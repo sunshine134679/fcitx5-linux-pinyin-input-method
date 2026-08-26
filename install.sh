@@ -8,6 +8,8 @@ generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
 config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
 environment_dir="$config_home/environment.d"
 environment_file="$environment_dir/90-modernime.conf"
+autostart_dir="$config_home/autostart"
+autostart_file="$autostart_dir/modernime-fcitx5-session.desktop"
 system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
 system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
 system_addon_dir="$system_libdir/fcitx5"
@@ -40,6 +42,27 @@ else
     printf '%s\n' "$environment_line" > "$environment_file"
 fi
 
+autostart_exec="env FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir fcitx5 -d -u modernime-ui"
+if [[ -e "$autostart_file" ]]; then
+    if [[ "$(wc -l < "$autostart_file")" -ne 8 ]] ||
+       ! grep -Fqx "Exec=$autostart_exec" "$autostart_file"; then
+        printf 'Refusing to overwrite existing file: %s\n' "$autostart_file" >&2
+        exit 1
+    fi
+else
+    mkdir -p "$autostart_dir"
+    {
+        printf '%s\n' '[Desktop Entry]'
+        printf '%s\n' 'Type=Application'
+        printf '%s\n' 'Name=ModernIME Fcitx5'
+        printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
+        printf 'Exec=%s\n' "$autostart_exec"
+        printf '%s\n' 'Terminal=false'
+        printf '%s\n' 'X-GNOME-Autostart-enabled=true'
+        printf '%s\n' 'NoDisplay=true'
+    } > "$autostart_file"
+fi
+
 manifest_dir="$prefix/share/modernime"
 manifest="$manifest_dir/install-manifest.txt"
 mkdir -p "$manifest_dir"
@@ -50,6 +73,7 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime-ui.conf"
     printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
     printf '%s\n' "$environment_file"
+    printf '%s\n' "$autostart_file"
 } > "$manifest"
 
 printf 'ModernIME installed to %s\n' "$prefix"
