@@ -40,7 +40,14 @@ PangoWeight pangoWeight(int weight) {
 CairoRenderSurface::CairoRenderSurface(cairo_surface_t *surface)
     : context_(cairo_create(surface)) {}
 
-CairoRenderSurface::~CairoRenderSurface() { cairo_destroy(context_); }
+CairoRenderSurface::CairoRenderSurface(cairo_t *context)
+    : context_(context), ownsContext_(false) {}
+
+CairoRenderSurface::~CairoRenderSurface() {
+    if (ownsContext_) {
+        cairo_destroy(context_);
+    }
+}
 
 void CairoRenderSurface::roundedRect(const Rect &bounds, double radius,
                                      const Color &color, bool fill) {

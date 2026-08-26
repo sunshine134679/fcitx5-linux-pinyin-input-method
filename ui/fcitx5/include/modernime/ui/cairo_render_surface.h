@@ -9,6 +9,7 @@ namespace modernime::ui {
 class CairoRenderSurface final : public RenderSurface {
 public:
     explicit CairoRenderSurface(cairo_surface_t *surface);
+    explicit CairoRenderSurface(cairo_t *context);
     ~CairoRenderSurface() override;
 
     CairoRenderSurface(const CairoRenderSurface &) = delete;
@@ -25,6 +26,7 @@ public:
 
 private:
     cairo_t *context_;
+    bool ownsContext_ = true;
 };
 
 } // namespace modernime::ui
