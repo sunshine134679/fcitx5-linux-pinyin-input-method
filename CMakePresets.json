@@ -25,6 +25,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "MODERNIME_BUILD_FCITX5": "ON",
+        "MODERNIME_BUILD_LIBIME_PINYIN": "ON",
         "MODERNIME_BUILD_TESTS": "ON"
       }
     }

@@ -6,11 +6,18 @@ prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
 
-cmake -S "$project_root" -B "$build_dir" -G "$generator" \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DCMAKE_INSTALL_PREFIX="$prefix" \
-    -DMODERNIME_BUILD_FCITX5=ON \
+cmake_args=(
+    -DCMAKE_BUILD_TYPE=Debug
+    -DCMAKE_INSTALL_PREFIX="$prefix"
+    -DMODERNIME_BUILD_FCITX5=ON
+    -DMODERNIME_BUILD_LIBIME_PINYIN=ON
     -DMODERNIME_BUILD_TESTS=ON
+)
+if [[ -n "${MODERNIME_BOOST_ROOT:-}" ]]; then
+    cmake_args+=("-DBoost_ROOT=$MODERNIME_BOOST_ROOT")
+fi
+
+cmake -S "$project_root" -B "$build_dir" -G "$generator" "${cmake_args[@]}"
 cmake --build "$build_dir"
 ctest --test-dir "$build_dir" --output-on-failure
 cmake --install "$build_dir"
