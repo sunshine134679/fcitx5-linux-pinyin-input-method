@@ -1,6 +1,8 @@
 add_library(modernime_core STATIC
     src/candidate_model.cpp
     src/input_state.cpp
+    src/candidate_ranker.cpp
+    src/pinyin_match.cpp
 )
 target_include_directories(modernime_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
