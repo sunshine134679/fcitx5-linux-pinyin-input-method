@@ -1,0 +1,2 @@
+add_library(modernime_core_support INTERFACE)
+target_link_libraries(modernime_core_support INTERFACE modernime_core)

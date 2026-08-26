@@ -1,0 +1,8 @@
+/build*/
+/out/
+/install-manifest.txt
+compile_commands.json
+.cache/
+.clangd/
+.idea/
+*.swp

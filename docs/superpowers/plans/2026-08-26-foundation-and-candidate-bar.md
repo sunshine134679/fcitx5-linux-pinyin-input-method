@@ -72,7 +72,7 @@ docs/
 
 **Interfaces:**
 - Produces a `modernime_core` library target, a `modernime_core_tests` executable, and a CTest registration.
-- `cmake -S . -B build -G Ninja -DMODERNIME_BUILD_FCITX5=OFF` must configure without Fcitx5 development headers.
+- `cmake -S . -B build -G "Unix Makefiles" -DMODERNIME_BUILD_FCITX5=OFF` must configure without Fcitx5 development headers. Ninja remains an optional generator when installed.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -92,7 +92,7 @@ int main() {
 Run:
 
 ```bash
-cmake -S . -B build -G Ninja -DMODERNIME_BUILD_FCITX5=OFF
+cmake -S . -B build -G "Unix Makefiles" -DMODERNIME_BUILD_FCITX5=OFF
 cmake --build build --target modernime_core_tests
 ctest --test-dir build --output-on-failure
 ```
@@ -236,7 +236,7 @@ Do not add learning, network access, fuzzy matching, or long-sentence behavior.
 After installing or exposing the Fcitx5 development headers, run:
 
 ```bash
-cmake -S . -B build -G Ninja -DMODERNIME_BUILD_FCITX5=ON
+cmake -S . -B build -G "Unix Makefiles" -DMODERNIME_BUILD_FCITX5=ON
 cmake --build build --clean-first
 ctest --test-dir build --output-on-failure
 ```

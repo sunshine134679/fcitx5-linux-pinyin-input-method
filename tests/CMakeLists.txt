@@ -1,0 +1,3 @@
+add_executable(modernime_core_tests core/foundation_test.cpp)
+target_link_libraries(modernime_core_tests PRIVATE modernime_core)
+add_test(NAME modernime_core_foundation COMMAND modernime_core_tests)

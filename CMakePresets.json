@@ -1,0 +1,58 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "core-debug",
+      "displayName": "ModernIME core debug",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/core-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MODERNIME_BUILD_FCITX5": "OFF",
+        "MODERNIME_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "fcitx5-debug",
+      "displayName": "ModernIME Fcitx5 debug",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/fcitx5-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MODERNIME_BUILD_FCITX5": "ON",
+        "MODERNIME_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "core-debug",
+      "configurePreset": "core-debug"
+    },
+    {
+      "name": "fcitx5-debug",
+      "configurePreset": "fcitx5-debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "core-debug",
+      "configurePreset": "core-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "fcitx5-debug",
+      "configurePreset": "fcitx5-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
