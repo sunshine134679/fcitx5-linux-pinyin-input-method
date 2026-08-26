@@ -42,6 +42,7 @@ CandidateBarLayout CandidateBarLayout::measure(
     CandidateBarLayout layout;
     layout.panel = {metrics.panelX, metrics.panelY, metrics.panelWidth,
                     metrics.panelHeight};
+    layout.preedit = page.preedit;
     layout.preeditX = metrics.preeditX;
     layout.preeditBaseline = metrics.preeditBaseline;
     layout.candidateBaseline = metrics.candidateBaseline;
