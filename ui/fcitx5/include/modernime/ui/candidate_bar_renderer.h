@@ -31,6 +31,8 @@ struct RenderStyle final {
     double panelRadius = 0.0;
     double selectedRadius = 0.0;
     double shadowRadius = 0.0;
+    double shadowSpread = 0.0;
+    double shadowOffsetY = 0.0;
     double borderWidth = 0.0;
     TextStyle preeditText;
     TextStyle candidateText;
@@ -44,6 +46,17 @@ public:
 
     virtual void roundedRect(const Rect &bounds, double radius,
                              const Color &color, bool fill) = 0;
+    virtual void shadowRoundedRect(const Rect &bounds, double radius,
+                                   const Color &color, double blurRadius) {
+        (void)blurRadius;
+        roundedRect(bounds, radius, color, true);
+    }
+    virtual double textWidth(std::string_view value,
+                             const TextStyle &style) const {
+        (void)value;
+        (void)style;
+        return 0.0;
+    }
     virtual void text(std::string_view value, double x, double baseline,
                       const TextStyle &style, const Color &color) = 0;
 };

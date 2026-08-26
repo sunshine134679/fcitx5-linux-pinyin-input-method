@@ -19,15 +19,24 @@ void assertTrue(bool condition, std::string_view message) {
 
 struct RecordingSurface final : modernime::ui::RenderSurface {
     std::vector<std::string> operations;
+    std::vector<double> textX;
+    std::vector<modernime::ui::Rect> rects;
 
-    void roundedRect(const modernime::ui::Rect &, double,
+    void roundedRect(const modernime::ui::Rect &bounds, double,
                      const modernime::ui::Color &, bool fill) override {
         operations.push_back(fill ? "rounded-fill" : "rounded-stroke");
+        rects.push_back(bounds);
     }
 
-    void text(std::string_view value, double, double,
+    double textWidth(std::string_view value,
+                     const modernime::ui::TextStyle &) const override {
+        return value.find('.') == std::string_view::npos ? 0.0 : 124.0;
+    }
+
+    void text(std::string_view value, double x, double,
               const modernime::ui::TextStyle &, const modernime::ui::Color &) override {
         operations.push_back("text:" + std::string(value));
+        textX.push_back(x);
     }
 };
 
@@ -55,5 +64,12 @@ int main() {
     assertTrue(surface.operations[5] == "text:1.还", "first candidate is drawn");
     assertTrue(surface.operations[6] == "text:2.海", "second candidate is drawn");
     assertTrue(surface.operations[7] == "text:3.害", "third candidate is drawn");
+    assertTrue(surface.rects[0].x == 212.0 && surface.rects[0].y == 338.0,
+               "shadow extends below and around the panel");
+    assertTrue(surface.textX.size() == 4, "all text positions are recorded");
+    assertTrue(surface.textX[1] == 277.0,
+               "selected candidate text is centered in its pill");
+    assertTrue(surface.textX[2] == 473.0,
+               "normal candidate text is centered in its slot");
     return EXIT_SUCCESS;
 }

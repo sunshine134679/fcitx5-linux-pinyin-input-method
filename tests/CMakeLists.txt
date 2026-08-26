@@ -36,3 +36,10 @@ target_sources(modernime_candidate_bar_renderer_tests PRIVATE
 )
 target_link_libraries(modernime_candidate_bar_renderer_tests PRIVATE modernime_core)
 add_test(NAME modernime_candidate_bar_renderer COMMAND modernime_candidate_bar_renderer_tests)
+
+add_executable(modernime_cairo_surface_tests ui/cairo_surface_test.cpp)
+target_include_directories(modernime_cairo_surface_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+)
+target_link_libraries(modernime_cairo_surface_tests PRIVATE modernime_ui_layout)
+add_test(NAME modernime_cairo_surface COMMAND modernime_cairo_surface_tests)

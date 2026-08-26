@@ -14,6 +14,8 @@ RenderStyle RenderStyle::reference() {
     style.panelRadius = 42.0;
     style.selectedRadius = 48.0;
     style.shadowRadius = 18.0;
+    style.shadowSpread = 4.0;
+    style.shadowOffsetY = 8.0;
     style.borderWidth = 2.0;
     style.preeditText = {"Noto Sans CJK SC", 56.0, 400};
     style.candidateText = {"Noto Sans CJK SC", 52.0, 400};
@@ -23,7 +25,14 @@ RenderStyle RenderStyle::reference() {
 void CandidateBarRenderer::render(RenderSurface &surface,
                                   const CandidateBarLayout &layout,
                                   const RenderStyle &style) {
-    surface.roundedRect(layout.panel, style.panelRadius, style.shadow, true);
+    const Rect shadowBounds{
+        layout.panel.x - style.shadowSpread,
+        layout.panel.y + style.shadowOffsetY,
+        layout.panel.width + 2.0 * style.shadowSpread,
+        layout.panel.height + style.shadowSpread};
+    surface.shadowRoundedRect(shadowBounds,
+                              style.panelRadius + style.shadowSpread,
+                              style.shadow, style.shadowRadius);
     surface.roundedRect(layout.panel, style.panelRadius, style.panel, true);
     surface.roundedRect(layout.panel, style.panelRadius, style.border, false);
 
@@ -37,7 +46,14 @@ void CandidateBarRenderer::render(RenderSurface &surface,
                      style.preeditText, style.preedit);
     }
     for (const auto &candidate : layout.candidates) {
-        surface.text(candidate.displayText, candidate.bounds.x,
+        const Rect textBounds = candidate.selected ? layout.selectedPill
+                                                   : candidate.bounds;
+        const double width =
+            surface.textWidth(candidate.displayText, style.candidateText);
+        const double textX = width > 0.0 && width <= textBounds.width
+                                 ? textBounds.x + (textBounds.width - width) / 2.0
+                                 : textBounds.x;
+        surface.text(candidate.displayText, textX,
                      layout.candidateBaseline, style.candidateText,
                      candidate.selected ? style.selectedText : style.text);
     }
