@@ -1,4 +1,5 @@
 #include "modernime/fcitx5/engine.h"
+#include "modernime/core/candidate_provider.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -25,6 +26,48 @@ struct RecordingHost final : modernime::fcitx5::EngineHost {
 
     void commit(std::string_view text) override {
         commits.emplace_back(text);
+    }
+};
+
+struct FakeProvider final : modernime::core::CandidateProvider {
+    modernime::core::CandidatePage current;
+    int appendCount = 0;
+    int eraseCount = 0;
+    int resetCount = 0;
+    int selectCount = 0;
+
+    bool append(std::string_view input) override {
+        ++appendCount;
+        current.preedit.append(input);
+        current.items.clear();
+        if (current.preedit == "nihao") {
+            current.items.push_back({"你好", "ni'hao", 0});
+        }
+        return true;
+    }
+
+    bool eraseLast() override {
+        ++eraseCount;
+        if (current.preedit.empty()) {
+            return false;
+        }
+        current.preedit.pop_back();
+        current.items.clear();
+        return true;
+    }
+
+    bool select(std::size_t index) override {
+        ++selectCount;
+        return index < current.items.size();
+    }
+
+    void reset() override {
+        ++resetCount;
+        current.clear();
+    }
+
+    const modernime::core::CandidatePage &page() const override {
+        return current;
     }
 };
 
@@ -83,5 +126,22 @@ int main() {
                "disabled input ignores characters");
     controller.handle({modernime::fcitx5::KeyKind::Toggle, 0, 0});
     assertTrue(controller.active(), "toggle re-enables input");
+
+    FakeProvider provider;
+    RecordingHost providerHost;
+    modernime::fcitx5::ModernIMEController providerController(providerHost,
+                                                               &provider);
+    type(providerController, "nihao");
+    assertTrue(provider.appendCount == 5,
+               "controller delegates character input to provider");
+    assertTrue(providerController.page().items.front().text == "你好",
+               "controller publishes provider candidates");
+    assertTrue(providerController.select(0), "provider selection is handled");
+    assertTrue(provider.selectCount == 1,
+               "controller delegates candidate selection to provider");
+    assertTrue(providerHost.commits.back() == "你好",
+               "provider candidate is committed");
+    assertTrue(provider.resetCount == 1,
+               "committing a provider candidate resets the provider");
     return EXIT_SUCCESS;
 }

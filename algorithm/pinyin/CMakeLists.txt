@@ -16,4 +16,5 @@ target_link_libraries(modernime_pinyin
         LibIME::Pinyin
 )
 target_compile_features(modernime_pinyin PUBLIC cxx_std_20)
+set_target_properties(modernime_pinyin PROPERTIES POSITION_INDEPENDENT_CODE ON)
 modernime_enable_warnings(modernime_pinyin)

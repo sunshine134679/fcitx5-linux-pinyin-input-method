@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/candidate_provider.h"
 #include "modernime/core/input_state.h"
 
 #include <string_view>
@@ -33,7 +34,8 @@ public:
 
 class ModernIMEController final {
 public:
-    explicit ModernIMEController(EngineHost &host);
+    explicit ModernIMEController(EngineHost &host,
+                                 core::CandidateProvider *provider = nullptr);
 
     bool handle(const KeyEvent &event);
     bool select(std::size_t index);
@@ -48,6 +50,7 @@ private:
     bool commitCurrent();
 
     EngineHost &host_;
+    core::CandidateProvider *provider_ = nullptr;
     core::InputState input_;
     core::CandidatePage page_;
     bool active_ = true;

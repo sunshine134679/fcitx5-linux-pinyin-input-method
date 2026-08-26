@@ -2,6 +2,10 @@
 
 #include "modernime/fcitx5/engine.h"
 
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+#include "modernime/pinyin/pinyin_candidate_provider.h"
+#endif
+
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
@@ -38,6 +42,9 @@ public:
 
 private:
     FcitxEngineHost host_;
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    std::unique_ptr<pinyin::PinyinCandidateProvider> provider_;
+#endif
     ModernIMEController controller_;
 };
 

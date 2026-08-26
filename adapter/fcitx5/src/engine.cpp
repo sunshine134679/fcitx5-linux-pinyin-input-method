@@ -10,7 +10,9 @@ const std::array<std::string_view, 9> sampleCandidates{
 
 } // namespace
 
-ModernIMEController::ModernIMEController(EngineHost &host) : host_(host) {}
+ModernIMEController::ModernIMEController(EngineHost &host,
+                                         core::CandidateProvider *provider)
+    : host_(host), provider_(provider) {}
 
 bool ModernIMEController::handle(const KeyEvent &event) {
     if (event.kind == KeyKind::Toggle) {
@@ -23,14 +25,21 @@ bool ModernIMEController::handle(const KeyEvent &event) {
 
     switch (event.kind) {
     case KeyKind::Character:
-        if (event.character < 'a' || event.character > 'z' ||
+        if (event.character < 'a' || event.character > 'z') {
+            return false;
+        }
+        if (provider_ &&
+            !provider_->append(std::string_view(&event.character, 1))) {
+            return false;
+        }
+        if (!provider_ &&
             !input_.append(std::string_view(&event.character, 1))) {
             return false;
         }
         refreshPage();
         return true;
     case KeyKind::Backspace:
-        if (!input_.eraseLast()) {
+        if (provider_ ? !provider_->eraseLast() : !input_.eraseLast()) {
             return false;
         }
         refreshPage();
@@ -42,10 +51,10 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (!page_.items.empty()) {
             return commitCurrent();
         }
-        if (input_.text().empty()) {
+        if (page_.preedit.empty()) {
             return false;
         }
-        host_.commit(input_.text());
+        host_.commit(page_.preedit);
         reset();
         return true;
     case KeyKind::Space:
@@ -67,13 +76,27 @@ bool ModernIMEController::select(std::size_t index) {
     if (!active_ || index >= page_.items.size()) {
         return false;
     }
+    if (provider_) {
+        const auto text = page_.items[index].text;
+        if (!provider_->select(index)) {
+            return false;
+        }
+        host_.commit(text);
+        reset();
+        return true;
+    }
     page_.cursor = index;
     return commitCurrent();
 }
 
 void ModernIMEController::reset() {
-    input_.clear();
-    page_.clear();
+    if (provider_) {
+        provider_->reset();
+        page_ = provider_->page();
+    } else {
+        input_.clear();
+        page_.clear();
+    }
     host_.publishPage(page_);
 }
 
@@ -85,6 +108,11 @@ void ModernIMEController::setActive(bool active) {
 }
 
 void ModernIMEController::refreshPage() {
+    if (provider_) {
+        page_ = provider_->page();
+        host_.publishPage(page_);
+        return;
+    }
     page_.clear();
     page_.preedit = input_.text();
     page_.generation = input_.generation();
@@ -104,7 +132,11 @@ bool ModernIMEController::commitCurrent() {
     if (page_.items.empty() || page_.cursor >= page_.items.size()) {
         return false;
     }
-    host_.commit(page_.items[page_.cursor].text);
+    const auto text = page_.items[page_.cursor].text;
+    if (provider_ && !provider_->select(page_.cursor)) {
+        return false;
+    }
+    host_.commit(text);
     reset();
     return true;
 }

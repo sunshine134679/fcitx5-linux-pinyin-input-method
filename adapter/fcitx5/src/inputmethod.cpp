@@ -67,7 +67,13 @@ void FcitxEngineHost::commit(std::string_view text) {
 }
 
 FcitxInputContextState::FcitxInputContextState(fcitx::InputContext &inputContext)
-    : host_(inputContext), controller_(host_) {
+    : host_(inputContext)
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+      , provider_(std::make_unique<pinyin::PinyinCandidateProvider>())
+      , controller_(host_, provider_.get()) {
+#else
+      , controller_(host_) {
+#endif
     host_.setController(controller_);
 }
 
