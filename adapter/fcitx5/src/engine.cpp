@@ -55,16 +55,20 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         const auto index = static_cast<std::size_t>(event.digit - '1');
-        if (index >= page_.items.size()) {
-            return false;
-        }
-        page_.cursor = index;
-        return commitCurrent();
+        return select(index);
     }
     case KeyKind::Toggle:
         break;
     }
     return false;
+}
+
+bool ModernIMEController::select(std::size_t index) {
+    if (!active_ || index >= page_.items.size()) {
+        return false;
+    }
+    page_.cursor = index;
+    return commitCurrent();
 }
 
 void ModernIMEController::reset() {

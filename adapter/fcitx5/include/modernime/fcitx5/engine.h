@@ -36,6 +36,7 @@ public:
     explicit ModernIMEController(EngineHost &host);
 
     bool handle(const KeyEvent &event);
+    bool select(std::size_t index);
     void reset();
     void setActive(bool active);
 

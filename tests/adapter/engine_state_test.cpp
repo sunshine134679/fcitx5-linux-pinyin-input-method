@@ -57,6 +57,11 @@ int main() {
     assertTrue(controller.page().preedit.empty(), "escape clears preedit");
 
     type(controller, "hail");
+    assertTrue(controller.select(1), "candidate index selection is handled");
+    assertTrue(host.commits.back() == "海", "candidate index commits second item");
+    assertTrue(controller.page().preedit.empty(), "index selection clears page");
+
+    type(controller, "hail");
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '2'}),
                "digit selection is handled");
     assertTrue(host.commits.back() == "海", "second candidate is committed");
