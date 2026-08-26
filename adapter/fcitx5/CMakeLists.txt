@@ -3,6 +3,7 @@ find_package(Fcitx5Utils REQUIRED)
 
 add_library(modernime_fcitx5 MODULE
     src/addon.cpp
+    src/engine.cpp
     src/inputmethod.cpp
 )
 
