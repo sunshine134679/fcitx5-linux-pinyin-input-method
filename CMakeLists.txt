@@ -21,5 +21,6 @@ endif()
 
 if(MODERNIME_BUILD_FCITX5)
     add_subdirectory(adapter/fcitx5)
-    add_subdirectory(ui/fcitx5)
 endif()
+
+add_subdirectory(ui/fcitx5)

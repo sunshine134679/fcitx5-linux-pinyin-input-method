@@ -15,3 +15,13 @@ target_sources(modernime_adapter_tests PRIVATE
 )
 target_link_libraries(modernime_adapter_tests PRIVATE modernime_core)
 add_test(NAME modernime_engine_state COMMAND modernime_adapter_tests)
+
+add_executable(modernime_ui_tests ui/candidate_bar_layout_test.cpp)
+target_include_directories(modernime_ui_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+)
+target_link_libraries(modernime_ui_tests PRIVATE modernime_core)
+target_sources(modernime_ui_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
+)
+add_test(NAME modernime_candidate_bar_layout COMMAND modernime_ui_tests)
