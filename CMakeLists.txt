@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(ModernIME VERSION 0.1.0 LANGUAGES CXX)
 
 option(MODERNIME_BUILD_FCITX5 "Build the Fcitx5 addon targets" OFF)
+option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" OFF)
 option(MODERNIME_BUILD_TESTS "Build ModernIME tests" ON)
 option(MODERNIME_BUILD_TOOLS "Build development and visual verification tools" OFF)
 
@@ -14,6 +15,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/ModernIMEWarnings.cmake)
 
 add_subdirectory(core)
+
+if(MODERNIME_BUILD_LIBIME_PINYIN)
+    add_subdirectory(algorithm/pinyin)
+endif()
 
 if(MODERNIME_BUILD_TESTS)
     enable_testing()

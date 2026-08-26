@@ -10,6 +10,12 @@ add_executable(modernime_pinyin_match_tests core/pinyin_match_test.cpp)
 target_link_libraries(modernime_pinyin_match_tests PRIVATE modernime_core)
 add_test(NAME modernime_pinyin_match COMMAND modernime_pinyin_match_tests)
 
+if(MODERNIME_BUILD_LIBIME_PINYIN)
+    add_executable(modernime_pinyin_provider_tests core/pinyin_provider_test.cpp)
+    target_link_libraries(modernime_pinyin_provider_tests PRIVATE modernime_pinyin)
+    add_test(NAME modernime_pinyin_provider COMMAND modernime_pinyin_provider_tests)
+endif()
+
 add_executable(modernime_adapter_tests adapter/engine_state_test.cpp)
 target_include_directories(modernime_adapter_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
