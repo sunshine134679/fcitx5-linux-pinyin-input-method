@@ -1,0 +1,55 @@
+#pragma once
+
+#include "modernime/core/candidate_model.h"
+#include "modernime/core/input_state.h"
+
+#include <string_view>
+
+namespace modernime::fcitx5 {
+
+enum class KeyKind {
+    Character,
+    Backspace,
+    Escape,
+    Enter,
+    Space,
+    Digit,
+    Toggle,
+};
+
+struct KeyEvent final {
+    KeyKind kind = KeyKind::Character;
+    char character = 0;
+    char digit = 0;
+};
+
+class EngineHost {
+public:
+    virtual ~EngineHost() = default;
+
+    virtual void publishPage(const core::CandidatePage &page) = 0;
+    virtual void commit(std::string_view text) = 0;
+};
+
+class ModernIMEController final {
+public:
+    explicit ModernIMEController(EngineHost &host);
+
+    bool handle(const KeyEvent &event);
+    void reset();
+    void setActive(bool active);
+
+    bool active() const { return active_; }
+    const core::CandidatePage &page() const { return page_; }
+
+private:
+    void refreshPage();
+    bool commitCurrent();
+
+    EngineHost &host_;
+    core::InputState input_;
+    core::CandidatePage page_;
+    bool active_ = true;
+};
+
+} // namespace modernime::fcitx5
