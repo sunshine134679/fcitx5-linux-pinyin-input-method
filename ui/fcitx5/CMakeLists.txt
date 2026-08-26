@@ -33,4 +33,8 @@ if(MODERNIME_BUILD_FCITX5)
     target_compile_features(modernime_ui PRIVATE cxx_std_20)
     modernime_enable_warnings(modernime_ui)
     set_target_properties(modernime_ui PROPERTIES PREFIX "")
+
+    install(TARGETS modernime_ui LIBRARY DESTINATION lib/fcitx5)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/addon/modernime-ui.conf
+            DESTINATION share/fcitx5/addon)
 endif()
