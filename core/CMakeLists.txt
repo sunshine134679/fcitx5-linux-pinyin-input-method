@@ -1,2 +1,8 @@
-add_library(modernime_core_support INTERFACE)
-target_link_libraries(modernime_core_support INTERFACE modernime_core)
+add_library(modernime_core STATIC
+    src/candidate_model.cpp
+    src/input_state.cpp
+)
+target_include_directories(modernime_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+modernime_enable_warnings(modernime_core)

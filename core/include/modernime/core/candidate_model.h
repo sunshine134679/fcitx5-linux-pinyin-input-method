@@ -1,0 +1,26 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace modernime::core {
+
+struct CandidateItem final {
+    std::string text;
+    std::string fullPinyin;
+    std::size_t sourceIndex = 0;
+};
+
+struct CandidatePage final {
+    std::string preedit;
+    std::vector<CandidateItem> items;
+    std::size_t cursor = 0;
+    std::uint64_t generation = 0;
+
+    bool select(std::size_t index);
+    void clear();
+};
+
+} // namespace modernime::core

@@ -12,11 +12,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(cmake/ModernIMEWarnings.cmake)
 
-add_library(modernime_core INTERFACE)
-target_include_directories(modernime_core INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/core/include>
-)
-modernime_enable_warnings(modernime_core)
+add_subdirectory(core)
 
 if(MODERNIME_BUILD_TESTS)
     enable_testing()
