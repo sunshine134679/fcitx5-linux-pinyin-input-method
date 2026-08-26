@@ -39,6 +39,18 @@ target_link_libraries(modernime_adapter_tests PRIVATE modernime_core)
 add_test(NAME modernime_engine_state COMMAND modernime_adapter_tests)
 
 if(MODERNIME_BUILD_FCITX5)
+    find_package(Fcitx5Core REQUIRED)
+
+    add_executable(modernime_fcitx5_candidate_list_tests
+        adapter/fcitx5_candidate_list_test.cpp
+    )
+    target_link_libraries(modernime_fcitx5_candidate_list_tests
+        PRIVATE Fcitx5::Core
+    )
+    add_test(NAME modernime_fcitx5_candidate_list
+        COMMAND modernime_fcitx5_candidate_list_tests
+    )
+
     add_executable(modernime_addon_load_tests adapter/addon_load_test.cpp)
     target_link_libraries(modernime_addon_load_tests PRIVATE ${CMAKE_DL_LIBS})
     add_test(NAME modernime_fcitx5_addon_load

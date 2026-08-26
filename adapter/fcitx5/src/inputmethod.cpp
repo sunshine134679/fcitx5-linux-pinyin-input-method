@@ -50,12 +50,14 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     candidates->setPageSize(9);
     candidates->setLayoutHint(fcitx::CandidateLayoutHint::Horizontal);
     candidates->setCursorIncludeUnselected(true);
-    candidates->setGlobalCursorIndex(static_cast<int>(page.cursor));
     for (std::size_t index = 0; index < page.items.size() && index < 9;
          ++index) {
         candidates->append<FcitxCandidateWord>(page.items[index].text,
                                                *controller_, index);
     }
+    // Fcitx5 validates the global cursor against the populated list.
+    const auto cursor = std::min<std::size_t>(page.cursor, candidates->size() - 1);
+    candidates->setGlobalCursorIndex(static_cast<int>(cursor));
 
     inputContext_->inputPanel().setPreedit(fcitx::Text(page.preedit));
     inputContext_->inputPanel().setCandidateList(std::move(candidates));
