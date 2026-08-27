@@ -5,20 +5,20 @@ namespace modernime::ui {
 RenderStyle RenderStyle::reference() {
     RenderStyle style;
     style.shadow = {0.10, 0.14, 0.20, 0.12};
-    style.panel = {1.0, 1.0, 1.0, 0.94};
+    style.panel = {1.0, 1.0, 1.0, 0.96};
     style.border = {0.88, 0.90, 0.93, 0.90};
-    style.selected = {0.08, 0.42, 0.94, 1.0};
-    style.text = {0.06, 0.10, 0.16, 1.0};
+    style.selected = {0.07, 0.40, 0.93, 1.0};
+    style.text = {0.05, 0.09, 0.15, 1.0};
     style.selectedText = {1.0, 1.0, 1.0, 1.0};
     style.preedit = {0.27, 0.32, 0.40, 1.0};
-    style.panelRadius = 14.0;
-    style.selectedRadius = 19.0;
-    style.shadowRadius = 4.0;
+    style.panelRadius = 15.0;
+    style.selectedRadius = 17.0;
+    style.shadowRadius = 6.0;
     style.shadowSpread = 2.0;
-    style.shadowOffsetY = 4.0;
+    style.shadowOffsetY = 3.0;
     style.borderWidth = 1.0;
-    style.preeditText = {"Noto Sans CJK SC", 18.0, 400};
-    style.candidateText = {"Noto Sans CJK SC", 20.0, 400};
+    style.preeditText = {"Noto Sans CJK SC", 20.0, 400};
+    style.candidateText = {"Noto Sans CJK SC", 18.0, 400};
     return style;
 }
 

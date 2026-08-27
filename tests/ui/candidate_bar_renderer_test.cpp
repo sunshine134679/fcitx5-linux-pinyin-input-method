@@ -53,8 +53,18 @@ int main() {
         page, modernime::ui::CandidateBarMetrics::reference());
 
     RecordingSurface surface;
-    modernime::ui::CandidateBarRenderer::render(
-        surface, layout, modernime::ui::RenderStyle::reference());
+    const auto style = modernime::ui::RenderStyle::reference();
+    assertTrue(style.panelRadius == 15.0 && style.selectedRadius == 17.0,
+               "reference radii follow the design proportions");
+    assertTrue(style.shadowRadius == 6.0 && style.shadowOffsetY == 3.0,
+               "reference shadow follows the design proportions");
+    assertTrue(style.candidateText.size == 18.0 &&
+                   style.preeditText.size == 20.0,
+               "reference typography follows the design proportions");
+    assertTrue(style.selected.red == 0.07 && style.selected.green == 0.40 &&
+                   style.selected.blue == 0.93,
+               "selected color matches the design");
+    modernime::ui::CandidateBarRenderer::render(surface, layout, style);
 
     assertTrue(surface.operations.size() == 7,
                "one shadow, panel, border, pill and three candidates");
@@ -65,7 +75,7 @@ int main() {
     assertTrue(surface.operations[4] == "text:1.还", "first candidate is drawn");
     assertTrue(surface.operations[5] == "text:2.海", "second candidate is drawn");
     assertTrue(surface.operations[6] == "text:3.害", "third candidate is drawn");
-    assertTrue(surface.rects[0].x == 0.0 && surface.rects[0].y == 6.0,
+    assertTrue(surface.rects[0].x == 0.0 && surface.rects[0].y == 5.0,
                "shadow extends below and around the panel");
     assertTrue(surface.textX.size() == 3, "candidate text positions are recorded");
     assertTrue(surface.textX[0] == 10.0,
@@ -74,9 +84,9 @@ int main() {
                "normal candidate text is centered in its slot");
     assertTrue(surface.textBaseline.size() == 3,
                "candidate baselines are recorded");
-    assertTrue(surface.textBaseline[0] == 34.0 &&
-                   surface.textBaseline[1] == 34.0 &&
-                   surface.textBaseline[2] == 34.0,
+    assertTrue(surface.textBaseline[0] == 33.5 &&
+                   surface.textBaseline[1] == 33.5 &&
+                   surface.textBaseline[2] == 33.5,
                "candidate text is vertically centered in its slot");
     return EXIT_SUCCESS;
 }

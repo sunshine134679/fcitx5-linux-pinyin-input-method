@@ -56,7 +56,7 @@ void CairoRenderSurface::roundedRect(const Rect &bounds, double radius,
     if (fill) {
         cairo_fill(context_);
     } else {
-        cairo_set_line_width(context_, 2.0);
+        cairo_set_line_width(context_, 1.0);
         cairo_stroke(context_);
     }
 }
@@ -64,7 +64,7 @@ void CairoRenderSurface::roundedRect(const Rect &bounds, double radius,
 void CairoRenderSurface::shadowRoundedRect(const Rect &bounds, double radius,
                                            const Color &color,
                                            double blurRadius) {
-    const int layerCount = std::max(1, static_cast<int>(blurRadius / 2.0));
+    const int layerCount = std::max(4, static_cast<int>(blurRadius * 2.0));
     for (int layer = layerCount; layer >= 1; --layer) {
         const double t = static_cast<double>(layer) / layerCount;
         const double inset = (1.0 - t) * blurRadius / 4.0;
@@ -72,7 +72,7 @@ void CairoRenderSurface::shadowRoundedRect(const Rect &bounds, double radius,
                                bounds.width - 2.0 * inset,
                                bounds.height - 2.0 * inset};
         const Color layerColor{color.red, color.green, color.blue,
-                               color.alpha * (0.1 - 0.09 * t)};
+                               color.alpha * 0.06 * t};
         addRoundedRectPath(context_, layerBounds, radius - inset);
         setSource(context_, layerColor);
         cairo_fill(context_);
