@@ -4,6 +4,7 @@
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_bar_renderer.h"
 #include "modernime/ui/status_indicator.h"
+#include "modernime/ui/window_anchor.h"
 
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h>
@@ -28,6 +29,7 @@ struct ModernIMEUserInterface::Impl final {
     AppIndicator *indicator = nullptr;
     GtkWidget *indicatorMenu = nullptr;
     CandidateBarLayout layout;
+    WindowAnchor windowAnchor;
     RenderStyle style = RenderStyle::reference();
     CandidateBarMetrics metrics = CandidateBarMetrics::reference();
     bool gtkAvailable = false;
@@ -204,6 +206,7 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
     const auto page = pageFromInputPanel(inputContext->inputPanel());
     if (page.items.empty()) {
         gtk_widget_hide(impl_->window);
+        impl_->windowAnchor.reset();
         return;
     }
 
@@ -214,8 +217,11 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         });
     impl_->setWindowSize(inputContext->scaleFactor());
     const auto &cursor = inputContext->cursorRect();
-    gtk_window_move(GTK_WINDOW(impl_->window), cursor.left(),
-                    cursor.top() + cursor.height());
+    if (impl_->windowAnchor.capture(cursor.left(),
+                                    cursor.top() + cursor.height())) {
+        gtk_window_move(GTK_WINDOW(impl_->window), impl_->windowAnchor.x,
+                        impl_->windowAnchor.y);
+    }
     gtk_widget_queue_draw(impl_->drawingArea);
     if (!impl_->suspended) {
         gtk_widget_show_all(impl_->window);

@@ -1,0 +1,35 @@
+#include "modernime/ui/window_anchor.h"
+
+#include <cstdlib>
+#include <iostream>
+#include <string_view>
+
+namespace {
+
+void assertTrue(bool condition, std::string_view message) {
+    if (!condition) {
+        std::cerr << "window anchor test failed: " << message << '\n';
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+} // namespace
+
+int main() {
+    modernime::ui::WindowAnchor anchor;
+
+    assertTrue(anchor.capture(120, 240), "first cursor position is captured");
+    assertTrue(anchor.x == 120 && anchor.y == 240,
+               "captured position is retained");
+    assertTrue(!anchor.capture(420, 640),
+               "subsequent cursor positions do not move the window");
+    assertTrue(anchor.x == 120 && anchor.y == 240,
+               "window remains at the first position");
+
+    anchor.reset();
+    assertTrue(anchor.capture(420, 640),
+               "position can be captured again after reset");
+    assertTrue(anchor.x == 420 && anchor.y == 640,
+               "new input starts from the new cursor position");
+    return EXIT_SUCCESS;
+}
