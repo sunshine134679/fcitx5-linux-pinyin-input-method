@@ -78,14 +78,17 @@ std::string candidateKey(std::string_view pinyin, std::string_view text) {
 
 class PinyinCandidateProvider::Impl final {
 public:
-    explicit Impl(const PinyinDataPaths &paths)
+    Impl(const PinyinDataPaths &paths, const PinyinProviderOptions &options)
         : userDictionaryPath_(paths.userDictionary.empty()
                                   ? defaultUserDictionaryPath()
                                   : std::filesystem::path(paths.userDictionary)),
-          learning_(std::make_unique<core::LearningWriter>(
-              paths.learningStore.empty()
-                  ? defaultLearningPath()
-                  : std::filesystem::path(paths.learningStore))),
+          learning_(options.learningEnabled
+                         ? std::make_unique<core::LearningWriter>(
+                               paths.learningStore.empty()
+                                   ? defaultLearningPath()
+                                   : std::filesystem::path(paths.learningStore))
+                         : nullptr),
+          contextLearningEnabled_(options.contextLearningEnabled),
           userDictionary_(UserDictionary::loadText(userDictionaryPath_)) {
         auto dictionary = std::make_unique<libime::PinyinDictionary>();
         if (std::filesystem::is_regular_file(paths.dictionary)) {
@@ -135,9 +138,11 @@ public:
             return false;
         }
         const auto &candidate = page_.items[index];
-        learning_->enqueueSelection(candidate.text, candidate.fullPinyin,
-                                     contextBefore_, contextAfter_,
-                                     nowMilliseconds());
+        if (learning_ != nullptr) {
+            learning_->enqueueSelection(candidate.text, candidate.fullPinyin,
+                                         contextBefore_, contextAfter_,
+                                         nowMilliseconds());
+        }
         context->select(page_.items[index].sourceIndex);
         refresh();
         return true;
@@ -173,6 +178,9 @@ public:
             suppressedLearned_.insert(
                 candidateKey(candidate.fullPinyin, candidate.text));
         }
+        if (learning_ == nullptr) {
+            return false;
+        }
         learning_->enqueueSuppression(candidate.text, candidate.fullPinyin);
         refresh();
         return true;
@@ -185,6 +193,11 @@ public:
     }
 
     void setContext(std::string_view before, std::string_view after) {
+        if (!contextLearningEnabled_) {
+            contextBefore_.clear();
+            contextAfter_.clear();
+            return;
+        }
         contextBefore_ = before;
         contextAfter_ = after;
     }
@@ -215,7 +228,8 @@ private:
             return;
         }
 
-        const auto learning = learning_->snapshot();
+        const auto learning = learning_ != nullptr ? learning_->snapshot()
+                                                   : nullptr;
         const auto result = buildCandidatePipeline(
             *context, *ime->dict(), learning.get(), nowMilliseconds(),
             contextBefore_, contextAfter_, previousOrder);
@@ -230,14 +244,17 @@ private:
             const auto &candidate = result.scored[sourceIndex];
             const bool isManual = userDictionary_.contains(
                 candidate.full_pinyin, candidate.text);
-            const auto learningEntry = learning->entry(
-                candidate.text, candidate.full_pinyin, contextBefore_,
-                contextAfter_);
+            const auto learningEntry = learning != nullptr
+                                           ? learning->entry(
+                                                 candidate.text,
+                                                 candidate.full_pinyin,
+                                                 contextBefore_, contextAfter_)
+                                           : nullptr;
             const auto key = candidateKey(candidate.full_pinyin, candidate.text);
             if (!isManual && suppressedLearned_.contains(key)) {
                 continue;
             }
-            const bool isLearned = !isManual &&
+            const bool isLearned = !isManual && learning != nullptr &&
                                    !learning->isSuppressed(
                                        candidate.text, candidate.full_pinyin) &&
                                    learningEntry != nullptr &&
@@ -269,6 +286,7 @@ private:
     std::unique_ptr<libime::PinyinContext> context;
     std::filesystem::path userDictionaryPath_;
     std::unique_ptr<core::LearningWriter> learning_;
+    bool contextLearningEnabled_ = true;
     UserDictionary userDictionary_;
     core::CandidatePage page_;
     std::string contextBefore_;
@@ -277,8 +295,9 @@ private:
     std::uint64_t generation = 0;
 };
 
-PinyinCandidateProvider::PinyinCandidateProvider(PinyinDataPaths paths)
-    : impl_(std::make_unique<Impl>(paths)) {}
+PinyinCandidateProvider::PinyinCandidateProvider(PinyinDataPaths paths,
+                                                 PinyinProviderOptions options)
+    : impl_(std::make_unique<Impl>(paths, options)) {}
 
 PinyinCandidateProvider::~PinyinCandidateProvider() = default;
 

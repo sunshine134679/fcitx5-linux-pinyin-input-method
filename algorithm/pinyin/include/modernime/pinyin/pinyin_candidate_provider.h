@@ -16,9 +16,15 @@ struct PinyinDataPaths final {
     std::string learningStore;
 };
 
+struct PinyinProviderOptions final {
+    bool learningEnabled = true;
+    bool contextLearningEnabled = true;
+};
+
 class PinyinCandidateProvider final : public core::CandidateProvider {
 public:
-    explicit PinyinCandidateProvider(PinyinDataPaths paths = {});
+    explicit PinyinCandidateProvider(PinyinDataPaths paths = {},
+                                     PinyinProviderOptions options = {});
     ~PinyinCandidateProvider() override;
 
     bool append(std::string_view input) override;

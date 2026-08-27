@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
@@ -52,6 +53,73 @@ bool isAsciiPunctuation(std::uint32_t unicode) {
     }
     return std::ispunct(static_cast<unsigned char>(unicode)) != 0;
 }
+
+bool matchesToggleKey(const fcitx::Key &key, std::string_view binding) {
+    if (binding == "Ctrl+Space") {
+        return key.check(FcitxKey_space,
+                         fcitx::KeyStates(fcitx::KeyState::Ctrl));
+    }
+    if (binding == "Alt+Space") {
+        return key.check(FcitxKey_space,
+                         fcitx::KeyStates(fcitx::KeyState::Alt));
+    }
+    if (binding == "Super+Space") {
+        return key.check(FcitxKey_space,
+                         fcitx::KeyStates(fcitx::KeyState::Super));
+    }
+    if (binding == "Ctrl+Shift+Space") {
+        return key.check(
+            FcitxKey_space,
+            fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift}));
+    }
+    return false;
+}
+
+core::ModernIMESettings loadSettings() {
+    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+    const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
+    const auto *home = std::getenv("HOME");
+    const auto paths = core::SettingsPaths::fromEnvironment(
+        xdgConfigHome == nullptr ? std::string_view{}
+                                 : std::string_view(xdgConfigHome),
+        xdgDataHome == nullptr ? std::string_view{}
+                               : std::string_view(xdgDataHome),
+        home == nullptr ? std::string_view{} : std::string_view(home));
+    return core::SettingsStore::load(paths.settingsFile).settings;
+}
+
+ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
+    return {settings.inputEnabled, settings.numberSelection,
+            settings.arrowNavigation, settings.pageNavigation};
+}
+
+KeyBindings keyBindings(const core::ModernIMESettings &settings) {
+    return {settings.toggleKey, settings.numberSelection,
+            settings.arrowNavigation, settings.pageNavigation};
+}
+
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+pinyin::PinyinDataPaths pinyinPaths() {
+    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+    const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
+    const auto *home = std::getenv("HOME");
+    const auto paths = core::SettingsPaths::fromEnvironment(
+        xdgConfigHome == nullptr ? std::string_view{}
+                                 : std::string_view(xdgConfigHome),
+        xdgDataHome == nullptr ? std::string_view{}
+                               : std::string_view(xdgDataHome),
+        home == nullptr ? std::string_view{} : std::string_view(home));
+    pinyin::PinyinDataPaths result;
+    result.userDictionary = paths.userDictionary.string();
+    result.learningStore = paths.learningStore.string();
+    return result;
+}
+
+pinyin::PinyinProviderOptions pinyinOptions(
+    const core::ModernIMESettings &settings) {
+    return {settings.learningEnabled, settings.contextLearningEnabled};
+}
+#endif
 
 } // namespace
 
@@ -117,20 +185,26 @@ void FcitxEngineHost::commit(std::string_view text) {
     inputContext_->commitString(std::string(text));
 }
 
-FcitxInputContextState::FcitxInputContextState(fcitx::InputContext &inputContext)
+FcitxInputContextState::FcitxInputContextState(
+    fcitx::InputContext &inputContext,
+    const core::ModernIMESettings &settings)
     : host_(inputContext)
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
-      , provider_(std::make_unique<pinyin::PinyinCandidateProvider>())
-      , controller_(host_, provider_.get()) {
+      , provider_(std::make_unique<pinyin::PinyinCandidateProvider>(
+            pinyinPaths(), pinyinOptions(settings)))
+      , controller_(host_, provider_.get(), controllerOptions(settings)) {
 #else
-      , controller_(host_) {
+      , controller_(host_, nullptr, controllerOptions(settings)) {
 #endif
     host_.setController(controller_);
+    controller_.setActive(settings.inputEnabled &&
+                           settings.defaultMode == core::InputMode::Chinese);
 }
 
 ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
-    : stateFactory_([](fcitx::InputContext &inputContext) {
-          return new FcitxInputContextState(inputContext);
+    : settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
+      stateFactory_([this](fcitx::InputContext &inputContext) {
+          return new FcitxInputContextState(inputContext, settings_);
       }) {
     if (manager != nullptr && manager->instance() != nullptr) {
         manager->instance()->inputContextManager().registerProperty(
@@ -157,9 +231,10 @@ ModernIMEInputMethod::state(fcitx::InputContext *inputContext) const {
     return inputContext->propertyFor(&stateFactory_);
 }
 
-std::optional<KeyEvent> translateKey(const fcitx::Key &key) {
+std::optional<KeyEvent> translateKey(const fcitx::Key &key,
+                                     const KeyBindings &bindings) {
     KeyEvent event;
-    if (key.check(FcitxKey_space, fcitx::KeyStates(fcitx::KeyState::Ctrl))) {
+    if (matchesToggleKey(key, bindings.toggleKey)) {
         event.kind = KeyKind::Toggle;
         return event;
     }
@@ -182,33 +257,37 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key) {
         event.kind = KeyKind::Enter;
         return event;
     }
-    if (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_Up)) {
+    if (bindings.pageNavigation &&
+        (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_Up))) {
         event.kind = KeyKind::PreviousPage;
         return event;
     }
-    if (key.check(FcitxKey_Page_Down) || key.check(FcitxKey_Down)) {
+    if (bindings.pageNavigation &&
+        (key.check(FcitxKey_Page_Down) || key.check(FcitxKey_Down))) {
         event.kind = KeyKind::NextPage;
         return event;
     }
-    if (key.check(FcitxKey_equal) || key.check(FcitxKey_plus) ||
-        key.check(FcitxKey_KP_Add)) {
+    if (bindings.pageNavigation &&
+        (key.check(FcitxKey_equal) || key.check(FcitxKey_plus) ||
+         key.check(FcitxKey_KP_Add))) {
         event.kind = KeyKind::NextPage;
         return event;
     }
-    if (key.check(FcitxKey_Left)) {
+    if (bindings.arrowNavigation && key.check(FcitxKey_Left)) {
         event.kind = KeyKind::PreviousCandidate;
         return event;
     }
-    if (key.check(FcitxKey_Right)) {
+    if (bindings.arrowNavigation && key.check(FcitxKey_Right)) {
         event.kind = KeyKind::NextCandidate;
         return event;
     }
-    if (key.check(FcitxKey_Tab,
+    if (bindings.arrowNavigation &&
+        key.check(FcitxKey_Tab,
                   fcitx::KeyStates(fcitx::KeyState::Shift))) {
         event.kind = KeyKind::PreviousCandidate;
         return event;
     }
-    if (key.check(FcitxKey_Tab)) {
+    if (bindings.arrowNavigation && key.check(FcitxKey_Tab)) {
         event.kind = KeyKind::NextCandidate;
         return event;
     }
@@ -217,7 +296,7 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key) {
         return event;
     }
     const int selection = key.digitSelection();
-    if (selection >= 0 && selection < 9) {
+    if (bindings.numberSelection && selection >= 0 && selection < 9) {
         event.kind = KeyKind::Digit;
         event.digit = static_cast<char>('1' + selection);
         return event;
@@ -260,7 +339,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
     const auto context = extractSurroundingContext(
         event.inputContext()->surroundingText(), 32);
     contextState->controller().setContext(context.first, context.second);
-    const auto modernEvent = translateKey(event.key());
+    const auto modernEvent = translateKey(event.key(), keyBindings_);
     if (modernEvent.has_value() &&
         contextState->controller().handle(*modernEvent)) {
         event.filterAndAccept();
@@ -270,7 +349,9 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
                                     fcitx::InputContextEvent &event) {
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
-        contextState->controller().setActive(true);
+        contextState->controller().setActive(
+            settings_.inputEnabled &&
+            settings_.defaultMode == core::InputMode::Chinese);
     }
 }
 

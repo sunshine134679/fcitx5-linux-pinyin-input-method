@@ -25,7 +25,8 @@ namespace modernime::fcitx5 {
 std::pair<std::string, std::string>
 extractSurroundingContext(const fcitx::SurroundingText &text,
                           std::size_t maxChars);
-std::optional<KeyEvent> translateKey(const fcitx::Key &key);
+std::optional<KeyEvent> translateKey(const fcitx::Key &key,
+                                     const KeyBindings &bindings = {});
 
 class FcitxEngineHost final : public EngineHost {
 public:
@@ -45,7 +46,8 @@ private:
 
 class FcitxInputContextState final : public fcitx::InputContextProperty {
 public:
-    explicit FcitxInputContextState(fcitx::InputContext &inputContext);
+    FcitxInputContextState(fcitx::InputContext &inputContext,
+                           const core::ModernIMESettings &settings);
 
     ModernIMEController &controller() { return controller_; }
 
@@ -75,6 +77,8 @@ public:
 private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
 
+    core::ModernIMESettings settings_;
+    KeyBindings keyBindings_;
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };
 

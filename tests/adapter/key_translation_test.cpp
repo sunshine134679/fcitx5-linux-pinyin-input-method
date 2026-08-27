@@ -40,6 +40,37 @@ int main() {
 
     const auto ctrl = fcitx::KeyStates(fcitx::KeyState::Ctrl);
     const auto shift = fcitx::KeyStates(fcitx::KeyState::Shift);
+    const modernime::fcitx5::KeyBindings defaultBindings;
+    const auto defaultToggle = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_space, ctrl), defaultBindings);
+    assertTrue(defaultToggle.has_value() &&
+                   defaultToggle->kind == modernime::fcitx5::KeyKind::Toggle,
+               "default toggle binding maps Ctrl+Space");
+    auto alternateBindings = defaultBindings;
+    alternateBindings.toggleKey = "Alt+Space";
+    const auto alternateToggle = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_space,
+                   fcitx::KeyStates(fcitx::KeyState::Alt)),
+        alternateBindings);
+    assertTrue(alternateToggle.has_value() &&
+                   alternateToggle->kind == modernime::fcitx5::KeyKind::Toggle,
+               "configured toggle binding maps Alt+Space");
+    assertTrue(!modernime::fcitx5::translateKey(
+                    fcitx::Key(FcitxKey_space, ctrl), alternateBindings)
+                    .has_value(),
+               "old toggle binding is disabled after reconfiguration");
+    auto disabledBindings = defaultBindings;
+    disabledBindings.numberSelection = false;
+    disabledBindings.arrowNavigation = false;
+    disabledBindings.pageNavigation = false;
+    assertTrue(!modernime::fcitx5::translateKey(
+                    fcitx::Key(FcitxKey_1), disabledBindings)
+                    .has_value(),
+               "disabled number selection does not translate digits");
+    assertTrue(!modernime::fcitx5::translateKey(
+                    fcitx::Key(FcitxKey_Up), disabledBindings)
+                    .has_value(),
+               "disabled page navigation does not translate arrows");
     const auto ctrlDelete = modernime::fcitx5::translateKey(
         fcitx::Key(FcitxKey_Delete, ctrl));
     assertTrue(ctrlDelete.has_value() &&

@@ -239,6 +239,40 @@ int main() {
     controller.handle({modernime::fcitx5::KeyKind::Toggle, 0, 0});
     assertTrue(controller.active(), "toggle re-enables input");
 
+    modernime::fcitx5::ControllerOptions disabledOptions;
+    disabledOptions.inputEnabled = false;
+    RecordingHost disabledHost;
+    modernime::fcitx5::ModernIMEController disabledController(
+        disabledHost, nullptr, disabledOptions);
+    assertTrue(!disabledController.handle(
+                    {modernime::fcitx5::KeyKind::Character, 'a', 0}),
+                "disabled settings ignore characters before activation");
+
+    ManyCandidateProvider navigationProvider;
+    RecordingHost navigationHost;
+    modernime::fcitx5::ControllerOptions navigationOptions;
+    navigationOptions.arrowNavigation = false;
+    navigationOptions.pageNavigation = false;
+    modernime::fcitx5::ModernIMEController navigationController(
+        navigationHost, &navigationProvider, navigationOptions);
+    type(navigationController, "n");
+    assertTrue(!navigationController.handle(
+                    {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}),
+                "disabled arrow navigation is not consumed");
+    assertTrue(!navigationController.handle(
+                    {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
+                "disabled page navigation is not consumed");
+
+    modernime::fcitx5::ControllerOptions numberOptions;
+    numberOptions.numberSelection = false;
+    RecordingHost numberHost;
+    modernime::fcitx5::ModernIMEController numberController(
+        numberHost, nullptr, numberOptions);
+    type(numberController, "hail");
+    assertTrue(!numberController.handle(
+                    {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+                "disabled number selection is not consumed");
+
     modernime::fcitx5::ModernIMEController separatorController(host);
     assertTrue(!separatorController.handle(
                     {modernime::fcitx5::KeyKind::Character, '\'', 0}),

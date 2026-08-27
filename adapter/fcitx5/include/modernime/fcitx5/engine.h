@@ -3,6 +3,7 @@
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/candidate_provider.h"
 #include "modernime/core/input_state.h"
+#include "modernime/core/settings.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +36,20 @@ struct KeyEvent final {
     char digit = 0;
 };
 
+struct ControllerOptions final {
+    bool inputEnabled = true;
+    bool numberSelection = true;
+    bool arrowNavigation = true;
+    bool pageNavigation = true;
+};
+
+struct KeyBindings final {
+    std::string toggleKey = "Ctrl+Space";
+    bool numberSelection = true;
+    bool arrowNavigation = true;
+    bool pageNavigation = true;
+};
+
 class EngineHost {
 public:
     virtual ~EngineHost() = default;
@@ -46,7 +61,8 @@ public:
 class ModernIMEController final {
 public:
     explicit ModernIMEController(EngineHost &host,
-                                 core::CandidateProvider *provider = nullptr);
+                                 core::CandidateProvider *provider = nullptr,
+                                 ControllerOptions options = {});
 
     bool handle(const KeyEvent &event);
     bool select(std::size_t index);
@@ -74,6 +90,7 @@ private:
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
+    ControllerOptions options_;
     bool active_ = true;
 };
 

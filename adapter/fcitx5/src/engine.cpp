@@ -16,8 +16,10 @@ const std::array<std::string_view, 9> sampleCandidates{
 } // namespace
 
 ModernIMEController::ModernIMEController(EngineHost &host,
-                                         core::CandidateProvider *provider)
-    : host_(host), provider_(provider) {}
+                                         core::CandidateProvider *provider,
+                                         ControllerOptions options)
+    : host_(host), provider_(provider), options_(options),
+      active_(options.inputEnabled) {}
 
 void ModernIMEController::setContext(std::string before, std::string after) {
     contextBefore_ = std::move(before);
@@ -95,6 +97,9 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         host_.commit(std::string_view(&event.character, 1));
         return true;
     case KeyKind::Digit: {
+        if (!options_.numberSelection) {
+            return false;
+        }
         if (event.digit < '1' || event.digit > '9') {
             return false;
         }
@@ -103,12 +108,24 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return select(pageStart + index);
     }
     case KeyKind::PreviousCandidate:
+        if (!options_.arrowNavigation) {
+            return false;
+        }
         return moveCursor(-1);
     case KeyKind::NextCandidate:
+        if (!options_.arrowNavigation) {
+            return false;
+        }
         return moveCursor(1);
     case KeyKind::PreviousPage:
+        if (!options_.pageNavigation) {
+            return false;
+        }
         return movePage(-1);
     case KeyKind::NextPage:
+        if (!options_.pageNavigation) {
+            return false;
+        }
         return movePage(1);
     case KeyKind::Toggle:
         break;

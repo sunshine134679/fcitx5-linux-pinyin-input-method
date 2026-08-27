@@ -177,5 +177,19 @@ int main() {
     std::filesystem::remove(repeatedPath, error);
     std::filesystem::remove(repeatedPath.string() + "-wal", error);
     std::filesystem::remove(repeatedPath.string() + "-shm", error);
+
+    const auto disabledLearningPath = testPath("disabled-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths disabledLearningPaths;
+    disabledLearningPaths.learningStore = disabledLearningPath.string();
+    modernime::pinyin::PinyinProviderOptions disabledLearningOptions;
+    disabledLearningOptions.learningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider disabledLearningProvider(
+        disabledLearningPaths, disabledLearningOptions);
+    assertTrue(disabledLearningProvider.append("nihao"),
+               "learning-disabled provider accepts input");
+    assertTrue(disabledLearningProvider.select(0),
+               "learning-disabled provider still selects candidates");
+    assertTrue(!std::filesystem::exists(disabledLearningPath),
+               "disabled learning does not create a database");
     return EXIT_SUCCESS;
 }
