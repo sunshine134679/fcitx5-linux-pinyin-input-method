@@ -20,6 +20,7 @@ void assertTrue(bool condition, std::string_view message) {
 struct RecordingSurface final : modernime::ui::RenderSurface {
     std::vector<std::string> operations;
     std::vector<double> textX;
+    std::vector<double> textBaseline;
     std::vector<modernime::ui::Rect> rects;
 
     void roundedRect(const modernime::ui::Rect &bounds, double,
@@ -33,10 +34,11 @@ struct RecordingSurface final : modernime::ui::RenderSurface {
         return value.find('.') == std::string_view::npos ? 0.0 : 124.0;
     }
 
-    void text(std::string_view value, double x, double,
+    void text(std::string_view value, double x, double baseline,
               const modernime::ui::TextStyle &, const modernime::ui::Color &) override {
         operations.push_back("text:" + std::string(value));
         textX.push_back(x);
+        textBaseline.push_back(baseline);
     }
 };
 
@@ -70,5 +72,11 @@ int main() {
                "selected candidate text is centered in its pill");
     assertTrue(surface.textX[1] == 48.0,
                "normal candidate text is centered in its slot");
+    assertTrue(surface.textBaseline.size() == 3,
+               "candidate baselines are recorded");
+    assertTrue(surface.textBaseline[0] == 34.0 &&
+                   surface.textBaseline[1] == 34.0 &&
+                   surface.textBaseline[2] == 34.0,
+               "candidate text is vertically centered in its slot");
     return EXIT_SUCCESS;
 }

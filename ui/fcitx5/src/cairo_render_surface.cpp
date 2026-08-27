@@ -98,6 +98,26 @@ double CairoRenderSurface::textWidth(std::string_view value,
     return static_cast<double>(width);
 }
 
+TextMetrics CairoRenderSurface::textMetrics(std::string_view value,
+                                            const TextStyle &style) const {
+    PangoLayout *layout = pango_cairo_create_layout(context_);
+    PangoFontDescription *font = pango_font_description_new();
+    pango_font_description_set_family(font, style.family.c_str());
+    pango_font_description_set_absolute_size(font, style.size * PANGO_SCALE);
+    pango_font_description_set_weight(font, pangoWeight(style.weight));
+    pango_layout_set_font_description(layout, font);
+    pango_layout_set_text(layout, value.data(), static_cast<int>(value.size()));
+
+    int width = 0;
+    int height = 0;
+    pango_layout_get_pixel_size(layout, &width, &height);
+    const double baseline =
+        static_cast<double>(pango_layout_get_baseline(layout)) / PANGO_SCALE;
+    pango_font_description_free(font);
+    g_object_unref(layout);
+    return {static_cast<double>(width), static_cast<double>(height), baseline};
+}
+
 void CairoRenderSurface::text(std::string_view value, double x, double baseline,
                               const TextStyle &style, const Color &color) {
     PangoLayout *layout = pango_cairo_create_layout(context_);

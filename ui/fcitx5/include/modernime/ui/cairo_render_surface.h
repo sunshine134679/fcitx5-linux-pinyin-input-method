@@ -21,6 +21,8 @@ public:
                            double blurRadius) override;
     double textWidth(std::string_view value,
                      const TextStyle &style) const override;
+    TextMetrics textMetrics(std::string_view value,
+                            const TextStyle &style) const override;
     void text(std::string_view value, double x, double baseline,
               const TextStyle &style, const Color &color) override;
 

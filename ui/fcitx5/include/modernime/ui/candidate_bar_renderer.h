@@ -20,6 +20,12 @@ struct TextStyle final {
     int weight = 400;
 };
 
+struct TextMetrics final {
+    double width = 0.0;
+    double height = 0.0;
+    double baseline = 0.0;
+};
+
 struct RenderStyle final {
     Color shadow;
     Color panel;
@@ -56,6 +62,10 @@ public:
         (void)value;
         (void)style;
         return 0.0;
+    }
+    virtual TextMetrics textMetrics(std::string_view value,
+                                    const TextStyle &style) const {
+        return {textWidth(value, style), style.size, style.size * 0.75};
     }
     virtual void text(std::string_view value, double x, double baseline,
                       const TextStyle &style, const Color &color) = 0;

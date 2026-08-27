@@ -44,13 +44,16 @@ void CandidateBarRenderer::render(RenderSurface &surface,
     for (const auto &candidate : layout.candidates) {
         const Rect textBounds = candidate.selected ? layout.selectedPill
                                                    : candidate.bounds;
-        const double width =
-            surface.textWidth(candidate.displayText, style.candidateText);
-        const double textX = width > 0.0 && width <= textBounds.width
-                                 ? textBounds.x + (textBounds.width - width) / 2.0
+        const auto metrics =
+            surface.textMetrics(candidate.displayText, style.candidateText);
+        const double textX = metrics.width > 0.0 && metrics.width <= textBounds.width
+                                 ? textBounds.x +
+                                       (textBounds.width - metrics.width) / 2.0
                                  : textBounds.x;
-        surface.text(candidate.displayText, textX,
-                     layout.candidateBaseline, style.candidateText,
+        const double baseline =
+            textBounds.y + (textBounds.height - metrics.height) / 2.0 +
+            metrics.baseline;
+        surface.text(candidate.displayText, textX, baseline, style.candidateText,
                      candidate.selected ? style.selectedText : style.text);
     }
 }
