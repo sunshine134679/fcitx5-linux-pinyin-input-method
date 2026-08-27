@@ -11,12 +11,15 @@
 #include <fcitx/inputmethodengine.h>
 
 #include <memory>
+#include <optional>
 
 namespace fcitx {
 class AddonManager;
 }
 
 namespace modernime::fcitx5 {
+
+std::optional<KeyEvent> translateKey(const fcitx::Key &key);
 
 class FcitxEngineHost final : public EngineHost {
 public:
@@ -65,7 +68,6 @@ public:
 
 private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
-    bool translateKey(const fcitx::Key &key, KeyEvent &event) const;
 
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };

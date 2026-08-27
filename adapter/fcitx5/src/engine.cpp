@@ -10,8 +10,6 @@ namespace {
 const std::array<std::string_view, 9> sampleCandidates{
     "还", "海", "害", "嗨", "咳", "亥", "孩", "骇", "氦"};
 
-constexpr std::size_t candidatePageSize = 9;
-
 } // namespace
 
 ModernIMEController::ModernIMEController(EngineHost &host,
@@ -79,16 +77,17 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         const auto index = static_cast<std::size_t>(event.digit - '1');
-        return select(index);
+        const auto pageStart = currentPageIndex() * kCandidatePageSize;
+        return select(pageStart + index);
     }
     case KeyKind::PreviousCandidate:
         return moveCursor(-1);
     case KeyKind::NextCandidate:
         return moveCursor(1);
     case KeyKind::PreviousPage:
-        return moveCursor(-static_cast<std::ptrdiff_t>(candidatePageSize));
+        return movePage(-1);
     case KeyKind::NextPage:
-        return moveCursor(static_cast<std::ptrdiff_t>(candidatePageSize));
+        return movePage(1);
     case KeyKind::Toggle:
         break;
     }
@@ -128,6 +127,23 @@ bool ModernIMEController::moveCursor(std::ptrdiff_t delta) {
     return true;
 }
 
+bool ModernIMEController::movePage(std::ptrdiff_t delta) {
+    if (page_.items.empty() || delta == 0) {
+        return false;
+    }
+
+    const auto current = static_cast<std::ptrdiff_t>(currentPageIndex());
+    const auto last = static_cast<std::ptrdiff_t>(
+        (page_.items.size() - 1) / kCandidatePageSize);
+    const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
+    if (next == current) {
+        return false;
+    }
+    page_.cursor = static_cast<std::size_t>(next) * kCandidatePageSize;
+    host_.publishPage(page_);
+    return true;
+}
+
 bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
     if (page_.preedit.empty()) {
         return false;
@@ -157,6 +173,14 @@ void ModernIMEController::setActive(bool active) {
     if (!active_) {
         reset();
     }
+}
+
+std::size_t ModernIMEController::currentPageIndex() const {
+    return page_.items.empty() ? 0 : page_.cursor / kCandidatePageSize;
+}
+
+std::size_t ModernIMEController::pageSize() const {
+    return kCandidatePageSize;
 }
 
 void ModernIMEController::refreshPage() {

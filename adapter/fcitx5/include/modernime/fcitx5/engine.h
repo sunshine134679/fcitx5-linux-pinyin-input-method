@@ -4,9 +4,13 @@
 #include "modernime/core/candidate_provider.h"
 #include "modernime/core/input_state.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace modernime::fcitx5 {
+
+inline constexpr std::size_t kCandidatePageSize = 9;
 
 enum class KeyKind {
     Character,
@@ -47,6 +51,9 @@ public:
     void reset();
     void setActive(bool active);
 
+    std::size_t currentPageIndex() const;
+    std::size_t pageSize() const;
+
     bool active() const { return active_; }
     const core::CandidatePage &page() const { return page_; }
 
@@ -55,6 +62,7 @@ private:
     bool commitCurrent();
     bool commitRawPreedit(std::string_view suffix = {});
     bool moveCursor(std::ptrdiff_t delta);
+    bool movePage(std::ptrdiff_t delta);
 
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;

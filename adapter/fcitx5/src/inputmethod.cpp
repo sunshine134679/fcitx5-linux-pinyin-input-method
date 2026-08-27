@@ -64,7 +64,7 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     }
 
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
-    candidates->setPageSize(9);
+    candidates->setPageSize(static_cast<int>(kCandidatePageSize));
     candidates->setLayoutHint(fcitx::CandidateLayoutHint::Horizontal);
     candidates->setCursorIncludeUnselected(true);
     for (std::size_t index = 0; index < page.items.size(); ++index) {
@@ -74,7 +74,7 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     // Fcitx5 validates the global cursor against the populated list.
     const auto cursor = std::min<std::size_t>(page.cursor, candidates->size() - 1);
     candidates->setGlobalCursorIndex(static_cast<int>(cursor));
-    candidates->setPage(static_cast<int>(cursor / 9));
+    candidates->setPage(static_cast<int>(cursor / kCandidatePageSize));
 
     fcitx::Text preedit(page.preedit);
     preedit.setCursor(static_cast<int>(preedit.textLength()));
@@ -129,83 +129,88 @@ ModernIMEInputMethod::state(fcitx::InputContext *inputContext) const {
     return inputContext->propertyFor(&stateFactory_);
 }
 
-bool ModernIMEInputMethod::translateKey(const fcitx::Key &key,
-                                        KeyEvent &event) const {
+std::optional<KeyEvent> translateKey(const fcitx::Key &key) {
+    KeyEvent event;
     if (key.check(FcitxKey_space, fcitx::KeyStates(fcitx::KeyState::Ctrl))) {
         event.kind = KeyKind::Toggle;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_BackSpace)) {
         event.kind = KeyKind::Backspace;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_Escape)) {
         event.kind = KeyKind::Escape;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_Return)) {
         event.kind = KeyKind::Enter;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_Up)) {
         event.kind = KeyKind::PreviousPage;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_Page_Down) || key.check(FcitxKey_Down)) {
         event.kind = KeyKind::NextPage;
-        return true;
+        return event;
+    }
+    if (key.check(FcitxKey_equal) || key.check(FcitxKey_plus) ||
+        key.check(FcitxKey_KP_Add)) {
+        event.kind = KeyKind::NextPage;
+        return event;
     }
     if (key.check(FcitxKey_Left)) {
         event.kind = KeyKind::PreviousCandidate;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_Right)) {
         event.kind = KeyKind::NextCandidate;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_Tab,
                   fcitx::KeyStates(fcitx::KeyState::Shift))) {
         event.kind = KeyKind::PreviousCandidate;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_Tab)) {
         event.kind = KeyKind::NextCandidate;
-        return true;
+        return event;
     }
     if (key.check(FcitxKey_space)) {
         event.kind = KeyKind::Space;
-        return true;
+        return event;
     }
     const int selection = key.digitSelection();
     if (selection >= 0 && selection < 9) {
         event.kind = KeyKind::Digit;
         event.digit = static_cast<char>('1' + selection);
-        return true;
+        return event;
     }
     if (!hasNonShiftModifier(key)) {
         const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
         if (unicode >= 'A' && unicode <= 'Z') {
             event.kind = KeyKind::Character;
             event.character = static_cast<char>(unicode - 'A' + 'a');
-            return true;
+            return event;
         }
         if (unicode >= 'a' && unicode <= 'z') {
             event.kind = KeyKind::Character;
             event.character = static_cast<char>(unicode);
-            return true;
+            return event;
         }
         if (unicode == '\'') {
             event.kind = KeyKind::Character;
             event.character = static_cast<char>(unicode);
-            return true;
+            return event;
         }
         if (isAsciiPunctuation(unicode)) {
             event.kind = KeyKind::Punctuation;
             event.character = static_cast<char>(unicode);
-            return true;
+            return event;
         }
     }
-    return false;
+    return std::nullopt;
 }
 
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
@@ -217,9 +222,9 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
     if (contextState == nullptr) {
         return;
     }
-    KeyEvent modernEvent;
-    if (translateKey(event.key(), modernEvent) &&
-        contextState->controller().handle(modernEvent)) {
+    const auto modernEvent = translateKey(event.key());
+    if (modernEvent.has_value() &&
+        contextState->controller().handle(*modernEvent)) {
         event.filterAndAccept();
     }
 }

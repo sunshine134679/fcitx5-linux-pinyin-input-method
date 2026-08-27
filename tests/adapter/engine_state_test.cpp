@@ -258,17 +258,42 @@ int main() {
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
                "next page moves by one page");
-    assertTrue(manyController.page().cursor == 10,
+    assertTrue(manyController.page().cursor == 9,
                "next page selects the first item on the next page");
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::PreviousCandidate, 0, 0}),
                "previous candidate moves back");
-    assertTrue(manyController.page().cursor == 9,
+    assertTrue(manyController.page().cursor == 8,
                "previous candidate selects the prior item");
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::Enter, 0, 0}),
                "enter commits the highlighted candidate");
-    assertTrue(manyHost.commits.back() == "候选10",
+    assertTrue(manyHost.commits.back() == "候选9",
                "the highlighted paged candidate is committed");
+
+    ManyCandidateProvider pagedProvider;
+    RecordingHost pagedHost;
+    modernime::fcitx5::ModernIMEController pagedController(pagedHost,
+                                                              &pagedProvider);
+    type(pagedController, "n");
+    for (int index = 0; index < 8; ++index) {
+        assertTrue(pagedController.handle(
+                       {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}),
+                   "cursor reaches the ninth candidate");
+    }
+    assertTrue(pagedController.currentPageIndex() == 0,
+               "cursor is still on the first page");
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
+               "page down works from the first page");
+    assertTrue(pagedController.currentPageIndex() == 1,
+               "page down enters the second page");
+    assertTrue(pagedController.page().cursor == 9,
+               "page down starts at item ten");
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::Digit, 0, '1'}),
+               "digit selects from the current page");
+    assertTrue(pagedHost.commits.back() == "候选10",
+               "page digit selects the first item on the current page");
     return EXIT_SUCCESS;
 }

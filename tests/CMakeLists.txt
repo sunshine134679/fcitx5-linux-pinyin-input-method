@@ -83,6 +83,21 @@ if(MODERNIME_BUILD_FCITX5)
     add_test(NAME modernime_fcitx5_input_panel
         COMMAND modernime_fcitx5_input_panel_tests
     )
+
+    add_executable(modernime_key_translation_tests
+        adapter/key_translation_test.cpp
+        ../adapter/fcitx5/src/inputmethod.cpp
+        ../adapter/fcitx5/src/engine.cpp
+    )
+    target_include_directories(modernime_key_translation_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+    )
+    target_link_libraries(modernime_key_translation_tests
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
+    )
+    add_test(NAME modernime_key_translation
+        COMMAND modernime_key_translation_tests
+    )
 endif()
 
 add_executable(modernime_ui_tests ui/candidate_bar_layout_test.cpp)
