@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <utility>
 
 namespace modernime::core {
@@ -98,6 +99,15 @@ std::size_t commonSuffixCharacters(std::string_view left,
     return 0;
 }
 
+std::string candidateKey(std::string_view phrase, std::string_view pinyin) {
+    std::string key;
+    key.reserve(phrase.size() + pinyin.size() + 1);
+    key.append(phrase);
+    key.push_back('\x1f');
+    key.append(pinyin);
+    return key;
+}
+
 } // namespace
 
 std::string normalizePinyin(std::string_view pinyin) {
@@ -113,7 +123,9 @@ std::string normalizePinyin(std::string_view pinyin) {
 }
 
 LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries)
-    : entries_(std::move(entries)) {}
+    : entries_(std::move(entries)) {
+    pruneContextVariants();
+}
 
 const LearningEntry *LearningSnapshot::entry(
     std::string_view phrase, std::string_view pinyin,
@@ -275,6 +287,7 @@ void LearningSnapshot::recordSelection(
     candidate->suppressed = false;
     candidate->frequency = saturatingIncrement(candidate->frequency);
     candidate->lastSelectedMs = nowMs;
+    pruneContextVariants();
 }
 
 void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,
@@ -290,6 +303,58 @@ void LearningSnapshot::recordSuppression(std::string_view phrase,
     candidate->suppressed = true;
     candidate->negativeFeedback =
         saturatingIncrement(candidate->negativeFeedback);
+}
+
+void LearningSnapshot::pruneContextVariants() {
+    constexpr std::size_t maximumVariants = 8;
+    std::unordered_map<std::string, std::vector<std::size_t>> variants;
+    for (std::size_t index = 0; index < entries_.size(); ++index) {
+        const auto &entry = entries_[index];
+        if (entry.contextBefore.empty() && entry.contextAfter.empty()) {
+            continue;
+        }
+        variants[candidateKey(entry.phrase, entry.pinyin)].push_back(index);
+    }
+
+    std::vector<bool> keep(entries_.size(), true);
+    for (auto &[key, indexes] : variants) {
+        (void)key;
+        std::stable_sort(indexes.begin(), indexes.end(),
+                         [this](std::size_t left, std::size_t right) {
+                             const auto &a = entries_[left];
+                             const auto &b = entries_[right];
+                             if (a.suppressed != b.suppressed) {
+                                 return a.suppressed > b.suppressed;
+                             }
+                             const auto aFrequency = std::max<std::int64_t>(
+                                 0, a.frequency);
+                             const auto bFrequency = std::max<std::int64_t>(
+                                 0, b.frequency);
+                             if (aFrequency != bFrequency) {
+                                 return aFrequency > bFrequency;
+                             }
+                             if (a.lastSelectedMs != b.lastSelectedMs) {
+                                 return a.lastSelectedMs > b.lastSelectedMs;
+                             }
+                             if (a.negativeFeedback != b.negativeFeedback) {
+                                 return a.negativeFeedback > b.negativeFeedback;
+                             }
+                             return left < right;
+                         });
+        for (std::size_t position = maximumVariants; position < indexes.size();
+             ++position) {
+            keep[indexes[position]] = false;
+        }
+    }
+
+    std::vector<LearningEntry> retained;
+    retained.reserve(entries_.size());
+    for (std::size_t index = 0; index < entries_.size(); ++index) {
+        if (keep[index]) {
+            retained.push_back(std::move(entries_[index]));
+        }
+    }
+    entries_ = std::move(retained);
 }
 
 } // namespace modernime::core

@@ -151,7 +151,7 @@ bool LearningStore::recordSelection(
                        sqlite3_bind_int64(statement, 5, nowMs) == SQLITE_OK;
     const bool success = bound && sqlite3_step(statement) == SQLITE_DONE;
     sqlite3_finalize(statement);
-    return success;
+    return success && pruneContextVariants();
 }
 
 bool LearningStore::recordNegativeFeedback(std::string_view phrase,
@@ -204,6 +204,19 @@ bool LearningStore::recordSuppression(std::string_view phrase,
     const bool success = bound && sqlite3_step(statement) == SQLITE_DONE;
     sqlite3_finalize(statement);
     return success;
+}
+
+bool LearningStore::pruneContextVariants() const {
+    constexpr const char *sql =
+        "DELETE FROM learning_entries WHERE rowid IN ("
+        "SELECT rowid FROM ("
+        "SELECT rowid, ROW_NUMBER() OVER ("
+        "PARTITION BY pinyin, phrase ORDER BY suppressed DESC, "
+        "frequency DESC, last_selected_ms DESC, rowid DESC"
+        ") AS variant_rank FROM learning_entries WHERE "
+        "context_before <> '' OR context_after <> ''"
+        ") WHERE variant_rank > 8);";
+    return execute(sql);
 }
 
 bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {

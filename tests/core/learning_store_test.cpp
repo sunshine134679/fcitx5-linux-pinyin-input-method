@@ -265,6 +265,33 @@ void testNearbyContextWindowStillMatches() {
     std::filesystem::remove(path, error);
 }
 
+void testContextHistoryRemainsBoundedPerCandidate() {
+    const auto path = testPath("bounded-context.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "bounded context store opens");
+    for (int index = 0; index < 16; ++index) {
+        assertTrue(store.recordSelection(
+                       "上下文限额词", "shangxiawenxianeci",
+                       "前文" + std::to_string(index), "后文", 1000 + index),
+                   "context variant is stored");
+    }
+    const auto snapshot = store.snapshot();
+    assertTrue(snapshot->entries().size() <= 8,
+               "context history is bounded per candidate");
+    assertTrue(snapshot->entry("上下文限额词", "shangxiawenxianeci", "前文15",
+                               "后文") != nullptr,
+               "the most recent context variant is retained");
+    store.close();
+    modernime::core::LearningStore reopened(path);
+    assertTrue(reopened.open(), "bounded context store reopens");
+    const auto reopenedSnapshot = reopened.snapshot();
+    assertTrue(reopenedSnapshot->entries().size() <= 8,
+               "bounded context history remains bounded after reopening");
+    reopened.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 void testBaseNegativeFeedbackAppliesToContextualSelection() {
     const auto path = testPath("context-negative-learning.sqlite3");
     modernime::core::LearningStore store(path);
@@ -385,6 +412,7 @@ int main() {
     testPersistedLearningCountersSaturateAtMaximum();
     testMatchingContextRaisesCandidate();
     testNearbyContextWindowStillMatches();
+    testContextHistoryRemainsBoundedPerCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
     testWriterRejectsMalformedStoreAtStartup();

@@ -50,6 +50,7 @@ public:
                            std::string_view pinyin);
 
 private:
+    void pruneContextVariants();
     LearningEntry *mutableEntry(std::string_view phrase,
                                 std::string_view pinyin,
                                 std::string_view contextBefore,

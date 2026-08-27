@@ -47,6 +47,7 @@ public:
 private:
     bool execute(const char *sql) const;
     bool ensureSuppressionColumn() const;
+    bool pruneContextVariants() const;
 
     std::filesystem::path path_;
     sqlite3 *db_ = nullptr;
