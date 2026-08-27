@@ -46,6 +46,8 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         }
         refreshPage();
         return true;
+    case KeyKind::DeleteCandidate:
+        return removeCurrent();
     case KeyKind::Escape:
         reset();
         return true;
@@ -109,6 +111,18 @@ bool ModernIMEController::select(std::size_t index) {
     }
     page_.cursor = index;
     return commitCurrent();
+}
+
+bool ModernIMEController::removeCurrent() {
+    if (!active_ || page_.items.empty() || provider_ == nullptr) {
+        return false;
+    }
+    if (!provider_->remove(page_.cursor)) {
+        return false;
+    }
+    page_ = provider_->page();
+    host_.publishPage(page_);
+    return true;
 }
 
 bool ModernIMEController::moveCursor(std::ptrdiff_t delta) {

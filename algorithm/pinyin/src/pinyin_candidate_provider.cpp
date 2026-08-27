@@ -142,6 +142,34 @@ public:
         return true;
     }
 
+    bool remove(std::size_t index) {
+        if (index >= page_.items.size()) {
+            return false;
+        }
+        const auto candidate = page_.items[index];
+        const auto rawInput = context->userInput();
+        if (candidate.source == core::CandidateSource::UserDictionary) {
+            const bool removedFromDictionary = userDictionary_.remove(
+                candidate.fullPinyin, candidate.text);
+            const bool removedFromLibime = userDictionary_.removeFrom(
+                *ime->dict(), 1, candidate.fullPinyin, candidate.text);
+            if (!removedFromDictionary && !removedFromLibime) {
+                return false;
+            }
+            rebuildContext(rawInput);
+            return true;
+        }
+
+        if (candidate.source == core::CandidateSource::Learned) {
+            suppressedLearned_.insert(
+                candidateKey(candidate.fullPinyin, candidate.text));
+        }
+        learning_->enqueueNegativeFeedback(candidate.text,
+                                            candidate.fullPinyin);
+        refresh();
+        return true;
+    }
+
     void reset() {
         context->clear();
         refresh();
@@ -155,6 +183,14 @@ public:
     const core::CandidatePage &page() const { return page_; }
 
 private:
+    void rebuildContext(const std::string &rawInput) {
+        context->clear();
+        if (!rawInput.empty()) {
+            context->type(rawInput);
+        }
+        refresh();
+    }
+
     void refresh() {
         page_.clear();
         page_.preedit = context->userInput();
@@ -179,6 +215,16 @@ private:
             const auto &candidate = result.scored[sourceIndex];
             const bool isManual = userDictionary_.contains(
                 candidate.full_pinyin, candidate.text);
+            const auto learningEntry = learning->entry(
+                candidate.text, candidate.full_pinyin, contextBefore_,
+                contextAfter_);
+            const bool isLearned = !isManual && learningEntry != nullptr &&
+                                   learningEntry->frequency > 0;
+            if (isLearned &&
+                suppressedLearned_.contains(candidateKey(
+                    candidate.full_pinyin, candidate.text))) {
+                continue;
+            }
             if (isManual && manualCount >= manualLimit) {
                 continue;
             }
@@ -191,8 +237,10 @@ private:
             item.text = candidate.text;
             item.fullPinyin = candidate.full_pinyin;
             item.sourceIndex = candidate.source_index;
-            item.source = isManual ? core::CandidateSource::UserDictionary
-                                   : core::CandidateSource::Engine;
+            item.source = isManual
+                              ? core::CandidateSource::UserDictionary
+                              : (isLearned ? core::CandidateSource::Learned
+                                           : core::CandidateSource::Engine);
             if (isManual) {
                 ++manualCount;
             }
@@ -207,6 +255,7 @@ private:
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
+    std::unordered_set<std::string> suppressedLearned_;
     std::uint64_t generation = 0;
 };
 
@@ -223,6 +272,10 @@ bool PinyinCandidateProvider::eraseLast() { return impl_->eraseLast(); }
 
 bool PinyinCandidateProvider::select(std::size_t index) {
     return impl_->select(index);
+}
+
+bool PinyinCandidateProvider::remove(std::size_t index) {
+    return impl_->remove(index);
 }
 
 void PinyinCandidateProvider::reset() { impl_->reset(); }

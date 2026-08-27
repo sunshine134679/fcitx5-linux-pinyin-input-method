@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 #include <unordered_map>
 #include <utility>
 
@@ -119,6 +120,20 @@ bool UserDictionary::contains(std::string_view normalizedPinyin,
         }
     }
     return false;
+}
+
+bool UserDictionary::remove(std::string_view normalizedPinyin,
+                            std::string_view phrase) {
+    const auto normalized = modernime::core::normalizePinyin(normalizedPinyin);
+    const auto iterator = std::find_if(
+        entries_.begin(), entries_.end(), [&normalized, phrase](const auto &entry) {
+            return entry.pinyin == normalized && entry.phrase == phrase;
+        });
+    if (iterator == entries_.end()) {
+        return false;
+    }
+    entries_.erase(iterator);
+    return true;
 }
 
 void UserDictionary::addTo(libime::PinyinDictionary &dictionary,

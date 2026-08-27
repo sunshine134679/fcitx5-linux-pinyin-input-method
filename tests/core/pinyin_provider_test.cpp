@@ -1,7 +1,12 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
+#include "modernime/core/learning_store.h"
+
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -11,6 +16,34 @@ void assertTrue(bool condition, std::string_view message) {
         std::cerr << "pinyin provider test failed: " << message << '\n';
         std::exit(EXIT_FAILURE);
     }
+}
+
+std::filesystem::path testPath(std::string_view name) {
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("modernime-" + std::string(name));
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    return path;
+}
+
+void writeFile(const std::filesystem::path &path, std::string_view contents) {
+    std::ofstream output(path);
+    output << contents;
+}
+
+std::size_t indexOf(const modernime::core::CandidatePage &page,
+                    std::string_view text) {
+    for (std::size_t index = 0; index < page.items.size(); ++index) {
+        if (page.items[index].text == text) {
+            return index;
+        }
+    }
+    return page.items.size();
+}
+
+bool hasText(const modernime::core::CandidatePage &page,
+             std::string_view text) {
+    return indexOf(page, text) < page.items.size();
 }
 
 } // namespace
@@ -34,5 +67,65 @@ int main() {
     provider.reset();
     assertTrue(provider.page().preedit.empty(), "reset clears preedit");
     assertTrue(provider.page().items.empty(), "reset clears candidates");
+
+    const auto dictionaryPath = testPath("remove-user-dictionary.txt");
+    const auto learningPath = testPath("remove-user-learning.sqlite3");
+    writeFile(dictionaryPath, "nihao\t人工智能\t100\n");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.userDictionary = dictionaryPath.string();
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider customProvider(paths);
+    assertTrue(customProvider.append("nihao"),
+               "custom dictionary input is accepted");
+    const auto customIndex = indexOf(customProvider.page(), "人工智能");
+    assertTrue(customIndex < customProvider.page().items.size(),
+               "custom phrase is visible before removal");
+    assertTrue(customProvider.page().items[customIndex].source ==
+                   modernime::core::CandidateSource::UserDictionary,
+               "custom phrase is marked as a user dictionary candidate");
+    assertTrue(customProvider.remove(customIndex),
+               "custom phrase removal is accepted");
+    assertTrue(!hasText(customProvider.page(), "人工智能"),
+               "custom phrase disappears after removal");
+    assertTrue(hasText(customProvider.page(), "你好"),
+               "system candidate remains after custom removal");
+    std::error_code error;
+    std::filesystem::remove(dictionaryPath, error);
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+
+    const auto learnedPath = testPath("remove-learned.sqlite3");
+    {
+        modernime::pinyin::PinyinDataPaths learnedPaths;
+        learnedPaths.learningStore = learnedPath.string();
+        modernime::pinyin::PinyinCandidateProvider learnedProvider(learnedPaths);
+        assertTrue(learnedProvider.append("nihao"),
+                   "learned candidate input is accepted");
+        assertTrue(learnedProvider.select(0), "candidate selection is accepted");
+        assertTrue(learnedProvider.append("nihao"),
+                   "learned candidate can be requested again");
+        const auto learnedIndex = indexOf(learnedProvider.page(), "你好");
+        assertTrue(learnedIndex < learnedProvider.page().items.size(),
+                   "selected candidate is available for deletion");
+        assertTrue(learnedProvider.page().items[learnedIndex].source ==
+                       modernime::core::CandidateSource::Learned,
+                   "selected candidate is marked as learned");
+        assertTrue(learnedProvider.remove(learnedIndex),
+                   "learned candidate removal is accepted");
+        assertTrue(!hasText(learnedProvider.page(), "你好"),
+                   "learned candidate is hidden after removal");
+    }
+    modernime::core::LearningStore learnedStore(learnedPath);
+    assertTrue(learnedStore.open(), "learned feedback store reopens");
+    const auto learnedSnapshot = learnedStore.snapshot();
+    const auto *learnedEntry =
+        learnedSnapshot->entry("你好", "nihao", {}, {});
+    assertTrue(learnedEntry != nullptr && learnedEntry->negativeFeedback > 0,
+               "learned deletion persists negative feedback");
+    learnedStore.close();
+    std::filesystem::remove(learnedPath, error);
+    std::filesystem::remove(learnedPath.string() + "-wal", error);
+    std::filesystem::remove(learnedPath.string() + "-shm", error);
     return EXIT_SUCCESS;
 }

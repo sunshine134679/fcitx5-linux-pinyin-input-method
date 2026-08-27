@@ -14,6 +14,7 @@ public:
     virtual bool append(std::string_view input) = 0;
     virtual bool eraseLast() = 0;
     virtual bool select(std::size_t index) = 0;
+    virtual bool remove(std::size_t) { return false; }
     virtual void reset() = 0;
     virtual const CandidatePage &page() const = 0;
 };

@@ -15,6 +15,7 @@ inline constexpr std::size_t kCandidatePageSize = 9;
 enum class KeyKind {
     Character,
     Backspace,
+    DeleteCandidate,
     Escape,
     Enter,
     Space,
@@ -48,6 +49,7 @@ public:
 
     bool handle(const KeyEvent &event);
     bool select(std::size_t index);
+    bool removeCurrent();
     void reset();
     void setActive(bool active);
 

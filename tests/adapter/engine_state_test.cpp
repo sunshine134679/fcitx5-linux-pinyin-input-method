@@ -35,6 +35,7 @@ struct FakeProvider final : modernime::core::CandidateProvider {
     int eraseCount = 0;
     int resetCount = 0;
     int selectCount = 0;
+    int removeCount = 0;
 
     bool append(std::string_view input) override {
         ++appendCount;
@@ -58,6 +59,11 @@ struct FakeProvider final : modernime::core::CandidateProvider {
 
     bool select(std::size_t index) override {
         ++selectCount;
+        return index < current.items.size();
+    }
+
+    bool remove(std::size_t index) override {
+        ++removeCount;
         return index < current.items.size();
     }
 
@@ -242,6 +248,17 @@ int main() {
                "provider candidate is committed");
     assertTrue(provider.resetCount == 1,
                "committing a provider candidate resets the provider");
+
+    FakeProvider removableProvider;
+    RecordingHost removableHost;
+    modernime::fcitx5::ModernIMEController removableController(
+        removableHost, &removableProvider);
+    type(removableController, "nihao");
+    assertTrue(removableController.handle(
+                   {modernime::fcitx5::KeyKind::DeleteCandidate, 0, 0}),
+               "delete key is handled");
+    assertTrue(removableProvider.removeCount == 1,
+               "provider receives current candidate deletion");
 
     ManyCandidateProvider manyProvider;
     RecordingHost manyHost;

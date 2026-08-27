@@ -25,6 +25,23 @@ void assertKind(fcitx::KeySym symbol, modernime::fcitx5::KeyKind expected,
 } // namespace
 
 int main() {
+    const auto ctrl = fcitx::KeyStates(fcitx::KeyState::Ctrl);
+    const auto shift = fcitx::KeyStates(fcitx::KeyState::Shift);
+    const auto ctrlDelete = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_Delete, ctrl));
+    assertTrue(ctrlDelete.has_value() &&
+                   ctrlDelete->kind ==
+                       modernime::fcitx5::KeyKind::DeleteCandidate,
+               "ctrl delete maps to candidate deletion");
+    const auto shiftDelete = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_Delete, shift));
+    assertTrue(shiftDelete.has_value() &&
+                   shiftDelete->kind ==
+                       modernime::fcitx5::KeyKind::DeleteCandidate,
+               "shift delete maps to candidate deletion");
+    assertTrue(!modernime::fcitx5::translateKey(fcitx::Key(FcitxKey_Delete))
+                    .has_value(),
+               "plain delete remains unhandled");
     assertKind(FcitxKey_Up, modernime::fcitx5::KeyKind::PreviousPage,
                "up maps to previous page");
     assertKind(FcitxKey_Page_Up, modernime::fcitx5::KeyKind::PreviousPage,

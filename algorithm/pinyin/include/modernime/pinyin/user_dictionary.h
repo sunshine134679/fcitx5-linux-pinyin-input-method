@@ -27,6 +27,7 @@ public:
     }
     bool contains(std::string_view normalizedPinyin,
                   std::string_view phrase) const;
+    bool remove(std::string_view normalizedPinyin, std::string_view phrase);
     void addTo(libime::PinyinDictionary &dictionary, std::size_t index) const;
     bool removeFrom(libime::PinyinDictionary &dictionary, std::size_t index,
                     std::string_view pinyin, std::string_view phrase) const;

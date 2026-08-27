@@ -135,6 +135,13 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key) {
         event.kind = KeyKind::Toggle;
         return event;
     }
+    if (key.check(FcitxKey_Delete,
+                  fcitx::KeyStates(fcitx::KeyState::Ctrl)) ||
+        key.check(FcitxKey_Delete,
+                  fcitx::KeyStates(fcitx::KeyState::Shift))) {
+        event.kind = KeyKind::DeleteCandidate;
+        return event;
+    }
     if (key.check(FcitxKey_BackSpace)) {
         event.kind = KeyKind::Backspace;
         return event;
