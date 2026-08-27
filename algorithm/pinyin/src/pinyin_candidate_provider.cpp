@@ -2,20 +2,53 @@
 
 #include "modernime/pinyin/candidate_pipeline.h"
 
+#include "modernime/core/learning_writer.h"
+
 #include <libime/core/userlanguagemodel.h>
 #include <libime/pinyin/pinyincontext.h>
 #include <libime/pinyin/pinyindictionary.h>
 #include <libime/pinyin/pinyinime.h>
 
 #include <filesystem>
+#include <chrono>
 #include <memory>
+#include <cstdlib>
+#include <string>
 #include <utility>
 
 namespace modernime::pinyin {
 
+namespace {
+
+std::filesystem::path defaultLearningPath() {
+    const auto *dataHome = std::getenv("XDG_DATA_HOME");
+    if (dataHome != nullptr && *dataHome != '\0') {
+        return std::filesystem::path(dataHome) / "modernime" /
+               "learning.sqlite3";
+    }
+    const auto *home = std::getenv("HOME");
+    if (home != nullptr && *home != '\0') {
+        return std::filesystem::path(home) / ".local" / "share" /
+               "modernime" / "learning.sqlite3";
+    }
+    return {};
+}
+
+std::int64_t nowMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+} // namespace
+
 class PinyinCandidateProvider::Impl final {
 public:
-    explicit Impl(const PinyinDataPaths &paths) {
+    explicit Impl(const PinyinDataPaths &paths)
+        : learning_(std::make_unique<core::LearningWriter>(
+              paths.learningStore.empty()
+                  ? defaultLearningPath()
+                  : std::filesystem::path(paths.learningStore))) {
         auto dictionary = std::make_unique<libime::PinyinDictionary>();
         if (std::filesystem::is_regular_file(paths.dictionary)) {
             dictionary->load(0, paths.dictionary.c_str(),
@@ -62,6 +95,10 @@ public:
         if (index >= page_.items.size()) {
             return false;
         }
+        const auto &candidate = page_.items[index];
+        learning_->enqueueSelection(candidate.text, candidate.fullPinyin,
+                                     contextBefore_, contextAfter_,
+                                     nowMilliseconds());
         context->select(page_.items[index].sourceIndex);
         refresh();
         return true;
@@ -70,6 +107,11 @@ public:
     void reset() {
         context->clear();
         refresh();
+    }
+
+    void setContext(std::string_view before, std::string_view after) {
+        contextBefore_ = before;
+        contextAfter_ = after;
     }
 
     const core::CandidatePage &page() const { return page_; }
@@ -84,18 +126,27 @@ private:
             return;
         }
 
-        const auto result = buildCandidatePipeline(*context, *ime->dict());
+        const auto learning = learning_->snapshot();
+        const auto result = buildCandidatePipeline(
+            *context, *ime->dict(), learning.get(), nowMilliseconds(),
+            contextBefore_, contextAfter_);
         page_.items.reserve(result.order.size());
         for (const auto sourceIndex : result.order) {
             const auto &candidate = result.scored[sourceIndex];
-            page_.items.push_back(
-                {candidate.text, candidate.full_pinyin, candidate.source_index});
+            core::CandidateItem item;
+            item.text = candidate.text;
+            item.fullPinyin = candidate.full_pinyin;
+            item.sourceIndex = candidate.source_index;
+            page_.items.push_back(std::move(item));
         }
     }
 
     std::unique_ptr<libime::PinyinIME> ime;
     std::unique_ptr<libime::PinyinContext> context;
+    std::unique_ptr<core::LearningWriter> learning_;
     core::CandidatePage page_;
+    std::string contextBefore_;
+    std::string contextAfter_;
     std::uint64_t generation = 0;
 };
 
@@ -118,6 +169,11 @@ void PinyinCandidateProvider::reset() { impl_->reset(); }
 
 const core::CandidatePage &PinyinCandidateProvider::page() const {
     return impl_->page();
+}
+
+void PinyinCandidateProvider::setContext(std::string_view before,
+                                         std::string_view after) {
+    impl_->setContext(before, after);
 }
 
 } // namespace modernime::pinyin
