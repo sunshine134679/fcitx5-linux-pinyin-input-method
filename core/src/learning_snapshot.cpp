@@ -70,8 +70,9 @@ double LearningSnapshot::boostAt(
         0, nowMs - candidate->lastSelectedMs);
     constexpr double halfLifeMs = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
     const double recency = std::exp(-static_cast<double>(ageMs) / halfLifeMs);
+    const auto frequencyCount = std::max<std::int64_t>(0, candidate->frequency);
     const double frequency = std::min(
-        2.0, 0.65 * std::log1p(static_cast<double>(candidate->frequency)));
+        2.0, 0.65 * std::log1p(static_cast<double>(frequencyCount)));
     const double recent = candidate->frequency > 0
                               ? std::min(1.0, 0.90 * recency)
                               : 0.0;
@@ -81,6 +82,7 @@ double LearningSnapshot::boostAt(
     if (candidate != base && base != nullptr) {
         negativeFeedback += base->negativeFeedback;
     }
+    negativeFeedback = std::max<std::int64_t>(0, negativeFeedback);
     const double penalty = std::min(
         2.0, 0.75 * std::log1p(static_cast<double>(negativeFeedback)));
     return std::clamp(frequency + recent - penalty, -2.0, 3.5);

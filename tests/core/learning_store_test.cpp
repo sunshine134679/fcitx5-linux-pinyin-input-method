@@ -4,6 +4,7 @@
 #include "modernime/core/learning_writer.h"
 
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <string_view>
@@ -119,6 +120,20 @@ void testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost() {
     std::filesystem::remove(path, error);
 }
 
+void testCorruptedLearningCountersRemainFinite() {
+    const std::vector<modernime::core::LearningEntry> entries{
+        {"损坏频次", "sunhuaici", {}, {}, -3, -1000, 0},
+        {"损坏负反馈", "sunfankuici", {}, {}, 0, 0, -3}};
+    const modernime::core::LearningSnapshot snapshot(entries);
+    const auto frequencyBoost =
+        snapshot.boostAt("损坏频次", "sunhuaici", {}, {}, 1000);
+    const auto feedbackBoost =
+        snapshot.boostAt("损坏负反馈", "sunfankuici", {}, {}, 1000);
+    assertTrue(std::isfinite(frequencyBoost) && frequencyBoost == 0.0 &&
+                   std::isfinite(feedbackBoost) && feedbackBoost == 0.0,
+               "negative persisted counters are ignored safely");
+}
+
 void testMatchingContextRaisesCandidate() {
     const auto path = testPath("context.sqlite3");
     modernime::core::LearningStore store(path);
@@ -222,6 +237,7 @@ int main() {
     testDecoderScoreIsNormalizedAsASecondarySignal();
     testNegativeFeedbackReducesLearningBoost();
     testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost();
+    testCorruptedLearningCountersRemainFinite();
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
