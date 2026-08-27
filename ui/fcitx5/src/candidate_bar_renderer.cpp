@@ -15,7 +15,7 @@ RenderStyle RenderStyle::reference() {
     style.selectedRadius = 17.0;
     style.shadowRadius = 6.0;
     style.shadowSpread = 2.0;
-    style.shadowOffsetY = 3.0;
+    style.shadowOffsetY = 4.0;
     style.borderWidth = 1.0;
     style.preeditText = {"Noto Sans CJK SC", 20.0, 400};
     style.candidateText = {"Noto Sans CJK SC", 18.0, 400};

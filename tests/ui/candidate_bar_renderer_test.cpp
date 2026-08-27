@@ -56,8 +56,8 @@ int main() {
     const auto style = modernime::ui::RenderStyle::reference();
     assertTrue(style.panelRadius == 15.0 && style.selectedRadius == 17.0,
                "reference radii follow the design proportions");
-    assertTrue(style.shadowRadius == 6.0 && style.shadowOffsetY == 3.0,
-               "reference shadow follows the design proportions");
+    assertTrue(style.shadowRadius == 6.0 && style.shadowOffsetY == 4.0,
+               "reference shadow preserves the native window height");
     assertTrue(style.candidateText.size == 18.0 &&
                    style.preeditText.size == 20.0,
                "reference typography follows the design proportions");
@@ -75,7 +75,7 @@ int main() {
     assertTrue(surface.operations[4] == "text:1.还", "first candidate is drawn");
     assertTrue(surface.operations[5] == "text:2.海", "second candidate is drawn");
     assertTrue(surface.operations[6] == "text:3.害", "third candidate is drawn");
-    assertTrue(surface.rects[0].x == 0.0 && surface.rects[0].y == 5.0,
+    assertTrue(surface.rects[0].x == 0.0 && surface.rects[0].y == 6.0,
                "shadow extends below and around the panel");
     assertTrue(surface.textX.size() == 3, "candidate text positions are recorded");
     assertTrue(surface.textX[0] == 10.0,
