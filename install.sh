@@ -14,6 +14,24 @@ system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
 system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
 system_addon_dir="$system_libdir/fcitx5"
 
+desktop_dir="$HOME/Desktop"
+if command -v xdg-user-dir >/dev/null 2>&1; then
+    configured_desktop_dir=$(xdg-user-dir DESKTOP || true)
+    if [[ -n "$configured_desktop_dir" ]]; then
+        desktop_dir="$configured_desktop_dir"
+    fi
+elif [[ ! -d "$desktop_dir" && -d "$HOME/桌面" ]]; then
+    desktop_dir="$HOME/桌面"
+fi
+desktop_shortcut="$desktop_dir/modernime-settings.desktop"
+desktop_tmp=""
+cleanup_desktop_tmp() {
+    if [[ -n "$desktop_tmp" ]]; then
+        rm -f -- "$desktop_tmp"
+    fi
+}
+trap cleanup_desktop_tmp EXIT
+
 fcitx_environment=(
     env
     "FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
@@ -40,6 +58,33 @@ cmake -S "$project_root" -B "$build_dir" -G "$generator" "${cmake_args[@]}"
 cmake --build "$build_dir"
 ctest --test-dir "$build_dir" --output-on-failure
 cmake --install "$build_dir"
+
+mkdir -p "$desktop_dir"
+desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
+{
+    printf '%s\n' '[Desktop Entry]'
+    printf '%s\n' 'Type=Application'
+    printf '%s\n' 'Name=ModernIME 设置'
+    printf '%s\n' 'Comment=Configure ModernIME input method'
+    printf 'Exec=%s\n' "$prefix/bin/modernime-settings"
+    printf '%s\n' 'Icon=input-keyboard'
+    printf '%s\n' 'Terminal=false'
+    printf '%s\n' 'Categories=Settings;Utility;'
+} > "$desktop_tmp"
+if [[ -e "$desktop_shortcut" ]]; then
+    if [[ ! -f "$desktop_shortcut" ]] ||
+       ! cmp -s "$desktop_tmp" "$desktop_shortcut"; then
+        printf 'Refusing to overwrite existing desktop shortcut: %s\n' \
+            "$desktop_shortcut" >&2
+        exit 1
+    fi
+    rm -f -- "$desktop_tmp"
+    desktop_tmp=""
+else
+    mv -- "$desktop_tmp" "$desktop_shortcut"
+    desktop_tmp=""
+    chmod +x "$desktop_shortcut"
+fi
 
 environment_line="FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
 if [[ -e "$environment_file" ]]; then
@@ -85,6 +130,7 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
     printf '%s\n' "$prefix/bin/modernime-settings"
     printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
+    printf '%s\n' "$desktop_shortcut"
     printf '%s\n' "$environment_file"
     printf '%s\n' "$autostart_file"
 } > "$manifest"

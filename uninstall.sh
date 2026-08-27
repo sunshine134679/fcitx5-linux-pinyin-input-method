@@ -11,6 +11,17 @@ system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
 system_addon_dir="$system_libdir/fcitx5"
 environment_line="FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
 autostart_exec="env FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir fcitx5 -d -u modernime-ui"
+desktop_dir="$HOME/Desktop"
+if command -v xdg-user-dir >/dev/null 2>&1; then
+    configured_desktop_dir=$(xdg-user-dir DESKTOP || true)
+    if [[ -n "$configured_desktop_dir" ]]; then
+        desktop_dir="$configured_desktop_dir"
+    fi
+elif [[ ! -d "$desktop_dir" && -d "$HOME/桌面" ]]; then
+    desktop_dir="$HOME/桌面"
+fi
+desktop_shortcut="$desktop_dir/modernime-settings.desktop"
+desktop_exec="$prefix/bin/modernime-settings"
 
 if [[ ! -f "$manifest" ]]; then
     printf 'No ModernIME install manifest found at %s\n' "$manifest"
@@ -28,6 +39,20 @@ while IFS= read -r path; do
         "$prefix/bin/modernime-settings"|\
         "$prefix/share/applications/modernime-settings.desktop")
             rm -f -- "$path"
+            ;;
+        "$desktop_shortcut")
+            if [[ -f "$path" ]] &&
+               [[ "$(wc -l < "$path")" -eq 8 ]] &&
+               grep -Fqx '[Desktop Entry]' "$path" &&
+               grep -Fqx 'Name=ModernIME 设置' "$path" &&
+               grep -Fqx "Exec=$desktop_exec" "$path" &&
+               grep -Fqx 'Categories=Settings;Utility;' "$path"; then
+                rm -f -- "$path"
+            else
+                printf 'Refusing to remove modified desktop shortcut: %s\n' \
+                    "$path" >&2
+                exit 1
+            fi
             ;;
         "$environment_file")
             if [[ -f "$path" ]] &&

@@ -45,8 +45,9 @@ chmod +x "$fake_bin"/*
 
 prefix="$test_root/prefix"
 config="$test_root/config"
-mkdir -p "$prefix/share/applications"
+mkdir -p "$prefix/share/applications" "$test_root/home/Desktop"
 printf '%s\n' unrelated >"$prefix/share/applications/unrelated.desktop"
+printf '%s\n' unrelated >"$test_root/home/Desktop/unrelated.desktop"
 env \
     HOME="$test_root/home" \
     XDG_CONFIG_HOME="$config" \
@@ -60,8 +61,11 @@ env \
 manifest="$prefix/share/modernime/install-manifest.txt"
 grep -Fqx "$prefix/bin/modernime-settings" "$manifest"
 grep -Fqx "$prefix/share/applications/modernime-settings.desktop" "$manifest"
+grep -Fqx "$test_root/home/Desktop/modernime-settings.desktop" "$manifest"
 grep -Fqx 'Exec=modernime-settings' \
     "$prefix/share/applications/modernime-settings.desktop"
+grep -Fqx "Exec=$prefix/bin/modernime-settings" \
+    "$test_root/home/Desktop/modernime-settings.desktop"
 
 env \
     HOME="$test_root/home" \
@@ -72,3 +76,5 @@ env \
 test ! -e "$prefix/bin/modernime-settings"
 test ! -e "$prefix/share/applications/modernime-settings.desktop"
 test -f "$prefix/share/applications/unrelated.desktop"
+test ! -e "$test_root/home/Desktop/modernime-settings.desktop"
+test -f "$test_root/home/Desktop/unrelated.desktop"
