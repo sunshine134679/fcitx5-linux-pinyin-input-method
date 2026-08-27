@@ -72,7 +72,9 @@ double LearningSnapshot::boostAt(
     const double recency = std::exp(-static_cast<double>(ageMs) / halfLifeMs);
     const double frequency = std::min(
         2.0, 0.65 * std::log1p(static_cast<double>(candidate->frequency)));
-    const double recent = std::min(1.0, 0.90 * recency);
+    const double recent = candidate->frequency > 0
+                              ? std::min(1.0, 0.90 * recency)
+                              : 0.0;
     auto negativeFeedback = candidate->negativeFeedback;
     // A global deletion/negative-feedback event must still apply when a
     // more-specific contextual selection exists for the same candidate.

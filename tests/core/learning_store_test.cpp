@@ -104,6 +104,21 @@ void testNegativeFeedbackReducesLearningBoost() {
     std::filesystem::remove(path, error);
 }
 
+void testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost() {
+    const auto path = testPath("negative-only-learning.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "negative-only store opens");
+    assertTrue(store.recordNegativeFeedback("从未选过", "congweixuanguo"),
+               "negative-only feedback is stored");
+    const auto snapshot = store.snapshot(1000);
+    assertTrue(snapshot->boostAt("从未选过", "congweixuanguo", {}, {}, 1000) <=
+                   0.0,
+               "negative-only feedback never creates a positive learning boost");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 void testMatchingContextRaisesCandidate() {
     const auto path = testPath("context.sqlite3");
     modernime::core::LearningStore store(path);
@@ -206,6 +221,7 @@ int main() {
     testCandidateOrderKeyIsSharedByRankingLayers();
     testDecoderScoreIsNormalizedAsASecondarySignal();
     testNegativeFeedbackReducesLearningBoost();
+    testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost();
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
