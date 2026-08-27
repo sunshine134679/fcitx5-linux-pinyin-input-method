@@ -1,5 +1,6 @@
 #include "modernime/core/candidate_ranker.h"
 
+#include "modernime/core/candidate_model.h"
 #include "modernime/core/pinyin_match.h"
 
 #include <algorithm>
@@ -54,7 +55,7 @@ CandidateRanker::rank(std::string_view userInput,
         for (auto &candidate : candidates) {
             const auto previous = std::find(
                 previousOrder.begin(), previousOrder.end(),
-                candidate.text + '\x1f' + candidate.full_pinyin);
+                candidateOrderKey(candidate.text, candidate.full_pinyin));
             if (previous == previousOrder.end()) {
                 continue;
             }

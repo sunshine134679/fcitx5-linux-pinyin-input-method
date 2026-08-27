@@ -3,11 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace modernime::core {
 
 enum class CandidateSource { Engine, UserDictionary, Learned };
+
+std::string candidateOrderKey(std::string_view text,
+                              std::string_view fullPinyin);
 
 struct CandidateItem final {
     std::string text;

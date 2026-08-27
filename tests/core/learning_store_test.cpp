@@ -1,4 +1,5 @@
 #include "modernime/core/candidate_ranker.h"
+#include "modernime/core/candidate_model.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/learning_writer.h"
 
@@ -62,11 +63,17 @@ void testPreviousOrderAddsStabilityForNearTies() {
     second.learning_boost = 0.15;
     std::vector candidates{first, second};
     const std::vector<std::string> previousOrder{
-        std::string("乙") + '\x1f' + "a",
-        std::string("甲") + '\x1f' + "a"};
+        modernime::core::candidateOrderKey("乙", "a"),
+        modernime::core::candidateOrderKey("甲", "a")};
     modernime::core::CandidateRanker::rank("a", candidates, previousOrder);
     assertTrue(candidates[1].stability_bonus > 0.0,
                "near-tied previous candidate receives stability bonus");
+}
+
+void testCandidateOrderKeyIsSharedByRankingLayers() {
+    assertTrue(modernime::core::candidateOrderKey("候选", "hou'xuan") ==
+                   std::string("候选") + '\x1f' + "hou'xuan",
+               "candidate order key uses text before pinyin");
 }
 
 void testDecoderScoreIsNormalizedAsASecondarySignal() {
@@ -196,6 +203,7 @@ int main() {
     testSelectionPersistsAcrossReopen();
     testFrequencyBonusIsBoundedAndMovesCandidate();
     testPreviousOrderAddsStabilityForNearTies();
+    testCandidateOrderKeyIsSharedByRankingLayers();
     testDecoderScoreIsNormalizedAsASecondarySignal();
     testNegativeFeedbackReducesLearningBoost();
     testMatchingContextRaisesCandidate();

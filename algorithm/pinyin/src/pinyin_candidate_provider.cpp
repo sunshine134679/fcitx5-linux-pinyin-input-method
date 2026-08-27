@@ -203,7 +203,8 @@ private:
         std::vector<std::string> previousOrder;
         previousOrder.reserve(page_.items.size());
         for (const auto &item : page_.items) {
-            previousOrder.push_back(candidateKey(item.fullPinyin, item.text));
+            previousOrder.push_back(
+                core::candidateOrderKey(item.text, item.fullPinyin));
         }
         page_.clear();
         page_.preedit = context->userInput();
