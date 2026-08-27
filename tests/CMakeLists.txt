@@ -6,6 +6,10 @@ add_executable(modernime_settings_tests core/settings_test.cpp)
 target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
 
+add_executable(modernime_clipboard_history_tests core/clipboard_history_test.cpp)
+target_link_libraries(modernime_clipboard_history_tests PRIVATE modernime_core)
+add_test(NAME modernime_clipboard_history COMMAND modernime_clipboard_history_tests)
+
 if(MODERNIME_BUILD_SETTINGS)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)

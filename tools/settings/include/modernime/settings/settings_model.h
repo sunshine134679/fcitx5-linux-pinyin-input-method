@@ -18,6 +18,7 @@ public:
     void setSettings(core::ModernIMESettings settings);
     void setCandidateOptions(bool numberSelection, bool arrowNavigation,
                              bool pageNavigation);
+    void setClipboardOptions(bool enabled, std::string trigger);
     bool save(std::string *error = nullptr);
     bool resetDefaults(std::string *error = nullptr);
     void resetEdits();

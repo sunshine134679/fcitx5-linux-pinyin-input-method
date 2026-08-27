@@ -42,6 +42,17 @@ bool validToggleKey(std::string_view value) {
     return true;
 }
 
+bool validClipboardTrigger(std::string_view value) {
+    if (value.size() != 3) {
+        return false;
+    }
+    const auto first = static_cast<unsigned char>(value[0]);
+    const auto second = static_cast<unsigned char>(value[2]);
+    const bool letter = (first >= 'A' && first <= 'Z') ||
+                        (first >= 'a' && first <= 'z');
+    return letter && value[1] == '+' && second >= '1' && second <= '9';
+}
+
 void diagnostic(SettingsLoadResult &result, std::size_t line,
                 std::string message) {
     result.diagnostics.push_back("line " + std::to_string(line) + ": " +
@@ -133,6 +144,13 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
         } else if (key == "learning.context_enabled") {
             parsed = parseBoolean(value,
                                   result.settings.contextLearningEnabled);
+        } else if (key == "clipboard.enabled") {
+            parsed = parseBoolean(value, result.settings.clipboardEnabled);
+        } else if (key == "clipboard.trigger") {
+            if (validClipboardTrigger(value)) {
+                result.settings.clipboardTrigger = value;
+                parsed = true;
+            }
         } else {
             diagnostic(result, lineNumber, "unknown key '" + key + "'");
             continue;
@@ -157,6 +175,10 @@ bool SettingsStore::save(const std::filesystem::path &path,
     };
     if (path.empty()) {
         setError("settings path is empty");
+        return false;
+    }
+    if (!validClipboardTrigger(settings.clipboardTrigger)) {
+        setError("invalid clipboard trigger; expected Letter+Digit");
         return false;
     }
     std::error_code filesystemError;
@@ -193,7 +215,10 @@ bool SettingsStore::save(const std::filesystem::path &path,
            << "learning.enabled="
            << (settings.learningEnabled ? "true" : "false") << '\n'
            << "learning.context_enabled="
-           << (settings.contextLearningEnabled ? "true" : "false") << '\n';
+           << (settings.contextLearningEnabled ? "true" : "false") << '\n'
+           << "clipboard.enabled="
+           << (settings.clipboardEnabled ? "true" : "false") << '\n'
+           << "clipboard.trigger=" << settings.clipboardTrigger << '\n';
     output.close();
     if (!output) {
         std::filesystem::remove(temporary, filesystemError);

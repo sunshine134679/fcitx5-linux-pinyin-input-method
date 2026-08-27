@@ -48,6 +48,10 @@ void testDefaultsAndRoundTrip() {
                "missing file uses mode default");
     assertTrue(missing.settings.toggleKey == defaults.toggleKey,
                "missing file uses toggle default");
+    assertTrue(missing.settings.clipboardEnabled == defaults.clipboardEnabled,
+               "missing file uses clipboard enabled default");
+    assertTrue(missing.settings.clipboardTrigger == defaults.clipboardTrigger,
+               "missing file uses clipboard trigger default");
 
     auto expected = defaults;
     expected.inputEnabled = false;
@@ -58,6 +62,8 @@ void testDefaultsAndRoundTrip() {
     expected.pageNavigation = false;
     expected.learningEnabled = false;
     expected.contextLearningEnabled = false;
+    expected.clipboardEnabled = false;
+    expected.clipboardTrigger = "B+7";
     std::string error;
     assertTrue(modernime::core::SettingsStore::save(path, expected, &error),
                "settings save succeeds: " + error);
@@ -77,6 +83,10 @@ void testDefaultsAndRoundTrip() {
                    loaded.settings.contextLearningEnabled ==
                        expected.contextLearningEnabled,
                "learning flags round-trip");
+    assertTrue(loaded.settings.clipboardEnabled == expected.clipboardEnabled &&
+                   loaded.settings.clipboardTrigger ==
+                       expected.clipboardTrigger,
+               "clipboard settings round-trip");
 }
 
 void testDiagnosticsAndPerKeyFallback() {
@@ -87,6 +97,8 @@ void testDiagnosticsAndPerKeyFallback() {
            << "input.default_mode=english\n"
            << "input.toggle_key=\n"
            << "learning.enabled=false\n"
+           << "clipboard.enabled=false\n"
+           << "clipboard.trigger=bad-trigger\n"
            << "unknown.option=true\n";
     output.close();
 
@@ -101,6 +113,10 @@ void testDiagnosticsAndPerKeyFallback() {
                "invalid key falls back independently");
     assertTrue(!loaded.settings.learningEnabled,
                "valid learning value remains applied");
+    assertTrue(!loaded.settings.clipboardEnabled,
+               "valid clipboard flag remains applied");
+    assertTrue(loaded.settings.clipboardTrigger == defaults.clipboardTrigger,
+               "invalid clipboard trigger falls back independently");
     assertTrue(loaded.diagnostics.size() >= 3,
                "invalid and unknown lines produce diagnostics");
 }

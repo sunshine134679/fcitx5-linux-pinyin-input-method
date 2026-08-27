@@ -6,6 +6,7 @@ add_library(modernime_core STATIC
     src/learning_snapshot.cpp
     src/learning_store.cpp
     src/learning_writer.cpp
+    src/clipboard_history.cpp
     src/settings.cpp
 )
 find_package(SQLite3 REQUIRED)

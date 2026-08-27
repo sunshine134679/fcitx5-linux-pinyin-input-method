@@ -24,6 +24,13 @@ void SettingsWindowModel::setCandidateOptions(bool numberSelection,
     setSettings(std::move(settings));
 }
 
+void SettingsWindowModel::setClipboardOptions(bool enabled, std::string trigger) {
+    auto settings = edited_;
+    settings.clipboardEnabled = enabled;
+    settings.clipboardTrigger = std::move(trigger);
+    setSettings(std::move(settings));
+}
+
 bool SettingsWindowModel::save(std::string *error) {
     std::string saveError;
     if (!core::SettingsStore::save(path_, edited_, &saveError)) {

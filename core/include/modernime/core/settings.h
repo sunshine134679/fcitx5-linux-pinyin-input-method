@@ -18,6 +18,8 @@ struct ModernIMESettings final {
     bool pageNavigation = true;
     bool learningEnabled = true;
     bool contextLearningEnabled = true;
+    bool clipboardEnabled = true;
+    std::string clipboardTrigger = "V+2";
 
     bool operator==(const ModernIMESettings &) const = default;
 };

@@ -68,6 +68,17 @@ int main() {
                    !candidateReloaded.settings().pageNavigation,
                "candidate options persist");
 
+    candidateReloaded.setClipboardOptions(false, "B+7");
+    assertTrue(!candidateReloaded.settings().clipboardEnabled &&
+                   candidateReloaded.settings().clipboardTrigger == "B+7",
+               "clipboard options can be edited");
+    assertTrue(candidateReloaded.save(&error),
+               "clipboard options save: " + error);
+    modernime::settings::SettingsWindowModel clipboardReloaded(path);
+    assertTrue(!clipboardReloaded.settings().clipboardEnabled &&
+                   clipboardReloaded.settings().clipboardTrigger == "B+7",
+               "clipboard options persist");
+
     const auto blocked = directory / "blocked";
     std::filesystem::create_directory(blocked);
     modernime::settings::SettingsWindowModel failed(blocked);
