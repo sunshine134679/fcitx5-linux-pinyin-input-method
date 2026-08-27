@@ -186,20 +186,42 @@ int main() {
 
     RecordingHost clipboardHost;
     modernime::fcitx5::ModernIMEController clipboardController(clipboardHost);
-    clipboardController.setClipboardEntries({"second clipboard", "first clipboard"});
+    clipboardController.setClipboardEntries({"second clipboard", "first clipboard",
+                                             "third clipboard", "fourth clipboard",
+                                             "fifth clipboard", "sixth clipboard"});
     assertTrue(clipboardController.handle(
                    {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
                "clipboard mode opens");
     assertTrue(clipboardController.clipboardMode() &&
                    clipboardController.page().preedit.empty() &&
-                   clipboardController.page().items.size() == 2,
+                   clipboardController.page().items.size() == 6,
                "clipboard entries are published without a pinyin preedit");
+    assertTrue(clipboardController.pageSize() == 5,
+               "clipboard mode uses five rows per page");
     assertTrue(clipboardController.handle(
                    {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
                "clipboard digit selection is handled");
     assertTrue(clipboardHost.commits.back() == "first clipboard" &&
                    !clipboardController.clipboardMode(),
                "selected clipboard text is committed and mode is cleared");
+
+    clipboardController.setClipboardEntries({"one", "two", "three", "four",
+                                             "five", "six"});
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode reopens for page navigation");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
+               "clipboard page navigation is handled");
+    assertTrue(clipboardController.currentPageIndex() == 1 &&
+                   clipboardController.page().cursor == 5,
+               "clipboard page navigation advances by five rows");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::Digit, 0, '1'}),
+               "clipboard selection works on the second page");
+    assertTrue(clipboardHost.commits.back() == "six" &&
+                   !clipboardController.clipboardMode(),
+               "second clipboard page commits its first row");
 
     type(controller, "hail");
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),

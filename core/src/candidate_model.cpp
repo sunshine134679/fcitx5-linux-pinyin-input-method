@@ -25,6 +25,7 @@ void CandidatePage::clear() {
     items.clear();
     cursor = 0;
     generation = 0;
+    mode = CandidatePageMode::Pinyin;
 }
 
 } // namespace modernime::core

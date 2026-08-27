@@ -15,6 +15,7 @@
 namespace modernime::fcitx5 {
 
 inline constexpr std::size_t kCandidatePageSize = 9;
+inline constexpr std::size_t kClipboardPageSize = 5;
 
 enum class KeyKind {
     Character,

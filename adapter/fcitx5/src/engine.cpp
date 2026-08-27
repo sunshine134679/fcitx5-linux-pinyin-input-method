@@ -183,7 +183,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         const auto index = static_cast<std::size_t>(event.digit - '1');
-        const auto pageStart = currentPageIndex() * kCandidatePageSize;
+        const auto pageStart = currentPageIndex() * pageSize();
         return select(pageStart + index);
     }
     case KeyKind::PreviousCandidate:
@@ -273,12 +273,12 @@ bool ModernIMEController::movePage(std::ptrdiff_t delta) {
 
     const auto current = static_cast<std::ptrdiff_t>(currentPageIndex());
     const auto last = static_cast<std::ptrdiff_t>(
-        (page_.items.size() - 1) / kCandidatePageSize);
+        (page_.items.size() - 1) / pageSize());
     const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
     if (next == current) {
         return false;
     }
-    page_.cursor = static_cast<std::size_t>(next) * kCandidatePageSize;
+    page_.cursor = static_cast<std::size_t>(next) * pageSize();
     host_.publishPage(page_);
     return true;
 }
@@ -327,11 +327,11 @@ void ModernIMEController::setClipboardEntries(
 }
 
 std::size_t ModernIMEController::currentPageIndex() const {
-    return page_.items.empty() ? 0 : page_.cursor / kCandidatePageSize;
+    return page_.items.empty() ? 0 : page_.cursor / pageSize();
 }
 
 std::size_t ModernIMEController::pageSize() const {
-    return kCandidatePageSize;
+    return clipboardMode_ ? kClipboardPageSize : kCandidatePageSize;
 }
 
 void ModernIMEController::refreshPage() {
@@ -369,6 +369,7 @@ bool ModernIMEController::openClipboard() {
         input_.clear();
     }
     page_.clear();
+    page_.mode = core::CandidatePageMode::Clipboard;
     clipboardMode_ = true;
     page_.items.reserve(clipboardEntries_.size());
     for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {

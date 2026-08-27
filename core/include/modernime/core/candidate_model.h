@@ -9,6 +9,7 @@
 namespace modernime::core {
 
 enum class CandidateSource { Engine, UserDictionary, Learned, Raw };
+enum class CandidatePageMode { Pinyin, Clipboard };
 
 std::string candidateOrderKey(std::string_view text,
                               std::string_view fullPinyin);
@@ -25,6 +26,7 @@ struct CandidatePage final {
     std::vector<CandidateItem> items;
     std::size_t cursor = 0;
     std::uint64_t generation = 0;
+    CandidatePageMode mode = CandidatePageMode::Pinyin;
 
     bool select(std::size_t index);
     void clear();

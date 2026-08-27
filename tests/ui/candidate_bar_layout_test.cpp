@@ -90,5 +90,44 @@ int main() {
     assertTrue(lastCandidate.x + lastCandidate.width <=
                    metrics.panelX + metrics.panelWidth - metrics.horizontalPadding,
                "last displayed candidate stays inside the panel");
+
+    modernime::core::CandidatePage clipboardPage;
+    clipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
+    clipboardPage.items = {
+        {"cd /home/wsl/ModernIME ./install.sh", {}, 0},
+        {"line one\nline two", {}, 1},
+    };
+    const auto clipboardLayout = modernime::ui::CandidateBarLayout::measure(
+        clipboardPage, metrics,
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 10);
+        });
+    assertTrue(clipboardLayout.panel.height > metrics.panelHeight,
+               "clipboard layout grows into a vertical list");
+    assertTrue(clipboardLayout.candidates.size() == 2 &&
+                   clipboardLayout.candidates[0].displayText ==
+                       "cd /home/wsl/ModernIME ./install.sh",
+               "clipboard rows do not add candidate number prefixes");
+    assertTrue(clipboardLayout.candidates[1].bounds.y >
+                   clipboardLayout.candidates[0].bounds.y,
+               "clipboard rows are stacked vertically");
+    assertTrue(clipboardLayout.candidates[1].displayText.find('\n') ==
+                   std::string::npos,
+               "clipboard rows remain single-line");
+
+    modernime::core::CandidatePage longClipboardPage;
+    longClipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
+    longClipboardPage.items = {
+        {"a very long clipboard entry that must be shortened before it reaches the edge of the popup", {}, 0}};
+    const auto longClipboardLayout = modernime::ui::CandidateBarLayout::measure(
+        longClipboardPage, metrics,
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 10);
+        });
+    assertTrue(longClipboardLayout.candidates.front().displayText.size() <
+                   longClipboardPage.items.front().text.size() &&
+                   longClipboardLayout.candidates.front().displayText.ends_with(
+                       "…"),
+               "long clipboard rows use an ellipsis instead of wrapping");
     return EXIT_SUCCESS;
 }

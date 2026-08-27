@@ -4,6 +4,65 @@
 #include <string_view>
 
 namespace modernime::ui {
+namespace {
+
+void renderClipboard(RenderSurface &surface, const CandidateBarLayout &layout,
+                     const RenderStyle &style) {
+    const Rect shadowBounds{
+        layout.panel.x - style.shadowSpread,
+        layout.panel.y + style.shadowOffsetY,
+        layout.panel.width + 2.0 * style.shadowSpread,
+        layout.panel.height + style.shadowSpread};
+    surface.shadowRoundedRect(shadowBounds,
+                              style.clipboardPanelRadius + style.shadowSpread,
+                              style.shadow, style.shadowRadius);
+    surface.roundedRect(layout.panel, style.clipboardPanelRadius, style.panel,
+                        true);
+    surface.roundedRect(layout.panel, style.clipboardPanelRadius, style.border,
+                        false);
+
+    for (const auto &separator : layout.separators) {
+        surface.roundedRect(separator, 0.0, style.clipboardSeparator, true);
+    }
+    if (layout.selectedPill.width > 0.0 && layout.selectedPill.height > 0.0) {
+        surface.roundedRect(layout.selectedPill, style.clipboardSelectedRadius,
+                            style.selected, true);
+    }
+
+    for (const auto &candidate : layout.candidates) {
+        const auto &bounds = candidate.bounds;
+        const auto textStyle = style.clipboardText;
+        const auto textMetrics = surface.textMetrics(candidate.displayText,
+                                                     textStyle);
+        const auto textX = bounds.x + layout.clipboardTextPadding;
+        const auto baseline = bounds.y +
+                              (bounds.height - textMetrics.height) / 2.0 +
+                              textMetrics.baseline;
+        const auto color = candidate.selected ? style.selectedText : style.text;
+        surface.text(candidate.displayText, textX, baseline, textStyle, color);
+
+        if (candidate.selected && layout.submitIcon.width > 0.0 &&
+            layout.submitIcon.height > 0.0) {
+            surface.roundedRect(layout.submitIcon, style.clipboardSubmitRadius,
+                                style.clipboardSubmitBackground, true);
+            constexpr std::string_view submitIcon = "↵";
+            const auto iconMetrics = surface.textMetrics(
+                submitIcon, style.clipboardSubmitIconText);
+            const auto iconX = layout.submitIcon.x +
+                               (layout.submitIcon.width - iconMetrics.width) /
+                                   2.0;
+            const auto iconBaseline = layout.submitIcon.y +
+                                      (layout.submitIcon.height -
+                                       iconMetrics.height) /
+                                          2.0 +
+                                      iconMetrics.baseline;
+            surface.text(submitIcon, iconX, iconBaseline,
+                         style.clipboardSubmitIconText, style.selectedText);
+        }
+    }
+}
+
+} // namespace
 
 RenderStyle RenderStyle::reference() {
     RenderStyle style;
@@ -23,12 +82,24 @@ RenderStyle RenderStyle::reference() {
     style.preeditText = {"Noto Sans CJK SC", 20.0, 400};
     style.candidateNumberText = {"Noto Sans CJK SC", 16.0, 400};
     style.candidateText = {"Noto Sans CJK SC", 19.0, 400};
+    style.clipboardText = {"Noto Sans CJK SC", 20.0, 400};
+    style.clipboardSubmitIconText = {"Noto Sans CJK SC", 18.0, 400};
+    style.clipboardSeparator = {0.86, 0.88, 0.91, 1.0};
+    style.clipboardSubmitBackground = {0.04, 0.32, 0.82, 1.0};
+    style.clipboardPanelRadius = 14.0;
+    style.clipboardSelectedRadius = 8.0;
+    style.clipboardSubmitRadius = 7.0;
     return style;
 }
 
 void CandidateBarRenderer::render(RenderSurface &surface,
                                   const CandidateBarLayout &layout,
                                   const RenderStyle &style) {
+    if (layout.clipboardMode) {
+        renderClipboard(surface, layout, style);
+        return;
+    }
+
     const Rect shadowBounds{
         layout.panel.x - style.shadowSpread,
         layout.panel.y + style.shadowOffsetY,

@@ -43,6 +43,13 @@ struct RenderStyle final {
     TextStyle preeditText;
     TextStyle candidateNumberText;
     TextStyle candidateText;
+    TextStyle clipboardText;
+    TextStyle clipboardSubmitIconText;
+    Color clipboardSeparator;
+    Color clipboardSubmitBackground;
+    double clipboardPanelRadius = 0.0;
+    double clipboardSelectedRadius = 0.0;
+    double clipboardSubmitRadius = 0.0;
 
     static RenderStyle reference();
 };

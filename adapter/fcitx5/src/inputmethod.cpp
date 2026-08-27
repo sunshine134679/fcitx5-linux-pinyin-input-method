@@ -181,17 +181,21 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     }
 
     auto candidates = std::make_unique<fcitx::CommonCandidateList>();
-    candidates->setPageSize(static_cast<int>(kCandidatePageSize));
-    candidates->setLayoutHint(fcitx::CandidateLayoutHint::Horizontal);
+    const bool clipboard = page.mode == core::CandidatePageMode::Clipboard;
+    const auto pageSize = clipboard ? kClipboardPageSize : kCandidatePageSize;
+    candidates->setPageSize(static_cast<int>(pageSize));
+    candidates->setLayoutHint(clipboard ? fcitx::CandidateLayoutHint::Vertical
+                                        : fcitx::CandidateLayoutHint::Horizontal);
     candidates->setCursorIncludeUnselected(true);
     for (std::size_t index = 0; index < page.items.size(); ++index) {
         candidates->append<FcitxCandidateWord>(page.items[index].text,
                                                controller_, index);
     }
-    // Fcitx5 validates the global cursor against the populated list.
-    const auto cursor = std::min<std::size_t>(page.cursor, candidates->size() - 1);
+    // Fcitx5's size() is page-local, so clamp against the full published list
+    // before selecting the requested page.
+    const auto cursor = std::min<std::size_t>(page.cursor, page.items.size() - 1);
     candidates->setGlobalCursorIndex(static_cast<int>(cursor));
-    candidates->setPage(static_cast<int>(cursor / kCandidatePageSize));
+    candidates->setPage(static_cast<int>(cursor / pageSize));
 
     inputContext_->inputPanel().setPreedit(preedit);
     inputContext_->inputPanel().setClientPreedit(preedit);

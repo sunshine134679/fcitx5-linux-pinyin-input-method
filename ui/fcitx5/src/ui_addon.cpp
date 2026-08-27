@@ -45,7 +45,7 @@ struct ModernIMEUserInterface::Impl final {
             (layout.panel.x + layout.panel.width + style.shadowSpread - originX) *
             scale));
         const int height = static_cast<int>(std::ceil(
-            (metrics.panelY + metrics.panelHeight + style.shadowSpread - originY +
+            (layout.panel.y + layout.panel.height + style.shadowSpread - originY +
              style.shadowOffsetY) *
             scale));
         gtk_widget_set_size_request(drawingArea, width, height);
@@ -138,7 +138,10 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
     }
     const int cursor = candidates->cursorIndex();
     page.cursor = cursor >= 0 ? static_cast<std::size_t>(cursor) : 0;
-    for (int index = 0; index < candidates->size() && index < 9; ++index) {
+    page.mode = candidates->layoutHint() == fcitx::CandidateLayoutHint::Vertical
+                    ? core::CandidatePageMode::Clipboard
+                    : core::CandidatePageMode::Pinyin;
+    for (int index = 0; index < candidates->size(); ++index) {
         const auto &candidate = candidates->candidate(index);
         page.items.push_back({candidate.text().toString(), {},
                               static_cast<std::size_t>(index)});
@@ -227,10 +230,14 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         return;
     }
 
+    const auto clipboardMode =
+        page.mode == core::CandidatePageMode::Clipboard;
     impl_->layout = CandidateBarLayout::measure(
         page, impl_->metrics,
-        [impl = impl_.get()](std::string_view value) {
-            return impl->textWidth(value);
+        [impl = impl_.get(), clipboardMode](std::string_view value) {
+            return impl->textWidth(
+                value, clipboardMode ? impl->style.clipboardText
+                                     : impl->style.candidateText);
         });
     impl_->setWindowSize(inputContext->scaleFactor());
     const auto &cursor = inputContext->cursorRect();

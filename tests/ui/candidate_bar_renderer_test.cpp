@@ -2,6 +2,7 @@
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_bar_renderer.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -100,5 +101,30 @@ int main() {
                    surface.textBaseline[4] == 33.75 &&
                    surface.textBaseline[5] == 33.75,
                "candidate text is vertically centered in its slot");
+
+    modernime::core::CandidatePage clipboardPage;
+    clipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
+    clipboardPage.items = {{"first clipboard", {}, 0},
+                           {"second clipboard", {}, 1},
+                           {"third clipboard", {}, 2}};
+    const auto clipboardLayout = modernime::ui::CandidateBarLayout::measure(
+        clipboardPage, modernime::ui::CandidateBarMetrics::reference(),
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 4);
+        });
+    RecordingSurface clipboardSurface;
+    modernime::ui::CandidateBarRenderer::render(clipboardSurface,
+                                                 clipboardLayout, style);
+    assertTrue(clipboardSurface.operations.size() > surface.operations.size(),
+               "clipboard rendering includes rows and separators");
+    assertTrue(std::find(clipboardSurface.operations.begin(),
+                         clipboardSurface.operations.end(),
+                         "text:first clipboard") !=
+                   clipboardSurface.operations.end(),
+               "clipboard rendering draws the row text without a number");
+    assertTrue(std::find(clipboardSurface.operations.begin(),
+                         clipboardSurface.operations.end(), "text:1.") ==
+                   clipboardSurface.operations.end(),
+               "clipboard rendering does not draw candidate number prefixes");
     return EXIT_SUCCESS;
 }

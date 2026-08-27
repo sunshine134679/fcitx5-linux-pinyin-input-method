@@ -46,6 +46,17 @@ struct CandidateBarMetrics final {
     double candidateFontSize = 0.0;
     int fontWeight = 0;
 
+    double clipboardPanelRadius = 0.0;
+    double clipboardRowHeight = 0.0;
+    double clipboardSelectedHeight = 0.0;
+    double clipboardHorizontalPadding = 0.0;
+    double clipboardVerticalPadding = 0.0;
+    double clipboardTextPadding = 0.0;
+    double clipboardSubmitIconWidth = 0.0;
+    double clipboardSubmitIconHeight = 0.0;
+    double clipboardSubmitIconGap = 0.0;
+    double clipboardSeparatorHeight = 0.0;
+
     static CandidateBarMetrics reference();
 };
 
@@ -58,10 +69,14 @@ struct CandidateGeometry final {
 struct CandidateBarLayout final {
     Rect panel;
     Rect selectedPill;
+    Rect submitIcon;
     std::string preedit;
     double preeditX = 0.0;
     double preeditBaseline = 0.0;
     double candidateBaseline = 0.0;
+    double clipboardTextPadding = 0.0;
+    bool clipboardMode = false;
+    std::vector<Rect> separators;
     std::vector<CandidateGeometry> candidates;
 
     static CandidateBarLayout measure(const core::CandidatePage &page,

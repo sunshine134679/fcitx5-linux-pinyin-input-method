@@ -73,5 +73,38 @@ int main() {
                "client preedit is cleared after reset");
     assertTrue(inputContext.preeditUpdates == 3,
                "clearing preedit sends an update");
+
+    modernime::fcitx5::ModernIMEController controller(host);
+    host.setController(controller);
+    controller.setClipboardEntries({"first clipboard", "second clipboard",
+                                    "third clipboard", "fourth clipboard",
+                                    "fifth clipboard", "sixth clipboard"});
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode publishes its candidate list");
+    const auto clipboardList = inputContext.inputPanel().candidateList();
+    assertTrue(clipboardList != nullptr &&
+                   clipboardList->layoutHint() ==
+                       fcitx::CandidateLayoutHint::Vertical,
+               "clipboard candidates use a vertical layout hint");
+    assertTrue(clipboardList->size() == 5,
+               "clipboard candidate pages expose five rows");
+    assertTrue(clipboardList->toPageable() != nullptr &&
+                   clipboardList->toPageable()->totalPages() == 2,
+               "clipboard candidates retain paging information");
+
+    modernime::core::CandidatePage secondClipboardPage;
+    secondClipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
+    secondClipboardPage.items = {{"first", {}, 0},  {"second", {}, 1},
+                                 {"third", {}, 2},  {"fourth", {}, 3},
+                                 {"fifth", {}, 4},  {"sixth", {}, 5}};
+    secondClipboardPage.cursor = 5;
+    host.publishPage(secondClipboardPage);
+    const auto secondClipboardList = inputContext.inputPanel().candidateList();
+    assertTrue(secondClipboardList->toPageable() != nullptr &&
+                   secondClipboardList->toPageable()->currentPage() == 1 &&
+                   secondClipboardList->candidate(0).text().toString() ==
+                       "sixth",
+               "clipboard publication selects the requested page");
     return EXIT_SUCCESS;
 }
