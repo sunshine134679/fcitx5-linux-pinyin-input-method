@@ -68,6 +68,14 @@ int main() {
     assertTrue(provider.page().preedit.empty(), "reset clears preedit");
     assertTrue(provider.page().items.empty(), "reset clears candidates");
 
+    assertTrue(!provider.append("'"),
+               "a pinyin separator cannot start a composition");
+    assertTrue(provider.append("ni"),
+               "a syllable can be entered before a separator");
+    assertTrue(!provider.append("''"),
+               "consecutive pinyin separators are rejected");
+    provider.reset();
+
     const auto dictionaryPath = testPath("remove-user-dictionary.txt");
     const auto learningPath = testPath("remove-user-learning.sqlite3");
     writeFile(dictionaryPath, "nihao\t人工智能\t100\n");

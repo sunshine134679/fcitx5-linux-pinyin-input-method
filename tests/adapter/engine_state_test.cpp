@@ -239,6 +239,22 @@ int main() {
     controller.handle({modernime::fcitx5::KeyKind::Toggle, 0, 0});
     assertTrue(controller.active(), "toggle re-enables input");
 
+    modernime::fcitx5::ModernIMEController separatorController(host);
+    assertTrue(!separatorController.handle(
+                    {modernime::fcitx5::KeyKind::Character, '\'', 0}),
+               "a pinyin separator cannot start a composition");
+    assertTrue(separatorController.page().preedit.empty(),
+               "invalid separator does not alter the preedit");
+    assertTrue(separatorController.handle(
+                   {modernime::fcitx5::KeyKind::Character, 'n', 0}),
+               "a pinyin letter starts a composition");
+    assertTrue(separatorController.handle(
+                   {modernime::fcitx5::KeyKind::Character, '\'', 0}),
+               "a separator is accepted after a syllable");
+    assertTrue(!separatorController.handle(
+                    {modernime::fcitx5::KeyKind::Character, '\'', 0}),
+               "consecutive separators are rejected");
+
     FakeProvider provider;
     RecordingHost providerHost;
     modernime::fcitx5::ModernIMEController providerController(providerHost,
@@ -255,11 +271,11 @@ int main() {
                "provider candidate is committed");
     assertTrue(provider.resetCount == 1,
                "committing a provider candidate resets the provider");
-    assertTrue(providerController.handle(
-                   {modernime::fcitx5::KeyKind::Character, '\'', 0}),
-               "apostrophe is handled as pinyin input");
-    assertTrue(provider.current.preedit == "'",
-               "apostrophe reaches the candidate provider");
+    assertTrue(!providerController.handle(
+                    {modernime::fcitx5::KeyKind::Character, '\'', 0}),
+               "a separator cannot start a provider composition");
+    assertTrue(provider.current.preedit.empty(),
+               "invalid separator does not reach the provider");
 
     FakeProvider contextualProvider;
     RecordingHost contextualHost;

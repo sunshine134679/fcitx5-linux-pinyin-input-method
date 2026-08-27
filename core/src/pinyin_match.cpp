@@ -36,6 +36,26 @@ std::string PinyinMatchPolicy::abbreviationKey(std::string_view fullPinyin) {
     return result;
 }
 
+bool PinyinMatchPolicy::validComposition(std::string_view userInput) {
+    if (userInput.empty()) {
+        return false;
+    }
+    bool hasLetter = false;
+    bool separator = false;
+    for (const char character : userInput) {
+        if (character >= 'a' && character <= 'z') {
+            hasLetter = true;
+            separator = false;
+            continue;
+        }
+        if (character != '\'' || !hasLetter || separator) {
+            return false;
+        }
+        separator = true;
+    }
+    return hasLetter;
+}
+
 bool PinyinMatchPolicy::isAbbreviationInput(std::string_view userInput) {
     if (userInput.size() < 2) {
         return false;

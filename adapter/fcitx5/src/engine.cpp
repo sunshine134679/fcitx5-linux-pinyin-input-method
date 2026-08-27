@@ -1,5 +1,7 @@
 #include "modernime/fcitx5/engine.h"
 
+#include "modernime/core/pinyin_match.h"
+
 #include <array>
 #include <algorithm>
 #include <cstddef>
@@ -39,6 +41,14 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if ((event.character < 'a' || event.character > 'z') &&
             event.character != '\'') {
             return false;
+        }
+        {
+            std::string nextInput = provider_ ? provider_->page().preedit
+                                               : input_.text();
+            nextInput.push_back(event.character);
+            if (!core::PinyinMatchPolicy::validComposition(nextInput)) {
+                return false;
+            }
         }
         if (provider_ &&
             !provider_->append(std::string_view(&event.character, 1))) {

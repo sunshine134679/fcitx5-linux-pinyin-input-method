@@ -3,6 +3,7 @@
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/user_dictionary.h"
 
+#include "modernime/core/pinyin_match.h"
 #include "modernime/core/learning_writer.h"
 
 #include <libime/core/userlanguagemodel.h>
@@ -109,9 +110,9 @@ public:
     }
 
     bool append(std::string_view input) {
-        if (input.empty() || input.find_first_not_of(
-                                 "abcdefghijklmnopqrstuvwxyz'") !=
-                                 std::string_view::npos) {
+        std::string nextInput = context->userInput();
+        nextInput.append(input);
+        if (!core::PinyinMatchPolicy::validComposition(nextInput)) {
             return false;
         }
         if (!context->type(input)) {
