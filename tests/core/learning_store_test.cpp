@@ -56,6 +56,19 @@ void testFrequencyBonusIsBoundedAndMovesCandidate() {
                "learning bonus remains bounded");
 }
 
+void testPreviousOrderAddsStabilityForNearTies() {
+    modernime::core::CandidateScore first{0, "甲", "a", 0.0F};
+    modernime::core::CandidateScore second{1, "乙", "a", 0.0F};
+    second.learning_boost = 0.15;
+    std::vector candidates{first, second};
+    const std::vector<std::string> previousOrder{
+        std::string("乙") + '\x1f' + "a",
+        std::string("甲") + '\x1f' + "a"};
+    modernime::core::CandidateRanker::rank("a", candidates, previousOrder);
+    assertTrue(candidates[1].stability_bonus > 0.0,
+               "near-tied previous candidate receives stability bonus");
+}
+
 void testNegativeFeedbackReducesLearningBoost() {
     const auto path = testPath("negative-learning.sqlite3");
     modernime::core::LearningStore store(path);
@@ -142,6 +155,7 @@ void testWriterFlushesSelectionBeforeReopen() {
 int main() {
     testSelectionPersistsAcrossReopen();
     testFrequencyBonusIsBoundedAndMovesCandidate();
+    testPreviousOrderAddsStabilityForNearTies();
     testNegativeFeedbackReducesLearningBoost();
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();

@@ -26,6 +26,7 @@ CandidatePipelineResult buildCandidatePipeline(
     const core::LearningSnapshot *learning = nullptr,
     std::int64_t nowMs = 0,
     std::string_view contextBefore = {},
-    std::string_view contextAfter = {});
+    std::string_view contextAfter = {},
+    const std::vector<std::string> &previousOrder = {});
 
 } // namespace modernime::pinyin

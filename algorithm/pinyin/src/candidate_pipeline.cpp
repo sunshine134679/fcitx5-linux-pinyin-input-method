@@ -68,7 +68,8 @@ CandidatePipelineResult buildCandidatePipeline(
     const libime::PinyinContext &context,
     const libime::PinyinDictionary &dictionary,
     const core::LearningSnapshot *learning, std::int64_t nowMs,
-    std::string_view contextBefore, std::string_view contextAfter) {
+    std::string_view contextBefore, std::string_view contextAfter,
+    const std::vector<std::string> &previousOrder) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
     result.scored.reserve(nativeCandidates.size());
@@ -91,7 +92,7 @@ CandidatePipelineResult buildCandidatePipeline(
         result.scored.push_back(std::move(candidate));
     }
     result.order = core::CandidateRanker::rank(
-        context.userInput(), result.scored);
+        context.userInput(), result.scored, previousOrder);
     return result;
 }
 

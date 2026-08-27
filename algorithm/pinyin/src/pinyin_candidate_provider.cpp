@@ -200,6 +200,11 @@ private:
     }
 
     void refresh() {
+        std::vector<std::string> previousOrder;
+        previousOrder.reserve(page_.items.size());
+        for (const auto &item : page_.items) {
+            previousOrder.push_back(candidateKey(item.fullPinyin, item.text));
+        }
         page_.clear();
         page_.preedit = context->userInput();
         ++generation;
@@ -211,7 +216,7 @@ private:
         const auto learning = learning_->snapshot();
         const auto result = buildCandidatePipeline(
             *context, *ime->dict(), learning.get(), nowMilliseconds(),
-            contextBefore_, contextAfter_);
+            contextBefore_, contextAfter_, previousOrder);
         page_.items.reserve(result.order.size());
         const auto manualLimit =
             pinyinLetterCount(page_.preedit) < 3 ? std::size_t{2}

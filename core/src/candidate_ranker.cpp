@@ -20,8 +20,7 @@ CandidateRanker::rank(std::string_view userInput,
     }
     if (!previousOrder.empty() && !candidates.empty()) {
         const auto baseCost = [](const CandidateScore &candidate) {
-            return static_cast<double>(candidate.source_index) -
-                   candidate.learning_boost;
+            return candidate.final_score();
         };
         double best = baseCost(candidates.front());
         for (const auto &candidate : candidates) {
