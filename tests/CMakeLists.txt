@@ -6,6 +6,22 @@ add_executable(modernime_settings_tests core/settings_test.cpp)
 target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
 
+if(MODERNIME_BUILD_SETTINGS)
+    add_executable(modernime_settings_model_tests
+        settings/settings_window_model_test.cpp
+    )
+    target_link_libraries(modernime_settings_model_tests PRIVATE modernime_core)
+    target_include_directories(modernime_settings_model_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_sources(modernime_settings_model_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/settings_model.cpp
+    )
+    add_test(NAME modernime_settings_model
+        COMMAND modernime_settings_model_tests
+    )
+endif()
+
 add_executable(modernime_dictionary_prior_tests core/dictionary_prior_test.cpp)
 target_link_libraries(modernime_dictionary_prior_tests PRIVATE modernime_core)
 add_test(NAME modernime_dictionary_prior COMMAND modernime_dictionary_prior_tests)

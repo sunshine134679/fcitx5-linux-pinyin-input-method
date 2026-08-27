@@ -6,6 +6,7 @@ option(MODERNIME_BUILD_FCITX5 "Build the Fcitx5 addon targets" OFF)
 option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" OFF)
 option(MODERNIME_BUILD_TESTS "Build ModernIME tests" ON)
 option(MODERNIME_BUILD_TOOLS "Build development and visual verification tools" OFF)
+option(MODERNIME_BUILD_SETTINGS "Build the GTK3 settings client" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,4 +34,8 @@ add_subdirectory(ui/fcitx5)
 
 if(MODERNIME_BUILD_TOOLS)
     add_subdirectory(tools)
+endif()
+
+if(MODERNIME_BUILD_SETTINGS)
+    add_subdirectory(tools/settings)
 endif()
