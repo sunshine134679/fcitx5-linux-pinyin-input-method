@@ -118,6 +118,18 @@ target_sources(modernime_adapter_tests PRIVATE
 target_link_libraries(modernime_adapter_tests PRIVATE modernime_core)
 add_test(NAME modernime_engine_state COMMAND modernime_adapter_tests)
 
+add_executable(modernime_clipboard_trigger_tests
+    adapter/clipboard_trigger_test.cpp
+    ../adapter/fcitx5/src/engine.cpp
+)
+target_include_directories(modernime_clipboard_trigger_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+)
+target_link_libraries(modernime_clipboard_trigger_tests PRIVATE modernime_core)
+add_test(NAME modernime_clipboard_trigger
+    COMMAND modernime_clipboard_trigger_tests
+)
+
 if(MODERNIME_BUILD_FCITX5)
     find_package(Fcitx5Core REQUIRED)
 

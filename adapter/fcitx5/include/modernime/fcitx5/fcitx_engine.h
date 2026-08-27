@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modernime/core/clipboard_history.h"
 #include "modernime/fcitx5/engine.h"
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -7,6 +8,7 @@
 #endif
 
 #include <fcitx/candidatelist.h>
+#include <fcitx-utils/event.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/surroundingtext.h>
@@ -17,7 +19,9 @@
 #include <utility>
 
 namespace fcitx {
+class AddonInstance;
 class AddonManager;
+class Instance;
 }
 
 namespace modernime::fcitx5 {
@@ -50,12 +54,23 @@ public:
                            const core::ModernIMESettings &settings);
 
     ModernIMEController &controller() { return controller_; }
+    ClipboardTriggerResult processClipboardTrigger(const KeyEvent &event,
+                                                   std::uint64_t nowMs,
+                                                   bool eligible) {
+        return clipboardTrigger_.feed(event, nowMs, eligible);
+    }
+    void flushClipboardTrigger(std::uint64_t nowMs);
+    void resetClipboardTrigger() { clipboardTrigger_.reset(); }
+    void setClipboardEntries(std::vector<std::string> entries) {
+        controller_.setClipboardEntries(std::move(entries));
+    }
 
 private:
     FcitxEngineHost host_;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::unique_ptr<pinyin::PinyinCandidateProvider> provider_;
 #endif
+    ClipboardTrigger clipboardTrigger_;
     ModernIMEController controller_;
 };
 
@@ -76,7 +91,15 @@ public:
 
 private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
+    void pollClipboard();
+    void flushClipboardTriggers(std::uint64_t nowMs);
 
+    fcitx::AddonManager *manager_ = nullptr;
+    fcitx::Instance *instance_ = nullptr;
+    fcitx::AddonInstance *clipboardAddon_ = nullptr;
+    bool clipboardAddonLookupAttempted_ = false;
+    core::ClipboardHistory clipboardHistory_;
+    std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;

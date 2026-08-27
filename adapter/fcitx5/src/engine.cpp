@@ -4,7 +4,9 @@
 
 #include <array>
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
+#include <string>
 #include <utility>
 
 namespace modernime::fcitx5 {
@@ -14,6 +16,83 @@ const std::array<std::string_view, 9> sampleCandidates{
     "还", "海", "害", "嗨", "咳", "亥", "孩", "骇", "氦"};
 
 } // namespace
+
+ClipboardTrigger::ClipboardTrigger(std::string_view trigger) {
+    if (trigger.size() != 3 || trigger[1] != '+') {
+        return;
+    }
+    const auto first = static_cast<unsigned char>(trigger[0]);
+    const auto second = static_cast<unsigned char>(trigger[2]);
+    const bool letter = (first >= 'A' && first <= 'Z') ||
+                        (first >= 'a' && first <= 'z');
+    if (!letter || second < '1' || second > '9') {
+        return;
+    }
+    first_ = static_cast<char>(std::tolower(first));
+    second_ = static_cast<char>(second);
+}
+
+bool ClipboardTrigger::isFirst(const KeyEvent &event) const {
+    if (event.kind != KeyKind::Character) {
+        return false;
+    }
+    return static_cast<char>(std::tolower(
+               static_cast<unsigned char>(event.character))) == first_;
+}
+
+bool ClipboardTrigger::isSecond(const KeyEvent &event) const {
+    return event.kind == KeyKind::Digit && event.digit == second_;
+}
+
+ClipboardTriggerResult ClipboardTrigger::feed(const KeyEvent &event,
+                                              std::uint64_t nowMs,
+                                              bool eligible) {
+    ClipboardTriggerResult result;
+    if (!valid()) {
+        return result;
+    }
+
+    if (pending_ && nowMs >= pendingSinceMs_ &&
+        nowMs - pendingSinceMs_ >= kTimeoutMs) {
+        result.replay = replayEvent();
+        pending_ = false;
+    }
+
+    if (pending_) {
+        if (isSecond(event)) {
+            pending_ = false;
+            result.consumed = true;
+            result.openClipboard = true;
+            return result;
+        }
+        result.replay = replayEvent();
+        pending_ = false;
+    }
+
+    if (eligible && isFirst(event)) {
+        pending_ = true;
+        pendingSinceMs_ = nowMs;
+        result.consumed = true;
+    }
+    return result;
+}
+
+ClipboardTriggerResult ClipboardTrigger::expire(std::uint64_t nowMs) {
+    ClipboardTriggerResult result;
+    if (!valid() || !pending_ || nowMs < pendingSinceMs_ ||
+        nowMs - pendingSinceMs_ < kTimeoutMs) {
+        return result;
+    }
+    pending_ = false;
+    result.consumed = true;
+    result.replay = replayEvent();
+    return result;
+}
+
+void ClipboardTrigger::reset() {
+    pending_ = false;
+    pendingSinceMs_ = 0;
+}
 
 ModernIMEController::ModernIMEController(EngineHost &host,
                                          core::CandidateProvider *provider,
@@ -127,6 +206,8 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         return movePage(1);
+    case KeyKind::OpenClipboard:
+        return openClipboard();
     case KeyKind::Toggle:
         break;
     }
@@ -136,6 +217,12 @@ bool ModernIMEController::handle(const KeyEvent &event) {
 bool ModernIMEController::select(std::size_t index) {
     if (!active_ || index >= page_.items.size()) {
         return false;
+    }
+    if (clipboardMode_) {
+        const auto text = page_.items[index].text;
+        host_.commit(text);
+        reset();
+        return true;
     }
     if (provider_) {
         const auto text = page_.items[index].text;
@@ -151,7 +238,8 @@ bool ModernIMEController::select(std::size_t index) {
 }
 
 bool ModernIMEController::removeCurrent() {
-    if (!active_ || page_.items.empty() || provider_ == nullptr) {
+    if (!active_ || clipboardMode_ || page_.items.empty() ||
+        provider_ == nullptr) {
         return false;
     }
     if (!provider_->remove(page_.cursor)) {
@@ -211,6 +299,8 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
 void ModernIMEController::reset() {
     contextBefore_.clear();
     contextAfter_.clear();
+    clipboardMode_ = false;
+    clipboardEntries_.clear();
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
     }
@@ -231,6 +321,11 @@ void ModernIMEController::setActive(bool active) {
     }
 }
 
+void ModernIMEController::setClipboardEntries(
+    std::vector<std::string> entries) {
+    clipboardEntries_ = std::move(entries);
+}
+
 std::size_t ModernIMEController::currentPageIndex() const {
     return page_.items.empty() ? 0 : page_.cursor / kCandidatePageSize;
 }
@@ -240,6 +335,9 @@ std::size_t ModernIMEController::pageSize() const {
 }
 
 void ModernIMEController::refreshPage() {
+    if (clipboardMode_) {
+        return;
+    }
     if (provider_) {
         page_ = provider_->page();
         host_.publishPage(page_);
@@ -258,6 +356,26 @@ void ModernIMEController::refreshPage() {
         page_.items.push_back({input_.text(), input_.text(), 0});
     }
     host_.publishPage(page_);
+}
+
+bool ModernIMEController::openClipboard() {
+    if (!active_) {
+        return false;
+    }
+
+    if (provider_ != nullptr) {
+        provider_->reset();
+    } else {
+        input_.clear();
+    }
+    page_.clear();
+    clipboardMode_ = true;
+    page_.items.reserve(clipboardEntries_.size());
+    for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {
+        page_.items.push_back({clipboardEntries_[index], {}, index});
+    }
+    host_.publishPage(page_);
+    return true;
 }
 
 bool ModernIMEController::commitCurrent() {

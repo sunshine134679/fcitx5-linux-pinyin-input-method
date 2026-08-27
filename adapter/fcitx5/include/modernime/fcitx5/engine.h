@@ -7,8 +7,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace modernime::fcitx5 {
 
@@ -27,6 +29,7 @@ enum class KeyKind {
     NextCandidate,
     PreviousPage,
     NextPage,
+    OpenClipboard,
     Punctuation,
 };
 
@@ -34,6 +37,37 @@ struct KeyEvent final {
     KeyKind kind = KeyKind::Character;
     char character = 0;
     char digit = 0;
+};
+
+struct ClipboardTriggerResult final {
+    bool consumed = false;
+    bool openClipboard = false;
+    std::optional<KeyEvent> replay;
+};
+
+class ClipboardTrigger final {
+public:
+    static constexpr std::uint64_t kTimeoutMs = 400;
+
+    explicit ClipboardTrigger(std::string_view trigger = "V+2");
+
+    ClipboardTriggerResult feed(const KeyEvent &event, std::uint64_t nowMs,
+                                bool eligible);
+    ClipboardTriggerResult expire(std::uint64_t nowMs);
+    void reset();
+
+    bool pending() const { return pending_; }
+
+private:
+    bool valid() const { return first_ != 0 && second_ != 0; }
+    bool isFirst(const KeyEvent &event) const;
+    bool isSecond(const KeyEvent &event) const;
+    KeyEvent replayEvent() const { return {KeyKind::Character, first_, 0}; }
+
+    char first_ = 0;
+    char second_ = 0;
+    bool pending_ = false;
+    std::uint64_t pendingSinceMs_ = 0;
 };
 
 struct ControllerOptions final {
@@ -48,6 +82,8 @@ struct KeyBindings final {
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;
+    bool clipboardEnabled = true;
+    std::string clipboardTrigger = "V+2";
 };
 
 class EngineHost {
@@ -74,6 +110,9 @@ public:
     std::size_t currentPageIndex() const;
     std::size_t pageSize() const;
 
+    void setClipboardEntries(std::vector<std::string> entries);
+    bool clipboardMode() const { return clipboardMode_; }
+
     bool active() const { return active_; }
     const core::CandidatePage &page() const { return page_; }
 
@@ -83,6 +122,7 @@ private:
     bool commitRawPreedit(std::string_view suffix = {});
     bool moveCursor(std::ptrdiff_t delta);
     bool movePage(std::ptrdiff_t delta);
+    bool openClipboard();
 
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;
@@ -92,6 +132,8 @@ private:
     std::string contextAfter_;
     ControllerOptions options_;
     bool active_ = true;
+    bool clipboardMode_ = false;
+    std::vector<std::string> clipboardEntries_;
 };
 
 } // namespace modernime::fcitx5

@@ -184,6 +184,23 @@ int main() {
     assertTrue(host.commits.back() == "海", "second candidate is committed");
     assertTrue(controller.page().preedit.empty(), "selection clears page");
 
+    RecordingHost clipboardHost;
+    modernime::fcitx5::ModernIMEController clipboardController(clipboardHost);
+    clipboardController.setClipboardEntries({"second clipboard", "first clipboard"});
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode opens");
+    assertTrue(clipboardController.clipboardMode() &&
+                   clipboardController.page().preedit.empty() &&
+                   clipboardController.page().items.size() == 2,
+               "clipboard entries are published without a pinyin preedit");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "clipboard digit selection is handled");
+    assertTrue(clipboardHost.commits.back() == "first clipboard" &&
+                   !clipboardController.clipboardMode(),
+               "selected clipboard text is committed and mode is cleared");
+
     type(controller, "hail");
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
                "space selects first candidate");

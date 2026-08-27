@@ -1,5 +1,6 @@
 #include "modernime/fcitx5/fcitx_engine.h"
 
+#include <fcitx/addoninstance.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/event.h>
@@ -15,7 +16,10 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace modernime::fcitx5 {
@@ -95,7 +99,22 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
     return {settings.toggleKey, settings.numberSelection,
-            settings.arrowNavigation, settings.pageNavigation};
+            settings.arrowNavigation, settings.pageNavigation,
+            settings.clipboardEnabled, settings.clipboardTrigger};
+}
+
+std::optional<char> clipboardTriggerDigit(const fcitx::Key &key,
+                                          std::string_view trigger) {
+    if (trigger.size() != 3 || trigger[1] != '+' ||
+        hasNonShiftModifier(key)) {
+        return std::nullopt;
+    }
+    const auto second = static_cast<unsigned char>(trigger[2]);
+    if (second < '1' || second > '9' ||
+        key.digitSelection() != static_cast<int>(second - '1')) {
+        return std::nullopt;
+    }
+    return static_cast<char>(second);
 }
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -192,8 +211,10 @@ FcitxInputContextState::FcitxInputContextState(
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
       , provider_(std::make_unique<pinyin::PinyinCandidateProvider>(
             pinyinPaths(), pinyinOptions(settings)))
+      , clipboardTrigger_(settings.clipboardTrigger)
       , controller_(host_, provider_.get(), controllerOptions(settings)) {
 #else
+      , clipboardTrigger_(settings.clipboardTrigger)
       , controller_(host_, nullptr, controllerOptions(settings)) {
 #endif
     host_.setController(controller_);
@@ -201,14 +222,33 @@ FcitxInputContextState::FcitxInputContextState(
                            settings.defaultMode == core::InputMode::Chinese);
 }
 
+void FcitxInputContextState::flushClipboardTrigger(std::uint64_t nowMs) {
+    const auto result = clipboardTrigger_.expire(nowMs);
+    if (result.replay.has_value() && controller_.active()) {
+        controller_.handle(*result.replay);
+    }
+}
+
 ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
-    : settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
+    : manager_(manager),
+      instance_(manager == nullptr ? nullptr : manager->instance()),
+      settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
       stateFactory_([this](fcitx::InputContext &inputContext) {
           return new FcitxInputContextState(inputContext, settings_);
       }) {
-    if (manager != nullptr && manager->instance() != nullptr) {
-        manager->instance()->inputContextManager().registerProperty(
+    if (instance_ != nullptr) {
+        instance_->inputContextManager().registerProperty(
             std::string(statePropertyName), &stateFactory_);
+        clipboardTimer_ = instance_->eventLoop().addTimeEvent(
+            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 50000, 50000,
+            [this](fcitx::EventSourceTime *source, std::uint64_t) {
+                pollClipboard();
+                flushClipboardTriggers(
+                    fcitx::now(CLOCK_MONOTONIC) / 1000);
+                source->setNextInterval(50000);
+                source->setEnabled(true);
+                return true;
+            });
     }
 }
 
@@ -327,6 +367,48 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
     return std::nullopt;
 }
 
+void ModernIMEInputMethod::pollClipboard() {
+    if (!keyBindings_.clipboardEnabled || manager_ == nullptr ||
+        instance_ == nullptr) {
+        return;
+    }
+    if (!clipboardAddonLookupAttempted_) {
+        clipboardAddon_ = manager_->addon("clipboard", true);
+        clipboardAddonLookupAttempted_ = true;
+    }
+    if (clipboardAddon_ == nullptr) {
+        return;
+    }
+    auto *inputContext =
+        instance_->inputContextManager().mostRecentInputContext();
+    if (inputContext == nullptr) {
+        return;
+    }
+    try {
+        const auto text = clipboardAddon_->callWithSignature<
+            std::string(const fcitx::InputContext *)>(
+            "Clipboard::clipboard", inputContext);
+        clipboardHistory_.observe(text);
+    } catch (const std::exception &) {
+        // A third-party or older clipboard addon may not expose this optional
+        // function. Clipboard mode remains harmlessly empty in that case.
+    }
+}
+
+void ModernIMEInputMethod::flushClipboardTriggers(std::uint64_t nowMs) {
+    if (instance_ == nullptr) {
+        return;
+    }
+    instance_->inputContextManager().foreach(
+        [this, nowMs](fcitx::InputContext *inputContext) {
+            if (auto *contextState = state(inputContext);
+                contextState != nullptr) {
+                contextState->flushClipboardTrigger(nowMs);
+            }
+            return true;
+        });
+}
+
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                                     fcitx::KeyEvent &event) {
     if (event.isRelease()) {
@@ -339,9 +421,42 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
     const auto context = extractSurroundingContext(
         event.inputContext()->surroundingText(), 32);
     contextState->controller().setContext(context.first, context.second);
-    const auto modernEvent = translateKey(event.key(), keyBindings_);
-    if (modernEvent.has_value() &&
-        contextState->controller().handle(*modernEvent)) {
+    auto modernEvent = translateKey(event.key(), keyBindings_);
+    const bool clipboardActive = keyBindings_.clipboardEnabled &&
+                                  contextState->controller().active();
+    if (!modernEvent.has_value() && clipboardActive) {
+        if (const auto digit =
+                clipboardTriggerDigit(event.key(), keyBindings_.clipboardTrigger);
+            digit.has_value()) {
+            modernEvent = KeyEvent{KeyKind::Digit, 0, *digit};
+        }
+    }
+    if (!modernEvent.has_value()) {
+        return;
+    }
+
+    if (clipboardActive) {
+        const auto trigger = contextState->processClipboardTrigger(
+            *modernEvent, fcitx::now(CLOCK_MONOTONIC) / 1000,
+            contextState->controller().page().preedit.empty());
+        if (trigger.replay.has_value()) {
+            contextState->controller().handle(*trigger.replay);
+        }
+        if (trigger.openClipboard) {
+            contextState->setClipboardEntries(clipboardHistory_.entries());
+            if (contextState->controller().handle(
+                    {KeyKind::OpenClipboard, 0, 0})) {
+                event.filterAndAccept();
+            }
+            return;
+        }
+        if (trigger.consumed) {
+            event.filterAndAccept();
+            return;
+        }
+    }
+
+    if (contextState->controller().handle(*modernEvent)) {
         event.filterAndAccept();
     }
 }
@@ -349,6 +464,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
                                     fcitx::InputContextEvent &event) {
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
+        contextState->resetClipboardTrigger();
         contextState->controller().setActive(
             settings_.inputEnabled &&
             settings_.defaultMode == core::InputMode::Chinese);
@@ -359,6 +475,7 @@ void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
                                       fcitx::InputContextEvent &event) {
     reset(entry, event);
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
+        contextState->resetClipboardTrigger();
         contextState->controller().setActive(false);
     }
 }
@@ -366,6 +483,7 @@ void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
 void ModernIMEInputMethod::reset(const fcitx::InputMethodEntry &,
                                  fcitx::InputContextEvent &event) {
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
+        contextState->resetClipboardTrigger();
         contextState->controller().reset();
     }
 }
