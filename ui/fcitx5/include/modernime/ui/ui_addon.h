@@ -6,11 +6,15 @@
 
 #include <memory>
 
+namespace fcitx {
+class Instance;
+}
+
 namespace modernime::ui {
 
 class ModernIMEUserInterface final : public fcitx::UserInterface {
 public:
-    ModernIMEUserInterface();
+    explicit ModernIMEUserInterface(fcitx::Instance *instance = nullptr);
     ~ModernIMEUserInterface() override;
 
     void update(fcitx::UserInterfaceComponent component,

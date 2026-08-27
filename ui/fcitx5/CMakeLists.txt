@@ -17,6 +17,9 @@ if(MODERNIME_BUILD_FCITX5)
     find_package(Fcitx5Core REQUIRED)
     find_package(Fcitx5Utils REQUIRED)
     pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+    pkg_check_modules(AYATANA_APPINDICATOR REQUIRED IMPORTED_TARGET
+        ayatana-appindicator3-0.1
+    )
 
     add_library(modernime_ui MODULE
         src/ui_addon.cpp
@@ -29,6 +32,7 @@ if(MODERNIME_BUILD_FCITX5)
         Fcitx5::Core
         Fcitx5::Utils
         PkgConfig::GTK3
+        PkgConfig::AYATANA_APPINDICATOR
     )
     target_compile_features(modernime_ui PRIVATE cxx_std_20)
     modernime_enable_warnings(modernime_ui)

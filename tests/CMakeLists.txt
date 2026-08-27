@@ -68,6 +68,12 @@ target_sources(modernime_ui_tests PRIVATE
 )
 add_test(NAME modernime_candidate_bar_layout COMMAND modernime_ui_tests)
 
+add_executable(modernime_status_indicator_tests ui/status_indicator_test.cpp)
+target_include_directories(modernime_status_indicator_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+)
+add_test(NAME modernime_status_indicator COMMAND modernime_status_indicator_tests)
+
 add_executable(modernime_candidate_bar_renderer_tests ui/candidate_bar_renderer_test.cpp)
 target_include_directories(modernime_candidate_bar_renderer_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include

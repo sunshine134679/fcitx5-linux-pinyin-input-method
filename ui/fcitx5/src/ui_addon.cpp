@@ -3,13 +3,17 @@
 #include "modernime/ui/cairo_render_surface.h"
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_bar_renderer.h"
+#include "modernime/ui/status_indicator.h"
 
 #include <fcitx/addonfactory.h>
+#include <fcitx/addonmanager.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputpanel.h>
+#include <fcitx/instance.h>
 
 #include <gtk/gtk.h>
+#include <libayatana-appindicator/app-indicator.h>
 
 #include <cmath>
 #include <memory>
@@ -19,6 +23,8 @@ namespace modernime::ui {
 struct ModernIMEUserInterface::Impl final {
     GtkWidget *window = nullptr;
     GtkWidget *drawingArea = nullptr;
+    AppIndicator *indicator = nullptr;
+    GtkWidget *indicatorMenu = nullptr;
     CandidateBarLayout layout;
     RenderStyle style = RenderStyle::reference();
     CandidateBarMetrics metrics = CandidateBarMetrics::reference();
@@ -41,6 +47,13 @@ struct ModernIMEUserInterface::Impl final {
 };
 
 namespace {
+
+void toggleInputMethod(GtkMenuItem *, gpointer data) {
+    if (auto *instance = static_cast<fcitx::Instance *>(data);
+        instance != nullptr) {
+        instance->toggle();
+    }
+}
 
 void drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
     static_cast<ModernIMEUserInterface *>(data)->draw(context);
@@ -82,7 +95,7 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
 
 } // namespace
 
-ModernIMEUserInterface::ModernIMEUserInterface()
+ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     : impl_(std::make_unique<Impl>()) {
     impl_->gtkAvailable = gtk_init_check(nullptr, nullptr);
     if (!impl_->gtkAvailable) {
@@ -90,6 +103,21 @@ ModernIMEUserInterface::ModernIMEUserInterface()
     }
     impl_->window = gtk_window_new(GTK_WINDOW_POPUP);
     configureWindow(impl_->window);
+    impl_->indicator = app_indicator_new(
+        "modernime-fcitx5", std::string(StatusIndicator::iconName()).c_str(),
+        APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+    app_indicator_set_title(impl_->indicator,
+                            std::string(StatusIndicator::title()).c_str());
+    app_indicator_set_status(impl_->indicator, APP_INDICATOR_STATUS_ACTIVE);
+    impl_->indicatorMenu = gtk_menu_new();
+    auto *indicatorItem = gtk_menu_item_new_with_label(
+        std::string(StatusIndicator::title()).c_str());
+    g_signal_connect(indicatorItem, "activate",
+                     G_CALLBACK(toggleInputMethod), instance);
+    gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), indicatorItem);
+    gtk_widget_show_all(impl_->indicatorMenu);
+    app_indicator_set_menu(impl_->indicator,
+                           GTK_MENU(impl_->indicatorMenu));
     impl_->drawingArea = gtk_drawing_area_new();
     gtk_container_add(GTK_CONTAINER(impl_->window), impl_->drawingArea);
     g_signal_connect(impl_->drawingArea, "draw", G_CALLBACK(drawCallback), this);
@@ -99,6 +127,12 @@ ModernIMEUserInterface::ModernIMEUserInterface()
 ModernIMEUserInterface::~ModernIMEUserInterface() {
     if (impl_->window != nullptr) {
         gtk_widget_destroy(impl_->window);
+    }
+    if (impl_->indicatorMenu != nullptr) {
+        gtk_widget_destroy(impl_->indicatorMenu);
+    }
+    if (impl_->indicator != nullptr) {
+        g_object_unref(impl_->indicator);
     }
 }
 
@@ -154,8 +188,9 @@ namespace {
 
 class ModernIMEUIAddonFactory final : public fcitx::AddonFactory {
 public:
-    fcitx::AddonInstance *create(fcitx::AddonManager *) override {
-        return new modernime::ui::ModernIMEUserInterface();
+    fcitx::AddonInstance *create(fcitx::AddonManager *manager) override {
+        return new modernime::ui::ModernIMEUserInterface(
+            manager != nullptr ? manager->instance() : nullptr);
     }
 };
 
