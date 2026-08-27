@@ -72,6 +72,9 @@ UserDictionary UserDictionary::loadText(
     std::unordered_map<std::string, std::size_t> positions;
     std::string line;
     while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
         if (line.empty() || line.front() == '#') {
             continue;
         }

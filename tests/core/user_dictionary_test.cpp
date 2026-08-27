@@ -76,6 +76,16 @@ void testUserDictionaryRejectsTrailingWeightData() {
     std::filesystem::remove(path, error);
 }
 
+void testUserDictionaryAcceptsWindowsLineEndings() {
+    const auto path = testPath("crlf-user-dictionary.txt");
+    writeFile(path, "ni\t换行词\t80\r\n");
+    const auto dictionary = modernime::pinyin::UserDictionary::loadText(path);
+    assertTrue(dictionary.contains("ni", "换行词"),
+               "CRLF dictionary rows are accepted");
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 void testProfessionalPhraseAppearsFromConfiguredDictionary() {
     const auto dictionaryPath = testPath("professional-dictionary.txt");
     const auto learningPath = testPath("professional-learning.sqlite3");
@@ -149,6 +159,7 @@ void testManualCandidatesExpandForLongerInput() {
 int main() {
     testUserDictionarySkipsBadRowsAndKeepsLastDuplicate();
     testUserDictionaryRejectsTrailingWeightData();
+    testUserDictionaryAcceptsWindowsLineEndings();
     testProfessionalPhraseAppearsFromConfiguredDictionary();
     testManualCandidatesAreCappedForShortInput();
     testManualCandidatesExpandForLongerInput();
