@@ -36,7 +36,8 @@ bool ModernIMEController::handle(const KeyEvent &event) {
 
     switch (event.kind) {
     case KeyKind::Character:
-        if (event.character < 'a' || event.character > 'z') {
+        if ((event.character < 'a' || event.character > 'z') &&
+            event.character != '\'') {
             return false;
         }
         if (provider_ &&

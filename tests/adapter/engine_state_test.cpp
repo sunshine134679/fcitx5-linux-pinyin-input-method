@@ -255,6 +255,11 @@ int main() {
                "provider candidate is committed");
     assertTrue(provider.resetCount == 1,
                "committing a provider candidate resets the provider");
+    assertTrue(providerController.handle(
+                   {modernime::fcitx5::KeyKind::Character, '\'', 0}),
+               "apostrophe is handled as pinyin input");
+    assertTrue(provider.current.preedit == "'",
+               "apostrophe reaches the candidate provider");
 
     FakeProvider contextualProvider;
     RecordingHost contextualHost;

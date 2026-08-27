@@ -67,5 +67,11 @@ int main() {
                "equal maps to next page");
     assertKind(FcitxKey_plus, modernime::fcitx5::KeyKind::NextPage,
                "plus maps to next page");
+    const auto apostrophe = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_apostrophe));
+    assertTrue(apostrophe.has_value() &&
+                   apostrophe->kind == modernime::fcitx5::KeyKind::Character &&
+                   apostrophe->character == '\'',
+               "apostrophe maps to a character event");
     return EXIT_SUCCESS;
 }
