@@ -78,5 +78,12 @@ int main() {
     assertTrue(!failed.save(&error), "failed save is reported");
     assertTrue(failed.dirty() && !error.empty(),
                "failed save keeps edits and exposes an error");
+
+    error.clear();
+    assertTrue(reloaded.resetDefaults(&error),
+               "reset defaults saves: " + error);
+    assertTrue(reloaded.settings() == modernime::core::defaultSettings() &&
+                   !reloaded.dirty(),
+               "reset defaults replaces settings and clears dirty state");
     return EXIT_SUCCESS;
 }

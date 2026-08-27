@@ -142,6 +142,28 @@ void onResetEdits(GtkButton *, gpointer data) {
     setStatus(impl, "已恢复未保存的修改");
 }
 
+void onResetDefaults(GtkButton *, gpointer data) {
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    auto *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(impl->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+        GTK_BUTTONS_YES_NO,
+        "这只会恢复 ModernIME 的设置默认值，不会删除学习记录或用户词典。继续吗？");
+    const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    if (response != GTK_RESPONSE_YES) {
+        return;
+    }
+    std::string error;
+    if (impl->model.resetDefaults(&error)) {
+        updateBasicPageFromModel(impl);
+        updateCandidatePageFromModel(impl);
+        updateLearningPageFromModel(impl);
+        setStatus(impl, "ModernIME 设置已恢复默认值");
+    } else {
+        setStatus(impl, error.c_str());
+    }
+}
+
 GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
     auto *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
@@ -703,10 +725,12 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     gtk_widget_set_margin_top(actions, 8);
     gtk_widget_set_margin_bottom(actions, 8);
     auto *reset = gtk_button_new_with_label("恢复修改");
+    auto *defaults = gtk_button_new_with_label("恢复默认");
     auto *save = gtk_button_new_with_label("保存");
     auto *apply = gtk_button_new_with_label("应用");
     gtk_box_pack_end(GTK_BOX(actions), apply, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(actions), save, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(actions), defaults, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(actions), reset, FALSE, FALSE, 0);
     impl_->status = gtk_label_new("");
     gtk_widget_set_halign(impl_->status, GTK_ALIGN_START);
@@ -715,6 +739,8 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     g_signal_connect(save, "clicked", G_CALLBACK(onSave), impl_.get());
     g_signal_connect(apply, "clicked", G_CALLBACK(onSave), impl_.get());
     g_signal_connect(reset, "clicked", G_CALLBACK(onResetEdits), impl_.get());
+    g_signal_connect(defaults, "clicked", G_CALLBACK(onResetDefaults),
+                     impl_.get());
     gtk_container_add(GTK_CONTAINER(impl_->window), root);
 }
 

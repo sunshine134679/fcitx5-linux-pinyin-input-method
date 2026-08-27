@@ -41,6 +41,24 @@ bool SettingsWindowModel::save(std::string *error) {
     return true;
 }
 
+bool SettingsWindowModel::resetDefaults(std::string *error) {
+    std::string saveError;
+    if (!core::SettingsStore::reset(path_, &saveError)) {
+        lastError_ = saveError;
+        if (error != nullptr) {
+            *error = saveError;
+        }
+        return false;
+    }
+    loaded_ = core::defaultSettings();
+    edited_ = loaded_;
+    lastError_.clear();
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
 void SettingsWindowModel::resetEdits() {
     edited_ = loaded_;
     lastError_.clear();

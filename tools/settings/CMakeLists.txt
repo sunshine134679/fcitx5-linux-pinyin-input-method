@@ -21,3 +21,7 @@ target_compile_definitions(modernime-settings PRIVATE
     MODERNIME_VERSION="${PROJECT_VERSION}"
 )
 modernime_enable_warnings(modernime-settings)
+
+install(TARGETS modernime-settings RUNTIME DESTINATION bin)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/desktop/modernime-settings.desktop
+        DESTINATION share/applications)

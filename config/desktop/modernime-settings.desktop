@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ModernIME Settings
+Comment=Configure ModernIME input method
+Exec=modernime-settings
+Icon=input-keyboard
+Terminal=false
+Categories=Settings;Utility;

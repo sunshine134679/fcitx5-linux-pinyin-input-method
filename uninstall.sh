@@ -24,7 +24,9 @@ while IFS= read -r path; do
         "$prefix/lib/fcitx5/modernime_ui.so"|\
         "$prefix/share/fcitx5/addon/modernime.conf"|\
         "$prefix/share/fcitx5/addon/modernime-ui.conf"|\
-        "$prefix/share/fcitx5/inputmethod/modernime.conf")
+        "$prefix/share/fcitx5/inputmethod/modernime.conf"|\
+        "$prefix/bin/modernime-settings"|\
+        "$prefix/share/applications/modernime-settings.desktop")
             rm -f -- "$path"
             ;;
         "$environment_file")

@@ -29,6 +29,7 @@ cmake_args=(
     -DCMAKE_INSTALL_PREFIX="$prefix"
     -DMODERNIME_BUILD_FCITX5=ON
     -DMODERNIME_BUILD_LIBIME_PINYIN=ON
+    -DMODERNIME_BUILD_SETTINGS=ON
     -DMODERNIME_BUILD_TESTS=ON
 )
 if [[ -n "${MODERNIME_BOOST_ROOT:-}" ]]; then
@@ -82,6 +83,8 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime.conf"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime-ui.conf"
     printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
+    printf '%s\n' "$prefix/bin/modernime-settings"
+    printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
     printf '%s\n' "$environment_file"
     printf '%s\n' "$autostart_file"
 } > "$manifest"
