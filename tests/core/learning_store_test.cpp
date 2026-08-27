@@ -89,6 +89,24 @@ void testMatchingContextRaisesCandidate() {
     std::filesystem::remove(path, error);
 }
 
+void testBaseNegativeFeedbackAppliesToContextualSelection() {
+    const auto path = testPath("context-negative-learning.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "context negative-feedback store opens");
+    assertTrue(store.recordSelection("上下文词", "shangxiawen", "前文",
+                                     "后文", 1000),
+               "contextual selection stores");
+    assertTrue(store.recordNegativeFeedback("上下文词", "shangxiawen"),
+               "base negative feedback stores");
+    const auto snapshot = store.snapshot(1000);
+    assertTrue(snapshot->boostAt("上下文词", "shangxiawen", "前文", "后文",
+                                 1000) < 1.0,
+               "base negative feedback lowers contextual selection boost");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 void testWriterReportsUnavailableStoreAndKeepsMemorySnapshot() {
     const auto path = std::filesystem::path("/dev/null") /
                       "modernime-learning.sqlite3";
@@ -126,6 +144,7 @@ int main() {
     testFrequencyBonusIsBoundedAndMovesCandidate();
     testNegativeFeedbackReducesLearningBoost();
     testMatchingContextRaisesCandidate();
+    testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
     testWriterFlushesSelectionBeforeReopen();
     return EXIT_SUCCESS;

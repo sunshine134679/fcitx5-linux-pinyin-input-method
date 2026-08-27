@@ -46,7 +46,23 @@ double LearningSnapshot::boostAt(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) const {
-    const auto *candidate = entry(phrase, pinyin, contextBefore, contextAfter);
+    const auto normalized = normalizePinyin(pinyin);
+    const LearningEntry *candidate = nullptr;
+    const LearningEntry *base = nullptr;
+    for (const auto &item : entries_) {
+        if (item.phrase != phrase || item.pinyin != normalized) {
+            continue;
+        }
+        if (item.contextBefore == contextBefore &&
+            item.contextAfter == contextAfter) {
+            candidate = &item;
+        } else if (item.contextBefore.empty() && item.contextAfter.empty()) {
+            base = &item;
+        }
+    }
+    if (candidate == nullptr) {
+        candidate = base;
+    }
     if (candidate == nullptr) {
         return 0.0;
     }
@@ -57,9 +73,14 @@ double LearningSnapshot::boostAt(
     const double frequency = std::min(
         2.0, 0.65 * std::log1p(static_cast<double>(candidate->frequency)));
     const double recent = std::min(1.0, 0.90 * recency);
+    auto negativeFeedback = candidate->negativeFeedback;
+    // A global deletion/negative-feedback event must still apply when a
+    // more-specific contextual selection exists for the same candidate.
+    if (candidate != base && base != nullptr) {
+        negativeFeedback += base->negativeFeedback;
+    }
     const double penalty = std::min(
-        2.0, 0.75 * std::log1p(
-                 static_cast<double>(candidate->negativeFeedback)));
+        2.0, 0.75 * std::log1p(static_cast<double>(negativeFeedback)));
     return std::clamp(frequency + recent - penalty, -2.0, 3.5);
 }
 
