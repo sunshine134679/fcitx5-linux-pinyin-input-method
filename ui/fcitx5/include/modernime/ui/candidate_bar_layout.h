@@ -59,7 +59,6 @@ struct CandidateBarLayout final {
     Rect panel;
     Rect selectedPill;
     std::string preedit;
-    std::string modePrompt;
     double preeditX = 0.0;
     double preeditBaseline = 0.0;
     double candidateBaseline = 0.0;

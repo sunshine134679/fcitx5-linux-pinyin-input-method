@@ -32,11 +32,5 @@ int main() {
     assertTrue(modernime::ui::StatusIndicator::titleForInputMethod("keyboard-us") ==
                    "英文键盘",
                "status indicator describes English keyboard mode");
-    assertTrue(modernime::ui::StatusIndicator::promptForInputMethod("modernime") ==
-                   "中文",
-               "input panel prompts Chinese input mode");
-    assertTrue(modernime::ui::StatusIndicator::promptForInputMethod("keyboard-us") ==
-                   "英文",
-               "input panel prompts English keyboard mode");
     return EXIT_SUCCESS;
 }
