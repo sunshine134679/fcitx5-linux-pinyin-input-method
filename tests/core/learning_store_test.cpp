@@ -149,6 +149,18 @@ void testLearningCountersSaturateAtMaximum() {
                "learning counters saturate instead of overflowing");
 }
 
+void testCorruptedSelectionTimestampDoesNotOverflow() {
+    const std::vector<modernime::core::LearningEntry> entries{
+        {"损坏时间", "sunhuaici", {}, {}, 1,
+         std::numeric_limits<std::int64_t>::min(), 0}};
+    const modernime::core::LearningSnapshot snapshot(entries);
+    const auto boost = snapshot.boostAt(
+        "损坏时间", "sunhuaici", {}, {},
+        std::numeric_limits<std::int64_t>::max());
+    assertTrue(std::isfinite(boost) && boost < 1.0,
+               "corrupted selection timestamps are treated as old safely");
+}
+
 void testPersistedLearningCountersSaturateAtMaximum() {
     constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
     const auto path = testPath("persisted-counter-overflow.sqlite3");
@@ -329,6 +341,7 @@ int main() {
     testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost();
     testCorruptedLearningCountersRemainFinite();
     testLearningCountersSaturateAtMaximum();
+    testCorruptedSelectionTimestampDoesNotOverflow();
     testPersistedLearningCountersSaturateAtMaximum();
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();

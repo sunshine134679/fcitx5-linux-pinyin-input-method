@@ -89,10 +89,11 @@ double LearningSnapshot::boostAt(
     if (candidate == nullptr) {
         return 0.0;
     }
-    const auto ageMs = std::max<std::int64_t>(
-        0, nowMs - candidate->lastSelectedMs);
+    const double ageMs = std::max(
+        0.0, static_cast<double>(nowMs) -
+                 static_cast<double>(candidate->lastSelectedMs));
     constexpr double halfLifeMs = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
-    const double recency = std::exp(-static_cast<double>(ageMs) / halfLifeMs);
+    const double recency = std::exp(-ageMs / halfLifeMs);
     const auto frequencyCount = std::max<std::int64_t>(0, candidate->frequency);
     const double frequency = std::min(
         2.0, 0.65 * std::log1p(static_cast<double>(frequencyCount)));
