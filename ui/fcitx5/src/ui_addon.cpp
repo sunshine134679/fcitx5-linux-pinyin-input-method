@@ -11,6 +11,7 @@
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx-utils/event.h>
 
 #include <gtk/gtk.h>
 #include <libayatana-appindicator/app-indicator.h>
@@ -30,6 +31,7 @@ struct ModernIMEUserInterface::Impl final {
     CandidateBarMetrics metrics = CandidateBarMetrics::reference();
     bool gtkAvailable = false;
     bool suspended = false;
+    std::unique_ptr<fcitx::EventSourceTime> gtkEventSource;
 
     static constexpr double originX = 208.0;
     static constexpr double originY = 220.0;
@@ -122,6 +124,16 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     gtk_container_add(GTK_CONTAINER(impl_->window), impl_->drawingArea);
     g_signal_connect(impl_->drawingArea, "draw", G_CALLBACK(drawCallback), this);
     gtk_widget_set_size_request(impl_->drawingArea, 1, 1);
+    if (instance != nullptr) {
+        impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
+            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 10000, 1000,
+            [](fcitx::EventSourceTime *source, uint64_t) {
+                g_main_context_iteration(nullptr, FALSE);
+                source->setNextInterval(10000);
+                source->setEnabled(true);
+                return true;
+            });
+    }
 }
 
 ModernIMEUserInterface::~ModernIMEUserInterface() {
