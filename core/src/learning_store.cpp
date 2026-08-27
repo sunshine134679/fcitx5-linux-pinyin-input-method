@@ -19,7 +19,9 @@ constexpr const char *schema =
     "PRIMARY KEY (pinyin, phrase, context_before, context_after));";
 
 bool bindText(sqlite3_stmt *statement, int index, std::string_view value) {
-    return sqlite3_bind_text(statement, index, value.data(),
+    const char empty[] = "";
+    const auto *data = value.data() != nullptr ? value.data() : empty;
+    return sqlite3_bind_text(statement, index, data,
                              static_cast<int>(value.size()),
                              SQLITE_TRANSIENT) == SQLITE_OK;
 }
@@ -86,7 +88,10 @@ bool LearningStore::recordSelection(
         "(pinyin, phrase, context_before, context_after, frequency, "
         "last_selected_ms) VALUES (?, ?, ?, ?, 1, ?) "
         "ON CONFLICT(pinyin, phrase, context_before, context_after) DO "
-        "UPDATE SET frequency = frequency + 1, last_selected_ms = excluded.last_selected_ms;";
+        "UPDATE SET frequency = CASE "
+        "WHEN frequency >= 9223372036854775807 THEN 9223372036854775807 "
+        "WHEN frequency < 0 THEN 1 ELSE frequency + 1 END, "
+        "last_selected_ms = excluded.last_selected_ms;";
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
         return false;
@@ -111,7 +116,11 @@ bool LearningStore::recordNegativeFeedback(std::string_view phrase,
         "INSERT INTO learning_entries "
         "(pinyin, phrase, negative_feedback) VALUES (?, ?, 1) "
         "ON CONFLICT(pinyin, phrase, context_before, context_after) DO "
-        "UPDATE SET negative_feedback = negative_feedback + 1;";
+        "UPDATE SET negative_feedback = CASE "
+        "WHEN negative_feedback >= 9223372036854775807 "
+        "THEN 9223372036854775807 "
+        "WHEN negative_feedback < 0 THEN 1 "
+        "ELSE negative_feedback + 1 END;";
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
         return false;

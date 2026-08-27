@@ -149,6 +149,54 @@ void testLearningCountersSaturateAtMaximum() {
                "learning counters saturate instead of overflowing");
 }
 
+void testPersistedLearningCountersSaturateAtMaximum() {
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    const auto path = testPath("persisted-counter-overflow.sqlite3");
+    sqlite3 *database = nullptr;
+    assertTrue(sqlite3_open(path.c_str(), &database) == SQLITE_OK,
+               "persistent overflow store can be created");
+    const auto schema =
+        "CREATE TABLE learning_entries ("
+        "pinyin TEXT NOT NULL, phrase TEXT NOT NULL, "
+        "context_before TEXT NOT NULL DEFAULT '', "
+        "context_after TEXT NOT NULL DEFAULT '', "
+        "frequency INTEGER NOT NULL DEFAULT 0, "
+        "last_selected_ms INTEGER NOT NULL DEFAULT 0, "
+        "negative_feedback INTEGER NOT NULL DEFAULT 0, "
+        "PRIMARY KEY (pinyin, phrase, context_before, context_after));";
+    char *error = nullptr;
+    assertTrue(sqlite3_exec(database, schema, nullptr, nullptr, &error) ==
+                   SQLITE_OK,
+               "persistent overflow schema is created");
+    sqlite3_free(error);
+    const auto insert =
+        "INSERT INTO learning_entries (pinyin, phrase, frequency, "
+        "negative_feedback) VALUES ('baheci', '饱和词', " +
+        std::to_string(maximum) + ", " + std::to_string(maximum) + ");";
+    assertTrue(sqlite3_exec(database, insert.c_str(), nullptr, nullptr,
+                            &error) == SQLITE_OK,
+               "maximum counters are inserted");
+    sqlite3_free(error);
+    sqlite3_close(database);
+
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "persistent overflow store opens");
+    assertTrue(store.recordSelection("饱和词", "baheci", {}, {}, 2000),
+               "selection at maximum counter succeeds");
+    assertTrue(store.recordNegativeFeedback("饱和词", "baheci"),
+               "feedback at maximum counter succeeds");
+    const auto snapshot = store.snapshot();
+    const auto *entry = snapshot->entry("饱和词", "baheci", {}, {});
+    assertTrue(entry != nullptr && entry->frequency == maximum &&
+                   entry->negativeFeedback == maximum,
+               "persistent counters saturate instead of overflowing");
+    store.close();
+    std::error_code errorCode;
+    std::filesystem::remove(path, errorCode);
+    std::filesystem::remove(path.string() + "-wal", errorCode);
+    std::filesystem::remove(path.string() + "-shm", errorCode);
+}
+
 void testMatchingContextRaisesCandidate() {
     const auto path = testPath("context.sqlite3");
     modernime::core::LearningStore store(path);
@@ -281,6 +329,7 @@ int main() {
     testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost();
     testCorruptedLearningCountersRemainFinite();
     testLearningCountersSaturateAtMaximum();
+    testPersistedLearningCountersSaturateAtMaximum();
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
