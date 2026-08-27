@@ -249,6 +249,22 @@ void testMatchingContextRaisesCandidate() {
     std::filesystem::remove(path, error);
 }
 
+void testNearbyContextWindowStillMatches() {
+    const auto path = testPath("nearby-context.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "nearby context store opens");
+    assertTrue(store.recordSelection("窗口词", "chuangkouci", "甲乙丙丁",
+                                     "戊己庚辛", 1000),
+               "nearby context selection stores");
+    const auto snapshot = store.snapshot(1000);
+    assertTrue(snapshot->contextBoost("窗口词", "chuangkouci", "新甲乙丙丁",
+                                      "戊己庚辛新") > 0.0,
+               "a shifted context window still contributes a bounded boost");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 void testBaseNegativeFeedbackAppliesToContextualSelection() {
     const auto path = testPath("context-negative-learning.sqlite3");
     modernime::core::LearningStore store(path);
@@ -368,6 +384,7 @@ int main() {
     testCorruptedSelectionTimestampDoesNotOverflow();
     testPersistedLearningCountersSaturateAtMaximum();
     testMatchingContextRaisesCandidate();
+    testNearbyContextWindowStillMatches();
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
     testWriterRejectsMalformedStoreAtStartup();

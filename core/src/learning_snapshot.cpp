@@ -28,6 +28,76 @@ std::int64_t saturatingAddNonNegative(std::int64_t left,
     return left + right;
 }
 
+bool isUtf8Continuation(unsigned char byte) {
+    return (byte & 0xc0U) == 0x80U;
+}
+
+std::size_t utf8CharacterCount(std::string_view value) {
+    std::size_t count = 0;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        if (!isUtf8Continuation(static_cast<unsigned char>(value[index]))) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::string_view prefixCharacters(std::string_view value,
+                                  std::size_t maxCharacters) {
+    std::size_t end = 0;
+    std::size_t count = 0;
+    while (end < value.size() && count < maxCharacters) {
+        ++end;
+        while (end < value.size() &&
+               isUtf8Continuation(static_cast<unsigned char>(value[end]))) {
+            ++end;
+        }
+        ++count;
+    }
+    return value.substr(0, end);
+}
+
+std::string_view suffixCharacters(std::string_view value,
+                                  std::size_t maxCharacters) {
+    std::size_t begin = value.size();
+    std::size_t count = 0;
+    while (begin > 0 && count < maxCharacters) {
+        --begin;
+        while (begin > 0 &&
+               isUtf8Continuation(static_cast<unsigned char>(value[begin]))) {
+            --begin;
+        }
+        ++count;
+    }
+    return value.substr(begin);
+}
+
+std::size_t commonPrefixCharacters(std::string_view left,
+                                   std::string_view right,
+                                   std::size_t maximum) {
+    const auto limit = std::min(
+        {maximum, utf8CharacterCount(left), utf8CharacterCount(right)});
+    for (std::size_t count = limit; count >= 1; --count) {
+        if (prefixCharacters(left, count) == prefixCharacters(right, count)) {
+            return count;
+        }
+    }
+    return 0;
+}
+
+std::size_t commonSuffixCharacters(std::string_view left,
+                                   std::string_view right,
+                                   std::size_t maximum) {
+    const auto limit = std::min(
+        {maximum, utf8CharacterCount(left), utf8CharacterCount(right)});
+    for (std::size_t count = limit; count >= 1; --count) {
+        if (suffixCharacters(left, count) == suffixCharacters(right, count)) {
+            return count;
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 std::string normalizePinyin(std::string_view pinyin) {
@@ -136,6 +206,11 @@ double LearningSnapshot::contextBoost(
         return 0.0;
     }
     const auto normalized = normalizePinyin(pinyin);
+    if (isSuppressed(phrase, normalized)) {
+        return 0.0;
+    }
+    constexpr std::size_t contextWindow = 8;
+    double bestBoost = 0.0;
     for (const auto &candidate : entries_) {
         if (candidate.phrase != phrase || candidate.pinyin != normalized) {
             continue;
@@ -143,16 +218,31 @@ double LearningSnapshot::contextBoost(
         if (candidate.contextBefore == contextBefore &&
             candidate.contextAfter == contextAfter &&
             !contextBefore.empty() && !contextAfter.empty()) {
-            return 0.8;
+            bestBoost = std::max(bestBoost, 0.8);
+            continue;
         }
         if ((candidate.contextBefore == contextBefore &&
              !contextBefore.empty() && candidate.contextAfter.empty()) ||
             (candidate.contextAfter == contextAfter &&
              !contextAfter.empty() && candidate.contextBefore.empty())) {
-            return 0.4;
+            bestBoost = std::max(bestBoost, 0.4);
+            continue;
+        }
+        const auto beforeMatch = commonSuffixCharacters(
+            candidate.contextBefore, contextBefore, contextWindow);
+        const auto afterMatch = commonPrefixCharacters(
+            candidate.contextAfter, contextAfter, contextWindow);
+        if (beforeMatch >= 4 && afterMatch >= 4) {
+            bestBoost = std::max(bestBoost, 0.6);
+        } else if (beforeMatch >= 2 && afterMatch >= 2) {
+            bestBoost = std::max(bestBoost, 0.4);
+        } else if (beforeMatch >= 4 || afterMatch >= 4) {
+            bestBoost = std::max(bestBoost, 0.3);
+        } else if (beforeMatch >= 2 || afterMatch >= 2) {
+            bestBoost = std::max(bestBoost, 0.2);
         }
     }
-    return 0.0;
+    return bestBoost;
 }
 
 LearningEntry *LearningSnapshot::mutableEntry(
