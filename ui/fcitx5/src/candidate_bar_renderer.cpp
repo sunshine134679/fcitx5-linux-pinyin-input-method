@@ -11,7 +11,7 @@ RenderStyle RenderStyle::reference() {
     style.text = {0.05, 0.09, 0.15, 1.0};
     style.selectedText = {1.0, 1.0, 1.0, 1.0};
     style.preedit = {0.27, 0.32, 0.40, 1.0};
-    style.panelRadius = 15.0;
+    style.panelRadius = 6.0;
     style.selectedRadius = 6.0;
     style.shadowRadius = 6.0;
     style.shadowSpread = 2.0;
