@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -8,6 +9,8 @@
 namespace modernime::core {
 
 inline constexpr double DictionaryPriorWeight = 12.0;
+inline constexpr double LearningPriorWeight = 4.0;
+inline constexpr double LearningPriorCap = 8.0;
 
 struct CandidateScore final {
     std::size_t source_index = 0;
@@ -21,7 +24,10 @@ struct CandidateScore final {
     double context_bonus = 0.0;
 
     double final_score() const {
-        return static_cast<double>(source_index) - learning_boost -
+        const double adaptive_learning = std::clamp(
+            LearningPriorWeight * learning_boost, -LearningPriorCap,
+            LearningPriorCap);
+        return static_cast<double>(source_index) - adaptive_learning -
                stability_bonus - DictionaryPriorWeight * dictionary_bonus -
                context_bonus;
     }

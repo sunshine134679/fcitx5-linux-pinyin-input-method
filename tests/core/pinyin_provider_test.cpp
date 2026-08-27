@@ -127,5 +127,29 @@ int main() {
     std::filesystem::remove(learnedPath, error);
     std::filesystem::remove(learnedPath.string() + "-wal", error);
     std::filesystem::remove(learnedPath.string() + "-shm", error);
+
+    const auto repeatedPath = testPath("repeated-selection.sqlite3");
+    modernime::pinyin::PinyinDataPaths repeatedPaths;
+    repeatedPaths.learningStore = repeatedPath.string();
+    modernime::pinyin::PinyinCandidateProvider repeatedProvider(repeatedPaths);
+    assertTrue(repeatedProvider.append("a"),
+               "single-syllable input is accepted");
+    assertTrue(indexOf(repeatedProvider.page(), "啊") == 1,
+               "啊 starts as the second candidate");
+    for (int count = 0; count < 5; ++count) {
+        const auto currentIndex = indexOf(repeatedProvider.page(), "啊");
+        assertTrue(currentIndex < repeatedProvider.page().items.size(),
+                   "repeated candidate remains available");
+        assertTrue(repeatedProvider.select(currentIndex),
+                   "repeated candidate selection is accepted");
+        repeatedProvider.reset();
+        assertTrue(repeatedProvider.append("a"),
+                   "single-syllable input can be re-entered");
+    }
+    assertTrue(repeatedProvider.page().items.front().text == "啊",
+               "five repeated selections move 啊 to the top");
+    std::filesystem::remove(repeatedPath, error);
+    std::filesystem::remove(repeatedPath.string() + "-wal", error);
+    std::filesystem::remove(repeatedPath.string() + "-shm", error);
     return EXIT_SUCCESS;
 }
