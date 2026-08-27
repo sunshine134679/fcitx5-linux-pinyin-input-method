@@ -20,6 +20,7 @@ enum class KeyKind {
     NextCandidate,
     PreviousPage,
     NextPage,
+    Punctuation,
 };
 
 struct KeyEvent final {
@@ -52,6 +53,7 @@ public:
 private:
     void refreshPage();
     bool commitCurrent();
+    bool commitRawPreedit(std::string_view suffix = {});
     bool moveCursor(std::ptrdiff_t delta);
 
     EngineHost &host_;

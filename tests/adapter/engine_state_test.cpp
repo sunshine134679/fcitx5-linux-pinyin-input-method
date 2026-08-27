@@ -106,6 +106,32 @@ struct ManyCandidateProvider final : modernime::core::CandidateProvider {
     }
 };
 
+struct EmptyCandidateProvider final : modernime::core::CandidateProvider {
+    modernime::core::CandidatePage current;
+
+    bool append(std::string_view input) override {
+        current.preedit.append(input);
+        current.items.clear();
+        return true;
+    }
+
+    bool eraseLast() override {
+        if (current.preedit.empty()) {
+            return false;
+        }
+        current.preedit.pop_back();
+        return true;
+    }
+
+    bool select(std::size_t) override { return false; }
+
+    void reset() override { current.clear(); }
+
+    const modernime::core::CandidatePage &page() const override {
+        return current;
+    }
+};
+
 void type(modernime::fcitx5::ModernIMEController &controller,
           std::string_view text) {
     for (const char character : text) {
@@ -154,6 +180,44 @@ int main() {
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Enter, 0, 0}),
                "enter commits raw fallback");
     assertTrue(host.commits.back() == "x", "raw fallback is committed");
+
+    type(controller, "x");
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '.', 0}),
+               "punctuation commits raw fallback");
+    assertTrue(host.commits.size() >= 2 &&
+                   host.commits[host.commits.size() - 2] == "x",
+               "punctuation preserves raw preedit");
+    assertTrue(host.commits.back() == ".",
+               "punctuation is committed after fallback");
+
+    type(controller, "hail");
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, ',', 0}),
+               "punctuation commits the selected candidate");
+    assertTrue(host.commits.size() >= 2 &&
+                   host.commits[host.commits.size() - 2] == "还",
+               "punctuation keeps the selected candidate");
+    assertTrue(host.commits.back() == ",",
+               "punctuation follows the selected candidate");
+
+    EmptyCandidateProvider emptyProvider;
+    RecordingHost emptyHost;
+    modernime::fcitx5::ModernIMEController emptyController(emptyHost,
+                                                            &emptyProvider);
+    type(emptyController, "x");
+    assertTrue(emptyController.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space commits a raw preedit without candidates");
+    assertTrue(emptyHost.commits.size() == 2 && emptyHost.commits[0] == "x" &&
+                   emptyHost.commits[1] == " ",
+               "space is preserved after raw fallback");
+    type(emptyController, "y");
+    assertTrue(emptyController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, ';', 0}),
+               "punctuation commits a raw preedit without candidates");
+    assertTrue(emptyHost.commits.size() == 4 && emptyHost.commits[2] == "y" &&
+                   emptyHost.commits[3] == ";",
+               "punctuation is preserved after raw fallback");
 
     controller.handle({modernime::fcitx5::KeyKind::Toggle, 0, 0});
     assertTrue(!controller.active(), "toggle disables input");

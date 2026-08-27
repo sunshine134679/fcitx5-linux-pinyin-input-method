@@ -10,6 +10,8 @@
 #include <fcitx-utils/keysymgen.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -33,6 +35,19 @@ private:
 };
 
 constexpr std::string_view statePropertyName = "modernime-fcitx5-state";
+
+bool hasNonShiftModifier(const fcitx::Key &key) {
+    return key.states().testAny(fcitx::KeyStates(
+        {fcitx::KeyState::Ctrl, fcitx::KeyState::Alt, fcitx::KeyState::Super,
+         fcitx::KeyState::Meta}));
+}
+
+bool isAsciiPunctuation(std::uint32_t unicode) {
+    if (unicode > 0x7f || unicode < 0x21) {
+        return false;
+    }
+    return std::ispunct(static_cast<unsigned char>(unicode)) != 0;
+}
 
 } // namespace
 
@@ -161,10 +176,23 @@ bool ModernIMEInputMethod::translateKey(const fcitx::Key &key,
         event.digit = static_cast<char>('1' + selection);
         return true;
     }
-    if (key.isLAZ()) {
-        event.kind = KeyKind::Character;
-        event.character = static_cast<char>(key.sym());
-        return true;
+    if (!hasNonShiftModifier(key)) {
+        const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
+        if (unicode >= 'A' && unicode <= 'Z') {
+            event.kind = KeyKind::Character;
+            event.character = static_cast<char>(unicode - 'A' + 'a');
+            return true;
+        }
+        if (unicode >= 'a' && unicode <= 'z') {
+            event.kind = KeyKind::Character;
+            event.character = static_cast<char>(unicode);
+            return true;
+        }
+        if (isAsciiPunctuation(unicode)) {
+            event.kind = KeyKind::Punctuation;
+            event.character = static_cast<char>(unicode);
+            return true;
+        }
     }
     return false;
 }

@@ -58,11 +58,22 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (page_.preedit.empty()) {
             return false;
         }
-        host_.commit(page_.preedit);
-        reset();
-        return true;
+        return commitRawPreedit();
     case KeyKind::Space:
-        return page_.items.empty() ? false : commitCurrent();
+        return page_.items.empty() ? commitRawPreedit(" ") : commitCurrent();
+    case KeyKind::Punctuation:
+        if (page_.preedit.empty()) {
+            return false;
+        }
+        if (!page_.items.empty()) {
+            if (!commitCurrent()) {
+                return false;
+            }
+        } else if (!commitRawPreedit()) {
+            return false;
+        }
+        host_.commit(std::string_view(&event.character, 1));
+        return true;
     case KeyKind::Digit: {
         if (event.digit < '1' || event.digit > '9') {
             return false;
@@ -114,6 +125,19 @@ bool ModernIMEController::moveCursor(std::ptrdiff_t delta) {
     }
     page_.cursor = static_cast<std::size_t>(next);
     host_.publishPage(page_);
+    return true;
+}
+
+bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
+    if (page_.preedit.empty()) {
+        return false;
+    }
+    const auto preedit = page_.preedit;
+    reset();
+    host_.commit(preedit);
+    if (!suffix.empty()) {
+        host_.commit(suffix);
+    }
     return true;
 }
 
