@@ -76,6 +76,30 @@ void testUserDictionaryRejectsTrailingWeightData() {
     std::filesystem::remove(path, error);
 }
 
+void testUserDictionaryRejectsMalformedPinyin() {
+    const auto path = testPath("malformed-pinyin-dictionary.txt");
+    const auto learningPath = testPath("malformed-pinyin-learning.sqlite3");
+    writeFile(path,
+              "'ni\t首撇号\t100\nni'\t尾撇号\t100\n"
+              "ni''hao\t连续撇号\t100\nni!hao\t非法字符\t100\n"
+              "NI'HAO\t合法大写\t100\n");
+    const auto dictionary = modernime::pinyin::UserDictionary::loadText(path);
+    assertTrue(dictionary.entries().size() == 1 &&
+                   dictionary.contains("nihao", "合法大写"),
+               "only well-formed pinyin rows are loaded");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.userDictionary = path.string();
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    assertTrue(provider.append("nihao"),
+               "malformed rows do not prevent provider startup");
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 void testUserDictionaryAcceptsWindowsLineEndings() {
     const auto path = testPath("crlf-user-dictionary.txt");
     writeFile(path, "ni\t换行词\t80\r\n");
@@ -159,6 +183,7 @@ void testManualCandidatesExpandForLongerInput() {
 int main() {
     testUserDictionarySkipsBadRowsAndKeepsLastDuplicate();
     testUserDictionaryRejectsTrailingWeightData();
+    testUserDictionaryRejectsMalformedPinyin();
     testUserDictionaryAcceptsWindowsLineEndings();
     testProfessionalPhraseAppearsFromConfiguredDictionary();
     testManualCandidatesAreCappedForShortInput();

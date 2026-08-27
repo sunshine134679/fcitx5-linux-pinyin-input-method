@@ -23,6 +23,29 @@ std::string keyFor(std::string_view pinyin, std::string_view phrase) {
     return key;
 }
 
+bool validUserPinyin(std::string_view pinyin) {
+    if (pinyin.empty()) {
+        return false;
+    }
+    bool hasLetter = false;
+    bool separator = false;
+    for (const char character : pinyin) {
+        const bool asciiLetter =
+            (character >= 'a' && character <= 'z') ||
+            (character >= 'A' && character <= 'Z');
+        if (asciiLetter) {
+            hasLetter = true;
+            separator = false;
+            continue;
+        }
+        if (character != '\'' || !hasLetter || separator) {
+            return false;
+        }
+        separator = true;
+    }
+    return hasLetter && !separator;
+}
+
 std::string segmentedPinyin(std::string_view pinyin) {
     if (pinyin.find('\'') != std::string_view::npos) {
         return std::string(pinyin);
@@ -88,6 +111,9 @@ UserDictionary UserDictionary::loadText(
             !std::getline(fields, weightText, '\t') ||
             std::getline(fields, extra, '\t') ||
             pinyin.empty() || phrase.empty()) {
+            continue;
+        }
+        if (!validUserPinyin(pinyin)) {
             continue;
         }
         try {
