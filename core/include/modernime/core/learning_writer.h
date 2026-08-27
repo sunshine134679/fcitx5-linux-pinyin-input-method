@@ -30,7 +30,9 @@ public:
                           std::int64_t nowMs);
     bool enqueueNegativeFeedback(std::string_view phrase,
                                  std::string_view pinyin);
-    void flush();
+    // Wait until queued events have been processed. Returns false when the
+    // backing store was unavailable or a write failed.
+    bool flush();
     std::shared_ptr<const LearningSnapshot> snapshot() const;
 
 private:
@@ -55,6 +57,7 @@ private:
     std::shared_ptr<LearningSnapshot> snapshot_;
     bool stopping_ = false;
     bool processing_ = false;
+    bool storageAvailable_ = false;
     std::thread worker_;
 };
 

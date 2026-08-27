@@ -9,7 +9,8 @@ namespace modernime::core {
 LearningWriter::LearningWriter(std::filesystem::path path)
     : store_(std::make_unique<LearningStore>(std::move(path))),
       snapshot_(std::make_shared<LearningSnapshot>()) {
-    if (store_->open()) {
+    storageAvailable_ = store_->open();
+    if (storageAvailable_) {
         const auto loaded = store_->snapshot();
         *snapshot_ = *loaded;
     }
@@ -35,6 +36,9 @@ bool LearningWriter::enqueueSelection(
     std::lock_guard lock(mutex_);
     snapshot_->recordSelection(phrase, pinyin, contextBefore, contextAfter,
                                nowMs);
+    if (!storageAvailable_ || stopping_) {
+        return false;
+    }
     events_.push({EventKind::Selection, std::string(phrase),
                   std::string(pinyin), std::string(contextBefore),
                   std::string(contextAfter), nowMs});
@@ -46,17 +50,21 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
                                               std::string_view pinyin) {
     std::lock_guard lock(mutex_);
     snapshot_->recordNegativeFeedback(phrase, pinyin);
+    if (!storageAvailable_ || stopping_) {
+        return false;
+    }
     events_.push({EventKind::NegativeFeedback, std::string(phrase),
                   std::string(pinyin), {}, {}, 0});
     wakeup_.notify_one();
     return true;
 }
 
-void LearningWriter::flush() {
+bool LearningWriter::flush() {
     std::unique_lock lock(mutex_);
     drained_.wait(lock, [this] {
         return events_.empty() && !processing_;
     });
+    return storageAvailable_;
 }
 
 std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
@@ -80,16 +88,23 @@ void LearningWriter::run() {
             processing_ = true;
         }
 
+        bool success = false;
         if (event.kind == EventKind::Selection) {
-            store_->recordSelection(event.phrase, event.pinyin,
-                                    event.contextBefore, event.contextAfter,
-                                    event.nowMs);
+            success = store_->recordSelection(
+                event.phrase, event.pinyin, event.contextBefore,
+                event.contextAfter, event.nowMs);
         } else {
-            store_->recordNegativeFeedback(event.phrase, event.pinyin);
+            success = store_->recordNegativeFeedback(event.phrase, event.pinyin);
         }
 
         {
             std::lock_guard lock(mutex_);
+            if (!success) {
+                storageAvailable_ = false;
+                while (!events_.empty()) {
+                    events_.pop();
+                }
+            }
             processing_ = false;
             if (events_.empty()) {
                 drained_.notify_all();

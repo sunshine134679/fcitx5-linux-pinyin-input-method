@@ -1,5 +1,6 @@
 #include "modernime/core/candidate_ranker.h"
 #include "modernime/core/learning_store.h"
+#include "modernime/core/learning_writer.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -88,6 +89,36 @@ void testMatchingContextRaisesCandidate() {
     std::filesystem::remove(path, error);
 }
 
+void testWriterReportsUnavailableStoreAndKeepsMemorySnapshot() {
+    const auto path = std::filesystem::path("/dev/null") /
+                      "modernime-learning.sqlite3";
+    modernime::core::LearningWriter writer(path);
+    assertTrue(!writer.enqueueSelection("内存词", "neicun" , {}, {}, 1000),
+               "writer rejects durable event when store cannot open");
+    const auto snapshot = writer.snapshot();
+    assertTrue(snapshot->boostAt("内存词", "neicun", {}, {}, 1000) > 0.0,
+               "in-memory learning remains available after storage failure");
+    assertTrue(!writer.flush(), "flush reports unavailable storage");
+}
+
+void testWriterFlushesSelectionBeforeReopen() {
+    const auto path = testPath("writer.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        assertTrue(writer.enqueueSelection("写入词", "xieruci", {}, {}, 1000),
+                   "writer accepts selection for a valid store");
+        assertTrue(writer.flush(), "flush confirms durable learning write");
+    }
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "flushed writer store reopens");
+    const auto snapshot = store.snapshot();
+    assertTrue(snapshot->boostAt("写入词", "xieruci", {}, {}, 1000) > 0.0,
+               "flushed selection survives writer shutdown");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 } // namespace
 
 int main() {
@@ -95,5 +126,7 @@ int main() {
     testFrequencyBonusIsBoundedAndMovesCandidate();
     testNegativeFeedbackReducesLearningBoost();
     testMatchingContextRaisesCandidate();
+    testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
+    testWriterFlushesSelectionBeforeReopen();
     return EXIT_SUCCESS;
 }
