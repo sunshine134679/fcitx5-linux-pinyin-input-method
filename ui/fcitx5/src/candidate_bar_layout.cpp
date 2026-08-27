@@ -6,11 +6,11 @@ namespace modernime::ui {
 
 CandidateBarMetrics CandidateBarMetrics::reference() {
     CandidateBarMetrics metrics;
-    metrics.canvasWidth = 624.0;
+    metrics.canvasWidth = 614.0;
     metrics.canvasHeight = 62.0;
     metrics.panelX = 2.0;
     metrics.panelY = 2.0;
-    metrics.panelWidth = 620.0;
+    metrics.panelWidth = 610.0;
     metrics.panelHeight = 54.0;
     metrics.panelRadius = 14.0;
     metrics.borderWidth = 1.0;
