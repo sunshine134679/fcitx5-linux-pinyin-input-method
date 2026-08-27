@@ -69,6 +69,18 @@ void testPreviousOrderAddsStabilityForNearTies() {
                "near-tied previous candidate receives stability bonus");
 }
 
+void testDecoderScoreIsNormalizedAsASecondarySignal() {
+    modernime::core::CandidateScore weaker{0, "甲", "a", 4.0F};
+    modernime::core::CandidateScore stronger{1, "乙", "a", 1.0F};
+    std::vector candidates{weaker, stronger};
+    modernime::core::CandidateRanker::rank("a", candidates);
+    assertTrue(candidates[1].decoder_bonus > candidates[0].decoder_bonus,
+               "lower decoder score receives a larger normalized bonus");
+    assertTrue(candidates[1].final_score() <
+                   static_cast<double>(candidates[1].source_index),
+               "decoder bonus participates in the final score");
+}
+
 void testNegativeFeedbackReducesLearningBoost() {
     const auto path = testPath("negative-learning.sqlite3");
     modernime::core::LearningStore store(path);
@@ -156,6 +168,7 @@ int main() {
     testSelectionPersistsAcrossReopen();
     testFrequencyBonusIsBoundedAndMovesCandidate();
     testPreviousOrderAddsStabilityForNearTies();
+    testDecoderScoreIsNormalizedAsASecondarySignal();
     testNegativeFeedbackReducesLearningBoost();
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();

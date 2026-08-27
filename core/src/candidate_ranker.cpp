@@ -17,6 +17,31 @@ CandidateRanker::rank(std::string_view userInput,
         candidate.match_priority =
             PinyinMatchPolicy::priority(userInput, candidate.full_pinyin);
         candidate.stability_bonus = 0.0;
+        candidate.decoder_bonus = 0.0;
+    }
+    float minimumDecoderScore = std::numeric_limits<float>::max();
+    float maximumDecoderScore = std::numeric_limits<float>::lowest();
+    for (const auto &candidate : candidates) {
+        if (!std::isfinite(candidate.decoder_score)) {
+            continue;
+        }
+        minimumDecoderScore =
+            std::min(minimumDecoderScore, candidate.decoder_score);
+        maximumDecoderScore =
+            std::max(maximumDecoderScore, candidate.decoder_score);
+    }
+    if (minimumDecoderScore < maximumDecoderScore) {
+        const auto range = static_cast<double>(maximumDecoderScore) -
+                           static_cast<double>(minimumDecoderScore);
+        for (auto &candidate : candidates) {
+            if (!std::isfinite(candidate.decoder_score)) {
+                continue;
+            }
+            candidate.decoder_bonus =
+                (static_cast<double>(maximumDecoderScore) -
+                 static_cast<double>(candidate.decoder_score)) /
+                range;
+        }
     }
     if (!previousOrder.empty() && !candidates.empty()) {
         const auto baseCost = [](const CandidateScore &candidate) {
