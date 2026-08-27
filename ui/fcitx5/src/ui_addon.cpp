@@ -230,15 +230,16 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         return;
     }
 
-    const auto clipboardMode =
-        page.mode == core::CandidatePageMode::Clipboard;
-    impl_->layout = CandidateBarLayout::measure(
-        page, impl_->metrics,
-        [impl = impl_.get(), clipboardMode](std::string_view value) {
-            return impl->textWidth(
-                value, clipboardMode ? impl->style.clipboardText
-                                     : impl->style.candidateText);
+    const auto textWidth = candidateTextWidthForMode(
+        page.mode,
+        [impl = impl_.get()](std::string_view value) {
+            return impl->textWidth(value);
+        },
+        [impl = impl_.get()](std::string_view value) {
+            return impl->textWidth(value, impl->style.clipboardText);
         });
+    impl_->layout = CandidateBarLayout::measure(
+        page, impl_->metrics, textWidth);
     impl_->setWindowSize(inputContext->scaleFactor());
     const auto &cursor = inputContext->cursorRect();
     if (impl_->windowAnchor.capture(cursor.left(),

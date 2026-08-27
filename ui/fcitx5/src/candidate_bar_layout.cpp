@@ -191,6 +191,15 @@ CandidateBarMetrics CandidateBarMetrics::reference() {
     return metrics;
 }
 
+std::function<double(std::string_view)> candidateTextWidthForMode(
+    core::CandidatePageMode mode,
+    std::function<double(std::string_view)> pinyinTextWidth,
+    std::function<double(std::string_view)> clipboardTextWidth) {
+    return mode == core::CandidatePageMode::Clipboard
+               ? std::move(clipboardTextWidth)
+               : std::move(pinyinTextWidth);
+}
+
 std::size_t CandidateBarLayout::visibleItems(const core::CandidatePage &page) {
     const auto limit = page.mode == core::CandidatePageMode::Clipboard
                            ? kClipboardVisibleRows

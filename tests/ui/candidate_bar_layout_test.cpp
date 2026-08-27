@@ -2,6 +2,7 @@
 #include "modernime/ui/candidate_bar_layout.h"
 
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <string_view>
 
@@ -90,6 +91,20 @@ int main() {
     assertTrue(lastCandidate.x + lastCandidate.width <=
                    metrics.panelX + metrics.panelWidth - metrics.horizontalPadding,
                "last displayed candidate stays inside the panel");
+
+    const auto pinyinWidth = modernime::ui::candidateTextWidthForMode(
+        modernime::core::CandidatePageMode::Pinyin,
+        [](std::string_view value) {
+            return value == "1.你" ? 30.0 : 999.0;
+        },
+        [](std::string_view) { return 40.0; });
+    const auto clipboardWidth = modernime::ui::candidateTextWidthForMode(
+        modernime::core::CandidatePageMode::Clipboard,
+        [](std::string_view) { return 30.0; },
+        [](std::string_view) { return 40.0; });
+    assertTrue(pinyinWidth("1.你") == 30.0 &&
+                   clipboardWidth("1.你") == 40.0,
+               "each candidate mode uses its own text measurement");
 
     modernime::core::CandidatePage clipboardPage;
     clipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;

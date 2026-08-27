@@ -60,6 +60,11 @@ struct CandidateBarMetrics final {
     static CandidateBarMetrics reference();
 };
 
+std::function<double(std::string_view)> candidateTextWidthForMode(
+    core::CandidatePageMode mode,
+    std::function<double(std::string_view)> pinyinTextWidth,
+    std::function<double(std::string_view)> clipboardTextWidth);
+
 struct CandidateGeometry final {
     Rect bounds;
     std::string displayText;
