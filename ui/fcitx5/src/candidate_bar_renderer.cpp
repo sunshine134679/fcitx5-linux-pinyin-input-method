@@ -11,14 +11,14 @@ RenderStyle RenderStyle::reference() {
     style.text = {0.06, 0.10, 0.16, 1.0};
     style.selectedText = {1.0, 1.0, 1.0, 1.0};
     style.preedit = {0.27, 0.32, 0.40, 1.0};
-    style.panelRadius = 42.0;
-    style.selectedRadius = 48.0;
-    style.shadowRadius = 18.0;
-    style.shadowSpread = 4.0;
-    style.shadowOffsetY = 8.0;
-    style.borderWidth = 2.0;
-    style.preeditText = {"Noto Sans CJK SC", 56.0, 400};
-    style.candidateText = {"Noto Sans CJK SC", 52.0, 400};
+    style.panelRadius = 14.0;
+    style.selectedRadius = 19.0;
+    style.shadowRadius = 4.0;
+    style.shadowSpread = 2.0;
+    style.shadowOffsetY = 4.0;
+    style.borderWidth = 1.0;
+    style.preeditText = {"Noto Sans CJK SC", 18.0, 400};
+    style.candidateText = {"Noto Sans CJK SC", 20.0, 400};
     return style;
 }
 

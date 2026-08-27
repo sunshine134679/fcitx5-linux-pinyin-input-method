@@ -64,12 +64,12 @@ int main() {
     assertTrue(surface.operations[5] == "text:1.还", "first candidate is drawn");
     assertTrue(surface.operations[6] == "text:2.海", "second candidate is drawn");
     assertTrue(surface.operations[7] == "text:3.害", "third candidate is drawn");
-    assertTrue(surface.rects[0].x == 212.0 && surface.rects[0].y == 338.0,
+    assertTrue(surface.rects[0].x == 0.0 && surface.rects[0].y == 6.0,
                "shadow extends below and around the panel");
     assertTrue(surface.textX.size() == 4, "all text positions are recorded");
-    assertTrue(surface.textX[1] == 277.0,
+    assertTrue(surface.textX[1] == 10.0,
                "selected candidate text is centered in its pill");
-    assertTrue(surface.textX[2] == 473.0,
+    assertTrue(surface.textX[2] == 48.0,
                "normal candidate text is centered in its slot");
     return EXIT_SUCCESS;
 }

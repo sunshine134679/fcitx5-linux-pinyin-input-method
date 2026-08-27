@@ -33,8 +33,8 @@ struct ModernIMEUserInterface::Impl final {
     bool suspended = false;
     std::unique_ptr<fcitx::EventSourceTime> gtkEventSource;
 
-    static constexpr double originX = 208.0;
-    static constexpr double originY = 220.0;
+    static constexpr double originX = 0.0;
+    static constexpr double originY = 0.0;
 
     void setWindowSize(double scale) {
         const int width = static_cast<int>(std::ceil(
@@ -42,8 +42,9 @@ struct ModernIMEUserInterface::Impl final {
             scale));
         const int height = static_cast<int>(std::ceil(
             (metrics.panelY + metrics.panelHeight + style.shadowSpread - originY +
-             8.0) *
+             style.shadowOffsetY) *
             scale));
+        gtk_widget_set_size_request(drawingArea, width, height);
         gtk_window_resize(GTK_WINDOW(window), width, height);
     }
 };
