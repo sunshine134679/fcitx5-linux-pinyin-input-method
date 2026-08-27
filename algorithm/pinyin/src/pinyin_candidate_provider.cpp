@@ -173,13 +173,13 @@ public:
             suppressedLearned_.insert(
                 candidateKey(candidate.fullPinyin, candidate.text));
         }
-        learning_->enqueueNegativeFeedback(candidate.text,
-                                            candidate.fullPinyin);
+        learning_->enqueueSuppression(candidate.text, candidate.fullPinyin);
         refresh();
         return true;
     }
 
     void reset() {
+        suppressedLearned_.clear();
         context->clear();
         refresh();
     }
@@ -233,13 +233,15 @@ private:
             const auto learningEntry = learning->entry(
                 candidate.text, candidate.full_pinyin, contextBefore_,
                 contextAfter_);
-            const bool isLearned = !isManual && learningEntry != nullptr &&
-                                   learningEntry->frequency > 0;
-            if (isLearned &&
-                suppressedLearned_.contains(candidateKey(
-                    candidate.full_pinyin, candidate.text))) {
+            const auto key = candidateKey(candidate.full_pinyin, candidate.text);
+            if (!isManual && suppressedLearned_.contains(key)) {
                 continue;
             }
+            const bool isLearned = !isManual &&
+                                   !learning->isSuppressed(
+                                       candidate.text, candidate.full_pinyin) &&
+                                   learningEntry != nullptr &&
+                                   learningEntry->frequency > 0;
             if (isManual && manualCount >= manualLimit) {
                 continue;
             }

@@ -65,11 +65,26 @@ const LearningEntry *LearningSnapshot::entry(
     return base;
 }
 
+bool LearningSnapshot::isSuppressed(std::string_view phrase,
+                                    std::string_view pinyin) const {
+    const auto normalized = normalizePinyin(pinyin);
+    for (const auto &candidate : entries_) {
+        if (candidate.phrase == phrase && candidate.pinyin == normalized &&
+            candidate.suppressed) {
+            return true;
+        }
+    }
+    return false;
+}
+
 double LearningSnapshot::boostAt(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) const {
     const auto normalized = normalizePinyin(pinyin);
+    if (isSuppressed(phrase, normalized)) {
+        return 0.0;
+    }
     const LearningEntry *candidate = nullptr;
     const LearningEntry *base = nullptr;
     for (const auto &item : entries_) {
@@ -160,7 +175,14 @@ void LearningSnapshot::recordSelection(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) {
+    const auto normalized = normalizePinyin(pinyin);
+    for (auto &item : entries_) {
+        if (item.phrase == phrase && item.pinyin == normalized) {
+            item.suppressed = false;
+        }
+    }
     auto *candidate = mutableEntry(phrase, pinyin, contextBefore, contextAfter);
+    candidate->suppressed = false;
     candidate->frequency = saturatingIncrement(candidate->frequency);
     candidate->lastSelectedMs = nowMs;
 }
@@ -168,6 +190,14 @@ void LearningSnapshot::recordSelection(
 void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,
                                               std::string_view pinyin) {
     auto *candidate = mutableEntry(phrase, pinyin, {}, {});
+    candidate->negativeFeedback =
+        saturatingIncrement(candidate->negativeFeedback);
+}
+
+void LearningSnapshot::recordSuppression(std::string_view phrase,
+                                         std::string_view pinyin) {
+    auto *candidate = mutableEntry(phrase, pinyin, {}, {});
+    candidate->suppressed = true;
     candidate->negativeFeedback =
         saturatingIncrement(candidate->negativeFeedback);
 }

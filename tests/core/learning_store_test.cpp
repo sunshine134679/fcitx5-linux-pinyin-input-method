@@ -123,6 +123,29 @@ void testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost() {
     std::filesystem::remove(path, error);
 }
 
+void testSuppressionPersistsAndDisablesLearningBoost() {
+    const auto path = testPath("suppressed-learning.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "suppression store opens");
+    assertTrue(store.recordSelection("被删词", "beishanci", {}, {}, 1000),
+               "selection is stored before suppression");
+    assertTrue(store.recordSuppression("被删词", "beishanci"),
+               "suppression is stored");
+    const auto snapshot = store.snapshot(1000);
+    const auto *entry = snapshot->entry("被删词", "beishanci", {}, {});
+    assertTrue(entry != nullptr && entry->suppressed,
+               "suppression survives in the snapshot");
+    assertTrue(snapshot->isSuppressed("被删词", "beishanci"),
+               "suppression is visible by candidate key");
+    assertTrue(snapshot->boostAt("被删词", "beishanci", {}, {}, 1000) == 0.0,
+               "suppressed candidates receive no learning boost");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
 void testCorruptedLearningCountersRemainFinite() {
     const std::vector<modernime::core::LearningEntry> entries{
         {"损坏频次", "sunhuaici", {}, {}, -3, -1000, 0},
@@ -339,6 +362,7 @@ int main() {
     testDecoderScoreIsNormalizedAsASecondarySignal();
     testNegativeFeedbackReducesLearningBoost();
     testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost();
+    testSuppressionPersistsAndDisablesLearningBoost();
     testCorruptedLearningCountersRemainFinite();
     testLearningCountersSaturateAtMaximum();
     testCorruptedSelectionTimestampDoesNotOverflow();

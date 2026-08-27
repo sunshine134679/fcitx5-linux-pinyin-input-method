@@ -16,6 +16,7 @@ constexpr const char *schema =
     "frequency INTEGER NOT NULL DEFAULT 0, "
     "last_selected_ms INTEGER NOT NULL DEFAULT 0, "
     "negative_feedback INTEGER NOT NULL DEFAULT 0, "
+    "suppressed INTEGER NOT NULL DEFAULT 0, "
     "PRIMARY KEY (pinyin, phrase, context_before, context_after));";
 
 bool bindText(sqlite3_stmt *statement, int index, std::string_view value) {
@@ -51,11 +52,41 @@ bool LearningStore::open() {
         close();
         return false;
     }
-    if (!execute("PRAGMA journal_mode=WAL;") || !execute(schema)) {
+    if (!execute("PRAGMA journal_mode=WAL;") || !execute(schema) ||
+        !ensureSuppressionColumn()) {
         close();
         return false;
     }
     return true;
+}
+
+bool LearningStore::ensureSuppressionColumn() const {
+    if (db_ == nullptr) {
+        return false;
+    }
+    constexpr const char *sql = "PRAGMA table_info(learning_entries);";
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    bool hasColumn = false;
+    int stepResult = SQLITE_OK;
+    while ((stepResult = sqlite3_step(statement)) == SQLITE_ROW) {
+        const auto *name = sqlite3_column_text(statement, 1);
+        if (name != nullptr &&
+            std::string_view(reinterpret_cast<const char *>(name)) ==
+                "suppressed") {
+            hasColumn = true;
+            break;
+        }
+    }
+    sqlite3_finalize(statement);
+    if (stepResult != SQLITE_ROW && stepResult != SQLITE_DONE) {
+        return false;
+    }
+    return hasColumn || execute(
+                           "ALTER TABLE learning_entries ADD COLUMN "
+                           "suppressed INTEGER NOT NULL DEFAULT 0;");
 }
 
 void LearningStore::close() {
@@ -83,6 +114,23 @@ bool LearningStore::recordSelection(
     if (db_ == nullptr) {
         return false;
     }
+    const auto normalized = normalizePinyin(pinyin);
+    constexpr const char *clearSuppressionSql =
+        "UPDATE learning_entries SET suppressed = 0 "
+        "WHERE pinyin = ? AND phrase = ?;";
+    sqlite3_stmt *clearStatement = nullptr;
+    if (sqlite3_prepare_v2(db_, clearSuppressionSql, -1, &clearStatement,
+                           nullptr) != SQLITE_OK) {
+        return false;
+    }
+    const bool clearBound = bindText(clearStatement, 1, normalized) &&
+                            bindText(clearStatement, 2, phrase);
+    const bool clearSuccess = clearBound &&
+                              sqlite3_step(clearStatement) == SQLITE_DONE;
+    sqlite3_finalize(clearStatement);
+    if (!clearSuccess) {
+        return false;
+    }
     constexpr const char *sql =
         "INSERT INTO learning_entries "
         "(pinyin, phrase, context_before, context_after, frequency, "
@@ -91,12 +139,11 @@ bool LearningStore::recordSelection(
         "UPDATE SET frequency = CASE "
         "WHEN frequency >= 9223372036854775807 THEN 9223372036854775807 "
         "WHEN frequency < 0 THEN 1 ELSE frequency + 1 END, "
-        "last_selected_ms = excluded.last_selected_ms;";
+        "last_selected_ms = excluded.last_selected_ms, suppressed = 0;";
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
         return false;
     }
-    const auto normalized = normalizePinyin(pinyin);
     const bool bound = bindText(statement, 1, normalized) &&
                        bindText(statement, 2, phrase) &&
                        bindText(statement, 3, contextBefore) &&
@@ -133,6 +180,32 @@ bool LearningStore::recordNegativeFeedback(std::string_view phrase,
     return success;
 }
 
+bool LearningStore::recordSuppression(std::string_view phrase,
+                                      std::string_view pinyin) {
+    if (db_ == nullptr) {
+        return false;
+    }
+    constexpr const char *sql =
+        "INSERT INTO learning_entries "
+        "(pinyin, phrase, negative_feedback, suppressed) VALUES (?, ?, 1, 1) "
+        "ON CONFLICT(pinyin, phrase, context_before, context_after) DO "
+        "UPDATE SET negative_feedback = CASE "
+        "WHEN negative_feedback >= 9223372036854775807 "
+        "THEN 9223372036854775807 "
+        "WHEN negative_feedback < 0 THEN 1 ELSE negative_feedback + 1 END, "
+        "suppressed = 1;";
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    const auto normalized = normalizePinyin(pinyin);
+    const bool bound = bindText(statement, 1, normalized) &&
+                       bindText(statement, 2, phrase);
+    const bool success = bound && sqlite3_step(statement) == SQLITE_DONE;
+    sqlite3_finalize(statement);
+    return success;
+}
+
 bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
     if (db_ == nullptr) {
         return false;
@@ -144,13 +217,20 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
         return false;
     }
     for (const auto &event : events) {
-        const bool success = event.kind == LearningEvent::Kind::Selection
-                                 ? recordSelection(
-                                       event.phrase, event.pinyin,
-                                       event.contextBefore, event.contextAfter,
-                                       event.nowMs)
-                                 : recordNegativeFeedback(event.phrase,
-                                                          event.pinyin);
+        bool success = false;
+        switch (event.kind) {
+        case LearningEvent::Kind::Selection:
+            success = recordSelection(event.phrase, event.pinyin,
+                                      event.contextBefore, event.contextAfter,
+                                      event.nowMs);
+            break;
+        case LearningEvent::Kind::NegativeFeedback:
+            success = recordNegativeFeedback(event.phrase, event.pinyin);
+            break;
+        case LearningEvent::Kind::Suppression:
+            success = recordSuppression(event.phrase, event.pinyin);
+            break;
+        }
         if (!success) {
             execute("ROLLBACK;");
             return false;
@@ -171,7 +251,8 @@ std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
     }
     constexpr const char *sql =
         "SELECT phrase, pinyin, context_before, context_after, frequency, "
-        "last_selected_ms, negative_feedback FROM learning_entries;";
+        "last_selected_ms, negative_feedback, suppressed "
+        "FROM learning_entries;";
     sqlite3_stmt *statement = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
         return {};
@@ -187,7 +268,8 @@ std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
         entries.push_back({textAt(0), textAt(1), textAt(2), textAt(3),
                            sqlite3_column_int64(statement, 4),
                            sqlite3_column_int64(statement, 5),
-                           sqlite3_column_int64(statement, 6)});
+                           sqlite3_column_int64(statement, 6),
+                           sqlite3_column_int(statement, 7) != 0});
     }
     sqlite3_finalize(statement);
     if (stepResult != SQLITE_DONE) {

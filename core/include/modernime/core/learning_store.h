@@ -14,7 +14,7 @@ struct sqlite3;
 namespace modernime::core {
 
 struct LearningEvent final {
-    enum class Kind { Selection, NegativeFeedback };
+    enum class Kind { Selection, NegativeFeedback, Suppression };
 
     Kind kind = Kind::Selection;
     std::string phrase;
@@ -39,11 +39,14 @@ public:
                          std::string_view contextAfter, std::int64_t nowMs);
     bool recordNegativeFeedback(std::string_view phrase,
                                 std::string_view pinyin);
+    bool recordSuppression(std::string_view phrase,
+                           std::string_view pinyin);
     bool recordBatch(const std::vector<LearningEvent> &events);
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;
 
 private:
     bool execute(const char *sql) const;
+    bool ensureSuppressionColumn() const;
 
     std::filesystem::path path_;
     sqlite3 *db_ = nullptr;

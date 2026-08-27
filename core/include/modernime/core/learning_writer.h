@@ -30,13 +30,15 @@ public:
                           std::int64_t nowMs);
     bool enqueueNegativeFeedback(std::string_view phrase,
                                  std::string_view pinyin);
+    bool enqueueSuppression(std::string_view phrase,
+                            std::string_view pinyin);
     // Wait until queued events have been processed. Returns false when the
     // backing store was unavailable or a write failed.
     bool flush();
     std::shared_ptr<const LearningSnapshot> snapshot() const;
 
 private:
-    enum class EventKind { Selection, NegativeFeedback };
+    enum class EventKind { Selection, NegativeFeedback, Suppression };
 
     struct Event final {
         EventKind kind = EventKind::Selection;

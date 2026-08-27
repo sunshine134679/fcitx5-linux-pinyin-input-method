@@ -111,9 +111,9 @@ int main() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 
     const auto learnedPath = testPath("remove-learned.sqlite3");
+    modernime::pinyin::PinyinDataPaths learnedPaths;
+    learnedPaths.learningStore = learnedPath.string();
     {
-        modernime::pinyin::PinyinDataPaths learnedPaths;
-        learnedPaths.learningStore = learnedPath.string();
         modernime::pinyin::PinyinCandidateProvider learnedProvider(learnedPaths);
         assertTrue(learnedProvider.append("nihao"),
                    "learned candidate input is accepted");
@@ -139,6 +139,17 @@ int main() {
     assertTrue(learnedEntry != nullptr && learnedEntry->negativeFeedback > 0,
                "learned deletion persists negative feedback");
     learnedStore.close();
+    modernime::pinyin::PinyinCandidateProvider reloadedLearnedProvider(
+        learnedPaths);
+    assertTrue(reloadedLearnedProvider.append("nihao"),
+               "reloaded learned input is accepted");
+    const auto reloadedLearnedIndex = indexOf(reloadedLearnedProvider.page(),
+                                              "你好");
+    assertTrue(reloadedLearnedIndex < reloadedLearnedProvider.page().items.size(),
+               "system candidate remains after learned suppression restart");
+    assertTrue(reloadedLearnedProvider.page().items[reloadedLearnedIndex].source ==
+                   modernime::core::CandidateSource::Engine,
+               "suppressed candidate is no longer classified as learned");
     std::filesystem::remove(learnedPath, error);
     std::filesystem::remove(learnedPath.string() + "-wal", error);
     std::filesystem::remove(learnedPath.string() + "-shm", error);

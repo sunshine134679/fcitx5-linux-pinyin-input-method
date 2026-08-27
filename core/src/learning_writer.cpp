@@ -65,6 +65,19 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
     return true;
 }
 
+bool LearningWriter::enqueueSuppression(std::string_view phrase,
+                                        std::string_view pinyin) {
+    std::lock_guard lock(mutex_);
+    snapshot_->recordSuppression(phrase, pinyin);
+    if (!storageAvailable_ || stopping_) {
+        return false;
+    }
+    events_.push({EventKind::Suppression, std::string(phrase),
+                  std::string(pinyin), {}, {}, 0});
+    wakeup_.notify_one();
+    return true;
+}
+
 bool LearningWriter::flush() {
     std::unique_lock lock(mutex_);
     drained_.wait(lock, [this] {
@@ -100,10 +113,13 @@ void LearningWriter::run() {
         std::vector<LearningEvent> storeEvents;
         storeEvents.reserve(events.size());
         for (const auto &event : events) {
+            const auto kind = event.kind == EventKind::Selection
+                                  ? LearningEvent::Kind::Selection
+                                  : event.kind == EventKind::NegativeFeedback
+                                        ? LearningEvent::Kind::NegativeFeedback
+                                        : LearningEvent::Kind::Suppression;
             storeEvents.push_back({
-                event.kind == EventKind::Selection
-                    ? LearningEvent::Kind::Selection
-                    : LearningEvent::Kind::NegativeFeedback,
+                kind,
                 event.phrase, event.pinyin, event.contextBefore,
                 event.contextAfter, event.nowMs});
         }
