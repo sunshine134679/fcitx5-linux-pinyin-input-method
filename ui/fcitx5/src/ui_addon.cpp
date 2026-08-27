@@ -44,6 +44,7 @@ struct ModernIMEUserInterface::Impl final {
             (metrics.panelY + metrics.panelHeight + style.shadowSpread - originY +
              8.0) *
             scale));
+        gtk_widget_set_size_request(drawingArea, width, height);
         gtk_window_resize(GTK_WINDOW(window), width, height);
     }
 };
