@@ -11,10 +11,11 @@
 #include <libime/pinyin/pinyindictionary.h>
 #include <libime/pinyin/pinyinime.h>
 
-#include <filesystem>
+#include <algorithm>
 #include <chrono>
-#include <memory>
 #include <cstdlib>
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -138,6 +139,11 @@ public:
             return false;
         }
         const auto &candidate = page_.items[index];
+        if (candidate.source == core::CandidateSource::Raw) {
+            context->clear();
+            refresh();
+            return true;
+        }
         if (learning_ != nullptr) {
             learning_->enqueueSelection(candidate.text, candidate.fullPinyin,
                                          contextBefore_, contextAfter_,
@@ -153,6 +159,9 @@ public:
             return false;
         }
         const auto candidate = page_.items[index];
+        if (candidate.source == core::CandidateSource::Raw) {
+            return false;
+        }
         const auto rawInput = context->userInput();
         if (candidate.source == core::CandidateSource::UserDictionary) {
             auto updatedDictionary = userDictionary_;
@@ -233,7 +242,13 @@ private:
         const auto result = buildCandidatePipeline(
             *context, *ime->dict(), learning.get(), nowMilliseconds(),
             contextBefore_, contextAfter_, previousOrder);
-        page_.items.reserve(result.order.size());
+        page_.items.reserve(result.order.size() + 1);
+        const bool hasExactPinyinMatch = std::any_of(
+            result.scored.begin(), result.scored.end(),
+            [this](const auto &candidate) {
+                return core::PinyinMatchPolicy::exactInputMatch(
+                    page_.preedit, candidate.full_pinyin);
+            });
         const auto manualLimit =
             pinyinLetterCount(page_.preedit) < 3 ? std::size_t{2}
                                                  : std::size_t{8};
@@ -279,6 +294,15 @@ private:
                 ++manualCount;
             }
             page_.items.push_back(std::move(item));
+        }
+
+        core::CandidateItem rawCandidate;
+        rawCandidate.text = page_.preedit;
+        rawCandidate.source = core::CandidateSource::Raw;
+        if (!hasExactPinyinMatch && page_.preedit.size() >= 3) {
+            page_.items.insert(page_.items.begin(), std::move(rawCandidate));
+        } else {
+            page_.items.push_back(std::move(rawCandidate));
         }
     }
 

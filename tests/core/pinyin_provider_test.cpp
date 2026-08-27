@@ -60,6 +60,19 @@ int main() {
 
     assertTrue(provider.eraseLast(), "last pinyin byte can be erased");
     assertTrue(provider.page().preedit == "niha", "erase refreshes preedit");
+
+    provider.reset();
+    assertTrue(provider.append("who"), "English letters are accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "who" &&
+                   provider.page().items.front().source ==
+                       modernime::core::CandidateSource::Raw,
+               "English input exposes the original text as the first candidate");
+    assertTrue(provider.select(0),
+               "the original English candidate can be selected");
+    assertTrue(provider.page().preedit.empty(),
+               "selecting the English candidate clears the preedit");
+
     provider.reset();
     assertTrue(provider.append("xi'an"), "apostrophe separates pinyin syllables");
     assertTrue(provider.page().preedit == "xi'an",

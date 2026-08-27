@@ -8,7 +8,7 @@
 
 namespace modernime::core {
 
-enum class CandidateSource { Engine, UserDictionary, Learned };
+enum class CandidateSource { Engine, UserDictionary, Learned, Raw };
 
 std::string candidateOrderKey(std::string_view text,
                               std::string_view fullPinyin);
