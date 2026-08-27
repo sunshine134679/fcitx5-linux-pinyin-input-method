@@ -1,4 +1,5 @@
 /build*/
+.worktrees/
 /out/
 /install-manifest.txt
 compile_commands.json
