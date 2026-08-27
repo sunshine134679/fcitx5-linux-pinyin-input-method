@@ -15,6 +15,7 @@
 
 #include <gtk/gtk.h>
 #include <libayatana-appindicator/app-indicator.h>
+#include <pango/pango.h>
 
 #include <cmath>
 #include <memory>
@@ -38,7 +39,7 @@ struct ModernIMEUserInterface::Impl final {
 
     void setWindowSize(double scale) {
         const int width = static_cast<int>(std::ceil(
-            (metrics.panelX + metrics.panelWidth + style.shadowSpread - originX) *
+            (layout.panel.x + layout.panel.width + style.shadowSpread - originX) *
             scale));
         const int height = static_cast<int>(std::ceil(
             (metrics.panelY + metrics.panelHeight + style.shadowSpread - originY +
@@ -46,6 +47,28 @@ struct ModernIMEUserInterface::Impl final {
             scale));
         gtk_widget_set_size_request(drawingArea, width, height);
         gtk_window_resize(GTK_WINDOW(window), width, height);
+    }
+
+    double textWidth(std::string_view value) const {
+        PangoContext *context = gtk_widget_get_pango_context(drawingArea);
+        PangoLayout *textLayout = pango_layout_new(context);
+        PangoFontDescription *font = pango_font_description_new();
+        pango_font_description_set_family(font, style.candidateText.family.c_str());
+        pango_font_description_set_absolute_size(
+            font, style.candidateText.size * PANGO_SCALE);
+        pango_font_description_set_weight(
+            font, style.candidateText.weight >= 700 ? PANGO_WEIGHT_BOLD
+                                                    : PANGO_WEIGHT_NORMAL);
+        pango_layout_set_font_description(textLayout, font);
+        pango_layout_set_text(textLayout, value.data(),
+                              static_cast<int>(value.size()));
+        int width = 0;
+        int height = 0;
+        pango_layout_get_pixel_size(textLayout, &width, &height);
+        (void)height;
+        pango_font_description_free(font);
+        g_object_unref(textLayout);
+        return static_cast<double>(width);
     }
 };
 
@@ -173,7 +196,11 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         return;
     }
 
-    impl_->layout = CandidateBarLayout::measure(page, impl_->metrics);
+    impl_->layout = CandidateBarLayout::measure(
+        page, impl_->metrics,
+        [impl = impl_.get()](std::string_view value) {
+            return impl->textWidth(value);
+        });
     impl_->setWindowSize(inputContext->scaleFactor());
     const auto &cursor = inputContext->cursorRect();
     gtk_window_move(GTK_WINDOW(impl_->window), cursor.left(),

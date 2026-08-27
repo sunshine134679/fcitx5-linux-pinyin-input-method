@@ -39,6 +39,12 @@ std::size_t CandidateBarLayout::visibleItems(const core::CandidatePage &page) {
 
 CandidateBarLayout CandidateBarLayout::measure(
     const core::CandidatePage &page, const CandidateBarMetrics &metrics) {
+    return measure(page, metrics, {});
+}
+
+CandidateBarLayout CandidateBarLayout::measure(
+    const core::CandidatePage &page, const CandidateBarMetrics &metrics,
+    const std::function<double(std::string_view)> &textWidth) {
     CandidateBarLayout layout;
     layout.panel = {metrics.panelX, metrics.panelY, metrics.panelWidth,
                     metrics.panelHeight};
@@ -49,20 +55,35 @@ CandidateBarLayout CandidateBarLayout::measure(
 
     const auto count = visibleItems(page);
     layout.candidates.reserve(count);
+    double nextX = metrics.panelX + metrics.horizontalPadding;
+    double contentRight = nextX;
     for (std::size_t index = 0; index < count; ++index) {
         const auto selected = index == page.cursor;
-        const auto x = metrics.panelX + metrics.horizontalPadding +
-                       static_cast<double>(index) * metrics.candidateAdvance;
+        const auto displayText =
+            std::to_string(index + 1) + "." + page.items[index].text;
+        double slotWidth = metrics.candidateWidth;
+        double selectedWidth = metrics.selectedWidth;
+        if (textWidth) {
+            const auto measuredWidth =
+                std::max(0.0, textWidth(displayText) + 8.0);
+            slotWidth = std::max(slotWidth, measuredWidth);
+            selectedWidth = std::max(selectedWidth, measuredWidth);
+        }
+        const auto x = nextX;
         const auto y = metrics.panelY +
                        (metrics.panelHeight - metrics.candidateHeight) / 2.0;
         layout.candidates.push_back(
-            {{x, y, metrics.candidateWidth, metrics.candidateHeight},
-             std::to_string(index + 1) + "." + page.items[index].text, selected});
+            {{x, y, slotWidth, metrics.candidateHeight}, displayText, selected});
         if (selected) {
-            layout.selectedPill = {x, y, metrics.selectedWidth,
-                                   metrics.selectedHeight};
+            layout.selectedPill = {x, y, selectedWidth, metrics.selectedHeight};
         }
+        const auto occupiedWidth =
+            selected ? std::max(slotWidth, selectedWidth) : slotWidth;
+        contentRight = std::max(contentRight, x + occupiedWidth);
+        nextX = x + std::max(metrics.candidateAdvance, occupiedWidth + 2.0);
     }
+    layout.panel.width = std::max(
+        metrics.panelWidth, contentRight - metrics.panelX + metrics.horizontalPadding);
     return layout;
 }
 

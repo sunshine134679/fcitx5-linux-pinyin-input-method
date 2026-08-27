@@ -41,10 +41,6 @@ void CandidateBarRenderer::render(RenderSurface &surface,
                             style.selected, true);
     }
 
-    if (!layout.preedit.empty()) {
-        surface.text(layout.preedit, layout.preeditX, layout.preeditBaseline,
-                     style.preeditText, style.preedit);
-    }
     for (const auto &candidate : layout.candidates) {
         const Rect textBounds = candidate.selected ? layout.selectedPill
                                                    : candidate.bounds;

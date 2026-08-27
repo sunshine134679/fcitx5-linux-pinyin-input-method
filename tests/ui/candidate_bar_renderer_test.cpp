@@ -54,22 +54,21 @@ int main() {
     modernime::ui::CandidateBarRenderer::render(
         surface, layout, modernime::ui::RenderStyle::reference());
 
-    assertTrue(surface.operations.size() == 8,
-               "one shadow, panel, border, pill, preedit and three candidates");
+    assertTrue(surface.operations.size() == 7,
+               "one shadow, panel, border, pill and three candidates");
     assertTrue(surface.operations[0] == "rounded-fill", "shadow is drawn first");
     assertTrue(surface.operations[1] == "rounded-fill", "panel is drawn second");
     assertTrue(surface.operations[2] == "rounded-stroke", "border is drawn third");
     assertTrue(surface.operations[3] == "rounded-fill", "selected pill is drawn fourth");
-    assertTrue(surface.operations[4] == "text:hail", "preedit is drawn fifth");
-    assertTrue(surface.operations[5] == "text:1.还", "first candidate is drawn");
-    assertTrue(surface.operations[6] == "text:2.海", "second candidate is drawn");
-    assertTrue(surface.operations[7] == "text:3.害", "third candidate is drawn");
+    assertTrue(surface.operations[4] == "text:1.还", "first candidate is drawn");
+    assertTrue(surface.operations[5] == "text:2.海", "second candidate is drawn");
+    assertTrue(surface.operations[6] == "text:3.害", "third candidate is drawn");
     assertTrue(surface.rects[0].x == 0.0 && surface.rects[0].y == 6.0,
                "shadow extends below and around the panel");
-    assertTrue(surface.textX.size() == 4, "all text positions are recorded");
-    assertTrue(surface.textX[1] == 10.0,
+    assertTrue(surface.textX.size() == 3, "candidate text positions are recorded");
+    assertTrue(surface.textX[0] == 10.0,
                "selected candidate text is centered in its pill");
-    assertTrue(surface.textX[2] == 48.0,
+    assertTrue(surface.textX[1] == 48.0,
                "normal candidate text is centered in its slot");
     return EXIT_SUCCESS;
 }

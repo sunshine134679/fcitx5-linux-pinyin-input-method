@@ -3,7 +3,9 @@
 #include "modernime/core/candidate_model.h"
 
 #include <cstddef>
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace modernime::ui {
@@ -61,6 +63,9 @@ struct CandidateBarLayout final {
 
     static CandidateBarLayout measure(const core::CandidatePage &page,
                                       const CandidateBarMetrics &metrics);
+    static CandidateBarLayout measure(
+        const core::CandidatePage &page, const CandidateBarMetrics &metrics,
+        const std::function<double(std::string_view)> &textWidth);
     static std::size_t visibleItems(const core::CandidatePage &page);
 };
 

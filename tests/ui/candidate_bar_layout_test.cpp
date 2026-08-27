@@ -53,5 +53,27 @@ int main() {
                        layout.candidates[index].bounds.x,
                    "candidate slots are ordered left to right");
     }
+
+    modernime::core::CandidatePage longWordPage;
+    longWordPage.preedit = "df";
+    for (std::size_t index = 0; index < 9; ++index) {
+        longWordPage.items.push_back({"地方", "df", index});
+    }
+    longWordPage.cursor = 0;
+    const auto longWordLayout = modernime::ui::CandidateBarLayout::measure(
+        longWordPage, metrics,
+        [](std::string_view) { return 52.0; });
+    assertTrue(longWordLayout.panel.width > metrics.panelWidth,
+               "panel expands for multi-character candidates");
+    assertTrue(longWordLayout.selectedPill.width >=
+                   longWordLayout.candidates.front().bounds.width,
+               "selected pill contains the selected candidate slot");
+    for (std::size_t index = 1; index < longWordLayout.candidates.size();
+         ++index) {
+        const auto &previous = longWordLayout.candidates[index - 1].bounds;
+        const auto &current = longWordLayout.candidates[index].bounds;
+        assertTrue(previous.x + previous.width <= current.x,
+                   "multi-character candidate slots do not overlap");
+    }
     return EXIT_SUCCESS;
 }
