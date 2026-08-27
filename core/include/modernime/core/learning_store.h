@@ -5,11 +5,24 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 struct sqlite3;
 
 namespace modernime::core {
+
+struct LearningEvent final {
+    enum class Kind { Selection, NegativeFeedback };
+
+    Kind kind = Kind::Selection;
+    std::string phrase;
+    std::string pinyin;
+    std::string contextBefore;
+    std::string contextAfter;
+    std::int64_t nowMs = 0;
+};
 
 class LearningStore final {
 public:
@@ -26,6 +39,7 @@ public:
                          std::string_view contextAfter, std::int64_t nowMs);
     bool recordNegativeFeedback(std::string_view phrase,
                                 std::string_view pinyin);
+    bool recordBatch(const std::vector<LearningEvent> &events);
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;
 
 private:

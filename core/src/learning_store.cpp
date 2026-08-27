@@ -124,6 +124,36 @@ bool LearningStore::recordNegativeFeedback(std::string_view phrase,
     return success;
 }
 
+bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
+    if (db_ == nullptr) {
+        return false;
+    }
+    if (events.empty()) {
+        return true;
+    }
+    if (!execute("BEGIN IMMEDIATE;")) {
+        return false;
+    }
+    for (const auto &event : events) {
+        const bool success = event.kind == LearningEvent::Kind::Selection
+                                 ? recordSelection(
+                                       event.phrase, event.pinyin,
+                                       event.contextBefore, event.contextAfter,
+                                       event.nowMs)
+                                 : recordNegativeFeedback(event.phrase,
+                                                          event.pinyin);
+        if (!success) {
+            execute("ROLLBACK;");
+            return false;
+        }
+    }
+    if (!execute("COMMIT;")) {
+        execute("ROLLBACK;");
+        return false;
+    }
+    return true;
+}
+
 std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
     std::int64_t) const {
     std::vector<LearningEntry> entries;

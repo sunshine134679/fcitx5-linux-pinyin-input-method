@@ -2,6 +2,7 @@
 
 #include "modernime/core/learning_store.h"
 
+#include <vector>
 #include <utility>
 
 namespace modernime::core {
@@ -74,7 +75,7 @@ std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
 
 void LearningWriter::run() {
     while (true) {
-        Event event;
+        std::vector<Event> events;
         {
             std::unique_lock lock(mutex_);
             wakeup_.wait(lock, [this] {
@@ -83,19 +84,25 @@ void LearningWriter::run() {
             if (stopping_ && events_.empty()) {
                 return;
             }
-            event = std::move(events_.front());
-            events_.pop();
+            events.reserve(events_.size());
+            while (!events_.empty()) {
+                events.push_back(std::move(events_.front()));
+                events_.pop();
+            }
             processing_ = true;
         }
 
-        bool success = false;
-        if (event.kind == EventKind::Selection) {
-            success = store_->recordSelection(
+        std::vector<LearningEvent> storeEvents;
+        storeEvents.reserve(events.size());
+        for (const auto &event : events) {
+            storeEvents.push_back({
+                event.kind == EventKind::Selection
+                    ? LearningEvent::Kind::Selection
+                    : LearningEvent::Kind::NegativeFeedback,
                 event.phrase, event.pinyin, event.contextBefore,
-                event.contextAfter, event.nowMs);
-        } else {
-            success = store_->recordNegativeFeedback(event.phrase, event.pinyin);
+                event.contextAfter, event.nowMs});
         }
+        const bool success = store_->recordBatch(storeEvents);
 
         {
             std::lock_guard lock(mutex_);

@@ -150,13 +150,41 @@ void testWriterFlushesSelectionBeforeReopen() {
         modernime::core::LearningWriter writer(path);
         assertTrue(writer.enqueueSelection("写入词", "xieruci", {}, {}, 1000),
                    "writer accepts selection for a valid store");
+        assertTrue(writer.enqueueSelection("写入词", "xieruci", {}, {}, 2000),
+                   "writer accepts repeated selection for a valid store");
+        assertTrue(writer.enqueueNegativeFeedback("写入词", "xieruci"),
+                   "writer accepts feedback for a valid store");
         assertTrue(writer.flush(), "flush confirms durable learning write");
     }
     modernime::core::LearningStore store(path);
     assertTrue(store.open(), "flushed writer store reopens");
     const auto snapshot = store.snapshot();
-    assertTrue(snapshot->boostAt("写入词", "xieruci", {}, {}, 1000) > 0.0,
-               "flushed selection survives writer shutdown");
+    const auto *entry = snapshot->entry("写入词", "xieruci", {}, {});
+    assertTrue(entry != nullptr && entry->frequency == 2 &&
+                   entry->negativeFeedback == 1,
+               "flushed batch survives writer shutdown");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
+void testLearningBatchPersistsAsOneLogicalUpdate() {
+    const auto path = testPath("learning-batch.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "batch learning store opens");
+    const std::vector<modernime::core::LearningEvent> events{
+        {modernime::core::LearningEvent::Kind::Selection, "批量词",
+         "piliangci", {}, {}, 1000},
+        {modernime::core::LearningEvent::Kind::Selection, "批量词",
+         "piliangci", {}, {}, 2000},
+        {modernime::core::LearningEvent::Kind::NegativeFeedback, "批量词",
+         "piliangci", {}, {}, 0}};
+    assertTrue(store.recordBatch(events), "learning events commit as a batch");
+    const auto snapshot = store.snapshot(2000);
+    const auto *entry = snapshot->entry("批量词", "piliangci", {}, {});
+    assertTrue(entry != nullptr && entry->frequency == 2 &&
+                   entry->negativeFeedback == 1,
+               "batch preserves every learning event");
     store.close();
     std::error_code error;
     std::filesystem::remove(path, error);
@@ -174,5 +202,6 @@ int main() {
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
     testWriterFlushesSelectionBeforeReopen();
+    testLearningBatchPersistsAsOneLogicalUpdate();
     return EXIT_SUCCESS;
 }
