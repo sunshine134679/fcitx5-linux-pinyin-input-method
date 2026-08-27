@@ -17,8 +17,8 @@ CandidateBarMetrics CandidateBarMetrics::reference() {
     metrics.shadowRadius = 4.0;
     metrics.shadowOpacity = 0.12;
     metrics.horizontalPadding = 8.0;
-    metrics.candidateTextPadding = 4.0;
-    metrics.selectedTextPadding = 8.0;
+    metrics.candidateTextPadding = 0.0;
+    metrics.selectedTextPadding = 6.0;
     metrics.candidateGap = 2.0;
     metrics.candidateAdvance = 38.0;
     metrics.candidateWidth = 34.0;
@@ -87,8 +87,11 @@ CandidateBarLayout CandidateBarLayout::measure(
         if (selected) {
             layout.selectedPill = {x, y, selectedWidth, metrics.selectedHeight};
         }
-        nextX = x + std::max(metrics.candidateAdvance,
-                             occupiedWidth + metrics.candidateGap);
+        const auto advance = textWidth
+                                 ? occupiedWidth + metrics.candidateGap
+                                 : std::max(metrics.candidateAdvance,
+                                            occupiedWidth + metrics.candidateGap);
+        nextX = x + advance;
     }
     return layout;
 }

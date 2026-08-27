@@ -54,6 +54,16 @@ int main() {
                    "candidate slots are ordered left to right");
     }
 
+    modernime::core::CandidatePage singleCharPage;
+    singleCharPage.preedit = "h";
+    for (std::size_t index = 0; index < 9; ++index) {
+        singleCharPage.items.push_back({"还", "h", index});
+    }
+    const auto singleCharLayout = modernime::ui::CandidateBarLayout::measure(
+        singleCharPage, metrics, [](std::string_view) { return 33.0; });
+    assertTrue(singleCharLayout.candidates.size() == 9,
+               "nine short candidates fit the fixed panel");
+
     modernime::core::CandidatePage longWordPage;
     longWordPage.preedit = "df";
     for (std::size_t index = 0; index < 9; ++index) {
@@ -62,12 +72,12 @@ int main() {
     longWordPage.cursor = 0;
     const auto longWordLayout = modernime::ui::CandidateBarLayout::measure(
         longWordPage, metrics,
-        [](std::string_view) { return 40.0; });
+        [](std::string_view) { return 47.0; });
     assertTrue(longWordLayout.panel.width == metrics.panelWidth,
                "panel keeps the fixed reference width");
     assertTrue(longWordLayout.candidates.size() == 6,
                "only candidates that fit the fixed panel are displayed");
-    assertTrue(longWordLayout.selectedPill.width == 56.0,
+    assertTrue(longWordLayout.selectedPill.width == 59.0,
                "selected pill has wider horizontal padding");
     for (std::size_t index = 1; index < longWordLayout.candidates.size();
          ++index) {
