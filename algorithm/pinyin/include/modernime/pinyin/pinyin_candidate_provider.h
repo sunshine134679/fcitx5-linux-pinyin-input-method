@@ -12,6 +12,7 @@ namespace modernime::pinyin {
 struct PinyinDataPaths final {
     std::string dictionary = "/usr/share/libime/sc.dict";
     std::string languageModel = "/usr/lib/x86_64-linux-gnu/libime/zh_CN.lm";
+    std::string userDictionary;
     std::string learningStore;
 };
 

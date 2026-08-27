@@ -7,10 +7,13 @@
 
 namespace modernime::core {
 
+enum class CandidateSource { Engine, UserDictionary, Learned };
+
 struct CandidateItem final {
     std::string text;
     std::string fullPinyin;
     std::size_t sourceIndex = 0;
+    CandidateSource source = CandidateSource::Engine;
 };
 
 struct CandidatePage final {

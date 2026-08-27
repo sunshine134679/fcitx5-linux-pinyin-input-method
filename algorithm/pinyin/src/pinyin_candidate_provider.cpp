@@ -1,6 +1,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include "modernime/pinyin/candidate_pipeline.h"
+#include "modernime/pinyin/user_dictionary.h"
 
 #include "modernime/core/learning_writer.h"
 
@@ -14,6 +15,7 @@
 #include <memory>
 #include <cstdlib>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 namespace modernime::pinyin {
@@ -34,10 +36,41 @@ std::filesystem::path defaultLearningPath() {
     return {};
 }
 
+std::filesystem::path defaultUserDictionaryPath() {
+    const auto *dataHome = std::getenv("XDG_DATA_HOME");
+    if (dataHome != nullptr && *dataHome != '\0') {
+        return std::filesystem::path(dataHome) / "modernime" /
+               "user-dictionary.txt";
+    }
+    const auto *home = std::getenv("HOME");
+    if (home != nullptr && *home != '\0') {
+        return std::filesystem::path(home) / ".local" / "share" /
+               "modernime" / "user-dictionary.txt";
+    }
+    return {};
+}
+
 std::int64_t nowMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch())
         .count();
+}
+
+std::size_t pinyinLetterCount(std::string_view input) {
+    std::size_t count = 0;
+    for (const char character : input) {
+        if (character >= 'a' && character <= 'z') {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::string candidateKey(std::string_view pinyin, std::string_view text) {
+    std::string key = core::normalizePinyin(pinyin);
+    key.push_back('\x1f');
+    key.append(text);
+    return key;
 }
 
 } // namespace
@@ -48,12 +81,17 @@ public:
         : learning_(std::make_unique<core::LearningWriter>(
               paths.learningStore.empty()
                   ? defaultLearningPath()
-                  : std::filesystem::path(paths.learningStore))) {
+                  : std::filesystem::path(paths.learningStore))),
+          userDictionary_(UserDictionary::loadText(
+              paths.userDictionary.empty()
+                  ? defaultUserDictionaryPath()
+                  : std::filesystem::path(paths.userDictionary))) {
         auto dictionary = std::make_unique<libime::PinyinDictionary>();
         if (std::filesystem::is_regular_file(paths.dictionary)) {
             dictionary->load(0, paths.dictionary.c_str(),
                              libime::PinyinDictFormat::Binary);
         }
+        userDictionary_.addTo(*dictionary, 1);
 
         std::unique_ptr<libime::UserLanguageModel> model;
         if (std::filesystem::is_regular_file(paths.languageModel)) {
@@ -131,12 +169,33 @@ private:
             *context, *ime->dict(), learning.get(), nowMilliseconds(),
             contextBefore_, contextAfter_);
         page_.items.reserve(result.order.size());
+        const auto manualLimit =
+            pinyinLetterCount(page_.preedit) < 3 ? std::size_t{2}
+                                                 : std::size_t{8};
+        std::size_t manualCount = 0;
+        std::unordered_set<std::string> seen;
+        seen.reserve(result.order.size());
         for (const auto sourceIndex : result.order) {
             const auto &candidate = result.scored[sourceIndex];
+            const bool isManual = userDictionary_.contains(
+                candidate.full_pinyin, candidate.text);
+            if (isManual && manualCount >= manualLimit) {
+                continue;
+            }
+            if (!seen.emplace(candidateKey(candidate.full_pinyin,
+                                           candidate.text))
+                     .second) {
+                continue;
+            }
             core::CandidateItem item;
             item.text = candidate.text;
             item.fullPinyin = candidate.full_pinyin;
             item.sourceIndex = candidate.source_index;
+            item.source = isManual ? core::CandidateSource::UserDictionary
+                                   : core::CandidateSource::Engine;
+            if (isManual) {
+                ++manualCount;
+            }
             page_.items.push_back(std::move(item));
         }
     }
@@ -144,6 +203,7 @@ private:
     std::unique_ptr<libime::PinyinIME> ime;
     std::unique_ptr<libime::PinyinContext> context;
     std::unique_ptr<core::LearningWriter> learning_;
+    UserDictionary userDictionary_;
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;

@@ -15,6 +15,14 @@ target_link_libraries(modernime_pinyin_match_tests PRIVATE modernime_core)
 add_test(NAME modernime_pinyin_match COMMAND modernime_pinyin_match_tests)
 
 if(MODERNIME_BUILD_LIBIME_PINYIN)
+    add_executable(modernime_user_dictionary_tests
+        core/user_dictionary_test.cpp
+    )
+    target_link_libraries(modernime_user_dictionary_tests PRIVATE modernime_pinyin)
+    add_test(NAME modernime_user_dictionary
+        COMMAND modernime_user_dictionary_tests
+    )
+
     add_executable(modernime_pinyin_provider_tests core/pinyin_provider_test.cpp)
     target_link_libraries(modernime_pinyin_provider_tests PRIVATE modernime_pinyin)
     add_test(NAME modernime_pinyin_provider COMMAND modernime_pinyin_provider_tests)

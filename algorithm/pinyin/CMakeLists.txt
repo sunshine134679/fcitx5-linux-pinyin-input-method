@@ -4,6 +4,7 @@ find_package(LibIMEPinyin REQUIRED)
 add_library(modernime_pinyin STATIC
     src/candidate_pipeline.cpp
     src/pinyin_candidate_provider.cpp
+    src/user_dictionary.cpp
 )
 target_include_directories(modernime_pinyin
     PUBLIC
