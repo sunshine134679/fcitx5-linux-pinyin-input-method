@@ -77,9 +77,33 @@ mkdir -p "$manifest_dir"
 } > "$manifest"
 
 if command -v fcitx5 >/dev/null 2>&1; then
+    previous_fcitx_pid=$(pgrep -o -x fcitx5 || true)
     env FCITX_ADDON_DIRS="$prefix/lib/fcitx5:$system_addon_dir" \
         fcitx5 -d -r -u modernime-ui >/dev/null 2>&1 &
     printf 'Fcitx5 restart requested with the ModernIME UI addon\n'
+    if command -v fcitx5-remote >/dev/null 2>&1; then
+        activated=false
+        for attempt in {1..20}; do
+            current_fcitx_pid=$(pgrep -o -x fcitx5 || true)
+            if [[ -n "$current_fcitx_pid" &&
+                  "$current_fcitx_pid" != "$previous_fcitx_pid" ]] &&
+               env FCITX_ADDON_DIRS="$prefix/lib/fcitx5:$system_addon_dir" \
+                   fcitx5-remote -s modernime >/dev/null 2>&1 &&
+               env FCITX_ADDON_DIRS="$prefix/lib/fcitx5:$system_addon_dir" \
+                   fcitx5-remote -o >/dev/null 2>&1 &&
+               [[ "$(fcitx5-remote -n 2>/dev/null)" == "modernime" ]] &&
+               [[ "$(fcitx5-remote 2>/dev/null)" == "2" ]]; then
+                activated=true
+                break
+            fi
+            sleep 0.2
+        done
+        if [[ "$activated" == true ]]; then
+            printf 'ModernIME input method activated\n'
+        else
+            printf 'ModernIME input method could not be activated automatically; use: fcitx5-remote -s modernime\n' >&2
+        fi
+    fi
 else
     printf 'Fcitx5 executable not found; start it after installation with: fcitx5 -u modernime-ui\n' >&2
 fi
