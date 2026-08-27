@@ -18,8 +18,10 @@
 #include <libayatana-appindicator/app-indicator.h>
 #include <pango/pango.h>
 
+#include <chrono>
 #include <cmath>
 #include <memory>
+#include <string>
 
 namespace modernime::ui {
 
@@ -31,6 +33,8 @@ struct ModernIMEUserInterface::Impl final {
     GtkWidget *indicatorMenu = nullptr;
     CandidateBarLayout layout;
     WindowAnchor windowAnchor;
+    std::string modePrompt;
+    std::chrono::steady_clock::time_point modePromptDeadline;
     RenderStyle style = RenderStyle::reference();
     CandidateBarMetrics metrics = CandidateBarMetrics::reference();
     bool gtkAvailable = false;
@@ -96,6 +100,36 @@ struct ModernIMEUserInterface::Impl final {
             std::string(StatusIndicator::titleForInputMethod(inputMethod));
         app_indicator_set_label(indicator, label.c_str(), "");
         app_indicator_set_title(indicator, title.c_str());
+    }
+
+    void showModePrompt(fcitx::InputContext *inputContext) {
+        if (instance == nullptr || inputContext == nullptr) {
+            return;
+        }
+        const auto inputMethod = instance->inputMethod(inputContext);
+        modePrompt =
+            std::string(StatusIndicator::promptForInputMethod(inputMethod));
+        layout = CandidateBarLayout::measure({}, metrics);
+        layout.modePrompt = modePrompt;
+        windowAnchor.reset();
+        setWindowSize(inputContext->scaleFactor());
+        const auto &cursor = inputContext->cursorRect();
+        windowAnchor.capture(cursor.left(), cursor.top() + cursor.height());
+        gtk_window_move(GTK_WINDOW(window), windowAnchor.x, windowAnchor.y);
+        modePromptDeadline = std::chrono::steady_clock::now() +
+                             std::chrono::milliseconds(1000);
+        gtk_widget_queue_draw(drawingArea);
+        if (!suspended) {
+            gtk_widget_show_all(window);
+        }
+    }
+
+    void expireModePrompt() {
+        if (!modePrompt.empty() &&
+            std::chrono::steady_clock::now() >= modePromptDeadline) {
+            modePrompt.clear();
+            gtk_widget_hide(window);
+        }
     }
 };
 
@@ -179,8 +213,9 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     if (instance != nullptr) {
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 10000, 1000,
-            [](fcitx::EventSourceTime *source, uint64_t) {
+            [impl = impl_.get()](fcitx::EventSourceTime *source, uint64_t) {
                 g_main_context_iteration(nullptr, FALSE);
+                impl->expireModePrompt();
                 source->setNextInterval(10000);
                 source->setEnabled(true);
                 return true;
@@ -217,16 +252,24 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         return;
     }
     impl_->updateIndicator(inputContext);
+    if (component == fcitx::UserInterfaceComponent::StatusArea) {
+        impl_->showModePrompt(inputContext);
+        return;
+    }
     if (component != fcitx::UserInterfaceComponent::InputPanel) {
         return;
     }
     const auto page = pageFromInputPanel(inputContext->inputPanel());
     if (page.items.empty()) {
+        if (!impl_->modePrompt.empty()) {
+            return;
+        }
         gtk_widget_hide(impl_->window);
         impl_->windowAnchor.reset();
         return;
     }
 
+    impl_->modePrompt.clear();
     impl_->layout = CandidateBarLayout::measure(
         page, impl_->metrics,
         [impl = impl_.get()](std::string_view value) {

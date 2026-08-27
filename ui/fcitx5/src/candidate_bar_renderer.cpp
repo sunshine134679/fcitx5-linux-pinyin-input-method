@@ -45,6 +45,18 @@ void CandidateBarRenderer::render(RenderSurface &surface,
                             style.selected, true);
     }
 
+    if (!layout.modePrompt.empty()) {
+        const auto metrics =
+            surface.textMetrics(layout.modePrompt, style.candidateText);
+        const auto textX = layout.panel.x +
+                           (layout.panel.width - metrics.width) / 2.0;
+        const auto baseline = layout.panel.y +
+                              (layout.panel.height - metrics.height) / 2.0 +
+                              metrics.baseline;
+        surface.text(layout.modePrompt, textX, baseline, style.candidateText,
+                     style.text);
+    }
+
     for (const auto &candidate : layout.candidates) {
         const Rect textBounds = candidate.selected ? layout.selectedPill
                                                    : candidate.bounds;

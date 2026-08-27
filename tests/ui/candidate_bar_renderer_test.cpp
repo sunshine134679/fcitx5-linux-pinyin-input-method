@@ -100,5 +100,13 @@ int main() {
                    surface.textBaseline[4] == 33.75 &&
                    surface.textBaseline[5] == 33.75,
                "candidate text is vertically centered in its slot");
+
+    auto promptLayout = layout;
+    promptLayout.modePrompt = "中文";
+    RecordingSurface promptSurface;
+    modernime::ui::CandidateBarRenderer::render(promptSurface, promptLayout,
+                                                 style);
+    assertTrue(promptSurface.operations[4] == "text:中文",
+               "mode prompt is drawn inside the candidate panel");
     return EXIT_SUCCESS;
 }

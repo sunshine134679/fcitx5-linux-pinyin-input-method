@@ -20,6 +20,11 @@ struct StatusIndicator final {
         std::string_view inputMethod) {
         return inputMethod == "modernime" ? "中文输入法" : "英文键盘";
     }
+
+    static constexpr std::string_view promptForInputMethod(
+        std::string_view inputMethod) {
+        return inputMethod == "modernime" ? "中文" : "英文";
+    }
 };
 
 } // namespace modernime::ui
