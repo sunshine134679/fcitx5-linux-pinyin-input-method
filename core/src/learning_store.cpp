@@ -164,21 +164,26 @@ std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
         "SELECT phrase, pinyin, context_before, context_after, frequency, "
         "last_selected_ms, negative_feedback FROM learning_entries;";
     sqlite3_stmt *statement = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) == SQLITE_OK) {
-        while (sqlite3_step(statement) == SQLITE_ROW) {
-            const auto textAt = [statement](int index) {
-                const auto *value = sqlite3_column_text(statement, index);
-                return value != nullptr
-                           ? std::string(reinterpret_cast<const char *>(value))
-                           : std::string();
-            };
-            entries.push_back({textAt(0), textAt(1), textAt(2), textAt(3),
-                               sqlite3_column_int64(statement, 4),
-                               sqlite3_column_int64(statement, 5),
-                               sqlite3_column_int64(statement, 6)});
-        }
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return {};
+    }
+    int stepResult = SQLITE_OK;
+    while ((stepResult = sqlite3_step(statement)) == SQLITE_ROW) {
+        const auto textAt = [statement](int index) {
+            const auto *value = sqlite3_column_text(statement, index);
+            return value != nullptr
+                       ? std::string(reinterpret_cast<const char *>(value))
+                       : std::string();
+        };
+        entries.push_back({textAt(0), textAt(1), textAt(2), textAt(3),
+                           sqlite3_column_int64(statement, 4),
+                           sqlite3_column_int64(statement, 5),
+                           sqlite3_column_int64(statement, 6)});
     }
     sqlite3_finalize(statement);
+    if (stepResult != SQLITE_DONE) {
+        return {};
+    }
     return std::make_shared<const LearningSnapshot>(std::move(entries));
 }
 

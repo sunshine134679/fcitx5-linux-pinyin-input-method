@@ -3,6 +3,8 @@
 #include "modernime/core/learning_store.h"
 #include "modernime/core/learning_writer.h"
 
+#include <sqlite3.h>
+
 #include <cstdlib>
 #include <cmath>
 #include <filesystem>
@@ -181,6 +183,33 @@ void testWriterReportsUnavailableStoreAndKeepsMemorySnapshot() {
     assertTrue(!writer.flush(), "flush reports unavailable storage");
 }
 
+void testWriterRejectsMalformedStoreAtStartup() {
+    const auto path = testPath("malformed-learning.sqlite3");
+    sqlite3 *database = nullptr;
+    assertTrue(sqlite3_open(path.c_str(), &database) == SQLITE_OK,
+               "malformed store can be created for the test");
+    char *error = nullptr;
+    assertTrue(sqlite3_exec(database,
+                            "CREATE TABLE learning_entries (broken INTEGER);",
+                            nullptr, nullptr, &error) == SQLITE_OK,
+               "malformed learning schema is created");
+    sqlite3_free(error);
+    sqlite3_close(database);
+
+    modernime::core::LearningWriter writer(path);
+    assertTrue(!writer.enqueueSelection("内存词", "neicun", {}, {}, 1000),
+               "malformed store is rejected before durable enqueue");
+    assertTrue(writer.snapshot()->boostAt("内存词", "neicun", {}, {}, 1000) >
+                   0.0,
+               "memory learning remains available after schema failure");
+    assertTrue(!writer.flush(), "flush reports malformed storage");
+
+    std::error_code errorCode;
+    std::filesystem::remove(path, errorCode);
+    std::filesystem::remove(path.string() + "-wal", errorCode);
+    std::filesystem::remove(path.string() + "-shm", errorCode);
+}
+
 void testWriterFlushesSelectionBeforeReopen() {
     const auto path = testPath("writer.sqlite3");
     {
@@ -241,6 +270,7 @@ int main() {
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
+    testWriterRejectsMalformedStoreAtStartup();
     testWriterFlushesSelectionBeforeReopen();
     testLearningBatchPersistsAsOneLogicalUpdate();
     return EXIT_SUCCESS;

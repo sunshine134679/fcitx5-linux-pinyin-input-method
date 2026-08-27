@@ -13,7 +13,12 @@ LearningWriter::LearningWriter(std::filesystem::path path)
     storageAvailable_ = store_->open();
     if (storageAvailable_) {
         const auto loaded = store_->snapshot();
-        *snapshot_ = *loaded;
+        if (loaded != nullptr) {
+            *snapshot_ = *loaded;
+        } else {
+            storageAvailable_ = false;
+            store_->close();
+        }
     }
     worker_ = std::thread(&LearningWriter::run, this);
 }
