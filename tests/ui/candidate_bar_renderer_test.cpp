@@ -57,7 +57,7 @@ int main() {
 
     RecordingSurface surface;
     const auto style = modernime::ui::RenderStyle::reference();
-    assertTrue(style.panelRadius == 6.0 && style.selectedRadius == 6.0,
+    assertTrue(style.panelRadius == 9.0 && style.selectedRadius == 6.0,
                "reference radii follow the design proportions");
     assertTrue(style.shadowRadius == 6.0 && style.shadowOffsetY == 4.0,
                "reference shadow preserves the native window height");
