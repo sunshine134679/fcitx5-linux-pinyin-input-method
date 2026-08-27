@@ -88,8 +88,12 @@ UserDictionary UserDictionary::loadText(
             continue;
         }
         try {
-            const auto weight = std::stof(weightText);
+            std::size_t consumed = 0;
+            const auto weight = std::stof(weightText, &consumed);
             if (!std::isfinite(weight) || weight < 0.0F) {
+                continue;
+            }
+            if (consumed != weightText.size()) {
                 continue;
             }
             const auto normalized = modernime::core::normalizePinyin(pinyin);

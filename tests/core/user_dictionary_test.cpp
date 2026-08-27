@@ -64,6 +64,18 @@ void testUserDictionarySkipsBadRowsAndKeepsLastDuplicate() {
     std::filesystem::remove(path, error);
 }
 
+void testUserDictionaryRejectsTrailingWeightData() {
+    const auto path = testPath("strict-weight-dictionary.txt");
+    writeFile(path, "ni\t错误权重\t80abc\nni\t合法词\t80\n");
+    const auto dictionary = modernime::pinyin::UserDictionary::loadText(path);
+    assertTrue(!dictionary.contains("ni", "错误权重"),
+               "weight with trailing data is rejected");
+    assertTrue(dictionary.contains("ni", "合法词"),
+               "strict parsing keeps valid weight");
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 void testProfessionalPhraseAppearsFromConfiguredDictionary() {
     const auto dictionaryPath = testPath("professional-dictionary.txt");
     const auto learningPath = testPath("professional-learning.sqlite3");
@@ -136,6 +148,7 @@ void testManualCandidatesExpandForLongerInput() {
 
 int main() {
     testUserDictionarySkipsBadRowsAndKeepsLastDuplicate();
+    testUserDictionaryRejectsTrailingWeightData();
     testProfessionalPhraseAppearsFromConfiguredDictionary();
     testManualCandidatesAreCappedForShortInput();
     testManualCandidatesExpandForLongerInput();
