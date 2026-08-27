@@ -184,6 +184,45 @@ int main() {
     assertTrue(host.commits.back() == "海", "second candidate is committed");
     assertTrue(controller.page().preedit.empty(), "selection clears page");
 
+    RecordingHost featureHost;
+    modernime::fcitx5::ModernIMEController featureController(featureHost);
+    featureController.setClipboardEntries({"clipboard entry"});
+    assertTrue(featureController.handle(
+                   {modernime::fcitx5::KeyKind::OpenFeatureMenu, 'V', '2'}),
+               "V opens the feature menu");
+    assertTrue(!featureController.clipboardMode() &&
+                   featureController.page().mode ==
+                       modernime::core::CandidatePageMode::FunctionMenu &&
+                   featureController.page().preedit == "V" &&
+                   featureController.page().items.size() == 1 &&
+                   featureController.page().items.front().text == "剪切板" &&
+                   featureController.page().items.front().sourceIndex == 1,
+               "feature menu exposes clipboard as function two");
+    assertTrue(featureController.select(0) && featureController.clipboardMode() &&
+                   featureController.page().items.front().text ==
+                       "clipboard entry",
+               "clicking the clipboard function opens clipboard history");
+    assertTrue(featureController.handle(
+                   {modernime::fcitx5::KeyKind::OpenFeatureMenu, 'V', '2'}),
+               "feature menu can be reopened after a click");
+    assertTrue(featureController.handle(
+                   {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "function two opens the clipboard");
+    assertTrue(featureController.clipboardMode() &&
+                   featureController.page().items.front().text ==
+                       "clipboard entry",
+               "selecting function two publishes clipboard history");
+
+    assertTrue(featureController.handle(
+                   {modernime::fcitx5::KeyKind::OpenFeatureMenu, 'V', '2'}),
+               "feature menu can be opened again");
+    assertTrue(featureController.handle(
+                   {modernime::fcitx5::KeyKind::Enter, 0, 0}),
+               "enter commits the feature prefix");
+    assertTrue(featureHost.commits.back() == "V" &&
+                   featureController.page().preedit.empty(),
+               "enter commits literal V and closes the feature menu");
+
     RecordingHost clipboardHost;
     modernime::fcitx5::ModernIMEController clipboardController(clipboardHost);
     clipboardController.setClipboardEntries({"second clipboard", "first clipboard",

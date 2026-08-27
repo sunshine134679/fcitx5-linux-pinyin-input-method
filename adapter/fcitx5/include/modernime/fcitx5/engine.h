@@ -6,6 +6,7 @@
 #include "modernime/core/settings.h"
 
 #include <cstddef>
+#include <cctype>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -30,7 +31,9 @@ enum class KeyKind {
     NextCandidate,
     PreviousPage,
     NextPage,
+    OpenFeatureMenu,
     OpenClipboard,
+    CommitLiteral,
     Punctuation,
 };
 
@@ -42,6 +45,9 @@ struct KeyEvent final {
 
 struct ClipboardTriggerResult final {
     bool consumed = false;
+    bool openFeatureMenu = false;
+    char featurePrefix = 0;
+    char featureDigit = 0;
     bool openClipboard = false;
     std::optional<KeyEvent> replay;
 };
@@ -63,7 +69,11 @@ private:
     bool valid() const { return first_ != 0 && second_ != 0; }
     bool isFirst(const KeyEvent &event) const;
     bool isSecond(const KeyEvent &event) const;
-    KeyEvent replayEvent() const { return {KeyKind::Character, first_, 0}; }
+    KeyEvent replayEvent() const {
+        const auto prefix = static_cast<char>(std::toupper(
+            static_cast<unsigned char>(first_)));
+        return {KeyKind::CommitLiteral, prefix, 0};
+    }
 
     char first_ = 0;
     char second_ = 0;
@@ -123,6 +133,7 @@ private:
     bool commitRawPreedit(std::string_view suffix = {});
     bool moveCursor(std::ptrdiff_t delta);
     bool movePage(std::ptrdiff_t delta);
+    bool openFeatureMenu(char prefix, char digit);
     bool openClipboard();
 
     EngineHost &host_;

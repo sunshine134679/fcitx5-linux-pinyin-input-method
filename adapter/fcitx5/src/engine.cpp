@@ -67,12 +67,18 @@ ClipboardTriggerResult ClipboardTrigger::feed(const KeyEvent &event,
         }
         result.replay = replayEvent();
         pending_ = false;
+        if (event.kind == KeyKind::Enter) {
+            result.consumed = true;
+        }
     }
 
     if (eligible && isFirst(event)) {
         pending_ = true;
         pendingSinceMs_ = nowMs;
         result.consumed = true;
+        result.openFeatureMenu = true;
+        result.featurePrefix = replayEvent().character;
+        result.featureDigit = second_;
     }
     return result;
 }
@@ -152,7 +158,20 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::Escape:
         reset();
         return true;
+    case KeyKind::CommitLiteral:
+        if (event.character == 0) {
+            return false;
+        }
+        {
+            const auto literal = event.character;
+            reset();
+            host_.commit(std::string_view(&literal, 1));
+        }
+        return true;
     case KeyKind::Enter:
+        if (page_.mode == core::CandidatePageMode::FunctionMenu) {
+            return commitRawPreedit();
+        }
         if (!page_.items.empty()) {
             return commitCurrent();
         }
@@ -182,6 +201,14 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (event.digit < '1' || event.digit > '9') {
             return false;
         }
+        if (page_.mode == core::CandidatePageMode::FunctionMenu) {
+            if (page_.items.empty()) {
+                return false;
+            }
+            const auto functionDigit = static_cast<char>(
+                '1' + page_.items.front().sourceIndex);
+            return event.digit == functionDigit && select(0);
+        }
         const auto index = static_cast<std::size_t>(event.digit - '1');
         const auto pageStart = currentPageIndex() * pageSize();
         return select(pageStart + index);
@@ -208,6 +235,8 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return movePage(1);
     case KeyKind::OpenClipboard:
         return openClipboard();
+    case KeyKind::OpenFeatureMenu:
+        return openFeatureMenu(event.character, event.digit);
     case KeyKind::Toggle:
         break;
     }
@@ -217,6 +246,9 @@ bool ModernIMEController::handle(const KeyEvent &event) {
 bool ModernIMEController::select(std::size_t index) {
     if (!active_ || index >= page_.items.size()) {
         return false;
+    }
+    if (page_.mode == core::CandidatePageMode::FunctionMenu) {
+        return openClipboard();
     }
     if (clipboardMode_) {
         const auto text = page_.items[index].text;
@@ -356,6 +388,26 @@ void ModernIMEController::refreshPage() {
         page_.items.push_back({input_.text(), input_.text(), 0});
     }
     host_.publishPage(page_);
+}
+
+bool ModernIMEController::openFeatureMenu(char prefix, char digit) {
+    if (!active_ || prefix == 0 || digit < '1' || digit > '9') {
+        return false;
+    }
+
+    if (provider_ != nullptr) {
+        provider_->reset();
+    } else {
+        input_.clear();
+    }
+    page_.clear();
+    page_.mode = core::CandidatePageMode::FunctionMenu;
+    page_.preedit = std::string(1, prefix);
+    page_.items.push_back({"剪切板", {},
+                           static_cast<std::size_t>(digit - '1')});
+    clipboardMode_ = false;
+    host_.publishPage(page_);
+    return true;
 }
 
 bool ModernIMEController::openClipboard() {

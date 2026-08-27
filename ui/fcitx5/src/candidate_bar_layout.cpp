@@ -234,8 +234,11 @@ CandidateBarLayout CandidateBarLayout::measure(
                              metrics.horizontalPadding;
     for (std::size_t index = 0; index < count; ++index) {
         const auto selected = index == page.cursor;
+        const auto number = page.mode == core::CandidatePageMode::FunctionMenu
+                                ? page.items[index].sourceIndex + 1
+                                : index + 1;
         const auto displayText =
-            std::to_string(index + 1) + "." + page.items[index].text;
+            std::to_string(number) + "." + page.items[index].text;
         double slotWidth = metrics.candidateWidth;
         double selectedWidth = metrics.selectedWidth;
         if (textWidth) {

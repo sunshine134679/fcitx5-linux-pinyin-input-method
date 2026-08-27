@@ -27,8 +27,10 @@ int main() {
     modernime::fcitx5::ClipboardTrigger trigger;
 
     const auto first = trigger.feed(character('v'), 100, true);
-    assertTrue(first.consumed && !first.openClipboard && !first.replay,
-               "first V waits for the second key");
+    assertTrue(first.consumed && first.openFeatureMenu &&
+                   first.featurePrefix == 'V' && first.featureDigit == '2' &&
+                   !first.openClipboard && !first.replay,
+               "first V opens the feature menu and waits for the second key");
     assertTrue(trigger.pending(), "first V creates a pending sequence");
 
     const auto opened = trigger.feed(digit('2'), 200, true);
@@ -41,7 +43,9 @@ int main() {
     const auto wrongSecond = trigger.feed(digit('1'), 200, true);
     assertTrue(!wrongSecond.consumed && !wrongSecond.openClipboard &&
                    wrongSecond.replay.has_value() &&
-                   wrongSecond.replay->character == 'v',
+                   wrongSecond.replay->kind ==
+                       modernime::fcitx5::KeyKind::CommitLiteral &&
+                   wrongSecond.replay->character == 'V',
                "a non-matching second key replays V");
     assertTrue(!trigger.pending(), "wrong second key clears the sequence");
 
@@ -51,8 +55,20 @@ int main() {
                "pending V is retained before timeout");
     const auto afterTimeout = trigger.expire(500);
     assertTrue(afterTimeout.consumed && afterTimeout.replay.has_value() &&
-                   afterTimeout.replay->character == 'v',
+                   afterTimeout.replay->kind ==
+                       modernime::fcitx5::KeyKind::CommitLiteral &&
+                   afterTimeout.replay->character == 'V',
                "pending V is replayed after timeout");
+
+    trigger.reset();
+    trigger.feed(character('v'), 100, true);
+    const auto enter = trigger.feed(
+        {modernime::fcitx5::KeyKind::Enter, 0, 0}, 200, true);
+    assertTrue(enter.consumed && enter.replay.has_value() &&
+                   enter.replay->kind ==
+                       modernime::fcitx5::KeyKind::CommitLiteral &&
+                   enter.replay->character == 'V',
+               "enter commits the pending V instead of reaching the client");
 
     trigger.reset();
     const auto ineligible = trigger.feed(character('v'), 100, false);

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -28,11 +29,15 @@ namespace {
 class FcitxCandidateWord final : public fcitx::CandidateWord {
 public:
     FcitxCandidateWord(std::string text, ModernIMEController *controller,
-                       std::size_t index)
+                       std::size_t index,
+                       std::function<void()> beforeSelection)
         : CandidateWord(fcitx::Text(std::move(text))), controller_(controller),
-          index_(index) {}
+          index_(index), beforeSelection_(std::move(beforeSelection)) {}
 
     void select(fcitx::InputContext *) const override {
+        if (beforeSelection_) {
+            beforeSelection_();
+        }
         if (controller_ != nullptr) {
             controller_->select(index_);
         }
@@ -41,6 +46,7 @@ public:
 private:
     ModernIMEController *controller_;
     std::size_t index_;
+    std::function<void()> beforeSelection_;
 };
 
 constexpr std::string_view statePropertyName = "modernime-fcitx5-state";
@@ -189,7 +195,8 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     candidates->setCursorIncludeUnselected(true);
     for (std::size_t index = 0; index < page.items.size(); ++index) {
         candidates->append<FcitxCandidateWord>(page.items[index].text,
-                                               controller_, index);
+                                               controller_, index,
+                                               beforeCandidateSelection_);
     }
     // Fcitx5's size() is page-local, so clamp against the full published list
     // before selecting the requested page.
@@ -222,6 +229,8 @@ FcitxInputContextState::FcitxInputContextState(
       , controller_(host_, nullptr, controllerOptions(settings)) {
 #endif
     host_.setController(controller_);
+    host_.setBeforeCandidateSelection(
+        [this] { clipboardTrigger_.reset(); });
     controller_.setActive(settings.inputEnabled &&
                            settings.defaultMode == core::InputMode::Chinese);
 }
@@ -445,6 +454,15 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             contextState->controller().page().preedit.empty());
         if (trigger.replay.has_value()) {
             contextState->controller().handle(*trigger.replay);
+        }
+        if (trigger.openFeatureMenu) {
+            contextState->setClipboardEntries(clipboardHistory_.entries());
+            if (contextState->controller().handle(
+                    {KeyKind::OpenFeatureMenu, trigger.featurePrefix,
+                     trigger.featureDigit})) {
+                event.filterAndAccept();
+            }
+            return;
         }
         if (trigger.openClipboard) {
             contextState->setClipboardEntries(clipboardHistory_.entries());

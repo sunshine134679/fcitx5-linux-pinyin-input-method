@@ -13,6 +13,7 @@
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/surroundingtext.h>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -39,6 +40,9 @@ public:
     void setController(ModernIMEController &controller) {
         controller_ = &controller;
     }
+    void setBeforeCandidateSelection(std::function<void()> callback) {
+        beforeCandidateSelection_ = std::move(callback);
+    }
 
     void publishPage(const core::CandidatePage &page) override;
     void commit(std::string_view text) override;
@@ -46,6 +50,7 @@ public:
 private:
     fcitx::InputContext *inputContext_;
     ModernIMEController *controller_ = nullptr;
+    std::function<void()> beforeCandidateSelection_;
 };
 
 class FcitxInputContextState final : public fcitx::InputContextProperty {
