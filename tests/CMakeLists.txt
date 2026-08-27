@@ -143,3 +143,11 @@ target_include_directories(modernime_cairo_surface_tests PRIVATE
 )
 target_link_libraries(modernime_cairo_surface_tests PRIVATE modernime_ui_layout)
 add_test(NAME modernime_cairo_surface COMMAND modernime_cairo_surface_tests)
+
+find_program(BASH_EXECUTABLE bash)
+if(BASH_EXECUTABLE)
+    add_test(NAME modernime_install_environment
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/install_environment_test.sh
+    )
+endif()

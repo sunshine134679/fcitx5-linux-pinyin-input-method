@@ -14,6 +14,16 @@ system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
 system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
 system_addon_dir="$system_libdir/fcitx5"
 
+fcitx_environment=(
+    env
+    "FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
+)
+for environment_name in DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
+    if [[ -n "${!environment_name:-}" ]]; then
+        fcitx_environment+=("$environment_name=${!environment_name}")
+    fi
+done
+
 cmake_args=(
     -DCMAKE_BUILD_TYPE=Debug
     -DCMAKE_INSTALL_PREFIX="$prefix"
@@ -78,8 +88,7 @@ mkdir -p "$manifest_dir"
 
 if command -v fcitx5 >/dev/null 2>&1; then
     previous_fcitx_pid=$(pgrep -o -x fcitx5 || true)
-    env FCITX_ADDON_DIRS="$prefix/lib/fcitx5:$system_addon_dir" \
-        fcitx5 -d -r -u modernime-ui >/dev/null 2>&1 &
+    "${fcitx_environment[@]}" fcitx5 -d -r -u modernime-ui >/dev/null 2>&1 &
     printf 'Fcitx5 restart requested with the ModernIME UI addon\n'
     if command -v fcitx5-remote >/dev/null 2>&1; then
         activated=false
@@ -87,12 +96,11 @@ if command -v fcitx5 >/dev/null 2>&1; then
             current_fcitx_pid=$(pgrep -o -x fcitx5 || true)
             if [[ -n "$current_fcitx_pid" &&
                   "$current_fcitx_pid" != "$previous_fcitx_pid" ]] &&
-               env FCITX_ADDON_DIRS="$prefix/lib/fcitx5:$system_addon_dir" \
-                   fcitx5-remote -s modernime >/dev/null 2>&1 &&
-               env FCITX_ADDON_DIRS="$prefix/lib/fcitx5:$system_addon_dir" \
-                   fcitx5-remote -o >/dev/null 2>&1 &&
-               [[ "$(fcitx5-remote -n 2>/dev/null)" == "modernime" ]] &&
-               [[ "$(fcitx5-remote 2>/dev/null)" == "2" ]]; then
+               "${fcitx_environment[@]}" fcitx5-remote -s modernime \
+                   >/dev/null 2>&1 &&
+               "${fcitx_environment[@]}" fcitx5-remote -o >/dev/null 2>&1 &&
+               [[ "$("${fcitx_environment[@]}" fcitx5-remote -n 2>/dev/null)" == "modernime" ]] &&
+               [[ "$("${fcitx_environment[@]}" fcitx5-remote 2>/dev/null)" == "2" ]]; then
                 activated=true
                 break
             fi
