@@ -28,6 +28,10 @@ int main() {
     assertTrue(provider.eraseLast(), "last pinyin byte can be erased");
     assertTrue(provider.page().preedit == "niha", "erase refreshes preedit");
     provider.reset();
+    assertTrue(provider.append("xi'an"), "apostrophe separates pinyin syllables");
+    assertTrue(provider.page().preedit == "xi'an",
+               "pinyin separator remains in the preedit");
+    provider.reset();
     assertTrue(provider.page().preedit.empty(), "reset clears preedit");
     assertTrue(provider.page().items.empty(), "reset clears candidates");
     return EXIT_SUCCESS;

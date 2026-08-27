@@ -188,6 +188,11 @@ bool ModernIMEInputMethod::translateKey(const fcitx::Key &key,
             event.character = static_cast<char>(unicode);
             return true;
         }
+        if (unicode == '\'') {
+            event.kind = KeyKind::Character;
+            event.character = static_cast<char>(unicode);
+            return true;
+        }
         if (isAsciiPunctuation(unicode)) {
             event.kind = KeyKind::Punctuation;
             event.character = static_cast<char>(unicode);

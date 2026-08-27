@@ -38,7 +38,8 @@ public:
     }
 
     bool append(std::string_view input) {
-        if (input.empty() || input.find_first_not_of("abcdefghijklmnopqrstuvwxyz") !=
+        if (input.empty() || input.find_first_not_of(
+                                 "abcdefghijklmnopqrstuvwxyz'") !=
                                  std::string_view::npos) {
             return false;
         }
