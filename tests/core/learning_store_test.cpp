@@ -9,6 +9,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <string_view>
 #include <vector>
 
@@ -134,6 +135,18 @@ void testCorruptedLearningCountersRemainFinite() {
     assertTrue(std::isfinite(frequencyBoost) && frequencyBoost == 0.0 &&
                    std::isfinite(feedbackBoost) && feedbackBoost == 0.0,
                "negative persisted counters are ignored safely");
+}
+
+void testLearningCountersSaturateAtMaximum() {
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    const std::vector<modernime::core::LearningEntry> entries{
+        {"饱和词", "baheci", {}, {}, maximum, 1000, maximum}};
+    modernime::core::LearningSnapshot snapshot(entries);
+    snapshot.recordSelection("饱和词", "baheci", {}, {}, 2000);
+    snapshot.recordNegativeFeedback("饱和词", "baheci");
+    const auto &stored = snapshot.entries().front();
+    assertTrue(stored.frequency == maximum && stored.negativeFeedback == maximum,
+               "learning counters saturate instead of overflowing");
 }
 
 void testMatchingContextRaisesCandidate() {
@@ -267,6 +280,7 @@ int main() {
     testNegativeFeedbackReducesLearningBoost();
     testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost();
     testCorruptedLearningCountersRemainFinite();
+    testLearningCountersSaturateAtMaximum();
     testMatchingContextRaisesCandidate();
     testBaseNegativeFeedbackAppliesToContextualSelection();
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();

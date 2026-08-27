@@ -3,9 +3,32 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace modernime::core {
+
+namespace {
+
+std::int64_t saturatingIncrement(std::int64_t value) {
+    if (value < 0 || value == std::numeric_limits<std::int64_t>::max()) {
+        return value < 0 ? 1 : value;
+    }
+    return value + 1;
+}
+
+std::int64_t saturatingAddNonNegative(std::int64_t left,
+                                      std::int64_t right) {
+    left = std::max<std::int64_t>(0, left);
+    right = std::max<std::int64_t>(0, right);
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    if (right > maximum - left) {
+        return maximum;
+    }
+    return left + right;
+}
+
+} // namespace
 
 std::string normalizePinyin(std::string_view pinyin) {
     std::string normalized;
@@ -76,11 +99,13 @@ double LearningSnapshot::boostAt(
     const double recent = candidate->frequency > 0
                               ? std::min(1.0, 0.90 * recency)
                               : 0.0;
-    auto negativeFeedback = candidate->negativeFeedback;
+    auto negativeFeedback = std::max<std::int64_t>(
+        0, candidate->negativeFeedback);
     // A global deletion/negative-feedback event must still apply when a
     // more-specific contextual selection exists for the same candidate.
     if (candidate != base && base != nullptr) {
-        negativeFeedback += base->negativeFeedback;
+        negativeFeedback = saturatingAddNonNegative(
+            negativeFeedback, base->negativeFeedback);
     }
     negativeFeedback = std::max<std::int64_t>(0, negativeFeedback);
     const double penalty = std::min(
@@ -135,14 +160,15 @@ void LearningSnapshot::recordSelection(
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) {
     auto *candidate = mutableEntry(phrase, pinyin, contextBefore, contextAfter);
-    ++candidate->frequency;
+    candidate->frequency = saturatingIncrement(candidate->frequency);
     candidate->lastSelectedMs = nowMs;
 }
 
 void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,
                                               std::string_view pinyin) {
     auto *candidate = mutableEntry(phrase, pinyin, {}, {});
-    ++candidate->negativeFeedback;
+    candidate->negativeFeedback =
+        saturatingIncrement(candidate->negativeFeedback);
 }
 
 } // namespace modernime::core
