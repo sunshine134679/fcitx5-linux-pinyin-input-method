@@ -18,6 +18,8 @@ struct ModernIMESettings final {
     bool pageNavigation = true;
     bool learningEnabled = true;
     bool contextLearningEnabled = true;
+
+    bool operator==(const ModernIMESettings &) const = default;
 };
 
 ModernIMESettings defaultSettings();

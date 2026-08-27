@@ -14,6 +14,16 @@ void SettingsWindowModel::setSettings(core::ModernIMESettings settings) {
     lastError_.clear();
 }
 
+void SettingsWindowModel::setCandidateOptions(bool numberSelection,
+                                              bool arrowNavigation,
+                                              bool pageNavigation) {
+    auto settings = edited_;
+    settings.numberSelection = numberSelection;
+    settings.arrowNavigation = arrowNavigation;
+    settings.pageNavigation = pageNavigation;
+    setSettings(std::move(settings));
+}
+
 bool SettingsWindowModel::save(std::string *error) {
     std::string saveError;
     if (!core::SettingsStore::save(path_, edited_, &saveError)) {

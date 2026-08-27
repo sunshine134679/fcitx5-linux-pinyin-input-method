@@ -1,9 +1,12 @@
 #include "modernime/settings/settings_window.h"
+#include "modernime/settings/runtime_controller.h"
 
 #include <gtk/gtk.h>
 
+#include <cstdlib>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace modernime::settings {
 
@@ -20,6 +23,11 @@ public:
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
     GtkWidget *toggleKey = nullptr;
+    GtkWidget *candidateNumber = nullptr;
+    GtkWidget *candidateArrow = nullptr;
+    GtkWidget *candidatePage = nullptr;
+    GtkWidget *runtimeStatus = nullptr;
+    GtkWidget *reloadButton = nullptr;
 };
 
 namespace {
@@ -40,6 +48,13 @@ void updateModelFromBasicPage(SettingsWindow::Impl *impl) {
     impl->model.setSettings(std::move(settings));
 }
 
+void updateModelFromCandidatePage(SettingsWindow::Impl *impl) {
+    impl->model.setCandidateOptions(
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(impl->candidateNumber)),
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(impl->candidateArrow)),
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(impl->candidatePage)));
+}
+
 void updateBasicPageFromModel(SettingsWindow::Impl *impl) {
     const auto &settings = impl->model.settings();
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->inputEnabled),
@@ -50,13 +65,28 @@ void updateBasicPageFromModel(SettingsWindow::Impl *impl) {
     gtk_entry_set_text(GTK_ENTRY(impl->toggleKey), settings.toggleKey.c_str());
 }
 
+void updateCandidatePageFromModel(SettingsWindow::Impl *impl) {
+    const auto &settings = impl->model.settings();
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->candidateNumber),
+                                 settings.numberSelection);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->candidateArrow),
+                                 settings.arrowNavigation);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->candidatePage),
+                                 settings.pageNavigation);
+}
+
 void onBasicChanged(GtkWidget *, gpointer data) {
     updateModelFromBasicPage(static_cast<SettingsWindow::Impl *>(data));
+}
+
+void onCandidateChanged(GtkWidget *, gpointer data) {
+    updateModelFromCandidatePage(static_cast<SettingsWindow::Impl *>(data));
 }
 
 void onSave(GtkButton *, gpointer data) {
     auto *impl = static_cast<SettingsWindow::Impl *>(data);
     updateModelFromBasicPage(impl);
+    updateModelFromCandidatePage(impl);
     std::string error;
     if (impl->model.save(&error)) {
         setStatus(impl, "设置已保存；重新加载输入法后生效");
@@ -69,6 +99,7 @@ void onResetEdits(GtkButton *, gpointer data) {
     auto *impl = static_cast<SettingsWindow::Impl *>(data);
     impl->model.resetEdits();
     updateBasicPageFromModel(impl);
+    updateCandidatePageFromModel(impl);
     setStatus(impl, "已恢复未保存的修改");
 }
 
@@ -118,6 +149,36 @@ GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
     return grid;
 }
 
+GtkWidget *makeCandidatePage(SettingsWindow::Impl *impl) {
+    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 24);
+    gtk_widget_set_margin_end(box, 24);
+    gtk_widget_set_margin_top(box, 24);
+    gtk_widget_set_margin_bottom(box, 24);
+    auto *title = gtk_label_new("候选设置");
+    gtk_widget_set_halign(title, GTK_ALIGN_START);
+    gtk_style_context_add_class(gtk_widget_get_style_context(title),
+                                "title-3");
+    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+
+    impl->candidateNumber = gtk_check_button_new_with_label("数字键选择候选");
+    impl->candidateArrow = gtk_check_button_new_with_label(
+        "左右方向键切换候选");
+    impl->candidatePage = gtk_check_button_new_with_label(
+        "上下方向键和 + / = 翻页");
+    gtk_box_pack_start(GTK_BOX(box), impl->candidateNumber, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), impl->candidateArrow, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), impl->candidatePage, FALSE, FALSE, 0);
+    updateCandidatePageFromModel(impl);
+    g_signal_connect(impl->candidateNumber, "toggled",
+                     G_CALLBACK(onCandidateChanged), impl);
+    g_signal_connect(impl->candidateArrow, "toggled",
+                     G_CALLBACK(onCandidateChanged), impl);
+    g_signal_connect(impl->candidatePage, "toggled",
+                     G_CALLBACK(onCandidateChanged), impl);
+    return box;
+}
+
 GtkWidget *makeInfoPage(const char *title, const char *message) {
     auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_margin_start(box, 24);
@@ -133,6 +194,131 @@ GtkWidget *makeInfoPage(const char *title, const char *message) {
     gtk_widget_set_halign(body, GTK_ALIGN_START);
     gtk_label_set_line_wrap(GTK_LABEL(body), TRUE);
     gtk_box_pack_start(GTK_BOX(box), body, FALSE, FALSE, 0);
+    return box;
+}
+
+Environment currentEnvironment() {
+    Environment environment;
+    for (const char *name : {"DISPLAY", "DBUS_SESSION_BUS_ADDRESS",
+                             "XDG_RUNTIME_DIR"}) {
+        const auto *value = std::getenv(name);
+        if (value != nullptr && *value != '\0') {
+            environment.emplace_back(name, value);
+        }
+    }
+    return environment;
+}
+
+std::filesystem::path fcitxRemotePath() {
+    auto *path = g_find_program_in_path("fcitx5-remote");
+    if (path == nullptr) {
+        return "fcitx5-remote";
+    }
+    const std::filesystem::path result(path);
+    g_free(path);
+    return result;
+}
+
+struct RuntimeTask final {
+    SettingsWindow::Impl *impl;
+    bool reload;
+    std::filesystem::path executable;
+    Environment environment;
+};
+
+void startRuntimeTask(SettingsWindow::Impl *impl, bool reload);
+
+void runtimeTaskFunction(GTask *task, gpointer, gpointer data,
+                         GCancellable *) {
+    const auto *request = static_cast<const RuntimeTask *>(data);
+    if (request->reload) {
+        g_task_return_pointer(
+            task,
+            new RuntimeResult(RuntimeController::reload(request->executable,
+                                                        request->environment)),
+            [](gpointer value) { delete static_cast<RuntimeResult *>(value); });
+    } else {
+        g_task_return_pointer(
+            task,
+            new RuntimeStatus(RuntimeController::probe(request->executable,
+                                                       request->environment)),
+            [](gpointer value) { delete static_cast<RuntimeStatus *>(value); });
+    }
+}
+
+void runtimeTaskFinished(GObject *, GAsyncResult *result, gpointer data) {
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    auto *task = G_TASK(result);
+    const auto *request = static_cast<const RuntimeTask *>(
+        g_task_get_task_data(task));
+    GError *error = nullptr;
+    if (request->reload) {
+        auto *reload = static_cast<RuntimeResult *>(
+            g_task_propagate_pointer(task, &error));
+        if (reload != nullptr) {
+            setStatus(impl, reload->success ? "ModernIME 重载请求已发送"
+                                             : reload->message.c_str());
+            gtk_widget_set_sensitive(impl->reloadButton, TRUE);
+            if (reload->success) {
+                startRuntimeTask(impl, false);
+            }
+        }
+        delete reload;
+        g_clear_error(&error);
+    } else {
+        auto *status = static_cast<RuntimeStatus *>(
+            g_task_propagate_pointer(task, &error));
+        if (status != nullptr) {
+            const auto message = status->message.empty()
+                                     ? "无法读取 Fcitx5 状态"
+                                     : status->message;
+            gtk_label_set_text(GTK_LABEL(impl->runtimeStatus), message.c_str());
+        }
+        delete status;
+        g_clear_error(&error);
+    }
+}
+
+void startRuntimeTask(SettingsWindow::Impl *impl, bool reload) {
+    auto *task = g_task_new(G_OBJECT(impl->window), nullptr,
+                            runtimeTaskFinished, impl);
+    auto *request = new RuntimeTask{impl, reload, fcitxRemotePath(),
+                                    currentEnvironment()};
+    g_task_set_task_data(task, request, [](gpointer value) {
+        delete static_cast<RuntimeTask *>(value);
+    });
+    g_task_run_in_thread(task, runtimeTaskFunction);
+    g_object_unref(task);
+}
+
+void onReload(GtkButton *, gpointer data) {
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    gtk_widget_set_sensitive(impl->reloadButton, FALSE);
+    setStatus(impl, "正在请求重载 ModernIME…");
+    startRuntimeTask(impl, true);
+}
+
+GtkWidget *makeStatusPage(SettingsWindow::Impl *impl) {
+    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 24);
+    gtk_widget_set_margin_end(box, 24);
+    gtk_widget_set_margin_top(box, 24);
+    gtk_widget_set_margin_bottom(box, 24);
+    auto *title = gtk_label_new("输入法状态");
+    gtk_widget_set_halign(title, GTK_ALIGN_START);
+    gtk_style_context_add_class(gtk_widget_get_style_context(title),
+                                "title-3");
+    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+    impl->runtimeStatus = gtk_label_new("正在读取 Fcitx5 状态…");
+    gtk_widget_set_halign(impl->runtimeStatus, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(impl->runtimeStatus), TRUE);
+    gtk_box_pack_start(GTK_BOX(box), impl->runtimeStatus, FALSE, FALSE, 0);
+    impl->reloadButton = gtk_button_new_with_label("重新加载 ModernIME");
+    gtk_widget_set_halign(impl->reloadButton, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(box), impl->reloadButton, FALSE, FALSE, 0);
+    g_signal_connect(impl->reloadButton, "clicked", G_CALLBACK(onReload),
+                     impl);
+    startRuntimeTask(impl, false);
     return box;
 }
 
@@ -162,7 +348,7 @@ SettingsWindow::SettingsWindow(void *application,
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          makeBasicPage(impl_.get()), "basic", "基本设置");
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeInfoPage("候选设置", "候选键盘操作将在此处配置。"),
+                         makeCandidatePage(impl_.get()),
                          "candidate", "候选设置");
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          makeInfoPage("智能学习", "学习开关和学习数据管理将在此处配置。"),
@@ -171,7 +357,7 @@ SettingsWindow::SettingsWindow(void *application,
                          makeInfoPage("用户词典", "专业词条管理将在此处配置。"),
                          "dictionary", "用户词典");
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeInfoPage("输入法状态", "Fcitx5 运行状态将在此处显示。"),
+                         makeStatusPage(impl_.get()),
                          "status", "输入法状态");
 
     auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);

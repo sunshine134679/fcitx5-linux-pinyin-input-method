@@ -56,6 +56,18 @@ int main() {
                "reset edits restores last saved settings");
     assertTrue(!reloaded.dirty(), "reset edits clears dirty state");
 
+    reloaded.setCandidateOptions(false, false, false);
+    assertTrue(!reloaded.settings().numberSelection &&
+                   !reloaded.settings().arrowNavigation &&
+                   !reloaded.settings().pageNavigation,
+               "candidate options can be edited");
+    assertTrue(reloaded.save(&error), "candidate options save: " + error);
+    modernime::settings::SettingsWindowModel candidateReloaded(path);
+    assertTrue(!candidateReloaded.settings().numberSelection &&
+                   !candidateReloaded.settings().arrowNavigation &&
+                   !candidateReloaded.settings().pageNavigation,
+               "candidate options persist");
+
     const auto blocked = directory / "blocked";
     std::filesystem::create_directory(blocked);
     modernime::settings::SettingsWindowModel failed(blocked);

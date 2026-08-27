@@ -16,6 +16,8 @@ public:
     bool dirty() const { return edited_ != loaded_; }
 
     void setSettings(core::ModernIMESettings settings);
+    void setCandidateOptions(bool numberSelection, bool arrowNavigation,
+                             bool pageNavigation);
     bool save(std::string *error = nullptr);
     void resetEdits();
     std::string_view validationError() const { return lastError_; }

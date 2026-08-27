@@ -7,6 +7,9 @@ target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
 
 if(MODERNIME_BUILD_SETTINGS)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+
     add_executable(modernime_settings_model_tests
         settings/settings_window_model_test.cpp
     )
@@ -19,6 +22,26 @@ if(MODERNIME_BUILD_SETTINGS)
     )
     add_test(NAME modernime_settings_model
         COMMAND modernime_settings_model_tests
+    )
+
+    add_executable(modernime_fake_fcitx5_remote
+        settings/fake_fcitx5_remote.cpp
+    )
+    add_executable(modernime_runtime_controller_tests
+        settings/runtime_controller_test.cpp
+    )
+    target_include_directories(modernime_runtime_controller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_sources(modernime_runtime_controller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/runtime_controller.cpp
+    )
+    target_link_libraries(modernime_runtime_controller_tests PRIVATE
+        PkgConfig::GTK3
+    )
+    add_test(NAME modernime_runtime_controller
+        COMMAND modernime_runtime_controller_tests
+            $<TARGET_FILE:modernime_fake_fcitx5_remote>
     )
 endif()
 

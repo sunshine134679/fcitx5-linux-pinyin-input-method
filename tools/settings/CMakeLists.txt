@@ -4,6 +4,7 @@ pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
 add_executable(modernime-settings
     settings_app.cpp
     settings_model.cpp
+    runtime_controller.cpp
     settings_window.cpp
 )
 target_include_directories(modernime-settings PRIVATE
