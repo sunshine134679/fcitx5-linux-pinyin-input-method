@@ -21,6 +21,7 @@ struct RecordingSurface final : modernime::ui::RenderSurface {
     std::vector<std::string> operations;
     std::vector<double> textX;
     std::vector<double> textBaseline;
+    std::vector<double> textSizes;
     std::vector<modernime::ui::Rect> rects;
 
     void roundedRect(const modernime::ui::Rect &bounds, double,
@@ -31,14 +32,16 @@ struct RecordingSurface final : modernime::ui::RenderSurface {
 
     double textWidth(std::string_view value,
                      const modernime::ui::TextStyle &) const override {
-        return value.find('.') == std::string_view::npos ? 0.0 : 124.0;
+        return value.find('.') == std::string_view::npos ? 20.0 : 8.0;
     }
 
     void text(std::string_view value, double x, double baseline,
-              const modernime::ui::TextStyle &, const modernime::ui::Color &) override {
+              const modernime::ui::TextStyle &style,
+              const modernime::ui::Color &) override {
         operations.push_back("text:" + std::string(value));
         textX.push_back(x);
         textBaseline.push_back(baseline);
+        textSizes.push_back(style.size);
     }
 };
 
@@ -58,7 +61,8 @@ int main() {
                "reference radii follow the design proportions");
     assertTrue(style.shadowRadius == 6.0 && style.shadowOffsetY == 4.0,
                "reference shadow preserves the native window height");
-    assertTrue(style.candidateText.size == 18.0 &&
+    assertTrue(style.candidateNumberText.size == 16.0 &&
+                   style.candidateText.size == 19.0 &&
                    style.preeditText.size == 20.0,
                "reference typography follows the design proportions");
     assertTrue(style.selected.red == 0.07 && style.selected.green == 0.40 &&
@@ -66,27 +70,35 @@ int main() {
                "selected color matches the design");
     modernime::ui::CandidateBarRenderer::render(surface, layout, style);
 
-    assertTrue(surface.operations.size() == 7,
-               "one shadow, panel, border, pill and three candidates");
+    assertTrue(surface.operations.size() == 10,
+               "one shadow, panel, border, pill and six text segments");
     assertTrue(surface.operations[0] == "rounded-fill", "shadow is drawn first");
     assertTrue(surface.operations[1] == "rounded-fill", "panel is drawn second");
     assertTrue(surface.operations[2] == "rounded-stroke", "border is drawn third");
     assertTrue(surface.operations[3] == "rounded-fill", "selected pill is drawn fourth");
-    assertTrue(surface.operations[4] == "text:1.还", "first candidate is drawn");
-    assertTrue(surface.operations[5] == "text:2.海", "second candidate is drawn");
-    assertTrue(surface.operations[6] == "text:3.害", "third candidate is drawn");
+    assertTrue(surface.operations[4] == "text:1.", "first candidate index is drawn");
+    assertTrue(surface.operations[5] == "text:还", "first candidate text is drawn");
+    assertTrue(surface.operations[6] == "text:2.", "second candidate index is drawn");
+    assertTrue(surface.operations[7] == "text:海", "second candidate text is drawn");
+    assertTrue(surface.operations[8] == "text:3.", "third candidate index is drawn");
+    assertTrue(surface.operations[9] == "text:害", "third candidate text is drawn");
     assertTrue(surface.rects[0].x == 0.0 && surface.rects[0].y == 6.0,
                "shadow extends below and around the panel");
-    assertTrue(surface.textX.size() == 3, "candidate text positions are recorded");
-    assertTrue(surface.textX[0] == 10.0,
+    assertTrue(surface.textX.size() == 6, "candidate text positions are recorded");
+    assertTrue(surface.textX[0] == 14.0 && surface.textX[1] == 22.0,
                "selected candidate text is centered in its pill");
-    assertTrue(surface.textX[1] == 80.0,
+    assertTrue(surface.textX[2] == 83.0 && surface.textX[3] == 91.0,
                "normal candidate text is centered in its slot");
-    assertTrue(surface.textBaseline.size() == 3,
+    assertTrue(surface.textSizes[0] == 16.0 && surface.textSizes[1] == 19.0,
+               "candidate index is smaller than candidate text");
+    assertTrue(surface.textBaseline.size() == 6,
                "candidate baselines are recorded");
-    assertTrue(surface.textBaseline[0] == 33.5 &&
-                   surface.textBaseline[1] == 33.5 &&
-                   surface.textBaseline[2] == 33.5,
+    assertTrue(surface.textBaseline[0] == 33.75 &&
+                   surface.textBaseline[1] == 33.75 &&
+                   surface.textBaseline[2] == 33.75 &&
+                   surface.textBaseline[3] == 33.75 &&
+                   surface.textBaseline[4] == 33.75 &&
+                   surface.textBaseline[5] == 33.75,
                "candidate text is vertically centered in its slot");
     return EXIT_SUCCESS;
 }

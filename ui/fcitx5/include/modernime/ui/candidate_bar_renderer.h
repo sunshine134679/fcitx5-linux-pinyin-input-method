@@ -41,6 +41,7 @@ struct RenderStyle final {
     double shadowOffsetY = 0.0;
     double borderWidth = 0.0;
     TextStyle preeditText;
+    TextStyle candidateNumberText;
     TextStyle candidateText;
 
     static RenderStyle reference();

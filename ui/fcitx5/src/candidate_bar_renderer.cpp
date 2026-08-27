@@ -1,5 +1,8 @@
 #include "modernime/ui/candidate_bar_renderer.h"
 
+#include <algorithm>
+#include <string_view>
+
 namespace modernime::ui {
 
 RenderStyle RenderStyle::reference() {
@@ -18,7 +21,8 @@ RenderStyle RenderStyle::reference() {
     style.shadowOffsetY = 4.0;
     style.borderWidth = 1.0;
     style.preeditText = {"Noto Sans CJK SC", 20.0, 400};
-    style.candidateText = {"Noto Sans CJK SC", 18.0, 400};
+    style.candidateNumberText = {"Noto Sans CJK SC", 16.0, 400};
+    style.candidateText = {"Noto Sans CJK SC", 19.0, 400};
     return style;
 }
 
@@ -44,17 +48,26 @@ void CandidateBarRenderer::render(RenderSurface &surface,
     for (const auto &candidate : layout.candidates) {
         const Rect textBounds = candidate.selected ? layout.selectedPill
                                                    : candidate.bounds;
-        const auto metrics =
-            surface.textMetrics(candidate.displayText, style.candidateText);
-        const double textX = metrics.width > 0.0 && metrics.width <= textBounds.width
-                                 ? textBounds.x +
-                                       (textBounds.width - metrics.width) / 2.0
-                                 : textBounds.x;
-        const double baseline =
-            textBounds.y + (textBounds.height - metrics.height) / 2.0 +
-            metrics.baseline;
-        surface.text(candidate.displayText, textX, baseline, style.candidateText,
-                     candidate.selected ? style.selectedText : style.text);
+        const auto separator = candidate.displayText.find('.');
+        const auto indexText = candidate.displayText.substr(0, separator + 1);
+        const auto valueText = candidate.displayText.substr(separator + 1);
+        const auto indexMetrics =
+            surface.textMetrics(indexText, style.candidateNumberText);
+        const auto valueMetrics =
+            surface.textMetrics(valueText, style.candidateText);
+        const auto textWidth = indexMetrics.width + valueMetrics.width;
+        const auto textX = textWidth <= textBounds.width
+                               ? textBounds.x +
+                                     (textBounds.width - textWidth) / 2.0
+                               : textBounds.x;
+        const auto textHeight = std::max(indexMetrics.height, valueMetrics.height);
+        const auto baseline = textBounds.y +
+                              (textBounds.height - textHeight) / 2.0 +
+                              std::max(indexMetrics.baseline, valueMetrics.baseline);
+        const auto color = candidate.selected ? style.selectedText : style.text;
+        surface.text(indexText, textX, baseline, style.candidateNumberText, color);
+        surface.text(valueText, textX + indexMetrics.width, baseline,
+                     style.candidateText, color);
     }
 }
 

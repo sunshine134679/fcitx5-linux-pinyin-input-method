@@ -49,16 +49,17 @@ struct ModernIMEUserInterface::Impl final {
         gtk_window_resize(GTK_WINDOW(window), width, height);
     }
 
-    double textWidth(std::string_view value) const {
+    double textWidth(std::string_view value,
+                     const TextStyle &textStyle) const {
         PangoContext *context = gtk_widget_get_pango_context(drawingArea);
         PangoLayout *textLayout = pango_layout_new(context);
         PangoFontDescription *font = pango_font_description_new();
-        pango_font_description_set_family(font, style.candidateText.family.c_str());
+        pango_font_description_set_family(font, textStyle.family.c_str());
         pango_font_description_set_absolute_size(
-            font, style.candidateText.size * PANGO_SCALE);
+            font, textStyle.size * PANGO_SCALE);
         pango_font_description_set_weight(
-            font, style.candidateText.weight >= 700 ? PANGO_WEIGHT_BOLD
-                                                    : PANGO_WEIGHT_NORMAL);
+            font, textStyle.weight >= 700 ? PANGO_WEIGHT_BOLD
+                                          : PANGO_WEIGHT_NORMAL);
         pango_layout_set_font_description(textLayout, font);
         pango_layout_set_text(textLayout, value.data(),
                               static_cast<int>(value.size()));
@@ -69,6 +70,16 @@ struct ModernIMEUserInterface::Impl final {
         pango_font_description_free(font);
         g_object_unref(textLayout);
         return static_cast<double>(width);
+    }
+
+    double textWidth(std::string_view value) const {
+        const auto separator = value.find('.');
+        if (separator == std::string_view::npos) {
+            return textWidth(value, style.candidateText);
+        }
+        return textWidth(value.substr(0, separator + 1),
+                         style.candidateNumberText) +
+               textWidth(value.substr(separator + 1), style.candidateText);
     }
 };
 
