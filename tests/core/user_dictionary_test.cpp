@@ -100,6 +100,22 @@ void testUserDictionaryRejectsMalformedPinyin() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testUserDictionaryRejectsInvalidUtf8Phrase() {
+    const auto path = testPath("invalid-utf8-dictionary.txt");
+    std::string contents = "ni\t";
+    contents.push_back(static_cast<char>(0xff));
+    contents += "\t100\n";
+    contents += "ni\t合法词\t100\n";
+    writeFile(path, contents);
+    const auto dictionary = modernime::pinyin::UserDictionary::loadText(path);
+    assertTrue(!dictionary.entries().empty() &&
+                   dictionary.contains("ni", "合法词") &&
+                   dictionary.entries().size() == 1,
+               "invalid UTF-8 phrases are ignored without dropping valid rows");
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 void testUserDictionaryAcceptsWindowsLineEndings() {
     const auto path = testPath("crlf-user-dictionary.txt");
     writeFile(path, "ni\t换行词\t80\r\n");
@@ -184,6 +200,7 @@ int main() {
     testUserDictionarySkipsBadRowsAndKeepsLastDuplicate();
     testUserDictionaryRejectsTrailingWeightData();
     testUserDictionaryRejectsMalformedPinyin();
+    testUserDictionaryRejectsInvalidUtf8Phrase();
     testUserDictionaryAcceptsWindowsLineEndings();
     testProfessionalPhraseAppearsFromConfiguredDictionary();
     testManualCandidatesAreCappedForShortInput();

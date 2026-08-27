@@ -46,6 +46,46 @@ bool validUserPinyin(std::string_view pinyin) {
     return hasLetter && !separator;
 }
 
+bool validUtf8(std::string_view value) {
+    std::size_t index = 0;
+    while (index < value.size()) {
+        const auto first = static_cast<unsigned char>(value[index]);
+        if (first <= 0x7fU) {
+            ++index;
+            continue;
+        }
+
+        std::size_t continuationCount = 0;
+        if (first >= 0xc2U && first <= 0xdfU) {
+            continuationCount = 1;
+        } else if (first >= 0xe0U && first <= 0xefU) {
+            continuationCount = 2;
+        } else if (first >= 0xf0U && first <= 0xf4U) {
+            continuationCount = 3;
+        } else {
+            return false;
+        }
+        if (index + continuationCount >= value.size()) {
+            return false;
+        }
+        for (std::size_t offset = 1; offset <= continuationCount; ++offset) {
+            const auto byte = static_cast<unsigned char>(value[index + offset]);
+            if ((byte & 0xc0U) != 0x80U) {
+                return false;
+            }
+        }
+        const auto second = static_cast<unsigned char>(value[index + 1]);
+        if ((first == 0xe0U && second < 0xa0U) ||
+            (first == 0xedU && second >= 0xa0U) ||
+            (first == 0xf0U && second < 0x90U) ||
+            (first == 0xf4U && second > 0x8fU)) {
+            return false;
+        }
+        index += continuationCount + 1;
+    }
+    return true;
+}
+
 std::string segmentedPinyin(std::string_view pinyin) {
     if (pinyin.find('\'') != std::string_view::npos) {
         return std::string(pinyin);
@@ -110,7 +150,7 @@ UserDictionary UserDictionary::loadText(
             !std::getline(fields, phrase, '\t') ||
             !std::getline(fields, weightText, '\t') ||
             std::getline(fields, extra, '\t') ||
-            pinyin.empty() || phrase.empty()) {
+            pinyin.empty() || phrase.empty() || !validUtf8(phrase)) {
             continue;
         }
         if (!validUserPinyin(pinyin)) {
