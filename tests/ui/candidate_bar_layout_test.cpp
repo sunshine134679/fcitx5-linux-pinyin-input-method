@@ -77,7 +77,7 @@ int main() {
                "panel keeps the fixed reference width");
     assertTrue(longWordLayout.candidates.size() == 6,
                "only candidates that fit the fixed panel are displayed");
-    assertTrue(longWordLayout.selectedPill.width == 59.0,
+    assertTrue(longWordLayout.selectedPill.width == 63.0,
                "selected pill has wider horizontal padding");
     for (std::size_t index = 1; index < longWordLayout.candidates.size();
          ++index) {

@@ -18,7 +18,7 @@ CandidateBarMetrics CandidateBarMetrics::reference() {
     metrics.shadowOpacity = 0.12;
     metrics.horizontalPadding = 8.0;
     metrics.candidateTextPadding = 0.0;
-    metrics.selectedTextPadding = 6.0;
+    metrics.selectedTextPadding = 8.0;
     metrics.candidateGap = 2.0;
     metrics.candidateAdvance = 38.0;
     metrics.candidateWidth = 34.0;
