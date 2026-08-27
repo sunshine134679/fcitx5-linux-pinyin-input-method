@@ -12,7 +12,7 @@ RenderStyle RenderStyle::reference() {
     style.selectedText = {1.0, 1.0, 1.0, 1.0};
     style.preedit = {0.27, 0.32, 0.40, 1.0};
     style.panelRadius = 15.0;
-    style.selectedRadius = 17.0;
+    style.selectedRadius = 6.0;
     style.shadowRadius = 6.0;
     style.shadowSpread = 2.0;
     style.shadowOffsetY = 4.0;
