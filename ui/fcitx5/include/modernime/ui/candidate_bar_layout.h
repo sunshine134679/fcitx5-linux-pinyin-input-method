@@ -29,6 +29,9 @@ struct CandidateBarMetrics final {
     double shadowRadius = 0.0;
     double shadowOpacity = 0.0;
     double horizontalPadding = 0.0;
+    double candidateTextPadding = 0.0;
+    double selectedTextPadding = 0.0;
+    double candidateGap = 0.0;
     double candidateAdvance = 0.0;
     double candidateWidth = 0.0;
     double candidateHeight = 0.0;

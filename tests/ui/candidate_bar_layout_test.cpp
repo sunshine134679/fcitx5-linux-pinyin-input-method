@@ -62,12 +62,13 @@ int main() {
     longWordPage.cursor = 0;
     const auto longWordLayout = modernime::ui::CandidateBarLayout::measure(
         longWordPage, metrics,
-        [](std::string_view) { return 52.0; });
-    assertTrue(longWordLayout.panel.width > metrics.panelWidth,
-               "panel expands for multi-character candidates");
-    assertTrue(longWordLayout.selectedPill.width >=
-                   longWordLayout.candidates.front().bounds.width,
-               "selected pill contains the selected candidate slot");
+        [](std::string_view) { return 40.0; });
+    assertTrue(longWordLayout.panel.width == metrics.panelWidth,
+               "panel keeps the fixed reference width");
+    assertTrue(longWordLayout.candidates.size() == 6,
+               "only candidates that fit the fixed panel are displayed");
+    assertTrue(longWordLayout.selectedPill.width == 56.0,
+               "selected pill has wider horizontal padding");
     for (std::size_t index = 1; index < longWordLayout.candidates.size();
          ++index) {
         const auto &previous = longWordLayout.candidates[index - 1].bounds;
@@ -75,5 +76,9 @@ int main() {
         assertTrue(previous.x + previous.width <= current.x,
                    "multi-character candidate slots do not overlap");
     }
+    const auto &lastCandidate = longWordLayout.candidates.back().bounds;
+    assertTrue(lastCandidate.x + lastCandidate.width <=
+                   metrics.panelX + metrics.panelWidth - metrics.horizontalPadding,
+               "last displayed candidate stays inside the panel");
     return EXIT_SUCCESS;
 }

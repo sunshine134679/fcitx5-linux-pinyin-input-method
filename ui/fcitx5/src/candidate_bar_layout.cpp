@@ -17,6 +17,9 @@ CandidateBarMetrics CandidateBarMetrics::reference() {
     metrics.shadowRadius = 4.0;
     metrics.shadowOpacity = 0.12;
     metrics.horizontalPadding = 8.0;
+    metrics.candidateTextPadding = 4.0;
+    metrics.selectedTextPadding = 8.0;
+    metrics.candidateGap = 2.0;
     metrics.candidateAdvance = 38.0;
     metrics.candidateWidth = 34.0;
     metrics.candidateHeight = 38.0;
@@ -56,7 +59,8 @@ CandidateBarLayout CandidateBarLayout::measure(
     const auto count = visibleItems(page);
     layout.candidates.reserve(count);
     double nextX = metrics.panelX + metrics.horizontalPadding;
-    double contentRight = nextX;
+    const double rightEdge = metrics.panelX + metrics.panelWidth -
+                             metrics.horizontalPadding;
     for (std::size_t index = 0; index < count; ++index) {
         const auto selected = index == page.cursor;
         const auto displayText =
@@ -64,12 +68,18 @@ CandidateBarLayout CandidateBarLayout::measure(
         double slotWidth = metrics.candidateWidth;
         double selectedWidth = metrics.selectedWidth;
         if (textWidth) {
-            const auto measuredWidth =
-                std::max(0.0, textWidth(displayText) + 8.0);
-            slotWidth = std::max(slotWidth, measuredWidth);
-            selectedWidth = std::max(selectedWidth, measuredWidth);
+            const auto measuredWidth = std::max(0.0, textWidth(displayText));
+            slotWidth = std::max(
+                slotWidth, measuredWidth + 2.0 * metrics.candidateTextPadding);
+            selectedWidth = std::max(
+                selectedWidth, measuredWidth + 2.0 * metrics.selectedTextPadding);
         }
         const auto x = nextX;
+        const auto occupiedWidth =
+            selected ? std::max(slotWidth, selectedWidth) : slotWidth;
+        if (x + occupiedWidth > rightEdge) {
+            break;
+        }
         const auto y = metrics.panelY +
                        (metrics.panelHeight - metrics.candidateHeight) / 2.0;
         layout.candidates.push_back(
@@ -77,13 +87,9 @@ CandidateBarLayout CandidateBarLayout::measure(
         if (selected) {
             layout.selectedPill = {x, y, selectedWidth, metrics.selectedHeight};
         }
-        const auto occupiedWidth =
-            selected ? std::max(slotWidth, selectedWidth) : slotWidth;
-        contentRight = std::max(contentRight, x + occupiedWidth);
-        nextX = x + std::max(metrics.candidateAdvance, occupiedWidth + 2.0);
+        nextX = x + std::max(metrics.candidateAdvance,
+                             occupiedWidth + metrics.candidateGap);
     }
-    layout.panel.width = std::max(
-        metrics.panelWidth, contentRight - metrics.panelX + metrics.horizontalPadding);
     return layout;
 }
 
