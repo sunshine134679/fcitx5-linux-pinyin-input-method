@@ -35,6 +35,8 @@ public:
     GtkWidget *candidateNumber = nullptr;
     GtkWidget *candidateArrow = nullptr;
     GtkWidget *candidatePage = nullptr;
+    GtkWidget *clipboardEnabled = nullptr;
+    GtkWidget *clipboardTrigger = nullptr;
     GtkWidget *learningEnabled = nullptr;
     GtkWidget *contextLearning = nullptr;
     GtkWidget *learningPath = nullptr;
@@ -80,6 +82,13 @@ void updateModelFromLearningPage(SettingsWindow::Impl *impl) {
     impl->model.setSettings(std::move(settings));
 }
 
+void updateModelFromClipboardPage(SettingsWindow::Impl *impl) {
+    impl->model.setClipboardOptions(
+        gtk_toggle_button_get_active(
+            GTK_TOGGLE_BUTTON(impl->clipboardEnabled)),
+        gtk_entry_get_text(GTK_ENTRY(impl->clipboardTrigger)));
+}
+
 void updateBasicPageFromModel(SettingsWindow::Impl *impl) {
     const auto &settings = impl->model.settings();
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->inputEnabled),
@@ -108,6 +117,14 @@ void updateLearningPageFromModel(SettingsWindow::Impl *impl) {
                                  settings.contextLearningEnabled);
 }
 
+void updateClipboardPageFromModel(SettingsWindow::Impl *impl) {
+    const auto &settings = impl->model.settings();
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->clipboardEnabled),
+                                 settings.clipboardEnabled);
+    gtk_entry_set_text(GTK_ENTRY(impl->clipboardTrigger),
+                       settings.clipboardTrigger.c_str());
+}
+
 void onBasicChanged(GtkWidget *, gpointer data) {
     updateModelFromBasicPage(static_cast<SettingsWindow::Impl *>(data));
 }
@@ -120,10 +137,15 @@ void onLearningChanged(GtkWidget *, gpointer data) {
     updateModelFromLearningPage(static_cast<SettingsWindow::Impl *>(data));
 }
 
+void onClipboardChanged(GtkWidget *, gpointer data) {
+    updateModelFromClipboardPage(static_cast<SettingsWindow::Impl *>(data));
+}
+
 void onSave(GtkButton *, gpointer data) {
     auto *impl = static_cast<SettingsWindow::Impl *>(data);
     updateModelFromBasicPage(impl);
     updateModelFromCandidatePage(impl);
+    updateModelFromClipboardPage(impl);
     updateModelFromLearningPage(impl);
     std::string error;
     if (impl->model.save(&error)) {
@@ -138,6 +160,7 @@ void onResetEdits(GtkButton *, gpointer data) {
     impl->model.resetEdits();
     updateBasicPageFromModel(impl);
     updateCandidatePageFromModel(impl);
+    updateClipboardPageFromModel(impl);
     updateLearningPageFromModel(impl);
     setStatus(impl, "已恢复未保存的修改");
 }
@@ -157,6 +180,7 @@ void onResetDefaults(GtkButton *, gpointer data) {
     if (impl->model.resetDefaults(&error)) {
         updateBasicPageFromModel(impl);
         updateCandidatePageFromModel(impl);
+        updateClipboardPageFromModel(impl);
         updateLearningPageFromModel(impl);
         setStatus(impl, "ModernIME 设置已恢复默认值");
     } else {
@@ -237,6 +261,52 @@ GtkWidget *makeCandidatePage(SettingsWindow::Impl *impl) {
                      G_CALLBACK(onCandidateChanged), impl);
     g_signal_connect(impl->candidatePage, "toggled",
                      G_CALLBACK(onCandidateChanged), impl);
+    return box;
+}
+
+GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
+    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 24);
+    gtk_widget_set_margin_end(box, 24);
+    gtk_widget_set_margin_top(box, 24);
+    gtk_widget_set_margin_bottom(box, 24);
+
+    auto *heading = gtk_label_new("剪贴板");
+    gtk_widget_set_halign(heading, GTK_ALIGN_START);
+    gtk_style_context_add_class(gtk_widget_get_style_context(heading),
+                                "title-3");
+    gtk_box_pack_start(GTK_BOX(box), heading, FALSE, FALSE, 0);
+
+    impl->clipboardEnabled =
+        gtk_check_button_new_with_label("启用 V+2 剪贴板");
+    gtk_box_pack_start(GTK_BOX(box), impl->clipboardEnabled, FALSE, FALSE, 0);
+
+    auto *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    auto *triggerLabel = gtk_label_new("剪贴板触发键");
+    gtk_widget_set_halign(triggerLabel, GTK_ALIGN_START);
+    impl->clipboardTrigger = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(impl->clipboardTrigger), 3);
+    gtk_entry_set_width_chars(GTK_ENTRY(impl->clipboardTrigger), 6);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(impl->clipboardTrigger),
+                                   "例如 V+2");
+    gtk_grid_attach(GTK_GRID(grid), triggerLabel, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), impl->clipboardTrigger, 1, 0, 1, 1);
+    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
+
+    auto *description = gtk_label_new(
+        "仅在中文输入状态且当前没有正在输入的拼音时触发。按第一个字母后，"
+        "在短时间内按数字键即可打开最近剪贴板内容。");
+    gtk_widget_set_halign(description, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
+    gtk_box_pack_start(GTK_BOX(box), description, FALSE, FALSE, 0);
+
+    updateClipboardPageFromModel(impl);
+    g_signal_connect(impl->clipboardEnabled, "toggled",
+                     G_CALLBACK(onClipboardChanged), impl);
+    g_signal_connect(impl->clipboardTrigger, "changed",
+                     G_CALLBACK(onClipboardChanged), impl);
     return box;
 }
 
@@ -710,6 +780,9 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
                          makeCandidatePage(impl_.get()),
                          "candidate", "候选设置");
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
+                         makeClipboardPage(impl_.get()),
+                         "clipboard", "剪贴板");
+    gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          makeLearningPage(impl_.get()),
                          "learning", "智能学习");
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
@@ -761,6 +834,10 @@ void SettingsWindow::showBasicPage() {
 
 void SettingsWindow::showCandidatePage() {
     gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "candidate");
+}
+
+void SettingsWindow::showClipboardPage() {
+    gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "clipboard");
 }
 
 void SettingsWindow::showLearningPage() {

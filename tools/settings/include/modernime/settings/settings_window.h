@@ -21,6 +21,7 @@ public:
     void present();
     void showBasicPage();
     void showCandidatePage();
+    void showClipboardPage();
     void showLearningPage();
     void showDictionaryPage();
     void showStatusPage();
