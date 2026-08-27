@@ -56,6 +56,8 @@ int main() {
                "client preedit cursor follows the end of the input");
     assertTrue(inputContext.preeditUpdates == 1,
                "client preedit update is sent");
+    inputContext.inputPanel().candidateList()->candidate(0).select(
+        &inputContext);
 
     page.clear();
     host.publishPage(page);

@@ -22,13 +22,15 @@ namespace {
 
 class FcitxCandidateWord final : public fcitx::CandidateWord {
 public:
-    FcitxCandidateWord(std::string text, ModernIMEController &controller,
+    FcitxCandidateWord(std::string text, ModernIMEController *controller,
                        std::size_t index)
-        : CandidateWord(fcitx::Text(std::move(text))), controller_(&controller),
+        : CandidateWord(fcitx::Text(std::move(text))), controller_(controller),
           index_(index) {}
 
     void select(fcitx::InputContext *) const override {
-        controller_->select(index_);
+        if (controller_ != nullptr) {
+            controller_->select(index_);
+        }
     }
 
 private:
@@ -94,7 +96,7 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     candidates->setCursorIncludeUnselected(true);
     for (std::size_t index = 0; index < page.items.size(); ++index) {
         candidates->append<FcitxCandidateWord>(page.items[index].text,
-                                               *controller_, index);
+                                               controller_, index);
     }
     // Fcitx5 validates the global cursor against the populated list.
     const auto cursor = std::min<std::size_t>(page.cursor, candidates->size() - 1);
