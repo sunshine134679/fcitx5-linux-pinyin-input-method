@@ -87,7 +87,7 @@ int main() {
     assertTrue(surface.textX.size() == 6, "candidate text positions are recorded");
     assertTrue(surface.textX[0] == 14.0 && surface.textX[1] == 22.0,
                "selected candidate text is centered in its pill");
-    assertTrue(surface.textX[2] == 83.0 && surface.textX[3] == 91.0,
+    assertTrue(surface.textX[2] == 82.0 && surface.textX[3] == 90.0,
                "normal candidate text is centered in its slot");
     assertTrue(surface.textSizes[0] == 16.0 && surface.textSizes[1] == 19.0,
                "candidate index is smaller than candidate text");
