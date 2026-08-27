@@ -229,6 +229,10 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().setActive(true);
     }
+    if (event.inputContext() != nullptr) {
+        event.inputContext()->updateUserInterface(
+            fcitx::UserInterfaceComponent::StatusArea, true);
+    }
 }
 
 void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
@@ -236,6 +240,10 @@ void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
     reset(entry, event);
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().setActive(false);
+    }
+    if (event.inputContext() != nullptr) {
+        event.inputContext()->updateUserInterface(
+            fcitx::UserInterfaceComponent::StatusArea, true);
     }
 }
 
