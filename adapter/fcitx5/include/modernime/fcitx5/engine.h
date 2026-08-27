@@ -16,6 +16,10 @@ enum class KeyKind {
     Space,
     Digit,
     Toggle,
+    PreviousCandidate,
+    NextCandidate,
+    PreviousPage,
+    NextPage,
 };
 
 struct KeyEvent final {
@@ -48,6 +52,7 @@ public:
 private:
     void refreshPage();
     bool commitCurrent();
+    bool moveCursor(std::ptrdiff_t delta);
 
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;

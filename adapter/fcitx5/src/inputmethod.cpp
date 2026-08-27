@@ -50,14 +50,14 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     candidates->setPageSize(9);
     candidates->setLayoutHint(fcitx::CandidateLayoutHint::Horizontal);
     candidates->setCursorIncludeUnselected(true);
-    for (std::size_t index = 0; index < page.items.size() && index < 9;
-         ++index) {
+    for (std::size_t index = 0; index < page.items.size(); ++index) {
         candidates->append<FcitxCandidateWord>(page.items[index].text,
                                                *controller_, index);
     }
     // Fcitx5 validates the global cursor against the populated list.
     const auto cursor = std::min<std::size_t>(page.cursor, candidates->size() - 1);
     candidates->setGlobalCursorIndex(static_cast<int>(cursor));
+    candidates->setPage(static_cast<int>(cursor / 9));
 
     inputContext_->inputPanel().setPreedit(fcitx::Text(page.preedit));
     inputContext_->inputPanel().setCandidateList(std::move(candidates));
@@ -124,6 +124,31 @@ bool ModernIMEInputMethod::translateKey(const fcitx::Key &key,
     }
     if (key.check(FcitxKey_Return)) {
         event.kind = KeyKind::Enter;
+        return true;
+    }
+    if (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_Up)) {
+        event.kind = KeyKind::PreviousPage;
+        return true;
+    }
+    if (key.check(FcitxKey_Page_Down) || key.check(FcitxKey_Down)) {
+        event.kind = KeyKind::NextPage;
+        return true;
+    }
+    if (key.check(FcitxKey_Left)) {
+        event.kind = KeyKind::PreviousCandidate;
+        return true;
+    }
+    if (key.check(FcitxKey_Right)) {
+        event.kind = KeyKind::NextCandidate;
+        return true;
+    }
+    if (key.check(FcitxKey_Tab,
+                  fcitx::KeyStates(fcitx::KeyState::Shift))) {
+        event.kind = KeyKind::PreviousCandidate;
+        return true;
+    }
+    if (key.check(FcitxKey_Tab)) {
+        event.kind = KeyKind::NextCandidate;
         return true;
     }
     if (key.check(FcitxKey_space)) {

@@ -1,12 +1,16 @@
 #include "modernime/fcitx5/engine.h"
 
 #include <array>
+#include <algorithm>
+#include <cstddef>
 
 namespace modernime::fcitx5 {
 namespace {
 
 const std::array<std::string_view, 9> sampleCandidates{
     "还", "海", "害", "嗨", "咳", "亥", "孩", "骇", "氦"};
+
+constexpr std::size_t candidatePageSize = 9;
 
 } // namespace
 
@@ -66,6 +70,14 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         const auto index = static_cast<std::size_t>(event.digit - '1');
         return select(index);
     }
+    case KeyKind::PreviousCandidate:
+        return moveCursor(-1);
+    case KeyKind::NextCandidate:
+        return moveCursor(1);
+    case KeyKind::PreviousPage:
+        return moveCursor(-static_cast<std::ptrdiff_t>(candidatePageSize));
+    case KeyKind::NextPage:
+        return moveCursor(static_cast<std::ptrdiff_t>(candidatePageSize));
     case KeyKind::Toggle:
         break;
     }
@@ -87,6 +99,22 @@ bool ModernIMEController::select(std::size_t index) {
     }
     page_.cursor = index;
     return commitCurrent();
+}
+
+bool ModernIMEController::moveCursor(std::ptrdiff_t delta) {
+    if (page_.items.empty() || delta == 0) {
+        return false;
+    }
+
+    const auto current = static_cast<std::ptrdiff_t>(page_.cursor);
+    const auto last = static_cast<std::ptrdiff_t>(page_.items.size() - 1);
+    const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
+    if (next == current) {
+        return false;
+    }
+    page_.cursor = static_cast<std::size_t>(next);
+    host_.publishPage(page_);
+    return true;
 }
 
 void ModernIMEController::reset() {

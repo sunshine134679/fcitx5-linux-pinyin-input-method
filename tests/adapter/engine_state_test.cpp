@@ -71,6 +71,41 @@ struct FakeProvider final : modernime::core::CandidateProvider {
     }
 };
 
+struct ManyCandidateProvider final : modernime::core::CandidateProvider {
+    modernime::core::CandidatePage current;
+
+    bool append(std::string_view input) override {
+        current.preedit.append(input);
+        current.items.clear();
+        if (!current.preedit.empty()) {
+            for (std::size_t index = 0; index < 20; ++index) {
+                current.items.push_back({"候选" + std::to_string(index + 1),
+                                         current.preedit, index});
+            }
+        }
+        return true;
+    }
+
+    bool eraseLast() override {
+        if (current.preedit.empty()) {
+            return false;
+        }
+        current.preedit.pop_back();
+        current.items.clear();
+        return true;
+    }
+
+    bool select(std::size_t index) override {
+        return index < current.items.size();
+    }
+
+    void reset() override { current.clear(); }
+
+    const modernime::core::CandidatePage &page() const override {
+        return current;
+    }
+};
+
 void type(modernime::fcitx5::ModernIMEController &controller,
           std::string_view text) {
     for (const char character : text) {
@@ -143,5 +178,33 @@ int main() {
                "provider candidate is committed");
     assertTrue(provider.resetCount == 1,
                "committing a provider candidate resets the provider");
+
+    ManyCandidateProvider manyProvider;
+    RecordingHost manyHost;
+    modernime::fcitx5::ModernIMEController manyController(manyHost,
+                                                           &manyProvider);
+    type(manyController, "n");
+    assertTrue(manyController.page().items.size() == 20,
+               "all candidates remain available to the controller");
+    assertTrue(manyController.handle(
+                   {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}),
+               "next candidate moves the cursor");
+    assertTrue(manyController.page().cursor == 1,
+               "next candidate selects the second item");
+    assertTrue(manyController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
+               "next page moves by one page");
+    assertTrue(manyController.page().cursor == 10,
+               "next page selects the first item on the next page");
+    assertTrue(manyController.handle(
+                   {modernime::fcitx5::KeyKind::PreviousCandidate, 0, 0}),
+               "previous candidate moves back");
+    assertTrue(manyController.page().cursor == 9,
+               "previous candidate selects the prior item");
+    assertTrue(manyController.handle(
+                   {modernime::fcitx5::KeyKind::Enter, 0, 0}),
+               "enter commits the highlighted candidate");
+    assertTrue(manyHost.commits.back() == "候选10",
+               "the highlighted paged candidate is committed");
     return EXIT_SUCCESS;
 }

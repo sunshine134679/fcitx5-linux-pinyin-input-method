@@ -38,5 +38,19 @@ int main() {
                "global cursor points at the first candidate");
     assertTrue(candidates.cursorIndex() == 0,
                "cursor index is valid after publication");
+
+    fcitx::CommonCandidateList paged;
+    paged.setPageSize(9);
+    for (int index = 0; index < 20; ++index) {
+        paged.append<TestCandidate>("candidate");
+    }
+    paged.setGlobalCursorIndex(10);
+    paged.setPage(1);
+    assertTrue(paged.totalSize() == 20, "all candidates are retained");
+    assertTrue(paged.totalPages() == 3, "candidate list exposes three pages");
+    assertTrue(paged.currentPage() == 1,
+               "global cursor selects the second page");
+    assertTrue(paged.cursorIndex() == 1,
+               "cursor index is relative to the current page");
     return EXIT_SUCCESS;
 }
