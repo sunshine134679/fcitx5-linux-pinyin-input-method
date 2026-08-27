@@ -2,6 +2,10 @@ add_executable(modernime_core_tests core/foundation_test.cpp)
 target_link_libraries(modernime_core_tests PRIVATE modernime_core)
 add_test(NAME modernime_core_foundation COMMAND modernime_core_tests)
 
+add_executable(modernime_settings_tests core/settings_test.cpp)
+target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
+add_test(NAME modernime_settings COMMAND modernime_settings_tests)
+
 add_executable(modernime_dictionary_prior_tests core/dictionary_prior_test.cpp)
 target_link_libraries(modernime_dictionary_prior_tests PRIVATE modernime_core)
 add_test(NAME modernime_dictionary_prior COMMAND modernime_dictionary_prior_tests)
