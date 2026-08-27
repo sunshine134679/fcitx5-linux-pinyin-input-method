@@ -42,6 +42,8 @@ public:
     bool recordSuppression(std::string_view phrase,
                            std::string_view pinyin);
     bool recordBatch(const std::vector<LearningEvent> &events);
+    bool backupTo(const std::filesystem::path &path) const;
+    bool clear();
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;
 
 private:

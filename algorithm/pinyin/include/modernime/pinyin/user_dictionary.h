@@ -25,6 +25,8 @@ public:
     const std::vector<UserDictionaryEntry> &entries() const {
         return entries_;
     }
+    bool upsert(std::string_view pinyin, std::string_view phrase,
+                float weight);
     bool contains(std::string_view normalizedPinyin,
                   std::string_view phrase) const;
     bool remove(std::string_view normalizedPinyin, std::string_view phrase);

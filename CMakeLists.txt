@@ -17,7 +17,7 @@ include(cmake/ModernIMEWarnings.cmake)
 
 add_subdirectory(core)
 
-if(MODERNIME_BUILD_LIBIME_PINYIN)
+if(MODERNIME_BUILD_LIBIME_PINYIN OR MODERNIME_BUILD_SETTINGS)
     add_subdirectory(algorithm/pinyin)
 endif()
 

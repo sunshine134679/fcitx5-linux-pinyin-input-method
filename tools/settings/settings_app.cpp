@@ -11,10 +11,10 @@
 namespace {
 
 struct ApplicationState final {
-    explicit ApplicationState(std::filesystem::path path)
-        : settingsPath(std::move(path)) {}
+    explicit ApplicationState(modernime::core::SettingsPaths paths)
+        : settingsPaths(std::move(paths)) {}
 
-    std::filesystem::path settingsPath;
+    modernime::core::SettingsPaths settingsPaths;
     std::unique_ptr<modernime::settings::SettingsWindow> window;
 };
 
@@ -22,7 +22,7 @@ void activate(GtkApplication *application, gpointer data) {
     auto *state = static_cast<ApplicationState *>(data);
     if (state->window == nullptr) {
         state->window = std::make_unique<modernime::settings::SettingsWindow>(
-            application, state->settingsPath);
+            application, state->settingsPaths);
     }
     state->window->present();
 }
@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
     }
 
     const auto paths = settingsPaths();
-    ApplicationState state(paths.settingsFile);
+    ApplicationState state(paths);
     auto *application = gtk_application_new("com.modernime.Settings",
                                              G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(application, "activate", G_CALLBACK(activate), &state);

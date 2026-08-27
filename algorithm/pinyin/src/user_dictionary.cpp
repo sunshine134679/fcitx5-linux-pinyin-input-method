@@ -185,6 +185,30 @@ UserDictionary UserDictionary::loadText(
     return dictionary;
 }
 
+bool UserDictionary::upsert(std::string_view pinyin, std::string_view phrase,
+                            float weight) {
+    if (!validUserPinyin(pinyin) || phrase.empty() || !validUtf8(phrase) ||
+        !std::isfinite(weight) || weight < 0.0F) {
+        return false;
+    }
+    const auto normalized = modernime::core::normalizePinyin(pinyin);
+    if (normalized.empty()) {
+        return false;
+    }
+    const auto iterator = std::find_if(
+        entries_.begin(), entries_.end(), [&normalized, phrase](const auto &entry) {
+            return entry.pinyin == normalized && entry.phrase == phrase;
+        });
+    if (iterator == entries_.end()) {
+        entries_.push_back({normalized, std::string(phrase), weight});
+    } else {
+        iterator->pinyin = normalized;
+        iterator->phrase = phrase;
+        iterator->weight = weight;
+    }
+    return true;
+}
+
 bool UserDictionary::contains(std::string_view normalizedPinyin,
                               std::string_view phrase) const {
     const auto normalized = modernime::core::normalizePinyin(normalizedPinyin);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modernime/core/settings.h"
 #include "modernime/settings/settings_model.h"
 
 #include <filesystem>
@@ -11,7 +12,7 @@ namespace modernime::settings {
 
 class SettingsWindow final {
 public:
-    SettingsWindow(void *application, std::filesystem::path settingsPath);
+    SettingsWindow(void *application, core::SettingsPaths paths);
     ~SettingsWindow();
 
     SettingsWindow(const SettingsWindow &) = delete;

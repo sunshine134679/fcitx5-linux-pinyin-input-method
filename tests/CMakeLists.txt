@@ -43,6 +43,23 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_runtime_controller_tests
             $<TARGET_FILE:modernime_fake_fcitx5_remote>
     )
+
+    add_executable(modernime_data_controller_tests
+        settings/data_controller_test.cpp
+    )
+    target_include_directories(modernime_data_controller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_sources(modernime_data_controller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/data_controller.cpp
+    )
+    target_link_libraries(modernime_data_controller_tests PRIVATE
+        modernime_core
+        modernime_pinyin
+    )
+    add_test(NAME modernime_data_controller
+        COMMAND modernime_data_controller_tests
+    )
 endif()
 
 add_executable(modernime_dictionary_prior_tests core/dictionary_prior_test.cpp)

@@ -107,6 +107,58 @@ bool LearningStore::execute(const char *sql) const {
     return success;
 }
 
+bool LearningStore::backupTo(const std::filesystem::path &path) const {
+    if (db_ == nullptr || path.empty() || path == path_) {
+        return false;
+    }
+    std::error_code error;
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (error) {
+            return false;
+        }
+    }
+
+    sqlite3 *backupDatabase = nullptr;
+    if (sqlite3_open_v2(path.c_str(), &backupDatabase,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+                        nullptr) != SQLITE_OK) {
+        if (backupDatabase != nullptr) {
+            sqlite3_close(backupDatabase);
+        }
+        return false;
+    }
+    sqlite3_busy_timeout(backupDatabase, 1000);
+    auto *backup = sqlite3_backup_init(backupDatabase, "main", db_, "main");
+    if (backup == nullptr) {
+        sqlite3_close(backupDatabase);
+        return false;
+    }
+    int result = SQLITE_OK;
+    do {
+        result = sqlite3_backup_step(backup, -1);
+    } while (result == SQLITE_BUSY || result == SQLITE_LOCKED);
+    const auto finishResult = sqlite3_backup_finish(backup);
+    const bool success = result == SQLITE_DONE && finishResult == SQLITE_OK;
+    sqlite3_close(backupDatabase);
+    return success;
+}
+
+bool LearningStore::clear() {
+    if (db_ == nullptr || !execute("BEGIN IMMEDIATE;")) {
+        return false;
+    }
+    if (!execute("DELETE FROM learning_entries;")) {
+        execute("ROLLBACK;");
+        return false;
+    }
+    if (!execute("COMMIT;")) {
+        execute("ROLLBACK;");
+        return false;
+    }
+    return true;
+}
+
 bool LearningStore::recordSelection(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
