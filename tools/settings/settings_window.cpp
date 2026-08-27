@@ -751,6 +751,7 @@ SettingsWindow::~SettingsWindow() {
 }
 
 void SettingsWindow::present() {
+    gtk_widget_show_all(impl_->window);
     gtk_window_present(GTK_WINDOW(impl_->window));
 }
 
