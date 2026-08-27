@@ -80,7 +80,7 @@ int main() {
     assertTrue(surface.textX.size() == 3, "candidate text positions are recorded");
     assertTrue(surface.textX[0] == 10.0,
                "selected candidate text is centered in its pill");
-    assertTrue(surface.textX[1] == 48.0,
+    assertTrue(surface.textX[1] == 80.0,
                "normal candidate text is centered in its slot");
     assertTrue(surface.textBaseline.size() == 3,
                "candidate baselines are recorded");

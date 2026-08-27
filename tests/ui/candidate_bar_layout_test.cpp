@@ -27,15 +27,15 @@ int main() {
     const auto metrics = modernime::ui::CandidateBarMetrics::reference();
     const auto layout = modernime::ui::CandidateBarLayout::measure(page, metrics);
 
-    assertTrue(metrics.canvasWidth == 360.0 && metrics.canvasHeight == 62.0,
+    assertTrue(metrics.canvasWidth == 624.0 && metrics.canvasHeight == 62.0,
                "reference canvas matches native Fcitx5 candidate window");
     assertTrue(metrics.panelX == 2.0 && metrics.panelY == 2.0 &&
-                   metrics.panelWidth == 356.0 && metrics.panelHeight == 54.0,
+                   metrics.panelWidth == 620.0 && metrics.panelHeight == 54.0,
                "candidate panel fits the native Fcitx5 window");
     assertTrue(layout.candidates.size() == 9, "layout caps candidates at nine");
     assertTrue(layout.panel.x == 2.0 && layout.panel.y == 2.0,
                "panel starts at reference position");
-    assertTrue(layout.panel.width == 356.0 && layout.panel.height == 54.0,
+    assertTrue(layout.panel.width == 620.0 && layout.panel.height == 54.0,
                "panel uses reference dimensions");
     assertTrue(layout.preeditBaseline < layout.panel.y,
                "preedit baseline is above panel");
@@ -75,7 +75,7 @@ int main() {
         [](std::string_view) { return 47.0; });
     assertTrue(longWordLayout.panel.width == metrics.panelWidth,
                "panel keeps the fixed reference width");
-    assertTrue(longWordLayout.candidates.size() == 6,
+    assertTrue(longWordLayout.candidates.size() == 7,
                "only candidates that fit the fixed panel are displayed");
     assertTrue(longWordLayout.selectedPill.width == 63.0,
                "selected pill has wider horizontal padding");
