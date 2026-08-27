@@ -24,6 +24,7 @@
 namespace modernime::ui {
 
 struct ModernIMEUserInterface::Impl final {
+    fcitx::Instance *instance = nullptr;
     GtkWidget *window = nullptr;
     GtkWidget *drawingArea = nullptr;
     AppIndicator *indicator = nullptr;
@@ -83,6 +84,19 @@ struct ModernIMEUserInterface::Impl final {
                          style.candidateNumberText) +
                textWidth(value.substr(separator + 1), style.candidateText);
     }
+
+    void updateIndicator(fcitx::InputContext *inputContext) {
+        if (indicator == nullptr || instance == nullptr || inputContext == nullptr) {
+            return;
+        }
+        const auto inputMethod = instance->inputMethod(inputContext);
+        const auto label =
+            std::string(StatusIndicator::labelForInputMethod(inputMethod));
+        const auto title =
+            std::string(StatusIndicator::titleForInputMethod(inputMethod));
+        app_indicator_set_label(indicator, label.c_str(), "");
+        app_indicator_set_title(indicator, title.c_str());
+    }
 };
 
 namespace {
@@ -136,6 +150,7 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
 
 ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     : impl_(std::make_unique<Impl>()) {
+    impl_->instance = instance;
     impl_->gtkAvailable = gtk_init_check(nullptr, nullptr);
     if (!impl_->gtkAvailable) {
         return;
@@ -198,9 +213,11 @@ void ModernIMEUserInterface::draw(cairo_t *context) {
 
 void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
                                     fcitx::InputContext *inputContext) {
-    if (!impl_->gtkAvailable ||
-        component != fcitx::UserInterfaceComponent::InputPanel ||
-        inputContext == nullptr) {
+    if (!impl_->gtkAvailable || inputContext == nullptr) {
+        return;
+    }
+    impl_->updateIndicator(inputContext);
+    if (component != fcitx::UserInterfaceComponent::InputPanel) {
         return;
     }
     const auto page = pageFromInputPanel(inputContext->inputPanel());
