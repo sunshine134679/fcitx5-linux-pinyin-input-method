@@ -76,6 +76,14 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$autostart_file"
 } > "$manifest"
 
+if command -v fcitx5 >/dev/null 2>&1; then
+    env FCITX_ADDON_DIRS="$prefix/lib/fcitx5:$system_addon_dir" \
+        fcitx5 -d -r -u modernime-ui >/dev/null 2>&1 &
+    printf 'Fcitx5 restart requested with the ModernIME UI addon\n'
+else
+    printf 'Fcitx5 executable not found; start it after installation with: fcitx5 -u modernime-ui\n' >&2
+fi
+
 printf 'ModernIME installed to %s\n' "$prefix"
 printf 'Install manifest: %s\n' "$manifest"
 printf 'Select the UI addon with: fcitx5 -u modernime-ui\n'
