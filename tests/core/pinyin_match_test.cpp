@@ -28,6 +28,8 @@ int main() {
                "abbreviation uses syllable initials");
     assertTrue(PinyinMatchPolicy::priority("nihao", "ni'hao") == 2,
                "exact match has highest priority");
+    assertTrue(PinyinMatchPolicy::priority("ni'hao", "ni'hao") == 2,
+               "separated exact input has highest priority");
     assertTrue(PinyinMatchPolicy::priority("nh", "ni'hao") == 1,
                "abbreviation match has secondary priority");
     assertTrue(PinyinMatchPolicy::priority("nihaoma", "ni'hao") == -1,

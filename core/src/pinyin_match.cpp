@@ -50,7 +50,7 @@ bool PinyinMatchPolicy::isAbbreviationInput(std::string_view userInput) {
 
 bool PinyinMatchPolicy::exactInputMatch(std::string_view userInput,
                                         std::string_view fullPinyin) {
-    return canonical(fullPinyin) == userInput;
+    return canonical(fullPinyin) == canonical(userInput);
 }
 
 int PinyinMatchPolicy::priority(std::string_view userInput,
