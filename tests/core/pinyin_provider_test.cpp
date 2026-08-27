@@ -74,21 +74,28 @@ int main() {
     modernime::pinyin::PinyinDataPaths paths;
     paths.userDictionary = dictionaryPath.string();
     paths.learningStore = learningPath.string();
-    modernime::pinyin::PinyinCandidateProvider customProvider(paths);
-    assertTrue(customProvider.append("nihao"),
-               "custom dictionary input is accepted");
-    const auto customIndex = indexOf(customProvider.page(), "人工智能");
-    assertTrue(customIndex < customProvider.page().items.size(),
-               "custom phrase is visible before removal");
-    assertTrue(customProvider.page().items[customIndex].source ==
-                   modernime::core::CandidateSource::UserDictionary,
-               "custom phrase is marked as a user dictionary candidate");
-    assertTrue(customProvider.remove(customIndex),
-               "custom phrase removal is accepted");
-    assertTrue(!hasText(customProvider.page(), "人工智能"),
-               "custom phrase disappears after removal");
-    assertTrue(hasText(customProvider.page(), "你好"),
-               "system candidate remains after custom removal");
+    {
+        modernime::pinyin::PinyinCandidateProvider customProvider(paths);
+        assertTrue(customProvider.append("nihao"),
+                   "custom dictionary input is accepted");
+        const auto customIndex = indexOf(customProvider.page(), "人工智能");
+        assertTrue(customIndex < customProvider.page().items.size(),
+                   "custom phrase is visible before removal");
+        assertTrue(customProvider.page().items[customIndex].source ==
+                       modernime::core::CandidateSource::UserDictionary,
+                   "custom phrase is marked as a user dictionary candidate");
+        assertTrue(customProvider.remove(customIndex),
+                   "custom phrase removal is accepted");
+        assertTrue(!hasText(customProvider.page(), "人工智能"),
+                   "custom phrase disappears after removal");
+        assertTrue(hasText(customProvider.page(), "你好"),
+                   "system candidate remains after custom removal");
+    }
+    modernime::pinyin::PinyinCandidateProvider reloadedProvider(paths);
+    assertTrue(reloadedProvider.append("nihao"),
+               "reloaded dictionary input is accepted");
+    assertTrue(!hasText(reloadedProvider.page(), "人工智能"),
+               "removed custom phrase stays absent after restart");
     std::error_code error;
     std::filesystem::remove(dictionaryPath, error);
     std::filesystem::remove(learningPath, error);

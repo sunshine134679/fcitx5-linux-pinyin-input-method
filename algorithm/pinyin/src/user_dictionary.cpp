@@ -7,8 +7,9 @@
 
 #include <cmath>
 #include <fstream>
-#include <sstream>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 
@@ -133,6 +134,43 @@ bool UserDictionary::remove(std::string_view normalizedPinyin,
         return false;
     }
     entries_.erase(iterator);
+    return true;
+}
+
+bool UserDictionary::saveText(const std::filesystem::path &path) const {
+    if (path.empty()) {
+        return false;
+    }
+    std::error_code error;
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (error) {
+            return false;
+        }
+    }
+
+    auto temporary = path;
+    temporary += ".tmp";
+    std::ofstream output(temporary, std::ios::trunc);
+    if (!output) {
+        return false;
+    }
+    output << std::setprecision(9);
+    for (const auto &entry : entries_) {
+        output << entry.pinyin << '\t' << entry.phrase << '\t' << entry.weight
+               << '\n';
+    }
+    output.close();
+    if (!output) {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
     return true;
 }
 

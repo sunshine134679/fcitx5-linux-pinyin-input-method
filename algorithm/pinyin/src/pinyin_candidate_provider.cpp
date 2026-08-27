@@ -78,14 +78,14 @@ std::string candidateKey(std::string_view pinyin, std::string_view text) {
 class PinyinCandidateProvider::Impl final {
 public:
     explicit Impl(const PinyinDataPaths &paths)
-        : learning_(std::make_unique<core::LearningWriter>(
+        : userDictionaryPath_(paths.userDictionary.empty()
+                                  ? defaultUserDictionaryPath()
+                                  : std::filesystem::path(paths.userDictionary)),
+          learning_(std::make_unique<core::LearningWriter>(
               paths.learningStore.empty()
                   ? defaultLearningPath()
                   : std::filesystem::path(paths.learningStore))),
-          userDictionary_(UserDictionary::loadText(
-              paths.userDictionary.empty()
-                  ? defaultUserDictionaryPath()
-                  : std::filesystem::path(paths.userDictionary))) {
+          userDictionary_(UserDictionary::loadText(userDictionaryPath_)) {
         auto dictionary = std::make_unique<libime::PinyinDictionary>();
         if (std::filesystem::is_regular_file(paths.dictionary)) {
             dictionary->load(0, paths.dictionary.c_str(),
@@ -149,13 +149,21 @@ public:
         const auto candidate = page_.items[index];
         const auto rawInput = context->userInput();
         if (candidate.source == core::CandidateSource::UserDictionary) {
-            const bool removedFromDictionary = userDictionary_.remove(
-                candidate.fullPinyin, candidate.text);
-            const bool removedFromLibime = userDictionary_.removeFrom(
-                *ime->dict(), 1, candidate.fullPinyin, candidate.text);
-            if (!removedFromDictionary && !removedFromLibime) {
+            auto updatedDictionary = userDictionary_;
+            if (!updatedDictionary.remove(candidate.fullPinyin,
+                                          candidate.text) ||
+                !updatedDictionary.saveText(userDictionaryPath_)) {
                 return false;
             }
+            const bool removedFromLibime = userDictionary_.removeFrom(
+                *ime->dict(), 1, candidate.fullPinyin, candidate.text);
+            if (!removedFromLibime) {
+                // Restore the original file if the in-memory dictionary layer
+                // could not be changed.
+                userDictionary_.saveText(userDictionaryPath_);
+                return false;
+            }
+            userDictionary_ = std::move(updatedDictionary);
             rebuildContext(rawInput);
             return true;
         }
@@ -250,6 +258,7 @@ private:
 
     std::unique_ptr<libime::PinyinIME> ime;
     std::unique_ptr<libime::PinyinContext> context;
+    std::filesystem::path userDictionaryPath_;
     std::unique_ptr<core::LearningWriter> learning_;
     UserDictionary userDictionary_;
     core::CandidatePage page_;
