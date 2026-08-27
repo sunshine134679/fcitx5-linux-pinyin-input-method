@@ -76,8 +76,10 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     candidates->setGlobalCursorIndex(static_cast<int>(cursor));
     candidates->setPage(static_cast<int>(cursor / 9));
 
-    inputContext_->inputPanel().setPreedit(fcitx::Text(page.preedit));
-    inputContext_->inputPanel().setClientPreedit(fcitx::Text(page.preedit));
+    fcitx::Text preedit(page.preedit);
+    preedit.setCursor(static_cast<int>(preedit.textLength()));
+    inputContext_->inputPanel().setPreedit(preedit);
+    inputContext_->inputPanel().setClientPreedit(preedit);
     inputContext_->inputPanel().setCandidateList(std::move(candidates));
     inputContext_->updatePreedit();
     inputContext_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);

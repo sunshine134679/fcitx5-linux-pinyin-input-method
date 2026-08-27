@@ -52,6 +52,8 @@ int main() {
 
     assertTrue(inputContext.inputPanel().clientPreedit().toString() == "df",
                "preedit is published to the client input area");
+    assertTrue(inputContext.inputPanel().clientPreedit().cursor() == 2,
+               "client preedit cursor follows the end of the input");
     assertTrue(inputContext.preeditUpdates == 1,
                "client preedit update is sent");
 
