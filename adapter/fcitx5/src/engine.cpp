@@ -3,6 +3,7 @@
 #include <array>
 #include <algorithm>
 #include <cstddef>
+#include <utility>
 
 namespace modernime::fcitx5 {
 namespace {
@@ -15,6 +16,14 @@ const std::array<std::string_view, 9> sampleCandidates{
 ModernIMEController::ModernIMEController(EngineHost &host,
                                          core::CandidateProvider *provider)
     : host_(host), provider_(provider) {}
+
+void ModernIMEController::setContext(std::string before, std::string after) {
+    contextBefore_ = std::move(before);
+    contextAfter_ = std::move(after);
+    if (provider_ != nullptr) {
+        provider_->setContext(contextBefore_, contextAfter_);
+    }
+}
 
 bool ModernIMEController::handle(const KeyEvent &event) {
     if (event.kind == KeyKind::Toggle) {
@@ -172,6 +181,11 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
 }
 
 void ModernIMEController::reset() {
+    contextBefore_.clear();
+    contextAfter_.clear();
+    if (provider_ != nullptr) {
+        provider_->setContext(contextBefore_, contextAfter_);
+    }
     if (provider_) {
         provider_->reset();
         page_ = provider_->page();

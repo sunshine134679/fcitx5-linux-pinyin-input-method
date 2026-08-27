@@ -7,7 +7,9 @@
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx/surroundingtext.h>
 #include <fcitx-utils/keysymgen.h>
+#include <fcitx-utils/utf8.h>
 
 #include <algorithm>
 #include <cctype>
@@ -50,6 +52,29 @@ bool isAsciiPunctuation(std::uint32_t unicode) {
 }
 
 } // namespace
+
+std::pair<std::string, std::string>
+extractSurroundingContext(const fcitx::SurroundingText &text,
+                          std::size_t maxChars) {
+    if (!text.isValid() || maxChars == 0 ||
+        !fcitx::utf8::validate(text.text())) {
+        return {};
+    }
+
+    const auto &value = text.text();
+    const auto length = fcitx::utf8::length(value);
+    const auto cursor = std::min<std::size_t>(text.cursor(), length);
+    const auto beforeCount = std::min(maxChars, cursor);
+    const auto afterCount = std::min(maxChars, length - cursor);
+    const auto advance = [](auto iterator, std::size_t count) {
+        return count == 0 ? iterator : fcitx::utf8::nextNChar(iterator, count);
+    };
+    const auto begin = advance(value.cbegin(), cursor - beforeCount);
+    const auto cursorIterator = advance(value.cbegin(), cursor);
+    const auto end = advance(cursorIterator, afterCount);
+    return {std::string(begin, cursorIterator),
+            std::string(cursorIterator, end)};
+}
 
 FcitxEngineHost::FcitxEngineHost(fcitx::InputContext &inputContext)
     : inputContext_(&inputContext) {}
@@ -229,6 +254,9 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
     if (contextState == nullptr) {
         return;
     }
+    const auto context = extractSurroundingContext(
+        event.inputContext()->surroundingText(), 32);
+    contextState->controller().setContext(context.first, context.second);
     const auto modernEvent = translateKey(event.key());
     if (modernEvent.has_value() &&
         contextState->controller().handle(*modernEvent)) {

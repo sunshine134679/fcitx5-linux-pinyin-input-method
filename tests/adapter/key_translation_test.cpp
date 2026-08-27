@@ -1,5 +1,6 @@
 #include "modernime/fcitx5/fcitx_engine.h"
 
+#include <fcitx/surroundingtext.h>
 #include <fcitx-utils/keysymgen.h>
 
 #include <cstdlib>
@@ -25,6 +26,18 @@ void assertKind(fcitx::KeySym symbol, modernime::fcitx5::KeyKind expected,
 } // namespace
 
 int main() {
+    fcitx::SurroundingText surrounding;
+    surrounding.setText("你好世界", 2, 2);
+    const auto context =
+        modernime::fcitx5::extractSurroundingContext(surrounding, 1);
+    assertTrue(context.first == "好" && context.second == "世",
+               "surrounding context is bounded by UTF-8 characters");
+    surrounding.invalidate();
+    const auto invalidContext =
+        modernime::fcitx5::extractSurroundingContext(surrounding, 32);
+    assertTrue(invalidContext.first.empty() && invalidContext.second.empty(),
+               "invalid surrounding context is ignored");
+
     const auto ctrl = fcitx::KeyStates(fcitx::KeyState::Ctrl);
     const auto shift = fcitx::KeyStates(fcitx::KeyState::Shift);
     const auto ctrlDelete = modernime::fcitx5::translateKey(

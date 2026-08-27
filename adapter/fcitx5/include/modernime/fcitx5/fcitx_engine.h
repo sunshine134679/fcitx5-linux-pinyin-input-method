@@ -9,9 +9,12 @@
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
+#include <fcitx/surroundingtext.h>
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
 
 namespace fcitx {
 class AddonManager;
@@ -19,6 +22,9 @@ class AddonManager;
 
 namespace modernime::fcitx5 {
 
+std::pair<std::string, std::string>
+extractSurroundingContext(const fcitx::SurroundingText &text,
+                          std::size_t maxChars);
 std::optional<KeyEvent> translateKey(const fcitx::Key &key);
 
 class FcitxEngineHost final : public EngineHost {

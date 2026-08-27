@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace modernime::fcitx5 {
@@ -50,6 +51,7 @@ public:
     bool handle(const KeyEvent &event);
     bool select(std::size_t index);
     bool removeCurrent();
+    void setContext(std::string before, std::string after);
     void reset();
     void setActive(bool active);
 
@@ -70,6 +72,8 @@ private:
     core::CandidateProvider *provider_ = nullptr;
     core::InputState input_;
     core::CandidatePage page_;
+    std::string contextBefore_;
+    std::string contextAfter_;
     bool active_ = true;
 };
 

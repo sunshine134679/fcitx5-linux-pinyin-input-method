@@ -71,11 +71,29 @@ void testNegativeFeedbackReducesLearningBoost() {
     std::filesystem::remove(path, error);
 }
 
+void testMatchingContextRaisesCandidate() {
+    const auto path = testPath("context.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "context store opens");
+    assertTrue(store.recordSelection("你好", "nihao", "今天天气", "很好", 1000),
+               "context selection stores");
+    const auto snapshot = store.snapshot(1000);
+    assertTrue(snapshot->contextBoost("你好", "nihao", "今天天气", "很好") >
+                   0.0,
+               "matching context adds a bounded boost");
+    assertTrue(snapshot->contextBoost("你好", "nihao", "完全不同", "") == 0.0,
+               "unmatched context adds no boost");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 } // namespace
 
 int main() {
     testSelectionPersistsAcrossReopen();
     testFrequencyBonusIsBoundedAndMovesCandidate();
     testNegativeFeedbackReducesLearningBoost();
+    testMatchingContextRaisesCandidate();
     return EXIT_SUCCESS;
 }

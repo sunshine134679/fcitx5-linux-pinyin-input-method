@@ -31,6 +31,8 @@ struct RecordingHost final : modernime::fcitx5::EngineHost {
 
 struct FakeProvider final : modernime::core::CandidateProvider {
     modernime::core::CandidatePage current;
+    std::string contextBefore;
+    std::string contextAfter;
     int appendCount = 0;
     int eraseCount = 0;
     int resetCount = 0;
@@ -65,6 +67,11 @@ struct FakeProvider final : modernime::core::CandidateProvider {
     bool remove(std::size_t index) override {
         ++removeCount;
         return index < current.items.size();
+    }
+
+    void setContext(std::string_view before, std::string_view after) override {
+        contextBefore = before;
+        contextAfter = after;
     }
 
     void reset() override {
@@ -248,6 +255,16 @@ int main() {
                "provider candidate is committed");
     assertTrue(provider.resetCount == 1,
                "committing a provider candidate resets the provider");
+
+    FakeProvider contextualProvider;
+    RecordingHost contextualHost;
+    modernime::fcitx5::ModernIMEController contextualController(
+        contextualHost, &contextualProvider);
+    contextualController.setContext("前文", "后文");
+    type(contextualController, "nihao");
+    assertTrue(contextualProvider.contextBefore == "前文" &&
+                   contextualProvider.contextAfter == "后文",
+               "controller forwards surrounding context to provider");
 
     FakeProvider removableProvider;
     RecordingHost removableHost;
