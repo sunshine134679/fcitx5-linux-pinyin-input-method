@@ -9,7 +9,7 @@ namespace modernime::core {
 // calibrated probability. Keep it bounded so native decoder order remains
 // the primary signal.
 inline double curatedDictionaryBonus(float cost) {
-    if (cost <= 0.0F) {
+    if (!std::isfinite(cost) || cost <= 0.0F) {
         return 0.0;
     }
     constexpr double maximumCost = 100.0;
@@ -19,11 +19,20 @@ inline double curatedDictionaryBonus(float cost) {
 }
 
 inline double systemDictionaryBonus(float cost) {
+    if (!std::isfinite(cost)) {
+        return 0.0;
+    }
     return std::clamp(-static_cast<double>(cost), 0.0, 4.0);
 }
 
 inline double combinedDictionaryBonus(double userBonus, double systemBonus) {
-    return std::min(12.0, userBonus + systemBonus);
+    if (!std::isfinite(userBonus)) {
+        userBonus = 0.0;
+    }
+    if (!std::isfinite(systemBonus)) {
+        systemBonus = 0.0;
+    }
+    return std::clamp(userBonus + systemBonus, 0.0, 12.0);
 }
 
 } // namespace modernime::core
