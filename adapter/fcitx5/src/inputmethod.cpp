@@ -82,9 +82,12 @@ FcitxEngineHost::FcitxEngineHost(fcitx::InputContext &inputContext)
     : inputContext_(&inputContext) {}
 
 void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
+    fcitx::Text preedit(page.preedit);
+    preedit.setCursor(static_cast<int>(preedit.textLength()));
     if (page.items.empty()) {
         inputContext_->inputPanel().reset();
-        inputContext_->inputPanel().setClientPreedit(fcitx::Text());
+        inputContext_->inputPanel().setPreedit(preedit);
+        inputContext_->inputPanel().setClientPreedit(preedit);
         inputContext_->updatePreedit();
         inputContext_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
         return;
@@ -103,8 +106,6 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     candidates->setGlobalCursorIndex(static_cast<int>(cursor));
     candidates->setPage(static_cast<int>(cursor / kCandidatePageSize));
 
-    fcitx::Text preedit(page.preedit);
-    preedit.setCursor(static_cast<int>(preedit.textLength()));
     inputContext_->inputPanel().setPreedit(preedit);
     inputContext_->inputPanel().setClientPreedit(preedit);
     inputContext_->inputPanel().setCandidateList(std::move(candidates));

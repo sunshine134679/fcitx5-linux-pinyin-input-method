@@ -60,10 +60,18 @@ int main() {
         &inputContext);
 
     page.clear();
+    page.preedit = "xyz";
+    host.publishPage(page);
+    assertTrue(inputContext.inputPanel().clientPreedit().toString() == "xyz",
+               "raw preedit remains visible without candidates");
+    assertTrue(inputContext.inputPanel().clientPreedit().cursor() == 3,
+               "raw preedit cursor follows the end without candidates");
+
+    page.clear();
     host.publishPage(page);
     assertTrue(inputContext.inputPanel().clientPreedit().empty(),
                "client preedit is cleared after reset");
-    assertTrue(inputContext.preeditUpdates == 2,
+    assertTrue(inputContext.preeditUpdates == 3,
                "clearing preedit sends an update");
     return EXIT_SUCCESS;
 }
