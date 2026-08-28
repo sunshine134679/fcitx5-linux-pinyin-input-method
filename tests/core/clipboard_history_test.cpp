@@ -32,6 +32,17 @@ int main() {
     assertTrue(!history.observe("second"),
                "observing the newest value does not change the order");
 
+    modernime::core::ClipboardHistory editable;
+    editable.observe("keep me");
+    editable.observe("remove me");
+    assertTrue(editable.remove(0), "history removes a selected entry");
+    assertTrue(editable.entries().size() == 1 &&
+                   editable.entries().front() == "keep me",
+               "history removal updates the newest-first list");
+    assertTrue(!editable.remove(1), "history rejects an out-of-range entry");
+    editable.clear();
+    assertTrue(editable.entries().empty(), "history can clear all entries");
+
     assertTrue(history.observe("first"),
                "reobserving an older value changes its recency");
     assertTrue(history.entries()[0] == "first" &&

@@ -37,6 +37,44 @@ bool DataController::saveDictionary(
     return true;
 }
 
+std::size_t DataController::learningEntryCount(
+    const std::filesystem::path &path, std::string *error) {
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (path.empty()) {
+        if (error != nullptr) {
+            *error = "学习数据库路径为空";
+        }
+        return 0;
+    }
+
+    std::error_code filesystemError;
+    if (!std::filesystem::exists(path, filesystemError)) {
+        if (filesystemError && error != nullptr) {
+            *error = "无法检查学习数据库：" + filesystemError.message();
+        }
+        return 0;
+    }
+
+    core::LearningStore store(path);
+    if (!store.open()) {
+        if (error != nullptr) {
+            *error = "无法打开学习数据库";
+        }
+        return 0;
+    }
+    const auto snapshot = store.snapshot();
+    store.close();
+    if (snapshot == nullptr) {
+        if (error != nullptr) {
+            *error = "无法读取学习数据库";
+        }
+        return 0;
+    }
+    return snapshot->entries().size();
+}
+
 bool DataController::backupAndClearLearning(
     const std::filesystem::path &path, const std::filesystem::path &backupPath,
     std::string *error) {

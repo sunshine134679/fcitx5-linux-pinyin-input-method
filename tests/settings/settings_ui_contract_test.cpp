@@ -38,5 +38,14 @@ int main() {
     assertTrue(actions[0] == "应用" && actions[1] == "保存并关闭" &&
                    actions[2] == "恢复修改" && actions[3] == "恢复默认",
                "primary action labels have clear semantics");
+
+    const auto clipboardActions =
+        modernime::settings::settingsClipboardActionLabels();
+    assertTrue(clipboardActions.size() == 3,
+               "clipboard history exposes all management actions");
+    assertTrue(clipboardActions[0] == "复制选中" &&
+                   clipboardActions[1] == "删除选中" &&
+                   clipboardActions[2] == "清空历史",
+               "clipboard action labels have clear semantics");
     return EXIT_SUCCESS;
 }

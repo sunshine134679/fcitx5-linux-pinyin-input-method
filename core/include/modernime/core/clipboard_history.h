@@ -25,6 +25,7 @@ public:
     bool save(const std::filesystem::path &path,
               std::string *error = nullptr) const;
 
+    bool remove(std::size_t index);
     void clear();
 
     const std::vector<std::string> &entries() const { return entries_; }

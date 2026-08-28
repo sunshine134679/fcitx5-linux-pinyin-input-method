@@ -27,4 +27,8 @@ constexpr auto settingsActionLabels() {
                                           "恢复默认"};
 }
 
+constexpr auto settingsClipboardActionLabels() {
+    return std::array<std::string_view, 3>{"复制选中", "删除选中", "清空历史"};
+}
+
 } // namespace modernime::settings

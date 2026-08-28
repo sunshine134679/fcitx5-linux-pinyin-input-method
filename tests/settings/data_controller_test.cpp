@@ -100,6 +100,9 @@ void testLearningBackupThenClear() {
     seed.close();
 
     std::string error;
+    assertTrue(modernime::settings::DataController::learningEntryCount(
+                   databasePath, &error) == 1,
+               "learning entry count is available to the settings client");
     assertTrue(modernime::settings::DataController::backupAndClearLearning(
                    databasePath, backupPath, &error),
                "learning backup and clear succeeds: " + error);
@@ -108,11 +111,20 @@ void testLearningBackupThenClear() {
     assertTrue(cleared.open() && cleared.snapshot()->entries().empty(),
                "cleared learning database is empty");
     cleared.close();
+    assertTrue(modernime::settings::DataController::learningEntryCount(
+                   databasePath, &error) == 0,
+               "learning entry count updates after clearing");
     modernime::core::LearningStore backup(backupPath);
     assertTrue(backup.open() && backup.snapshot()->entry(
                                    "人工智能", "rengongzhineng", {}, {}) != nullptr,
                "backup remains readable and preserves learning data");
     backup.close();
+
+    const auto missingPath = directory / "not-created.sqlite3";
+    assertTrue(modernime::settings::DataController::learningEntryCount(
+                   missingPath, &error) == 0 && error.empty() &&
+                   !std::filesystem::exists(missingPath),
+               "missing learning database is shown as empty without creation");
 }
 
 void testFailedBackupDoesNotClearLearning() {

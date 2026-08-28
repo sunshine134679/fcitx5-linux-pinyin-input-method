@@ -2,6 +2,7 @@
 
 #include "modernime/pinyin/user_dictionary.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -16,6 +17,8 @@ public:
         const std::filesystem::path &path,
         const std::vector<pinyin::UserDictionaryEntry> &entries,
         std::string *error = nullptr);
+    static std::size_t learningEntryCount(const std::filesystem::path &path,
+                                          std::string *error = nullptr);
     static bool backupAndClearLearning(const std::filesystem::path &path,
                                        const std::filesystem::path &backupPath,
                                        std::string *error = nullptr);

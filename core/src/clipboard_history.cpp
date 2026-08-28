@@ -209,6 +209,14 @@ bool ClipboardHistory::save(const std::filesystem::path &path,
     return true;
 }
 
+bool ClipboardHistory::remove(std::size_t index) {
+    if (index >= entries_.size()) {
+        return false;
+    }
+    entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(index));
+    return true;
+}
+
 void ClipboardHistory::clear() { entries_.clear(); }
 
 } // namespace modernime::core
