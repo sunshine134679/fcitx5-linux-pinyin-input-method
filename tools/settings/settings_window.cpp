@@ -2,6 +2,7 @@
 #include "modernime/settings/clipboard_history_model.h"
 #include "modernime/settings/data_controller.h"
 #include "modernime/settings/runtime_controller.h"
+#include "modernime/settings/settings_ui_contract.h"
 
 #include "modernime/core/clipboard_history.h"
 #include "modernime/pinyin/user_dictionary.h"
@@ -10,9 +11,9 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <sstream>
 #include <iomanip>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -33,6 +34,11 @@ public:
     GtkWidget *window = nullptr;
     GtkWidget *stack = nullptr;
     GtkWidget *status = nullptr;
+    GtkWidget *editState = nullptr;
+    GtkWidget *saveButton = nullptr;
+    GtkWidget *applyButton = nullptr;
+    GtkWidget *resetButton = nullptr;
+    GtkWidget *defaultsButton = nullptr;
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
     GtkWidget *toggleKey = nullptr;
@@ -58,7 +64,130 @@ public:
 namespace {
 
 void setStatus(SettingsWindow::Impl *impl, const char *message) {
-    gtk_label_set_text(GTK_LABEL(impl->status), message);
+    if (impl->status != nullptr) {
+        gtk_label_set_text(GTK_LABEL(impl->status), message);
+    }
+}
+
+void addStyleClass(GtkWidget *widget, const char *className) {
+    gtk_style_context_add_class(gtk_widget_get_style_context(widget),
+                                className);
+}
+
+void installStyles() {
+    auto *screen = gdk_screen_get_default();
+    if (screen == nullptr) {
+        return;
+    }
+    auto *provider = gtk_css_provider_new();
+    constexpr const char *css = R"css(
+        .modernime-sidebar {
+            border-right: 1px solid @borders;
+            background-color: @theme_bg_color;
+            padding: 10px 6px;
+        }
+        .modernime-page {
+            background-color: @theme_bg_color;
+        }
+        .modernime-page-title {
+            font-size: 20px;
+            font-weight: 600;
+        }
+        .modernime-page-subtitle,
+        .modernime-description,
+        .modernime-path {
+            color: @insensitive_fg_color;
+        }
+        .modernime-section {
+            border: 1px solid @borders;
+            border-radius: 10px;
+            background-color: @theme_base_color;
+            padding: 14px;
+        }
+        .modernime-section-title {
+            font-weight: 600;
+        }
+        .modernime-status {
+            padding: 4px 8px;
+        }
+        .modernime-status-dirty {
+            color: #b35a00;
+            font-weight: 600;
+        }
+        .modernime-status-error,
+        entry.error {
+            color: #b3261e;
+        }
+        entry.error {
+            border-color: #b3261e;
+        }
+    )css";
+    gtk_css_provider_load_from_data(provider, css, -1, nullptr);
+    gtk_style_context_add_provider_for_screen(
+        screen, GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+}
+
+GtkWidget *makePageShell(const char *title, const char *subtitle) {
+    auto *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 18);
+    addStyleClass(page, "modernime-page");
+    gtk_widget_set_margin_start(page, 28);
+    gtk_widget_set_margin_end(page, 28);
+    gtk_widget_set_margin_top(page, 28);
+    gtk_widget_set_margin_bottom(page, 28);
+
+    auto *heading = gtk_label_new(title);
+    addStyleClass(heading, "modernime-page-title");
+    gtk_widget_set_halign(heading, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(page), heading, FALSE, FALSE, 0);
+
+    auto *description = gtk_label_new(subtitle);
+    addStyleClass(description, "modernime-page-subtitle");
+    gtk_widget_set_halign(description, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
+    gtk_box_pack_start(GTK_BOX(page), description, FALSE, FALSE, 0);
+    return page;
+}
+
+GtkWidget *makeSectionCard(const char *title, const char *description) {
+    auto *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    addStyleClass(card, "modernime-section");
+    if (title != nullptr && *title != '\0') {
+        auto *heading = gtk_label_new(title);
+        addStyleClass(heading, "modernime-section-title");
+        gtk_widget_set_halign(heading, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(card), heading, FALSE, FALSE, 0);
+    }
+    if (description != nullptr && *description != '\0') {
+        auto *help = gtk_label_new(description);
+        addStyleClass(help, "modernime-description");
+        gtk_widget_set_halign(help, GTK_ALIGN_START);
+        gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
+        gtk_box_pack_start(GTK_BOX(card), help, FALSE, FALSE, 0);
+    }
+    return card;
+}
+
+GtkWidget *makeScrollablePage(GtkWidget *page) {
+    auto *scrolled = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_hexpand(scrolled, TRUE);
+    gtk_widget_set_vexpand(scrolled, TRUE);
+    gtk_container_add(GTK_CONTAINER(scrolled), page);
+    return scrolled;
+}
+
+void setWidgetError(GtkWidget *widget, bool invalid, const char *message) {
+    auto *context = gtk_widget_get_style_context(widget);
+    if (invalid) {
+        gtk_style_context_add_class(context, "error");
+        gtk_widget_set_tooltip_text(widget, message);
+    } else {
+        gtk_style_context_remove_class(context, "error");
+        gtk_widget_set_tooltip_text(widget, nullptr);
+    }
 }
 
 void updateModelFromBasicPage(SettingsWindow::Impl *impl) {
@@ -132,20 +261,93 @@ void updateClipboardPageFromModel(SettingsWindow::Impl *impl) {
                        settings.clipboardTrigger.c_str());
 }
 
+void updateDependentSensitivity(SettingsWindow::Impl *impl) {
+    if (impl->inputEnabled != nullptr) {
+        const auto enabled = gtk_toggle_button_get_active(
+            GTK_TOGGLE_BUTTON(impl->inputEnabled));
+        if (impl->defaultMode != nullptr) {
+            gtk_widget_set_sensitive(impl->defaultMode, enabled);
+        }
+        if (impl->toggleKey != nullptr) {
+            gtk_widget_set_sensitive(impl->toggleKey, enabled);
+        }
+    }
+    if (impl->clipboardEnabled == nullptr ||
+        impl->clipboardTrigger == nullptr) {
+        return;
+    }
+    gtk_widget_set_sensitive(
+        impl->clipboardTrigger,
+        gtk_toggle_button_get_active(
+            GTK_TOGGLE_BUTTON(impl->clipboardEnabled)));
+}
+
+void updateActionState(SettingsWindow::Impl *impl) {
+    if (impl->editState == nullptr) {
+        return;
+    }
+    const auto validation = impl->model.validation();
+    const bool canSave = impl->model.dirty() && validation.valid;
+    for (auto *button : {impl->saveButton, impl->applyButton}) {
+        if (button != nullptr) {
+            gtk_widget_set_sensitive(button, canSave);
+        }
+    }
+    if (impl->resetButton != nullptr) {
+        gtk_widget_set_sensitive(impl->resetButton, impl->model.dirty());
+    }
+
+    auto *context = gtk_widget_get_style_context(impl->editState);
+    gtk_style_context_remove_class(context, "modernime-status-dirty");
+    gtk_style_context_remove_class(context, "modernime-status-error");
+    if (!validation.valid) {
+        addStyleClass(impl->editState, "modernime-status-error");
+        const auto message = validation.errors.empty()
+                                  ? std::string("当前设置无法保存")
+                                  : validation.errors.front();
+        gtk_label_set_text(GTK_LABEL(impl->editState), message.c_str());
+    } else if (impl->model.dirty()) {
+        addStyleClass(impl->editState, "modernime-status-dirty");
+        gtk_label_set_text(GTK_LABEL(impl->editState), "有未保存修改");
+    } else {
+        gtk_label_set_text(GTK_LABEL(impl->editState), "所有设置已保存");
+    }
+
+    if (impl->toggleKey != nullptr) {
+        auto toggleOnly = impl->model.settings();
+        toggleOnly.clipboardTrigger = core::defaultSettings().clipboardTrigger;
+        const auto toggleValidation = core::validateSettings(toggleOnly);
+        const auto message = toggleValidation.errors.empty()
+                                  ? "中英文切换快捷键格式不正确"
+                                  : toggleValidation.errors.front().c_str();
+        setWidgetError(impl->toggleKey, !toggleValidation.valid, message);
+    }
+}
+
 void onBasicChanged(GtkWidget *, gpointer data) {
-    updateModelFromBasicPage(static_cast<SettingsWindow::Impl *>(data));
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    updateModelFromBasicPage(impl);
+    updateDependentSensitivity(impl);
+    updateActionState(impl);
 }
 
 void onCandidateChanged(GtkWidget *, gpointer data) {
-    updateModelFromCandidatePage(static_cast<SettingsWindow::Impl *>(data));
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    updateModelFromCandidatePage(impl);
+    updateActionState(impl);
 }
 
 void onLearningChanged(GtkWidget *, gpointer data) {
-    updateModelFromLearningPage(static_cast<SettingsWindow::Impl *>(data));
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    updateModelFromLearningPage(impl);
+    updateActionState(impl);
 }
 
 void onClipboardChanged(GtkWidget *, gpointer data) {
-    updateModelFromClipboardPage(static_cast<SettingsWindow::Impl *>(data));
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    updateModelFromClipboardPage(impl);
+    updateDependentSensitivity(impl);
+    updateActionState(impl);
 }
 
 void refreshClipboardHistory(SettingsWindow::Impl *impl, bool notify) {
@@ -195,18 +397,50 @@ void onStackVisibleChildChanged(GObject *object, GParamSpec *, gpointer data) {
     }
 }
 
-void onSave(GtkButton *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+bool saveEditedSettings(SettingsWindow::Impl *impl, bool closeAfterSave) {
     updateModelFromBasicPage(impl);
     updateModelFromCandidatePage(impl);
     updateModelFromClipboardPage(impl);
     updateModelFromLearningPage(impl);
+    const auto validation = impl->model.validation();
+    if (!validation.valid) {
+        const auto message = validation.errors.empty()
+                                  ? std::string("当前设置无法保存")
+                                  : validation.errors.front();
+        setStatus(impl, message.c_str());
+        updateActionState(impl);
+        return false;
+    }
+    if (!impl->model.dirty()) {
+        setStatus(impl, "没有需要保存的修改");
+        if (closeAfterSave) {
+            gtk_widget_hide(impl->window);
+        }
+        return true;
+    }
     std::string error;
     if (impl->model.save(&error)) {
-        setStatus(impl, "设置已保存；重新加载输入法后生效");
+        setStatus(impl, closeAfterSave
+                           ? "设置已保存；重新加载输入法后生效"
+                           : "设置已应用；重新加载输入法后生效");
+        updateActionState(impl);
+        if (closeAfterSave) {
+            gtk_widget_hide(impl->window);
+        }
+        return true;
     } else {
         setStatus(impl, error.c_str());
+        updateActionState(impl);
+        return false;
     }
+}
+
+void onSave(GtkButton *, gpointer data) {
+    saveEditedSettings(static_cast<SettingsWindow::Impl *>(data), true);
+}
+
+void onApply(GtkButton *, gpointer data) {
+    saveEditedSettings(static_cast<SettingsWindow::Impl *>(data), false);
 }
 
 void onResetEdits(GtkButton *, gpointer data) {
@@ -216,6 +450,8 @@ void onResetEdits(GtkButton *, gpointer data) {
     updateCandidatePageFromModel(impl);
     updateClipboardPageFromModel(impl);
     updateLearningPageFromModel(impl);
+    updateDependentSensitivity(impl);
+    updateActionState(impl);
     setStatus(impl, "已恢复未保存的修改");
 }
 
@@ -236,47 +472,70 @@ void onResetDefaults(GtkButton *, gpointer data) {
         updateCandidatePageFromModel(impl);
         updateClipboardPageFromModel(impl);
         updateLearningPageFromModel(impl);
+        updateDependentSensitivity(impl);
+        updateActionState(impl);
         setStatus(impl, "ModernIME 设置已恢复默认值");
     } else {
         setStatus(impl, error.c_str());
     }
 }
 
+bool confirmDiscardChanges(SettingsWindow::Impl *impl) {
+    if (!impl->model.dirty()) {
+        return true;
+    }
+    auto *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(impl->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+        GTK_BUTTONS_NONE, "当前有未保存的修改，关闭后将丢失。仍要关闭吗？");
+    gtk_dialog_add_button(GTK_DIALOG(dialog), "继续编辑", GTK_RESPONSE_CANCEL);
+    gtk_dialog_add_button(GTK_DIALOG(dialog), "放弃修改并关闭", GTK_RESPONSE_YES);
+    const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    return response == GTK_RESPONSE_YES;
+}
+
+gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer data) {
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    if (!confirmDiscardChanges(impl)) {
+        return TRUE;
+    }
+    gtk_widget_hide(impl->window);
+    return TRUE;
+}
+
 GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
+    auto *page = makePageShell(
+        "基本设置", "配置 ModernIME 的启用状态、默认输入状态和切换快捷键");
+    auto *section = makeSectionCard(
+        "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
     auto *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    gtk_widget_set_margin_start(grid, 24);
-    gtk_widget_set_margin_end(grid, 24);
-    gtk_widget_set_margin_top(grid, 24);
-    gtk_widget_set_margin_bottom(grid, 24);
-
-    auto *title = gtk_label_new("基本设置");
-    gtk_widget_set_halign(title, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(title),
-                                "title-3");
-    gtk_grid_attach(GTK_GRID(grid), title, 0, 0, 2, 1);
 
     impl->inputEnabled = gtk_check_button_new_with_label("启用 ModernIME");
-    gtk_grid_attach(GTK_GRID(grid), impl->inputEnabled, 0, 1, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), impl->inputEnabled, 0, 0, 2, 1);
 
     auto *modeLabel = gtk_label_new("默认输入状态");
     gtk_widget_set_halign(modeLabel, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), modeLabel, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), modeLabel, 0, 1, 1, 1);
     impl->defaultMode = gtk_combo_box_text_new();
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(impl->defaultMode),
                                    "中文");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(impl->defaultMode),
                                    "英文");
-    gtk_grid_attach(GTK_GRID(grid), impl->defaultMode, 1, 2, 1, 1);
+    gtk_widget_set_hexpand(impl->defaultMode, TRUE);
+    gtk_grid_attach(GTK_GRID(grid), impl->defaultMode, 1, 1, 1, 1);
 
     auto *toggleLabel = gtk_label_new("中英文切换快捷键");
     gtk_widget_set_halign(toggleLabel, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), toggleLabel, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), toggleLabel, 0, 2, 1, 1);
     impl->toggleKey = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(impl->toggleKey),
                                    "例如 Ctrl+Space");
-    gtk_grid_attach(GTK_GRID(grid), impl->toggleKey, 1, 3, 1, 1);
+    gtk_widget_set_hexpand(impl->toggleKey, TRUE);
+    gtk_grid_attach(GTK_GRID(grid), impl->toggleKey, 1, 2, 1, 1);
+    gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
     updateBasicPageFromModel(impl);
     g_signal_connect(impl->inputEnabled, "toggled", G_CALLBACK(onBasicChanged),
@@ -285,29 +544,32 @@ GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
                      impl);
     g_signal_connect(impl->toggleKey, "changed", G_CALLBACK(onBasicChanged),
                      impl);
-    return grid;
+    return page;
 }
 
 GtkWidget *makeCandidatePage(SettingsWindow::Impl *impl) {
-    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_set_margin_start(box, 24);
-    gtk_widget_set_margin_end(box, 24);
-    gtk_widget_set_margin_top(box, 24);
-    gtk_widget_set_margin_bottom(box, 24);
-    auto *title = gtk_label_new("候选设置");
-    gtk_widget_set_halign(title, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(title),
-                                "title-3");
-    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+    auto *page = makePageShell(
+        "候选设置", "配置候选选择、方向键导航和翻页方式，不改变候选栏外观尺寸");
+    auto *section = makeSectionCard(
+        "候选操作", "关闭某项后，对应按键会交给其他输入行为处理。");
 
     impl->candidateNumber = gtk_check_button_new_with_label("数字键选择候选");
     impl->candidateArrow = gtk_check_button_new_with_label(
         "左右方向键切换候选");
     impl->candidatePage = gtk_check_button_new_with_label(
         "上下方向键和 + / = 翻页");
-    gtk_box_pack_start(GTK_BOX(box), impl->candidateNumber, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), impl->candidateArrow, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), impl->candidatePage, FALSE, FALSE, 0);
+    gtk_widget_set_tooltip_text(impl->candidateNumber,
+                                "使用数字键选择当前候选项");
+    gtk_widget_set_tooltip_text(impl->candidateArrow,
+                                "使用左右方向键切换候选项");
+    gtk_widget_set_tooltip_text(impl->candidatePage,
+                                "使用上下方向键或 + / = 翻页");
+    gtk_box_pack_start(GTK_BOX(section), impl->candidateNumber, FALSE, FALSE,
+                       0);
+    gtk_box_pack_start(GTK_BOX(section), impl->candidateArrow, FALSE, FALSE,
+                       0);
+    gtk_box_pack_start(GTK_BOX(section), impl->candidatePage, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
     updateCandidatePageFromModel(impl);
     g_signal_connect(impl->candidateNumber, "toggled",
                      G_CALLBACK(onCandidateChanged), impl);
@@ -315,25 +577,19 @@ GtkWidget *makeCandidatePage(SettingsWindow::Impl *impl) {
                      G_CALLBACK(onCandidateChanged), impl);
     g_signal_connect(impl->candidatePage, "toggled",
                      G_CALLBACK(onCandidateChanged), impl);
-    return box;
+    return page;
 }
 
 GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
-    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_set_margin_start(box, 24);
-    gtk_widget_set_margin_end(box, 24);
-    gtk_widget_set_margin_top(box, 24);
-    gtk_widget_set_margin_bottom(box, 24);
-
-    auto *heading = gtk_label_new("剪贴板");
-    gtk_widget_set_halign(heading, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(heading),
-                                "title-3");
-    gtk_box_pack_start(GTK_BOX(box), heading, FALSE, FALSE, 0);
+    auto *page = makePageShell(
+        "剪贴板", "配置 V+2 功能并查看保存在本地的剪贴板历史");
+    auto *settingsSection = makeSectionCard(
+        "触发方式", "仅在中文输入状态且当前没有正在输入拼音时触发。");
 
     impl->clipboardEnabled =
         gtk_check_button_new_with_label("启用 V+2 剪贴板");
-    gtk_box_pack_start(GTK_BOX(box), impl->clipboardEnabled, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settingsSection), impl->clipboardEnabled, FALSE,
+                       FALSE, 0);
 
     auto *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
@@ -345,27 +601,28 @@ GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
     gtk_entry_set_width_chars(GTK_ENTRY(impl->clipboardTrigger), 6);
     gtk_entry_set_placeholder_text(GTK_ENTRY(impl->clipboardTrigger),
                                    "例如 V+2");
+    gtk_widget_set_hexpand(impl->clipboardTrigger, TRUE);
     gtk_grid_attach(GTK_GRID(grid), triggerLabel, 0, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), impl->clipboardTrigger, 1, 0, 1, 1);
-    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settingsSection), grid, FALSE, FALSE, 0);
 
     auto *description = gtk_label_new(
         "仅在中文输入状态且当前没有正在输入的拼音时触发。按第一个字母后，"
         "可继续选择对应功能或直接按回车输出字母。");
+    addStyleClass(description, "modernime-description");
     gtk_widget_set_halign(description, GTK_ALIGN_START);
     gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
-    gtk_box_pack_start(GTK_BOX(box), description, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settingsSection), description, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
 
-    auto *historyHeading = gtk_label_new("剪贴板历史");
-    gtk_widget_set_halign(historyHeading, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(historyHeading),
-                                "title-4");
-    gtk_box_pack_start(GTK_BOX(box), historyHeading, FALSE, FALSE, 0);
+    auto *historySection = makeSectionCard(
+        "剪贴板历史", "按最近使用顺序显示，最多保留 30 条内容。");
 
     impl->clipboardHistoryCount = gtk_label_new("正在读取…");
+    addStyleClass(impl->clipboardHistoryCount, "modernime-description");
     gtk_widget_set_halign(impl->clipboardHistoryCount, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(box), impl->clipboardHistoryCount, FALSE, FALSE,
-                       0);
+    gtk_box_pack_start(GTK_BOX(historySection), impl->clipboardHistoryCount,
+                       FALSE, FALSE, 0);
 
     impl->clipboardHistoryStore =
         gtk_list_store_new(2, G_TYPE_UINT, G_TYPE_STRING);
@@ -385,21 +642,25 @@ GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
     auto *historyScrolled = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_widget_set_vexpand(historyScrolled, TRUE);
     gtk_widget_set_hexpand(historyScrolled, TRUE);
+    gtk_widget_set_size_request(historyScrolled, -1, 160);
     gtk_container_add(GTK_CONTAINER(historyScrolled), historyView);
-    gtk_box_pack_start(GTK_BOX(box), historyScrolled, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(historySection), historyScrolled, TRUE, TRUE, 0);
 
     auto *refreshButton = gtk_button_new_with_label("刷新历史");
     gtk_widget_set_halign(refreshButton, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(box), refreshButton, FALSE, FALSE, 0);
+    gtk_widget_set_tooltip_text(refreshButton, "重新读取磁盘上的剪贴板历史");
+    gtk_box_pack_start(GTK_BOX(historySection), refreshButton, FALSE, FALSE, 0);
     g_signal_connect(refreshButton, "clicked", G_CALLBACK(onClipboardRefresh),
                      impl);
+    gtk_box_pack_start(GTK_BOX(page), historySection, TRUE, TRUE, 0);
 
     updateClipboardPageFromModel(impl);
+    updateDependentSensitivity(impl);
     g_signal_connect(impl->clipboardEnabled, "toggled",
                      G_CALLBACK(onClipboardChanged), impl);
     g_signal_connect(impl->clipboardTrigger, "changed",
                      G_CALLBACK(onClipboardChanged), impl);
-    return box;
+    return page;
 }
 
 std::filesystem::path learningBackupPath(const std::filesystem::path &path) {
@@ -439,22 +700,23 @@ void onClearLearning(GtkButton *, gpointer data) {
 }
 
 GtkWidget *makeLearningPage(SettingsWindow::Impl *impl) {
-    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_set_margin_start(box, 24);
-    gtk_widget_set_margin_end(box, 24);
-    gtk_widget_set_margin_top(box, 24);
-    gtk_widget_set_margin_bottom(box, 24);
-    auto *heading = gtk_label_new("智能学习");
-    gtk_widget_set_halign(heading, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(heading),
-                                "title-3");
-    gtk_box_pack_start(GTK_BOX(box), heading, FALSE, FALSE, 0);
+    auto *page = makePageShell(
+        "智能学习", "让 ModernIME 记住你的候选选择，并结合上下文优化排序");
+    auto *learningSection = makeSectionCard(
+        "学习行为", "关闭后不会删除已经保存的学习数据。");
 
     impl->learningEnabled = gtk_check_button_new_with_label("记忆用户候选选择");
     impl->contextLearning = gtk_check_button_new_with_label(
         "根据光标前后文调整候选排序");
-    gtk_box_pack_start(GTK_BOX(box), impl->learningEnabled, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), impl->contextLearning, FALSE, FALSE, 0);
+    gtk_widget_set_tooltip_text(impl->learningEnabled,
+                                "记录你主动选择的候选词");
+    gtk_widget_set_tooltip_text(impl->contextLearning,
+                                "根据输入前后的文字调整候选顺序");
+    gtk_box_pack_start(GTK_BOX(learningSection), impl->learningEnabled, FALSE,
+                       FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(learningSection), impl->contextLearning, FALSE,
+                       FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), learningSection, FALSE, FALSE, 0);
     updateLearningPageFromModel(impl);
     g_signal_connect(impl->learningEnabled, "toggled",
                      G_CALLBACK(onLearningChanged), impl);
@@ -463,18 +725,25 @@ GtkWidget *makeLearningPage(SettingsWindow::Impl *impl) {
 
     const auto pathText = "学习数据库：" + impl->paths_.learningStore.string();
     impl->learningPath = gtk_label_new(pathText.c_str());
+    addStyleClass(impl->learningPath, "modernime-path");
     gtk_widget_set_halign(impl->learningPath, GTK_ALIGN_START);
     gtk_label_set_selectable(GTK_LABEL(impl->learningPath), TRUE);
     gtk_label_set_line_wrap(GTK_LABEL(impl->learningPath), TRUE);
-    gtk_box_pack_start(GTK_BOX(box), impl->learningPath, FALSE, FALSE, 0);
+    auto *dataSection = makeSectionCard(
+        "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
+    gtk_box_pack_start(GTK_BOX(dataSection), impl->learningPath, FALSE, FALSE,
+                       0);
 
     impl->clearLearningButton = gtk_button_new_with_label("清空学习记录");
     gtk_widget_set_halign(impl->clearLearningButton, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(box), impl->clearLearningButton, FALSE, FALSE,
-                       0);
+    gtk_widget_set_tooltip_text(impl->clearLearningButton,
+                                "备份后清空 ModernIME 的学习排序");
+    gtk_box_pack_start(GTK_BOX(dataSection), impl->clearLearningButton, FALSE,
+                       FALSE, 0);
     g_signal_connect(impl->clearLearningButton, "clicked",
                      G_CALLBACK(onClearLearning), impl);
-    return box;
+    gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
+    return page;
 }
 
 void refreshDictionaryPage(SettingsWindow::Impl *impl) {
@@ -668,16 +937,10 @@ void onDictionaryExport(GtkButton *, gpointer data) {
 }
 
 GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
-    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_set_margin_start(box, 24);
-    gtk_widget_set_margin_end(box, 24);
-    gtk_widget_set_margin_top(box, 24);
-    gtk_widget_set_margin_bottom(box, 24);
-    auto *heading = gtk_label_new("用户词典");
-    gtk_widget_set_halign(heading, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(heading),
-                                "title-3");
-    gtk_box_pack_start(GTK_BOX(box), heading, FALSE, FALSE, 0);
+    auto *page = makePageShell(
+        "用户词典", "维护个人词条和专业名词，重载 ModernIME 后生效");
+    auto *section = makeSectionCard(
+        "词条列表", "拼音、词条和权重会在保存时统一校验。");
     impl->dictionaryStore = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING,
                                                G_TYPE_STRING);
     impl->dictionaryView = gtk_tree_view_new_with_model(
@@ -692,8 +955,10 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     }
     auto *scrolled = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_widget_set_vexpand(scrolled, TRUE);
+    gtk_widget_set_size_request(scrolled, -1, 220);
     gtk_container_add(GTK_CONTAINER(scrolled), impl->dictionaryView);
-    gtk_box_pack_start(GTK_BOX(box), scrolled, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(section), scrolled, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(page), section, TRUE, TRUE, 0);
 
     auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     const auto addButton = gtk_button_new_with_label("添加");
@@ -701,11 +966,16 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     const auto deleteButton = gtk_button_new_with_label("删除");
     const auto importButton = gtk_button_new_with_label("导入");
     const auto exportButton = gtk_button_new_with_label("导出");
+    gtk_widget_set_tooltip_text(addButton, "添加一条用户词典词条");
+    gtk_widget_set_tooltip_text(editButton, "编辑选中的词条");
+    gtk_widget_set_tooltip_text(deleteButton, "删除选中的词条");
+    gtk_widget_set_tooltip_text(importButton, "从文本文件导入词条");
+    gtk_widget_set_tooltip_text(exportButton, "将当前词典导出为文本文件");
     for (auto *button : {addButton, editButton, deleteButton, importButton,
                          exportButton}) {
         gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
     }
-    gtk_box_pack_start(GTK_BOX(box), actions, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), actions, FALSE, FALSE, 0);
     g_signal_connect(addButton, "clicked", G_CALLBACK(onDictionaryAdd), impl);
     g_signal_connect(editButton, "clicked", G_CALLBACK(onDictionaryEdit),
                      impl);
@@ -716,7 +986,7 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     g_signal_connect(exportButton, "clicked", G_CALLBACK(onDictionaryExport),
                      impl);
     refreshDictionaryPage(impl);
-    return box;
+    return page;
 }
 
 std::string modernimeAddonDirectories() {
@@ -864,27 +1134,25 @@ void onReload(GtkButton *, gpointer data) {
 }
 
 GtkWidget *makeStatusPage(SettingsWindow::Impl *impl) {
-    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_set_margin_start(box, 24);
-    gtk_widget_set_margin_end(box, 24);
-    gtk_widget_set_margin_top(box, 24);
-    gtk_widget_set_margin_bottom(box, 24);
-    auto *title = gtk_label_new("输入法状态");
-    gtk_widget_set_halign(title, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(title),
-                                "title-3");
-    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+    auto *page = makePageShell(
+        "输入法状态", "检查 Fcitx5、ModernIME 插件和当前激活状态");
+    auto *section = makeSectionCard(
+        "运行状态", "如果状态异常，可以在这里重新加载 ModernIME。");
     impl->runtimeStatus = gtk_label_new("正在读取 Fcitx5 状态…");
+    addStyleClass(impl->runtimeStatus, "modernime-status");
     gtk_widget_set_halign(impl->runtimeStatus, GTK_ALIGN_START);
     gtk_label_set_line_wrap(GTK_LABEL(impl->runtimeStatus), TRUE);
-    gtk_box_pack_start(GTK_BOX(box), impl->runtimeStatus, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(section), impl->runtimeStatus, FALSE, FALSE, 0);
     impl->reloadButton = gtk_button_new_with_label("重新加载 ModernIME");
     gtk_widget_set_halign(impl->reloadButton, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(box), impl->reloadButton, FALSE, FALSE, 0);
+    gtk_widget_set_tooltip_text(impl->reloadButton,
+                                "保存配置后重新加载 ModernIME");
+    gtk_box_pack_start(GTK_BOX(section), impl->reloadButton, FALSE, FALSE, 0);
     g_signal_connect(impl->reloadButton, "clicked", G_CALLBACK(onReload),
                      impl);
     startRuntimeTask(impl, false);
-    return box;
+    gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
+    return page;
 }
 
 } // namespace
@@ -894,7 +1162,11 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     impl_->window = gtk_application_window_new(
         GTK_APPLICATION(impl_->application_));
     gtk_window_set_title(GTK_WINDOW(impl_->window), "ModernIME 设置");
-    gtk_window_set_default_size(GTK_WINDOW(impl_->window), 720, 520);
+    gtk_window_set_default_size(GTK_WINDOW(impl_->window), 860, 620);
+    addStyleClass(impl_->window, "modernime-settings");
+    installStyles();
+    g_signal_connect(impl_->window, "delete-event", G_CALLBACK(onWindowDelete),
+                     impl_.get());
 
     auto *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     auto *body = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -904,54 +1176,81 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     g_signal_connect(impl_->stack, "notify::visible-child-name",
                      G_CALLBACK(onStackVisibleChildChanged), impl_.get());
     auto *sidebar = gtk_stack_sidebar_new();
+    addStyleClass(sidebar, "modernime-sidebar");
     gtk_stack_sidebar_set_stack(GTK_STACK_SIDEBAR(sidebar),
                                 GTK_STACK(impl_->stack));
-    gtk_widget_set_size_request(sidebar, 170, -1);
+    gtk_widget_set_size_request(sidebar, 200, -1);
     gtk_box_pack_start(GTK_BOX(body), sidebar, FALSE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(body), impl_->stack, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(root), body, TRUE, TRUE, 0);
 
+    const auto pages = settingsPageDefinitions();
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeBasicPage(impl_.get()), "basic", "基本设置");
+                         makeScrollablePage(makeBasicPage(impl_.get())),
+                         pages[0].name.data(), pages[0].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeCandidatePage(impl_.get()),
-                         "candidate", "候选设置");
+                         makeScrollablePage(makeCandidatePage(impl_.get())),
+                         pages[1].name.data(), pages[1].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeClipboardPage(impl_.get()),
-                         "clipboard", "剪贴板");
+                         makeScrollablePage(makeClipboardPage(impl_.get())),
+                         pages[2].name.data(), pages[2].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeLearningPage(impl_.get()),
-                         "learning", "智能学习");
+                         makeScrollablePage(makeLearningPage(impl_.get())),
+                         pages[3].name.data(), pages[3].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeDictionaryPage(impl_.get()),
-                         "dictionary", "用户词典");
+                         makeScrollablePage(makeDictionaryPage(impl_.get())),
+                         pages[4].name.data(), pages[4].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeStatusPage(impl_.get()),
-                         "status", "输入法状态");
+                         makeScrollablePage(makeStatusPage(impl_.get())),
+                         pages[5].name.data(), pages[5].title.data());
 
     auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_margin_start(actions, 12);
     gtk_widget_set_margin_end(actions, 12);
     gtk_widget_set_margin_top(actions, 8);
     gtk_widget_set_margin_bottom(actions, 8);
-    auto *reset = gtk_button_new_with_label("恢复修改");
-    auto *defaults = gtk_button_new_with_label("恢复默认");
-    auto *save = gtk_button_new_with_label("保存");
-    auto *apply = gtk_button_new_with_label("应用");
+    const auto actionLabels = settingsActionLabels();
+    auto *reset = gtk_button_new_with_label(actionLabels[2].data());
+    auto *defaults = gtk_button_new_with_label(actionLabels[3].data());
+    auto *save = gtk_button_new_with_label(actionLabels[1].data());
+    auto *apply = gtk_button_new_with_label(actionLabels[0].data());
+    impl_->saveButton = save;
+    impl_->applyButton = apply;
+    impl_->resetButton = reset;
+    impl_->defaultsButton = defaults;
     gtk_box_pack_end(GTK_BOX(actions), apply, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(actions), save, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(actions), defaults, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(actions), reset, FALSE, FALSE, 0);
+    impl_->editState = gtk_label_new("所有设置已保存");
+    addStyleClass(impl_->editState, "modernime-status");
+    gtk_widget_set_halign(impl_->editState, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(actions), impl_->editState, FALSE, FALSE, 0);
     impl_->status = gtk_label_new("");
+    addStyleClass(impl_->status, "modernime-status");
     gtk_widget_set_halign(impl_->status, GTK_ALIGN_START);
     gtk_box_pack_start(GTK_BOX(actions), impl_->status, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 0);
     g_signal_connect(save, "clicked", G_CALLBACK(onSave), impl_.get());
-    g_signal_connect(apply, "clicked", G_CALLBACK(onSave), impl_.get());
+    g_signal_connect(apply, "clicked", G_CALLBACK(onApply), impl_.get());
     g_signal_connect(reset, "clicked", G_CALLBACK(onResetEdits), impl_.get());
     g_signal_connect(defaults, "clicked", G_CALLBACK(onResetDefaults),
                      impl_.get());
     gtk_container_add(GTK_CONTAINER(impl_->window), root);
+    updateDependentSensitivity(impl_.get());
+    updateActionState(impl_.get());
+    if (!impl_->model.loadDiagnostics().empty()) {
+        std::ostringstream warning;
+        warning << "配置读取警告：";
+        for (std::size_t index = 0;
+             index < impl_->model.loadDiagnostics().size(); ++index) {
+            if (index != 0) {
+                warning << "；";
+            }
+            warning << impl_->model.loadDiagnostics()[index];
+        }
+        setStatus(impl_.get(), warning.str().c_str());
+    }
 }
 
 SettingsWindow::~SettingsWindow() {
