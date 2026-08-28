@@ -1,9 +1,48 @@
-/build*/
+# CMake and build outputs
+build*/
 .worktrees/
-/out/
-/install-manifest.txt
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+install_manifest.txt
+install-manifest.txt
 compile_commands.json
+Testing/
+
+# Compiled objects and local packages
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.deb
+*.rpm
+
+# Runtime data and logs
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.log
+*.pid
+*.tmp
+
+# IDE, editor, and local tool state
+.idea/
+.vscode/
 .cache/
 .clangd/
-.idea/
+.agents/
+.codex/
 *.swp
+*.swo
+*~
+.DS_Store
