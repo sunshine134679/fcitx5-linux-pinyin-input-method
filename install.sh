@@ -66,7 +66,10 @@ fi
 
 cmake -S "$project_root" -B "$build_dir" -G "$generator" "${cmake_args[@]}"
 cmake --build "$build_dir"
-ctest --test-dir "$build_dir" --output-on-failure
+(
+    unset MODERNIME_SKIP_FCITX_RESTART
+    ctest --test-dir "$build_dir" --output-on-failure
+)
 cmake --install "$build_dir"
 
 mkdir -p "$desktop_dir"

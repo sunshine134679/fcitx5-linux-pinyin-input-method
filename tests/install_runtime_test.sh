@@ -15,6 +15,13 @@ exit 0
 EOF
     cat >"$fake_bin/ctest" <<'EOF'
 #!/usr/bin/env bash
+if [[ -n "${FAKE_CTEST_SKIP_LOG:-}" ]]; then
+    if [[ -n "${MODERNIME_SKIP_FCITX_RESTART:-}" ]]; then
+        printf '%s\n' inherited >"$FAKE_CTEST_SKIP_LOG"
+    else
+        : >"$FAKE_CTEST_SKIP_LOG"
+    fi
+fi
 exit 0
 EOF
     cat >"$fake_bin/pkg-config" <<'EOF'
@@ -67,11 +74,15 @@ run_install() {
 }
 
 : >"$log_file"
+ctest_skip_log="$test_root/ctest-skip.log"
 skip_output="$test_root/skip-output"
-run_install skip MODERNIME_SKIP_FCITX_RESTART=1 >"$skip_output" 2>&1
+run_install skip \
+    MODERNIME_SKIP_FCITX_RESTART=1 \
+    FAKE_CTEST_SKIP_LOG="$ctest_skip_log" >"$skip_output" 2>&1
 grep -F 'Fcitx5 restart skipped by MODERNIME_SKIP_FCITX_RESTART=1' \
     "$skip_output" >/dev/null
 test ! -s "$log_file"
+test ! -s "$ctest_skip_log"
 
 no_fcitx_bin="$test_root/no-fcitx-bin"
 make_fake_build_tools "$no_fcitx_bin"
