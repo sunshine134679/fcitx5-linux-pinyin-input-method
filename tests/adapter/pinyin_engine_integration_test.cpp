@@ -41,8 +41,8 @@ int main() {
                            modernime::fcitx5::KeyKind::Character, character, 0}),
                        "pinyin character is handled");
         }
-        assertTrue(controller.page().preedit == "nihao",
-                   "controller exposes LibIME preedit");
+        assertTrue(controller.page().preedit == "ni'hao",
+                   "controller exposes segmented LibIME preedit");
         assertTrue(!controller.page().items.empty(),
                    "controller exposes LibIME candidates");
         assertTrue(controller.page().items.front().text == "你好",

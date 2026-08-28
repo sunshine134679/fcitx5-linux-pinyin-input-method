@@ -119,14 +119,43 @@ void testAbbreviationInputIsAutomaticallySegmentedInPreedit() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testFullPinyinInputIsAutomaticallySegmentedInPreedit() {
+    const auto learningPath = testPath("full-pinyin-preedit-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    assertTrue(provider.append("wosh"),
+               "unfinished full pinyin is accepted for automatic segmentation");
+    assertTrue(hasText(provider.page(), "我是"),
+               "unfinished full pinyin exposes its Chinese match");
+    assertTrue(provider.page().preedit == "wo'sh",
+               "unfinished final syllable keeps the discovered boundary");
+
+    provider.reset();
+    assertTrue(provider.append("woshishenme"),
+               "continuous full pinyin is accepted for automatic segmentation");
+    assertTrue(hasText(provider.page(), "我是什么"),
+               "continuous full pinyin exposes its Chinese match");
+    assertTrue(provider.page().preedit == "wo'shi'shen'me",
+               "full pinyin is displayed with candidate syllable separators");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
     testAbbreviationPhraseOutranksRawEnglishFallback();
     testAbbreviationInputIsAutomaticallySegmentedInPreedit();
+    testFullPinyinInputIsAutomaticallySegmentedInPreedit();
     modernime::pinyin::PinyinCandidateProvider provider;
     assertTrue(provider.append("nihao"), "ASCII pinyin is accepted");
-    assertTrue(provider.page().preedit == "nihao", "preedit follows input");
+    assertTrue(provider.page().preedit == "ni'hao",
+               "full pinyin preedit uses the candidate syllable boundary");
     assertTrue(!provider.page().items.empty(), "LibIME produces candidates");
     assertTrue(provider.page().items.front().text == "你好",
                "system dictionary produces the expected top candidate");
@@ -134,7 +163,8 @@ int main() {
                "candidate retains full pinyin segmentation");
 
     assertTrue(provider.eraseLast(), "last pinyin byte can be erased");
-    assertTrue(provider.page().preedit == "niha", "erase refreshes preedit");
+    assertTrue(provider.page().preedit == "ni'ha",
+               "erase refreshes the shortened pinyin segmentation");
 
     provider.reset();
     assertTrue(provider.append("who"), "English letters are accepted");

@@ -15,7 +15,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -209,32 +211,170 @@ bool coversPinyinInput(std::string_view userInput,
     return inputOffset == input.size() && consumedFullSyllable;
 }
 
+struct PreeditAlignment final {
+    std::string text;
+    std::size_t fullSyllableCount = 0;
+    std::size_t abbreviationSyllableCount = 0;
+};
+
+bool isBetterPreeditAlignment(const PreeditAlignment &candidate,
+                              const PreeditAlignment &current) {
+    if (candidate.fullSyllableCount != current.fullSyllableCount) {
+        return candidate.fullSyllableCount > current.fullSyllableCount;
+    }
+    if (candidate.abbreviationSyllableCount !=
+        current.abbreviationSyllableCount) {
+        return candidate.abbreviationSyllableCount >
+               current.abbreviationSyllableCount;
+    }
+    return candidate.text.size() > current.text.size();
+}
+
+std::optional<PreeditAlignment> alignPreeditToCandidate(
+    std::string_view rawInput, std::string_view fullPinyin) {
+    if (rawInput.empty() || fullPinyin.empty() ||
+        rawInput.find('\'') != std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    std::vector<std::string_view> syllables;
+    std::size_t syllableStart = 0;
+    while (syllableStart < fullPinyin.size()) {
+        const auto separator = fullPinyin.find('\'', syllableStart);
+        const auto syllableEnd = separator == std::string_view::npos
+                                     ? fullPinyin.size()
+                                     : separator;
+        if (syllableEnd == syllableStart) {
+            return std::nullopt;
+        }
+        syllables.push_back(
+            fullPinyin.substr(syllableStart, syllableEnd - syllableStart));
+        if (separator == std::string_view::npos) {
+            break;
+        }
+        syllableStart = separator + 1;
+    }
+    if (syllables.empty()) {
+        return std::nullopt;
+    }
+
+    const auto stateCount = (syllables.size() + 1) * (rawInput.size() + 1);
+    std::vector<std::optional<PreeditAlignment>> memo(stateCount);
+    std::vector<bool> visited(stateCount, false);
+    const auto stateIndex = [rawInput](std::size_t syllableIndex,
+                                       std::size_t inputOffset) {
+        return syllableIndex * (rawInput.size() + 1) + inputOffset;
+    };
+
+    std::function<std::optional<PreeditAlignment>(std::size_t, std::size_t)>
+        align = [&](std::size_t syllableIndex,
+                    std::size_t inputOffset)
+        -> std::optional<PreeditAlignment> {
+        const auto index = stateIndex(syllableIndex, inputOffset);
+        if (visited[index]) {
+            return memo[index];
+        }
+        visited[index] = true;
+
+        if (inputOffset == rawInput.size()) {
+            memo[index] = PreeditAlignment{};
+            return memo[index];
+        }
+        if (syllableIndex == syllables.size()) {
+            return std::nullopt;
+        }
+
+        const auto syllable = syllables[syllableIndex];
+        const auto remaining = rawInput.substr(inputOffset);
+        std::optional<PreeditAlignment> best;
+        const auto consider = [&](std::size_t consumed,
+                                  bool fullSyllable,
+                                  bool abbreviation) {
+            const auto tail = align(syllableIndex + 1,
+                                    inputOffset + consumed);
+            if (!tail.has_value()) {
+                return;
+            }
+
+            PreeditAlignment alignment;
+            alignment.text.assign(rawInput.substr(inputOffset, consumed));
+            if (!tail->text.empty()) {
+                alignment.text.push_back('\'');
+                alignment.text.append(tail->text);
+            }
+            alignment.fullSyllableCount =
+                tail->fullSyllableCount + (fullSyllable ? 1 : 0);
+            alignment.abbreviationSyllableCount =
+                tail->abbreviationSyllableCount + (abbreviation ? 1 : 0);
+            if (!best.has_value() ||
+                isBetterPreeditAlignment(alignment, *best)) {
+                best = std::move(alignment);
+            }
+        };
+
+        if (remaining.starts_with(syllable)) {
+            consider(syllable.size(), true, false);
+        }
+
+        if (remaining.front() == syllable.front()) {
+            consider(1, false, true);
+        }
+
+        // A shorter prefix is an unfinished final syllable. It must consume
+        // all remaining input; otherwise it would swallow initials belonging
+        // to later syllables (for example, smcg -> s'm'c'g).
+        if (remaining.size() < syllable.size() &&
+            syllable.starts_with(remaining)) {
+            PreeditAlignment alignment;
+            alignment.text = std::string(remaining);
+            if (remaining.size() == rawInput.size() - inputOffset) {
+                best = !best.has_value() ||
+                               isBetterPreeditAlignment(alignment, *best)
+                           ? std::optional<PreeditAlignment>(
+                                 std::move(alignment))
+                           : best;
+            }
+        }
+
+        memo[index] = best;
+        return memo[index];
+    };
+
+    auto alignment = align(0, 0);
+    if (!alignment.has_value() || alignment->text.find('\'') ==
+                                     std::string::npos) {
+        return std::nullopt;
+    }
+
+    // A short all-initial input is intentionally left alone so ordinary
+    // English fragments such as "who" are not rendered as Chinese initials.
+    if (alignment->fullSyllableCount == 0 && rawInput.size() < 4) {
+        return std::nullopt;
+    }
+    return alignment;
+}
+
 std::string automaticallySegmentedPreedit(
     std::string_view rawInput, const CandidatePipelineResult &result) {
-    if (rawInput.size() < 4 ||
-        !core::PinyinMatchPolicy::isAbbreviationInput(rawInput)) {
+    // An explicit separator is the user's segmentation choice.
+    if (rawInput.find('\'') != std::string_view::npos) {
         return std::string(rawInput);
     }
 
-    const auto hasAbbreviationMatch = std::any_of(
-        result.scored.begin(), result.scored.end(),
-        [rawInput](const auto &candidate) {
-            return core::PinyinMatchPolicy::abbreviationKey(
-                       candidate.full_pinyin) == rawInput;
-        });
-    if (!hasAbbreviationMatch) {
-        return std::string(rawInput);
-    }
-
-    std::string segmented;
-    segmented.reserve(rawInput.size() * 2 - 1);
-    for (std::size_t index = 0; index < rawInput.size(); ++index) {
-        if (index != 0) {
-            segmented.push_back('\'');
+    // Try candidates in their actual ranked order so the displayed boundary
+    // follows the same phrase that the user sees first in the candidate list.
+    for (const auto sourceIndex : result.order) {
+        if (sourceIndex >= result.scored.size()) {
+            continue;
         }
-        segmented.push_back(rawInput[index]);
+        const auto &candidate = result.scored[sourceIndex];
+        const auto alignment =
+            alignPreeditToCandidate(rawInput, candidate.full_pinyin);
+        if (alignment.has_value()) {
+            return alignment->text;
+        }
     }
-    return segmented;
+    return std::string(rawInput);
 }
 
 } // namespace
