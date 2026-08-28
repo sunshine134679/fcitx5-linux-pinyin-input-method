@@ -10,6 +10,7 @@
 #include <gtk/gtk.h>
 
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <sstream>
 #include <iomanip>
@@ -62,6 +63,11 @@ public:
     GtkWidget *clearLearningButton = nullptr;
     GtkListStore *dictionaryStore = nullptr;
     GtkWidget *dictionaryView = nullptr;
+    GtkWidget *dictionarySearch = nullptr;
+    GtkWidget *dictionaryCount = nullptr;
+    GtkWidget *dictionaryState = nullptr;
+    GtkWidget *dictionaryEditButton = nullptr;
+    GtkWidget *dictionaryDeleteButton = nullptr;
     std::vector<pinyin::UserDictionaryEntry> dictionaryEntries;
     GtkWidget *runtimeStatus = nullptr;
     GtkWidget *reloadButton = nullptr;
@@ -966,19 +972,77 @@ GtkWidget *makeLearningPage(SettingsWindow::Impl *impl) {
     return page;
 }
 
+std::string foldAscii(std::string_view value) {
+    std::string result(value);
+    for (auto &character : result) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (byte >= static_cast<unsigned char>('A') &&
+            byte <= static_cast<unsigned char>('Z')) {
+            character = static_cast<char>(byte + ('a' - 'A'));
+        }
+    }
+    return result;
+}
+
+bool dictionaryMatches(const pinyin::UserDictionaryEntry &entry,
+                       std::string_view query) {
+    if (query.empty()) {
+        return true;
+    }
+    const auto foldedQuery = foldAscii(query);
+    const auto foldedPinyin = foldAscii(entry.pinyin);
+    const auto foldedPhrase = foldAscii(entry.phrase);
+    return foldedPinyin.find(foldedQuery) != std::string::npos ||
+           foldedPhrase.find(foldedQuery) != std::string::npos;
+}
+
+void updateDictionaryActionState(SettingsWindow::Impl *impl);
+
 void refreshDictionaryPage(SettingsWindow::Impl *impl) {
     impl->dictionaryEntries = DataController::loadDictionary(
         impl->paths_.userDictionary);
     gtk_list_store_clear(impl->dictionaryStore);
-    for (const auto &entry : impl->dictionaryEntries) {
+    const auto query = impl->dictionarySearch == nullptr
+                           ? std::string()
+                           : gtk_entry_get_text(GTK_ENTRY(impl->dictionarySearch));
+    std::size_t visibleCount = 0;
+    for (std::size_t index = 0; index < impl->dictionaryEntries.size(); ++index) {
+        const auto &entry = impl->dictionaryEntries[index];
+        if (!dictionaryMatches(entry, query)) {
+            continue;
+        }
         auto weight = std::ostringstream{};
         weight << std::setprecision(9) << entry.weight;
         GtkTreeIter iterator;
         gtk_list_store_append(impl->dictionaryStore, &iterator);
         gtk_list_store_set(impl->dictionaryStore, &iterator, 0,
                            entry.pinyin.c_str(), 1, entry.phrase.c_str(), 2,
-                           weight.str().c_str(), -1);
+                           weight.str().c_str(), 3,
+                           static_cast<guint>(index), -1);
+        ++visibleCount;
     }
+
+    if (impl->dictionaryCount != nullptr) {
+        const auto countText = query.empty()
+                                   ? "共 " + std::to_string(visibleCount) + " 条"
+                                   : "显示 " + std::to_string(visibleCount) +
+                                         " 条，共 " +
+                                         std::to_string(impl->dictionaryEntries.size()) +
+                                         " 条";
+        gtk_label_set_text(GTK_LABEL(impl->dictionaryCount), countText.c_str());
+    }
+    if (impl->dictionaryState != nullptr) {
+        const char *state = nullptr;
+        if (impl->dictionaryEntries.empty()) {
+            state = "暂无用户词条；可以添加个人词条或导入专业词典";
+        } else if (visibleCount == 0) {
+            state = "没有匹配的词条；请更换拼音或词条关键词";
+        }
+        gtk_label_set_text(GTK_LABEL(impl->dictionaryState),
+                           state == nullptr ? "" : state);
+        gtk_widget_set_visible(impl->dictionaryState, state != nullptr);
+    }
+    updateDictionaryActionState(impl);
 }
 
 std::optional<std::size_t> selectedDictionaryIndex(
@@ -990,18 +1054,33 @@ std::optional<std::size_t> selectedDictionaryIndex(
     if (!gtk_tree_selection_get_selected(selection, &model, &iterator)) {
         return std::nullopt;
     }
-    auto *path = gtk_tree_model_get_path(model, &iterator);
-    if (path == nullptr) {
+    guint sourceIndex = 0;
+    gtk_tree_model_get(model, &iterator, 3, &sourceIndex, -1);
+    if (static_cast<std::size_t>(sourceIndex) >=
+        impl->dictionaryEntries.size()) {
         return std::nullopt;
     }
-    const auto *indices = gtk_tree_path_get_indices(path);
-    const auto index = indices == nullptr ? -1 : indices[0];
-    gtk_tree_path_free(path);
-    if (index < 0 || static_cast<std::size_t>(index) >=
-                         impl->dictionaryEntries.size()) {
-        return std::nullopt;
+    return static_cast<std::size_t>(sourceIndex);
+}
+
+void updateDictionaryActionState(SettingsWindow::Impl *impl) {
+    const auto selected = selectedDictionaryIndex(impl);
+    const bool hasSelected = selected.has_value();
+    if (impl->dictionaryEditButton != nullptr) {
+        gtk_widget_set_sensitive(impl->dictionaryEditButton, hasSelected);
     }
-    return static_cast<std::size_t>(index);
+    if (impl->dictionaryDeleteButton != nullptr) {
+        gtk_widget_set_sensitive(impl->dictionaryDeleteButton, hasSelected);
+    }
+}
+
+void onDictionarySelectionChanged(GtkTreeSelection *, gpointer data) {
+    updateDictionaryActionState(
+        static_cast<SettingsWindow::Impl *>(data));
+}
+
+void onDictionarySearchChanged(GtkEditable *, gpointer data) {
+    refreshDictionaryPage(static_cast<SettingsWindow::Impl *>(data));
 }
 
 bool saveDictionaryEntries(SettingsWindow::Impl *impl,
@@ -1015,6 +1094,37 @@ bool saveDictionaryEntries(SettingsWindow::Impl *impl,
     refreshDictionaryPage(impl);
     setStatus(impl, "用户词典已保存；重新加载输入法后生效");
     return true;
+}
+
+struct DictionaryDialogState final {
+    GtkWidget *pinyin = nullptr;
+    GtkWidget *phrase = nullptr;
+    GtkWidget *weight = nullptr;
+    GtkWidget *validation = nullptr;
+    GtkWidget *accept = nullptr;
+};
+
+void updateDictionaryDialogValidity(DictionaryDialogState *state) {
+    pinyin::UserDictionary dictionary;
+    const auto valid = dictionary.upsert(
+        gtk_entry_get_text(GTK_ENTRY(state->pinyin)),
+        gtk_entry_get_text(GTK_ENTRY(state->phrase)),
+        static_cast<float>(gtk_spin_button_get_value(
+            GTK_SPIN_BUTTON(state->weight))));
+    gtk_widget_set_sensitive(state->accept, valid);
+    gtk_label_set_text(GTK_LABEL(state->validation),
+                       valid ? "" : "拼音、词条或权重格式不合法");
+    gtk_widget_set_visible(state->validation, !valid);
+}
+
+void onDictionaryDialogTextChanged(GtkEditable *, gpointer data) {
+    updateDictionaryDialogValidity(
+        static_cast<DictionaryDialogState *>(data));
+}
+
+void onDictionaryDialogWeightChanged(GtkSpinButton *, gpointer data) {
+    updateDictionaryDialogValidity(
+        static_cast<DictionaryDialogState *>(data));
 }
 
 bool editDictionaryEntry(SettingsWindow::Impl *impl,
@@ -1046,13 +1156,33 @@ bool editDictionaryEntry(SettingsWindow::Impl *impl,
     gtk_grid_attach(GTK_GRID(grid), phrase, 1, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), weightLabel, 0, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), weight, 1, 2, 1, 1);
+    auto *validation = gtk_label_new("");
+    addStyleClass(validation, "modernime-status-error");
+    gtk_widget_set_halign(validation, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), validation, 1, 3, 1, 1);
     if (selected.has_value()) {
         const auto &entry = impl->dictionaryEntries[*selected];
         gtk_entry_set_text(GTK_ENTRY(pinyin), entry.pinyin.c_str());
         gtk_entry_set_text(GTK_ENTRY(phrase), entry.phrase.c_str());
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), entry.weight);
     }
+    auto state = DictionaryDialogState{pinyin, phrase, weight, validation,
+                                       gtk_dialog_get_widget_for_response(
+                                           GTK_DIALOG(dialog),
+                                           GTK_RESPONSE_ACCEPT)};
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+    gtk_entry_set_activates_default(GTK_ENTRY(pinyin), TRUE);
+    gtk_entry_set_activates_default(GTK_ENTRY(phrase), TRUE);
+    g_signal_connect(pinyin, "changed",
+                     G_CALLBACK(onDictionaryDialogTextChanged), &state);
+    g_signal_connect(phrase, "changed",
+                     G_CALLBACK(onDictionaryDialogTextChanged), &state);
+    g_signal_connect(weight, "value-changed",
+                     G_CALLBACK(onDictionaryDialogWeightChanged), &state);
+    updateDictionaryDialogValidity(&state);
     gtk_widget_show_all(dialog);
+    gtk_widget_set_visible(validation, !gtk_widget_get_sensitive(state.accept));
+    gtk_widget_grab_focus(pinyin);
     const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
     if (response != GTK_RESPONSE_ACCEPT) {
         gtk_widget_destroy(dialog);
@@ -1127,7 +1257,14 @@ void onDictionaryImport(GtkButton *, gpointer data) {
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
         const auto filename = gtk_file_chooser_get_filename(
             GTK_FILE_CHOOSER(dialog));
-        const auto imported = DataController::loadDictionary(filename);
+        std::vector<pinyin::UserDictionaryEntry> imported;
+        std::string error;
+        if (!DataController::importDictionary(filename, imported, &error)) {
+            setStatus(impl, error.c_str());
+            g_free(filename);
+            gtk_widget_destroy(dialog);
+            return;
+        }
         g_free(filename);
         saveDictionaryEntries(impl, imported);
     }
@@ -1160,11 +1297,37 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     auto *page = makePageShell(
         "用户词典", "维护个人词条和专业名词，重载 ModernIME 后生效");
     auto *section = makeSectionCard(
-        "词条列表", "拼音、词条和权重会在保存时统一校验。");
-    impl->dictionaryStore = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING,
-                                               G_TYPE_STRING);
+        "词条列表", "拼音、词条和权重会在保存时统一校验；导入失败不会覆盖原词典。");
+
+    auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    auto *searchLabel = gtk_label_new("搜索");
+    gtk_widget_set_halign(searchLabel, GTK_ALIGN_START);
+    impl->dictionarySearch = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(impl->dictionarySearch),
+                                   "输入拼音或词条关键词");
+    gtk_widget_set_hexpand(impl->dictionarySearch, TRUE);
+    gtk_widget_set_tooltip_text(impl->dictionarySearch,
+                                "实时筛选拼音和词条内容");
+    gtk_box_pack_start(GTK_BOX(searchRow), searchLabel, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(searchRow), impl->dictionarySearch, TRUE, TRUE,
+                       0);
+    gtk_box_pack_start(GTK_BOX(section), searchRow, FALSE, FALSE, 0);
+
+    impl->dictionaryCount = gtk_label_new("正在读取用户词典…");
+    addStyleClass(impl->dictionaryCount, "modernime-description");
+    gtk_widget_set_halign(impl->dictionaryCount, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(section), impl->dictionaryCount, FALSE, FALSE,
+                       0);
+
+    impl->dictionaryStore = gtk_list_store_new(
+        4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT);
     impl->dictionaryView = gtk_tree_view_new_with_model(
         GTK_TREE_MODEL(impl->dictionaryStore));
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(impl->dictionaryView),
+                                      TRUE);
+    gtk_tree_view_set_enable_search(GTK_TREE_VIEW(impl->dictionaryView), FALSE);
+    gtk_widget_set_tooltip_text(impl->dictionaryView,
+                                "选择词条后可以编辑或删除");
     for (const auto &column : {std::pair<const char *, int>{"拼音", 0},
                                {"词条", 1}, {"权重", 2}}) {
         auto *renderer = gtk_cell_renderer_text_new();
@@ -1178,7 +1341,19 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     gtk_widget_set_size_request(scrolled, -1, 220);
     gtk_container_add(GTK_CONTAINER(scrolled), impl->dictionaryView);
     gtk_box_pack_start(GTK_BOX(section), scrolled, TRUE, TRUE, 0);
+    impl->dictionaryState = gtk_label_new("");
+    addStyleClass(impl->dictionaryState, "modernime-description");
+    gtk_widget_set_halign(impl->dictionaryState, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(impl->dictionaryState), TRUE);
+    gtk_box_pack_start(GTK_BOX(section), impl->dictionaryState, FALSE, FALSE,
+                       0);
     gtk_box_pack_start(GTK_BOX(page), section, TRUE, TRUE, 0);
+
+    auto *selection = gtk_tree_view_get_selection(
+        GTK_TREE_VIEW(impl->dictionaryView));
+    gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
+    g_signal_connect(selection, "changed",
+                     G_CALLBACK(onDictionarySelectionChanged), impl);
 
     auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     const auto addButton = gtk_button_new_with_label("添加");
@@ -1186,6 +1361,8 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     const auto deleteButton = gtk_button_new_with_label("删除");
     const auto importButton = gtk_button_new_with_label("导入");
     const auto exportButton = gtk_button_new_with_label("导出");
+    impl->dictionaryEditButton = editButton;
+    impl->dictionaryDeleteButton = deleteButton;
     gtk_widget_set_tooltip_text(addButton, "添加一条用户词典词条");
     gtk_widget_set_tooltip_text(editButton, "编辑选中的词条");
     gtk_widget_set_tooltip_text(deleteButton, "删除选中的词条");
@@ -1205,6 +1382,8 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
                      impl);
     g_signal_connect(exportButton, "clicked", G_CALLBACK(onDictionaryExport),
                      impl);
+    g_signal_connect(impl->dictionarySearch, "search-changed",
+                     G_CALLBACK(onDictionarySearchChanged), impl);
     refreshDictionaryPage(impl);
     return page;
 }
@@ -1504,6 +1683,7 @@ void SettingsWindow::showLearningPage() {
 
 void SettingsWindow::showDictionaryPage() {
     gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "dictionary");
+    refreshDictionaryPage(impl_.get());
 }
 
 void SettingsWindow::showStatusPage() {

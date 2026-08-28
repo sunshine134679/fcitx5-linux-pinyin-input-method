@@ -89,6 +89,45 @@ void testDictionaryImportExportUsesValidatedRows() {
                "exported import round-trips");
 }
 
+void testDictionaryImportIsStrictAndNonDestructive() {
+    const auto directory = testDirectory("strict-import");
+    const auto source = directory / "source.txt";
+    const auto validSource = directory / "valid-source.txt";
+    const auto target = directory / "target.txt";
+    std::string error;
+    assertTrue(modernime::settings::DataController::saveDictionary(
+                   target,
+                   {modernime::pinyin::UserDictionaryEntry{"ni", "原词条",
+                                                          10.0F}},
+                   &error),
+               "strict import target fixture is saved: " + error);
+
+    {
+        std::ofstream output(source);
+        output << "ni\t合法词\t80\n"
+               << "bad!pinyin\t非法词\t100\n";
+    }
+    std::vector<modernime::pinyin::UserDictionaryEntry> imported;
+    assertTrue(!modernime::settings::DataController::importDictionary(
+                   source, imported, &error) && !error.empty(),
+               "invalid import is rejected with a diagnostic");
+    assertTrue(modernime::settings::DataController::loadDictionary(target)
+                   .front()
+                   .phrase == "原词条",
+               "rejected import does not alter the existing dictionary");
+
+    {
+        std::ofstream output(validSource);
+        output << "# comment\nni'hao\t你好\t100\n"
+               << "rengongzhineng\t人工智能\t120\n";
+    }
+    error.clear();
+    assertTrue(modernime::settings::DataController::importDictionary(
+                   validSource, imported, &error) && imported.size() == 2 &&
+                   error.empty(),
+               "valid import returns all normalized entries");
+}
+
 void testLearningBackupThenClear() {
     const auto directory = testDirectory("learning");
     const auto databasePath = directory / "learning.sqlite3";
@@ -155,6 +194,7 @@ void testFailedBackupDoesNotClearLearning() {
 int main() {
     testUserDictionaryEditingAndRoundTrip();
     testDictionaryImportExportUsesValidatedRows();
+    testDictionaryImportIsStrictAndNonDestructive();
     testLearningBackupThenClear();
     testFailedBackupDoesNotClearLearning();
     return EXIT_SUCCESS;

@@ -13,6 +13,10 @@ class DataController final {
 public:
     static std::vector<pinyin::UserDictionaryEntry> loadDictionary(
         const std::filesystem::path &path);
+    static bool importDictionary(
+        const std::filesystem::path &path,
+        std::vector<pinyin::UserDictionaryEntry> &entries,
+        std::string *error = nullptr);
     static bool saveDictionary(
         const std::filesystem::path &path,
         const std::vector<pinyin::UserDictionaryEntry> &entries,
