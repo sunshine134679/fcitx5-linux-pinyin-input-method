@@ -60,11 +60,9 @@ public:
 
     ModernIMEController &controller() { return controller_; }
     ClipboardTriggerResult processClipboardTrigger(const KeyEvent &event,
-                                                   std::uint64_t nowMs,
                                                    bool eligible) {
-        return clipboardTrigger_.feed(event, nowMs, eligible);
+        return clipboardTrigger_.feed(event, eligible);
     }
-    void flushClipboardTrigger(std::uint64_t nowMs);
     void resetClipboardTrigger() { clipboardTrigger_.reset(); }
     void setClipboardEntries(std::vector<std::string> entries) {
         controller_.setClipboardEntries(std::move(entries));
@@ -97,7 +95,6 @@ public:
 private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
     void pollClipboard();
-    void flushClipboardTriggers(std::uint64_t nowMs);
 
     fcitx::AddonManager *manager_ = nullptr;
     fcitx::Instance *instance_ = nullptr;

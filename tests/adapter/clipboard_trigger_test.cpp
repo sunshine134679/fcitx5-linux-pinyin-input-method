@@ -26,21 +26,21 @@ modernime::fcitx5::KeyEvent digit(char value) {
 int main() {
     modernime::fcitx5::ClipboardTrigger trigger;
 
-    const auto first = trigger.feed(character('v'), 100, true);
+    const auto first = trigger.feed(character('v'), true);
     assertTrue(first.consumed && first.openFeatureMenu &&
                    first.featurePrefix == 'V' && first.featureDigit == '2' &&
                    !first.openClipboard && !first.replay,
                "first V opens the feature menu and waits for the second key");
     assertTrue(trigger.pending(), "first V creates a pending sequence");
 
-    const auto opened = trigger.feed(digit('2'), 200, true);
+    const auto opened = trigger.feed(digit('2'), true);
     assertTrue(opened.consumed && opened.openClipboard && !opened.replay,
                "V+2 opens the clipboard sequence");
     assertTrue(!trigger.pending(), "completed sequence is cleared");
 
     trigger.reset();
-    trigger.feed(character('v'), 100, true);
-    const auto wrongSecond = trigger.feed(digit('1'), 200, true);
+    trigger.feed(character('v'), true);
+    const auto wrongSecond = trigger.feed(digit('1'), true);
     assertTrue(!wrongSecond.consumed && !wrongSecond.openClipboard &&
                    wrongSecond.replay.has_value() &&
                    wrongSecond.replay->kind ==
@@ -49,21 +49,17 @@ int main() {
                "a non-matching second key replays V");
     assertTrue(!trigger.pending(), "wrong second key clears the sequence");
 
-    trigger.feed(character('v'), 100, true);
-    const auto beforeTimeout = trigger.expire(499);
-    assertTrue(!beforeTimeout.replay.has_value(),
-               "pending V is retained before timeout");
-    const auto afterTimeout = trigger.expire(500);
-    assertTrue(afterTimeout.consumed && afterTimeout.replay.has_value() &&
-                   afterTimeout.replay->kind ==
-                       modernime::fcitx5::KeyKind::CommitLiteral &&
-                   afterTimeout.replay->character == 'V',
-               "pending V is replayed after timeout");
+    trigger.feed(character('v'), true);
+    const auto delayedOpen = trigger.feed(digit('2'), true);
+    assertTrue(delayedOpen.consumed && delayedOpen.openClipboard &&
+                   !delayedOpen.replay,
+               "V can enter the clipboard after a long wait");
+    assertTrue(!trigger.pending(), "delayed feature selection clears the trigger");
 
     trigger.reset();
-    trigger.feed(character('v'), 100, true);
+    trigger.feed(character('v'), true);
     const auto enter = trigger.feed(
-        {modernime::fcitx5::KeyKind::Enter, 0, 0}, 200, true);
+        {modernime::fcitx5::KeyKind::Enter, 0, 0}, true);
     assertTrue(enter.consumed && enter.replay.has_value() &&
                    enter.replay->kind ==
                        modernime::fcitx5::KeyKind::CommitLiteral &&
@@ -71,18 +67,18 @@ int main() {
                "enter commits the pending V instead of reaching the client");
 
     trigger.reset();
-    const auto ineligible = trigger.feed(character('v'), 100, false);
+    const auto ineligible = trigger.feed(character('v'), false);
     assertTrue(!ineligible.consumed && !trigger.pending(),
                "V is not intercepted while a preedit already exists");
 
     modernime::fcitx5::ClipboardTrigger custom("B+7");
-    custom.feed(character('b'), 10, true);
-    const auto customOpened = custom.feed(digit('7'), 20, true);
+    custom.feed(character('b'), true);
+    const auto customOpened = custom.feed(digit('7'), true);
     assertTrue(customOpened.openClipboard,
                "configured letter and digit are honored");
 
     modernime::fcitx5::ClipboardTrigger invalid("V+0");
-    const auto invalidResult = invalid.feed(character('v'), 0, true);
+    const auto invalidResult = invalid.feed(character('v'), true);
     assertTrue(!invalidResult.consumed && !invalid.pending(),
                "invalid trigger is disabled safely");
     return EXIT_SUCCESS;

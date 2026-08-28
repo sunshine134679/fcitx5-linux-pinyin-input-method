@@ -45,17 +45,10 @@ bool ClipboardTrigger::isSecond(const KeyEvent &event) const {
 }
 
 ClipboardTriggerResult ClipboardTrigger::feed(const KeyEvent &event,
-                                              std::uint64_t nowMs,
                                               bool eligible) {
     ClipboardTriggerResult result;
     if (!valid()) {
         return result;
-    }
-
-    if (pending_ && nowMs >= pendingSinceMs_ &&
-        nowMs - pendingSinceMs_ >= kTimeoutMs) {
-        result.replay = replayEvent();
-        pending_ = false;
     }
 
     if (pending_) {
@@ -74,7 +67,6 @@ ClipboardTriggerResult ClipboardTrigger::feed(const KeyEvent &event,
 
     if (eligible && isFirst(event)) {
         pending_ = true;
-        pendingSinceMs_ = nowMs;
         result.consumed = true;
         result.openFeatureMenu = true;
         result.featurePrefix = replayEvent().character;
@@ -83,21 +75,8 @@ ClipboardTriggerResult ClipboardTrigger::feed(const KeyEvent &event,
     return result;
 }
 
-ClipboardTriggerResult ClipboardTrigger::expire(std::uint64_t nowMs) {
-    ClipboardTriggerResult result;
-    if (!valid() || !pending_ || nowMs < pendingSinceMs_ ||
-        nowMs - pendingSinceMs_ < kTimeoutMs) {
-        return result;
-    }
-    pending_ = false;
-    result.consumed = true;
-    result.replay = replayEvent();
-    return result;
-}
-
 void ClipboardTrigger::reset() {
     pending_ = false;
-    pendingSinceMs_ = 0;
 }
 
 ModernIMEController::ModernIMEController(EngineHost &host,

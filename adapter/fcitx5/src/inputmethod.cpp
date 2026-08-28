@@ -235,13 +235,6 @@ FcitxInputContextState::FcitxInputContextState(
                            settings.defaultMode == core::InputMode::Chinese);
 }
 
-void FcitxInputContextState::flushClipboardTrigger(std::uint64_t nowMs) {
-    const auto result = clipboardTrigger_.expire(nowMs);
-    if (result.replay.has_value() && controller_.active()) {
-        controller_.handle(*result.replay);
-    }
-}
-
 ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
     : manager_(manager),
       instance_(manager == nullptr ? nullptr : manager->instance()),
@@ -256,8 +249,6 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 50000, 50000,
             [this](fcitx::EventSourceTime *source, std::uint64_t) {
                 pollClipboard();
-                flushClipboardTriggers(
-                    fcitx::now(CLOCK_MONOTONIC) / 1000);
                 source->setNextInterval(50000);
                 source->setEnabled(true);
                 return true;
@@ -408,20 +399,6 @@ void ModernIMEInputMethod::pollClipboard() {
     }
 }
 
-void ModernIMEInputMethod::flushClipboardTriggers(std::uint64_t nowMs) {
-    if (instance_ == nullptr) {
-        return;
-    }
-    instance_->inputContextManager().foreach(
-        [this, nowMs](fcitx::InputContext *inputContext) {
-            if (auto *contextState = state(inputContext);
-                contextState != nullptr) {
-                contextState->flushClipboardTrigger(nowMs);
-            }
-            return true;
-        });
-}
-
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                                     fcitx::KeyEvent &event) {
     if (event.isRelease()) {
@@ -450,8 +427,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 
     if (clipboardActive) {
         const auto trigger = contextState->processClipboardTrigger(
-            *modernEvent, fcitx::now(CLOCK_MONOTONIC) / 1000,
-            contextState->controller().page().preedit.empty());
+            *modernEvent, contextState->controller().page().preedit.empty());
         if (trigger.replay.has_value()) {
             contextState->controller().handle(*trigger.replay);
         }

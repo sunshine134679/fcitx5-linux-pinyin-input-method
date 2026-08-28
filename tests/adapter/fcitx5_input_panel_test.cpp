@@ -83,7 +83,7 @@ int main() {
     host.setBeforeCandidateSelection(
         [&featureTrigger] { featureTrigger.reset(); });
     featureTrigger.feed(
-        {modernime::fcitx5::KeyKind::Character, 'v', 0}, 100, true);
+        {modernime::fcitx5::KeyKind::Character, 'v', 0}, true);
     assertTrue(featureTrigger.pending(),
                "feature trigger is pending before a candidate click");
     assertTrue(controller.handle(

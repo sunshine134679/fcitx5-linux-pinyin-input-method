@@ -54,13 +54,9 @@ struct ClipboardTriggerResult final {
 
 class ClipboardTrigger final {
 public:
-    static constexpr std::uint64_t kTimeoutMs = 400;
-
     explicit ClipboardTrigger(std::string_view trigger = "V+2");
 
-    ClipboardTriggerResult feed(const KeyEvent &event, std::uint64_t nowMs,
-                                bool eligible);
-    ClipboardTriggerResult expire(std::uint64_t nowMs);
+    ClipboardTriggerResult feed(const KeyEvent &event, bool eligible);
     void reset();
 
     bool pending() const { return pending_; }
@@ -78,7 +74,6 @@ private:
     char first_ = 0;
     char second_ = 0;
     bool pending_ = false;
-    std::uint64_t pendingSinceMs_ = 0;
 };
 
 struct ControllerOptions final {
