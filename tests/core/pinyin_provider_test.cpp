@@ -46,6 +46,38 @@ bool hasText(const modernime::core::CandidatePage &page,
     return indexOf(page, text) < page.items.size();
 }
 
+void testExtensionDictionaryIsLoadedAsOfflineKnowledge() {
+    const auto learningPath = testPath("extension-knowledge-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    assertTrue(provider.append("qiangliantongsuodian"),
+               "full pinyin from the extension dictionary is accepted");
+    const auto index = indexOf(provider.page(), "强连通缩点");
+    assertTrue(index < provider.page().items.size(),
+               "an offline IT term is decoded from the extension dictionary");
+    assertTrue(provider.page().items[index].source ==
+                   modernime::core::CandidateSource::Engine,
+               "offline knowledge stays an engine candidate in this phase");
+
+    modernime::pinyin::PinyinDataPaths missingPaths;
+    missingPaths.extensionDictionary =
+        (std::filesystem::temp_directory_path() /
+         "modernime-extension-dictionary-does-not-exist").string();
+    missingPaths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider fallbackProvider(missingPaths);
+    assertTrue(fallbackProvider.append("nihao"),
+               "missing offline knowledge does not block provider startup");
+    assertTrue(hasText(fallbackProvider.page(), "你好"),
+               "system dictionary remains usable without offline knowledge");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
@@ -226,5 +258,6 @@ int main() {
                "learning-disabled provider still selects candidates");
     assertTrue(!std::filesystem::exists(disabledLearningPath),
                "disabled learning does not create a database");
+    testExtensionDictionaryIsLoadedAsOfflineKnowledge();
     return EXIT_SUCCESS;
 }

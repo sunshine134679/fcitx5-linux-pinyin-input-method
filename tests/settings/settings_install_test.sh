@@ -59,6 +59,7 @@ env \
     bash "$project_root/install.sh" >/dev/null
 
 manifest="$prefix/share/modernime/install-manifest.txt"
+grep -Fqx "$prefix/share/modernime/pinyin/modernime-knowledge.dict" "$manifest"
 grep -Fqx "$prefix/bin/modernime-settings" "$manifest"
 grep -Fqx "$prefix/share/applications/modernime-settings.desktop" "$manifest"
 grep -Fqx "$test_root/home/Desktop/modernime-settings.desktop" "$manifest"

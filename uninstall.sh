@@ -33,6 +33,7 @@ while IFS= read -r path; do
     case "$path" in
         "$prefix/lib/fcitx5/modernime_fcitx5.so"|\
         "$prefix/lib/fcitx5/modernime_ui.so"|\
+        "$prefix/share/modernime/pinyin/modernime-knowledge.dict"|\
         "$prefix/share/fcitx5/addon/modernime.conf"|\
         "$prefix/share/fcitx5/addon/modernime-ui.conf"|\
         "$prefix/share/fcitx5/inputmethod/modernime.conf"|\

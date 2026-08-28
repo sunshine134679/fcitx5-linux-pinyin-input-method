@@ -138,6 +138,7 @@ mkdir -p "$manifest_dir"
 {
     printf '%s\n' "$prefix/lib/fcitx5/modernime_fcitx5.so"
     printf '%s\n' "$prefix/lib/fcitx5/modernime_ui.so"
+    printf '%s\n' "$prefix/share/modernime/pinyin/modernime-knowledge.dict"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime.conf"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime-ui.conf"
     printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
@@ -211,6 +212,7 @@ fi
 
 printf 'ModernIME installed to %s\n' "$prefix"
 printf 'Install manifest: %s\n' "$manifest"
+printf 'Offline pinyin knowledge dictionary: %s/share/modernime/pinyin/modernime-knowledge.dict\n' "$prefix"
 printf 'Launch settings client: %s\n' "$prefix/bin/modernime-settings"
 printf 'Desktop shortcut: %s\n' "$desktop_shortcut"
 printf 'Select the UI addon with: fcitx5 -u modernime-ui\n'

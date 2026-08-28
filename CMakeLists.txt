@@ -14,10 +14,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(cmake/ModernIMEWarnings.cmake)
+include(GNUInstallDirs)
 
 add_subdirectory(core)
 
 if(MODERNIME_BUILD_LIBIME_PINYIN OR MODERNIME_BUILD_SETTINGS)
+    if(MODERNIME_BUILD_LIBIME_PINYIN)
+        add_subdirectory(data/pinyin)
+    endif()
     add_subdirectory(algorithm/pinyin)
 endif()
 

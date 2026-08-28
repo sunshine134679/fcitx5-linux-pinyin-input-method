@@ -16,7 +16,8 @@
       "commit": "78606b0294a22e798633c4469a4009b78ad60f26",
       "path": "china_idiom/idiom.csv",
       "license": "MIT",
-      "used_fields": ["word", "pinyin", "abbreviation"]
+      "used_fields": ["word"],
+      "pinyin_annotation": "python-pinyin phrase dictionary; upstream pinyin is fallback only"
     },
     {
       "id": "thuocl",

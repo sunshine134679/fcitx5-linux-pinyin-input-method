@@ -139,9 +139,13 @@ def read_idioms(path: Path, entries: dict[tuple[str, str], Entry]) -> int:
             phrase = normalize_phrase(row.get("word", ""))
             if phrase is None:
                 continue
-            pinyin = pinyin_from_source(row.get("pinyin", ""))
+            # The upstream CSV contains a small number of malformed or
+            # truncated pinyin fields.  Prefer the phrase-aware annotator so
+            # those rows cannot poison the LibIME dictionary; retain the
+            # upstream field only as a fallback for an unknown phrase.
+            pinyin = pinyin_for_phrase(phrase)
             if pinyin is None:
-                pinyin = pinyin_for_phrase(phrase)
+                pinyin = pinyin_from_source(row.get("pinyin", ""))
             if pinyin is None:
                 continue
             entry = Entry(

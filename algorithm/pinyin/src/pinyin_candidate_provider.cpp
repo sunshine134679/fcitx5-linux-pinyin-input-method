@@ -54,6 +54,72 @@ std::filesystem::path defaultUserDictionaryPath() {
     return {};
 }
 
+bool isRegularFile(const std::filesystem::path &path) {
+    if (path.empty()) {
+        return false;
+    }
+    std::error_code error;
+    return std::filesystem::is_regular_file(path, error) && !error;
+}
+
+std::filesystem::path extensionDictionaryPath(
+    std::string_view configuredPath) {
+    if (!configuredPath.empty()) {
+        return std::filesystem::path(configuredPath);
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    if (const auto *environment = std::getenv(
+            "MODERNIME_PINYIN_KNOWLEDGE_DICTIONARY");
+        environment != nullptr && *environment != '\0') {
+        candidates.emplace_back(environment);
+    }
+
+    const auto *dataHome = std::getenv("XDG_DATA_HOME");
+    if (dataHome != nullptr && *dataHome != '\0') {
+        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime" /
+                                "pinyin" / "modernime-knowledge.dict");
+    } else if (const auto *home = std::getenv("HOME"); home != nullptr &&
+               *home != '\0') {
+        candidates.emplace_back(std::filesystem::path(home) / ".local" /
+                                "share" / "modernime" / "pinyin" /
+                                "modernime-knowledge.dict");
+    }
+
+#ifdef MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY
+    candidates.emplace_back(MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY);
+#endif
+#ifdef MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY
+    candidates.emplace_back(MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY);
+#endif
+    candidates.emplace_back(
+        "/usr/share/modernime/pinyin/modernime-knowledge.dict");
+
+    for (const auto &candidate : candidates) {
+        if (isRegularFile(candidate)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+void loadExtensionDictionary(libime::PinyinDictionary &dictionary,
+                             const std::filesystem::path &path) {
+    if (!isRegularFile(path)) {
+        return;
+    }
+
+    const auto index = dictionary.dictSize();
+    dictionary.addEmptyDict();
+    try {
+        dictionary.load(index, path.c_str(), libime::PinyinDictFormat::Binary);
+    } catch (...) {
+        // An optional data package must never prevent the system dictionary
+        // and user dictionary from starting.
+        dictionary.clear(index);
+    }
+}
+
 std::int64_t nowMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch())
@@ -142,6 +208,8 @@ public:
         : userDictionaryPath_(paths.userDictionary.empty()
                                   ? defaultUserDictionaryPath()
                                   : std::filesystem::path(paths.userDictionary)),
+          extensionDictionaryPath_(extensionDictionaryPath(
+              paths.extensionDictionary)),
           learning_(options.learningEnabled
                          ? std::make_unique<core::LearningWriter>(
                                paths.learningStore.empty()
@@ -156,6 +224,7 @@ public:
                              libime::PinyinDictFormat::Binary);
         }
         userDictionary_.addTo(*dictionary, 1);
+        loadExtensionDictionary(*dictionary, extensionDictionaryPath_);
 
         std::unique_ptr<libime::UserLanguageModel> model;
         if (std::filesystem::is_regular_file(paths.languageModel)) {
@@ -367,6 +436,7 @@ private:
     std::unique_ptr<libime::PinyinIME> ime;
     std::unique_ptr<libime::PinyinContext> context;
     std::filesystem::path userDictionaryPath_;
+    std::filesystem::path extensionDictionaryPath_;
     std::unique_ptr<core::LearningWriter> learning_;
     bool contextLearningEnabled_ = true;
     UserDictionary userDictionary_;
