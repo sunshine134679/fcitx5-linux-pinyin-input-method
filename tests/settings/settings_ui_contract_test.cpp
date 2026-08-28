@@ -60,9 +60,10 @@ int main() {
 
     const auto pageSurfaceClasses =
         modernime::settings::settingsPageSurfaceStyleClasses();
-    assertTrue(pageSurfaceClasses.size() == 2 &&
+    assertTrue(pageSurfaceClasses.size() == 3 &&
                    pageSurfaceClasses[0] == "modernime-page-scroller" &&
-                   pageSurfaceClasses[1] == "modernime-page-viewport",
-               "page scroller and viewport have explicit surface styles");
+                   pageSurfaceClasses[1] == "modernime-page-viewport" &&
+                   pageSurfaceClasses[2] == "modernime-page-stack",
+               "page stack, scroller and viewport have explicit surface styles");
     return EXIT_SUCCESS;
 }

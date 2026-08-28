@@ -108,7 +108,8 @@ void installStyles() {
         }
         .modernime-page-scroller,
         .modernime-page-viewport,
-        .modernime-page-scroller > viewport {
+        .modernime-page-scroller > viewport,
+        .modernime-page-stack {
             background-color: @theme_bg_color;
             border: none;
         }
@@ -1680,6 +1681,7 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     auto *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     auto *body = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     impl_->stack = gtk_stack_new();
+    addStyleClass(impl_->stack, "modernime-page-stack");
     gtk_stack_set_transition_type(GTK_STACK(impl_->stack),
                                   GTK_STACK_TRANSITION_TYPE_CROSSFADE);
     g_signal_connect(impl_->stack, "notify::visible-child-name",
