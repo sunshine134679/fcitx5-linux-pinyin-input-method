@@ -85,6 +85,10 @@ int main() {
                "shift delete maps to candidate deletion");
     assertKind(FcitxKey_Delete, modernime::fcitx5::KeyKind::CloseClipboard,
                "plain delete maps to closing clipboard mode");
+    assertKind(FcitxKey_Return, modernime::fcitx5::KeyKind::Enter,
+               "main enter maps to candidate submission");
+    assertKind(FcitxKey_KP_Enter, modernime::fcitx5::KeyKind::Enter,
+               "keypad enter maps to candidate submission");
     assertKind(FcitxKey_Up, modernime::fcitx5::KeyKind::PreviousClipboardItem,
                "up maps to the previous clipboard item");
     assertKind(FcitxKey_Page_Up, modernime::fcitx5::KeyKind::PreviousPage,

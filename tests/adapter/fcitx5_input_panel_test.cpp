@@ -95,6 +95,7 @@ int main() {
                        fcitx::CandidateLayoutHint::Horizontal &&
                    inputContext.inputPanel().preedit().toString() == "V" &&
                    featureList->size() == 1 &&
+                   featureList->label(0).toString() == "2" &&
                    featureList->candidate(0).text().toString() == "剪切板",
                "feature menu uses the horizontal candidate panel");
     featureList->candidate(0).select(&inputContext);

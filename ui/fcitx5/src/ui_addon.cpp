@@ -155,8 +155,16 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
     }
     for (int index = 0; index < candidates->size(); ++index) {
         const auto &candidate = candidates->candidate(index);
+        std::size_t sourceIndex = static_cast<std::size_t>(index);
+        if (functionMenu) {
+            const auto label = candidates->label(index).toString();
+            if (label.size() == 1 && label.front() >= '1' &&
+                label.front() <= '9') {
+                sourceIndex = static_cast<std::size_t>(label.front() - '1');
+            }
+        }
         page.items.push_back({candidate.text().toString(), {},
-                              static_cast<std::size_t>(index)});
+                              sourceIndex});
     }
     return page;
 }

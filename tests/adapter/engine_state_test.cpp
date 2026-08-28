@@ -249,8 +249,8 @@ int main() {
     assertTrue(clipboardController.page().cursor == 0,
                "up returns to the first clipboard item");
     assertTrue(clipboardController.handle(
-                   {modernime::fcitx5::KeyKind::CloseClipboard, 0, 0}),
-               "delete exits clipboard mode");
+                   {modernime::fcitx5::KeyKind::Backspace, 0, 0}),
+               "backspace exits clipboard mode");
     assertTrue(!clipboardController.clipboardMode() &&
                    clipboardController.page().items.empty() &&
                    clipboardHost.commits.empty(),
@@ -300,6 +300,21 @@ int main() {
     assertTrue(clipboardHost.commits.back() == "six" &&
                    !clipboardController.clipboardMode(),
                "second clipboard page commits its first row");
+
+    FakeProvider providerWithClipboard;
+    RecordingHost providerClipboardHost;
+    modernime::fcitx5::ModernIMEController providerClipboardController(
+        providerClipboardHost, &providerWithClipboard);
+    providerClipboardController.setClipboardEntries({"provider clipboard"});
+    assertTrue(providerClipboardController.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode opens with a pinyin provider");
+    assertTrue(providerClipboardController.handle(
+                   {modernime::fcitx5::KeyKind::Enter, 0, 0}),
+               "enter submits clipboard text with a pinyin provider");
+    assertTrue(providerClipboardHost.commits.back() == "provider clipboard" &&
+                   !providerClipboardController.clipboardMode(),
+               "provider-backed clipboard submission commits the history item");
 
     type(controller, "hail");
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),

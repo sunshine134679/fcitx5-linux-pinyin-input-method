@@ -127,6 +127,10 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         refreshPage();
         return true;
     case KeyKind::Backspace:
+        if (clipboardMode_) {
+            reset();
+            return true;
+        }
         if (provider_ ? !provider_->eraseLast() : !input_.eraseLast()) {
             return false;
         }
@@ -431,7 +435,7 @@ bool ModernIMEController::commitCurrent() {
         return false;
     }
     const auto text = page_.items[page_.cursor].text;
-    if (provider_ && !provider_->select(page_.cursor)) {
+    if (!clipboardMode_ && provider_ && !provider_->select(page_.cursor)) {
         return false;
     }
     host_.commit(text);

@@ -198,6 +198,14 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
                                                controller_, index,
                                                beforeCandidateSelection_);
     }
+    if (page.mode == core::CandidatePageMode::FunctionMenu) {
+        std::vector<std::string> labels;
+        labels.reserve(page.items.size());
+        for (const auto &item : page.items) {
+            labels.push_back(std::to_string(item.sourceIndex + 1));
+        }
+        candidates->setLabels(labels);
+    }
     // Fcitx5's size() is page-local, so clamp against the full published list
     // before selecting the requested page.
     const auto cursor = std::min<std::size_t>(page.cursor, page.items.size() - 1);
@@ -301,7 +309,7 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::Escape;
         return event;
     }
-    if (key.check(FcitxKey_Return)) {
+    if (key.check(FcitxKey_Return) || key.check(FcitxKey_KP_Enter)) {
         event.kind = KeyKind::Enter;
         return event;
     }
