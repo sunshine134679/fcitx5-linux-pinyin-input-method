@@ -294,9 +294,11 @@ RuntimeResult RuntimeController::reload(
     }
 
     if (current.running) {
-        const auto reload = runCommand(remoteExecutable, {"-r"}, environment);
-        if (!reload.successful) {
-            return {false, failureMessage(reload, "Fcitx5 重载")};
+        const auto replace = startCommand(
+            fcitxExecutable, {"-d", "--replace", "-u", "modernime-ui"},
+            environment);
+        if (!replace.started || !replace.successful) {
+            return {false, failureMessage(replace, "Fcitx5 替换")};
         }
     } else {
         const auto start =

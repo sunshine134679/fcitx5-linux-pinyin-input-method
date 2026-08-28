@@ -56,15 +56,39 @@ int main(int argc, char **argv) {
         argv[2], argv[1], runningEnvironment);
     assertTrue(runningReload.success,
                "running Fcitx5 reloads through the existing service");
-    assertTrue(!std::filesystem::exists(runningFcitxLog),
-               "running Fcitx5 is not started a second time");
+
+    std::ifstream runningFcitxStream(runningFcitxLog);
+    std::stringstream runningFcitxContents;
+    runningFcitxContents << runningFcitxStream.rdbuf();
+    assertTrue(runningFcitxContents.str().find(
+                   "args -d --replace -u modernime-ui") !=
+                   std::string::npos,
+               "running Fcitx5 is replaced with the ModernIME UI");
+    assertTrue(runningFcitxContents.str().find(
+                   "addon=/home/wsl/.local/lib/fcitx5:/usr/lib/fcitx5") !=
+                   std::string::npos,
+               "replacement receives the current ModernIME addon directory");
 
     std::ifstream runningRemoteStream(runningRemoteLog);
     std::stringstream runningRemoteContents;
     runningRemoteContents << runningRemoteStream.rdbuf();
-    assertTrue(runningRemoteContents.str().find("remote:-r") !=
+    assertTrue(runningRemoteContents.str().find("remote:-r") ==
                    std::string::npos,
-               "running Fcitx5 is reloaded through fcitx5-remote");
+               "running Fcitx5 does not use configuration reload for plugins");
+
+    const auto failedReplaceLog = directory / "failed-replace-fcitx.log";
+    auto failedReplaceEnvironment = baseEnvironment;
+    failedReplaceEnvironment.emplace_back("FAKE_FCITX5_LOG",
+                                          failedReplaceLog.string());
+    failedReplaceEnvironment.emplace_back("FAKE_FCITX5_EXIT", "7");
+    failedReplaceEnvironment.emplace_back("FAKE_FCITX5_ERROR",
+                                          "fake fcitx5 replace error");
+    const auto failedReplace = modernime::settings::RuntimeController::reload(
+        argv[2], argv[1], failedReplaceEnvironment);
+    assertTrue(!failedReplace.success &&
+                   failedReplace.message.find("fake fcitx5 replace error") !=
+                       std::string::npos,
+               "Fcitx5 replacement errors are returned to the client");
 
     auto stoppedEnvironment = baseEnvironment;
     stoppedEnvironment.emplace_back("FAKE_REMOTE_STATUS", "3");
