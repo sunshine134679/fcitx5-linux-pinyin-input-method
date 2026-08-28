@@ -1,6 +1,6 @@
 #pragma once
 
-#include "modernime/core/clipboard_history.h"
+#include "modernime/core/persistent_clipboard_history.h"
 #include "modernime/fcitx5/engine.h"
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -13,7 +13,6 @@
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/surroundingtext.h>
 
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -84,6 +83,7 @@ public:
     ~ModernIMEInputMethod() override = default;
 
     std::vector<fcitx::InputMethodEntry> listInputMethods() override;
+    void save() override;
     void keyEvent(const fcitx::InputMethodEntry &entry,
                   fcitx::KeyEvent &event) override;
     void activate(const fcitx::InputMethodEntry &entry,
@@ -101,11 +101,10 @@ private:
     fcitx::Instance *instance_ = nullptr;
     fcitx::AddonInstance *clipboardAddon_ = nullptr;
     bool clipboardAddonLookupAttempted_ = false;
-    core::ClipboardHistory clipboardHistory_;
+    core::PersistentClipboardHistory clipboardHistory_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
-    std::filesystem::path clipboardHistoryPath_;
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };
 

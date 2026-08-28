@@ -10,6 +10,7 @@
 #include <fcitx/instance.h>
 #include <fcitx/surroundingtext.h>
 #include <fcitx-utils/keysymgen.h>
+#include <fcitx-utils/log.h>
 #include <fcitx-utils/utf8.h>
 
 #include <algorithm>
@@ -241,13 +242,16 @@ FcitxInputContextState::FcitxInputContextState(
 ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
     : manager_(manager),
       instance_(manager == nullptr ? nullptr : manager->instance()),
+      clipboardHistory_(settingsPaths().clipboardHistory),
       settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
-      clipboardHistoryPath_(settingsPaths().clipboardHistory),
       stateFactory_([this](fcitx::InputContext &inputContext) {
           return new FcitxInputContextState(inputContext, settings_);
       }) {
     std::string historyError;
-    clipboardHistory_.load(clipboardHistoryPath_, &historyError);
+    if (!clipboardHistory_.load(&historyError)) {
+        FCITX_ERROR() << "Failed to load ModernIME clipboard history: "
+                      << historyError;
+    }
     if (instance_ != nullptr) {
         instance_->inputContextManager().registerProperty(
             std::string(statePropertyName), &stateFactory_);
@@ -271,6 +275,14 @@ std::vector<fcitx::InputMethodEntry> ModernIMEInputMethod::listInputMethods() {
         .setLabel("拼")
         .setConfigurable(false);
     return entries;
+}
+
+void ModernIMEInputMethod::save() {
+    std::string historyError;
+    if (!clipboardHistory_.flush(&historyError)) {
+        FCITX_ERROR() << "Failed to save ModernIME clipboard history: "
+                      << historyError;
+    }
 }
 
 FcitxInputContextState *
@@ -408,9 +420,11 @@ void ModernIMEInputMethod::pollClipboard() {
         const auto text = clipboardAddon_->callWithSignature<
             std::string(const fcitx::InputContext *)>(
             "Clipboard::clipboard", inputContext);
-        if (clipboardHistory_.observe(text)) {
-            std::string historyError;
-            clipboardHistory_.save(clipboardHistoryPath_, &historyError);
+        std::string historyError;
+        clipboardHistory_.observe(text, &historyError);
+        if (!historyError.empty()) {
+            FCITX_ERROR() << "Failed to save ModernIME clipboard history: "
+                          << historyError;
         }
     } catch (const std::exception &) {
         // A third-party or older clipboard addon may not expose this optional
