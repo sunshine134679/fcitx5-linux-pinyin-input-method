@@ -145,6 +145,15 @@ std::string candidateKey(std::string_view pinyin, std::string_view text) {
 
 bool coversPinyinInput(std::string_view userInput,
                        std::string_view fullPinyin) {
+    // Keep short ASCII words such as "who" as the English fallback. Chinese
+    // initialisms become a reliable signal once they contain at least four
+    // initials, which also covers the normal four-character idiom case.
+    if (userInput.size() >= 4 &&
+        core::PinyinMatchPolicy::isAbbreviationInput(userInput) &&
+        core::PinyinMatchPolicy::abbreviationKey(fullPinyin) == userInput) {
+        return true;
+    }
+
     const auto input = core::PinyinMatchPolicy::canonical(userInput);
     const auto candidate = core::PinyinMatchPolicy::canonical(fullPinyin);
     if (input.empty()) {

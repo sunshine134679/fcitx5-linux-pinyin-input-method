@@ -78,9 +78,32 @@ void testExtensionDictionaryIsLoadedAsOfflineKnowledge() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testAbbreviationPhraseOutranksRawEnglishFallback() {
+    const auto learningPath = testPath("abbreviation-idiom-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    assertTrue(provider.append("hstz"),
+               "idiom abbreviation input is accepted");
+    assertTrue(!provider.page().items.empty(),
+               "abbreviation input produces candidates");
+    assertTrue(provider.page().items.front().text == "画蛇添足",
+               "an idiom abbreviation outranks the raw English fallback");
+    assertTrue(provider.page().items.front().source !=
+                   modernime::core::CandidateSource::Raw,
+               "an idiom abbreviation is not classified as raw English");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
+    testAbbreviationPhraseOutranksRawEnglishFallback();
     modernime::pinyin::PinyinCandidateProvider provider;
     assertTrue(provider.append("nihao"), "ASCII pinyin is accepted");
     assertTrue(provider.page().preedit == "nihao", "preedit follows input");
