@@ -31,4 +31,9 @@ constexpr auto settingsClipboardActionLabels() {
     return std::array<std::string_view, 3>{"复制选中", "删除选中", "清空历史"};
 }
 
+constexpr auto settingsRuntimeStatusLabels() {
+    return std::array<std::string_view, 4>{"fcitx5-remote", "Fcitx5 服务",
+                                          "当前输入法", "ModernIME"};
+}
+
 } // namespace modernime::settings

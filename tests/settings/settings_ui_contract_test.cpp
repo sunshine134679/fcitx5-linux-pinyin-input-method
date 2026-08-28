@@ -47,5 +47,15 @@ int main() {
                    clipboardActions[1] == "删除选中" &&
                    clipboardActions[2] == "清空历史",
                "clipboard action labels have clear semantics");
+
+    const auto runtimeLabels =
+        modernime::settings::settingsRuntimeStatusLabels();
+    assertTrue(runtimeLabels.size() == 4,
+               "runtime page exposes all four status dimensions");
+    assertTrue(runtimeLabels[0] == "fcitx5-remote" &&
+                   runtimeLabels[1] == "Fcitx5 服务" &&
+                   runtimeLabels[2] == "当前输入法" &&
+                   runtimeLabels[3] == "ModernIME",
+               "runtime status labels have clear semantics");
     return EXIT_SUCCESS;
 }
