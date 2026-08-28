@@ -209,6 +209,34 @@ bool coversPinyinInput(std::string_view userInput,
     return inputOffset == input.size() && consumedFullSyllable;
 }
 
+std::string automaticallySegmentedPreedit(
+    std::string_view rawInput, const CandidatePipelineResult &result) {
+    if (rawInput.size() < 4 ||
+        !core::PinyinMatchPolicy::isAbbreviationInput(rawInput)) {
+        return std::string(rawInput);
+    }
+
+    const auto hasAbbreviationMatch = std::any_of(
+        result.scored.begin(), result.scored.end(),
+        [rawInput](const auto &candidate) {
+            return core::PinyinMatchPolicy::abbreviationKey(
+                       candidate.full_pinyin) == rawInput;
+        });
+    if (!hasAbbreviationMatch) {
+        return std::string(rawInput);
+    }
+
+    std::string segmented;
+    segmented.reserve(rawInput.size() * 2 - 1);
+    for (std::size_t index = 0; index < rawInput.size(); ++index) {
+        if (index != 0) {
+            segmented.push_back('\'');
+        }
+        segmented.push_back(rawInput[index]);
+    }
+    return segmented;
+}
+
 } // namespace
 
 class PinyinCandidateProvider::Impl final {
@@ -367,10 +395,11 @@ private:
                 core::candidateOrderKey(item.text, item.fullPinyin));
         }
         page_.clear();
-        page_.preedit = context->userInput();
+        const auto rawInput = context->userInput();
+        page_.preedit = rawInput;
         ++generation;
         page_.generation = generation;
-        if (context->userInput().empty()) {
+        if (rawInput.empty()) {
             return;
         }
 
@@ -382,12 +411,11 @@ private:
         page_.items.reserve(result.order.size() + 1);
         const bool hasPinyinCoverage = std::any_of(
             result.scored.begin(), result.scored.end(),
-            [this](const auto &candidate) {
-                return coversPinyinInput(page_.preedit, candidate.full_pinyin);
+            [&rawInput](const auto &candidate) {
+                return coversPinyinInput(rawInput, candidate.full_pinyin);
             });
         const auto manualLimit =
-            pinyinLetterCount(page_.preedit) < 3 ? std::size_t{2}
-                                                 : std::size_t{8};
+            pinyinLetterCount(rawInput) < 3 ? std::size_t{2} : std::size_t{8};
         std::size_t manualCount = 0;
         std::unordered_set<std::string> seen;
         seen.reserve(result.order.size());
@@ -433,13 +461,14 @@ private:
         }
 
         core::CandidateItem rawCandidate;
-        rawCandidate.text = page_.preedit;
+        rawCandidate.text = rawInput;
         rawCandidate.source = core::CandidateSource::Raw;
-        if (!hasPinyinCoverage && page_.preedit.size() >= 3) {
+        if (!hasPinyinCoverage && rawInput.size() >= 3) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
         } else {
             page_.items.push_back(std::move(rawCandidate));
         }
+        page_.preedit = automaticallySegmentedPreedit(rawInput, result);
     }
 
     std::unique_ptr<libime::PinyinIME> ime;

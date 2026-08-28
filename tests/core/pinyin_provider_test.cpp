@@ -100,10 +100,30 @@ void testAbbreviationPhraseOutranksRawEnglishFallback() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testAbbreviationInputIsAutomaticallySegmentedInPreedit() {
+    const auto learningPath = testPath("abbreviation-preedit-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    assertTrue(provider.append("smcg"),
+               "idiom initial input is accepted for automatic segmentation");
+    assertTrue(hasText(provider.page(), "四面楚歌"),
+               "the segmented initial input still exposes its Chinese match");
+    assertTrue(provider.page().preedit == "s'm'c'g",
+               "initial input is displayed with automatic syllable separators");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
     testAbbreviationPhraseOutranksRawEnglishFallback();
+    testAbbreviationInputIsAutomaticallySegmentedInPreedit();
     modernime::pinyin::PinyinCandidateProvider provider;
     assertTrue(provider.append("nihao"), "ASCII pinyin is accepted");
     assertTrue(provider.page().preedit == "nihao", "preedit follows input");
