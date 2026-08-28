@@ -2,6 +2,16 @@
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+required_commands=(cmake ctest pkg-config)
+for required_command in "${required_commands[@]}"; do
+    if ! command -v "$required_command" >/dev/null 2>&1; then
+        printf 'Required build command not found: %s\n' "$required_command" >&2
+        printf 'Install the build dependencies listed in README.md and try again.\n' >&2
+        exit 1
+    fi
+done
+
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
@@ -36,7 +46,7 @@ fcitx_environment=(
     env
     "FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
 )
-for environment_name in DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
+for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
     if [[ -n "${!environment_name:-}" ]]; then
         fcitx_environment+=("$environment_name=${!environment_name}")
     fi
@@ -135,36 +145,69 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$autostart_file"
 } > "$manifest"
 
-if command -v fcitx5 >/dev/null 2>&1; then
-    previous_fcitx_pid=$(pgrep -o -x fcitx5 || true)
-    "${fcitx_environment[@]}" fcitx5 -d -r -u modernime-ui >/dev/null 2>&1 &
+run_fcitx5_remote() {
+    "${fcitx_environment[@]}" bash -c '
+        if command -v timeout >/dev/null 2>&1; then
+            timeout --kill-after=0.5s 1s fcitx5-remote "$@" || exit 1
+        else
+            fcitx5-remote "$@" || exit 1
+        fi
+    ' modernime-fcitx5-remote "$@" 2>/dev/null
+}
+
+start_fcitx5_safely() {
+    "${fcitx_environment[@]}" bash -c '
+        if command -v timeout >/dev/null 2>&1; then
+            timeout --kill-after=1s 3s fcitx5 -d -r -u modernime-ui || true
+        else
+            fcitx5 -d -r -u modernime-ui || true
+        fi
+    ' modernime-fcitx5-start >/dev/null 2>&1
+}
+
+skip_fcitx_restart=false
+case "${MODERNIME_SKIP_FCITX_RESTART:-}" in
+    1|true|TRUE|yes|YES)
+        skip_fcitx_restart=true
+        ;;
+esac
+
+if [[ "$skip_fcitx_restart" == true ]]; then
+    printf 'Fcitx5 restart skipped by MODERNIME_SKIP_FCITX_RESTART=1\n'
+elif ! command -v fcitx5 >/dev/null 2>&1; then
+    printf 'Fcitx5 executable not found; installation completed; start it after installation with: fcitx5 -u modernime-ui\n' >&2
+elif ! command -v fcitx5-remote >/dev/null 2>&1; then
+    printf 'fcitx5-remote executable not found; installation completed; start it after installation with: fcitx5 -u modernime-ui\n' >&2
+elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    printf 'No graphical session detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5 -u modernime-ui\n' >&2
+elif [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    printf 'DBus session not detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5 -u modernime-ui\n' >&2
+else
+    start_fcitx5_safely &
     printf 'Fcitx5 restart requested with the ModernIME UI addon\n'
-    if command -v fcitx5-remote >/dev/null 2>&1; then
-        activated=false
-        for attempt in {1..20}; do
-            current_fcitx_pid=$(pgrep -o -x fcitx5 || true)
-            if [[ -n "$current_fcitx_pid" &&
-                  "$current_fcitx_pid" != "$previous_fcitx_pid" ]] &&
-               "${fcitx_environment[@]}" fcitx5-remote -s modernime \
-                   >/dev/null 2>&1 &&
-               "${fcitx_environment[@]}" fcitx5-remote -o >/dev/null 2>&1 &&
-               [[ "$("${fcitx_environment[@]}" fcitx5-remote -n 2>/dev/null)" == "modernime" ]] &&
-               [[ "$("${fcitx_environment[@]}" fcitx5-remote 2>/dev/null)" == "2" ]]; then
+    activated=false
+    for attempt in {1..20}; do
+        if run_fcitx5_remote -s modernime >/dev/null &&
+           run_fcitx5_remote -o >/dev/null; then
+            current_input_method=$(run_fcitx5_remote -n) || current_input_method=""
+            current_input_status=$(run_fcitx5_remote) || current_input_status=""
+            if [[ "$current_input_method" == "modernime" &&
+                  "$current_input_status" == "2" ]]; then
                 activated=true
                 break
             fi
-            sleep 0.2
-        done
-        if [[ "$activated" == true ]]; then
-            printf 'ModernIME input method activated\n'
-        else
-            printf 'ModernIME input method could not be activated automatically; use: fcitx5-remote -s modernime\n' >&2
         fi
+        sleep 0.2
+    done
+    if [[ "$activated" == true ]]; then
+        printf 'ModernIME input method activated\n'
+    else
+        printf 'ModernIME input method could not be activated automatically; use: fcitx5-remote -s modernime\n' >&2
     fi
-else
-    printf 'Fcitx5 executable not found; start it after installation with: fcitx5 -u modernime-ui\n' >&2
 fi
 
 printf 'ModernIME installed to %s\n' "$prefix"
 printf 'Install manifest: %s\n' "$manifest"
+printf 'Launch settings client: %s\n' "$prefix/bin/modernime-settings"
+printf 'Desktop shortcut: %s\n' "$desktop_shortcut"
 printf 'Select the UI addon with: fcitx5 -u modernime-ui\n'

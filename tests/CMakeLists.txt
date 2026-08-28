@@ -222,6 +222,14 @@ add_test(NAME modernime_cairo_surface COMMAND modernime_cairo_surface_tests)
 
 find_program(BASH_EXECUTABLE bash)
 if(BASH_EXECUTABLE)
+    add_test(NAME modernime_repository_contract
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/repository_contract_test.sh
+    )
+    add_test(NAME modernime_install_runtime
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/install_runtime_test.sh
+    )
     add_test(NAME modernime_install_environment
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/install_environment_test.sh
