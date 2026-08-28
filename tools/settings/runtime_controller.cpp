@@ -295,6 +295,23 @@ std::string failureMessage(const ProcessResult &result,
     return std::string(operation) + " failed";
 }
 
+bool isFcitxState(std::string_view state) {
+    return state == "0" || state == "1" || state == "2";
+}
+
+bool modernimeReady(const RuntimeStatus &status) {
+    if (!status.running || !status.modernimeAvailable) {
+        return false;
+    }
+    if (!status.inputContextAvailable) {
+        // fcitx5-remote -n is empty when no application owns an input
+        // context. In that state the global method cannot be reported, but
+        // a successfully registered ModernIME is ready for the next context.
+        return true;
+    }
+    return status.inputMethodEnabled && status.currentInputMethod == "modernime";
+}
+
 } // namespace
 
 RuntimeStatus RuntimeController::probe(
@@ -318,10 +335,26 @@ RuntimeStatus RuntimeController::probe(
         return status;
     }
     const auto state = trim(running.standardOutput);
-    status.running = state == "0" || state == "1" || state == "2";
-    status.modernimeActive = status.running &&
+    if (!isFcitxState(state)) {
+        status.message = "无法解析 Fcitx5 状态";
+        return status;
+    }
+    status.running = true;
+    status.inputContextAvailable = state != "0";
+    status.inputMethodEnabled = state == "2";
+
+    const auto modernime =
+        runCommand(executable, {"-m", "modernime"}, environment);
+    status.modernimeAvailable = modernime.successful;
+    status.modernimeActive = status.inputMethodEnabled &&
                              status.currentInputMethod == "modernime";
-    status.message = status.running ? "Fcitx5 正在运行" : "Fcitx5 未激活";
+    if (!status.modernimeAvailable) {
+        status.message = "Fcitx5 正在运行，但未找到 ModernIME";
+    } else if (!status.inputContextAvailable) {
+        status.message = "Fcitx5 正在运行，当前窗口暂无输入上下文";
+    } else {
+        status.message = "Fcitx5 正在运行";
+    }
     return status;
 }
 
@@ -362,7 +395,7 @@ RuntimeResult RuntimeController::reload(
         const auto enable = runCommand(remoteExecutable, {"-o"}, environment);
         const auto status = probe(remoteExecutable, environment);
         if (select.successful && enable.successful &&
-            status.modernimeActive) {
+            modernimeReady(status)) {
             return {true, "ModernIME 已重新加载并激活"};
         }
 

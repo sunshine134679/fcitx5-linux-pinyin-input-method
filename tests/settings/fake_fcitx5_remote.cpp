@@ -42,15 +42,35 @@ void markActivated() {
 int main(int argc, char **argv) {
     logInvocation(argc, argv);
     if (argc == 2 && std::string_view(argv[1]) == "-n") {
+        if (std::string_view(environmentValue(
+                "FAKE_REMOTE_INPUT_METHOD_EMPTY", "0")) == "1") {
+            std::cout << '\n';
+            return EXIT_SUCCESS;
+        }
         std::cout << environmentValue("FAKE_REMOTE_INPUT_METHOD", "modernime")
                   << '\n';
         return EXIT_SUCCESS;
     }
     if (argc == 1) {
-        const auto *status = activated()
-                                 ? "2"
-                                 : environmentValue("FAKE_REMOTE_STATUS", "2");
+        const auto *status =
+            std::string_view(environmentValue("FAKE_REMOTE_NO_CONTEXT", "0")) ==
+                    "1"
+                ? "0"
+                : (activated() ? "2"
+                               : environmentValue("FAKE_REMOTE_STATUS", "2"));
         std::cout << status << '\n';
+        return EXIT_SUCCESS;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "-m" &&
+        std::string_view(argv[2]) == "modernime") {
+        if (std::string_view(environmentValue(
+                "FAKE_REMOTE_MODERNIME_AVAILABLE", "1")) != "1") {
+            std::cerr << "Input method name is invalid.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << environmentValue("FAKE_REMOTE_MODERNIME_ADDON",
+                                      "modernime")
+                  << '\n';
         return EXIT_SUCCESS;
     }
     if (argc == 2 && std::string_view(argv[1]) == "-r") {

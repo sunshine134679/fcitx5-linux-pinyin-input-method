@@ -1528,12 +1528,17 @@ void updateRuntimeStatusWidgets(SettingsWindow::Impl *impl,
                     status.running ? "正在运行" : "未运行");
     setRuntimeLabel(impl->runtimeInputMethod,
                     status.currentInputMethod.empty()
-                        ? "未获取"
+                        ? (status.inputContextAvailable ? "未获取"
+                                                        : "暂无输入上下文")
                         : status.currentInputMethod.c_str());
     setRuntimeLabel(impl->runtimeModernime,
                     status.modernimeActive
                         ? "已激活"
-                        : (status.running ? "未激活" : "未运行"));
+                        : (!status.modernimeAvailable
+                               ? "未加载"
+                               : (!status.inputContextAvailable && status.running
+                                      ? "已就绪"
+                                      : (status.running ? "未激活" : "未运行"))));
     setRuntimeLabel(impl->runtimeStatus,
                     status.message.empty() ? "无法读取 Fcitx5 状态"
                                            : status.message.c_str());

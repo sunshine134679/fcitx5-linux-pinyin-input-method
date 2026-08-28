@@ -44,9 +44,54 @@ int main(int argc, char **argv) {
         argv[1], baseEnvironment);
     assertTrue(status.available && status.running,
                "available remote reports a running service");
+    assertTrue(status.inputContextAvailable && status.inputMethodEnabled,
+               "probe identifies an active input context");
     assertTrue(status.currentInputMethod == "modernime" &&
+                   status.modernimeAvailable &&
                    status.modernimeActive,
                "probe parses the active ModernIME state");
+
+    auto noContextEnvironment = baseEnvironment;
+    noContextEnvironment.emplace_back("FAKE_REMOTE_INPUT_METHOD_EMPTY", "1");
+    noContextEnvironment.emplace_back("FAKE_REMOTE_NO_CONTEXT", "1");
+    noContextEnvironment.emplace_back(
+        "FAKE_FCITX5_LOG", (directory / "no-context-fcitx.log").string());
+    const auto noContext = modernime::settings::RuntimeController::probe(
+        argv[1], noContextEnvironment);
+    assertTrue(noContext.available && noContext.running &&
+                   !noContext.inputContextAvailable &&
+                   !noContext.inputMethodEnabled &&
+                   noContext.currentInputMethod.empty() &&
+                   noContext.modernimeAvailable && !noContext.modernimeActive,
+               "probe distinguishes a running service without an input context");
+    assertTrue(noContext.message.find("输入上下文") != std::string::npos,
+               "no-context status explains why current input method is empty");
+
+    const auto noContextReload = modernime::settings::RuntimeController::reload(
+        argv[2], argv[1], noContextEnvironment);
+    assertTrue(noContextReload.success,
+               "ModernIME reload succeeds when no window currently owns an input context");
+
+    auto inactiveEnvironment = baseEnvironment;
+    inactiveEnvironment.emplace_back("FAKE_REMOTE_STATUS", "1");
+    const auto inactive = modernime::settings::RuntimeController::probe(
+        argv[1], inactiveEnvironment);
+    assertTrue(inactive.running && inactive.inputContextAvailable &&
+                   !inactive.inputMethodEnabled &&
+                   !inactive.modernimeActive,
+               "probe does not call an inactive input context activated");
+
+    auto missingModernimeEnvironment = noContextEnvironment;
+    missingModernimeEnvironment.emplace_back(
+        "FAKE_REMOTE_MODERNIME_AVAILABLE", "0");
+    const auto missingModernime = modernime::settings::RuntimeController::probe(
+        argv[1], missingModernimeEnvironment);
+    assertTrue(missingModernime.running &&
+                   !missingModernime.modernimeAvailable &&
+                   !missingModernime.modernimeActive &&
+                   missingModernime.message.find("未找到 ModernIME") !=
+                       std::string::npos,
+               "probe reports a running service without a registered ModernIME");
 
     auto runningEnvironment = baseEnvironment;
     runningEnvironment.emplace_back("FAKE_FCITX5_LOG",

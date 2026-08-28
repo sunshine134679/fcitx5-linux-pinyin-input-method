@@ -12,7 +12,10 @@ using Environment = std::vector<std::pair<std::string, std::string>>;
 struct RuntimeStatus final {
     bool available = false;
     bool running = false;
+    bool inputContextAvailable = false;
+    bool inputMethodEnabled = false;
     std::string currentInputMethod;
+    bool modernimeAvailable = false;
     bool modernimeActive = false;
     std::string message;
 };
