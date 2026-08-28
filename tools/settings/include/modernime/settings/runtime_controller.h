@@ -26,7 +26,8 @@ class RuntimeController final {
 public:
     static RuntimeStatus probe(const std::filesystem::path &executable,
                                const Environment &environment = {});
-    static RuntimeResult reload(const std::filesystem::path &executable,
+    static RuntimeResult reload(const std::filesystem::path &fcitxExecutable,
+                                const std::filesystem::path &remoteExecutable,
                                 const Environment &environment = {});
 };
 

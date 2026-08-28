@@ -31,6 +31,9 @@ if(MODERNIME_BUILD_SETTINGS)
     add_executable(modernime_fake_fcitx5_remote
         settings/fake_fcitx5_remote.cpp
     )
+    add_executable(modernime_fake_fcitx5
+        settings/fake_fcitx5.cpp
+    )
     add_executable(modernime_runtime_controller_tests
         settings/runtime_controller_test.cpp
     )
@@ -46,6 +49,7 @@ if(MODERNIME_BUILD_SETTINGS)
     add_test(NAME modernime_runtime_controller
         COMMAND modernime_runtime_controller_tests
             $<TARGET_FILE:modernime_fake_fcitx5_remote>
+            $<TARGET_FILE:modernime_fake_fcitx5>
     )
 
     add_executable(modernime_data_controller_tests

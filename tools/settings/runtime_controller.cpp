@@ -10,6 +10,8 @@ namespace modernime::settings {
 namespace {
 
 constexpr guint waitTimeoutMs = 1500;
+constexpr int reloadAttempts = 20;
+constexpr guint reloadIntervalUs = 100000;
 
 struct ProcessResult final {
     bool started = false;
@@ -125,6 +127,48 @@ ProcessResult runCommand(const std::filesystem::path &executable,
     return result;
 }
 
+ProcessResult startCommand(const std::filesystem::path &executable,
+                           const std::vector<std::string> &arguments,
+                           const Environment &environment) {
+    ProcessResult result;
+    if (executable.empty()) {
+        result.error = "fcitx5 path is empty";
+        return result;
+    }
+
+    GSubprocessLauncher *launcher = g_subprocess_launcher_new(
+        static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+                                      G_SUBPROCESS_FLAGS_STDERR_SILENCE));
+    for (const auto &[name, value] : environment) {
+        g_subprocess_launcher_setenv(launcher, name.c_str(), value.c_str(),
+                                     TRUE);
+    }
+
+    std::vector<const gchar *> argv;
+    argv.reserve(arguments.size() + 1);
+    argv.push_back(executable.c_str());
+    for (const auto &argument : arguments) {
+        argv.push_back(argument.c_str());
+    }
+    argv.push_back(nullptr);
+
+    GError *spawnError = nullptr;
+    GSubprocess *process = g_subprocess_launcher_spawnv(
+        launcher, argv.data(), &spawnError);
+    g_object_unref(launcher);
+    if (process == nullptr) {
+        result.error = spawnError == nullptr ? "unable to start fcitx5"
+                                             : spawnError->message;
+        g_clear_error(&spawnError);
+        return result;
+    }
+
+    result.started = true;
+    result.successful = true;
+    g_object_unref(process);
+    return result;
+}
+
 std::string failureMessage(const ProcessResult &result,
                            std::string_view operation) {
     if (result.timedOut) {
@@ -170,15 +214,43 @@ RuntimeStatus RuntimeController::probe(
 }
 
 RuntimeResult RuntimeController::reload(
-    const std::filesystem::path &executable, const Environment &environment) {
-    const auto result = runCommand(executable, {"-r"}, environment);
-    if (!result.started) {
-        return {false, result.error};
+    const std::filesystem::path &fcitxExecutable,
+    const std::filesystem::path &remoteExecutable,
+    const Environment &environment) {
+    if (remoteExecutable.empty()) {
+        return {false, "fcitx5-remote path is empty"};
     }
-    if (!result.successful) {
-        return {false, failureMessage(result, "ModernIME reload")};
+
+    const auto start = startCommand(
+        fcitxExecutable, {"-d", "-r", "-u", "modernime-ui"}, environment);
+    if (!start.started) {
+        return {false, start.error};
     }
-    return {true, "ModernIME reload requested"};
+
+    std::string lastError;
+    for (int attempt = 0; attempt < reloadAttempts; ++attempt) {
+        const auto select = runCommand(
+            remoteExecutable, {"-s", "modernime"}, environment);
+        const auto enable = runCommand(remoteExecutable, {"-o"}, environment);
+        const auto status = probe(remoteExecutable, environment);
+        if (select.successful && enable.successful &&
+            status.modernimeActive) {
+            return {true, "ModernIME 已重新加载并激活"};
+        }
+
+        if (!select.successful) {
+            lastError = failureMessage(select, "ModernIME 激活");
+        } else if (!enable.successful) {
+            lastError = failureMessage(enable, "ModernIME 启用");
+        } else if (!status.message.empty()) {
+            lastError = status.message;
+        }
+        if (attempt + 1 < reloadAttempts) {
+            g_usleep(reloadIntervalUs);
+        }
+    }
+
+    return {false, lastError.empty() ? "ModernIME 激活失败" : lastError};
 }
 
 } // namespace modernime::settings

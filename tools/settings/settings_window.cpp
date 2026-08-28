@@ -627,16 +627,57 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     return box;
 }
 
+std::string modernimeAddonDirectories() {
+    std::vector<std::string> directories;
+#ifdef MODERNIME_INSTALL_PREFIX
+    directories.emplace_back(
+        (std::filesystem::path(MODERNIME_INSTALL_PREFIX) / "lib/fcitx5")
+            .string());
+#endif
+#ifdef MODERNIME_SYSTEM_FCITX5_ADDON_DIR
+    if (std::string_view(MODERNIME_SYSTEM_FCITX5_ADDON_DIR).size() != 0) {
+        directories.emplace_back(MODERNIME_SYSTEM_FCITX5_ADDON_DIR);
+    }
+#endif
+    if (const auto *existing = std::getenv("FCITX_ADDON_DIRS");
+        existing != nullptr && *existing != '\0') {
+        directories.emplace_back(existing);
+    }
+
+    std::ostringstream result;
+    for (std::size_t index = 0; index < directories.size(); ++index) {
+        if (index != 0) {
+            result << ':';
+        }
+        result << directories[index];
+    }
+    return result.str();
+}
+
 Environment currentEnvironment() {
     Environment environment;
-    for (const char *name : {"DISPLAY", "DBUS_SESSION_BUS_ADDRESS",
-                             "XDG_RUNTIME_DIR"}) {
+    for (const char *name : {"DISPLAY", "WAYLAND_DISPLAY",
+                             "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}) {
         const auto *value = std::getenv(name);
         if (value != nullptr && *value != '\0') {
             environment.emplace_back(name, value);
         }
     }
+    const auto addonDirectories = modernimeAddonDirectories();
+    if (!addonDirectories.empty()) {
+        environment.emplace_back("FCITX_ADDON_DIRS", addonDirectories);
+    }
     return environment;
+}
+
+std::filesystem::path fcitxPath() {
+    auto *path = g_find_program_in_path("fcitx5");
+    if (path == nullptr) {
+        return "fcitx5";
+    }
+    const std::filesystem::path result(path);
+    g_free(path);
+    return result;
 }
 
 std::filesystem::path fcitxRemotePath() {
@@ -652,6 +693,7 @@ std::filesystem::path fcitxRemotePath() {
 struct RuntimeTask final {
     SettingsWindow::Impl *impl;
     bool reload;
+    std::filesystem::path fcitxExecutable;
     std::filesystem::path executable;
     Environment environment;
 };
@@ -664,8 +706,9 @@ void runtimeTaskFunction(GTask *task, gpointer, gpointer data,
     if (request->reload) {
         g_task_return_pointer(
             task,
-            new RuntimeResult(RuntimeController::reload(request->executable,
-                                                        request->environment)),
+            new RuntimeResult(RuntimeController::reload(
+                request->fcitxExecutable, request->executable,
+                request->environment)),
             [](gpointer value) { delete static_cast<RuntimeResult *>(value); });
     } else {
         g_task_return_pointer(
@@ -686,7 +729,7 @@ void runtimeTaskFinished(GObject *, GAsyncResult *result, gpointer data) {
         auto *reload = static_cast<RuntimeResult *>(
             g_task_propagate_pointer(task, &error));
         if (reload != nullptr) {
-            setStatus(impl, reload->success ? "ModernIME 重载请求已发送"
+            setStatus(impl, reload->success ? "ModernIME 已重新加载并激活"
                                              : reload->message.c_str());
             gtk_widget_set_sensitive(impl->reloadButton, TRUE);
             if (reload->success) {
@@ -712,8 +755,8 @@ void runtimeTaskFinished(GObject *, GAsyncResult *result, gpointer data) {
 void startRuntimeTask(SettingsWindow::Impl *impl, bool reload) {
     auto *task = g_task_new(G_OBJECT(impl->window), nullptr,
                             runtimeTaskFinished, impl);
-    auto *request = new RuntimeTask{impl, reload, fcitxRemotePath(),
-                                    currentEnvironment()};
+    auto *request = new RuntimeTask{impl, reload, fcitxPath(),
+                                    fcitxRemotePath(), currentEnvironment()};
     g_task_set_task_data(task, request, [](gpointer value) {
         delete static_cast<RuntimeTask *>(value);
     });
