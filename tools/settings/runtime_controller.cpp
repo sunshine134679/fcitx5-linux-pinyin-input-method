@@ -294,11 +294,9 @@ RuntimeResult RuntimeController::reload(
     }
 
     if (current.running) {
-        const auto restart = startCommand(
-            fcitxExecutable, {"-d", "-r", "-u", "modernime-ui"},
-            environment);
-        if (!restart.started || !restart.successful) {
-            return {false, failureMessage(restart, "Fcitx5 重载")};
+        const auto reload = runCommand(remoteExecutable, {"-r"}, environment);
+        if (!reload.successful) {
+            return {false, failureMessage(reload, "Fcitx5 重载")};
         }
     } else {
         const auto start =

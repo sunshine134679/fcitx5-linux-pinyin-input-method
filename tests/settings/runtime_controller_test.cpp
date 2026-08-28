@@ -55,25 +55,16 @@ int main(int argc, char **argv) {
     const auto runningReload = modernime::settings::RuntimeController::reload(
         argv[2], argv[1], runningEnvironment);
     assertTrue(runningReload.success,
-               "running Fcitx5 reload replaces the running service");
-
-    std::ifstream runningFcitxStream(runningFcitxLog);
-    std::stringstream runningFcitxContents;
-    runningFcitxContents << runningFcitxStream.rdbuf();
-    assertTrue(runningFcitxContents.str().find(
-                   "args -d -r -u modernime-ui") != std::string::npos,
-               "running Fcitx5 is replaced with the ModernIME UI override");
-    assertTrue(runningFcitxContents.str().find(
-                   "addon=/home/wsl/.local/lib/fcitx5:/usr/lib/fcitx5") !=
-                   std::string::npos,
-               "replacement Fcitx5 receives the current addon directory");
+               "running Fcitx5 reloads through the existing service");
+    assertTrue(!std::filesystem::exists(runningFcitxLog),
+               "running Fcitx5 is not started a second time");
 
     std::ifstream runningRemoteStream(runningRemoteLog);
     std::stringstream runningRemoteContents;
     runningRemoteContents << runningRemoteStream.rdbuf();
-    assertTrue(runningRemoteContents.str().find("remote:-s modernime") !=
+    assertTrue(runningRemoteContents.str().find("remote:-r") !=
                    std::string::npos,
-               "replaced Fcitx5 is activated through fcitx5-remote");
+               "running Fcitx5 is reloaded through fcitx5-remote");
 
     auto stoppedEnvironment = baseEnvironment;
     stoppedEnvironment.emplace_back("FAKE_REMOTE_STATUS", "3");
