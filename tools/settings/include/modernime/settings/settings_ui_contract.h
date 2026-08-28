@@ -37,9 +37,10 @@ constexpr auto settingsRuntimeStatusLabels() {
 }
 
 constexpr auto settingsPageSurfaceStyleClasses() {
-    return std::array<std::string_view, 3>{"modernime-page-scroller",
+    return std::array<std::string_view, 4>{"modernime-page-scroller",
                                           "modernime-page-viewport",
-                                          "modernime-page-stack"};
+                                          "modernime-page-stack",
+                                          "modernime-page-surface"};
 }
 
 } // namespace modernime::settings
