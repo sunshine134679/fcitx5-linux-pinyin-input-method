@@ -20,6 +20,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace modernime::pinyin {
 
@@ -80,8 +81,57 @@ bool coversPinyinInput(std::string_view userInput,
                        std::string_view fullPinyin) {
     const auto input = core::PinyinMatchPolicy::canonical(userInput);
     const auto candidate = core::PinyinMatchPolicy::canonical(fullPinyin);
-    return !input.empty() && candidate.size() >= input.size() &&
-           candidate.compare(0, input.size(), input) == 0;
+    if (input.empty()) {
+        return false;
+    }
+    if (candidate.size() >= input.size() &&
+        candidate.compare(0, input.size(), input) == 0) {
+        return true;
+    }
+
+    std::vector<std::string_view> syllables;
+    std::size_t syllableStart = 0;
+    while (syllableStart < fullPinyin.size()) {
+        const auto separator = fullPinyin.find('\'', syllableStart);
+        const auto syllableEnd = separator == std::string_view::npos
+                                     ? fullPinyin.size()
+                                     : separator;
+        if (syllableEnd == syllableStart) {
+            return false;
+        }
+        syllables.push_back(
+            fullPinyin.substr(syllableStart, syllableEnd - syllableStart));
+        if (separator == std::string_view::npos) {
+            break;
+        }
+        syllableStart = separator + 1;
+    }
+
+    std::size_t inputOffset = 0;
+    bool abbreviationMode = false;
+    bool consumedFullSyllable = false;
+    for (const auto syllable : syllables) {
+        if (inputOffset == input.size()) {
+            return consumedFullSyllable;
+        }
+        const auto remaining = input.substr(inputOffset);
+        if (!abbreviationMode && remaining.starts_with(syllable)) {
+            inputOffset += syllable.size();
+            consumedFullSyllable = true;
+            continue;
+        }
+        if (remaining.size() <= syllable.size() &&
+            syllable.compare(0, remaining.size(), remaining) == 0) {
+            return consumedFullSyllable;
+        }
+        if (remaining.front() == syllable.front()) {
+            abbreviationMode = true;
+            ++inputOffset;
+            continue;
+        }
+        return false;
+    }
+    return inputOffset == input.size() && consumedFullSyllable;
 }
 
 } // namespace

@@ -85,6 +85,17 @@ int main() {
                "Chinese conversion stays ahead of in-progress raw letters");
 
     provider.reset();
+    assertTrue(provider.append("nishism"),
+               "mixed full-pinyin and abbreviation input is accepted");
+    const auto mixedInputRawIndex = indexOf(provider.page(), "nishism");
+    assertTrue(mixedInputRawIndex > 0 &&
+                   mixedInputRawIndex < provider.page().items.size(),
+               "raw mixed pinyin stays after Chinese candidates");
+    assertTrue(provider.page().items.front().source !=
+                   modernime::core::CandidateSource::Raw,
+               "Chinese conversion stays ahead of mixed pinyin letters");
+
+    provider.reset();
     assertTrue(provider.append("xi'an"), "apostrophe separates pinyin syllables");
     assertTrue(provider.page().preedit == "xi'an",
                "pinyin separator remains in the preedit");
