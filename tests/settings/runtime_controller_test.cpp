@@ -1,5 +1,6 @@
 #include "modernime/settings/runtime_controller.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -75,6 +76,26 @@ int main(int argc, char **argv) {
     assertTrue(runningRemoteContents.str().find("remote:-r") ==
                    std::string::npos,
                "running Fcitx5 does not use configuration reload for plugins");
+
+    auto daemonizedEnvironment = baseEnvironment;
+    daemonizedEnvironment.emplace_back(
+        "FAKE_FCITX5_LOG", (directory / "daemonized-fcitx.log").string());
+    daemonizedEnvironment.emplace_back(
+        "FAKE_FCITX5_DAEMONIZE", "1");
+    daemonizedEnvironment.emplace_back(
+        "FAKE_FCITX5_DAEMON_SECONDS", "2");
+    const auto daemonizedStart = std::chrono::steady_clock::now();
+    const auto daemonizedReload =
+        modernime::settings::RuntimeController::reload(
+            argv[2], argv[1], daemonizedEnvironment);
+    const auto daemonizedElapsed = std::chrono::duration_cast<
+        std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                   daemonizedStart);
+    assertTrue(daemonizedReload.success,
+               "daemonized Fcitx5 replacement still reloads successfully");
+    assertTrue(daemonizedElapsed < std::chrono::seconds(1),
+               "daemonized Fcitx5 replacement does not wait for inherited "
+               "stderr");
 
     const auto failedReplaceLog = directory / "failed-replace-fcitx.log";
     auto failedReplaceEnvironment = baseEnvironment;

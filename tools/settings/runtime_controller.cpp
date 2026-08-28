@@ -11,6 +11,7 @@ namespace {
 
 constexpr guint waitTimeoutMs = 1500;
 constexpr guint startCheckTimeoutMs = 200;
+constexpr guint startOutputTimeoutMs = 250;
 constexpr int reloadAttempts = 20;
 constexpr guint reloadIntervalUs = 100000;
 
@@ -34,6 +35,15 @@ struct StartWaitState final {
     GCancellable *cancellable = nullptr;
     bool timedOut = false;
     bool successful = false;
+    std::string error;
+};
+
+struct CommunicationState final {
+    GMainLoop *loop = nullptr;
+    GCancellable *cancellable = nullptr;
+    bool timedOut = false;
+    bool successful = false;
+    std::string standardError;
     std::string error;
 };
 
@@ -77,6 +87,31 @@ void startFinished(GObject *object, GAsyncResult *result, gpointer data) {
 
 gboolean cancelStartAfterTimeout(gpointer data) {
     auto *state = static_cast<StartWaitState *>(data);
+    state->timedOut = true;
+    g_cancellable_cancel(state->cancellable);
+    return G_SOURCE_REMOVE;
+}
+
+void communicationFinished(GObject *object, GAsyncResult *result,
+                           gpointer data) {
+    auto *state = static_cast<CommunicationState *>(data);
+    gchar *standardError = nullptr;
+    GError *error = nullptr;
+    state->successful = g_subprocess_communicate_utf8_finish(
+        G_SUBPROCESS(object), result, nullptr, &standardError, &error);
+    if (standardError != nullptr) {
+        state->standardError = standardError;
+    }
+    if (error != nullptr) {
+        state->error = error->message;
+    }
+    g_free(standardError);
+    g_clear_error(&error);
+    g_main_loop_quit(state->loop);
+}
+
+gboolean cancelCommunicationAfterTimeout(gpointer data) {
+    auto *state = static_cast<CommunicationState *>(data);
     state->timedOut = true;
     g_cancellable_cancel(state->cancellable);
     return G_SOURCE_REMOVE;
@@ -214,19 +249,30 @@ ProcessResult startCommand(const std::filesystem::path &executable,
         return result;
     }
 
-    gchar *standardError = nullptr;
-    GError *communicationError = nullptr;
-    if (!g_subprocess_communicate_utf8(process, nullptr, nullptr, nullptr,
-                                       &standardError, &communicationError)) {
-        result.error = communicationError == nullptr
-                           ? state.error
-                           : communicationError->message;
-        g_clear_error(&communicationError);
+    auto *communicationLoop = g_main_loop_new(nullptr, FALSE);
+    auto *communicationCancellable = g_cancellable_new();
+    CommunicationState communicationState{
+        communicationLoop, communicationCancellable, false, false, {}, {}};
+    g_subprocess_communicate_utf8_async(
+        process, nullptr, communicationCancellable, communicationFinished,
+        &communicationState);
+    const auto communicationTimeoutSource = g_timeout_add(
+        startOutputTimeoutMs, cancelCommunicationAfterTimeout,
+        &communicationState);
+    g_main_loop_run(communicationLoop);
+    if (!communicationState.timedOut) {
+        g_source_remove(communicationTimeoutSource);
     }
-    if (standardError != nullptr && result.error.empty()) {
-        result.error = trim(standardError);
+    g_object_unref(communicationCancellable);
+    g_main_loop_unref(communicationLoop);
+    result.standardError = std::move(communicationState.standardError);
+    if (!communicationState.error.empty()) {
+        result.error = communicationState.error;
+    } else if (!result.standardError.empty()) {
+        result.error = trim(result.standardError);
+    } else if (communicationState.timedOut) {
+        result.error = "读取 Fcitx5 启动输出超时";
     }
-    g_free(standardError);
     result.successful = state.successful;
     if (!result.successful && result.error.empty()) {
         result.error = state.error;
