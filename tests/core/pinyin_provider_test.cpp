@@ -74,6 +74,17 @@ int main() {
                "selecting the English candidate clears the preedit");
 
     provider.reset();
+    assertTrue(provider.append("woshin"),
+               "in-progress pinyin input is accepted");
+    const auto inProgressRawIndex = indexOf(provider.page(), "woshin");
+    assertTrue(inProgressRawIndex > 0 &&
+                   inProgressRawIndex < provider.page().items.size(),
+               "raw in-progress pinyin stays after Chinese candidates");
+    assertTrue(provider.page().items.front().source !=
+                   modernime::core::CandidateSource::Raw,
+               "Chinese conversion stays ahead of in-progress raw letters");
+
+    provider.reset();
     assertTrue(provider.append("xi'an"), "apostrophe separates pinyin syllables");
     assertTrue(provider.page().preedit == "xi'an",
                "pinyin separator remains in the preedit");

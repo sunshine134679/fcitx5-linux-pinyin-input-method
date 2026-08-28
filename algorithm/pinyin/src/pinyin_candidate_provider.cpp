@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -73,6 +74,14 @@ std::string candidateKey(std::string_view pinyin, std::string_view text) {
     key.push_back('\x1f');
     key.append(text);
     return key;
+}
+
+bool coversPinyinInput(std::string_view userInput,
+                       std::string_view fullPinyin) {
+    const auto input = core::PinyinMatchPolicy::canonical(userInput);
+    const auto candidate = core::PinyinMatchPolicy::canonical(fullPinyin);
+    return !input.empty() && candidate.size() >= input.size() &&
+           candidate.compare(0, input.size(), input) == 0;
 }
 
 } // namespace
@@ -243,11 +252,10 @@ private:
             *context, *ime->dict(), learning.get(), nowMilliseconds(),
             contextBefore_, contextAfter_, previousOrder);
         page_.items.reserve(result.order.size() + 1);
-        const bool hasExactPinyinMatch = std::any_of(
+        const bool hasPinyinCoverage = std::any_of(
             result.scored.begin(), result.scored.end(),
             [this](const auto &candidate) {
-                return core::PinyinMatchPolicy::exactInputMatch(
-                    page_.preedit, candidate.full_pinyin);
+                return coversPinyinInput(page_.preedit, candidate.full_pinyin);
             });
         const auto manualLimit =
             pinyinLetterCount(page_.preedit) < 3 ? std::size_t{2}
@@ -299,7 +307,7 @@ private:
         core::CandidateItem rawCandidate;
         rawCandidate.text = page_.preedit;
         rawCandidate.source = core::CandidateSource::Raw;
-        if (!hasExactPinyinMatch && page_.preedit.size() >= 3) {
+        if (!hasPinyinCoverage && page_.preedit.size() >= 3) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
         } else {
             page_.items.push_back(std::move(rawCandidate));
