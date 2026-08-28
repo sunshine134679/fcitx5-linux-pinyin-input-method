@@ -3,6 +3,15 @@
   "generated_by": "tools/generate_pinyin_knowledge.py",
   "generated_on": "2026-08-28",
   "runtime_network": false,
+  "generated_counts": {
+    "entries": 120340,
+    "idiom": 30803,
+    "thuocl": 89537
+  },
+  "sha256": {
+    "modernime-knowledge.tsv": "778d5dc0936df0ebcb2000d11f439bfe513dc9c1890494f5e1d878d0161bb173",
+    "modernime-knowledge.raw": "15ea26b044a4566681f665bc7956e14d5eef692dc8a337a6eee73b02a17abb0c"
+  },
   "filters": {
     "phrase": "连续中文字符，长度 2 到 24",
     "thuocl_frequency": "DF >= 5",

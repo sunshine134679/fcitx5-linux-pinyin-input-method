@@ -23,6 +23,7 @@ cd fcitx5-linux-pinyin-input-method
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
 
 - 安装 Fcitx5 输入法插件和候选栏 UI；
+- 安装离线扩展拼音词典（成语、IT、医学、法律、地名等类别）；
 - 安装 `modernime-settings` 设置客户端；
 - 安装桌面菜单入口 `modernime-settings.desktop`；
 - 在当前桌面目录生成 `modernime-settings.desktop` 快捷方式；
@@ -73,6 +74,15 @@ cmake --install build/fcitx5-debug
 
 直接执行 `cmake --install` 只负责安装 CMake 目标，不会代替 `install.sh` 生成当前桌面快捷方式、用户环境文件和自动启动文件。需要完整的一键安装体验时，请使用 `./install.sh`。
 
+扩展词典安装在：
+
+```text
+~/.local/share/modernime/pinyin/modernime-knowledge.dict
+```
+
+自定义 `MODERNIME_PREFIX` 时会跟随该前缀安装到
+`share/modernime/pinyin/modernime-knowledge.dict`。这份词典在本地离线加载，正常构建和运行不需要 Python 或网络；Python 只用于维护者重新生成数据。
+
 ## Fcitx5 启动与检查
 
 在正常桌面会话中，安装脚本会尝试自动重载。若输入法没有立即出现，可以在当前用户终端执行：
@@ -98,7 +108,8 @@ fcitx5-remote
 - 英文输入：在中文输入状态输入非拼音英文串时保留原始英文候选；
 - 剪贴板：在中文输入状态按 `V` 打开功能入口，再按数字键选择剪贴板；直接按回车会输入字母 `V`；
 - 用户学习：候选选择会记录到当前用户的学习数据中，并用于后续排序；
-- 用户词典：设置客户端可管理本地词条和专业词汇。
+- 用户词典：设置客户端可管理本地词条和专业词汇；
+- 离线知识库：完整拼音可直接命中扩展成语、专业词、地名、历史人物和诗词等词条；首字母简拼和混合拼音匹配仍由后续匹配算法阶段负责。
 
 所有 ModernIME 自己的配置和数据都保存在当前用户目录下，不修改系统其他输入法：
 
@@ -131,7 +142,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ## 故障排查
 
-- CMake 提示找不到 `Fcitx5Core`、`LibIMEPinyin` 或 GTK3：确认已安装上面的开发包，然后重新执行 `./install.sh`；
+- CMake 提示找不到 `Fcitx5Core`、`LibIMEPinyin`、`libime_pinyindict` 或 GTK3：确认已安装上面的开发包，然后重新执行 `./install.sh`；
 - `fcitx5-remote` 没有输出：先确认 Fcitx5 已运行，再执行 `fcitx5-remote -r`；
 - 设置客户端找不到：直接运行 `~/.local/bin/modernime-settings`，并确认 `~/.local/share/applications/modernime-settings.desktop` 存在；
 - 在 SSH、容器或无桌面的终端安装：这是受支持的，安装脚本会跳过 Fcitx5 自动启动；回到图形会话后手动启动 Fcitx5 即可。

@@ -84,7 +84,7 @@
 - Modify: `install.sh`
 - Modify: `uninstall.sh`
 - Modify: `tests/core/pinyin_provider_test.cpp`
-- Modify: `tests/install_runtime_test.sh`
+- Modify: `tests/settings/settings_install_test.sh`
 
 **Interfaces:**
 - `PinyinDataPaths::extensionDictionary` 显式覆盖扩展二进制路径；为空时由 provider 搜索用户数据目录和安装数据目录。
@@ -93,7 +93,7 @@
 
 - [ ] **Step 1: 写扩展词典回归测试。**
 
-  在 `pinyin_provider_test.cpp` 中显式设置 `paths.extensionDictionary` 为 CMake 生成的二进制路径，输入无撇号连续串 `yixinyiyi`，断言页面中能找到“一心一意”；另测 `paths.extensionDictionary` 指向不存在文件时 provider 仍能输入 `nihao`。测试通过编译定义读取 `${CMAKE_CURRENT_BINARY_DIR}/modernime-knowledge.dict`。
+  在 `pinyin_provider_test.cpp` 中显式设置 `paths.extensionDictionary` 为 CMake 生成的二进制路径，输入无撇号连续串 `yixinyiyi`，断言页面中能找到“一心一意”；另测 `paths.extensionDictionary` 指向不存在文件时 provider 仍能输入 `nihao`。测试通过公开编译定义 `MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY` 读取 `${CMAKE_CURRENT_BINARY_DIR}/data/pinyin/modernime-knowledge.dict`。
 
 - [ ] **Step 2: 运行新增测试确认缺少接口/数据加载时失败。**
 
@@ -109,9 +109,9 @@
 
   解析顺序为环境变量 `MODERNIME_PINYIN_KNOWLEDGE_DICTIONARY`、`XDG_DATA_HOME/modernime/pinyin/modernime-knowledge.dict`、`HOME/.local/share/modernime/pinyin/modernime-knowledge.dict`、编译时安装数据目录和 `/usr/share/modernime/pinyin/modernime-knowledge.dict`。只对 `is_regular_file` 的候选调用 `addEmptyDict()` 和 `load(2, ..., Binary)`；任何文件系统错误都保留系统词典继续运行。
 
-- [ ] **Step 5: 更新安装清单、卸载和运行时测试。**
+- [ ] **Step 5: 更新安装清单、卸载和安装测试。**
 
-  `install.sh` 的 manifest 增加扩展二进制，`uninstall.sh` 只依据 manifest 删除它；安装运行时测试检查文件存在、非空且能被 `libime_pinyndict -d` 读取。不要把 build 目录文件写入仓库。
+  `install.sh` 的 manifest 增加扩展二进制，`uninstall.sh` 只依据 manifest 删除它；设置客户端安装测试检查 manifest 包含扩展二进制路径，实际安装验证用 `libime_pinyndict -d` 检查文件内容。不要把 build 目录文件写入仓库。
 
 - [ ] **Step 6: 运行 focused、full CTest 和安装。**
 
