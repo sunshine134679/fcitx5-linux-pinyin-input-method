@@ -57,5 +57,12 @@ int main() {
                    runtimeLabels[2] == "当前输入法" &&
                    runtimeLabels[3] == "ModernIME",
                "runtime status labels have clear semantics");
+
+    const auto pageSurfaceClasses =
+        modernime::settings::settingsPageSurfaceStyleClasses();
+    assertTrue(pageSurfaceClasses.size() == 2 &&
+                   pageSurfaceClasses[0] == "modernime-page-scroller" &&
+                   pageSurfaceClasses[1] == "modernime-page-viewport",
+               "page scroller and viewport have explicit surface styles");
     return EXIT_SUCCESS;
 }

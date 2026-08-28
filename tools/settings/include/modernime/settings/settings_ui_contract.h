@@ -36,4 +36,9 @@ constexpr auto settingsRuntimeStatusLabels() {
                                           "当前输入法", "ModernIME"};
 }
 
+constexpr auto settingsPageSurfaceStyleClasses() {
+    return std::array<std::string_view, 2>{"modernime-page-scroller",
+                                          "modernime-page-viewport"};
+}
+
 } // namespace modernime::settings

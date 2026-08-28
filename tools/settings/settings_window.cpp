@@ -106,6 +106,12 @@ void installStyles() {
         .modernime-page {
             background-color: @theme_bg_color;
         }
+        .modernime-page-scroller,
+        .modernime-page-viewport,
+        .modernime-page-scroller > viewport {
+            background-color: @theme_bg_color;
+            border: none;
+        }
         .modernime-page-title {
             font-size: 20px;
             font-weight: 600;
@@ -188,11 +194,20 @@ GtkWidget *makeSectionCard(const char *title, const char *description) {
 
 GtkWidget *makeScrollablePage(GtkWidget *page) {
     auto *scrolled = gtk_scrolled_window_new(nullptr, nullptr);
+    addStyleClass(scrolled, "modernime-page-scroller");
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scrolled),
+                                        GTK_SHADOW_NONE);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_hexpand(scrolled, TRUE);
     gtk_widget_set_vexpand(scrolled, TRUE);
+    gtk_widget_set_halign(page, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(page, GTK_ALIGN_FILL);
     gtk_container_add(GTK_CONTAINER(scrolled), page);
+    auto *viewport = gtk_bin_get_child(GTK_BIN(scrolled));
+    if (viewport != nullptr) {
+        addStyleClass(viewport, "modernime-page-viewport");
+    }
     return scrolled;
 }
 
