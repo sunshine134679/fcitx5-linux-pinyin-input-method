@@ -264,6 +264,12 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/repository_contract_test.sh
     )
+    add_test(NAME modernime_pinyin_knowledge_data
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/pinyin_knowledge_data_test.sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/../data/pinyin/modernime-knowledge.tsv
+            ${CMAKE_CURRENT_SOURCE_DIR}/../data/pinyin/modernime-knowledge.raw
+    )
     add_test(NAME modernime_install_runtime
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/install_runtime_test.sh

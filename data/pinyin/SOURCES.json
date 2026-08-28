@@ -1,0 +1,48 @@
+{
+  "format_version": 1,
+  "generated_by": "tools/generate_pinyin_knowledge.py",
+  "generated_on": "2026-08-28",
+  "runtime_network": false,
+  "filters": {
+    "phrase": "连续中文字符，长度 2 到 24",
+    "thuocl_frequency": "DF >= 5",
+    "deduplication": "词语 + 完整拼音，保留频率较高者；同频按固定类别和来源顺序稳定选择",
+    "libime_cost": 0
+  },
+  "sources": [
+    {
+      "id": "china-idiom",
+      "repository": "https://github.com/sfyc23/China-idiom",
+      "commit": "78606b0294a22e798633c4469a4009b78ad60f26",
+      "path": "china_idiom/idiom.csv",
+      "license": "MIT",
+      "used_fields": ["word", "pinyin", "abbreviation"]
+    },
+    {
+      "id": "thuocl",
+      "repository": "https://github.com/thunlp/THUOCL",
+      "commit": "a30ce79d895d01ab5132a5c74c29703ff7efb4cc",
+      "license": "MIT",
+      "used_categories": [
+        "IT",
+        "caijing",
+        "diming",
+        "lishimingren",
+        "poem",
+        "medical",
+        "food",
+        "law",
+        "car",
+        "animal"
+      ],
+      "used_fields": ["word", "DF"]
+    },
+    {
+      "id": "python-pinyin",
+      "repository": "https://github.com/mozillazg/python-pinyin",
+      "commit": "8595294b1a97845e30f11ecfdb3caa4e61ac398",
+      "license": "MIT",
+      "role": "maintenance-time pinyin annotation only"
+    }
+  ]
+}
