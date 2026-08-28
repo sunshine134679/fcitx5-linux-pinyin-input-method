@@ -83,15 +83,14 @@ int main() {
                    shiftDelete->kind ==
                        modernime::fcitx5::KeyKind::DeleteCandidate,
                "shift delete maps to candidate deletion");
-    assertTrue(!modernime::fcitx5::translateKey(fcitx::Key(FcitxKey_Delete))
-                    .has_value(),
-               "plain delete remains unhandled");
-    assertKind(FcitxKey_Up, modernime::fcitx5::KeyKind::PreviousPage,
-               "up maps to previous page");
+    assertKind(FcitxKey_Delete, modernime::fcitx5::KeyKind::CloseClipboard,
+               "plain delete maps to closing clipboard mode");
+    assertKind(FcitxKey_Up, modernime::fcitx5::KeyKind::PreviousClipboardItem,
+               "up maps to the previous clipboard item");
     assertKind(FcitxKey_Page_Up, modernime::fcitx5::KeyKind::PreviousPage,
                "page up maps to previous page");
-    assertKind(FcitxKey_Down, modernime::fcitx5::KeyKind::NextPage,
-               "down maps to next page");
+    assertKind(FcitxKey_Down, modernime::fcitx5::KeyKind::NextClipboardItem,
+               "down maps to the next clipboard item");
     assertKind(FcitxKey_Page_Down, modernime::fcitx5::KeyKind::NextPage,
                "page down maps to next page");
     assertKind(FcitxKey_equal, modernime::fcitx5::KeyKind::NextPage,

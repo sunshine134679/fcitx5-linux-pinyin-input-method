@@ -238,6 +238,45 @@ int main() {
     assertTrue(clipboardController.pageSize() == 5,
                "clipboard mode uses five rows per page");
     assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}),
+               "down moves to the next clipboard item");
+    assertTrue(clipboardController.page().cursor == 1 &&
+                   clipboardHost.commits.empty(),
+               "clipboard navigation only changes the highlight");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::PreviousClipboardItem, 0, 0}),
+               "up moves to the previous clipboard item");
+    assertTrue(clipboardController.page().cursor == 0,
+               "up returns to the first clipboard item");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::CloseClipboard, 0, 0}),
+               "delete exits clipboard mode");
+    assertTrue(!clipboardController.clipboardMode() &&
+                   clipboardController.page().items.empty() &&
+                   clipboardHost.commits.empty(),
+               "exiting clipboard mode does not commit a history entry");
+    clipboardController.setClipboardEntries(
+        {"second clipboard", "first clipboard", "third clipboard",
+         "fourth clipboard", "fifth clipboard", "sixth clipboard"});
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode reopens for enter selection");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}),
+               "down selects the second clipboard item");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::Enter, 0, 0}),
+               "enter commits the highlighted clipboard item");
+    assertTrue(clipboardHost.commits.back() == "first clipboard" &&
+                   !clipboardController.clipboardMode(),
+               "enter commits the highlighted clipboard history");
+    clipboardController.setClipboardEntries(
+        {"second clipboard", "first clipboard", "third clipboard",
+         "fourth clipboard", "fifth clipboard", "sixth clipboard"});
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode reopens for digit selection");
+    assertTrue(clipboardController.handle(
                    {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
                "clipboard digit selection is handled");
     assertTrue(clipboardHost.commits.back() == "first clipboard" &&
@@ -437,6 +476,17 @@ int main() {
                "enter commits the highlighted candidate");
     assertTrue(manyHost.commits.back() == "候选9",
                "the highlighted paged candidate is committed");
+
+    ManyCandidateProvider verticalProvider;
+    RecordingHost verticalHost;
+    modernime::fcitx5::ModernIMEController verticalController(
+        verticalHost, &verticalProvider);
+    type(verticalController, "n");
+    assertTrue(verticalController.handle(
+                   {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}),
+               "down remains handled in the normal candidate mode");
+    assertTrue(verticalController.page().cursor == 9,
+               "down keeps page navigation in the normal candidate mode");
 
     ManyCandidateProvider pagedProvider;
     RecordingHost pagedHost;

@@ -134,6 +134,12 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return true;
     case KeyKind::DeleteCandidate:
         return removeCurrent();
+    case KeyKind::CloseClipboard:
+        if (!clipboardMode_) {
+            return false;
+        }
+        reset();
+        return true;
     case KeyKind::Escape:
         reset();
         return true;
@@ -202,6 +208,16 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         return moveCursor(1);
+    case KeyKind::PreviousClipboardItem:
+        if (!options_.pageNavigation) {
+            return false;
+        }
+        return clipboardMode_ ? moveCursor(-1) : movePage(-1);
+    case KeyKind::NextClipboardItem:
+        if (!options_.pageNavigation) {
+            return false;
+        }
+        return clipboardMode_ ? moveCursor(1) : movePage(1);
     case KeyKind::PreviousPage:
         if (!options_.pageNavigation) {
             return false;

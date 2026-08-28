@@ -289,6 +289,10 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::DeleteCandidate;
         return event;
     }
+    if (key.check(FcitxKey_Delete)) {
+        event.kind = KeyKind::CloseClipboard;
+        return event;
+    }
     if (key.check(FcitxKey_BackSpace)) {
         event.kind = KeyKind::Backspace;
         return event;
@@ -301,14 +305,20 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::Enter;
         return event;
     }
-    if (bindings.pageNavigation &&
-        (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_Up))) {
+    if (bindings.pageNavigation && key.check(FcitxKey_Page_Up)) {
         event.kind = KeyKind::PreviousPage;
         return event;
     }
-    if (bindings.pageNavigation &&
-        (key.check(FcitxKey_Page_Down) || key.check(FcitxKey_Down))) {
+    if (bindings.pageNavigation && key.check(FcitxKey_Page_Down)) {
         event.kind = KeyKind::NextPage;
+        return event;
+    }
+    if (bindings.pageNavigation && key.check(FcitxKey_Up)) {
+        event.kind = KeyKind::PreviousClipboardItem;
+        return event;
+    }
+    if (bindings.pageNavigation && key.check(FcitxKey_Down)) {
+        event.kind = KeyKind::NextClipboardItem;
         return event;
     }
     if (bindings.pageNavigation &&
