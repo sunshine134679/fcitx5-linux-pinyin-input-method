@@ -10,6 +10,7 @@ namespace modernime::settings {
 namespace {
 
 constexpr guint waitTimeoutMs = 1500;
+constexpr guint startCheckTimeoutMs = 200;
 constexpr int reloadAttempts = 20;
 constexpr guint reloadIntervalUs = 100000;
 
@@ -26,6 +27,14 @@ struct WaitState final {
     GMainLoop *loop = nullptr;
     GSubprocess *process = nullptr;
     bool timedOut = false;
+};
+
+struct StartWaitState final {
+    GMainLoop *loop = nullptr;
+    GCancellable *cancellable = nullptr;
+    bool timedOut = false;
+    bool successful = false;
+    std::string error;
 };
 
 std::string trim(std::string value) {
@@ -51,6 +60,25 @@ gboolean killAfterTimeout(gpointer data) {
     auto *state = static_cast<WaitState *>(data);
     state->timedOut = true;
     g_subprocess_force_exit(state->process);
+    return G_SOURCE_REMOVE;
+}
+
+void startFinished(GObject *object, GAsyncResult *result, gpointer data) {
+    auto *state = static_cast<StartWaitState *>(data);
+    GError *error = nullptr;
+    state->successful = g_subprocess_wait_check_finish(
+        G_SUBPROCESS(object), result, &error);
+    if (error != nullptr) {
+        state->error = error->message;
+    }
+    g_clear_error(&error);
+    g_main_loop_quit(state->loop);
+}
+
+gboolean cancelStartAfterTimeout(gpointer data) {
+    auto *state = static_cast<StartWaitState *>(data);
+    state->timedOut = true;
+    g_cancellable_cancel(state->cancellable);
     return G_SOURCE_REMOVE;
 }
 
@@ -138,7 +166,7 @@ ProcessResult startCommand(const std::filesystem::path &executable,
 
     GSubprocessLauncher *launcher = g_subprocess_launcher_new(
         static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
-                                      G_SUBPROCESS_FLAGS_STDERR_SILENCE));
+                                      G_SUBPROCESS_FLAGS_STDERR_PIPE));
     for (const auto &[name, value] : environment) {
         g_subprocess_launcher_setenv(launcher, name.c_str(), value.c_str(),
                                      TRUE);
@@ -164,7 +192,45 @@ ProcessResult startCommand(const std::filesystem::path &executable,
     }
 
     result.started = true;
-    result.successful = true;
+
+    auto *loop = g_main_loop_new(nullptr, FALSE);
+    auto *cancellable = g_cancellable_new();
+    StartWaitState state{loop, cancellable, false, false, {}};
+    g_subprocess_wait_check_async(process, cancellable, startFinished, &state);
+    const auto timeoutSource =
+        g_timeout_add(startCheckTimeoutMs, cancelStartAfterTimeout, &state);
+    g_main_loop_run(loop);
+    if (!state.timedOut) {
+        g_source_remove(timeoutSource);
+    }
+    g_object_unref(cancellable);
+    g_main_loop_unref(loop);
+
+    if (state.timedOut) {
+        // A running daemon is expected not to exit during the short startup
+        // check. Leave it alive and let the remote probe verify readiness.
+        result.successful = true;
+        g_object_unref(process);
+        return result;
+    }
+
+    gchar *standardError = nullptr;
+    GError *communicationError = nullptr;
+    if (!g_subprocess_communicate_utf8(process, nullptr, nullptr, nullptr,
+                                       &standardError, &communicationError)) {
+        result.error = communicationError == nullptr
+                           ? state.error
+                           : communicationError->message;
+        g_clear_error(&communicationError);
+    }
+    if (standardError != nullptr && result.error.empty()) {
+        result.error = trim(standardError);
+    }
+    g_free(standardError);
+    result.successful = state.successful;
+    if (!result.successful && result.error.empty()) {
+        result.error = state.error;
+    }
     g_object_unref(process);
     return result;
 }
@@ -221,10 +287,24 @@ RuntimeResult RuntimeController::reload(
         return {false, "fcitx5-remote path is empty"};
     }
 
-    const auto start = startCommand(
-        fcitxExecutable, {"-d", "-r", "-u", "modernime-ui"}, environment);
-    if (!start.started) {
-        return {false, start.error};
+    const auto current = RuntimeController::probe(remoteExecutable, environment);
+    if (!current.available) {
+        return {false, current.message.empty() ? "无法连接 fcitx5-remote"
+                                               : current.message};
+    }
+
+    if (current.running) {
+        const auto reload = runCommand(remoteExecutable, {"-r"}, environment);
+        if (!reload.successful) {
+            return {false, failureMessage(reload, "Fcitx5 重载")};
+        }
+    } else {
+        const auto start =
+            startCommand(fcitxExecutable, {"-d", "-u", "modernime-ui"},
+                         environment);
+        if (!start.started || !start.successful) {
+            return {false, failureMessage(start, "Fcitx5 启动")};
+        }
     }
 
     std::string lastError;
