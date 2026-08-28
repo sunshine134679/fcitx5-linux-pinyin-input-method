@@ -2,6 +2,8 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 
@@ -52,6 +54,34 @@ int main() {
         modernime::core::ClipboardHistory::kMaxEntryBytes + 1, 'x');
     assertTrue(!history.observe(oversized),
                "oversized clipboard values are ignored safely");
+
+    const auto directory = std::filesystem::temp_directory_path() /
+                           "modernime-clipboard-history-test";
+    std::error_code filesystemError;
+    std::filesystem::remove_all(directory, filesystemError);
+    std::filesystem::create_directories(directory, filesystemError);
+    assertTrue(!filesystemError, "history test directory is created");
+    const auto path = directory / "clipboard-history.bin";
+    modernime::core::ClipboardHistory persisted;
+    persisted.observe("line one\nline two");
+    persisted.observe("second");
+    std::string error;
+    assertTrue(persisted.save(path, &error),
+               "clipboard history saves: " + error);
+    modernime::core::ClipboardHistory reloaded;
+    assertTrue(reloaded.load(path, &error),
+               "clipboard history loads: " + error);
+    assertTrue(reloaded.entries().size() == 2 &&
+                   reloaded.entries()[0] == "second" &&
+                   reloaded.entries()[1] == "line one\nline two",
+               "clipboard history preserves order and newlines");
+
+    std::ofstream malformed(path, std::ios::binary | std::ios::trunc);
+    malformed << "not a ModernIME clipboard history";
+    malformed.close();
+    error.clear();
+    assertTrue(!reloaded.load(path, &error) && !error.empty(),
+               "malformed clipboard history is rejected");
 
     history.clear();
     assertTrue(history.entries().empty(), "history can be cleared");

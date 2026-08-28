@@ -13,6 +13,7 @@
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/surroundingtext.h>
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -104,6 +105,7 @@ private:
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
+    std::filesystem::path clipboardHistoryPath_;
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };
 

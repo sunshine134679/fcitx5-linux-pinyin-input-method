@@ -84,7 +84,8 @@ SettingsPaths SettingsPaths::fromEnvironment(std::string_view xdgConfigHome,
     const auto modernimeData = dataDirectory / "modernime";
     return {modernimeConfig / "settings.conf",
             modernimeData / "user-dictionary.txt",
-            modernimeData / "learning.sqlite3"};
+            modernimeData / "learning.sqlite3",
+            modernimeData / "clipboard-history.bin"};
 }
 
 SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {

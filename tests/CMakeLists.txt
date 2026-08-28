@@ -28,6 +28,20 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_model_tests
     )
 
+    add_executable(modernime_clipboard_history_model_tests
+        settings/clipboard_history_model_test.cpp
+        ../tools/settings/clipboard_history_model.cpp
+    )
+    target_include_directories(modernime_clipboard_history_model_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_clipboard_history_model_tests PRIVATE
+        modernime_core
+    )
+    add_test(NAME modernime_clipboard_history_model
+        COMMAND modernime_clipboard_history_model_tests
+    )
+
     add_executable(modernime_fake_fcitx5_remote
         settings/fake_fcitx5_remote.cpp
     )

@@ -35,6 +35,9 @@ void testPaths() {
                "dictionary path uses data home");
     assertTrue(paths.learningStore == "/tmp/data/modernime/learning.sqlite3",
                "learning path uses data home");
+    assertTrue(paths.clipboardHistory ==
+                   "/tmp/data/modernime/clipboard-history.bin",
+               "clipboard history path uses data home");
 }
 
 void testDefaultsAndRoundTrip() {

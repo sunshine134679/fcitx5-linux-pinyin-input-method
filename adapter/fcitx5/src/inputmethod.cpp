@@ -85,17 +85,20 @@ bool matchesToggleKey(const fcitx::Key &key, std::string_view binding) {
     return false;
 }
 
-core::ModernIMESettings loadSettings() {
+core::SettingsPaths settingsPaths() {
     const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
     const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
     const auto *home = std::getenv("HOME");
-    const auto paths = core::SettingsPaths::fromEnvironment(
+    return core::SettingsPaths::fromEnvironment(
         xdgConfigHome == nullptr ? std::string_view{}
                                  : std::string_view(xdgConfigHome),
         xdgDataHome == nullptr ? std::string_view{}
                                : std::string_view(xdgDataHome),
         home == nullptr ? std::string_view{} : std::string_view(home));
-    return core::SettingsStore::load(paths.settingsFile).settings;
+}
+
+core::ModernIMESettings loadSettings() {
+    return core::SettingsStore::load(settingsPaths().settingsFile).settings;
 }
 
 ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
@@ -125,15 +128,7 @@ std::optional<char> clipboardTriggerDigit(const fcitx::Key &key,
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
 pinyin::PinyinDataPaths pinyinPaths() {
-    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
-    const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
-    const auto *home = std::getenv("HOME");
-    const auto paths = core::SettingsPaths::fromEnvironment(
-        xdgConfigHome == nullptr ? std::string_view{}
-                                 : std::string_view(xdgConfigHome),
-        xdgDataHome == nullptr ? std::string_view{}
-                               : std::string_view(xdgDataHome),
-        home == nullptr ? std::string_view{} : std::string_view(home));
+    const auto paths = settingsPaths();
     pinyin::PinyinDataPaths result;
     result.userDictionary = paths.userDictionary.string();
     result.learningStore = paths.learningStore.string();
@@ -247,9 +242,12 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
     : manager_(manager),
       instance_(manager == nullptr ? nullptr : manager->instance()),
       settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
+      clipboardHistoryPath_(settingsPaths().clipboardHistory),
       stateFactory_([this](fcitx::InputContext &inputContext) {
           return new FcitxInputContextState(inputContext, settings_);
       }) {
+    std::string historyError;
+    clipboardHistory_.load(clipboardHistoryPath_, &historyError);
     if (instance_ != nullptr) {
         instance_->inputContextManager().registerProperty(
             std::string(statePropertyName), &stateFactory_);
@@ -410,7 +408,10 @@ void ModernIMEInputMethod::pollClipboard() {
         const auto text = clipboardAddon_->callWithSignature<
             std::string(const fcitx::InputContext *)>(
             "Clipboard::clipboard", inputContext);
-        clipboardHistory_.observe(text);
+        if (clipboardHistory_.observe(text)) {
+            std::string historyError;
+            clipboardHistory_.save(clipboardHistoryPath_, &historyError);
+        }
     } catch (const std::exception &) {
         // A third-party or older clipboard addon may not expose this optional
         // function. Clipboard mode remains harmlessly empty in that case.
