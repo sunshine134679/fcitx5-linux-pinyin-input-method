@@ -141,6 +141,23 @@ void testFailedSavePreservesExistingTarget() {
     assertTrue(content == "preserve", "failed save preserves target data");
 }
 
+void testSharedValidationRejectsInvalidValues() {
+    auto settings = modernime::core::defaultSettings();
+    settings.toggleKey = "Ctrl Space";
+    const auto invalidToggle =
+        modernime::core::validateSettings(settings);
+    assertTrue(!invalidToggle.valid, "invalid toggle key is rejected");
+    assertTrue(!invalidToggle.errors.empty(),
+               "toggle key validation explains the error");
+
+    settings = modernime::core::defaultSettings();
+    settings.clipboardTrigger = "bad-trigger";
+    const auto invalidClipboard =
+        modernime::core::validateSettings(settings);
+    assertTrue(!invalidClipboard.valid,
+               "invalid clipboard trigger is rejected");
+}
+
 } // namespace
 
 int main() {
@@ -148,5 +165,6 @@ int main() {
     testDefaultsAndRoundTrip();
     testDiagnosticsAndPerKeyFallback();
     testFailedSavePreservesExistingTarget();
+    testSharedValidationRejectsInvalidValues();
     return EXIT_SUCCESS;
 }

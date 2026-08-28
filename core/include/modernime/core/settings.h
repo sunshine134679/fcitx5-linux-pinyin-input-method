@@ -24,7 +24,13 @@ struct ModernIMESettings final {
     bool operator==(const ModernIMESettings &) const = default;
 };
 
+struct SettingsValidationResult final {
+    bool valid = true;
+    std::vector<std::string> errors;
+};
+
 ModernIMESettings defaultSettings();
+SettingsValidationResult validateSettings(const ModernIMESettings &settings);
 
 struct SettingsPaths final {
     std::filesystem::path settingsFile;

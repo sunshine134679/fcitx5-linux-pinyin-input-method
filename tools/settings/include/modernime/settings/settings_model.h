@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace modernime::settings {
 
@@ -14,6 +15,12 @@ public:
 
     const core::ModernIMESettings &settings() const { return edited_; }
     bool dirty() const { return edited_ != loaded_; }
+    core::SettingsValidationResult validation() const {
+        return core::validateSettings(edited_);
+    }
+    const std::vector<std::string> &loadDiagnostics() const {
+        return loadDiagnostics_;
+    }
 
     void setSettings(core::ModernIMESettings settings);
     void setCandidateOptions(bool numberSelection, bool arrowNavigation,
@@ -28,6 +35,7 @@ private:
     std::filesystem::path path_;
     core::ModernIMESettings loaded_;
     core::ModernIMESettings edited_;
+    std::vector<std::string> loadDiagnostics_;
     std::string lastError_;
 };
 

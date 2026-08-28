@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string_view>
 
@@ -79,6 +80,13 @@ int main() {
                    clipboardReloaded.settings().clipboardTrigger == "B+7",
                "clipboard options persist");
 
+    auto invalidSettings = clipboardReloaded.settings();
+    invalidSettings.toggleKey = "Ctrl Space";
+    clipboardReloaded.setSettings(invalidSettings);
+    assertTrue(!clipboardReloaded.validation().valid &&
+                   !clipboardReloaded.validation().errors.empty(),
+               "model exposes validation errors for current edits");
+
     const auto blocked = directory / "blocked";
     std::filesystem::create_directory(blocked);
     modernime::settings::SettingsWindowModel failed(blocked);
@@ -96,5 +104,16 @@ int main() {
     assertTrue(reloaded.settings() == modernime::core::defaultSettings() &&
                    !reloaded.dirty(),
                "reset defaults replaces settings and clears dirty state");
+
+    const auto diagnosticPath = directory / "diagnostic-settings.conf";
+    {
+        std::ofstream output(diagnosticPath);
+        output << "input.toggle_key=Ctrl Space\n";
+    }
+    modernime::settings::SettingsWindowModel diagnosticModel(diagnosticPath);
+    assertTrue(diagnosticModel.settings().toggleKey == "Ctrl+Space",
+               "invalid loaded key falls back to the default");
+    assertTrue(!diagnosticModel.loadDiagnostics().empty(),
+               "loaded settings diagnostics are exposed to the client");
     return EXIT_SUCCESS;
 }

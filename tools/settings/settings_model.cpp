@@ -5,9 +5,12 @@
 namespace modernime::settings {
 
 SettingsWindowModel::SettingsWindowModel(std::filesystem::path path)
-    : path_(std::move(path)),
-      loaded_(core::SettingsStore::load(path_).settings),
-      edited_(loaded_) {}
+    : path_(std::move(path)) {
+    const auto loaded = core::SettingsStore::load(path_);
+    loaded_ = loaded.settings;
+    edited_ = loaded_;
+    loadDiagnostics_ = loaded.diagnostics;
+}
 
 void SettingsWindowModel::setSettings(core::ModernIMESettings settings) {
     edited_ = std::move(settings);

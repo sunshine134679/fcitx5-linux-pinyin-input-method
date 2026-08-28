@@ -68,6 +68,20 @@ std::filesystem::path homePath(std::string_view home) {
 
 ModernIMESettings defaultSettings() { return {}; }
 
+SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
+    SettingsValidationResult result;
+    if (!validToggleKey(settings.toggleKey)) {
+        result.errors.emplace_back(
+            "中英文切换快捷键不能为空，且只能包含字母、数字、+ 或 -");
+    }
+    if (!validClipboardTrigger(settings.clipboardTrigger)) {
+        result.errors.emplace_back(
+            "剪贴板触发键必须符合字母+数字格式，例如 V+2");
+    }
+    result.valid = result.errors.empty();
+    return result;
+}
+
 SettingsPaths SettingsPaths::fromEnvironment(std::string_view xdgConfigHome,
                                              std::string_view xdgDataHome,
                                              std::string_view home) {
@@ -178,8 +192,9 @@ bool SettingsStore::save(const std::filesystem::path &path,
         setError("settings path is empty");
         return false;
     }
-    if (!validClipboardTrigger(settings.clipboardTrigger)) {
-        setError("invalid clipboard trigger; expected Letter+Digit");
+    const auto validation = validateSettings(settings);
+    if (!validation.valid) {
+        setError(validation.errors.front());
         return false;
     }
     std::error_code filesystemError;
