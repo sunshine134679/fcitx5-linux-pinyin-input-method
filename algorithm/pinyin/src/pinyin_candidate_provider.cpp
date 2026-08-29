@@ -379,42 +379,65 @@ std::string automaticallySegmentedPreedit(
 
 } // namespace
 
+class PinyinCandidateProvider::SharedResources final {
+public:
+    std::unique_ptr<libime::PinyinIME> ime;
+    std::unique_ptr<core::LearningWriter> learning;
+    UserDictionary userDictionary;
+    std::filesystem::path userDictionaryPath;
+};
+
+std::shared_ptr<PinyinCandidateProvider::SharedResources>
+PinyinCandidateProvider::createSharedResources(
+    const PinyinDataPaths &paths, const PinyinProviderOptions &options) {
+    auto resources = std::make_shared<SharedResources>();
+    resources->userDictionaryPath =
+        paths.userDictionary.empty()
+            ? defaultUserDictionaryPath()
+            : std::filesystem::path(paths.userDictionary);
+    resources->userDictionary =
+        UserDictionary::loadText(resources->userDictionaryPath);
+
+    auto dictionary = std::make_unique<libime::PinyinDictionary>();
+    if (std::filesystem::is_regular_file(paths.dictionary)) {
+        dictionary->load(0, paths.dictionary.c_str(),
+                         libime::PinyinDictFormat::Binary);
+    }
+    resources->userDictionary.addTo(*dictionary, 1);
+    loadExtensionDictionary(
+        *dictionary,
+        extensionDictionaryPath(paths.extensionDictionary));
+
+    std::unique_ptr<libime::UserLanguageModel> model;
+    if (std::filesystem::is_regular_file(paths.languageModel)) {
+        model = std::make_unique<libime::UserLanguageModel>(
+            paths.languageModel.c_str());
+    } else {
+        model = std::make_unique<libime::UserLanguageModel>();
+    }
+
+    resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
+                                                         std::move(model));
+    resources->ime->setNBest(32);
+    if (options.learningEnabled) {
+        resources->learning = std::make_unique<core::LearningWriter>(
+            paths.learningStore.empty()
+                ? defaultLearningPath()
+                : std::filesystem::path(paths.learningStore));
+    }
+    return resources;
+}
+
 class PinyinCandidateProvider::Impl final {
 public:
     Impl(const PinyinDataPaths &paths, const PinyinProviderOptions &options)
-        : userDictionaryPath_(paths.userDictionary.empty()
-                                  ? defaultUserDictionaryPath()
-                                  : std::filesystem::path(paths.userDictionary)),
-          extensionDictionaryPath_(extensionDictionaryPath(
-              paths.extensionDictionary)),
-          learning_(options.learningEnabled
-                         ? std::make_unique<core::LearningWriter>(
-                               paths.learningStore.empty()
-                                   ? defaultLearningPath()
-                                   : std::filesystem::path(paths.learningStore))
-                         : nullptr),
-          contextLearningEnabled_(options.contextLearningEnabled),
-          userDictionary_(UserDictionary::loadText(userDictionaryPath_)) {
-        auto dictionary = std::make_unique<libime::PinyinDictionary>();
-        if (std::filesystem::is_regular_file(paths.dictionary)) {
-            dictionary->load(0, paths.dictionary.c_str(),
-                             libime::PinyinDictFormat::Binary);
-        }
-        userDictionary_.addTo(*dictionary, 1);
-        loadExtensionDictionary(*dictionary, extensionDictionaryPath_);
+        : Impl(createSharedResources(paths, options), options) {}
 
-        std::unique_ptr<libime::UserLanguageModel> model;
-        if (std::filesystem::is_regular_file(paths.languageModel)) {
-            model = std::make_unique<libime::UserLanguageModel>(
-                paths.languageModel.c_str());
-        } else {
-            model = std::make_unique<libime::UserLanguageModel>();
-        }
-
-        ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
-                                                  std::move(model));
-        ime->setNBest(32);
-        context = std::make_unique<libime::PinyinContext>(ime.get());
+    Impl(std::shared_ptr<SharedResources> shared,
+         const PinyinProviderOptions &options)
+        : shared_(std::move(shared)),
+          contextLearningEnabled_(options.contextLearningEnabled) {
+        context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         refresh();
     }
 
@@ -449,10 +472,10 @@ public:
             refresh();
             return true;
         }
-        if (learning_ != nullptr) {
-            learning_->enqueueSelection(candidate.text, candidate.fullPinyin,
-                                         contextBefore_, contextAfter_,
-                                         nowMilliseconds());
+        if (auto *learning = learningWriter(); learning != nullptr) {
+            learning->enqueueSelection(candidate.text, candidate.fullPinyin,
+                                       contextBefore_, contextAfter_,
+                                       nowMilliseconds());
         }
         context->select(page_.items[index].sourceIndex);
         refresh();
@@ -469,21 +492,21 @@ public:
         }
         const auto rawInput = context->userInput();
         if (candidate.source == core::CandidateSource::UserDictionary) {
-            auto updatedDictionary = userDictionary_;
+            auto updatedDictionary = userDictionary();
             if (!updatedDictionary.remove(candidate.fullPinyin,
                                           candidate.text) ||
-                !updatedDictionary.saveText(userDictionaryPath_)) {
+                !updatedDictionary.saveText(userDictionaryPath())) {
                 return false;
             }
-            const bool removedFromLibime = userDictionary_.removeFrom(
-                *ime->dict(), 1, candidate.fullPinyin, candidate.text);
+            const bool removedFromLibime = userDictionary().removeFrom(
+                *ime().dict(), 1, candidate.fullPinyin, candidate.text);
             if (!removedFromLibime) {
                 // Restore the original file if the in-memory dictionary layer
                 // could not be changed.
-                userDictionary_.saveText(userDictionaryPath_);
+                userDictionary().saveText(userDictionaryPath());
                 return false;
             }
-            userDictionary_ = std::move(updatedDictionary);
+            userDictionary() = std::move(updatedDictionary);
             rebuildContext(rawInput);
             return true;
         }
@@ -492,10 +515,11 @@ public:
             suppressedLearned_.insert(
                 candidateKey(candidate.fullPinyin, candidate.text));
         }
-        if (learning_ == nullptr) {
+        if (learningWriter() == nullptr) {
             return false;
         }
-        learning_->enqueueSuppression(candidate.text, candidate.fullPinyin);
+        learningWriter()->enqueueSuppression(candidate.text,
+                                             candidate.fullPinyin);
         refresh();
         return true;
     }
@@ -519,6 +543,13 @@ public:
     const core::CandidatePage &page() const { return page_; }
 
 private:
+    libime::PinyinIME &ime() { return *shared_->ime; }
+    core::LearningWriter *learningWriter() { return shared_->learning.get(); }
+    UserDictionary &userDictionary() { return shared_->userDictionary; }
+    const std::filesystem::path &userDictionaryPath() const {
+        return shared_->userDictionaryPath;
+    }
+
     void rebuildContext(const std::string &rawInput) {
         context->clear();
         if (!rawInput.empty()) {
@@ -543,10 +574,12 @@ private:
             return;
         }
 
-        const auto learning = learning_ != nullptr ? learning_->snapshot()
-                                                   : nullptr;
+        const auto learning = [&] {
+            auto *writer = learningWriter();
+            return writer != nullptr ? writer->snapshot() : nullptr;
+        }();
         const auto result = buildCandidatePipeline(
-            *context, *ime->dict(), learning.get(), nowMilliseconds(),
+            *context, *ime().dict(), learning.get(), nowMilliseconds(),
             contextBefore_, contextAfter_, previousOrder);
         page_.items.reserve(result.order.size() + 1);
         const bool hasPinyinCoverage = std::any_of(
@@ -561,7 +594,7 @@ private:
         seen.reserve(result.order.size());
         for (const auto sourceIndex : result.order) {
             const auto &candidate = result.scored[sourceIndex];
-            const bool isManual = userDictionary_.contains(
+            const bool isManual = userDictionary().contains(
                 candidate.full_pinyin, candidate.text);
             const auto learningEntry = learning != nullptr
                                            ? learning->entry(
@@ -611,13 +644,9 @@ private:
         page_.preedit = automaticallySegmentedPreedit(rawInput, result);
     }
 
-    std::unique_ptr<libime::PinyinIME> ime;
+    std::shared_ptr<SharedResources> shared_;
     std::unique_ptr<libime::PinyinContext> context;
-    std::filesystem::path userDictionaryPath_;
-    std::filesystem::path extensionDictionaryPath_;
-    std::unique_ptr<core::LearningWriter> learning_;
     bool contextLearningEnabled_ = true;
-    UserDictionary userDictionary_;
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
@@ -628,6 +657,10 @@ private:
 PinyinCandidateProvider::PinyinCandidateProvider(PinyinDataPaths paths,
                                                  PinyinProviderOptions options)
     : impl_(std::make_unique<Impl>(paths, options)) {}
+
+PinyinCandidateProvider::PinyinCandidateProvider(
+    std::shared_ptr<SharedResources> shared, PinyinProviderOptions options)
+    : impl_(std::make_unique<Impl>(std::move(shared), options)) {}
 
 PinyinCandidateProvider::~PinyinCandidateProvider() = default;
 

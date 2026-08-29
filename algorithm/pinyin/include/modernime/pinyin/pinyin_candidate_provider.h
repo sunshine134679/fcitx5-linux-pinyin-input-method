@@ -24,7 +24,24 @@ struct PinyinProviderOptions final {
 
 class PinyinCandidateProvider final : public core::CandidateProvider {
 public:
+    // Heavyweight state (system/user/extension dictionaries, language model,
+    // learning writer) intended to be created once per engine and shared by
+    // every provider instance. Defined in the source file so libime stays out
+    // of this header.
+    class SharedResources;
+
+    // Builds the shared resources; never returns null. options.learningEnabled
+    // decides whether the shared learning writer exists.
+    static std::shared_ptr<SharedResources> createSharedResources(
+        const PinyinDataPaths &paths, const PinyinProviderOptions &options);
+
+    // Constructs a provider that owns all of its resources. Convenience for
+    // tests and single-instance tools.
     explicit PinyinCandidateProvider(PinyinDataPaths paths = {},
+                                     PinyinProviderOptions options = {});
+    // Shares the given resources across provider instances; each instance only
+    // keeps per-context composition state. resources must not be null.
+    explicit PinyinCandidateProvider(std::shared_ptr<SharedResources> shared,
                                      PinyinProviderOptions options = {});
     ~PinyinCandidateProvider() override;
 

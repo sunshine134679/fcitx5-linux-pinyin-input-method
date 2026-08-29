@@ -220,17 +220,22 @@ void FcitxEngineHost::commit(std::string_view text) {
 }
 
 FcitxInputContextState::FcitxInputContextState(
-    fcitx::InputContext &inputContext,
-    const core::ModernIMESettings &settings)
+    fcitx::InputContext &inputContext, const core::ModernIMESettings &settings,
+    const FcitxEngineResources &resources)
     : host_(inputContext)
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
-      , provider_(std::make_unique<pinyin::PinyinCandidateProvider>(
-            pinyinPaths(), pinyinOptions(settings)))
+      ,
+      provider_(resources.pinyin != nullptr
+                    ? std::make_unique<pinyin::PinyinCandidateProvider>(
+                          resources.pinyin, pinyinOptions(settings))
+                    : std::make_unique<pinyin::PinyinCandidateProvider>(
+                          pinyinPaths(), pinyinOptions(settings)))
       , clipboardTrigger_(settings.clipboardTrigger)
       , controller_(host_, provider_.get(), controllerOptions(settings)) {
 #else
       , clipboardTrigger_(settings.clipboardTrigger)
       , controller_(host_, nullptr, controllerOptions(settings)) {
+        (void)resources;
 #endif
     host_.setController(controller_);
     host_.setBeforeCandidateSelection(
@@ -245,8 +250,15 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
       clipboardHistory_(settingsPaths().clipboardHistory),
       settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
       stateFactory_([this](fcitx::InputContext &inputContext) {
-          return new FcitxInputContextState(inputContext, settings_);
+          return new FcitxInputContextState(inputContext, settings_,
+                                            resources_);
       }) {
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    // One dictionary/language-model/learning-writer set for the whole engine;
+    // every input context only adds its own composition state.
+    resources_.pinyin = pinyin::PinyinCandidateProvider::createSharedResources(
+        pinyinPaths(), pinyinOptions(settings_));
+#endif
     std::string historyError;
     if (!clipboardHistory_.load(&historyError)) {
         FCITX_ERROR() << "Failed to load ModernIME clipboard history: "

@@ -33,6 +33,14 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
 std::optional<KeyEvent> translateKey(const fcitx::Key &key,
                                      const KeyBindings &bindings = {});
 
+// Heavyweight resources created once per input method engine and shared by
+// every input context.
+struct FcitxEngineResources final {
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    std::shared_ptr<pinyin::PinyinCandidateProvider::SharedResources> pinyin;
+#endif
+};
+
 class FcitxEngineHost final : public EngineHost {
 public:
     explicit FcitxEngineHost(fcitx::InputContext &inputContext);
@@ -56,7 +64,8 @@ private:
 class FcitxInputContextState final : public fcitx::InputContextProperty {
 public:
     FcitxInputContextState(fcitx::InputContext &inputContext,
-                           const core::ModernIMESettings &settings);
+                           const core::ModernIMESettings &settings,
+                           const FcitxEngineResources &resources);
 
     ModernIMEController &controller() { return controller_; }
     ClipboardTriggerResult processClipboardTrigger(const KeyEvent &event,
@@ -105,6 +114,7 @@ private:
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
+    FcitxEngineResources resources_;
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };
 
