@@ -1,6 +1,9 @@
 function(modernime_enable_warnings target)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(${target} INTERFACE
+        # PUBLIC, not INTERFACE: the flags must also apply to the target
+        # itself, which INTERFACE-only flags never reach (MODULE libraries
+        # have no consumers to inherit them).
+        target_compile_options(${target} PUBLIC
             -Wall
             -Wextra
             -Wpedantic
@@ -8,6 +11,6 @@ function(modernime_enable_warnings target)
             -Wshadow
         )
     elseif(MSVC)
-        target_compile_options(${target} INTERFACE /W4)
+        target_compile_options(${target} PUBLIC /W4)
     endif()
 endfunction()
