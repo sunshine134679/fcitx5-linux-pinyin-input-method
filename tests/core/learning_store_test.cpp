@@ -42,7 +42,7 @@ void testSelectionPersistsAcrossReopen() {
     assertTrue(second.open(), "learning store reopens");
     const auto snapshot = second.snapshot(1000);
     assertTrue(snapshot != nullptr, "snapshot is available");
-    assertTrue(snapshot->boostAt("你好", "nihao", "今", "，", 1000) > 0.0,
+    assertTrue(snapshot->boostAt("你好", "nihao", 1000) > 0.0,
                "persisted selection boosts the candidate");
     second.close();
     std::error_code error;
@@ -101,7 +101,7 @@ void testNegativeFeedbackReducesLearningBoost() {
     assertTrue(store.recordNegativeFeedback("错误词", "cuowuci"),
                "negative feedback is stored");
     const auto snapshot = store.snapshot(1000);
-    assertTrue(snapshot->boostAt("错误词", "cuowuci", "", "", 1000) < 1.0,
+    assertTrue(snapshot->boostAt("错误词", "cuowuci", 1000) < 1.0,
                "negative feedback reduces the boost");
     store.close();
     std::error_code error;
@@ -115,7 +115,7 @@ void testNegativeFeedbackWithoutSelectionDoesNotCreatePositiveBoost() {
     assertTrue(store.recordNegativeFeedback("从未选过", "congweixuanguo"),
                "negative-only feedback is stored");
     const auto snapshot = store.snapshot(1000);
-    assertTrue(snapshot->boostAt("从未选过", "congweixuanguo", {}, {}, 1000) <=
+    assertTrue(snapshot->boostAt("从未选过", "congweixuanguo", 1000) <=
                    0.0,
                "negative-only feedback never creates a positive learning boost");
     store.close();
@@ -137,7 +137,7 @@ void testSuppressionPersistsAndDisablesLearningBoost() {
                "suppression survives in the snapshot");
     assertTrue(snapshot->isSuppressed("被删词", "beishanci"),
                "suppression is visible by candidate key");
-    assertTrue(snapshot->boostAt("被删词", "beishanci", {}, {}, 1000) == 0.0,
+    assertTrue(snapshot->boostAt("被删词", "beishanci", 1000) == 0.0,
                "suppressed candidates receive no learning boost");
     store.close();
     std::error_code error;
@@ -152,9 +152,9 @@ void testCorruptedLearningCountersRemainFinite() {
         {"损坏负反馈", "sunfankuici", {}, {}, 0, 0, -3}};
     const modernime::core::LearningSnapshot snapshot(entries);
     const auto frequencyBoost =
-        snapshot.boostAt("损坏频次", "sunhuaici", {}, {}, 1000);
+        snapshot.boostAt("损坏频次", "sunhuaici", 1000);
     const auto feedbackBoost =
-        snapshot.boostAt("损坏负反馈", "sunfankuici", {}, {}, 1000);
+        snapshot.boostAt("损坏负反馈", "sunfankuici", 1000);
     assertTrue(std::isfinite(frequencyBoost) && frequencyBoost == 0.0 &&
                    std::isfinite(feedbackBoost) && feedbackBoost == 0.0,
                "negative persisted counters are ignored safely");
@@ -178,8 +178,7 @@ void testCorruptedSelectionTimestampDoesNotOverflow() {
          std::numeric_limits<std::int64_t>::min(), 0}};
     const modernime::core::LearningSnapshot snapshot(entries);
     const auto boost = snapshot.boostAt(
-        "损坏时间", "sunhuaici", {}, {},
-        std::numeric_limits<std::int64_t>::max());
+        "损坏时间", "sunhuaici", std::numeric_limits<std::int64_t>::max());
     assertTrue(std::isfinite(boost) && boost < 1.0,
                "corrupted selection timestamps are treated as old safely");
 }
@@ -302,8 +301,7 @@ void testBaseNegativeFeedbackAppliesToContextualSelection() {
     assertTrue(store.recordNegativeFeedback("上下文词", "shangxiawen"),
                "base negative feedback stores");
     const auto snapshot = store.snapshot(1000);
-    assertTrue(snapshot->boostAt("上下文词", "shangxiawen", "前文", "后文",
-                                 1000) < 1.0,
+    assertTrue(snapshot->boostAt("上下文词", "shangxiawen", 1000) < 1.0,
                "base negative feedback lowers contextual selection boost");
     store.close();
     std::error_code error;
@@ -317,7 +315,7 @@ void testWriterReportsUnavailableStoreAndKeepsMemorySnapshot() {
     assertTrue(!writer.enqueueSelection("内存词", "neicun" , {}, {}, 1000),
                "writer rejects durable event when store cannot open");
     const auto snapshot = writer.snapshot();
-    assertTrue(snapshot->boostAt("内存词", "neicun", {}, {}, 1000) > 0.0,
+    assertTrue(snapshot->boostAt("内存词", "neicun", 1000) > 0.0,
                "in-memory learning remains available after storage failure");
     assertTrue(!writer.flush(), "flush reports unavailable storage");
 }
@@ -338,7 +336,7 @@ void testWriterRejectsMalformedStoreAtStartup() {
     modernime::core::LearningWriter writer(path);
     assertTrue(!writer.enqueueSelection("内存词", "neicun", {}, {}, 1000),
                "malformed store is rejected before durable enqueue");
-    assertTrue(writer.snapshot()->boostAt("内存词", "neicun", {}, {}, 1000) >
+    assertTrue(writer.snapshot()->boostAt("内存词", "neicun", 1000) >
                    0.0,
                "memory learning remains available after schema failure");
     assertTrue(!writer.flush(), "flush reports malformed storage");
@@ -469,6 +467,34 @@ void testSnapshotAppliesTotalEntryLimit() {
                "the oldest entry is evicted by the mutation");
 }
 
+void testFrequencyAccumulatesAcrossContextVariants() {
+    const auto path = testPath("cross-context-learning.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "cross-context store opens");
+    // The same word selected once in each of several different contexts:
+    // each selection lands in its own context variant row.
+    assertTrue(store.recordSelection("高频词", "gaopinci", "前甲", "后甲", 1000),
+               "first context selection stores");
+    assertTrue(store.recordSelection("高频词", "gaopinci", "前乙", "后乙", 2000),
+               "second context selection stores");
+    assertTrue(store.recordSelection("高频词", "gaopinci", "前丙", "后丙", 3000),
+               "third context selection stores");
+    const auto snapshot = store.snapshot(3000);
+    assertTrue(snapshot->boostAt("高频词", "gaopinci", 3000) > 1.5,
+               "aggregated frequency boosts a brand-new context");
+    assertTrue(snapshot->hasPositiveFrequency("高频词", "gaopinci"),
+               "aggregated frequency classifies the candidate as learned");
+    assertTrue(snapshot->boostAt("从未选过", "congweixuanguo", 3000) == 0.0,
+               "a word without selections receives no boost");
+    assertTrue(!snapshot->hasPositiveFrequency("从未选过", "congweixuanguo"),
+               "a word without selections is not classified as learned");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
@@ -494,5 +520,6 @@ int main() {
     testLearningBatchPersistsAsOneLogicalUpdate();
     testTotalEntryLimitEvictsSuppressedThenOldest();
     testSnapshotAppliesTotalEntryLimit();
+    testFrequencyAccumulatesAcrossContextVariants();
     return EXIT_SUCCESS;
 }

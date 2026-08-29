@@ -19,17 +19,6 @@ std::int64_t saturatingIncrement(std::int64_t value) {
     return value + 1;
 }
 
-std::int64_t saturatingAddNonNegative(std::int64_t left,
-                                      std::int64_t right) {
-    left = std::max<std::int64_t>(0, left);
-    right = std::max<std::int64_t>(0, right);
-    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
-    if (right > maximum - left) {
-        return maximum;
-    }
-    return left + right;
-}
-
 bool isUtf8Continuation(unsigned char byte) {
     return (byte & 0xc0U) == 0x80U;
 }
@@ -164,55 +153,60 @@ bool LearningSnapshot::isSuppressed(std::string_view phrase,
     return false;
 }
 
-double LearningSnapshot::boostAt(
-    std::string_view phrase, std::string_view pinyin,
-    std::string_view contextBefore, std::string_view contextAfter,
-    std::int64_t nowMs) const {
+bool LearningSnapshot::hasPositiveFrequency(std::string_view phrase,
+                                            std::string_view pinyin) const {
+    if (isSuppressed(phrase, pinyin)) {
+        return false;
+    }
+    const auto normalized = normalizePinyin(pinyin);
+    for (const auto &item : entries_) {
+        if (item.phrase == phrase && item.pinyin == normalized &&
+            !item.suppressed && item.frequency > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+double LearningSnapshot::boostAt(std::string_view phrase,
+                                 std::string_view pinyin,
+                                 std::int64_t nowMs) const {
     const auto normalized = normalizePinyin(pinyin);
     if (isSuppressed(phrase, normalized)) {
         return 0.0;
     }
-    const LearningEntry *candidate = nullptr;
-    const LearningEntry *base = nullptr;
+    // Frequency is aggregated across every context variant: each selection
+    // writes exactly one row, so the sum is the true "how often the user
+    // picks this word" signal regardless of which sentence it appeared in.
+    std::int64_t totalFrequency = 0;
+    std::int64_t lastSelectedMs = 0;
+    std::int64_t worstFeedback = 0;
     for (const auto &item : entries_) {
         if (item.phrase != phrase || item.pinyin != normalized) {
             continue;
         }
-        if (item.contextBefore == contextBefore &&
-            item.contextAfter == contextAfter) {
-            candidate = &item;
-        } else if (item.contextBefore.empty() && item.contextAfter.empty()) {
-            base = &item;
+        worstFeedback = std::max(worstFeedback, item.negativeFeedback);
+        if (item.suppressed) {
+            continue;
         }
+        totalFrequency += std::max<std::int64_t>(0, item.frequency);
+        lastSelectedMs = std::max(lastSelectedMs, item.lastSelectedMs);
     }
-    if (candidate == nullptr) {
-        candidate = base;
-    }
-    if (candidate == nullptr) {
+    if (totalFrequency <= 0) {
         return 0.0;
     }
     const double ageMs = std::max(
         0.0, static_cast<double>(nowMs) -
-                 static_cast<double>(candidate->lastSelectedMs));
+                 static_cast<double>(lastSelectedMs));
     constexpr double halfLifeMs = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
     const double recency = std::exp(-ageMs / halfLifeMs);
-    const auto frequencyCount = std::max<std::int64_t>(0, candidate->frequency);
     const double frequency = std::min(
-        2.0, 0.65 * std::log1p(static_cast<double>(frequencyCount)));
-    const double recent = candidate->frequency > 0
-                              ? std::min(1.0, 0.90 * recency)
-                              : 0.0;
-    auto negativeFeedback = std::max<std::int64_t>(
-        0, candidate->negativeFeedback);
-    // A global deletion/negative-feedback event must still apply when a
-    // more-specific contextual selection exists for the same candidate.
-    if (candidate != base && base != nullptr) {
-        negativeFeedback = saturatingAddNonNegative(
-            negativeFeedback, base->negativeFeedback);
-    }
-    negativeFeedback = std::max<std::int64_t>(0, negativeFeedback);
+        2.0, 0.65 * std::log1p(static_cast<double>(totalFrequency)));
+    const double recent = std::min(1.0, 0.90 * recency);
+    // The strongest negative feedback of any variant applies globally.
     const double penalty = std::min(
-        2.0, 0.75 * std::log1p(static_cast<double>(negativeFeedback)));
+        2.0, 0.75 * std::log1p(static_cast<double>(
+                        std::max<std::int64_t>(0, worstFeedback))));
     return std::clamp(frequency + recent - penalty, -2.0, 3.5);
 }
 

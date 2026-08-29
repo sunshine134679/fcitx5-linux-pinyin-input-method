@@ -596,21 +596,13 @@ private:
             const auto &candidate = result.scored[sourceIndex];
             const bool isManual = userDictionary().contains(
                 candidate.full_pinyin, candidate.text);
-            const auto learningEntry = learning != nullptr
-                                           ? learning->entry(
-                                                 candidate.text,
-                                                 candidate.full_pinyin,
-                                                 contextBefore_, contextAfter_)
-                                           : nullptr;
             const auto key = candidateKey(candidate.full_pinyin, candidate.text);
             if (!isManual && suppressedLearned_.contains(key)) {
                 continue;
             }
             const bool isLearned = !isManual && learning != nullptr &&
-                                   !learning->isSuppressed(
-                                       candidate.text, candidate.full_pinyin) &&
-                                   learningEntry != nullptr &&
-                                   learningEntry->frequency > 0;
+                                   learning->hasPositiveFrequency(
+                                       candidate.text, candidate.full_pinyin);
             if (isManual && manualCount >= manualLimit) {
                 continue;
             }

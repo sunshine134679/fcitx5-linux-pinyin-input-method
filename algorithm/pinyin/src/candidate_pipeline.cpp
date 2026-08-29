@@ -83,8 +83,7 @@ CandidatePipelineResult buildCandidatePipeline(
             dictionary, candidate.full_pinyin, candidate.text);
         if (learning != nullptr) {
             candidate.learning_boost = learning->boostAt(
-                candidate.text, candidate.full_pinyin, contextBefore,
-                contextAfter, nowMs);
+                candidate.text, candidate.full_pinyin, nowMs);
             candidate.context_bonus = learning->contextBoost(
                 candidate.text, candidate.full_pinyin, contextBefore,
                 contextAfter);

@@ -37,9 +37,10 @@ public:
                                std::string_view pinyin,
                                std::string_view contextBefore,
                                std::string_view contextAfter) const;
+    // Frequency aggregated across every context variant of (phrase, pinyin).
+    bool hasPositiveFrequency(std::string_view phrase,
+                              std::string_view pinyin) const;
     double boostAt(std::string_view phrase, std::string_view pinyin,
-                   std::string_view contextBefore,
-                   std::string_view contextAfter,
                    std::int64_t nowMs) const;
     bool isSuppressed(std::string_view phrase,
                       std::string_view pinyin) const;

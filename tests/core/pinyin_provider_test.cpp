@@ -146,6 +146,34 @@ void testFullPinyinInputIsAutomaticallySegmentedInPreedit() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testRepeatedSelectionAcrossContextsStillPromotes() {
+    const auto learningPath = testPath("context-promotion-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    // Reproduces real typing: every selection carries a different piece of
+    // surrounding text, so selections land in different context rows.
+    for (int count = 0; count < 3; ++count) {
+        provider.setContext("前文" + std::to_string(count), "后文");
+        assertTrue(provider.append("a"), "single-syllable input is accepted");
+        const auto index = indexOf(provider.page(), "啊");
+        assertTrue(index < provider.page().items.size(),
+                   "the candidate remains available");
+        assertTrue(provider.select(index), "selection is accepted");
+        provider.reset();
+    }
+    // A brand-new context that never occurred before must still see the
+    // aggregated frequency.
+    provider.setContext("完全", "不同");
+    assertTrue(provider.append("a"), "single-syllable input is re-accepted");
+    assertTrue(provider.page().items.front().text == "啊",
+               "repeated selections across contexts promote the word to top");
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
@@ -332,5 +360,6 @@ int main() {
     assertTrue(!std::filesystem::exists(disabledLearningPath),
                "disabled learning does not create a database");
     testExtensionDictionaryIsLoadedAsOfflineKnowledge();
+    testRepeatedSelectionAcrossContextsStillPromotes();
     return EXIT_SUCCESS;
 }
