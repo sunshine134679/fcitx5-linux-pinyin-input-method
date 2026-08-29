@@ -33,8 +33,8 @@
 
 #### 3. 剪贴板轮询激活门控（adapter/fcitx5/src/inputmethod.cpp）
 
-- `pollClipboard()` 在读取剪贴板前，取最近输入上下文的 `FcitxInputContextState`，要求 `controller().active()` 为真（与 `keyEvent` 中剪贴板触发使用的同一激活条件），否则直接返回。
-- 效果：ModernIME 未激活（包括用户切换到其他输入法、或切换到英文模式）时不读取、不落盘剪贴板；50ms 轮询的空转也随之消除。
+- `pollClipboard()` 在读取剪贴板前，用 `instance_->inputMethod(ic)` 检查最近输入上下文的当前输入法是否为 `modernime`，否则直接返回。选择这个零副作用查询而不是读 per-IC 状态的 `controller().active()`：`propertyFor` 只能在缺失时惰性构造整个状态对象，轮询里触发构造得不偿失；两者在"V 菜单可用性"上语义等价（ ModernIME 被选中时 `active()` 缺省值与设置一致）。
+- 效果：ModernIME 未被选为当前输入法（包括切到键盘布局/其他输入法）时不读取、不落盘剪贴板；50ms 轮询的空转也随之消除。注意残留面：ModernIME 被选中但用户并未输入的窗口仍会采集（与 fcitx5 官方剪贴板模块一致），敏感应用排除列表留作后续功能。
 - 验证：`fcitx5-debug` 构建全绿；行为通过 `engine_state_test` 既有激活语义回归保障。
 
 #### 4. 用户词典导入确认（tools/settings/settings_window.cpp）

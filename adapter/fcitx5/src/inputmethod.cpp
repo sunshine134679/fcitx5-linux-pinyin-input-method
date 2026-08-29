@@ -416,6 +416,12 @@ void ModernIMEInputMethod::pollClipboard() {
     if (inputContext == nullptr) {
         return;
     }
+    // Collect only while ModernIME is the active input method: clipboard
+    // content copied under other input methods or keyboard layouts must not
+    // end up in the history file.
+    if (instance_->inputMethod(inputContext) != "modernime") {
+        return;
+    }
     try {
         const auto text = clipboardAddon_->callWithSignature<
             std::string(const fcitx::InputContext *)>(
