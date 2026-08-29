@@ -44,6 +44,20 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_ui_contract_tests
     )
 
+    add_executable(modernime_settings_widgets_contract_tests
+        settings/settings_widgets_contract_test.cpp
+        ../tools/settings/settings_widgets.cpp
+    )
+    target_include_directories(modernime_settings_widgets_contract_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_settings_widgets_contract_tests PRIVATE
+        PkgConfig::GTK3
+    )
+    add_test(NAME modernime_settings_widgets_contract
+        COMMAND modernime_settings_widgets_contract_tests
+    )
+
     add_executable(modernime_page_registry_tests
         settings/page_registry_test.cpp
         ../tools/settings/page_registry.cpp

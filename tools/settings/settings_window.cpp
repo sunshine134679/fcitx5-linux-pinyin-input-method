@@ -3,6 +3,7 @@
 #include "modernime/settings/data_controller.h"
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_ui_contract.h"
+#include "modernime/settings/settings_widgets.h"
 
 #include "modernime/core/clipboard_history.h"
 #include "modernime/pinyin/user_dictionary.h"
@@ -87,143 +88,9 @@ void setStatus(SettingsWindow::Impl *impl, const char *message) {
     }
 }
 
-void addStyleClass(GtkWidget *widget, const char *className) {
+void addStyleClass(GtkWidget *widget, std::string_view className) {
     gtk_style_context_add_class(gtk_widget_get_style_context(widget),
-                                className);
-}
-
-void installStyles() {
-    auto *screen = gdk_screen_get_default();
-    if (screen == nullptr) {
-        return;
-    }
-    auto *provider = gtk_css_provider_new();
-    constexpr const char *css = R"css(
-        .modernime-sidebar {
-            border-right: 1px solid @borders;
-            background-color: @theme_bg_color;
-            padding: 10px 6px;
-        }
-        .modernime-page {
-            background-color: @theme_bg_color;
-        }
-        .modernime-page-scroller,
-        .modernime-page-viewport,
-        .modernime-page-scroller > viewport,
-        .modernime-page-stack {
-            background-color: @theme_bg_color;
-            border: none;
-        }
-        .modernime-page-surface {
-            background-color: @theme_bg_color;
-            border: none;
-        }
-        .modernime-page-title {
-            font-size: 20px;
-            font-weight: 600;
-        }
-        .modernime-page-subtitle,
-        .modernime-description,
-        .modernime-path {
-            color: @insensitive_fg_color;
-        }
-        .modernime-section {
-            border: 1px solid @borders;
-            border-radius: 10px;
-            background-color: @theme_base_color;
-            padding: 14px;
-        }
-        .modernime-section-title {
-            font-weight: 600;
-        }
-        .modernime-status {
-            padding: 4px 8px;
-        }
-        .modernime-status-dirty {
-            color: #b35a00;
-            font-weight: 600;
-        }
-        .modernime-status-error,
-        entry.error {
-            color: #b3261e;
-        }
-        entry.error {
-            border-color: #b3261e;
-        }
-    )css";
-    gtk_css_provider_load_from_data(provider, css, -1, nullptr);
-    gtk_style_context_add_provider_for_screen(
-        screen, GTK_STYLE_PROVIDER(provider),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_unref(provider);
-}
-
-GtkWidget *makePageShell(const char *title, const char *subtitle) {
-    auto *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 18);
-    addStyleClass(page, "modernime-page");
-    gtk_widget_set_margin_start(page, 28);
-    gtk_widget_set_margin_end(page, 28);
-    gtk_widget_set_margin_top(page, 28);
-    gtk_widget_set_margin_bottom(page, 28);
-
-    auto *heading = gtk_label_new(title);
-    addStyleClass(heading, "modernime-page-title");
-    gtk_widget_set_halign(heading, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(page), heading, FALSE, FALSE, 0);
-
-    auto *description = gtk_label_new(subtitle);
-    addStyleClass(description, "modernime-page-subtitle");
-    gtk_widget_set_halign(description, GTK_ALIGN_START);
-    gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
-    gtk_box_pack_start(GTK_BOX(page), description, FALSE, FALSE, 0);
-    return page;
-}
-
-GtkWidget *makeSectionCard(const char *title, const char *description) {
-    auto *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    addStyleClass(card, "modernime-section");
-    if (title != nullptr && *title != '\0') {
-        auto *heading = gtk_label_new(title);
-        addStyleClass(heading, "modernime-section-title");
-        gtk_widget_set_halign(heading, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(card), heading, FALSE, FALSE, 0);
-    }
-    if (description != nullptr && *description != '\0') {
-        auto *help = gtk_label_new(description);
-        addStyleClass(help, "modernime-description");
-        gtk_widget_set_halign(help, GTK_ALIGN_START);
-        gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
-        gtk_box_pack_start(GTK_BOX(card), help, FALSE, FALSE, 0);
-    }
-    return card;
-}
-
-GtkWidget *makeScrollablePage(GtkWidget *page) {
-    auto *surface = gtk_event_box_new();
-    addStyleClass(surface, "modernime-page-surface");
-    gtk_event_box_set_visible_window(GTK_EVENT_BOX(surface), TRUE);
-    gtk_widget_set_hexpand(surface, TRUE);
-    gtk_widget_set_vexpand(surface, TRUE);
-
-    auto *scrolled = gtk_scrolled_window_new(nullptr, nullptr);
-    addStyleClass(scrolled, "modernime-page-scroller");
-    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scrolled),
-                                        GTK_SHADOW_NONE);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
-                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_hexpand(scrolled, TRUE);
-    gtk_widget_set_vexpand(scrolled, TRUE);
-    gtk_widget_set_hexpand(page, TRUE);
-    gtk_widget_set_vexpand(page, TRUE);
-    gtk_widget_set_halign(page, GTK_ALIGN_FILL);
-    gtk_widget_set_valign(page, GTK_ALIGN_FILL);
-    gtk_container_add(GTK_CONTAINER(surface), page);
-    gtk_container_add(GTK_CONTAINER(scrolled), surface);
-    auto *viewport = gtk_bin_get_child(GTK_BIN(scrolled));
-    if (viewport != nullptr) {
-        addStyleClass(viewport, "modernime-page-viewport");
-    }
-    return scrolled;
+                                std::string(className).c_str());
 }
 
 void setWidgetError(GtkWidget *widget, bool invalid, const char *message) {
@@ -693,9 +560,9 @@ gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer data) {
 }
 
 GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
-    auto *page = makePageShell(
+    auto *page = createPageShell(
         "基本设置", "配置 ModernIME 的启用状态、默认输入状态和切换快捷键");
-    auto *section = makeSectionCard(
+    auto *section = createSectionCard(
         "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
     auto *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
@@ -743,9 +610,9 @@ GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
 }
 
 GtkWidget *makeCandidatePage(SettingsWindow::Impl *impl) {
-    auto *page = makePageShell(
+    auto *page = createPageShell(
         "候选设置", "配置候选选择、方向键导航和翻页方式，不改变候选栏外观尺寸");
-    auto *section = makeSectionCard(
+    auto *section = createSectionCard(
         "候选操作", "关闭某项后，对应按键会交给其他输入行为处理。");
 
     impl->candidateNumber = gtk_check_button_new_with_label("数字键选择候选");
@@ -776,9 +643,9 @@ GtkWidget *makeCandidatePage(SettingsWindow::Impl *impl) {
 }
 
 GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
-    auto *page = makePageShell(
+    auto *page = createPageShell(
         "剪贴板", "配置 V+2 功能并查看保存在本地的剪贴板历史");
-    auto *settingsSection = makeSectionCard(
+    auto *settingsSection = createSectionCard(
         "触发方式", "仅在中文输入状态且当前没有正在输入拼音时触发。");
 
     impl->clipboardEnabled =
@@ -810,7 +677,7 @@ GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
     gtk_box_pack_start(GTK_BOX(settingsSection), description, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
 
-    auto *historySection = makeSectionCard(
+    auto *historySection = createSectionCard(
         "剪贴板历史", "按最近使用顺序显示，最多保留 30 条内容。");
 
     impl->clipboardHistoryCount = gtk_label_new("正在读取…");
@@ -973,9 +840,9 @@ void refreshLearningData(SettingsWindow::Impl *impl, bool notify) {
 }
 
 GtkWidget *makeLearningPage(SettingsWindow::Impl *impl) {
-    auto *page = makePageShell(
+    auto *page = createPageShell(
         "智能学习", "让 ModernIME 记住你的候选选择，并结合上下文优化排序");
-    auto *learningSection = makeSectionCard(
+    auto *learningSection = createSectionCard(
         "学习行为", "关闭后不会删除已经保存的学习数据。");
 
     impl->learningEnabled = gtk_check_button_new_with_label("记忆用户候选选择");
@@ -1002,7 +869,7 @@ GtkWidget *makeLearningPage(SettingsWindow::Impl *impl) {
     gtk_widget_set_halign(impl->learningPath, GTK_ALIGN_START);
     gtk_label_set_selectable(GTK_LABEL(impl->learningPath), TRUE);
     gtk_label_set_line_wrap(GTK_LABEL(impl->learningPath), TRUE);
-    auto *dataSection = makeSectionCard(
+    auto *dataSection = createSectionCard(
         "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
     impl->learningCount = gtk_label_new("正在读取学习记录…");
     addStyleClass(impl->learningCount, "modernime-description");
@@ -1360,9 +1227,9 @@ void onDictionaryExport(GtkButton *, gpointer data) {
 }
 
 GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
-    auto *page = makePageShell(
+    auto *page = createPageShell(
         "用户词典", "维护个人词条和专业名词，重载 ModernIME 后生效");
-    auto *section = makeSectionCard(
+    auto *section = createSectionCard(
         "词条列表", "拼音、词条和权重会在保存时统一校验；导入前会确认整体替换，失败不会覆盖原词典。");
 
     auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -1661,9 +1528,9 @@ void onRefreshStatus(GtkButton *, gpointer data) {
 }
 
 GtkWidget *makeStatusPage(SettingsWindow::Impl *impl) {
-    auto *page = makePageShell(
+    auto *page = createPageShell(
         "输入法状态", "检查 Fcitx5、ModernIME 插件和当前激活状态");
-    auto *section = makeSectionCard(
+    auto *section = createSectionCard(
         "运行状态", "如果状态异常，可以在这里重新加载 ModernIME。");
     impl->runtimeStatus = gtk_label_new("正在读取 Fcitx5 状态…");
     addStyleClass(impl->runtimeStatus, "modernime-status");
@@ -1723,8 +1590,8 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
         GTK_APPLICATION(impl_->application_));
     gtk_window_set_title(GTK_WINDOW(impl_->window), "ModernIME 设置");
     gtk_window_set_default_size(GTK_WINDOW(impl_->window), 860, 620);
-    addStyleClass(impl_->window, "modernime-settings");
-    installStyles();
+    addStyleClass(impl_->window, kSettingsWindowClass);
+    installSettingsStyles();
     g_signal_connect(impl_->window, "delete-event", G_CALLBACK(onWindowDelete),
                      impl_.get());
 
@@ -1737,7 +1604,7 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     g_signal_connect(impl_->stack, "notify::visible-child-name",
                      G_CALLBACK(onStackVisibleChildChanged), impl_.get());
     auto *sidebar = gtk_stack_sidebar_new();
-    addStyleClass(sidebar, "modernime-sidebar");
+    addStyleClass(sidebar, kSettingsSidebarClass);
     gtk_stack_sidebar_set_stack(GTK_STACK_SIDEBAR(sidebar),
                                 GTK_STACK(impl_->stack));
     gtk_widget_set_size_request(sidebar, 200, -1);
@@ -1747,22 +1614,22 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
 
     const auto pages = legacySettingsPageDefinitions();
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeScrollablePage(makeBasicPage(impl_.get())),
+                         createScrollablePage(makeBasicPage(impl_.get())),
                          pages[0].name.data(), pages[0].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeScrollablePage(makeCandidatePage(impl_.get())),
+                         createScrollablePage(makeCandidatePage(impl_.get())),
                          pages[1].name.data(), pages[1].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeScrollablePage(makeClipboardPage(impl_.get())),
+                         createScrollablePage(makeClipboardPage(impl_.get())),
                          pages[2].name.data(), pages[2].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeScrollablePage(makeLearningPage(impl_.get())),
+                         createScrollablePage(makeLearningPage(impl_.get())),
                          pages[3].name.data(), pages[3].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeScrollablePage(makeDictionaryPage(impl_.get())),
+                         createScrollablePage(makeDictionaryPage(impl_.get())),
                          pages[4].name.data(), pages[4].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         makeScrollablePage(makeStatusPage(impl_.get())),
+                         createScrollablePage(makeStatusPage(impl_.get())),
                          pages[5].name.data(), pages[5].title.data());
 
     auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
