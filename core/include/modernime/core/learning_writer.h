@@ -56,7 +56,10 @@ private:
     std::condition_variable wakeup_;
     std::condition_variable drained_;
     std::queue<Event> events_;
-    std::shared_ptr<LearningSnapshot> snapshot_;
+    // Copy-on-write: enqueue replaces this pointer with a mutated clone, so
+    // snapshots handed out by snapshot() stay immutable even if a future
+    // caller reads them from another thread.
+    std::shared_ptr<const LearningSnapshot> snapshot_;
     bool stopping_ = false;
     bool processing_ = false;
     bool storageAvailable_ = false;

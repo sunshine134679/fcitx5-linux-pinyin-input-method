@@ -9,12 +9,12 @@ namespace modernime::core {
 
 LearningWriter::LearningWriter(std::filesystem::path path)
     : store_(std::make_unique<LearningStore>(std::move(path))),
-      snapshot_(std::make_shared<LearningSnapshot>()) {
+      snapshot_(std::make_shared<const LearningSnapshot>()) {
     storageAvailable_ = store_->open();
     if (storageAvailable_) {
         const auto loaded = store_->snapshot();
         if (loaded != nullptr) {
-            *snapshot_ = *loaded;
+            snapshot_ = std::move(loaded);
         } else {
             storageAvailable_ = false;
             store_->close();
@@ -40,8 +40,9 @@ bool LearningWriter::enqueueSelection(
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) {
     std::lock_guard lock(mutex_);
-    snapshot_->recordSelection(phrase, pinyin, contextBefore, contextAfter,
-                               nowMs);
+    auto next = std::make_shared<LearningSnapshot>(*snapshot_);
+    next->recordSelection(phrase, pinyin, contextBefore, contextAfter, nowMs);
+    snapshot_ = std::move(next);
     if (!storageAvailable_ || stopping_) {
         return false;
     }
@@ -55,7 +56,9 @@ bool LearningWriter::enqueueSelection(
 bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
                                               std::string_view pinyin) {
     std::lock_guard lock(mutex_);
-    snapshot_->recordNegativeFeedback(phrase, pinyin);
+    auto next = std::make_shared<LearningSnapshot>(*snapshot_);
+    next->recordNegativeFeedback(phrase, pinyin);
+    snapshot_ = std::move(next);
     if (!storageAvailable_ || stopping_) {
         return false;
     }
@@ -68,7 +71,9 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
 bool LearningWriter::enqueueSuppression(std::string_view phrase,
                                         std::string_view pinyin) {
     std::lock_guard lock(mutex_);
-    snapshot_->recordSuppression(phrase, pinyin);
+    auto next = std::make_shared<LearningSnapshot>(*snapshot_);
+    next->recordSuppression(phrase, pinyin);
+    snapshot_ = std::move(next);
     if (!storageAvailable_ || stopping_) {
         return false;
     }
@@ -88,7 +93,7 @@ bool LearningWriter::flush() {
 
 std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
     std::lock_guard lock(mutex_);
-    return std::shared_ptr<const LearningSnapshot>(snapshot_);
+    return snapshot_;
 }
 
 void LearningWriter::run() {
