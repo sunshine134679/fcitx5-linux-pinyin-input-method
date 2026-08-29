@@ -44,7 +44,7 @@ void SettingsWindowModel::editDefaults() {
 }
 
 bool SettingsWindowModel::save(std::string *error) {
-    const bool changed = dirty();
+    const bool changed = edited_ != loaded_;
     std::string saveError;
     if (!core::SettingsStore::save(path_, edited_, &saveError)) {
         lastError_ = saveError;

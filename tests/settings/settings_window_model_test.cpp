@@ -41,8 +41,8 @@ int main() {
                "editing defaults does not create a settings file");
     std::string error;
     assertTrue(model.save(&error), "edited defaults save: " + error);
-    assertTrue(model.reloadRequired(),
-               "saving changed settings requires an engine reload");
+    assertTrue(!model.reloadRequired(),
+               "saving equal defaults does not require an engine reload");
     model.markReloaded();
     assertTrue(!model.reloadRequired(),
                "marking the engine reloaded clears reload state");
@@ -54,6 +54,8 @@ int main() {
     assertTrue(model.dirty(), "edited settings are dirty");
     assertTrue(model.save(&error), "edited settings save: " + error);
     assertTrue(!model.dirty(), "saved model is clean");
+    assertTrue(model.reloadRequired(),
+               "saving changed settings requires an engine reload");
 
     modernime::settings::SettingsWindowModel reloaded(path);
     assertTrue(!reloaded.settings().inputEnabled &&
