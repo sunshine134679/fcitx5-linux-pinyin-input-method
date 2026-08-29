@@ -5,6 +5,7 @@
 
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/learning_writer.h"
+#include "modernime/core/settings.h"
 
 #include <libime/core/userlanguagemodel.h>
 #include <libime/pinyin/pinyincontext.h>
@@ -29,31 +30,31 @@ namespace modernime::pinyin {
 namespace {
 
 std::filesystem::path defaultLearningPath() {
+    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
     const auto *dataHome = std::getenv("XDG_DATA_HOME");
-    if (dataHome != nullptr && *dataHome != '\0') {
-        return std::filesystem::path(dataHome) / "modernime" /
-               "learning.sqlite3";
-    }
     const auto *home = std::getenv("HOME");
-    if (home != nullptr && *home != '\0') {
-        return std::filesystem::path(home) / ".local" / "share" /
-               "modernime" / "learning.sqlite3";
-    }
-    return {};
+    return core::SettingsPaths::fromEnvironment(
+               xdgConfigHome == nullptr ? std::string_view{}
+                                        : std::string_view(xdgConfigHome),
+               dataHome == nullptr ? std::string_view{}
+                                   : std::string_view(dataHome),
+               home == nullptr ? std::string_view{}
+                               : std::string_view(home))
+        .learningStore;
 }
 
 std::filesystem::path defaultUserDictionaryPath() {
+    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
     const auto *dataHome = std::getenv("XDG_DATA_HOME");
-    if (dataHome != nullptr && *dataHome != '\0') {
-        return std::filesystem::path(dataHome) / "modernime" /
-               "user-dictionary.txt";
-    }
     const auto *home = std::getenv("HOME");
-    if (home != nullptr && *home != '\0') {
-        return std::filesystem::path(home) / ".local" / "share" /
-               "modernime" / "user-dictionary.txt";
-    }
-    return {};
+    return core::SettingsPaths::fromEnvironment(
+               xdgConfigHome == nullptr ? std::string_view{}
+                                        : std::string_view(xdgConfigHome),
+               dataHome == nullptr ? std::string_view{}
+                                   : std::string_view(dataHome),
+               home == nullptr ? std::string_view{}
+                               : std::string_view(home))
+        .userDictionary;
 }
 
 bool isRegularFile(const std::filesystem::path &path) {
