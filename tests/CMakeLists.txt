@@ -34,6 +34,20 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_model_tests
     )
 
+    add_executable(modernime_input_page_state_tests
+        settings/input_page_state_test.cpp
+        ../tools/settings/settings_model.cpp
+    )
+    target_link_libraries(modernime_input_page_state_tests PRIVATE
+        modernime_core
+    )
+    target_include_directories(modernime_input_page_state_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    add_test(NAME modernime_input_page_state
+        COMMAND modernime_input_page_state_tests
+    )
+
     add_executable(modernime_settings_ui_contract_tests
         settings/settings_ui_contract_test.cpp
     )

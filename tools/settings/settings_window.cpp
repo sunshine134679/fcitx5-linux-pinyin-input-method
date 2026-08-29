@@ -1,6 +1,7 @@
 #include "modernime/settings/settings_window.h"
 #include "modernime/settings/clipboard_history_model.h"
 #include "modernime/settings/data_controller.h"
+#include "modernime/settings/pages/input_page.h"
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
@@ -41,13 +42,7 @@ public:
     GtkWidget *applyButton = nullptr;
     GtkWidget *resetButton = nullptr;
     GtkWidget *defaultsButton = nullptr;
-    GtkWidget *inputEnabled = nullptr;
-    GtkWidget *defaultMode = nullptr;
-    GtkWidget *toggleKey = nullptr;
-    GtkWidget *punctuationFullWidth = nullptr;
-    GtkWidget *candidateNumber = nullptr;
-    GtkWidget *candidateArrow = nullptr;
-    GtkWidget *candidatePage = nullptr;
+    std::unique_ptr<InputPage> inputPage;
     GtkWidget *clipboardEnabled = nullptr;
     GtkWidget *clipboardTrigger = nullptr;
     GtkListStore *clipboardHistoryStore = nullptr;
@@ -104,27 +99,6 @@ void setWidgetError(GtkWidget *widget, bool invalid, const char *message) {
     }
 }
 
-void updateModelFromBasicPage(SettingsWindow::Impl *impl) {
-    auto settings = impl->model.settings();
-    settings.inputEnabled = gtk_toggle_button_get_active(
-        GTK_TOGGLE_BUTTON(impl->inputEnabled));
-    const auto mode = gtk_combo_box_get_active(
-        GTK_COMBO_BOX(impl->defaultMode));
-    settings.defaultMode = mode == 1 ? core::InputMode::English
-                                     : core::InputMode::Chinese;
-    settings.toggleKey = gtk_entry_get_text(GTK_ENTRY(impl->toggleKey));
-    settings.punctuationEnabled = gtk_toggle_button_get_active(
-        GTK_TOGGLE_BUTTON(impl->punctuationFullWidth));
-    impl->model.setSettings(std::move(settings));
-}
-
-void updateModelFromCandidatePage(SettingsWindow::Impl *impl) {
-    impl->model.setCandidateOptions(
-        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(impl->candidateNumber)),
-        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(impl->candidateArrow)),
-        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(impl->candidatePage)));
-}
-
 void updateModelFromLearningPage(SettingsWindow::Impl *impl) {
     auto settings = impl->model.settings();
     settings.learningEnabled = gtk_toggle_button_get_active(
@@ -139,28 +113,6 @@ void updateModelFromClipboardPage(SettingsWindow::Impl *impl) {
         gtk_toggle_button_get_active(
             GTK_TOGGLE_BUTTON(impl->clipboardEnabled)),
         gtk_entry_get_text(GTK_ENTRY(impl->clipboardTrigger)));
-}
-
-void updateBasicPageFromModel(SettingsWindow::Impl *impl) {
-    const auto &settings = impl->model.settings();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->inputEnabled),
-                                 settings.inputEnabled);
-    gtk_combo_box_set_active(
-        GTK_COMBO_BOX(impl->defaultMode),
-        settings.defaultMode == core::InputMode::English ? 1 : 0);
-    gtk_entry_set_text(GTK_ENTRY(impl->toggleKey), settings.toggleKey.c_str());
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->punctuationFullWidth),
-                                 settings.punctuationEnabled);
-}
-
-void updateCandidatePageFromModel(SettingsWindow::Impl *impl) {
-    const auto &settings = impl->model.settings();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->candidateNumber),
-                                 settings.numberSelection);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->candidateArrow),
-                                 settings.arrowNavigation);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->candidatePage),
-                                 settings.pageNavigation);
 }
 
 void updateLearningPageFromModel(SettingsWindow::Impl *impl) {
@@ -180,19 +132,6 @@ void updateClipboardPageFromModel(SettingsWindow::Impl *impl) {
 }
 
 void updateDependentSensitivity(SettingsWindow::Impl *impl) {
-    if (impl->inputEnabled != nullptr) {
-        const auto enabled = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->inputEnabled));
-        if (impl->defaultMode != nullptr) {
-            gtk_widget_set_sensitive(impl->defaultMode, enabled);
-        }
-        if (impl->toggleKey != nullptr) {
-            gtk_widget_set_sensitive(impl->toggleKey, enabled);
-        }
-        if (impl->punctuationFullWidth != nullptr) {
-            gtk_widget_set_sensitive(impl->punctuationFullWidth, enabled);
-        }
-    }
     if (impl->clipboardEnabled == nullptr ||
         impl->clipboardTrigger == nullptr) {
         return;
@@ -242,29 +181,11 @@ void updateActionState(SettingsWindow::Impl *impl) {
         }
         return static_cast<const char *>(nullptr);
     };
-    if (impl->toggleKey != nullptr) {
-        const auto *message = issueFor("input.toggle_key");
-        setWidgetError(impl->toggleKey, message != nullptr,
-                       message == nullptr ? "" : message);
-    }
     if (impl->clipboardTrigger != nullptr) {
         const auto *message = issueFor("clipboard.trigger");
         setWidgetError(impl->clipboardTrigger, message != nullptr,
                        message == nullptr ? "" : message);
     }
-}
-
-void onBasicChanged(GtkWidget *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    updateModelFromBasicPage(impl);
-    updateDependentSensitivity(impl);
-    updateActionState(impl);
-}
-
-void onCandidateChanged(GtkWidget *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    updateModelFromCandidatePage(impl);
-    updateActionState(impl);
 }
 
 void onLearningChanged(GtkWidget *, gpointer data) {
@@ -458,8 +379,6 @@ void onStackVisibleChildChanged(GObject *object, GParamSpec *, gpointer data) {
 }
 
 bool saveEditedSettings(SettingsWindow::Impl *impl, bool closeAfterSave) {
-    updateModelFromBasicPage(impl);
-    updateModelFromCandidatePage(impl);
     updateModelFromClipboardPage(impl);
     updateModelFromLearningPage(impl);
     const auto validation = impl->model.validation();
@@ -506,8 +425,7 @@ void onApply(GtkButton *, gpointer data) {
 void onResetEdits(GtkButton *, gpointer data) {
     auto *impl = static_cast<SettingsWindow::Impl *>(data);
     impl->model.resetEdits();
-    updateBasicPageFromModel(impl);
-    updateCandidatePageFromModel(impl);
+    impl->inputPage->refresh();
     updateClipboardPageFromModel(impl);
     updateLearningPageFromModel(impl);
     updateDependentSensitivity(impl);
@@ -527,8 +445,7 @@ void onResetDefaults(GtkButton *, gpointer data) {
         return;
     }
     impl->model.editDefaults();
-    updateBasicPageFromModel(impl);
-    updateCandidatePageFromModel(impl);
+    impl->inputPage->refresh();
     updateClipboardPageFromModel(impl);
     updateLearningPageFromModel(impl);
     updateDependentSensitivity(impl);
@@ -557,89 +474,6 @@ gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer data) {
     }
     gtk_widget_hide(impl->window);
     return TRUE;
-}
-
-GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
-    auto *page = createPageShell(
-        "基本设置", "配置 ModernIME 的启用状态、默认输入状态和切换快捷键");
-    auto *section = createSectionCard(
-        "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
-    auto *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-
-    impl->inputEnabled = gtk_check_button_new_with_label("启用 ModernIME");
-    gtk_grid_attach(GTK_GRID(grid), impl->inputEnabled, 0, 0, 2, 1);
-
-    auto *modeLabel = gtk_label_new("默认输入状态");
-    gtk_widget_set_halign(modeLabel, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), modeLabel, 0, 1, 1, 1);
-    impl->defaultMode = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(impl->defaultMode),
-                                   "中文");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(impl->defaultMode),
-                                   "英文");
-    gtk_widget_set_hexpand(impl->defaultMode, TRUE);
-    gtk_grid_attach(GTK_GRID(grid), impl->defaultMode, 1, 1, 1, 1);
-
-    auto *toggleLabel = gtk_label_new("中英文切换快捷键");
-    gtk_widget_set_halign(toggleLabel, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), toggleLabel, 0, 2, 1, 1);
-    impl->toggleKey = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(impl->toggleKey),
-                                   "例如 Ctrl+Space");
-    gtk_widget_set_hexpand(impl->toggleKey, TRUE);
-    gtk_grid_attach(GTK_GRID(grid), impl->toggleKey, 1, 2, 1, 1);
-
-    impl->punctuationFullWidth =
-        gtk_check_button_new_with_label("中文标点使用全角（，。？！等）");
-    gtk_grid_attach(GTK_GRID(grid), impl->punctuationFullWidth, 0, 3, 2, 1);
-    gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-
-    updateBasicPageFromModel(impl);
-    g_signal_connect(impl->inputEnabled, "toggled", G_CALLBACK(onBasicChanged),
-                     impl);
-    g_signal_connect(impl->defaultMode, "changed", G_CALLBACK(onBasicChanged),
-                     impl);
-    g_signal_connect(impl->toggleKey, "changed", G_CALLBACK(onBasicChanged),
-                     impl);
-    g_signal_connect(impl->punctuationFullWidth, "toggled",
-                     G_CALLBACK(onBasicChanged), impl);
-    return page;
-}
-
-GtkWidget *makeCandidatePage(SettingsWindow::Impl *impl) {
-    auto *page = createPageShell(
-        "候选设置", "配置候选选择、方向键导航和翻页方式，不改变候选栏外观尺寸");
-    auto *section = createSectionCard(
-        "候选操作", "关闭某项后，对应按键会交给其他输入行为处理。");
-
-    impl->candidateNumber = gtk_check_button_new_with_label("数字键选择候选");
-    impl->candidateArrow = gtk_check_button_new_with_label(
-        "左右方向键切换候选");
-    impl->candidatePage = gtk_check_button_new_with_label(
-        "上下方向键和 + / = 翻页");
-    gtk_widget_set_tooltip_text(impl->candidateNumber,
-                                "使用数字键选择当前候选项");
-    gtk_widget_set_tooltip_text(impl->candidateArrow,
-                                "使用左右方向键切换候选项");
-    gtk_widget_set_tooltip_text(impl->candidatePage,
-                                "使用上下方向键或 + / = 翻页");
-    gtk_box_pack_start(GTK_BOX(section), impl->candidateNumber, FALSE, FALSE,
-                       0);
-    gtk_box_pack_start(GTK_BOX(section), impl->candidateArrow, FALSE, FALSE,
-                       0);
-    gtk_box_pack_start(GTK_BOX(section), impl->candidatePage, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-    updateCandidatePageFromModel(impl);
-    g_signal_connect(impl->candidateNumber, "toggled",
-                     G_CALLBACK(onCandidateChanged), impl);
-    g_signal_connect(impl->candidateArrow, "toggled",
-                     G_CALLBACK(onCandidateChanged), impl);
-    g_signal_connect(impl->candidatePage, "toggled",
-                     G_CALLBACK(onCandidateChanged), impl);
-    return page;
 }
 
 GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
@@ -1613,12 +1447,11 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     gtk_box_pack_start(GTK_BOX(root), body, TRUE, TRUE, 0);
 
     const auto pages = legacySettingsPageDefinitions();
+    impl_->inputPage = std::make_unique<InputPage>(
+        impl_->model, [this] { updateActionState(impl_.get()); });
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         createScrollablePage(makeBasicPage(impl_.get())),
-                         pages[0].name.data(), pages[0].title.data());
-    gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         createScrollablePage(makeCandidatePage(impl_.get())),
-                         pages[1].name.data(), pages[1].title.data());
+                         createScrollablePage(impl_->inputPage->widget()),
+                         "input", "输入体验");
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          createScrollablePage(makeClipboardPage(impl_.get())),
                          pages[2].name.data(), pages[2].title.data());
@@ -1693,11 +1526,11 @@ void SettingsWindow::present() {
 }
 
 void SettingsWindow::showBasicPage() {
-    gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "basic");
+    gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "input");
 }
 
 void SettingsWindow::showCandidatePage() {
-    gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "candidate");
+    gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "input");
 }
 
 void SettingsWindow::showClipboardPage() {
