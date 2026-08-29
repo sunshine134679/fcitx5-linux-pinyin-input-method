@@ -135,6 +135,23 @@ if(MODERNIME_BUILD_SETTINGS)
     add_test(NAME modernime_data_controller
         COMMAND modernime_data_controller_tests
     )
+
+    add_executable(modernime_overview_model_tests
+        settings/overview_model_test.cpp
+        ../tools/settings/overview_model.cpp
+        ../tools/settings/data_controller.cpp
+        ../tools/settings/clipboard_history_model.cpp
+    )
+    target_include_directories(modernime_overview_model_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_overview_model_tests PRIVATE
+        modernime_core
+        modernime_pinyin
+    )
+    add_test(NAME modernime_overview_model
+        COMMAND modernime_overview_model_tests
+    )
 endif()
 
 add_executable(modernime_dictionary_prior_tests core/dictionary_prior_test.cpp)
