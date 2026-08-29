@@ -35,6 +35,11 @@ public:
     static std::shared_ptr<SharedResources> createSharedResources(
         const PinyinDataPaths &paths, const PinyinProviderOptions &options);
 
+    // Re-reads the user dictionary file into the shared resources so
+    // settings-client edits apply without restarting; false when null.
+    static bool reloadUserDictionary(
+        std::shared_ptr<SharedResources> &resources);
+
     // Constructs a provider that owns all of its resources. Convenience for
     // tests and single-instance tools.
     explicit PinyinCandidateProvider(PinyinDataPaths paths = {},

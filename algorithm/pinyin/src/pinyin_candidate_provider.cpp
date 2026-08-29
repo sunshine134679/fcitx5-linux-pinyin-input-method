@@ -394,6 +394,16 @@ public:
         }
         return learning.get();
     }
+
+    // Re-reads the user dictionary file and swaps the libime dictionary
+    // layer, so settings-client edits apply without restarting fcitx5.
+    bool reloadUserDictionary() {
+        auto updated = UserDictionary::loadText(userDictionaryPath);
+        ime->dict()->clear(1);
+        updated.addTo(*ime->dict(), 1);
+        userDictionary = std::move(updated);
+        return true;
+    }
 };
 
 std::shared_ptr<PinyinCandidateProvider::SharedResources>
@@ -437,6 +447,14 @@ PinyinCandidateProvider::createSharedResources(
             std::make_unique<core::LearningWriter>(resources->learningStorePath);
     }
     return resources;
+}
+
+bool PinyinCandidateProvider::reloadUserDictionary(
+    std::shared_ptr<SharedResources> &resources) {
+    if (resources == nullptr) {
+        return false;
+    }
+    return resources->reloadUserDictionary();
 }
 
 class PinyinCandidateProvider::Impl final {

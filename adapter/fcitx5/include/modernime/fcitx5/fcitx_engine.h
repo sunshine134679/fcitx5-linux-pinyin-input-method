@@ -115,7 +115,7 @@ public:
 private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
     void pollClipboard();
-    void pollSettingsFile();
+    void pollFileChanges();
 
     fcitx::AddonManager *manager_ = nullptr;
     fcitx::Instance *instance_ = nullptr;
@@ -123,8 +123,9 @@ private:
     bool clipboardAddonLookupAttempted_ = false;
     core::PersistentClipboardHistory clipboardHistory_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
-    std::unique_ptr<fcitx::EventSourceTime> settingsTimer_;
+    std::unique_ptr<fcitx::EventSourceTime> fileTimer_;
     std::filesystem::file_time_type settingsMtime_{};
+    std::filesystem::file_time_type userDictionaryMtime_{};
     std::uint64_t settingsGeneration_ = 0;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;

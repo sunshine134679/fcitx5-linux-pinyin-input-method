@@ -285,6 +285,11 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
         if (mtimeError) {
             settingsMtime_ = {};
         }
+        userDictionaryMtime_ = std::filesystem::last_write_time(
+            settingsPaths().userDictionary, mtimeError);
+        if (mtimeError) {
+            userDictionaryMtime_ = {};
+        }
     }
     std::string historyError;
     if (!clipboardHistory_.load(&historyError)) {
@@ -302,10 +307,10 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
                 source->setEnabled(true);
                 return true;
             });
-        settingsTimer_ = instance_->eventLoop().addTimeEvent(
+        fileTimer_ = instance_->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 2000000, 2000000,
             [this](fcitx::EventSourceTime *source, std::uint64_t) {
-                pollSettingsFile();
+                pollFileChanges();
                 source->setNextInterval(2000000);
                 source->setEnabled(true);
                 return true;
@@ -485,21 +490,35 @@ void ModernIMEInputMethod::pollClipboard() {
     }
 }
 
-void ModernIMEInputMethod::pollSettingsFile() {
+void ModernIMEInputMethod::pollFileChanges() {
     if (instance_ == nullptr) {
         return;
     }
     std::error_code error;
-    const auto path = settingsPaths().settingsFile;
-    const auto mtime = std::filesystem::last_write_time(path, error);
-    if (error || mtime == settingsMtime_) {
-        return;
+    const auto settingsFile = settingsPaths().settingsFile;
+    const auto settingsTime =
+        std::filesystem::last_write_time(settingsFile, error);
+    if (!error && settingsTime != settingsMtime_) {
+        settingsMtime_ = settingsTime;
+        settings_ = core::SettingsStore::load(settingsFile).settings;
+        keyBindings_ = keyBindings(settings_);
+        ++settingsGeneration_;
+        FCITX_INFO() << "ModernIME settings reloaded from "
+                     << settingsFile.string();
     }
-    settingsMtime_ = mtime;
-    settings_ = core::SettingsStore::load(path).settings;
-    keyBindings_ = keyBindings(settings_);
-    ++settingsGeneration_;
-    FCITX_INFO() << "ModernIME settings reloaded from " << path.string();
+    const auto dictionaryFile = settingsPaths().userDictionary;
+    const auto dictionaryTime =
+        std::filesystem::last_write_time(dictionaryFile, error);
+    if (!error && dictionaryTime != userDictionaryMtime_) {
+        userDictionaryMtime_ = dictionaryTime;
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+        if (pinyin::PinyinCandidateProvider::reloadUserDictionary(
+                resources_.pinyin)) {
+            FCITX_INFO() << "ModernIME user dictionary reloaded from "
+                         << dictionaryFile.string();
+        }
+#endif
+    }
 }
 
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
