@@ -19,6 +19,7 @@ add_executable(modernime-settings
     settings_widgets.cpp
     pages/clipboard_page.cpp
     pages/input_page.cpp
+    pages/learning_page.cpp
     pages/overview_page.cpp
     settings_window.cpp
 )

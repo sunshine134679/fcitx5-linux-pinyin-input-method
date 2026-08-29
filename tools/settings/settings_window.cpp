@@ -2,6 +2,7 @@
 #include "modernime/settings/data_controller.h"
 #include "modernime/settings/pages/clipboard_page.h"
 #include "modernime/settings/pages/input_page.h"
+#include "modernime/settings/pages/learning_page.h"
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
@@ -10,7 +11,6 @@
 
 #include <gtk/gtk.h>
 
-#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <sstream>
@@ -42,11 +42,7 @@ public:
     GtkWidget *defaultsButton = nullptr;
     std::unique_ptr<InputPage> inputPage;
     std::unique_ptr<ClipboardPage> clipboardPage;
-    GtkWidget *learningEnabled = nullptr;
-    GtkWidget *contextLearning = nullptr;
-    GtkWidget *learningPath = nullptr;
-    GtkWidget *learningCount = nullptr;
-    GtkWidget *clearLearningButton = nullptr;
+    std::unique_ptr<LearningPage> learningPage;
     GtkListStore *dictionaryStore = nullptr;
     GtkWidget *dictionaryView = nullptr;
     GtkWidget *dictionarySearch = nullptr;
@@ -75,23 +71,6 @@ void setStatus(SettingsWindow::Impl *impl, const char *message) {
 void addStyleClass(GtkWidget *widget, std::string_view className) {
     gtk_style_context_add_class(gtk_widget_get_style_context(widget),
                                 std::string(className).c_str());
-}
-
-void updateModelFromLearningPage(SettingsWindow::Impl *impl) {
-    auto settings = impl->model.settings();
-    settings.learningEnabled = gtk_toggle_button_get_active(
-        GTK_TOGGLE_BUTTON(impl->learningEnabled));
-    settings.contextLearningEnabled = gtk_toggle_button_get_active(
-        GTK_TOGGLE_BUTTON(impl->contextLearning));
-    impl->model.setSettings(std::move(settings));
-}
-
-void updateLearningPageFromModel(SettingsWindow::Impl *impl) {
-    const auto &settings = impl->model.settings();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->learningEnabled),
-                                 settings.learningEnabled);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->contextLearning),
-                                 settings.contextLearningEnabled);
 }
 
 void updateActionState(SettingsWindow::Impl *impl) {
@@ -127,12 +106,6 @@ void updateActionState(SettingsWindow::Impl *impl) {
 
 }
 
-void onLearningChanged(GtkWidget *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    updateModelFromLearningPage(impl);
-    updateActionState(impl);
-}
-
 void onStackVisibleChildChanged(GObject *object, GParamSpec *, gpointer data) {
     const auto *name = gtk_stack_get_visible_child_name(GTK_STACK(object));
     auto *impl = static_cast<SettingsWindow::Impl *>(data);
@@ -143,7 +116,6 @@ void onStackVisibleChildChanged(GObject *object, GParamSpec *, gpointer data) {
 }
 
 bool saveEditedSettings(SettingsWindow::Impl *impl, bool closeAfterSave) {
-    updateModelFromLearningPage(impl);
     const auto validation = impl->model.validation();
     if (!validation.valid) {
         const auto message = validation.issues.empty()
@@ -190,7 +162,7 @@ void onResetEdits(GtkButton *, gpointer data) {
     impl->model.resetEdits();
     impl->inputPage->refresh();
     impl->clipboardPage->refreshSettings();
-    updateLearningPageFromModel(impl);
+    impl->learningPage->refreshSettings();
     updateActionState(impl);
     setStatus(impl, "已恢复未保存的修改");
 }
@@ -209,7 +181,7 @@ void onResetDefaults(GtkButton *, gpointer data) {
     impl->model.editDefaults();
     impl->inputPage->refresh();
     impl->clipboardPage->refreshSettings();
-    updateLearningPageFromModel(impl);
+    impl->learningPage->refreshSettings();
     updateActionState(impl);
     setStatus(impl, "ModernIME 设置已恢复默认值，请保存后生效");
 }
@@ -235,123 +207,6 @@ gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer data) {
     }
     gtk_widget_hide(impl->window);
     return TRUE;
-}
-
-std::filesystem::path learningBackupPath(const std::filesystem::path &path) {
-    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::system_clock::now().time_since_epoch())
-                         .count();
-    auto filename = path.filename().string();
-    if (filename.empty()) {
-        filename = "learning.sqlite3";
-    }
-    filename += ".backup-" + std::to_string(now) + ".sqlite3";
-    return path.parent_path() / filename;
-}
-
-void refreshLearningData(SettingsWindow::Impl *impl, bool notify);
-
-void onClearLearning(GtkButton *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    auto *dialog = gtk_message_dialog_new(
-        GTK_WINDOW(impl->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
-        GTK_BUTTONS_YES_NO,
-        "清空后将无法恢复当前学习排序，是否先备份并清空？");
-    const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
-    if (response != GTK_RESPONSE_YES) {
-        return;
-    }
-
-    gtk_widget_set_sensitive(impl->clearLearningButton, FALSE);
-    const auto backup = learningBackupPath(impl->paths_.learningStore);
-    std::string error;
-    if (DataController::backupAndClearLearning(impl->paths_.learningStore,
-                                                backup, &error)) {
-        refreshLearningData(impl, false);
-        setStatus(impl, ("学习记录已清空，备份位于 " + backup.string()).c_str());
-    } else {
-        setStatus(impl, error.c_str());
-    }
-    gtk_widget_set_sensitive(impl->clearLearningButton, TRUE);
-}
-
-void refreshLearningData(SettingsWindow::Impl *impl, bool notify) {
-    if (impl->learningCount == nullptr) {
-        return;
-    }
-    std::string error;
-    const auto count = DataController::learningEntryCount(
-        impl->paths_.learningStore, &error);
-    if (!error.empty()) {
-        gtk_label_set_text(GTK_LABEL(impl->learningCount),
-                           "当前学习记录：读取失败");
-        gtk_widget_set_sensitive(impl->clearLearningButton, FALSE);
-        if (notify) {
-            setStatus(impl, error.c_str());
-        }
-        return;
-    }
-    gtk_label_set_text(
-        GTK_LABEL(impl->learningCount),
-        ("当前学习记录：" + std::to_string(count) + " 条").c_str());
-    gtk_widget_set_sensitive(impl->clearLearningButton, count != 0);
-    if (notify) {
-        setStatus(impl, "学习记录统计已刷新");
-    }
-}
-
-GtkWidget *makeLearningPage(SettingsWindow::Impl *impl) {
-    auto *page = createPageShell(
-        "智能学习", "让 ModernIME 记住你的候选选择，并结合上下文优化排序");
-    auto *learningSection = createSectionCard(
-        "学习行为", "关闭后不会删除已经保存的学习数据。");
-
-    impl->learningEnabled = gtk_check_button_new_with_label("记忆用户候选选择");
-    impl->contextLearning = gtk_check_button_new_with_label(
-        "根据光标前后文调整候选排序");
-    gtk_widget_set_tooltip_text(impl->learningEnabled,
-                                "记录你主动选择的候选词");
-    gtk_widget_set_tooltip_text(impl->contextLearning,
-                                "根据输入前后的文字调整候选顺序");
-    gtk_box_pack_start(GTK_BOX(learningSection), impl->learningEnabled, FALSE,
-                       FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(learningSection), impl->contextLearning, FALSE,
-                       FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(page), learningSection, FALSE, FALSE, 0);
-    updateLearningPageFromModel(impl);
-    g_signal_connect(impl->learningEnabled, "toggled",
-                     G_CALLBACK(onLearningChanged), impl);
-    g_signal_connect(impl->contextLearning, "toggled",
-                     G_CALLBACK(onLearningChanged), impl);
-
-    const auto pathText = "学习数据库：" + impl->paths_.learningStore.string();
-    impl->learningPath = gtk_label_new(pathText.c_str());
-    addStyleClass(impl->learningPath, "modernime-path");
-    gtk_widget_set_halign(impl->learningPath, GTK_ALIGN_START);
-    gtk_label_set_selectable(GTK_LABEL(impl->learningPath), TRUE);
-    gtk_label_set_line_wrap(GTK_LABEL(impl->learningPath), TRUE);
-    auto *dataSection = createSectionCard(
-        "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
-    impl->learningCount = gtk_label_new("正在读取学习记录…");
-    addStyleClass(impl->learningCount, "modernime-description");
-    gtk_widget_set_halign(impl->learningCount, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(dataSection), impl->learningCount, FALSE, FALSE,
-                       0);
-    gtk_box_pack_start(GTK_BOX(dataSection), impl->learningPath, FALSE, FALSE,
-                       0);
-
-    impl->clearLearningButton = gtk_button_new_with_label("清空学习记录");
-    gtk_widget_set_halign(impl->clearLearningButton, GTK_ALIGN_START);
-    gtk_widget_set_tooltip_text(impl->clearLearningButton,
-                                "备份后清空 ModernIME 的学习排序");
-    gtk_box_pack_start(GTK_BOX(dataSection), impl->clearLearningButton, FALSE,
-                       FALSE, 0);
-    g_signal_connect(impl->clearLearningButton, "clicked",
-                     G_CALLBACK(onClearLearning), impl);
-    gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
-    refreshLearningData(impl, false);
-    return page;
 }
 
 std::string foldAscii(std::string_view value) {
@@ -1083,6 +938,12 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
         [this](std::string message) {
             setStatus(impl_.get(), message.c_str());
         });
+    impl_->learningPage = std::make_unique<LearningPage>(
+        impl_->model, impl_->paths_.learningStore,
+        [this] { updateActionState(impl_.get()); },
+        [this](std::string message) {
+            setStatus(impl_.get(), message.c_str());
+        });
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          createScrollablePage(impl_->inputPage->widget()),
                          "input", "输入体验");
@@ -1090,7 +951,7 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
                          createScrollablePage(impl_->clipboardPage->widget()),
                          pages[2].name.data(), pages[2].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         createScrollablePage(makeLearningPage(impl_.get())),
+                         createScrollablePage(impl_->learningPage->widget()),
                          pages[3].name.data(), pages[3].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          createScrollablePage(makeDictionaryPage(impl_.get())),
@@ -1173,7 +1034,7 @@ void SettingsWindow::showClipboardPage() {
 
 void SettingsWindow::showLearningPage() {
     gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "learning");
-    refreshLearningData(impl_.get(), false);
+    impl_->learningPage->refresh(false);
 }
 
 void SettingsWindow::showDictionaryPage() {
