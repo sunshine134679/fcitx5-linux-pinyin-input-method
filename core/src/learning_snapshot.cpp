@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <unordered_map>
 #include <utility>
 
@@ -122,9 +123,13 @@ std::string normalizePinyin(std::string_view pinyin) {
     return normalized;
 }
 
-LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries)
-    : entries_(std::move(entries)) {
+LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
+                                   std::size_t totalEntryLimit)
+    : entries_(std::move(entries)),
+      totalEntryLimit_(totalEntryLimit == 0 ? kMaxLearningEntries
+                                            : totalEntryLimit) {
     pruneContextVariants();
+    pruneTotalEntries();
 }
 
 const LearningEntry *LearningSnapshot::entry(
@@ -288,6 +293,7 @@ void LearningSnapshot::recordSelection(
     candidate->frequency = saturatingIncrement(candidate->frequency);
     candidate->lastSelectedMs = nowMs;
     pruneContextVariants();
+    pruneTotalEntries();
 }
 
 void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,
@@ -295,6 +301,7 @@ void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,
     auto *candidate = mutableEntry(phrase, pinyin, {}, {});
     candidate->negativeFeedback =
         saturatingIncrement(candidate->negativeFeedback);
+    pruneTotalEntries();
 }
 
 void LearningSnapshot::recordSuppression(std::string_view phrase,
@@ -303,6 +310,7 @@ void LearningSnapshot::recordSuppression(std::string_view phrase,
     candidate->suppressed = true;
     candidate->negativeFeedback =
         saturatingIncrement(candidate->negativeFeedback);
+    pruneTotalEntries();
 }
 
 void LearningSnapshot::pruneContextVariants() {
@@ -349,6 +357,46 @@ void LearningSnapshot::pruneContextVariants() {
 
     std::vector<LearningEntry> retained;
     retained.reserve(entries_.size());
+    for (std::size_t index = 0; index < entries_.size(); ++index) {
+        if (keep[index]) {
+            retained.push_back(std::move(entries_[index]));
+        }
+    }
+    entries_ = std::move(retained);
+}
+
+void LearningSnapshot::pruneTotalEntries() {
+    if (entries_.size() <= totalEntryLimit_) {
+        return;
+    }
+    std::vector<std::size_t> indexes(entries_.size());
+    std::iota(indexes.begin(), indexes.end(), std::size_t{0});
+    // Same retention priority as the SQLite-side prune: keep unsuppressed,
+    // recently selected and frequently selected entries.
+    const auto keepPriority = [this](std::size_t left, std::size_t right) {
+        const auto &a = entries_[left];
+        const auto &b = entries_[right];
+        if (a.suppressed != b.suppressed) {
+            return a.suppressed < b.suppressed;
+        }
+        if (a.lastSelectedMs != b.lastSelectedMs) {
+            return a.lastSelectedMs > b.lastSelectedMs;
+        }
+        if (a.frequency != b.frequency) {
+            return a.frequency > b.frequency;
+        }
+        return left < right;
+    };
+    std::partial_sort(indexes.begin(),
+                      indexes.begin() + static_cast<std::ptrdiff_t>(
+                                            totalEntryLimit_),
+                      indexes.end(), keepPriority);
+    std::vector<bool> keep(entries_.size(), false);
+    for (std::size_t position = 0; position < totalEntryLimit_; ++position) {
+        keep[indexes[position]] = true;
+    }
+    std::vector<LearningEntry> retained;
+    retained.reserve(totalEntryLimit_);
     for (std::size_t index = 0; index < entries_.size(); ++index) {
         if (keep[index]) {
             retained.push_back(std::move(entries_[index]));

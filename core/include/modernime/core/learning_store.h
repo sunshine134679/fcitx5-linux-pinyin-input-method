@@ -34,6 +34,10 @@ public:
 
     bool open();
     void close();
+    // Overrides the retained-entry cap; zero restores the default.
+    void setTotalEntryLimit(std::size_t limit) {
+        totalEntryLimit_ = limit == 0 ? kMaxLearningEntries : limit;
+    }
     bool recordSelection(std::string_view phrase, std::string_view pinyin,
                          std::string_view contextBefore,
                          std::string_view contextAfter, std::int64_t nowMs);
@@ -50,9 +54,18 @@ private:
     bool execute(const char *sql) const;
     bool ensureSuppressionColumn() const;
     bool pruneContextVariants() const;
+    bool pruneTotalEntries() const;
+    bool applySelection(std::string_view phrase, std::string_view pinyin,
+                        std::string_view contextBefore,
+                        std::string_view contextAfter, std::int64_t nowMs) const;
+    bool applyNegativeFeedback(std::string_view phrase,
+                               std::string_view pinyin) const;
+    bool applySuppression(std::string_view phrase,
+                          std::string_view pinyin) const;
 
     std::filesystem::path path_;
     sqlite3 *db_ = nullptr;
+    std::size_t totalEntryLimit_ = kMaxLearningEntries;
 };
 
 } // namespace modernime::core

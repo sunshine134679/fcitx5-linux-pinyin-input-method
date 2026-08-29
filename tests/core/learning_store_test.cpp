@@ -395,6 +395,80 @@ void testLearningBatchPersistsAsOneLogicalUpdate() {
     std::filesystem::remove(path, error);
 }
 
+void testTotalEntryLimitEvictsSuppressedThenOldest() {
+    const auto path = testPath("capped-learning.sqlite3");
+    modernime::core::LearningStore store(path);
+    store.setTotalEntryLimit(4);
+    assertTrue(store.open(), "capped store opens");
+    assertTrue(store.recordSelection("旧甲", "jijia", {}, {}, 1000),
+               "first old entry stores");
+    assertTrue(store.recordSelection("旧乙", "jiyi", {}, {}, 1100),
+               "second old entry stores");
+    assertTrue(store.recordSuppression("旧乙", "jiyi"),
+               "second old entry is suppressed");
+    assertTrue(store.recordSelection("新甲", "xinjia", {}, {}, 3000),
+               "first recent entry stores");
+    assertTrue(store.recordSelection("新乙", "xinyi", {}, {}, 3100),
+               "second recent entry stores");
+    assertTrue(store.snapshot()->entries().size() == 4,
+               "the store stays at the total entry limit");
+
+    assertTrue(store.recordSelection("新丙", "xinbing", {}, {}, 3200),
+               "third recent entry stores");
+    const auto afterSuppressedEviction = store.snapshot();
+    assertTrue(afterSuppressedEviction->entries().size() == 4,
+               "the limit holds when over capacity");
+    assertTrue(afterSuppressedEviction->entry("旧乙", "jiyi", {}, {}) == nullptr,
+               "the suppressed entry is evicted first");
+    assertTrue(afterSuppressedEviction->entry("旧甲", "jijia", {}, {}) != nullptr,
+               "the older unsuppressed entry survives the suppressed one");
+
+    assertTrue(store.recordSelection("新丁", "xinding", {}, {}, 3300),
+               "fourth recent entry stores");
+    const auto afterOldestEviction = store.snapshot();
+    assertTrue(afterOldestEviction->entries().size() == 4,
+               "the limit still holds");
+    assertTrue(afterOldestEviction->entry("旧甲", "jijia", {}, {}) == nullptr,
+               "the oldest unsuppressed entry is evicted next");
+    assertTrue(afterOldestEviction->entry("新甲", "xinjia", {}, {}) != nullptr &&
+                   afterOldestEviction->entry("新乙", "xinyi", {}, {}) != nullptr &&
+                   afterOldestEviction->entry("新丙", "xinbing", {}, {}) != nullptr &&
+                   afterOldestEviction->entry("新丁", "xinding", {}, {}) != nullptr,
+               "recent entries are retained");
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
+void testSnapshotAppliesTotalEntryLimit() {
+    std::vector<modernime::core::LearningEntry> entries;
+    for (int index = 0; index < 6; ++index) {
+        entries.push_back({"词" + std::to_string(index), "ci", {}, {}, 1,
+                           1000 + index, 0});
+    }
+    const modernime::core::LearningSnapshot snapshot(entries, 3);
+    assertTrue(snapshot.entries().size() == 3,
+               "the snapshot constructor applies the total limit");
+    assertTrue(snapshot.entry("词5", "ci", {}, {}) != nullptr,
+               "the most recent entries are retained");
+    assertTrue(snapshot.entry("词0", "ci", {}, {}) == nullptr,
+               "the oldest entries are evicted");
+
+    std::vector<modernime::core::LearningEntry> seed{
+        {"甲", "jia", {}, {}, 1, 1000, 0},
+        {"乙", "yi", {}, {}, 1, 2000, 0}};
+    modernime::core::LearningSnapshot mutating(seed, 2);
+    mutating.recordSelection("丙", "bing", {}, {}, 5000);
+    assertTrue(mutating.entries().size() == 2,
+               "mutations respect the total limit");
+    assertTrue(mutating.entry("丙", "bing", {}, {}) != nullptr,
+               "the newly selected entry is retained");
+    assertTrue(mutating.entry("甲", "jia", {}, {}) == nullptr,
+               "the oldest entry is evicted by the mutation");
+}
+
 } // namespace
 
 int main() {
@@ -418,5 +492,7 @@ int main() {
     testWriterRejectsMalformedStoreAtStartup();
     testWriterFlushesSelectionBeforeReopen();
     testLearningBatchPersistsAsOneLogicalUpdate();
+    testTotalEntryLimitEvictsSuppressedThenOldest();
+    testSnapshotAppliesTotalEntryLimit();
     return EXIT_SUCCESS;
 }

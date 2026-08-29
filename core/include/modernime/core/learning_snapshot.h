@@ -1,11 +1,17 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace modernime::core {
+
+// Upper bound on stored learning entries. Both the SQLite store and the
+// in-memory snapshot evict beyond this limit: suppressed entries first, then
+// the oldest and least frequently selected.
+inline constexpr std::size_t kMaxLearningEntries = 20000;
 
 struct LearningEntry final {
     std::string phrase;
@@ -23,7 +29,9 @@ std::string normalizePinyin(std::string_view pinyin);
 class LearningSnapshot final {
 public:
     LearningSnapshot() = default;
-    explicit LearningSnapshot(std::vector<LearningEntry> entries);
+    explicit LearningSnapshot(
+        std::vector<LearningEntry> entries,
+        std::size_t totalEntryLimit = kMaxLearningEntries);
 
     const LearningEntry *entry(std::string_view phrase,
                                std::string_view pinyin,
@@ -51,12 +59,14 @@ public:
 
 private:
     void pruneContextVariants();
+    void pruneTotalEntries();
     LearningEntry *mutableEntry(std::string_view phrase,
                                 std::string_view pinyin,
                                 std::string_view contextBefore,
                                 std::string_view contextAfter);
 
     std::vector<LearningEntry> entries_;
+    std::size_t totalEntryLimit_ = kMaxLearningEntries;
 };
 
 } // namespace modernime::core

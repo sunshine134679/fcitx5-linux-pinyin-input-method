@@ -163,10 +163,10 @@ bool LearningStore::clear() {
     return true;
 }
 
-bool LearningStore::recordSelection(
+bool LearningStore::applySelection(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
-    std::int64_t nowMs) {
+    std::int64_t nowMs) const {
     if (db_ == nullptr) {
         return false;
     }
@@ -207,11 +207,21 @@ bool LearningStore::recordSelection(
                        sqlite3_bind_int64(statement, 5, nowMs) == SQLITE_OK;
     const bool success = bound && sqlite3_step(statement) == SQLITE_DONE;
     sqlite3_finalize(statement);
-    return success && pruneContextVariants();
+    return success;
 }
 
-bool LearningStore::recordNegativeFeedback(std::string_view phrase,
-                                           std::string_view pinyin) {
+bool LearningStore::recordSelection(
+    std::string_view phrase, std::string_view pinyin,
+    std::string_view contextBefore, std::string_view contextAfter,
+    std::int64_t nowMs) {
+    if (!applySelection(phrase, pinyin, contextBefore, contextAfter, nowMs)) {
+        return false;
+    }
+    return pruneContextVariants() && pruneTotalEntries();
+}
+
+bool LearningStore::applyNegativeFeedback(std::string_view phrase,
+                                          std::string_view pinyin) const {
     if (db_ == nullptr) {
         return false;
     }
@@ -236,8 +246,16 @@ bool LearningStore::recordNegativeFeedback(std::string_view phrase,
     return success;
 }
 
-bool LearningStore::recordSuppression(std::string_view phrase,
-                                      std::string_view pinyin) {
+bool LearningStore::recordNegativeFeedback(std::string_view phrase,
+                                           std::string_view pinyin) {
+    if (!applyNegativeFeedback(phrase, pinyin)) {
+        return false;
+    }
+    return pruneTotalEntries();
+}
+
+bool LearningStore::applySuppression(std::string_view phrase,
+                                     std::string_view pinyin) const {
     if (db_ == nullptr) {
         return false;
     }
@@ -262,6 +280,14 @@ bool LearningStore::recordSuppression(std::string_view phrase,
     return success;
 }
 
+bool LearningStore::recordSuppression(std::string_view phrase,
+                                      std::string_view pinyin) {
+    if (!applySuppression(phrase, pinyin)) {
+        return false;
+    }
+    return pruneTotalEntries();
+}
+
 bool LearningStore::pruneContextVariants() const {
     constexpr const char *sql =
         "DELETE FROM learning_entries WHERE rowid IN ("
@@ -273,6 +299,31 @@ bool LearningStore::pruneContextVariants() const {
         "context_before <> '' OR context_after <> ''"
         ") WHERE variant_rank > 8);";
     return execute(sql);
+}
+
+bool LearningStore::pruneTotalEntries() const {
+    if (db_ == nullptr) {
+        return false;
+    }
+    constexpr const char *sql =
+        "DELETE FROM learning_entries WHERE rowid IN ("
+        "SELECT rowid FROM ("
+        "SELECT rowid, ROW_NUMBER() OVER ("
+        "ORDER BY suppressed ASC, last_selected_ms DESC, frequency DESC, "
+        "rowid ASC"
+        ") AS keep_rank FROM learning_entries"
+        ") WHERE keep_rank > ?);";
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    const bool bound = sqlite3_bind_int64(
+                           statement, 1,
+                           static_cast<sqlite3_int64>(totalEntryLimit_)) ==
+                       SQLITE_OK;
+    const bool success = bound && sqlite3_step(statement) == SQLITE_DONE;
+    sqlite3_finalize(statement);
+    return success;
 }
 
 bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
@@ -289,15 +340,15 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
         bool success = false;
         switch (event.kind) {
         case LearningEvent::Kind::Selection:
-            success = recordSelection(event.phrase, event.pinyin,
-                                      event.contextBefore, event.contextAfter,
-                                      event.nowMs);
+            success = applySelection(event.phrase, event.pinyin,
+                                     event.contextBefore, event.contextAfter,
+                                     event.nowMs);
             break;
         case LearningEvent::Kind::NegativeFeedback:
-            success = recordNegativeFeedback(event.phrase, event.pinyin);
+            success = applyNegativeFeedback(event.phrase, event.pinyin);
             break;
         case LearningEvent::Kind::Suppression:
-            success = recordSuppression(event.phrase, event.pinyin);
+            success = applySuppression(event.phrase, event.pinyin);
             break;
         }
         if (!success) {
@@ -309,7 +360,8 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
         execute("ROLLBACK;");
         return false;
     }
-    return true;
+    // Housekeeping runs once per batch instead of once per event.
+    return pruneContextVariants() && pruneTotalEntries();
 }
 
 std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
