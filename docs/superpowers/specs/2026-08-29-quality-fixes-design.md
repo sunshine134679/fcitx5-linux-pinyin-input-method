@@ -57,7 +57,7 @@
 
 #### 7. 词典/学习资源引擎级共享（algorithm/pinyin、adapter/fcitx5）
 
-- 新增 `PinyinSharedResources`（algorithm/pinyin）：持有 `PinyinIME`（连同其拥有的系统/用户/扩展词典与语言模型）、`LearningWriter`、`UserDictionary` 及词典路径；由工厂按 `PinyinDataPaths` 构建一次。
+- 新增 `PinyinCandidateProvider::SharedResources`（algorithm/pinyin，嵌套类，定义保留在源文件中继续隔离 libime）：持有 `PinyinIME`（连同其拥有的系统/用户/扩展词典与语言模型）、`LearningWriter`、`UserDictionary` 及词典路径；由静态工厂 `createSharedResources` 按 `PinyinDataPaths` 构建一次。
 - `PinyinCandidateProvider` 新增接受 `std::shared_ptr<PinyinSharedResources>` 的构造方式；`Impl` 只保留每上下文私有状态（`PinyinContext`、`suppressedLearned_`、页面缓存、上下文文本）。原"独立构造全部资源"的构造函数保留，供测试与单进程工具使用。
 - `adapter/fcitx5`：`ModernIMEInputMethod` 构造时创建一份共享资源，`FcitxInputContextState` 的每个 IC 从共享资源构造 Provider；provider 持 `shared_ptr`，保证插件析构与 IC 属性析构顺序无关紧要。
 - 学习线程从每窗口一个降为全局一个；词典内存从每窗口一份降为全局一份。
