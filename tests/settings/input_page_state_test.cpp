@@ -11,7 +11,14 @@ int main() {
     std::filesystem::remove(path, error);
 
     modernime::settings::SettingsWindowModel model(path);
+    assert(!modernime::settings::deriveInputPageState(model).canApply);
+
     auto settings = model.settings();
+    settings.inputEnabled = false;
+    model.setSettings(settings);
+    assert(modernime::settings::deriveInputPageState(model).canApply);
+
+    settings = model.settings();
     settings.inputEnabled = false;
     settings.toggleKey = "Ctrl Space";
     model.setSettings(settings);

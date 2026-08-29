@@ -24,7 +24,7 @@ inline InputPageState deriveInputPageState(const SettingsWindowModel &model) {
     InputPageState state;
     state.dependentControlsSensitive = model.settings().inputEnabled;
     const auto validation = model.validation();
-    state.canApply = validation.valid;
+    state.canApply = model.dirty() && validation.valid;
     for (const auto &issue : validation.issues) {
         if (issue.key == "input.toggle_key") {
             state.toggleKeyValid = false;
