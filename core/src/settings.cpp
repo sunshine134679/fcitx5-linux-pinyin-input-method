@@ -154,6 +154,8 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
             parsed = parseBoolean(value, result.settings.arrowNavigation);
         } else if (key == "candidate.page_navigation") {
             parsed = parseBoolean(value, result.settings.pageNavigation);
+        } else if (key == "punctuation.enabled") {
+            parsed = parseBoolean(value, result.settings.punctuationEnabled);
         } else if (key == "learning.enabled") {
             parsed = parseBoolean(value, result.settings.learningEnabled);
         } else if (key == "learning.context_enabled") {
@@ -228,6 +230,8 @@ bool SettingsStore::save(const std::filesystem::path &path,
            << (settings.arrowNavigation ? "true" : "false") << '\n'
            << "candidate.page_navigation="
            << (settings.pageNavigation ? "true" : "false") << '\n'
+           << "punctuation.enabled="
+           << (settings.punctuationEnabled ? "true" : "false") << '\n'
            << "learning.enabled="
            << (settings.learningEnabled ? "true" : "false") << '\n'
            << "learning.context_enabled="

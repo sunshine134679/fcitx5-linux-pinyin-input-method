@@ -3,6 +3,7 @@ add_library(modernime_core STATIC
     src/input_state.cpp
     src/candidate_ranker.cpp
     src/pinyin_match.cpp
+    src/punctuation.cpp
     src/learning_snapshot.cpp
     src/learning_store.cpp
     src/learning_writer.cpp

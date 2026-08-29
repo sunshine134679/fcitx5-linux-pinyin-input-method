@@ -84,6 +84,7 @@ struct ControllerOptions final {
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;
+    bool punctuationEnabled = true;
 };
 
 struct KeyBindings final {
@@ -120,6 +121,7 @@ public:
     std::size_t pageSize() const;
 
     void setClipboardEntries(std::vector<std::string> entries);
+    void setOptions(ControllerOptions options) { options_ = options; }
     bool clipboardMode() const { return clipboardMode_; }
 
     bool active() const { return active_; }
@@ -129,6 +131,7 @@ private:
     void refreshPage();
     bool commitCurrent();
     bool commitRawPreedit(std::string_view suffix = {});
+    bool commitPunctuation(char ascii);
     bool moveCursor(std::ptrdiff_t delta);
     bool movePage(std::ptrdiff_t delta);
     bool openFeatureMenu(char prefix, char digit);
@@ -143,6 +146,8 @@ private:
     ControllerOptions options_;
     bool active_ = true;
     bool clipboardMode_ = false;
+    bool doubleQuoteOpen_ = false;
+    bool singleQuoteOpen_ = false;
     std::vector<std::string> clipboardEntries_;
 };
 

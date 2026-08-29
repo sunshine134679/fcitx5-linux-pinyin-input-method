@@ -1,11 +1,13 @@
 #include "modernime/fcitx5/engine.h"
 
 #include "modernime/core/pinyin_match.h"
+#include "modernime/core/punctuation.h"
 
 #include <array>
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -14,6 +16,25 @@ namespace {
 
 const std::array<std::string_view, 9> sampleCandidates{
     "还", "海", "害", "嗨", "咳", "亥", "孩", "骇", "氦"};
+
+bool endsWithAsciiAlnum(std::string_view text) {
+    if (text.empty()) {
+        return false;
+    }
+    const auto last = static_cast<unsigned char>(text.back());
+    return (last >= '0' && last <= '9') ||
+           (last >= 'a' && last <= 'z') ||
+           (last >= 'A' && last <= 'Z');
+}
+
+bool isAsciiText(std::string_view text) {
+    for (const char character : text) {
+        if (static_cast<unsigned char>(character) >= 0x80) {
+            return false;
+        }
+    }
+    return true;
+}
 
 } // namespace
 
@@ -171,6 +192,10 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::Space:
         return page_.items.empty() ? commitRawPreedit(" ") : commitCurrent();
     case KeyKind::Punctuation:
+        if (options_.punctuationEnabled &&
+            commitPunctuation(event.character)) {
+            return true;
+        }
         if (page_.preedit.empty()) {
             return false;
         }
@@ -314,6 +339,57 @@ bool ModernIMEController::movePage(std::ptrdiff_t delta) {
     return true;
 }
 
+bool ModernIMEController::commitPunctuation(char ascii) {
+    // Punctuation inside an ASCII run stays half-width so inputs such as
+    // "3.14", "1,000" and English fragments survive. During composition the
+    // pending candidate decides: committing Chinese goes with full-width,
+    // committing a raw ASCII fragment goes half-width.
+    bool afterAscii = endsWithAsciiAlnum(contextBefore_);
+    if (!page_.preedit.empty()) {
+        std::string_view pending = page_.preedit;
+        if (!page_.items.empty()) {
+            const auto index = std::min(page_.cursor, page_.items.size() - 1);
+            pending = page_.items[index].text;
+        }
+        afterAscii = afterAscii || isAsciiText(pending);
+    }
+    std::optional<std::string> converted;
+    if (!afterAscii) {
+        switch (ascii) {
+        case '"':
+            converted = std::string(doubleQuoteOpen_
+                                        ? core::kRightDoubleQuote
+                                        : core::kLeftDoubleQuote);
+            break;
+        case '\'':
+            converted = std::string(singleQuoteOpen_
+                                        ? core::kRightSingleQuote
+                                        : core::kLeftSingleQuote);
+            break;
+        default:
+            converted = core::fullWidthPunctuation(ascii);
+            break;
+        }
+    }
+    if (!converted.has_value()) {
+        return false;
+    }
+    if (!page_.preedit.empty()) {
+        const bool committed = !page_.items.empty() ? commitCurrent()
+                                                    : commitRawPreedit();
+        if (!committed) {
+            return false;
+        }
+    }
+    host_.commit(*converted);
+    if (ascii == '"') {
+        doubleQuoteOpen_ = !doubleQuoteOpen_;
+    } else if (ascii == '\'') {
+        singleQuoteOpen_ = !singleQuoteOpen_;
+    }
+    return true;
+}
+
 bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
     if (page_.preedit.empty()) {
         return false;
@@ -331,6 +407,8 @@ void ModernIMEController::reset() {
     contextBefore_.clear();
     contextAfter_.clear();
     clipboardMode_ = false;
+    doubleQuoteOpen_ = false;
+    singleQuoteOpen_ = false;
     clipboardEntries_.clear();
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);

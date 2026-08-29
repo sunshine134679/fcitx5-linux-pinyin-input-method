@@ -343,8 +343,8 @@ int main() {
     assertTrue(host.commits.size() >= 2 &&
                    host.commits[host.commits.size() - 2] == "还",
                "punctuation keeps the selected candidate");
-    assertTrue(host.commits.back() == ",",
-               "punctuation follows the selected candidate");
+    assertTrue(host.commits.back() == "，",
+               "punctuation after a Chinese candidate is full-width");
 
     EmptyCandidateProvider emptyProvider;
     RecordingHost emptyHost;
@@ -527,5 +527,68 @@ int main() {
                "digit selects from the current page");
     assertTrue(pagedHost.commits.back() == "候选10",
                "page digit selects the first item on the current page");
+
+    RecordingHost punctuationHost;
+    modernime::fcitx5::ModernIMEController punctuationController(
+        punctuationHost);
+    assertTrue(punctuationController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, ',', 0}),
+               "Chinese mode intercepts an empty-preedit punctuation key");
+    assertTrue(punctuationHost.commits.back() == "，",
+               "comma commits full-width in Chinese mode");
+    assertTrue(punctuationController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '@', 0}) == false,
+               "characters without a mapping pass through unchanged");
+
+    punctuationController.setContext("3", "");
+    assertTrue(punctuationController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '.', 0}) == false,
+               "a period after ASCII digits stays half-width");
+    punctuationController.setContext("你好", "");
+    assertTrue(punctuationController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '.', 0}),
+               "a period after Chinese text is intercepted");
+    assertTrue(punctuationHost.commits.back() == "。",
+               "period commits full-width after Chinese text");
+
+    assertTrue(punctuationController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}),
+               "an opening quote is intercepted");
+    assertTrue(punctuationHost.commits.back() == "“",
+               "the first double quote commits the left form");
+    assertTrue(punctuationController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}),
+               "a closing quote is intercepted");
+    assertTrue(punctuationHost.commits.back() == "”",
+               "the second double quote commits the right form");
+    punctuationController.reset();
+    assertTrue(punctuationController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   punctuationHost.commits.back() == "“",
+               "reset restores the quote pairing state");
+
+    modernime::fcitx5::ModernIMEController legacyController(punctuationHost);
+    modernime::fcitx5::ControllerOptions legacyOptions;
+    legacyOptions.punctuationEnabled = false;
+    legacyController.setOptions(legacyOptions);
+    assertTrue(legacyController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, ',', 0}) == false,
+               "disabling punctuation conversion restores the legacy path");
+
+    FakeProvider composingProvider;
+    RecordingHost composingHost;
+    modernime::fcitx5::ModernIMEController composingController(
+        composingHost, &composingProvider);
+    type(composingController, "nihao");
+    assertTrue(!composingController.page().items.empty(),
+               "composition has candidates before punctuation");
+    assertTrue(composingController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '!', 0}),
+               "punctuation during composition is handled");
+    assertTrue(composingHost.commits.size() >= 2 &&
+                   composingHost.commits[composingHost.commits.size() - 2] ==
+                       "你好" &&
+                   composingHost.commits.back() == "！",
+               "composition commits the candidate then the full-width mark");
     return EXIT_SUCCESS;
 }

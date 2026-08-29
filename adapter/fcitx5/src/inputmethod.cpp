@@ -104,7 +104,8 @@ core::ModernIMESettings loadSettings() {
 
 ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
     return {settings.inputEnabled, settings.numberSelection,
-            settings.arrowNavigation, settings.pageNavigation};
+            settings.arrowNavigation, settings.pageNavigation,
+            settings.punctuationEnabled};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {

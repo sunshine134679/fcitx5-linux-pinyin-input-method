@@ -43,6 +43,7 @@ public:
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
     GtkWidget *toggleKey = nullptr;
+    GtkWidget *punctuationFullWidth = nullptr;
     GtkWidget *candidateNumber = nullptr;
     GtkWidget *candidateArrow = nullptr;
     GtkWidget *candidatePage = nullptr;
@@ -245,6 +246,8 @@ void updateModelFromBasicPage(SettingsWindow::Impl *impl) {
     settings.defaultMode = mode == 1 ? core::InputMode::English
                                      : core::InputMode::Chinese;
     settings.toggleKey = gtk_entry_get_text(GTK_ENTRY(impl->toggleKey));
+    settings.punctuationEnabled = gtk_toggle_button_get_active(
+        GTK_TOGGLE_BUTTON(impl->punctuationFullWidth));
     impl->model.setSettings(std::move(settings));
 }
 
@@ -279,6 +282,8 @@ void updateBasicPageFromModel(SettingsWindow::Impl *impl) {
         GTK_COMBO_BOX(impl->defaultMode),
         settings.defaultMode == core::InputMode::English ? 1 : 0);
     gtk_entry_set_text(GTK_ENTRY(impl->toggleKey), settings.toggleKey.c_str());
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->punctuationFullWidth),
+                                 settings.punctuationEnabled);
 }
 
 void updateCandidatePageFromModel(SettingsWindow::Impl *impl) {
@@ -316,6 +321,9 @@ void updateDependentSensitivity(SettingsWindow::Impl *impl) {
         }
         if (impl->toggleKey != nullptr) {
             gtk_widget_set_sensitive(impl->toggleKey, enabled);
+        }
+        if (impl->punctuationFullWidth != nullptr) {
+            gtk_widget_set_sensitive(impl->punctuationFullWidth, enabled);
         }
     }
     if (impl->clipboardEnabled == nullptr ||
@@ -710,6 +718,10 @@ GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
                                    "例如 Ctrl+Space");
     gtk_widget_set_hexpand(impl->toggleKey, TRUE);
     gtk_grid_attach(GTK_GRID(grid), impl->toggleKey, 1, 2, 1, 1);
+
+    impl->punctuationFullWidth =
+        gtk_check_button_new_with_label("中文标点使用全角（，。？！等）");
+    gtk_grid_attach(GTK_GRID(grid), impl->punctuationFullWidth, 0, 3, 2, 1);
     gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
@@ -720,6 +732,8 @@ GtkWidget *makeBasicPage(SettingsWindow::Impl *impl) {
                      impl);
     g_signal_connect(impl->toggleKey, "changed", G_CALLBACK(onBasicChanged),
                      impl);
+    g_signal_connect(impl->punctuationFullWidth, "toggled",
+                     G_CALLBACK(onBasicChanged), impl);
     return page;
 }
 

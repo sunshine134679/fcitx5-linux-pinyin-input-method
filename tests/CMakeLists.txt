@@ -120,6 +120,10 @@ add_executable(modernime_pinyin_match_tests core/pinyin_match_test.cpp)
 target_link_libraries(modernime_pinyin_match_tests PRIVATE modernime_core)
 add_test(NAME modernime_pinyin_match COMMAND modernime_pinyin_match_tests)
 
+add_executable(modernime_punctuation_tests core/punctuation_test.cpp)
+target_link_libraries(modernime_punctuation_tests PRIVATE modernime_core)
+add_test(NAME modernime_punctuation COMMAND modernime_punctuation_tests)
+
 if(MODERNIME_BUILD_LIBIME_PINYIN)
     add_executable(modernime_user_dictionary_tests
         core/user_dictionary_test.cpp

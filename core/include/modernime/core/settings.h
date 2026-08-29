@@ -16,6 +16,7 @@ struct ModernIMESettings final {
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;
+    bool punctuationEnabled = true;
     bool learningEnabled = true;
     bool contextLearningEnabled = true;
     bool clipboardEnabled = true;
