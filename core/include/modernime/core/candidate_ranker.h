@@ -12,7 +12,11 @@ namespace modernime::core {
 
 inline constexpr double DictionaryPriorWeight = 12.0;
 inline constexpr double LearningPriorWeight = 4.0;
-inline constexpr double LearningPriorCap = 8.0;
+// Deep enough that a steadily accumulated learning boost can carry a
+// frequently selected candidate from the tail of the engine list to the
+// front page, while still bounded so learning never overrides match
+// priority (input coverage) itself.
+inline constexpr double LearningPriorCap = 16.0;
 inline constexpr double DecoderPriorWeight = 0.25;
 
 struct CandidateScore final {

@@ -495,6 +495,27 @@ void testFrequencyAccumulatesAcrossContextVariants() {
     std::filesystem::remove(path.string() + "-shm", error);
 }
 
+void testHighFrequencyBoostExceedsTheOldCeiling() {
+    const std::vector<modernime::core::LearningEntry> entries{
+        {"常用词", "changyongci", {}, {}, 100, 1000, 0}};
+    const modernime::core::LearningSnapshot snapshot(entries);
+    const auto boost = snapshot.boostAt("常用词", "changyongci", 1000);
+    assertTrue(boost > 3.5,
+               "high accumulated frequency pushes the boost past the old ceiling");
+    assertTrue(boost <= 4.0, "the learning boost stays bounded");
+}
+
+void testDeeplyLearnedCandidateReachesTheFront() {
+    std::vector<modernime::core::CandidateScore> candidates;
+    for (std::size_t index = 0; index < 13; ++index) {
+        candidates.push_back({index, "词" + std::to_string(index), "a", 0.0F});
+    }
+    candidates.back().learning_boost = 3.9;
+    const auto order = modernime::core::CandidateRanker::rank("a", candidates);
+    assertTrue(order.front() == candidates.size() - 1,
+               "a strongly learned tail candidate reaches the front");
+}
+
 } // namespace
 
 int main() {
@@ -521,5 +542,7 @@ int main() {
     testTotalEntryLimitEvictsSuppressedThenOldest();
     testSnapshotAppliesTotalEntryLimit();
     testFrequencyAccumulatesAcrossContextVariants();
+    testHighFrequencyBoostExceedsTheOldCeiling();
+    testDeeplyLearnedCandidateReachesTheFront();
     return EXIT_SUCCESS;
 }

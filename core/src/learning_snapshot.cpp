@@ -200,14 +200,17 @@ double LearningSnapshot::boostAt(std::string_view phrase,
                  static_cast<double>(lastSelectedMs));
     constexpr double halfLifeMs = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
     const double recency = std::exp(-ageMs / halfLifeMs);
+    // log1p growth reaches the cap around 25 accumulated selections, so
+    // genuinely frequent picks climb steadily instead of saturating after a
+    // couple of uses.
     const double frequency = std::min(
-        2.0, 0.65 * std::log1p(static_cast<double>(totalFrequency)));
+        3.0, 0.85 * std::log1p(static_cast<double>(totalFrequency)));
     const double recent = std::min(1.0, 0.90 * recency);
     // The strongest negative feedback of any variant applies globally.
     const double penalty = std::min(
         2.0, 0.75 * std::log1p(static_cast<double>(
                         std::max<std::int64_t>(0, worstFeedback))));
-    return std::clamp(frequency + recent - penalty, -2.0, 3.5);
+    return std::clamp(frequency + recent - penalty, -2.0, 4.0);
 }
 
 double LearningSnapshot::contextBoost(
