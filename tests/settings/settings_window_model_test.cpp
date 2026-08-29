@@ -32,13 +32,26 @@ int main() {
     const auto path = directory / "settings.conf";
     modernime::settings::SettingsWindowModel model(path);
     assertTrue(!model.dirty(), "fresh model is clean");
+    assertTrue(model.savedSettings() == model.settings(),
+               "fresh model exposes its saved settings");
+
+    model.editDefaults();
+    assertTrue(model.dirty(), "editing defaults marks the model dirty");
+    assertTrue(!std::filesystem::exists(path),
+               "editing defaults does not create a settings file");
+    std::string error;
+    assertTrue(model.save(&error), "edited defaults save: " + error);
+    assertTrue(model.reloadRequired(),
+               "saving changed settings requires an engine reload");
+    model.markReloaded();
+    assertTrue(!model.reloadRequired(),
+               "marking the engine reloaded clears reload state");
 
     auto settings = model.settings();
     settings.inputEnabled = false;
     settings.defaultMode = modernime::core::InputMode::English;
     model.setSettings(settings);
     assertTrue(model.dirty(), "edited settings are dirty");
-    std::string error;
     assertTrue(model.save(&error), "edited settings save: " + error);
     assertTrue(!model.dirty(), "saved model is clean");
 
@@ -84,7 +97,7 @@ int main() {
     invalidSettings.toggleKey = "Ctrl Space";
     clipboardReloaded.setSettings(invalidSettings);
     assertTrue(!clipboardReloaded.validation().valid &&
-                   !clipboardReloaded.validation().errors.empty(),
+                   !clipboardReloaded.validation().issues.empty(),
                "model exposes validation errors for current edits");
 
     const auto blocked = directory / "blocked";
@@ -97,13 +110,13 @@ int main() {
     assertTrue(!failed.save(&error), "failed save is reported");
     assertTrue(failed.dirty() && !error.empty(),
                "failed save keeps edits and exposes an error");
+    assertTrue(!failed.reloadRequired(),
+               "failed save does not require an engine reload");
 
-    error.clear();
-    assertTrue(reloaded.resetDefaults(&error),
-               "reset defaults saves: " + error);
+    reloaded.editDefaults();
     assertTrue(reloaded.settings() == modernime::core::defaultSettings() &&
-                   !reloaded.dirty(),
-               "reset defaults replaces settings and clears dirty state");
+                   reloaded.dirty(),
+               "editing defaults replaces edits without saving");
 
     const auto diagnosticPath = directory / "diagnostic-settings.conf";
     {

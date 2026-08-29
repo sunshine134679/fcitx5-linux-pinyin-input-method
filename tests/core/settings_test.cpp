@@ -147,8 +147,10 @@ void testSharedValidationRejectsInvalidValues() {
     const auto invalidToggle =
         modernime::core::validateSettings(settings);
     assertTrue(!invalidToggle.valid, "invalid toggle key is rejected");
-    assertTrue(!invalidToggle.errors.empty(),
+    assertTrue(invalidToggle.issues.size() == 1,
                "toggle key validation explains the error");
+    assertTrue(invalidToggle.issues.front().key == "input.toggle_key",
+               "toggle key validation identifies its settings field");
 
     settings = modernime::core::defaultSettings();
     settings.clipboardTrigger = "bad-trigger";
@@ -156,6 +158,10 @@ void testSharedValidationRejectsInvalidValues() {
         modernime::core::validateSettings(settings);
     assertTrue(!invalidClipboard.valid,
                "invalid clipboard trigger is rejected");
+    assertTrue(invalidClipboard.issues.size() == 1,
+               "clipboard validation explains the error");
+    assertTrue(invalidClipboard.issues.front().key == "clipboard.trigger",
+               "clipboard validation identifies its settings field");
 }
 
 } // namespace

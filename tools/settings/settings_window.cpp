@@ -356,9 +356,9 @@ void updateActionState(SettingsWindow::Impl *impl) {
     gtk_style_context_remove_class(context, "modernime-status-error");
     if (!validation.valid) {
         addStyleClass(impl->editState, "modernime-status-error");
-        const auto message = validation.errors.empty()
+        const auto message = validation.issues.empty()
                                   ? std::string("当前设置无法保存")
-                                  : validation.errors.front();
+                                  : validation.issues.front().message;
         gtk_label_set_text(GTK_LABEL(impl->editState), message.c_str());
     } else if (impl->model.dirty()) {
         addStyleClass(impl->editState, "modernime-status-dirty");
@@ -367,14 +367,23 @@ void updateActionState(SettingsWindow::Impl *impl) {
         gtk_label_set_text(GTK_LABEL(impl->editState), "所有设置已保存");
     }
 
+    const auto issueFor = [&validation](std::string_view key) {
+        for (const auto &issue : validation.issues) {
+            if (issue.key == key) {
+                return issue.message.c_str();
+            }
+        }
+        return static_cast<const char *>(nullptr);
+    };
     if (impl->toggleKey != nullptr) {
-        auto toggleOnly = impl->model.settings();
-        toggleOnly.clipboardTrigger = core::defaultSettings().clipboardTrigger;
-        const auto toggleValidation = core::validateSettings(toggleOnly);
-        const auto message = toggleValidation.errors.empty()
-                                  ? "中英文切换快捷键格式不正确"
-                                  : toggleValidation.errors.front().c_str();
-        setWidgetError(impl->toggleKey, !toggleValidation.valid, message);
+        const auto *message = issueFor("input.toggle_key");
+        setWidgetError(impl->toggleKey, message != nullptr,
+                       message == nullptr ? "" : message);
+    }
+    if (impl->clipboardTrigger != nullptr) {
+        const auto *message = issueFor("clipboard.trigger");
+        setWidgetError(impl->clipboardTrigger, message != nullptr,
+                       message == nullptr ? "" : message);
     }
 }
 
@@ -588,9 +597,9 @@ bool saveEditedSettings(SettingsWindow::Impl *impl, bool closeAfterSave) {
     updateModelFromLearningPage(impl);
     const auto validation = impl->model.validation();
     if (!validation.valid) {
-        const auto message = validation.errors.empty()
+        const auto message = validation.issues.empty()
                                   ? std::string("当前设置无法保存")
-                                  : validation.errors.front();
+                                  : validation.issues.front().message;
         setStatus(impl, message.c_str());
         updateActionState(impl);
         return false;
@@ -650,18 +659,14 @@ void onResetDefaults(GtkButton *, gpointer data) {
     if (response != GTK_RESPONSE_YES) {
         return;
     }
-    std::string error;
-    if (impl->model.resetDefaults(&error)) {
-        updateBasicPageFromModel(impl);
-        updateCandidatePageFromModel(impl);
-        updateClipboardPageFromModel(impl);
-        updateLearningPageFromModel(impl);
-        updateDependentSensitivity(impl);
-        updateActionState(impl);
-        setStatus(impl, "ModernIME 设置已恢复默认值");
-    } else {
-        setStatus(impl, error.c_str());
-    }
+    impl->model.editDefaults();
+    updateBasicPageFromModel(impl);
+    updateCandidatePageFromModel(impl);
+    updateClipboardPageFromModel(impl);
+    updateLearningPageFromModel(impl);
+    updateDependentSensitivity(impl);
+    updateActionState(impl);
+    setStatus(impl, "ModernIME 设置已恢复默认值，请保存后生效");
 }
 
 bool confirmDiscardChanges(SettingsWindow::Impl *impl) {

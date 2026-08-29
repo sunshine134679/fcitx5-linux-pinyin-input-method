@@ -12,6 +12,10 @@ SettingsWindowModel::SettingsWindowModel(std::filesystem::path path)
     loadDiagnostics_ = loaded.diagnostics;
 }
 
+bool SettingsWindowModel::dirty() const {
+    return defaultsEdited_ || edited_ != loaded_;
+}
+
 void SettingsWindowModel::setSettings(core::ModernIMESettings settings) {
     edited_ = std::move(settings);
     lastError_.clear();
@@ -34,7 +38,13 @@ void SettingsWindowModel::setClipboardOptions(bool enabled, std::string trigger)
     setSettings(std::move(settings));
 }
 
+void SettingsWindowModel::editDefaults() {
+    setSettings(core::defaultSettings());
+    defaultsEdited_ = true;
+}
+
 bool SettingsWindowModel::save(std::string *error) {
+    const bool changed = dirty();
     std::string saveError;
     if (!core::SettingsStore::save(path_, edited_, &saveError)) {
         lastError_ = saveError;
@@ -44,24 +54,8 @@ bool SettingsWindowModel::save(std::string *error) {
         return false;
     }
     loaded_ = edited_;
-    lastError_.clear();
-    if (error != nullptr) {
-        error->clear();
-    }
-    return true;
-}
-
-bool SettingsWindowModel::resetDefaults(std::string *error) {
-    std::string saveError;
-    if (!core::SettingsStore::reset(path_, &saveError)) {
-        lastError_ = saveError;
-        if (error != nullptr) {
-            *error = saveError;
-        }
-        return false;
-    }
-    loaded_ = core::defaultSettings();
-    edited_ = loaded_;
+    defaultsEdited_ = false;
+    reloadRequired_ = reloadRequired_ || changed;
     lastError_.clear();
     if (error != nullptr) {
         error->clear();
@@ -71,6 +65,7 @@ bool SettingsWindowModel::resetDefaults(std::string *error) {
 
 void SettingsWindowModel::resetEdits() {
     edited_ = loaded_;
+    defaultsEdited_ = false;
     lastError_.clear();
 }
 

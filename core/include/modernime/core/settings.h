@@ -25,9 +25,14 @@ struct ModernIMESettings final {
     bool operator==(const ModernIMESettings &) const = default;
 };
 
+struct SettingsValidationIssue final {
+    std::string key;
+    std::string message;
+};
+
 struct SettingsValidationResult final {
     bool valid = true;
-    std::vector<std::string> errors;
+    std::vector<SettingsValidationIssue> issues;
 };
 
 ModernIMESettings defaultSettings();

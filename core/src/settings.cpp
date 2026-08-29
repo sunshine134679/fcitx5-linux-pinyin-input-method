@@ -71,14 +71,14 @@ ModernIMESettings defaultSettings() { return {}; }
 SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     SettingsValidationResult result;
     if (!validToggleKey(settings.toggleKey)) {
-        result.errors.emplace_back(
-            "中英文切换快捷键不能为空，且只能包含字母、数字、+ 或 -");
+        result.issues.push_back(
+            {"input.toggle_key", "中英文切换快捷键不能为空，且只能包含字母、数字、+ 或 -"});
     }
     if (!validClipboardTrigger(settings.clipboardTrigger)) {
-        result.errors.emplace_back(
-            "剪贴板触发键必须符合字母+数字格式，例如 V+2");
+        result.issues.push_back(
+            {"clipboard.trigger", "剪贴板触发键必须符合字母+数字格式，例如 V+2"});
     }
-    result.valid = result.errors.empty();
+    result.valid = result.issues.empty();
     return result;
 }
 
@@ -196,7 +196,7 @@ bool SettingsStore::save(const std::filesystem::path &path,
     }
     const auto validation = validateSettings(settings);
     if (!validation.valid) {
-        setError(validation.errors.front());
+        setError(validation.issues.front().message);
         return false;
     }
     std::error_code filesystemError;

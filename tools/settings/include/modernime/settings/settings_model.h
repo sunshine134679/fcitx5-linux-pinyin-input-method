@@ -14,7 +14,8 @@ public:
     explicit SettingsWindowModel(std::filesystem::path path);
 
     const core::ModernIMESettings &settings() const { return edited_; }
-    bool dirty() const { return edited_ != loaded_; }
+    const core::ModernIMESettings &savedSettings() const { return loaded_; }
+    bool dirty() const;
     core::SettingsValidationResult validation() const {
         return core::validateSettings(edited_);
     }
@@ -26,9 +27,11 @@ public:
     void setCandidateOptions(bool numberSelection, bool arrowNavigation,
                              bool pageNavigation);
     void setClipboardOptions(bool enabled, std::string trigger);
+    void editDefaults();
     bool save(std::string *error = nullptr);
-    bool resetDefaults(std::string *error = nullptr);
     void resetEdits();
+    bool reloadRequired() const { return reloadRequired_; }
+    void markReloaded() { reloadRequired_ = false; }
     std::string_view validationError() const { return lastError_; }
 
 private:
@@ -37,6 +40,8 @@ private:
     core::ModernIMESettings edited_;
     std::vector<std::string> loadDiagnostics_;
     std::string lastError_;
+    bool defaultsEdited_ = false;
+    bool reloadRequired_ = false;
 };
 
 } // namespace modernime::settings
