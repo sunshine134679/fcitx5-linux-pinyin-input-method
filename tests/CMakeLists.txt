@@ -74,6 +74,19 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_learning_page_contract_tests
     )
 
+    add_executable(modernime_dictionary_page_contract_tests
+        settings/dictionary_page_contract_test.cpp
+    )
+    target_include_directories(modernime_dictionary_page_contract_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_dictionary_page_contract_tests PRIVATE
+        modernime_core
+    )
+    add_test(NAME modernime_dictionary_page_contract
+        COMMAND modernime_dictionary_page_contract_tests
+    )
+
     add_executable(modernime_settings_ui_contract_tests
         settings/settings_ui_contract_test.cpp
     )
