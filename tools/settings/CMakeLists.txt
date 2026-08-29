@@ -14,6 +14,7 @@ add_executable(modernime-settings
     settings_model.cpp
     runtime_controller.cpp
     clipboard_history_model.cpp
+    page_registry.cpp
     settings_window.cpp
 )
 target_include_directories(modernime-settings PRIVATE

@@ -44,6 +44,15 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_ui_contract_tests
     )
 
+    add_executable(modernime_page_registry_tests
+        settings/page_registry_test.cpp
+        ../tools/settings/page_registry.cpp
+    )
+    target_include_directories(modernime_page_registry_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    add_test(NAME modernime_page_registry COMMAND modernime_page_registry_tests)
+
     add_executable(modernime_clipboard_history_model_tests
         settings/clipboard_history_model_test.cpp
         ../tools/settings/clipboard_history_model.cpp

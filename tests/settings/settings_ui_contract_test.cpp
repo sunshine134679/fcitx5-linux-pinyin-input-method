@@ -16,7 +16,7 @@ void assertTrue(bool condition, std::string_view message) {
 } // namespace
 
 int main() {
-    const auto pages = modernime::settings::settingsPageDefinitions();
+    const auto pages = modernime::settings::legacySettingsPageDefinitions();
     assertTrue(pages.size() == 6, "all six settings pages are declared");
     assertTrue(pages[0].name == "basic" && pages[0].title == "基本设置",
                "basic page contract is stable");

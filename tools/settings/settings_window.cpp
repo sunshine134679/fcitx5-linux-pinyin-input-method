@@ -1740,7 +1740,7 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     gtk_box_pack_start(GTK_BOX(body), impl_->stack, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(root), body, TRUE, TRUE, 0);
 
-    const auto pages = settingsPageDefinitions();
+    const auto pages = legacySettingsPageDefinitions();
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          makeScrollablePage(makeBasicPage(impl_.get())),
                          pages[0].name.data(), pages[0].title.data());
