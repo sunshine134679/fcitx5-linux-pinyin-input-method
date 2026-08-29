@@ -71,15 +71,45 @@
 - 代码去重：XDG 路径推导、`text\x1fpinyin` 键拼接、`setError` 助手的重复实现。
 - `LearningSnapshot` 查询索引（消除 O(候选×词条) 扫描）、`settings_window.cpp` GTK 层 UI 测试、并发竞态测试。
 
-## 提交计划
+## 批次二（2026-08-29 追加：习惯学习强化、标点、热重载、清理）
 
-每完成一项并通过 `ctest --preset fcitx5-debug` 后立即提交，消息风格与仓库现有中文单主题提交一致：
+用户反馈：频繁选择排在后面的候选，后期没有被前移/置顶。核实结论：
 
-1. `制定质量修复方案`
-2. `修复编译警告旗标未生效`
-3. `修复学习数据库并发写入失败`
-4. `剪贴板轮询仅在输入法激活时采集`
-5. `用户词典导入前增加替换确认`
-6. `学习快照改为写时复制`
-7. `限制学习记录总量`
-8. `词典与学习资源提升到引擎级共享`
+- `pinyin_provider_test.cpp:297-319` 已有"选 5 次低位候选置顶"的回归测试且通过——因为测试从不设置上下文。
+- 真实链路里 `engine.cpp:88-94` 把 surrounding text 传入 provider，`learning.enabled` 默认开启，于是每次选词都按 (pinyin, phrase, 上下文前缀, 上下文后缀) 落成**上下文变体行**；`boostAt` 只查"完全相同上下文"或"空上下文基础行"。同一词语在不同句子里各选一次，频率被拆成多行、每行都很低，全局频率信号永远聚不起来——这是主根因。
+- 次因：排序层学习权重封顶 `LearningPriorCap = 8`（`candidate_ranker.h:15`），即便有 boost 也最多前移 8 个 source_index，够不到首页。
+
+### 1. 学习频率跨上下文聚合（core）
+
+- `LearningSnapshot::boostAt` 改为对 (phrase, pinyin) 的**全部未抑制行**聚合：频率求和（每次选词恰写入一行，求和即真实总次数）、最近时间取最大、负反馈取最大；签名去掉上下文参数（上下文细化由 `contextBoost` 单独承担）。`entry()` 保留原语义供测试与兼容。
+- 新增 `hasPositiveFrequency(phrase, pinyin)`，provider 的 Learned 分类改用它，替代现在按精确/基础行查找的 `entry()` 调用。
+- 存储层不变，无需迁移。新增回归测试：多上下文各选一次后，新上下文下 boost 仍显著大于 0；并新增 provider 级"带变化的上下文反复选词仍置顶"用例（复现用户场景，旧实现必失败）。
+
+### 2. 提升常选候选的排序权重（core）
+
+- `boostAt` 频率曲线改为 `min(3.0, 0.85×log1p(总频率))`，recency 不变，总 clamp 放宽到 [−2, 4.0]；`LearningPriorCap` 8 → 16。
+- 效果梯度：1 次最近选择约前移 6 位，10 次约 12 位，30 次以上可达封顶 16 位；`match_priority` 仍是主键——无法消耗当前输入的候选（如前缀截断）不会被学习顶到前面，这是正确性边界。
+
+### 3. 中文标点全角转换（core + adapter + 设置客户端）
+
+- core 新增 `punctuation.{h,cpp}`：固定映射（`,`→`，`、`.`→`。`、`?`→`？`、`!`→`！`、`:`→`：`、`;`→`；`、`(`→`（`、`)`→`）`、`~`→`～`），配对引号 `"`/`'` 由控制器按开合状态输出 `“”`/`‘’`（每个输入上下文独立记忆，reset 复位）。
+- 两条防误伤规则：上下文（或即将提交的 preedit）以 ASCII 字母/数字结尾时保持半角（覆盖 `3.14`、`1,000`、代码片段）；无映射的字符（`@#$/` 等）保持现状直通。
+- 行为：中文模式（active）下，preedit 为空时标点键被输入法接管并上屏全角（旧实现是放行给应用）；组词中则先上屏候选/原始串再上屏全角标点。英文模式（非 active）完全不变。
+- 设置项 `punctuation.enabled`（默认 true），`ModernIMESettings` 加字段；设置客户端"基本设置"页加开关。
+
+### 4. 配置文件热重载（adapter）
+
+- `ModernIMEInputMethod` 加 2 秒定时器检查 `settings.conf` mtime；变化则重载 `SettingsStore`，更新引擎级 `settings_`/`keyBindings_`，并经 `InputContextManager::foreach` 同步到**已存在**的每个 IC 状态（`applySettings`：控制器选项、剪贴板触发键、provider 学习开关）。
+- 为避免 foreach 触发惰性构造重量级状态，工厂维护存活状态集合，引擎析构时 `stateFactory_.unregister()`（顺带补上此前缺失的属性注销）。
+- provider 新增 `setLearningEnabled`/`setContextLearningEnabled`；学习写入器改为"启动时按初值创建，之后惰性创建"（保住"禁用学习不建库"的既有测试语义）。
+- 用户词典文件与剪贴板历史文件同机制监听：词典变化时共享资源层 `clear(1)` + 重新 `addTo`，词典页改动免重启生效；剪贴板文件变化时插件先从磁盘重载再 observe，修复设置客户端删除/清空被插件旧内存覆盖回写的竞态。
+
+### 5. 卫生清理
+
+- pinyin provider 的 `defaultLearningPath`/`defaultUserDictionaryPath` 改用 `core::SettingsPaths::fromEnvironment`，消除双轨路径推导。
+- 删除空壳 `foundation_test`；修掉 `runtime_controller_test.cpp` 中硬编码 `/home/wsl/...` 的断言。
+
+### 提交计划
+
+`更新修复方案批次二` → `学习频率跨上下文聚合` → `提升常选候选的排序权重` → `中文标点全角转换` → `实现配置文件热重载` → `实现用户词典修改免重启生效` → `修复剪贴板历史被插件旧内存覆盖` → `统一用户数据路径推导` → `清理测试与死代码`
+
