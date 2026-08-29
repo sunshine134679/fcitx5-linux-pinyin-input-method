@@ -1,6 +1,7 @@
 #include "modernime/core/clipboard_history.h"
 #include "modernime/core/persistent_clipboard_history.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -56,5 +57,28 @@ int main() {
 
     assertTrue(history.flush(&error),
                "history flushes during runtime reload: " + error);
+
+    // An external writer (the settings client) replaces the file behind our
+    // back; the persistent wrapper must adopt the on-disk state instead of
+    // overwriting it with stale in-memory entries.
+    modernime::core::ClipboardHistory external;
+    external.observe("external only");
+    assertTrue(external.save(path, &error),
+               "external writer saves a fresh history: " + error);
+    {
+        std::error_code mtimeError;
+        const auto bumped = std::filesystem::last_write_time(
+                                path, mtimeError) +
+                            std::chrono::seconds(2);
+        std::filesystem::last_write_time(path, bumped, mtimeError);
+        assertTrue(!mtimeError, "external modification timestamp is applied");
+    }
+    assertTrue(history.reloadIfExternallyChanged(&error),
+               "an external change triggers a reload: " + error);
+    assertTrue(history.entries().size() == 1 &&
+                   history.entries().front() == "external only",
+               "reloaded history reflects the external state");
+    assertTrue(!history.reloadIfExternallyChanged(&error),
+               "an unchanged file does not trigger another reload");
     return EXIT_SUCCESS;
 }

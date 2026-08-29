@@ -474,6 +474,16 @@ void ModernIMEInputMethod::pollClipboard() {
     if (instance_->inputMethod(inputContext) != "modernime") {
         return;
     }
+    // The settings client may have deleted or cleared the history file since
+    // our last write; adopt the on-disk state before recording new content.
+    {
+        std::string reloadError;
+        if (!clipboardHistory_.reloadIfExternallyChanged(&reloadError) &&
+            !reloadError.empty()) {
+            FCITX_ERROR() << "Failed to reload ModernIME clipboard history: "
+                          << reloadError;
+        }
+    }
     try {
         const auto text = clipboardAddon_->callWithSignature<
             std::string(const fcitx::InputContext *)>(
