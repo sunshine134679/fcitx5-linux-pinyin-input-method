@@ -1,12 +1,11 @@
 #include "modernime/settings/settings_window.h"
-#include "modernime/settings/clipboard_history_model.h"
 #include "modernime/settings/data_controller.h"
+#include "modernime/settings/pages/clipboard_page.h"
 #include "modernime/settings/pages/input_page.h"
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
-#include "modernime/core/clipboard_history.h"
 #include "modernime/pinyin/user_dictionary.h"
 
 #include <gtk/gtk.h>
@@ -28,8 +27,7 @@ class SettingsWindow::Impl final {
 public:
     Impl(void *application, core::SettingsPaths paths)
         : application_(application), paths_(std::move(paths)),
-          model(paths_.settingsFile),
-          clipboardHistory(paths_.clipboardHistory) {}
+          model(paths_.settingsFile) {}
 
     void *application_;
     core::SettingsPaths paths_;
@@ -43,16 +41,7 @@ public:
     GtkWidget *resetButton = nullptr;
     GtkWidget *defaultsButton = nullptr;
     std::unique_ptr<InputPage> inputPage;
-    GtkWidget *clipboardEnabled = nullptr;
-    GtkWidget *clipboardTrigger = nullptr;
-    GtkListStore *clipboardHistoryStore = nullptr;
-    GtkWidget *clipboardHistoryCount = nullptr;
-    GtkWidget *clipboardHistoryState = nullptr;
-    GtkWidget *clipboardHistoryView = nullptr;
-    GtkWidget *clipboardCopyButton = nullptr;
-    GtkWidget *clipboardDeleteButton = nullptr;
-    GtkWidget *clipboardClearButton = nullptr;
-    ClipboardHistoryModel clipboardHistory;
+    std::unique_ptr<ClipboardPage> clipboardPage;
     GtkWidget *learningEnabled = nullptr;
     GtkWidget *contextLearning = nullptr;
     GtkWidget *learningPath = nullptr;
@@ -88,17 +77,6 @@ void addStyleClass(GtkWidget *widget, std::string_view className) {
                                 std::string(className).c_str());
 }
 
-void setWidgetError(GtkWidget *widget, bool invalid, const char *message) {
-    auto *context = gtk_widget_get_style_context(widget);
-    if (invalid) {
-        gtk_style_context_add_class(context, "error");
-        gtk_widget_set_tooltip_text(widget, message);
-    } else {
-        gtk_style_context_remove_class(context, "error");
-        gtk_widget_set_tooltip_text(widget, nullptr);
-    }
-}
-
 void updateModelFromLearningPage(SettingsWindow::Impl *impl) {
     auto settings = impl->model.settings();
     settings.learningEnabled = gtk_toggle_button_get_active(
@@ -108,38 +86,12 @@ void updateModelFromLearningPage(SettingsWindow::Impl *impl) {
     impl->model.setSettings(std::move(settings));
 }
 
-void updateModelFromClipboardPage(SettingsWindow::Impl *impl) {
-    impl->model.setClipboardOptions(
-        gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->clipboardEnabled)),
-        gtk_entry_get_text(GTK_ENTRY(impl->clipboardTrigger)));
-}
-
 void updateLearningPageFromModel(SettingsWindow::Impl *impl) {
     const auto &settings = impl->model.settings();
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->learningEnabled),
                                  settings.learningEnabled);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->contextLearning),
                                  settings.contextLearningEnabled);
-}
-
-void updateClipboardPageFromModel(SettingsWindow::Impl *impl) {
-    const auto &settings = impl->model.settings();
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(impl->clipboardEnabled),
-                                 settings.clipboardEnabled);
-    gtk_entry_set_text(GTK_ENTRY(impl->clipboardTrigger),
-                       settings.clipboardTrigger.c_str());
-}
-
-void updateDependentSensitivity(SettingsWindow::Impl *impl) {
-    if (impl->clipboardEnabled == nullptr ||
-        impl->clipboardTrigger == nullptr) {
-        return;
-    }
-    gtk_widget_set_sensitive(
-        impl->clipboardTrigger,
-        gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->clipboardEnabled)));
 }
 
 void updateActionState(SettingsWindow::Impl *impl) {
@@ -173,19 +125,6 @@ void updateActionState(SettingsWindow::Impl *impl) {
         gtk_label_set_text(GTK_LABEL(impl->editState), "所有设置已保存");
     }
 
-    const auto issueFor = [&validation](std::string_view key) {
-        for (const auto &issue : validation.issues) {
-            if (issue.key == key) {
-                return issue.message.c_str();
-            }
-        }
-        return static_cast<const char *>(nullptr);
-    };
-    if (impl->clipboardTrigger != nullptr) {
-        const auto *message = issueFor("clipboard.trigger");
-        setWidgetError(impl->clipboardTrigger, message != nullptr,
-                       message == nullptr ? "" : message);
-    }
 }
 
 void onLearningChanged(GtkWidget *, gpointer data) {
@@ -194,192 +133,16 @@ void onLearningChanged(GtkWidget *, gpointer data) {
     updateActionState(impl);
 }
 
-void onClipboardChanged(GtkWidget *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    updateModelFromClipboardPage(impl);
-    updateDependentSensitivity(impl);
-    updateActionState(impl);
-}
-
-std::optional<std::size_t> selectedClipboardIndex(
-    SettingsWindow::Impl *impl) {
-    if (impl->clipboardHistoryView == nullptr) {
-        return std::nullopt;
-    }
-    auto *selection = gtk_tree_view_get_selection(
-        GTK_TREE_VIEW(impl->clipboardHistoryView));
-    GtkTreeModel *model = nullptr;
-    GtkTreeIter iterator;
-    if (!gtk_tree_selection_get_selected(selection, &model, &iterator)) {
-        return std::nullopt;
-    }
-    auto *path = gtk_tree_model_get_path(model, &iterator);
-    if (path == nullptr) {
-        return std::nullopt;
-    }
-    const auto *indices = gtk_tree_path_get_indices(path);
-    const auto index = indices == nullptr ? -1 : indices[0];
-    gtk_tree_path_free(path);
-    if (index < 0 || static_cast<std::size_t>(index) >=
-                         impl->clipboardHistory.entries().size()) {
-        return std::nullopt;
-    }
-    return static_cast<std::size_t>(index);
-}
-
-void updateClipboardHistoryActionState(SettingsWindow::Impl *impl) {
-    const auto selected = selectedClipboardIndex(impl);
-    const bool hasSelected = selected.has_value();
-    const bool hasEntries = !impl->clipboardHistory.entries().empty();
-    if (impl->clipboardCopyButton != nullptr) {
-        gtk_widget_set_sensitive(impl->clipboardCopyButton, hasSelected);
-    }
-    if (impl->clipboardDeleteButton != nullptr) {
-        gtk_widget_set_sensitive(impl->clipboardDeleteButton, hasSelected);
-    }
-    if (impl->clipboardClearButton != nullptr) {
-        gtk_widget_set_sensitive(impl->clipboardClearButton, hasEntries);
-    }
-}
-
-void refreshClipboardHistory(SettingsWindow::Impl *impl, bool notify) {
-    if (impl->clipboardHistoryStore == nullptr) {
-        return;
-    }
-
-    gtk_list_store_clear(impl->clipboardHistoryStore);
-    std::string error;
-    if (!impl->clipboardHistory.reload(&error)) {
-        gtk_label_set_text(GTK_LABEL(impl->clipboardHistoryCount),
-                           "历史读取失败");
-        if (impl->clipboardHistoryState != nullptr) {
-            gtk_label_set_text(GTK_LABEL(impl->clipboardHistoryState),
-                               error.empty() ? "无法读取剪贴板历史"
-                                             : ("无法读取剪贴板历史：" + error)
-                                                   .c_str());
-            gtk_widget_set_visible(impl->clipboardHistoryState, TRUE);
-        }
-        updateClipboardHistoryActionState(impl);
-        if (notify) {
-            setStatus(impl, error.c_str());
-        }
-        return;
-    }
-
-    const auto &entries = impl->clipboardHistory.entries();
-    if (impl->clipboardHistoryState != nullptr) {
-        gtk_label_set_text(
-            GTK_LABEL(impl->clipboardHistoryState),
-            entries.empty() ? "暂无剪贴板历史；复制内容后会自动记录" : "");
-        gtk_widget_set_visible(impl->clipboardHistoryState, entries.empty());
-    }
-    for (std::size_t index = 0; index < entries.size(); ++index) {
-        GtkTreeIter iter;
-        gtk_list_store_append(impl->clipboardHistoryStore, &iter);
-        gtk_list_store_set(impl->clipboardHistoryStore, &iter, 0,
-                           static_cast<guint>(index + 1), 1,
-                           entries[index].c_str(), -1);
-    }
-    const auto count = std::to_string(entries.size());
-    gtk_label_set_text(
-        GTK_LABEL(impl->clipboardHistoryCount),
-        ("当前 " + count + " 条，最多保存 " +
-         std::to_string(core::ClipboardHistory::kMaxEntries) + " 条")
-            .c_str());
-    updateClipboardHistoryActionState(impl);
-    if (notify) {
-        setStatus(impl, "剪贴板历史已刷新");
-    }
-}
-
-void onClipboardSelectionChanged(GtkTreeSelection *, gpointer data) {
-    updateClipboardHistoryActionState(
-        static_cast<SettingsWindow::Impl *>(data));
-}
-
-void onClipboardRefresh(GtkButton *, gpointer data) {
-    refreshClipboardHistory(static_cast<SettingsWindow::Impl *>(data), true);
-}
-
-void onClipboardCopy(GtkButton *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    const auto selected = selectedClipboardIndex(impl);
-    if (!selected.has_value()) {
-        setStatus(impl, "请先选择要复制的剪贴板历史");
-        return;
-    }
-    const auto &entry = impl->clipboardHistory.entries()[*selected];
-    auto *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
-    if (clipboard == nullptr) {
-        setStatus(impl, "系统剪贴板不可用");
-        return;
-    }
-    gtk_clipboard_set_text(clipboard, entry.c_str(), -1);
-    setStatus(impl, "已复制选中的剪贴板历史");
-}
-
-void onClipboardDelete(GtkButton *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    const auto selected = selectedClipboardIndex(impl);
-    if (!selected.has_value()) {
-        setStatus(impl, "请先选择要删除的剪贴板历史");
-        return;
-    }
-    const auto number = std::to_string(*selected + 1);
-    auto *dialog = gtk_message_dialog_new(
-        GTK_WINDOW(impl->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
-        GTK_BUTTONS_YES_NO, "确定删除第 %s 条剪贴板历史吗？", number.c_str());
-    const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
-    if (response != GTK_RESPONSE_YES) {
-        return;
-    }
-
-    std::string error;
-    if (impl->clipboardHistory.remove(*selected, &error)) {
-        refreshClipboardHistory(impl, false);
-        setStatus(impl, "已删除选中的剪贴板历史");
-    } else {
-        setStatus(impl, error.empty() ? "剪贴板历史删除失败" : error.c_str());
-    }
-}
-
-void onClipboardClear(GtkButton *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    if (impl->clipboardHistory.entries().empty()) {
-        setStatus(impl, "当前没有可清空的剪贴板历史");
-        return;
-    }
-    const auto count = std::to_string(impl->clipboardHistory.entries().size());
-    auto *dialog = gtk_message_dialog_new(
-        GTK_WINDOW(impl->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
-        GTK_BUTTONS_YES_NO, "确定清空全部 %s 条剪贴板历史吗？此操作不可撤销。",
-        count.c_str());
-    const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
-    if (response != GTK_RESPONSE_YES) {
-        return;
-    }
-
-    std::string error;
-    if (impl->clipboardHistory.clear(&error)) {
-        refreshClipboardHistory(impl, false);
-        setStatus(impl, "剪贴板历史已清空");
-    } else {
-        setStatus(impl, error.empty() ? "剪贴板历史清空失败" : error.c_str());
-    }
-}
-
 void onStackVisibleChildChanged(GObject *object, GParamSpec *, gpointer data) {
     const auto *name = gtk_stack_get_visible_child_name(GTK_STACK(object));
-    if (name != nullptr && std::string_view(name) == "clipboard") {
-        refreshClipboardHistory(static_cast<SettingsWindow::Impl *>(data),
-                                false);
+    auto *impl = static_cast<SettingsWindow::Impl *>(data);
+    if (name != nullptr && std::string_view(name) == "clipboard" &&
+        impl->clipboardPage != nullptr) {
+        impl->clipboardPage->refresh(false);
     }
 }
 
 bool saveEditedSettings(SettingsWindow::Impl *impl, bool closeAfterSave) {
-    updateModelFromClipboardPage(impl);
     updateModelFromLearningPage(impl);
     const auto validation = impl->model.validation();
     if (!validation.valid) {
@@ -426,9 +189,8 @@ void onResetEdits(GtkButton *, gpointer data) {
     auto *impl = static_cast<SettingsWindow::Impl *>(data);
     impl->model.resetEdits();
     impl->inputPage->refresh();
-    updateClipboardPageFromModel(impl);
+    impl->clipboardPage->refreshSettings();
     updateLearningPageFromModel(impl);
-    updateDependentSensitivity(impl);
     updateActionState(impl);
     setStatus(impl, "已恢复未保存的修改");
 }
@@ -446,9 +208,8 @@ void onResetDefaults(GtkButton *, gpointer data) {
     }
     impl->model.editDefaults();
     impl->inputPage->refresh();
-    updateClipboardPageFromModel(impl);
+    impl->clipboardPage->refreshSettings();
     updateLearningPageFromModel(impl);
-    updateDependentSensitivity(impl);
     updateActionState(impl);
     setStatus(impl, "ModernIME 设置已恢复默认值，请保存后生效");
 }
@@ -474,139 +235,6 @@ gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer data) {
     }
     gtk_widget_hide(impl->window);
     return TRUE;
-}
-
-GtkWidget *makeClipboardPage(SettingsWindow::Impl *impl) {
-    auto *page = createPageShell(
-        "剪贴板", "配置 V+2 功能并查看保存在本地的剪贴板历史");
-    auto *settingsSection = createSectionCard(
-        "触发方式", "仅在中文输入状态且当前没有正在输入拼音时触发。");
-
-    impl->clipboardEnabled =
-        gtk_check_button_new_with_label("启用 V+2 剪贴板");
-    gtk_box_pack_start(GTK_BOX(settingsSection), impl->clipboardEnabled, FALSE,
-                       FALSE, 0);
-
-    auto *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    auto *triggerLabel = gtk_label_new("剪贴板触发键");
-    gtk_widget_set_halign(triggerLabel, GTK_ALIGN_START);
-    impl->clipboardTrigger = gtk_entry_new();
-    gtk_entry_set_max_length(GTK_ENTRY(impl->clipboardTrigger), 3);
-    gtk_entry_set_width_chars(GTK_ENTRY(impl->clipboardTrigger), 6);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(impl->clipboardTrigger),
-                                   "例如 V+2");
-    gtk_widget_set_hexpand(impl->clipboardTrigger, TRUE);
-    gtk_grid_attach(GTK_GRID(grid), triggerLabel, 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), impl->clipboardTrigger, 1, 0, 1, 1);
-    gtk_box_pack_start(GTK_BOX(settingsSection), grid, FALSE, FALSE, 0);
-
-    auto *description = gtk_label_new(
-        "仅在中文输入状态且当前没有正在输入的拼音时触发。按第一个字母后，"
-        "可继续选择对应功能或直接按回车输出字母。");
-    addStyleClass(description, "modernime-description");
-    gtk_widget_set_halign(description, GTK_ALIGN_START);
-    gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
-    gtk_box_pack_start(GTK_BOX(settingsSection), description, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
-
-    auto *historySection = createSectionCard(
-        "剪贴板历史", "按最近使用顺序显示，最多保留 30 条内容。");
-
-    impl->clipboardHistoryCount = gtk_label_new("正在读取…");
-    addStyleClass(impl->clipboardHistoryCount, "modernime-description");
-    gtk_widget_set_halign(impl->clipboardHistoryCount, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(historySection), impl->clipboardHistoryCount,
-                       FALSE, FALSE, 0);
-
-    impl->clipboardHistoryStore =
-        gtk_list_store_new(2, G_TYPE_UINT, G_TYPE_STRING);
-    impl->clipboardHistoryView = gtk_tree_view_new_with_model(
-        GTK_TREE_MODEL(impl->clipboardHistoryStore));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(impl->clipboardHistoryView),
-                                      TRUE);
-    gtk_tree_view_set_enable_search(GTK_TREE_VIEW(impl->clipboardHistoryView),
-                                    TRUE);
-    gtk_widget_set_tooltip_text(
-        impl->clipboardHistoryView,
-        "选择一条历史后可以复制、删除；也可以使用键盘上下键移动");
-    auto *numberRenderer = gtk_cell_renderer_text_new();
-    auto *numberColumn = gtk_tree_view_column_new_with_attributes(
-        "序号", numberRenderer, "text", 0, nullptr);
-    gtk_tree_view_column_set_resizable(numberColumn, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(impl->clipboardHistoryView),
-                                numberColumn);
-    auto *textRenderer = gtk_cell_renderer_text_new();
-    auto *textColumn = gtk_tree_view_column_new_with_attributes(
-        "内容", textRenderer, "text", 1, nullptr);
-    gtk_tree_view_column_set_expand(textColumn, TRUE);
-    gtk_tree_view_column_set_resizable(textColumn, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(impl->clipboardHistoryView),
-                                textColumn);
-    auto *selection = gtk_tree_view_get_selection(
-        GTK_TREE_VIEW(impl->clipboardHistoryView));
-    gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
-    g_signal_connect(selection, "changed",
-                     G_CALLBACK(onClipboardSelectionChanged), impl);
-    auto *historyScrolled = gtk_scrolled_window_new(nullptr, nullptr);
-    gtk_widget_set_vexpand(historyScrolled, TRUE);
-    gtk_widget_set_hexpand(historyScrolled, TRUE);
-    gtk_widget_set_size_request(historyScrolled, -1, 160);
-    gtk_container_add(GTK_CONTAINER(historyScrolled),
-                      impl->clipboardHistoryView);
-    gtk_box_pack_start(GTK_BOX(historySection), historyScrolled, TRUE, TRUE, 0);
-
-    impl->clipboardHistoryState = gtk_label_new("正在读取…");
-    addStyleClass(impl->clipboardHistoryState, "modernime-description");
-    gtk_widget_set_halign(impl->clipboardHistoryState, GTK_ALIGN_START);
-    gtk_label_set_line_wrap(GTK_LABEL(impl->clipboardHistoryState), TRUE);
-    gtk_box_pack_start(GTK_BOX(historySection), impl->clipboardHistoryState,
-                       FALSE, FALSE, 0);
-
-    auto *historyActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    const auto clipboardActionLabels = settingsClipboardActionLabels();
-    impl->clipboardCopyButton = gtk_button_new_with_label(
-        clipboardActionLabels[0].data());
-    impl->clipboardDeleteButton = gtk_button_new_with_label(
-        clipboardActionLabels[1].data());
-    impl->clipboardClearButton = gtk_button_new_with_label(
-        clipboardActionLabels[2].data());
-    gtk_widget_set_tooltip_text(impl->clipboardCopyButton,
-                                "复制选中的历史内容到系统剪贴板");
-    gtk_widget_set_tooltip_text(impl->clipboardDeleteButton,
-                                "删除选中的历史内容");
-    gtk_widget_set_tooltip_text(impl->clipboardClearButton,
-                                "清空全部历史内容，需要确认");
-    for (auto *button : {impl->clipboardCopyButton,
-                         impl->clipboardDeleteButton,
-                         impl->clipboardClearButton}) {
-        gtk_box_pack_start(GTK_BOX(historyActions), button, FALSE, FALSE, 0);
-    }
-    gtk_box_pack_start(GTK_BOX(historySection), historyActions, FALSE, FALSE,
-                       0);
-
-    auto *refreshButton = gtk_button_new_with_label("刷新历史");
-    gtk_widget_set_halign(refreshButton, GTK_ALIGN_START);
-    gtk_widget_set_tooltip_text(refreshButton, "重新读取磁盘上的剪贴板历史");
-    gtk_box_pack_start(GTK_BOX(historySection), refreshButton, FALSE, FALSE, 0);
-    g_signal_connect(refreshButton, "clicked", G_CALLBACK(onClipboardRefresh),
-                     impl);
-    g_signal_connect(impl->clipboardCopyButton, "clicked",
-                     G_CALLBACK(onClipboardCopy), impl);
-    g_signal_connect(impl->clipboardDeleteButton, "clicked",
-                     G_CALLBACK(onClipboardDelete), impl);
-    g_signal_connect(impl->clipboardClearButton, "clicked",
-                     G_CALLBACK(onClipboardClear), impl);
-    gtk_box_pack_start(GTK_BOX(page), historySection, TRUE, TRUE, 0);
-
-    updateClipboardPageFromModel(impl);
-    updateDependentSensitivity(impl);
-    g_signal_connect(impl->clipboardEnabled, "toggled",
-                     G_CALLBACK(onClipboardChanged), impl);
-    g_signal_connect(impl->clipboardTrigger, "changed",
-                     G_CALLBACK(onClipboardChanged), impl);
-    return page;
 }
 
 std::filesystem::path learningBackupPath(const std::filesystem::path &path) {
@@ -1449,11 +1077,17 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     const auto pages = legacySettingsPageDefinitions();
     impl_->inputPage = std::make_unique<InputPage>(
         impl_->model, [this] { updateActionState(impl_.get()); });
+    impl_->clipboardPage = std::make_unique<ClipboardPage>(
+        impl_->model, impl_->paths_.clipboardHistory,
+        [this] { updateActionState(impl_.get()); },
+        [this](std::string message) {
+            setStatus(impl_.get(), message.c_str());
+        });
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          createScrollablePage(impl_->inputPage->widget()),
                          "input", "输入体验");
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         createScrollablePage(makeClipboardPage(impl_.get())),
+                         createScrollablePage(impl_->clipboardPage->widget()),
                          pages[2].name.data(), pages[2].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          createScrollablePage(makeLearningPage(impl_.get())),
@@ -1498,7 +1132,6 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
     g_signal_connect(defaults, "clicked", G_CALLBACK(onResetDefaults),
                      impl_.get());
     gtk_container_add(GTK_CONTAINER(impl_->window), root);
-    updateDependentSensitivity(impl_.get());
     updateActionState(impl_.get());
     if (!impl_->model.loadDiagnostics().empty()) {
         std::ostringstream warning;
@@ -1535,7 +1168,7 @@ void SettingsWindow::showCandidatePage() {
 
 void SettingsWindow::showClipboardPage() {
     gtk_stack_set_visible_child_name(GTK_STACK(impl_->stack), "clipboard");
-    refreshClipboardHistory(impl_.get(), false);
+    impl_->clipboardPage->refresh(false);
 }
 
 void SettingsWindow::showLearningPage() {
