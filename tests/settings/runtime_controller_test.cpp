@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     const modernime::settings::Environment baseEnvironment{
         {"DISPLAY", ":0"},
         {"DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus"},
-        {"FCITX_ADDON_DIRS", "/home/wsl/.local/lib/fcitx5:/usr/lib/fcitx5"}};
+        {"FCITX_ADDON_DIRS", "/demo-prefix/lib/fcitx5:/usr/lib/fcitx5"}};
 
     const auto status = modernime::settings::RuntimeController::probe(
         argv[1], baseEnvironment);
@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
                    std::string::npos,
                "running Fcitx5 is replaced with the ModernIME UI");
     assertTrue(runningFcitxContents.str().find(
-                   "addon=/home/wsl/.local/lib/fcitx5:/usr/lib/fcitx5") !=
+                   "addon=/demo-prefix/lib/fcitx5:/usr/lib/fcitx5") !=
                    std::string::npos,
                "replacement receives the current ModernIME addon directory");
 

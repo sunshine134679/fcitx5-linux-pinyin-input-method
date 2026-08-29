@@ -123,7 +123,7 @@ int main() {
     modernime::core::CandidatePage clipboardPage;
     clipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
     clipboardPage.items = {
-        {"cd /home/wsl/ModernIME ./install.sh", {}, 0},
+        {"cd ~/src/app ./install.sh", {}, 0},
         {"line one\nline two", {}, 1},
     };
     const auto clipboardLayout = modernime::ui::CandidateBarLayout::measure(
@@ -135,7 +135,7 @@ int main() {
                "clipboard layout grows into a vertical list");
     assertTrue(clipboardLayout.candidates.size() == 2 &&
                    clipboardLayout.candidates[0].displayText ==
-                       "cd /home/wsl/ModernIME ./install.sh",
+                       "cd ~/src/app ./install.sh",
                "clipboard rows do not add candidate number prefixes");
     assertTrue(clipboardLayout.candidates[1].bounds.y >
                    clipboardLayout.candidates[0].bounds.y,
