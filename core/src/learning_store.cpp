@@ -52,6 +52,10 @@ bool LearningStore::open() {
         close();
         return false;
     }
+    // The settings client reads the same database while the input method
+    // writes it; wait briefly for the other writer instead of failing with
+    // SQLITE_BUSY.
+    sqlite3_busy_timeout(db_, 1000);
     if (!execute("PRAGMA journal_mode=WAL;") || !execute(schema) ||
         !ensureSuppressionColumn()) {
         close();
