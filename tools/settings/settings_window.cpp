@@ -1288,21 +1288,34 @@ void onDictionaryImport(GtkButton *, gpointer data) {
     auto *dialog = gtk_file_chooser_dialog_new(
         "导入用户词典", GTK_WINDOW(impl->window), GTK_FILE_CHOOSER_ACTION_OPEN,
         "取消", GTK_RESPONSE_CANCEL, "导入", GTK_RESPONSE_ACCEPT, nullptr);
+    gchar *filename = nullptr;
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-        const auto filename = gtk_file_chooser_get_filename(
-            GTK_FILE_CHOOSER(dialog));
-        std::vector<pinyin::UserDictionaryEntry> imported;
-        std::string error;
-        if (!DataController::importDictionary(filename, imported, &error)) {
-            setStatus(impl, error.c_str());
-            g_free(filename);
-            gtk_widget_destroy(dialog);
-            return;
-        }
-        g_free(filename);
-        saveDictionaryEntries(impl, imported);
+        filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
     }
     gtk_widget_destroy(dialog);
+    if (filename == nullptr) {
+        return;
+    }
+    std::vector<pinyin::UserDictionaryEntry> imported;
+    std::string error;
+    if (!DataController::importDictionary(filename, imported, &error)) {
+        setStatus(impl, error.c_str());
+        g_free(filename);
+        return;
+    }
+    g_free(filename);
+    auto *confirm = gtk_message_dialog_new(
+        GTK_WINDOW(impl->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+        GTK_BUTTONS_YES_NO,
+        "导入将替换现有全部 %zu 条词条（导入文件含 %zu 条），确定继续吗？",
+        impl->dictionaryEntries.size(), imported.size());
+    const auto confirmed = gtk_dialog_run(GTK_DIALOG(confirm));
+    gtk_widget_destroy(confirm);
+    if (confirmed == GTK_RESPONSE_YES) {
+        saveDictionaryEntries(impl, imported);
+    } else {
+        setStatus(impl, "已取消导入，现有词典未修改");
+    }
 }
 
 void onDictionaryExport(GtkButton *, gpointer data) {
@@ -1331,7 +1344,7 @@ GtkWidget *makeDictionaryPage(SettingsWindow::Impl *impl) {
     auto *page = makePageShell(
         "用户词典", "维护个人词条和专业名词，重载 ModernIME 后生效");
     auto *section = makeSectionCard(
-        "词条列表", "拼音、词条和权重会在保存时统一校验；导入失败不会覆盖原词典。");
+        "词条列表", "拼音、词条和权重会在保存时统一校验；导入前会确认整体替换，失败不会覆盖原词典。");
 
     auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     auto *searchLabel = gtk_label_new("搜索");
