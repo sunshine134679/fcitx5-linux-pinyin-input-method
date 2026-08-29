@@ -385,6 +385,15 @@ public:
     std::unique_ptr<core::LearningWriter> learning;
     UserDictionary userDictionary;
     std::filesystem::path userDictionaryPath;
+    std::filesystem::path learningStorePath;
+
+    core::LearningWriter *ensureLearningWriter() {
+        if (learning == nullptr && !learningStorePath.empty()) {
+            learning =
+                std::make_unique<core::LearningWriter>(learningStorePath);
+        }
+        return learning.get();
+    }
 };
 
 std::shared_ptr<PinyinCandidateProvider::SharedResources>
@@ -397,6 +406,10 @@ PinyinCandidateProvider::createSharedResources(
             : std::filesystem::path(paths.userDictionary);
     resources->userDictionary =
         UserDictionary::loadText(resources->userDictionaryPath);
+    resources->learningStorePath =
+        paths.learningStore.empty()
+            ? defaultLearningPath()
+            : std::filesystem::path(paths.learningStore);
 
     auto dictionary = std::make_unique<libime::PinyinDictionary>();
     if (std::filesystem::is_regular_file(paths.dictionary)) {
@@ -420,10 +433,8 @@ PinyinCandidateProvider::createSharedResources(
                                                          std::move(model));
     resources->ime->setNBest(32);
     if (options.learningEnabled) {
-        resources->learning = std::make_unique<core::LearningWriter>(
-            paths.learningStore.empty()
-                ? defaultLearningPath()
-                : std::filesystem::path(paths.learningStore));
+        resources->learning =
+            std::make_unique<core::LearningWriter>(resources->learningStorePath);
     }
     return resources;
 }
@@ -436,7 +447,8 @@ public:
     Impl(std::shared_ptr<SharedResources> shared,
          const PinyinProviderOptions &options)
         : shared_(std::move(shared)),
-          contextLearningEnabled_(options.contextLearningEnabled) {
+          contextLearningEnabled_(options.contextLearningEnabled),
+          learningEnabled_(options.learningEnabled) {
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         refresh();
     }
@@ -540,11 +552,26 @@ public:
         contextAfter_ = after;
     }
 
+    void setLearningEnabled(bool enabled) { learningEnabled_ = enabled; }
+
+    void setContextLearningEnabled(bool enabled) {
+        contextLearningEnabled_ = enabled;
+        if (!enabled) {
+            contextBefore_.clear();
+            contextAfter_.clear();
+        }
+    }
+
     const core::CandidatePage &page() const { return page_; }
 
 private:
     libime::PinyinIME &ime() { return *shared_->ime; }
-    core::LearningWriter *learningWriter() { return shared_->learning.get(); }
+    core::LearningWriter *learningWriter() {
+        if (!learningEnabled_) {
+            return nullptr;
+        }
+        return shared_->ensureLearningWriter();
+    }
     UserDictionary &userDictionary() { return shared_->userDictionary; }
     const std::filesystem::path &userDictionaryPath() const {
         return shared_->userDictionaryPath;
@@ -639,6 +666,7 @@ private:
     std::shared_ptr<SharedResources> shared_;
     std::unique_ptr<libime::PinyinContext> context;
     bool contextLearningEnabled_ = true;
+    bool learningEnabled_ = true;
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
@@ -679,6 +707,14 @@ const core::CandidatePage &PinyinCandidateProvider::page() const {
 void PinyinCandidateProvider::setContext(std::string_view before,
                                          std::string_view after) {
     impl_->setContext(before, after);
+}
+
+void PinyinCandidateProvider::setLearningEnabled(bool enabled) {
+    impl_->setLearningEnabled(enabled);
+}
+
+void PinyinCandidateProvider::setContextLearningEnabled(bool enabled) {
+    impl_->setContextLearningEnabled(enabled);
 }
 
 } // namespace modernime::pinyin

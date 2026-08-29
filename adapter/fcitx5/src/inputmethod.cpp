@@ -222,7 +222,7 @@ void FcitxEngineHost::commit(std::string_view text) {
 
 FcitxInputContextState::FcitxInputContextState(
     fcitx::InputContext &inputContext, const core::ModernIMESettings &settings,
-    const FcitxEngineResources &resources)
+    const FcitxEngineResources &resources, std::uint64_t settingsGeneration)
     : host_(inputContext)
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
       ,
@@ -232,17 +232,35 @@ FcitxInputContextState::FcitxInputContextState(
                     : std::make_unique<pinyin::PinyinCandidateProvider>(
                           pinyinPaths(), pinyinOptions(settings)))
       , clipboardTrigger_(settings.clipboardTrigger)
-      , controller_(host_, provider_.get(), controllerOptions(settings)) {
+      , controller_(host_, provider_.get(), controllerOptions(settings))
+      , settingsGeneration_(settingsGeneration) {
 #else
       , clipboardTrigger_(settings.clipboardTrigger)
-      , controller_(host_, nullptr, controllerOptions(settings)) {
+      , controller_(host_, nullptr, controllerOptions(settings))
+      , settingsGeneration_(settingsGeneration) {
         (void)resources;
 #endif
     host_.setController(controller_);
     host_.setBeforeCandidateSelection(
         [this] { clipboardTrigger_.reset(); });
     controller_.setActive(settings.inputEnabled &&
-                           settings.defaultMode == core::InputMode::Chinese);
+                          settings.defaultMode == core::InputMode::Chinese);
+}
+
+void FcitxInputContextState::applySettings(
+    const core::ModernIMESettings &settings, std::uint64_t generation) {
+    controller().setOptions(controllerOptions(settings));
+    clipboardTrigger_ = ClipboardTrigger(settings.clipboardTrigger);
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    if (provider_ != nullptr) {
+        provider_->setLearningEnabled(settings.learningEnabled);
+        provider_->setContextLearningEnabled(
+            settings.contextLearningEnabled);
+    }
+#else
+    (void)settings;
+#endif
+    settingsGeneration_ = generation;
 }
 
 ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
@@ -252,7 +270,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
       settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
       stateFactory_([this](fcitx::InputContext &inputContext) {
           return new FcitxInputContextState(inputContext, settings_,
-                                            resources_);
+                                            resources_, settingsGeneration_);
       }) {
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // One dictionary/language-model/learning-writer set for the whole engine;
@@ -260,6 +278,14 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
     resources_.pinyin = pinyin::PinyinCandidateProvider::createSharedResources(
         pinyinPaths(), pinyinOptions(settings_));
 #endif
+    {
+        std::error_code mtimeError;
+        settingsMtime_ = std::filesystem::last_write_time(
+            settingsPaths().settingsFile, mtimeError);
+        if (mtimeError) {
+            settingsMtime_ = {};
+        }
+    }
     std::string historyError;
     if (!clipboardHistory_.load(&historyError)) {
         FCITX_ERROR() << "Failed to load ModernIME clipboard history: "
@@ -273,6 +299,14 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
             [this](fcitx::EventSourceTime *source, std::uint64_t) {
                 pollClipboard();
                 source->setNextInterval(50000);
+                source->setEnabled(true);
+                return true;
+            });
+        settingsTimer_ = instance_->eventLoop().addTimeEvent(
+            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 2000000, 2000000,
+            [this](fcitx::EventSourceTime *source, std::uint64_t) {
+                pollSettingsFile();
+                source->setNextInterval(2000000);
                 source->setEnabled(true);
                 return true;
             });
@@ -451,6 +485,23 @@ void ModernIMEInputMethod::pollClipboard() {
     }
 }
 
+void ModernIMEInputMethod::pollSettingsFile() {
+    if (instance_ == nullptr) {
+        return;
+    }
+    std::error_code error;
+    const auto path = settingsPaths().settingsFile;
+    const auto mtime = std::filesystem::last_write_time(path, error);
+    if (error || mtime == settingsMtime_) {
+        return;
+    }
+    settingsMtime_ = mtime;
+    settings_ = core::SettingsStore::load(path).settings;
+    keyBindings_ = keyBindings(settings_);
+    ++settingsGeneration_;
+    FCITX_INFO() << "ModernIME settings reloaded from " << path.string();
+}
+
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                                     fcitx::KeyEvent &event) {
     if (event.isRelease()) {
@@ -459,6 +510,9 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
     auto *contextState = state(event.inputContext());
     if (contextState == nullptr) {
         return;
+    }
+    if (contextState->settingsGeneration() != settingsGeneration_) {
+        contextState->applySettings(settings_, settingsGeneration_);
     }
     const auto context = extractSurroundingContext(
         event.inputContext()->surroundingText(), 32);
@@ -514,6 +568,9 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
                                     fcitx::InputContextEvent &event) {
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
+        if (contextState->settingsGeneration() != settingsGeneration_) {
+            contextState->applySettings(settings_, settingsGeneration_);
+        }
         contextState->resetClipboardTrigger();
         contextState->controller().setActive(
             settings_.inputEnabled &&

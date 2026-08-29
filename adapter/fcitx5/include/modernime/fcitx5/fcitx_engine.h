@@ -13,6 +13,8 @@
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/surroundingtext.h>
 
+#include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -65,7 +67,14 @@ class FcitxInputContextState final : public fcitx::InputContextProperty {
 public:
     FcitxInputContextState(fcitx::InputContext &inputContext,
                            const core::ModernIMESettings &settings,
-                           const FcitxEngineResources &resources);
+                           const FcitxEngineResources &resources,
+                           std::uint64_t settingsGeneration);
+
+    // Brings this context in sync with reloaded settings; cheap enough to
+    // call whenever the engine notices a stale generation.
+    void applySettings(const core::ModernIMESettings &settings,
+                       std::uint64_t generation);
+    std::uint64_t settingsGeneration() const { return settingsGeneration_; }
 
     ModernIMEController &controller() { return controller_; }
     ClipboardTriggerResult processClipboardTrigger(const KeyEvent &event,
@@ -84,6 +93,7 @@ private:
 #endif
     ClipboardTrigger clipboardTrigger_;
     ModernIMEController controller_;
+    std::uint64_t settingsGeneration_ = 0;
 };
 
 class ModernIMEInputMethod final : public fcitx::InputMethodEngine {
@@ -105,6 +115,7 @@ public:
 private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
     void pollClipboard();
+    void pollSettingsFile();
 
     fcitx::AddonManager *manager_ = nullptr;
     fcitx::Instance *instance_ = nullptr;
@@ -112,6 +123,9 @@ private:
     bool clipboardAddonLookupAttempted_ = false;
     core::PersistentClipboardHistory clipboardHistory_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
+    std::unique_ptr<fcitx::EventSourceTime> settingsTimer_;
+    std::filesystem::file_time_type settingsMtime_{};
+    std::uint64_t settingsGeneration_ = 0;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
     FcitxEngineResources resources_;

@@ -53,6 +53,10 @@ public:
     const core::CandidatePage &page() const override;
 
     void setContext(std::string_view before, std::string_view after);
+    // Runtime toggles for settings hot-reload; learning writer is created
+    // lazily on first use after being enabled.
+    void setLearningEnabled(bool enabled);
+    void setContextLearningEnabled(bool enabled);
 
 private:
     class Impl;
