@@ -1,9 +1,9 @@
 #include "modernime/settings/settings_window.h"
 #include "modernime/settings/pages/clipboard_page.h"
+#include "modernime/settings/pages/diagnostics_page.h"
 #include "modernime/settings/pages/dictionary_page.h"
 #include "modernime/settings/pages/input_page.h"
 #include "modernime/settings/pages/learning_page.h"
-#include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -39,13 +39,7 @@ public:
     std::unique_ptr<ClipboardPage> clipboardPage;
     std::unique_ptr<LearningPage> learningPage;
     std::unique_ptr<DictionaryPage> dictionaryPage;
-    GtkWidget *runtimeStatus = nullptr;
-    GtkWidget *runtimeAvailability = nullptr;
-    GtkWidget *runtimeService = nullptr;
-    GtkWidget *runtimeInputMethod = nullptr;
-    GtkWidget *runtimeModernime = nullptr;
-    GtkWidget *refreshStatusButton = nullptr;
-    GtkWidget *reloadButton = nullptr;
+    std::unique_ptr<DiagnosticsPage> diagnosticsPage;
 };
 
 namespace {
@@ -261,204 +255,6 @@ std::filesystem::path fcitxRemotePath() {
     return result;
 }
 
-struct RuntimeTask final {
-    SettingsWindow::Impl *impl;
-    bool reload;
-    std::filesystem::path fcitxExecutable;
-    std::filesystem::path executable;
-    Environment environment;
-};
-
-void startRuntimeTask(SettingsWindow::Impl *impl, bool reload);
-
-void runtimeTaskFunction(GTask *task, gpointer, gpointer data,
-                         GCancellable *) {
-    const auto *request = static_cast<const RuntimeTask *>(data);
-    if (request->reload) {
-        g_task_return_pointer(
-            task,
-            new RuntimeResult(RuntimeController::reload(
-                request->fcitxExecutable, request->executable,
-                request->environment)),
-            [](gpointer value) { delete static_cast<RuntimeResult *>(value); });
-    } else {
-        g_task_return_pointer(
-            task,
-            new RuntimeStatus(RuntimeController::probe(request->executable,
-                                                       request->environment)),
-            [](gpointer value) { delete static_cast<RuntimeStatus *>(value); });
-    }
-}
-
-void setRuntimeLabel(GtkWidget *label, const char *text) {
-    if (label != nullptr) {
-        gtk_label_set_text(GTK_LABEL(label), text);
-    }
-}
-
-void updateRuntimeStatusWidgets(SettingsWindow::Impl *impl,
-                                const RuntimeStatus &status) {
-    setRuntimeLabel(impl->runtimeAvailability,
-                    status.available ? "可用" : "不可用");
-    setRuntimeLabel(impl->runtimeService,
-                    status.running ? "正在运行" : "未运行");
-    setRuntimeLabel(impl->runtimeInputMethod,
-                    status.currentInputMethod.empty()
-                        ? (status.inputContextAvailable ? "未获取"
-                                                        : "暂无输入上下文")
-                        : status.currentInputMethod.c_str());
-    setRuntimeLabel(impl->runtimeModernime,
-                    status.modernimeActive
-                        ? "已激活"
-                        : (!status.modernimeAvailable
-                               ? "未加载"
-                               : (!status.inputContextAvailable && status.running
-                                      ? "已就绪"
-                                      : (status.running ? "未激活" : "未运行"))));
-    setRuntimeLabel(impl->runtimeStatus,
-                    status.message.empty() ? "无法读取 Fcitx5 状态"
-                                           : status.message.c_str());
-}
-
-void updateRuntimeFailureWidgets(SettingsWindow::Impl *impl,
-                                 const char *message) {
-    setRuntimeLabel(impl->runtimeAvailability, "检测失败");
-    setRuntimeLabel(impl->runtimeService, "未知");
-    setRuntimeLabel(impl->runtimeInputMethod, "未获取");
-    setRuntimeLabel(impl->runtimeModernime, "未知");
-    setRuntimeLabel(impl->runtimeStatus,
-                    message == nullptr || *message == '\0'
-                        ? "无法读取 Fcitx5 状态"
-                        : message);
-}
-
-void runtimeTaskFinished(GObject *, GAsyncResult *result, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    auto *task = G_TASK(result);
-    const auto *request = static_cast<const RuntimeTask *>(
-        g_task_get_task_data(task));
-    GError *error = nullptr;
-    if (request->reload) {
-        auto *reload = static_cast<RuntimeResult *>(
-            g_task_propagate_pointer(task, &error));
-        if (reload != nullptr) {
-            setStatus(impl, reload->success ? "ModernIME 已重新加载并激活"
-                                             : reload->message.c_str());
-            gtk_widget_set_sensitive(impl->reloadButton, TRUE);
-            gtk_widget_set_sensitive(impl->refreshStatusButton, TRUE);
-            if (reload->success) {
-                gtk_widget_set_sensitive(impl->reloadButton, FALSE);
-                gtk_widget_set_sensitive(impl->refreshStatusButton, FALSE);
-                startRuntimeTask(impl, false);
-            }
-        } else {
-            setStatus(impl, error == nullptr ? "ModernIME 重载失败"
-                                             : error->message);
-            gtk_widget_set_sensitive(impl->reloadButton, TRUE);
-            gtk_widget_set_sensitive(impl->refreshStatusButton, TRUE);
-        }
-        delete reload;
-        g_clear_error(&error);
-    } else {
-        auto *status = static_cast<RuntimeStatus *>(
-            g_task_propagate_pointer(task, &error));
-        if (status != nullptr) {
-            updateRuntimeStatusWidgets(impl, *status);
-        } else {
-            updateRuntimeFailureWidgets(impl,
-                                        error == nullptr ? nullptr
-                                                          : error->message);
-        }
-        gtk_widget_set_sensitive(impl->refreshStatusButton, TRUE);
-        gtk_widget_set_sensitive(impl->reloadButton, TRUE);
-        delete status;
-        g_clear_error(&error);
-    }
-}
-
-void startRuntimeTask(SettingsWindow::Impl *impl, bool reload) {
-    auto *task = g_task_new(G_OBJECT(impl->window), nullptr,
-                            runtimeTaskFinished, impl);
-    auto *request = new RuntimeTask{impl, reload, fcitxPath(),
-                                    fcitxRemotePath(), currentEnvironment()};
-    g_task_set_task_data(task, request, [](gpointer value) {
-        delete static_cast<RuntimeTask *>(value);
-    });
-    g_task_run_in_thread(task, runtimeTaskFunction);
-    g_object_unref(task);
-}
-
-void onReload(GtkButton *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    gtk_widget_set_sensitive(impl->reloadButton, FALSE);
-    gtk_widget_set_sensitive(impl->refreshStatusButton, FALSE);
-    setStatus(impl, "正在请求重载 ModernIME…");
-    startRuntimeTask(impl, true);
-}
-
-void onRefreshStatus(GtkButton *, gpointer data) {
-    auto *impl = static_cast<SettingsWindow::Impl *>(data);
-    gtk_widget_set_sensitive(impl->refreshStatusButton, FALSE);
-    gtk_widget_set_sensitive(impl->reloadButton, FALSE);
-    setRuntimeLabel(impl->runtimeStatus, "正在检测 Fcitx5 状态…");
-    startRuntimeTask(impl, false);
-}
-
-GtkWidget *makeStatusPage(SettingsWindow::Impl *impl) {
-    auto *page = createPageShell(
-        "输入法状态", "检查 Fcitx5、ModernIME 插件和当前激活状态");
-    auto *section = createSectionCard(
-        "运行状态", "如果状态异常，可以在这里重新加载 ModernIME。");
-    impl->runtimeStatus = gtk_label_new("正在读取 Fcitx5 状态…");
-    addStyleClass(impl->runtimeStatus, "modernime-status");
-    gtk_widget_set_halign(impl->runtimeStatus, GTK_ALIGN_START);
-    gtk_label_set_line_wrap(GTK_LABEL(impl->runtimeStatus), TRUE);
-    gtk_box_pack_start(GTK_BOX(section), impl->runtimeStatus, FALSE, FALSE, 0);
-
-    auto *statusGrid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(statusGrid), 8);
-    gtk_grid_set_column_spacing(GTK_GRID(statusGrid), 16);
-    const auto statusLabels = settingsRuntimeStatusLabels();
-    const auto addStatusRow = [statusGrid](int row, std::string_view title,
-                                           GtkWidget **value,
-                                           const char *initial) {
-        auto *label = gtk_label_new(title.data());
-        gtk_widget_set_halign(label, GTK_ALIGN_START);
-        gtk_grid_attach(GTK_GRID(statusGrid), label, 0, row, 1, 1);
-        *value = gtk_label_new(initial);
-        addStyleClass(*value, "modernime-status");
-        gtk_widget_set_halign(*value, GTK_ALIGN_START);
-        gtk_grid_attach(GTK_GRID(statusGrid), *value, 1, row, 1, 1);
-    };
-    addStatusRow(0, statusLabels[0], &impl->runtimeAvailability, "检测中…");
-    addStatusRow(1, statusLabels[1], &impl->runtimeService, "检测中…");
-    addStatusRow(2, statusLabels[2], &impl->runtimeInputMethod, "检测中…");
-    addStatusRow(3, statusLabels[3], &impl->runtimeModernime, "检测中…");
-    gtk_box_pack_start(GTK_BOX(section), statusGrid, FALSE, FALSE, 0);
-
-    auto *statusActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    impl->refreshStatusButton = gtk_button_new_with_label("刷新状态");
-    gtk_widget_set_tooltip_text(impl->refreshStatusButton,
-                                "重新查询 Fcitx5 和 ModernIME 状态");
-    impl->reloadButton = gtk_button_new_with_label("重新加载 ModernIME");
-    gtk_widget_set_tooltip_text(impl->reloadButton,
-                                "保存配置后重新加载 ModernIME");
-    gtk_box_pack_start(GTK_BOX(statusActions), impl->refreshStatusButton,
-                       FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(statusActions), impl->reloadButton, FALSE,
-                       FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(section), statusActions, FALSE, FALSE, 0);
-    g_signal_connect(impl->refreshStatusButton, "clicked",
-                     G_CALLBACK(onRefreshStatus), impl);
-    g_signal_connect(impl->reloadButton, "clicked", G_CALLBACK(onReload),
-                     impl);
-    gtk_widget_set_sensitive(impl->refreshStatusButton, FALSE);
-    gtk_widget_set_sensitive(impl->reloadButton, FALSE);
-    startRuntimeTask(impl, false);
-    gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-    return page;
-}
-
 } // namespace
 
 SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
@@ -508,6 +304,11 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
         impl_->paths_.userDictionary, [this](std::string message) {
             setStatus(impl_.get(), message.c_str());
         });
+    impl_->diagnosticsPage = std::make_unique<DiagnosticsPage>(
+        fcitxPath(), fcitxRemotePath(), currentEnvironment(),
+        [this](std::string message) {
+            setStatus(impl_.get(), message.c_str());
+        });
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
                          createScrollablePage(impl_->inputPage->widget()),
                          "input", "输入体验");
@@ -521,8 +322,8 @@ SettingsWindow::SettingsWindow(void *application, core::SettingsPaths paths)
                          createScrollablePage(impl_->dictionaryPage->widget()),
                          pages[4].name.data(), pages[4].title.data());
     gtk_stack_add_titled(GTK_STACK(impl_->stack),
-                         createScrollablePage(makeStatusPage(impl_.get())),
-                         pages[5].name.data(), pages[5].title.data());
+                         createScrollablePage(impl_->diagnosticsPage->widget()),
+                         pages[5].name.data(), "系统与诊断");
 
     auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_margin_start(actions, 12);
