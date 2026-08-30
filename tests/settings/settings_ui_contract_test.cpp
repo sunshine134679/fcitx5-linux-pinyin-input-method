@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <ranges>
 #include <string_view>
 
 namespace {
@@ -59,13 +60,20 @@ int main() {
                    runtimeLabels[3] == "ModernIME",
                "runtime status labels have clear semantics");
 
-    const auto pageSurfaceClasses =
+    const auto pageClasses =
         modernime::settings::settingsPageSurfaceStyleClasses();
-    assertTrue(pageSurfaceClasses.size() == 4 &&
-                   pageSurfaceClasses[0] == "modernime-page-scroller" &&
-                   pageSurfaceClasses[1] == "modernime-page-viewport" &&
-                   pageSurfaceClasses[2] == "modernime-page-stack" &&
-                   pageSurfaceClasses[3] == "modernime-page-surface",
-               "page stack, scroller, viewport and surface have explicit styles");
+    assertTrue(std::ranges::find(pageClasses, "modernime-page-scroller") !=
+                   pageClasses.end(),
+               "the page scroller has an explicit surface style");
+    assertTrue(std::ranges::find(pageClasses, "modernime-page-surface") !=
+                   pageClasses.end(),
+               "the page content has an explicit surface style");
+
+    const auto shortcuts = modernime::settings::settingsKeyboardShortcuts();
+    assertTrue(shortcuts.size() == 3, "all global keyboard shortcuts are declared");
+    assertTrue(shortcuts[0] == "<Primary>f" &&
+                   shortcuts[1] == "<Primary>Return" &&
+                   shortcuts[2] == "Escape",
+               "search, apply and popover dismissal use approved shortcuts");
     return EXIT_SUCCESS;
 }

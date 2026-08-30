@@ -280,6 +280,31 @@ private:
         return TRUE;
     }
 
+    static gboolean onWindowKeyPress(GtkWidget *, GdkEventKey *event,
+                                     gpointer data) {
+        auto *owner = static_cast<Impl *>(data);
+        const auto modifiers = event->state & gtk_accelerator_get_default_mod_mask();
+        if (modifiers == GDK_CONTROL_MASK &&
+            (event->keyval == GDK_KEY_f || event->keyval == GDK_KEY_F)) {
+            gtk_widget_grab_focus(owner->searchEntry);
+            return TRUE;
+        }
+        if (modifiers == GDK_CONTROL_MASK &&
+            (event->keyval == GDK_KEY_Return ||
+             event->keyval == GDK_KEY_KP_Enter)) {
+            if (gtk_widget_is_sensitive(owner->applyButton)) {
+                gtk_button_clicked(GTK_BUTTON(owner->applyButton));
+            }
+            return TRUE;
+        }
+        if (event->keyval == GDK_KEY_Escape &&
+            gtk_widget_get_visible(owner->searchPopover)) {
+            gtk_popover_popdown(GTK_POPOVER(owner->searchPopover));
+            return TRUE;
+        }
+        return FALSE;
+    }
+
     static void overviewTaskFinished(GObject *source, GAsyncResult *result,
                                      gpointer) {
         GError *error = nullptr;
@@ -312,6 +337,8 @@ private:
         installSettingsStyles();
         g_signal_connect(windowOwner.get(), "delete-event",
                          G_CALLBACK(onWindowDelete), this);
+        g_signal_connect(windowOwner.get(), "key-press-event",
+                         G_CALLBACK(onWindowKeyPress), this);
 
         detail::GtkWidgetGuard rootGuard(
             gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
@@ -342,6 +369,8 @@ private:
         gtk_entry_set_placeholder_text(GTK_ENTRY(searchEntry), "搜索设置");
         gtk_widget_set_tooltip_text(searchEntry,
                                     "仅在本地搜索设置名称和说明");
+        setAccessibleWidgetText(searchEntry, "搜索设置",
+                                "仅在本地搜索设置名称和说明，按 Ctrl+F 聚焦");
         gtk_box_pack_start(GTK_BOX(sidebar), searchEntry, FALSE, FALSE, 0);
 
         searchPopover = gtk_popover_new(searchEntry);
@@ -373,6 +402,8 @@ private:
             gtk_widget_set_hexpand(button, TRUE);
             gtk_widget_set_tooltip_text(
                 button, std::string(definition.subtitle).c_str());
+            setAccessibleWidgetText(button, definition.title,
+                                    definition.subtitle);
             gtk_box_pack_start(GTK_BOX(sidebar), button, FALSE, FALSE, 0);
             navigationButtons.emplace_back(definition.id, button);
             g_signal_connect_data(
@@ -436,6 +467,9 @@ private:
         auto *defaults = gtk_menu_item_new_with_label("恢复默认");
         gtk_widget_set_tooltip_text(
             defaults, "只修改当前设置草稿，不删除个人词典或学习数据");
+        setAccessibleWidgetText(
+            defaults, "恢复默认",
+            "只修改当前设置草稿，不删除个人词典或学习数据");
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), defaults);
         gtk_widget_show(defaults);
         g_signal_connect(defaults, "activate", G_CALLBACK(onEditDefaults),
@@ -446,6 +480,8 @@ private:
         gtk_button_set_label(GTK_BUTTON(menuButton), "更多");
         gtk_widget_set_halign(menuButton, GTK_ALIGN_END);
         gtk_widget_set_tooltip_text(menuButton, "打开输入体验的更多操作");
+        setAccessibleWidgetText(menuButton, "更多",
+                                "打开输入体验的更多操作菜单");
         gtk_menu_button_set_popup(GTK_MENU_BUTTON(menuButton), menu);
         menuGuard.release();
         gtk_box_pack_start(GTK_BOX(inputPage->widget()), menuButton, FALSE,
@@ -480,6 +516,12 @@ private:
         applyButton = gtk_button_new_with_label(labels[1].data());
         saveButton = gtk_button_new_with_label(labels[2].data());
         addStyleClass(saveButton, kSettingsPrimaryButtonClass);
+        setAccessibleWidgetText(restoreButton, labels[0],
+                                "放弃当前会话内尚未保存的设置修改");
+        setAccessibleWidgetText(applyButton, labels[1],
+                                "保存设置但保持窗口打开，可按 Ctrl+Enter");
+        setAccessibleWidgetText(saveButton, labels[2],
+                                "保存设置并关闭窗口");
         for (auto *button : {restoreButton, applyButton, saveButton}) {
             gtk_box_pack_start(GTK_BOX(buttons), button, FALSE, FALSE, 0);
         }
@@ -522,6 +564,7 @@ private:
             auto descriptionText = std::string(pageDefinition(entry.page).title);
             descriptionText += " · ";
             descriptionText += entry.description;
+            setAccessibleWidgetText(button, entry.title, descriptionText);
             auto *description = gtk_label_new(descriptionText.c_str());
             addStyleClass(description, "modernime-description");
             gtk_widget_set_halign(description, GTK_ALIGN_START);

@@ -42,6 +42,9 @@ public:
         buildShortcutSection();
         buildPunctuationSection();
         buildCandidateBehaviorSection();
+        setSettingsFocusChain(
+            page, {inputEnabled, defaultMode, toggleKey, punctuation,
+                   numberSelection, arrowNavigation, pageNavigation});
         refresh();
         pageGuard.release();
     }
@@ -90,8 +93,7 @@ public:
         auto *section = createSectionCard(
             "标点", "配置中文输入状态下的标点输出方式。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-        punctuation = gtk_check_button_new_with_label(
-            "中文标点使用全角（，。？！等）");
+        punctuation = gtk_check_button_new_with_label("中文标点");
         setTarget(punctuation, "punctuation");
         punctuationFallback = createSettingRow(
             "中文标点", "在中文状态下使用全角标点。", punctuation);
@@ -110,8 +112,7 @@ public:
         arrowNavigation = gtk_check_button_new_with_label("左右方向键切换候选");
         gtk_widget_set_tooltip_text(arrowNavigation, "使用左右方向键切换候选项");
         setTarget(arrowNavigation, "arrow-navigation");
-        pageNavigation = gtk_check_button_new_with_label(
-            "上下方向键和 + / = 翻页");
+        pageNavigation = gtk_check_button_new_with_label("候选翻页");
         gtk_widget_set_tooltip_text(pageNavigation,
                                     "使用上下方向键或 + / = 翻页");
         setTarget(pageNavigation, "page-navigation");

@@ -39,4 +39,9 @@ constexpr auto settingsPageSurfaceStyleClasses() {
                                           "modernime-page-surface"};
 }
 
+constexpr auto settingsKeyboardShortcuts() {
+    return std::array<std::string_view, 3>{"<Primary>f",
+                                          "<Primary>Return", "Escape"};
+}
+
 } // namespace modernime::settings

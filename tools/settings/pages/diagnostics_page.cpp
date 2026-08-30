@@ -196,6 +196,10 @@ private:
                                     "重新查询 Fcitx5 和 ModernIME 状态");
         gtk_widget_set_tooltip_text(reloadButton,
                                     "保存配置后重新加载 ModernIME");
+        setAccessibleWidgetText(refreshButton, "刷新状态",
+                                "重新查询 Fcitx5 和 ModernIME 运行状态");
+        setAccessibleWidgetText(reloadButton, "重新加载 ModernIME",
+                                "请求 Fcitx5 重新加载并激活 ModernIME");
         gtk_box_pack_start(GTK_BOX(actions), refreshButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(actions), reloadButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section), actions, FALSE, FALSE, 0);
@@ -207,6 +211,7 @@ private:
             reloadButton, "clicked", G_CALLBACK(onReload),
             new SharedLifetime(state), destroySignalState,
             static_cast<GConnectFlags>(0));
+        setSettingsFocusChain(page, {refreshButton, reloadButton});
     }
 
     void startTask(bool reloadRequest) {

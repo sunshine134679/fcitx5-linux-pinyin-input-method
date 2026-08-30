@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=ModernIME 设置
-Comment=配置 ModernIME 输入法
+Comment=配置 ModernIME 输入体验与个人数据
 Exec=modernime-settings
 Icon=input-keyboard
 Terminal=false

@@ -67,6 +67,8 @@ grep -Fqx 'Exec=modernime-settings' \
     "$prefix/share/applications/modernime-settings.desktop"
 grep -Fqx 'Name=ModernIME 设置' \
     "$prefix/share/applications/modernime-settings.desktop"
+grep -Fqx 'Comment=配置 ModernIME 输入体验与个人数据' \
+    "$prefix/share/applications/modernime-settings.desktop"
 grep -Fqx "Exec=$prefix/bin/modernime-settings" \
     "$test_root/home/Desktop/modernime-settings.desktop"
 

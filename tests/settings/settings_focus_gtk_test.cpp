@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <string>
+#include <string_view>
 
 int main(int argc, char **argv) {
     if (!gtk_init_check(&argc, &argv)) {
@@ -17,10 +18,25 @@ int main(int argc, char **argv) {
     auto *target = gtk_entry_new();
     auto *fallback = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     auto *next = gtk_button_new_with_label("下一个控件");
+    setAccessibleWidgetText(next, "下一个控件", "将焦点移动到下一个控件");
+    auto *nextAccessible = gtk_widget_get_accessible(next);
+    assert(std::string_view(atk_object_get_name(nextAccessible)) ==
+           "下一个控件");
+    assert(std::string_view(atk_object_get_description(nextAccessible)) ==
+           "将焦点移动到下一个控件");
     gtk_container_add(GTK_CONTAINER(window), box);
     gtk_box_pack_start(GTK_BOX(box), target, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), fallback, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), next, FALSE, FALSE, 0);
+    setSettingsFocusChain(box, {target, next});
+    GList *focusChain = nullptr;
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    assert(gtk_container_get_focus_chain(GTK_CONTAINER(box), &focusChain));
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    assert(g_list_length(focusChain) == 2);
+    assert(focusChain->data == target);
+    assert(focusChain->next->data == next);
+    g_list_free(focusChain);
     gtk_widget_show_all(window);
     gtk_window_present(GTK_WINDOW(window));
     while (gtk_events_pending()) {

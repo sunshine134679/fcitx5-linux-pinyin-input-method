@@ -2,6 +2,7 @@
 
 #include <gtk/gtk.h>
 
+#include <initializer_list>
 #include <string_view>
 
 namespace modernime::settings {
@@ -18,6 +19,11 @@ inline constexpr std::string_view kSettingsFocusFallbackClass =
 
 void installSettingsStyles();
 std::string_view settingsStyles();
+void setAccessibleWidgetText(GtkWidget *widget, std::string_view name,
+                             std::string_view description);
+void setSettingsFocusChain(
+    GtkWidget *container,
+    std::initializer_list<GtkWidget *> focusableWidgets);
 
 GtkWidget *createPageShell(std::string_view title, std::string_view subtitle);
 GtkWidget *createSectionCard(std::string_view title,

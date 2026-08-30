@@ -30,9 +30,12 @@ void destroyDestinationAction(gpointer data, GClosure *) {
 
 GtkWidget *createDestinationButton(
     std::string_view label, SettingsPageId destination,
-    const std::function<void(SettingsPageId)> &navigate) {
+    const std::function<void(SettingsPageId)> &navigate,
+    std::string_view description = "打开对应设置页面") {
     auto *button = gtk_button_new_with_label(std::string(label).c_str());
     gtk_widget_set_halign(button, GTK_ALIGN_START);
+    setAccessibleWidgetText(button, label, description);
+    gtk_widget_set_tooltip_text(button, std::string(description).c_str());
     g_signal_connect_data(
         button, "clicked", G_CALLBACK(onNavigate),
         new DestinationAction{navigate, destination},
@@ -55,7 +58,8 @@ GtkWidget *createOverviewCard(
     addValue(card, value);
     gtk_box_pack_start(
         GTK_BOX(card),
-        createDestinationButton(actionLabel, destination, navigate), FALSE,
+        createDestinationButton(actionLabel, destination, navigate,
+                                "打开对应页面查看并修改设置"), FALSE,
         FALSE, 0);
     return card;
 }
@@ -142,7 +146,8 @@ public:
                 gtk_box_pack_start(
                     GTK_BOX(notices),
                     createDestinationButton(notice.message,
-                                            notice.destination, navigate),
+                                            notice.destination, navigate,
+                                            "打开相关页面处理此问题"),
                     FALSE, FALSE, 0);
             }
             gtk_box_pack_start(GTK_BOX(content), notices, FALSE, FALSE, 0);

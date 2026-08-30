@@ -93,7 +93,7 @@ public:
          std::function<void(std::string)> notifyCallback)
         : path(std::move(dictionaryPath)), notify(std::move(notifyCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "用户词典", "维护个人词条和专业名词，重载 ModernIME 后生效"));
+            "个人词典", "维护个人词条和专业名词，重载 ModernIME 后生效"));
         page = pageGuard.get();
         buildPage();
         refresh();
@@ -115,6 +115,8 @@ public:
         gtk_widget_set_tooltip_text(dictionarySearch,
                                     "实时筛选拼音和词条内容");
         setTarget(dictionarySearch, "dictionary-search");
+        setAccessibleWidgetText(dictionarySearch, "搜索",
+                                "按拼音或词条关键词实时筛选个人词典");
         gtk_box_pack_start(GTK_BOX(searchRow), searchLabel, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(searchRow), dictionarySearch, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(section), searchRow, FALSE, FALSE, 0);
@@ -133,6 +135,8 @@ public:
         dictionaryStoreOwner.reset();
         gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(dictionaryView), TRUE);
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(dictionaryView), FALSE);
+        setAccessibleWidgetText(dictionaryView, "个人词典词条列表",
+                                "选择词条后可以编辑或删除");
         gtk_widget_set_tooltip_text(dictionaryView,
                                     "选择词条后可以编辑或删除");
         for (const auto &column : {std::pair<const char *, int>{"拼音", 0},
@@ -173,6 +177,13 @@ public:
         gtk_widget_set_tooltip_text(importButton, "从文本文件导入词条");
         gtk_widget_set_tooltip_text(exportButton,
                                     "将当前词典导出为文本文件");
+        setAccessibleWidgetText(addButton, "添加", "添加一条个人词典词条");
+        setAccessibleWidgetText(editButton, "编辑", "编辑选中的词条");
+        setAccessibleWidgetText(deleteButton, "删除", "删除选中的词条");
+        setAccessibleWidgetText(importButton, "导入",
+                                "从文本文件导入并整体替换个人词典");
+        setAccessibleWidgetText(exportButton, "导出",
+                                "将当前个人词典导出为文本文件");
         for (auto *button : {addButton, editButton, deleteButton, importButton,
                              exportButton}) {
             gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
@@ -185,6 +196,9 @@ public:
         g_signal_connect(exportButton, "clicked", G_CALLBACK(onExport), this);
         g_signal_connect(dictionarySearch, "search-changed",
                          G_CALLBACK(onSearchChanged), this);
+        setSettingsFocusChain(
+            page, {dictionarySearch, dictionaryView, addButton, editButton,
+                   deleteButton, importButton, exportButton});
     }
 
     void refresh() {
@@ -407,6 +421,10 @@ private:
         auto *phrase = gtk_entry_new();
         auto *weight =
             gtk_spin_button_new_with_range(0.0, 1000000000.0, 1.0);
+        setAccessibleWidgetText(pinyin, "拼音", "输入词条的完整拼音");
+        setAccessibleWidgetText(phrase, "词条", "输入要保存的中文词条");
+        setAccessibleWidgetText(weight, "权重",
+                                "设置词条排序权重，数值越大越靠前");
         gtk_spin_button_set_digits(GTK_SPIN_BUTTON(weight), 3);
         gtk_grid_attach(GTK_GRID(grid), pinyinLabel, 0, 0, 1, 1);
         gtk_grid_attach(GTK_GRID(grid), pinyin, 1, 0, 1, 1);
@@ -428,6 +446,15 @@ private:
             pinyin, phrase, weight, validation,
             gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog),
                                                GTK_RESPONSE_ACCEPT)};
+        setAccessibleWidgetText(state.accept, "保存",
+                                "校验通过后保存当前词条");
+        if (auto *cancel = gtk_dialog_get_widget_for_response(
+                GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+            cancel != nullptr) {
+            setAccessibleWidgetText(cancel, "取消",
+                                    "关闭对话框且不保存词条修改");
+        }
+        setSettingsFocusChain(content, {pinyin, phrase, weight, state.accept});
         gtk_dialog_set_default_response(GTK_DIALOG(dialog),
                                         GTK_RESPONSE_ACCEPT);
         gtk_entry_set_activates_default(GTK_ENTRY(pinyin), TRUE);

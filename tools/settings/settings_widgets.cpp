@@ -43,18 +43,40 @@ void ensureFocusFallbackCleanup(GtkWidget *widget) {
                      nullptr);
 }
 
-void setAccessibleText(GtkWidget *widget, std::string_view name,
-                       std::string_view description = {}) {
+} // namespace
+
+void setAccessibleWidgetText(GtkWidget *widget, std::string_view name,
+                             std::string_view description) {
+    if (widget == nullptr) {
+        return;
+    }
     auto *accessible = gtk_widget_get_accessible(widget);
     if (!name.empty()) {
         atk_object_set_name(accessible, std::string(name).c_str());
     }
     if (!description.empty()) {
-        atk_object_set_description(accessible, std::string(description).c_str());
+        atk_object_set_description(accessible,
+                                   std::string(description).c_str());
     }
 }
 
-} // namespace
+void setSettingsFocusChain(
+    GtkWidget *container,
+    std::initializer_list<GtkWidget *> focusableWidgets) {
+    if (!GTK_IS_CONTAINER(container)) {
+        return;
+    }
+    GList *chain = nullptr;
+    for (auto *widget : focusableWidgets) {
+        if (widget != nullptr) {
+            chain = g_list_append(chain, widget);
+        }
+    }
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    gtk_container_set_focus_chain(GTK_CONTAINER(container), chain);
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    g_list_free(chain);
+}
 
 std::string_view settingsStyles() {
     return R"css(
@@ -136,19 +158,19 @@ GtkWidget *createPageShell(std::string_view title, std::string_view subtitle) {
     gtk_widget_set_margin_end(page, 24);
     gtk_widget_set_margin_top(page, 24);
     gtk_widget_set_margin_bottom(page, 24);
-    setAccessibleText(page, title, subtitle);
+    setAccessibleWidgetText(page, title, subtitle);
 
     auto *heading = gtk_label_new(std::string(title).c_str());
     addStyleClass(heading, "modernime-page-title");
     gtk_widget_set_halign(heading, GTK_ALIGN_START);
-    setAccessibleText(heading, title);
+    setAccessibleWidgetText(heading, title, "页面标题");
     gtk_box_pack_start(GTK_BOX(page), heading, FALSE, FALSE, 0);
 
     auto *description = gtk_label_new(std::string(subtitle).c_str());
     addStyleClass(description, "modernime-page-subtitle");
     gtk_widget_set_halign(description, GTK_ALIGN_START);
     gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
-    setAccessibleText(description, subtitle);
+    setAccessibleWidgetText(description, subtitle, "页面说明");
     gtk_box_pack_start(GTK_BOX(page), description, FALSE, FALSE, 0);
     return pageGuard.release();
 }
@@ -159,12 +181,12 @@ GtkWidget *createSectionCard(std::string_view title,
         gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
     auto *card = cardGuard.get();
     addStyleClass(card, kSettingsSectionClass);
-    setAccessibleText(card, title, description);
+    setAccessibleWidgetText(card, title, description);
     if (!title.empty()) {
         auto *heading = gtk_label_new(std::string(title).c_str());
         addStyleClass(heading, "modernime-section-title");
         gtk_widget_set_halign(heading, GTK_ALIGN_START);
-        setAccessibleText(heading, title);
+        setAccessibleWidgetText(heading, title, "设置分组标题");
         gtk_box_pack_start(GTK_BOX(card), heading, FALSE, FALSE, 0);
     }
     if (!description.empty()) {
@@ -172,7 +194,7 @@ GtkWidget *createSectionCard(std::string_view title,
         addStyleClass(help, "modernime-description");
         gtk_widget_set_halign(help, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
-        setAccessibleText(help, description);
+        setAccessibleWidgetText(help, description, "设置分组说明");
         gtk_box_pack_start(GTK_BOX(card), help, FALSE, FALSE, 0);
     }
     return cardGuard.release();
@@ -219,21 +241,21 @@ GtkWidget *createSettingRow(std::string_view title,
     detail::GtkWidgetGuard rowGuard(
         gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
     auto *row = rowGuard.get();
-    setAccessibleText(row, title, description);
+    setAccessibleWidgetText(row, title, description);
     auto *label = gtk_label_new(std::string(title).c_str());
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    setAccessibleText(label, title);
+    setAccessibleWidgetText(label, title, "设置名称");
     gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
     if (!description.empty()) {
         auto *help = gtk_label_new(std::string(description).c_str());
         addStyleClass(help, "modernime-description");
         gtk_widget_set_halign(help, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
-        setAccessibleText(help, description);
+        setAccessibleWidgetText(help, description, "设置说明");
         gtk_box_pack_start(GTK_BOX(row), help, FALSE, FALSE, 0);
     }
     if (control != nullptr) {
-        setAccessibleText(control, title, description);
+        setAccessibleWidgetText(control, title, description);
         gtk_box_pack_start(GTK_BOX(row), control, FALSE, FALSE, 0);
         controlGuard.release();
     }
@@ -246,7 +268,7 @@ GtkWidget *createStatusPill(std::string_view text) {
     auto *status = statusGuard.get();
     addStyleClass(status, "modernime-status");
     gtk_widget_set_halign(status, GTK_ALIGN_START);
-    setAccessibleText(status, text);
+    setAccessibleWidgetText(status, text, "当前状态");
     return statusGuard.release();
 }
 
@@ -255,17 +277,17 @@ GtkWidget *createEmptyState(std::string_view title,
     detail::GtkWidgetGuard stateGuard(
         gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
     auto *state = stateGuard.get();
-    setAccessibleText(state, title, description);
+    setAccessibleWidgetText(state, title, description);
     auto *heading = gtk_label_new(std::string(title).c_str());
     gtk_widget_set_halign(heading, GTK_ALIGN_START);
-    setAccessibleText(heading, title);
+    setAccessibleWidgetText(heading, title, "空状态标题");
     gtk_box_pack_start(GTK_BOX(state), heading, FALSE, FALSE, 0);
     if (!description.empty()) {
         auto *help = gtk_label_new(std::string(description).c_str());
         addStyleClass(help, "modernime-description");
         gtk_widget_set_halign(help, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
-        setAccessibleText(help, description);
+        setAccessibleWidgetText(help, description, "空状态说明");
         gtk_box_pack_start(GTK_BOX(state), help, FALSE, FALSE, 0);
     }
     return stateGuard.release();

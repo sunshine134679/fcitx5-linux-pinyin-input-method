@@ -68,6 +68,11 @@ public:
         gtk_widget_set_tooltip_text(learningEnabled, "记录你主动选择的候选词");
         gtk_widget_set_tooltip_text(contextLearning,
                                     "根据输入前后的文字调整候选顺序");
+        setAccessibleWidgetText(learningEnabled, "记忆用户候选选择",
+                                "启用或暂停本地记录用户候选选择");
+        setAccessibleWidgetText(contextLearning,
+                                "根据光标前后文调整候选排序",
+                                "启用或关闭本地上下文候选排序");
         gtk_box_pack_start(GTK_BOX(learningSection), learningEnabled, FALSE,
                            FALSE, 0);
         gtk_box_pack_start(GTK_BOX(learningSection), contextLearning, FALSE,
@@ -77,6 +82,8 @@ public:
         addStyleClass(learningPath, "modernime-path");
         gtk_widget_set_halign(learningPath, GTK_ALIGN_START);
         gtk_label_set_selectable(GTK_LABEL(learningPath), TRUE);
+        setAccessibleWidgetText(learningPath, pathText,
+                                "可复制的本地学习数据库路径");
         gtk_label_set_line_wrap(GTK_LABEL(learningPath), TRUE);
         auto *dataSection = createSectionCard(
             "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
@@ -95,6 +102,8 @@ public:
         gtk_widget_set_halign(clearLearningButton, GTK_ALIGN_START);
         gtk_widget_set_tooltip_text(clearLearningButton,
                                     "备份后清空 ModernIME 的学习排序");
+        setAccessibleWidgetText(clearLearningButton, "清空学习记录",
+                                "先创建并验证备份，再清空本地学习排序");
         gtk_box_pack_start(GTK_BOX(dataSection), clearLearningButton, FALSE,
                            FALSE, 0);
         g_signal_connect(learningEnabled, "toggled", G_CALLBACK(onChanged),
@@ -103,6 +112,9 @@ public:
                          this);
         g_signal_connect(clearLearningButton, "clicked", G_CALLBACK(onClear),
                          this);
+        setSettingsFocusChain(
+            page, {learningEnabled, contextLearning, learningPath,
+                   clearLearningButton});
     }
 
     void refresh(bool shouldNotify) {

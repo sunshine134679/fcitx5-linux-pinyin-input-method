@@ -62,16 +62,16 @@ public:
         gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
 
         clipboardEnabled = gtk_check_button_new_with_label("启用 V+2 剪贴板");
+        setAccessibleWidgetText(clipboardEnabled, "启用 V+2 剪贴板",
+                                "启用或关闭本地剪贴板历史入口");
         setTarget(clipboardEnabled, "clipboard-enabled");
         gtk_box_pack_start(GTK_BOX(settingsSection), clipboardEnabled, FALSE,
                            FALSE, 0);
 
         auto *grid = gtk_grid_new();
         clipboardTriggerFallback = grid;
-        atk_object_set_name(gtk_widget_get_accessible(clipboardTriggerFallback),
-                            "剪贴板触发键");
-        atk_object_set_description(
-            gtk_widget_get_accessible(clipboardTriggerFallback),
+        setAccessibleWidgetText(
+            clipboardTriggerFallback, "剪贴板触发键",
             "剪贴板功能关闭时仍可定位并阅读触发键设置");
         gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
         gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
@@ -83,6 +83,9 @@ public:
         gtk_entry_set_placeholder_text(GTK_ENTRY(clipboardTrigger), "例如 V+2");
         gtk_widget_set_hexpand(clipboardTrigger, TRUE);
         setTarget(clipboardTrigger, "clipboard-trigger");
+        setAccessibleWidgetText(
+            clipboardTrigger, "剪贴板触发键",
+            "设置在中文输入状态打开本地剪贴板历史的按键");
         gtk_grid_attach(GTK_GRID(grid), triggerLabel, 0, 0, 1, 1);
         gtk_grid_attach(GTK_GRID(grid), clipboardTrigger, 1, 0, 1, 1);
         gtk_box_pack_start(GTK_BOX(settingsSection), grid, FALSE, FALSE, 0);
@@ -111,6 +114,9 @@ public:
         historyView = gtk_tree_view_new_with_model(GTK_TREE_MODEL(historyStore));
         historyStoreOwner.reset();
         setTarget(historyView, "clipboard-history");
+        setAccessibleWidgetText(
+            historyView, "剪贴板历史",
+            "选择一条本地历史后可以复制或删除");
         gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(historyView), TRUE);
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(historyView), TRUE);
         gtk_widget_set_tooltip_text(
@@ -153,6 +159,12 @@ public:
         gtk_widget_set_tooltip_text(copyButton, "复制选中的历史内容到系统剪贴板");
         gtk_widget_set_tooltip_text(deleteButton, "删除选中的历史内容");
         gtk_widget_set_tooltip_text(clearButton, "清空全部历史内容，需要确认");
+        setAccessibleWidgetText(copyButton, actionLabels[0],
+                                "复制选中的历史内容到系统剪贴板");
+        setAccessibleWidgetText(deleteButton, actionLabels[1],
+                                "删除选中的历史内容");
+        setAccessibleWidgetText(clearButton, actionLabels[2],
+                                "确认后清空全部本地剪贴板历史");
         for (auto *button : {copyButton, deleteButton, clearButton}) {
             gtk_box_pack_start(GTK_BOX(historyActions), button, FALSE, FALSE, 0);
         }
@@ -162,6 +174,8 @@ public:
         auto *refreshButton = gtk_button_new_with_label("刷新历史");
         gtk_widget_set_halign(refreshButton, GTK_ALIGN_START);
         gtk_widget_set_tooltip_text(refreshButton, "重新读取磁盘上的剪贴板历史");
+        setAccessibleWidgetText(refreshButton, "刷新历史",
+                                "重新读取磁盘上的剪贴板历史");
         gtk_box_pack_start(GTK_BOX(historySection), refreshButton, FALSE, FALSE,
                            0);
         g_signal_connect(refreshButton, "clicked", G_CALLBACK(onRefresh), this);
@@ -172,6 +186,9 @@ public:
                          this);
         g_signal_connect(clipboardTrigger, "changed", G_CALLBACK(onChanged),
                          this);
+        setSettingsFocusChain(
+            page, {clipboardEnabled, clipboardTrigger, historyView,
+                   copyButton, deleteButton, clearButton, refreshButton});
     }
 
     void refresh(bool shouldNotify) {
