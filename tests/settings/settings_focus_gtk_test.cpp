@@ -53,5 +53,20 @@ int main(int argc, char **argv) {
     assert(gtk_widget_has_focus(target));
     assert(!gtk_widget_get_can_focus(fallback));
 
+    gtk_widget_grab_focus(next);
+    auto *unattachedTarget = gtk_entry_new();
+    gtk_widget_show(unattachedTarget);
+    assert(gtk_widget_get_visible(unattachedTarget));
+    assert(gtk_widget_is_sensitive(unattachedTarget));
+    assert(gtk_widget_get_can_focus(unattachedTarget));
+    assert(!gtk_widget_get_mapped(unattachedTarget));
+    assert(focusWidgetOrFallback(unattachedTarget, fallback));
+    assert(gtk_widget_has_focus(fallback));
+    assert(gtk_widget_get_can_focus(fallback));
+
+    g_object_ref_sink(unattachedTarget);
+    gtk_widget_destroy(unattachedTarget);
+    g_object_unref(unattachedTarget);
+
     gtk_widget_destroy(window);
 }

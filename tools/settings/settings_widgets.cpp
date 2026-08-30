@@ -292,7 +292,7 @@ bool focusWidgetOrFallback(GtkWidget *target, GtkWidget *fallback) {
         grabAndVerify(target)) {
         return true;
     }
-    if (destination == SettingsFocusDestination::Fallback) {
+    if (fallbackAvailable(fallback)) {
         gtk_widget_set_can_focus(fallback, TRUE);
         addStyleClass(fallback, kSettingsFocusFallbackClass);
         if (grabAndVerify(fallback)) {
