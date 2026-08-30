@@ -100,6 +100,16 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_diagnostics_page_contract_tests
     )
 
+    add_executable(modernime_diagnostics_lifetime_tests
+        settings/diagnostics_lifetime_test.cpp
+    )
+    target_include_directories(modernime_diagnostics_lifetime_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    add_test(NAME modernime_diagnostics_lifetime
+        COMMAND modernime_diagnostics_lifetime_tests
+    )
+
     add_executable(modernime_settings_ui_contract_tests
         settings/settings_ui_contract_test.cpp
     )

@@ -1,5 +1,6 @@
 #include "modernime/settings/pages/diagnostics_page.h"
 
+#include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -67,24 +68,18 @@ public:
           environment(std::move(currentEnvironment)),
           notify(std::move(notifyCallback)) {
         lifetime = G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr));
-        state = new AsyncState{this, true};
-        g_object_set_data_full(lifetime, kStateKey, state,
-                               [](gpointer value) {
-                                   delete static_cast<AsyncState *>(value);
-                               });
+        state = std::make_shared<Lifetime>(this);
+        g_object_set_data_full(
+            lifetime, kStateKey, new SharedLifetime(state),
+            [](gpointer value) {
+                delete static_cast<SharedLifetime *>(value);
+            });
         buildPage();
         refresh();
     }
 
     ~Impl() {
-        state->active = false;
-        state->owner = nullptr;
-        if (refreshButton != nullptr) {
-            g_signal_handlers_disconnect_by_data(refreshButton, this);
-        }
-        if (reloadButton != nullptr) {
-            g_signal_handlers_disconnect_by_data(reloadButton, this);
-        }
+        state->deactivate();
         g_object_unref(lifetime);
     }
 
@@ -107,20 +102,24 @@ public:
     }
 
 private:
-    struct AsyncState final {
-        Impl *owner;
-        bool active;
-    };
+    using Lifetime = detail::DiagnosticsLifetime<Impl>;
+    using SharedLifetime = std::shared_ptr<Lifetime>;
 
     static constexpr const char *kStateKey =
         "modernime-diagnostics-async-state";
 
     static void onRefresh(GtkButton *, gpointer data) {
-        static_cast<Impl *>(data)->refresh();
+        auto &state = *static_cast<SharedLifetime *>(data);
+        state->withOwner([](Impl &owner) { owner.refresh(); });
     }
 
     static void onReload(GtkButton *, gpointer data) {
-        static_cast<Impl *>(data)->reload();
+        auto &state = *static_cast<SharedLifetime *>(data);
+        state->withOwner([](Impl &owner) { owner.reload(); });
+    }
+
+    static void destroySignalState(gpointer data, GClosure *) {
+        delete static_cast<SharedLifetime *>(data);
     }
 
     static void taskFinished(GObject *source, GAsyncResult *result,
@@ -128,22 +127,26 @@ private:
         auto *task = G_TASK(result);
         const auto *request = static_cast<const RuntimeTask *>(
             g_task_get_task_data(task));
-        auto *state = static_cast<AsyncState *>(
+        auto *state = static_cast<SharedLifetime *>(
             g_object_get_data(source, kStateKey));
         GError *error = nullptr;
 
         if (request->reload) {
             auto *reloadResult = static_cast<RuntimeResult *>(
                 g_task_propagate_pointer(task, &error));
-            if (state != nullptr && state->active) {
-                state->owner->finishReload(reloadResult, error);
+            if (state != nullptr) {
+                (*state)->withOwner([reloadResult, error](Impl &owner) {
+                    owner.finishReload(reloadResult, error);
+                });
             }
             delete reloadResult;
         } else {
             auto *runtimeStatus = static_cast<RuntimeStatus *>(
                 g_task_propagate_pointer(task, &error));
-            if (state != nullptr && state->active) {
-                state->owner->finishRefresh(runtimeStatus, error);
+            if (state != nullptr) {
+                (*state)->withOwner([runtimeStatus, error](Impl &owner) {
+                    owner.finishRefresh(runtimeStatus, error);
+                });
             }
             delete runtimeStatus;
         }
@@ -196,9 +199,14 @@ private:
         gtk_box_pack_start(GTK_BOX(actions), reloadButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section), actions, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-        g_signal_connect(refreshButton, "clicked", G_CALLBACK(onRefresh),
-                         this);
-        g_signal_connect(reloadButton, "clicked", G_CALLBACK(onReload), this);
+        g_signal_connect_data(
+            refreshButton, "clicked", G_CALLBACK(onRefresh),
+            new SharedLifetime(state), destroySignalState,
+            static_cast<GConnectFlags>(0));
+        g_signal_connect_data(
+            reloadButton, "clicked", G_CALLBACK(onReload),
+            new SharedLifetime(state), destroySignalState,
+            static_cast<GConnectFlags>(0));
     }
 
     void startTask(bool reloadRequest) {
@@ -301,7 +309,7 @@ private:
     Environment environment;
     std::function<void(std::string)> notify;
     GObject *lifetime = nullptr;
-    AsyncState *state = nullptr;
+    SharedLifetime state;
     bool busy = false;
     GtkWidget *page = nullptr;
     GtkWidget *statusMessage = nullptr;
