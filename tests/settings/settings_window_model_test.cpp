@@ -1,4 +1,4 @@
-#include "modernime/settings/settings_window.h"
+#include "modernime/settings/settings_model.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -107,11 +107,15 @@ int main() {
     modernime::settings::SettingsWindowModel failed(blocked);
     auto failedSettings = failed.settings();
     failedSettings.learningEnabled = false;
+    const auto failedSavedSettings = failed.savedSettings();
     failed.setSettings(failedSettings);
     error.clear();
     assertTrue(!failed.save(&error), "failed save is reported");
     assertTrue(failed.dirty() && !error.empty(),
                "failed save keeps edits and exposes an error");
+    assertTrue(failed.settings() == failedSettings &&
+                   failed.savedSettings() == failedSavedSettings,
+               "failed save preserves both the draft and saved snapshot");
     assertTrue(!failed.reloadRequired(),
                "failed save does not require an engine reload");
 

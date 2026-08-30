@@ -1,14 +1,13 @@
 #pragma once
 
 #include "modernime/core/settings.h"
-#include "modernime/settings/settings_model.h"
 
-#include <filesystem>
 #include <memory>
-#include <string>
 #include <string_view>
 
 namespace modernime::settings {
+
+class SettingsShell;
 
 class SettingsWindow final {
 public:
@@ -27,10 +26,8 @@ public:
     void showStatusPage();
     void presentError(std::string_view message);
 
-    class Impl;
-
 private:
-    std::unique_ptr<Impl> impl_;
+    std::unique_ptr<SettingsShell> shell_;
 };
 
 } // namespace modernime::settings
