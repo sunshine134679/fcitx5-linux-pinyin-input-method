@@ -63,6 +63,13 @@ public:
                            FALSE, 0);
 
         auto *grid = gtk_grid_new();
+        clipboardTriggerFallback = grid;
+        gtk_widget_set_can_focus(clipboardTriggerFallback, TRUE);
+        atk_object_set_name(gtk_widget_get_accessible(clipboardTriggerFallback),
+                            "剪贴板触发键");
+        atk_object_set_description(
+            gtk_widget_get_accessible(clipboardTriggerFallback),
+            "剪贴板功能关闭时仍可定位并阅读触发键设置");
         gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
         gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
         auto *triggerLabel = gtk_label_new("剪贴板触发键");
@@ -216,12 +223,16 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
-        for (auto *control : {clipboardEnabled, clipboardTrigger, historyView}) {
+        const std::array controls{
+            std::pair{clipboardEnabled, static_cast<GtkWidget *>(nullptr)},
+            std::pair{clipboardTrigger, clipboardTriggerFallback},
+            std::pair{historyView, static_cast<GtkWidget *>(nullptr)},
+        };
+        for (const auto &[control, fallback] : controls) {
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
-                gtk_widget_grab_focus(control);
-                return true;
+                return focusWidgetOrFallback(control, fallback);
             }
         }
         return false;
@@ -379,6 +390,7 @@ private:
     GtkWidget *page = nullptr;
     GtkWidget *clipboardEnabled = nullptr;
     GtkWidget *clipboardTrigger = nullptr;
+    GtkWidget *clipboardTriggerFallback = nullptr;
     GtkListStore *historyStore = nullptr;
     GtkWidget *historyCount = nullptr;
     GtkWidget *historyState = nullptr;

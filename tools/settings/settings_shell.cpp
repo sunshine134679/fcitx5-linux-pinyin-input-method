@@ -10,6 +10,7 @@
 #include "modernime/settings/pages/overview_page.h"
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_model.h"
+#include "modernime/settings/settings_shell_state.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -108,11 +109,31 @@ void clearContainer(GtkWidget *container) {
 }
 
 struct OverviewTask final {
+    OverviewRefreshState::Generation generation;
     core::SettingsPaths paths;
     core::ModernIMESettings settings;
     std::filesystem::path remoteExecutable;
     Environment environment;
 };
+
+struct GObjectUnref final {
+    void operator()(GObject *object) const {
+        if (object != nullptr) {
+            g_object_unref(object);
+        }
+    }
+};
+
+struct GtkWidgetDestroy final {
+    void operator()(GtkWidget *widget) const {
+        if (widget != nullptr) {
+            gtk_widget_destroy(widget);
+        }
+    }
+};
+
+using GObjectOwner = std::unique_ptr<GObject, GObjectUnref>;
+using GtkWidgetOwner = std::unique_ptr<GtkWidget, GtkWidgetDestroy>;
 
 void overviewTaskFunction(GTask *task, gpointer, gpointer data,
                           GCancellable *) {
@@ -134,32 +155,26 @@ public:
         : application(gtkApplication), paths(std::move(settingsPaths)),
           model(paths.settingsFile), fcitx(executablePath("fcitx5")),
           remote(executablePath("fcitx5-remote")),
-          environment(currentEnvironment()) {
-        overviewLifetime = G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr));
-        overviewState = std::make_shared<Lifetime>(this);
+          environment(currentEnvironment()),
+          overviewLifetime(G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr))),
+          lifetimeGuard(std::make_shared<Lifetime>(this)) {
         g_object_set_data_full(
-            overviewLifetime, kOverviewStateKey,
-            new SharedLifetime(overviewState),
+            overviewLifetime.get(), kOverviewStateKey,
+            new SharedLifetime(lifetimeGuard.state()),
             [](gpointer value) { delete static_cast<SharedLifetime *>(value); });
         buildWindow();
         show(SettingsPageId::Overview, {});
         showLoadDiagnostics();
     }
 
-    ~Impl() {
-        overviewState->deactivate();
-        g_object_unref(overviewLifetime);
-        if (windowWidget != nullptr) {
-            gtk_widget_destroy(windowWidget);
-            windowWidget = nullptr;
-        }
-    }
+    ~Impl() = default;
 
-    GtkWidget *window() const { return windowWidget; }
+    GtkWidget *window() const { return windowOwner.get(); }
 
     void present() {
-        gtk_widget_show_all(windowWidget);
-        gtk_window_present(GTK_WINDOW(windowWidget));
+        requestOverviewRefresh();
+        gtk_widget_show_all(windowOwner.get());
+        gtk_window_present(GTK_WINDOW(windowOwner.get()));
     }
 
     void show(SettingsPageId page, std::string_view target) {
@@ -170,7 +185,7 @@ public:
 
         switch (page) {
         case SettingsPageId::Overview:
-            startOverviewRefresh();
+            requestOverviewRefresh();
             break;
         case SettingsPageId::Input:
             inputPage->refresh();
@@ -267,11 +282,14 @@ private:
         GError *error = nullptr;
         auto *snapshot = static_cast<OverviewSnapshot *>(
             g_task_propagate_pointer(G_TASK(result), &error));
+        const auto *request =
+            static_cast<const OverviewTask *>(g_task_get_task_data(G_TASK(result)));
+        const auto generation = request->generation;
         auto *state = static_cast<SharedLifetime *>(
             g_object_get_data(source, kOverviewStateKey));
         if (state != nullptr) {
-            (*state)->withOwner([snapshot, error](Impl &owner) {
-                owner.finishOverviewRefresh(snapshot, error);
+            (*state)->withOwner([snapshot, error, generation](Impl &owner) {
+                owner.finishOverviewRefresh(generation, snapshot, error);
             });
         }
         delete snapshot;
@@ -279,17 +297,17 @@ private:
     }
 
     void buildWindow() {
-        windowWidget = gtk_application_window_new(application);
-        gtk_window_set_title(GTK_WINDOW(windowWidget), "ModernIME 设置");
+        windowOwner.reset(gtk_application_window_new(application));
+        gtk_window_set_title(GTK_WINDOW(windowOwner.get()), "ModernIME 设置");
         const auto defaultSize = settingsDefaultWindowSize();
-        gtk_window_set_default_size(GTK_WINDOW(windowWidget), defaultSize.width,
-                                    defaultSize.height);
+        gtk_window_set_default_size(GTK_WINDOW(windowOwner.get()),
+                                    defaultSize.width, defaultSize.height);
         const auto minimumSize = settingsMinimumWindowSize();
-        gtk_widget_set_size_request(windowWidget, minimumSize.width,
+        gtk_widget_set_size_request(windowOwner.get(), minimumSize.width,
                                     minimumSize.height);
-        addStyleClass(windowWidget, kSettingsWindowClass);
+        addStyleClass(windowOwner.get(), kSettingsWindowClass);
         installSettingsStyles();
-        g_signal_connect(windowWidget, "delete-event",
+        g_signal_connect(windowOwner.get(), "delete-event",
                          G_CALLBACK(onWindowDelete), this);
 
         auto *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -298,7 +316,7 @@ private:
         gtk_box_pack_start(GTK_BOX(body), buildPageStack(), TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), body, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), buildBottomBar(), FALSE, FALSE, 0);
-        gtk_container_add(GTK_CONTAINER(windowWidget), root);
+        gtk_container_add(GTK_CONTAINER(windowOwner.get()), root);
         updateActionState();
     }
 
@@ -573,9 +591,13 @@ private:
     bool saveEditedSettings(bool closeAfterSave) {
         const auto validation = model.validation();
         if (!validation.valid) {
-            presentError(validation.issues.empty()
-                             ? "当前设置无法保存"
-                             : validation.issues.front().message);
+            if (validation.issues.empty()) {
+                presentError("当前设置无法保存");
+            } else {
+                const auto &issue = validation.issues.front();
+                presentError(issue.message);
+                focusValidationIssue(issue.key);
+            }
             updateActionState();
             return false;
         }
@@ -598,6 +620,7 @@ private:
             return false;
         }
 
+        requestOverviewRefresh();
         presentError(model.reloadRequired()
                          ? "设置已保存，需要重新加载 ModernIME"
                          : "设置已保存");
@@ -610,13 +633,15 @@ private:
     void restoreEdits() {
         model.resetEdits();
         refreshSettingsPages();
+        requestOverviewRefresh();
         updateActionState();
         presentError("已恢复未保存的修改");
     }
 
     void editDefaults() {
         auto *dialog = gtk_message_dialog_new(
-            GTK_WINDOW(windowWidget), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+            GTK_WINDOW(windowOwner.get()), GTK_DIALOG_MODAL,
+            GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
             "这只会修改 ModernIME 设置草稿，不会删除学习记录或个人词典。继续吗？");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -643,7 +668,8 @@ private:
         }
 
         auto *dialog = gtk_message_dialog_new(
-            GTK_WINDOW(windowWidget), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+            GTK_WINDOW(windowOwner.get()), GTK_DIALOG_MODAL,
+            GTK_MESSAGE_WARNING,
             GTK_BUTTONS_NONE, "当前有未保存的修改。");
         gtk_dialog_add_button(GTK_DIALOG(dialog), "继续编辑",
                               GTK_RESPONSE_CANCEL);
@@ -657,6 +683,7 @@ private:
         if (response == GTK_RESPONSE_REJECT) {
             model.resetEdits();
             refreshSettingsPages();
+            requestOverviewRefresh();
             updateActionState();
             hideWindow();
         } else if (response == GTK_RESPONSE_ACCEPT) {
@@ -666,7 +693,7 @@ private:
 
     void hideWindow() {
         gtk_popover_popdown(GTK_POPOVER(searchPopover));
-        gtk_widget_hide(windowWidget);
+        gtk_widget_hide(windowOwner.get());
     }
 
     void onPageMessage(std::string message) {
@@ -677,32 +704,47 @@ private:
         presentError(message);
     }
 
-    void startOverviewRefresh() {
-        if (overviewBusy) {
-            return;
+    void focusValidationIssue(std::string_view issueKey) {
+        const auto route = settingsFocusRouteForIssue(issueKey);
+        if (route.has_value()) {
+            show(route->page, route->target);
         }
-        overviewBusy = true;
-        auto *task =
-            g_task_new(overviewLifetime, nullptr, overviewTaskFinished, nullptr);
-        auto *request = new OverviewTask{paths, model.settings(), remote,
-                                         environment};
-        g_task_set_task_data(task, request, [](gpointer value) {
-            delete static_cast<OverviewTask *>(value);
-        });
-        g_task_run_in_thread(task, overviewTaskFunction);
-        g_object_unref(task);
     }
 
-    void finishOverviewRefresh(const OverviewSnapshot *snapshot,
-                               const GError *error) {
-        overviewBusy = false;
-        if (snapshot != nullptr) {
-            overviewPage->setSnapshot(*snapshot);
-            return;
+    void requestOverviewRefresh() {
+        const auto generation = overviewRefresh.request();
+        if (generation.has_value()) {
+            launchOverviewRefresh(*generation);
         }
-        presentError(error == nullptr || error->message == nullptr
-                         ? "无法读取概览"
-                         : error->message);
+    }
+
+    void launchOverviewRefresh(OverviewRefreshState::Generation generation) {
+        GObjectOwner taskOwner(G_OBJECT(g_task_new(
+            overviewLifetime.get(), nullptr, overviewTaskFinished, nullptr)));
+        auto request = std::make_unique<OverviewTask>(OverviewTask{
+            generation, paths, model.settings(), remote, environment});
+        g_task_set_task_data(G_TASK(taskOwner.get()), request.release(),
+                             [](gpointer value) {
+            delete static_cast<OverviewTask *>(value);
+        });
+        g_task_run_in_thread(G_TASK(taskOwner.get()), overviewTaskFunction);
+    }
+
+    void finishOverviewRefresh(OverviewRefreshState::Generation generation,
+                               const OverviewSnapshot *snapshot,
+                               const GError *error) {
+        const bool current = overviewRefresh.complete(generation);
+        if (current && snapshot != nullptr) {
+            overviewPage->setSnapshot(*snapshot);
+        } else if (current) {
+            presentError(error == nullptr || error->message == nullptr
+                             ? "无法读取概览"
+                             : error->message);
+        }
+        const auto pending = overviewRefresh.startPending();
+        if (pending.has_value()) {
+            launchOverviewRefresh(*pending);
+        }
     }
 
     void showLoadDiagnostics() {
@@ -728,12 +770,8 @@ private:
     std::filesystem::path remote;
     Environment environment;
 
-    GObject *overviewLifetime = nullptr;
-    SharedLifetime overviewState;
-    bool overviewBusy = false;
     bool actionBusy = false;
 
-    GtkWidget *windowWidget = nullptr;
     GtkWidget *stack = nullptr;
     GtkWidget *searchEntry = nullptr;
     GtkWidget *searchPopover = nullptr;
@@ -751,6 +789,10 @@ private:
     std::unique_ptr<ClipboardPage> clipboardPage;
     std::unique_ptr<LearningPage> learningPage;
     std::unique_ptr<DiagnosticsPage> diagnosticsPage;
+    GtkWidgetOwner windowOwner;
+    OverviewRefreshState overviewRefresh;
+    GObjectOwner overviewLifetime;
+    ScopedLifetimeDeactivation<Lifetime> lifetimeGuard;
 };
 
 SettingsShell::SettingsShell(GtkApplication *application,

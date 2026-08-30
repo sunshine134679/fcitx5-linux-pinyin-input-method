@@ -1,5 +1,7 @@
 #include "modernime/settings/settings_widgets.h"
 
+#include "modernime/settings/settings_shell_state.h"
+
 #include <string>
 
 namespace modernime::settings {
@@ -214,6 +216,29 @@ GtkWidget *createEmptyState(std::string_view title,
         gtk_box_pack_start(GTK_BOX(state), help, FALSE, FALSE, 0);
     }
     return state;
+}
+
+bool focusWidgetOrFallback(GtkWidget *target, GtkWidget *fallback) {
+    const auto focusable = [](GtkWidget *widget) {
+        return widget != nullptr && gtk_widget_get_visible(widget) &&
+               gtk_widget_is_sensitive(widget) &&
+               gtk_widget_get_can_focus(widget);
+    };
+    const auto grabAndVerify = [](GtkWidget *widget) {
+        gtk_widget_grab_focus(widget);
+        return gtk_widget_has_focus(widget);
+    };
+
+    const auto destination = chooseSettingsFocusDestination(
+        focusable(target), focusable(fallback));
+    if (destination == SettingsFocusDestination::Target &&
+        grabAndVerify(target)) {
+        return true;
+    }
+    if (focusable(fallback) && grabAndVerify(fallback)) {
+        return true;
+    }
+    return false;
 }
 
 } // namespace modernime::settings

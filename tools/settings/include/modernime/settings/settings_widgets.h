@@ -27,5 +27,6 @@ GtkWidget *createSettingRow(std::string_view title,
 GtkWidget *createStatusPill(std::string_view text);
 GtkWidget *createEmptyState(std::string_view title,
                             std::string_view description);
+bool focusWidgetOrFallback(GtkWidget *target, GtkWidget *fallback = nullptr);
 
 } // namespace modernime::settings

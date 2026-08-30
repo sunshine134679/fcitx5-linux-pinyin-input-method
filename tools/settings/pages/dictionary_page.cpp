@@ -233,8 +233,7 @@ public:
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
-                gtk_widget_grab_focus(control);
-                return true;
+                return focusWidgetOrFallback(control);
             }
         }
         return false;

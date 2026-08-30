@@ -59,11 +59,11 @@ public:
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(defaultMode), "英文");
         gtk_widget_set_hexpand(defaultMode, TRUE);
         setTarget(defaultMode, "default-mode");
-        gtk_box_pack_start(GTK_BOX(section),
-                           createSettingRow("默认输入状态",
-                                            "选择启动时默认使用中文或英文。",
-                                            defaultMode),
-                           FALSE, FALSE, 0);
+        defaultModeFallback = createSettingRow(
+            "默认输入状态", "选择启动时默认使用中文或英文。", defaultMode);
+        gtk_widget_set_can_focus(defaultModeFallback, TRUE);
+        gtk_box_pack_start(GTK_BOX(section), defaultModeFallback, FALSE, FALSE,
+                           0);
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
         g_signal_connect(inputEnabled, "toggled", G_CALLBACK(onChanged), this);
@@ -77,11 +77,11 @@ public:
         gtk_entry_set_placeholder_text(GTK_ENTRY(toggleKey), "例如 Ctrl+Space");
         gtk_widget_set_hexpand(toggleKey, TRUE);
         setTarget(toggleKey, "toggle-key");
-        gtk_box_pack_start(GTK_BOX(section),
-                           createSettingRow("中英文切换快捷键",
-                                            "只能包含字母、数字、+ 或 -。",
-                                            toggleKey),
-                           FALSE, FALSE, 0);
+        toggleKeyFallback = createSettingRow(
+            "中英文切换快捷键", "只能包含字母、数字、+ 或 -。", toggleKey);
+        gtk_widget_set_can_focus(toggleKeyFallback, TRUE);
+        gtk_box_pack_start(GTK_BOX(section), toggleKeyFallback, FALSE, FALSE,
+                           0);
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         g_signal_connect(toggleKey, "changed", G_CALLBACK(onChanged), this);
     }
@@ -92,11 +92,11 @@ public:
         punctuation = gtk_check_button_new_with_label(
             "中文标点使用全角（，。？！等）");
         setTarget(punctuation, "punctuation");
-        gtk_box_pack_start(GTK_BOX(section),
-                           createSettingRow("中文标点",
-                                            "在中文状态下使用全角标点。",
-                                            punctuation),
-                           FALSE, FALSE, 0);
+        punctuationFallback = createSettingRow(
+            "中文标点", "在中文状态下使用全角标点。", punctuation);
+        gtk_widget_set_can_focus(punctuationFallback, TRUE);
+        gtk_box_pack_start(GTK_BOX(section), punctuationFallback, FALSE, FALSE,
+                           0);
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         g_signal_connect(punctuation, "toggled", G_CALLBACK(onChanged), this);
     }
@@ -195,15 +195,19 @@ public:
 
     bool focusTarget(std::string_view target) {
         const std::array controls{
-            inputEnabled, defaultMode, toggleKey, punctuation, numberSelection,
-            arrowNavigation, pageNavigation,
+            std::pair{inputEnabled, static_cast<GtkWidget *>(nullptr)},
+            std::pair{defaultMode, defaultModeFallback},
+            std::pair{toggleKey, toggleKeyFallback},
+            std::pair{punctuation, punctuationFallback},
+            std::pair{numberSelection, static_cast<GtkWidget *>(nullptr)},
+            std::pair{arrowNavigation, static_cast<GtkWidget *>(nullptr)},
+            std::pair{pageNavigation, static_cast<GtkWidget *>(nullptr)},
         };
-        for (auto *control : controls) {
+        for (const auto &[control, fallback] : controls) {
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
-                gtk_widget_grab_focus(control);
-                return true;
+                return focusWidgetOrFallback(control, fallback);
             }
         }
         return false;
@@ -214,8 +218,11 @@ public:
     GtkWidget *page = nullptr;
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
+    GtkWidget *defaultModeFallback = nullptr;
     GtkWidget *toggleKey = nullptr;
+    GtkWidget *toggleKeyFallback = nullptr;
     GtkWidget *punctuation = nullptr;
+    GtkWidget *punctuationFallback = nullptr;
     GtkWidget *numberSelection = nullptr;
     GtkWidget *arrowNavigation = nullptr;
     GtkWidget *pageNavigation = nullptr;

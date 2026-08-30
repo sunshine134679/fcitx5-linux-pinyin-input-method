@@ -78,6 +78,8 @@ public:
         gtk_label_set_line_wrap(GTK_LABEL(learningPath), TRUE);
         auto *dataSection = createSectionCard(
             "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
+        learningDataFallback = dataSection;
+        gtk_widget_set_can_focus(learningDataFallback, TRUE);
         learningCount = gtk_label_new("正在读取学习记录…");
         addStyleClass(learningCount, "modernime-description");
         gtk_widget_set_halign(learningCount, GTK_ALIGN_START);
@@ -135,14 +137,16 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
-        const std::array controls{learningEnabled, contextLearning,
-                                  clearLearningButton};
-        for (auto *control : controls) {
+        const std::array controls{
+            std::pair{learningEnabled, static_cast<GtkWidget *>(nullptr)},
+            std::pair{contextLearning, static_cast<GtkWidget *>(nullptr)},
+            std::pair{clearLearningButton, learningDataFallback},
+        };
+        for (const auto &[control, fallback] : controls) {
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
-                gtk_widget_grab_focus(control);
-                return true;
+                return focusWidgetOrFallback(control, fallback);
             }
         }
         return false;
@@ -210,6 +214,7 @@ private:
     GtkWidget *learningPath = nullptr;
     GtkWidget *learningCount = nullptr;
     GtkWidget *clearLearningButton = nullptr;
+    GtkWidget *learningDataFallback = nullptr;
     bool refreshing = false;
 };
 

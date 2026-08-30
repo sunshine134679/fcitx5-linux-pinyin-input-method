@@ -121,9 +121,21 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_ui_contract_tests
     )
 
+    add_executable(modernime_settings_shell_state_tests
+        settings/settings_shell_state_test.cpp
+        ../tools/settings/settings_shell_state.cpp
+    )
+    target_include_directories(modernime_settings_shell_state_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    add_test(NAME modernime_settings_shell_state
+        COMMAND modernime_settings_shell_state_tests
+    )
+
     add_executable(modernime_settings_widgets_contract_tests
         settings/settings_widgets_contract_test.cpp
         ../tools/settings/settings_widgets.cpp
+        ../tools/settings/settings_shell_state.cpp
     )
     target_include_directories(modernime_settings_widgets_contract_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include

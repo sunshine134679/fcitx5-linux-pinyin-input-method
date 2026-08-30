@@ -18,6 +18,7 @@ add_executable(modernime-settings
     page_registry.cpp
     settings_widgets.cpp
     settings_shell.cpp
+    settings_shell_state.cpp
     pages/clipboard_page.cpp
     pages/diagnostics_page.cpp
     pages/dictionary_page.cpp
