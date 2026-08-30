@@ -1,5 +1,6 @@
 #include "modernime/settings/settings_widgets.h"
 
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_shell_state.h"
 
 #include <string>
@@ -10,6 +11,36 @@ namespace {
 void addStyleClass(GtkWidget *widget, std::string_view className) {
     gtk_style_context_add_class(gtk_widget_get_style_context(widget),
                                 std::string(className).c_str());
+}
+
+void restoreFocusFallback(GtkWidget *widget) {
+    gtk_style_context_remove_class(
+        gtk_widget_get_style_context(widget),
+        std::string(kSettingsFocusFallbackClass).c_str());
+    gtk_widget_set_can_focus(widget, FALSE);
+}
+
+gboolean onFocusFallbackOut(GtkWidget *widget, GdkEventFocus *, gpointer) {
+    restoreFocusFallback(widget);
+    return FALSE;
+}
+
+void onFocusFallbackUnmap(GtkWidget *widget, gpointer) {
+    restoreFocusFallback(widget);
+}
+
+void ensureFocusFallbackCleanup(GtkWidget *widget) {
+    constexpr const char *kCleanupInstalled =
+        "modernime-focus-fallback-cleanup-installed";
+    if (g_object_get_data(G_OBJECT(widget), kCleanupInstalled) != nullptr) {
+        return;
+    }
+    g_object_set_data(G_OBJECT(widget), kCleanupInstalled,
+                      GINT_TO_POINTER(1));
+    g_signal_connect(widget, "focus-out-event",
+                     G_CALLBACK(onFocusFallbackOut), nullptr);
+    g_signal_connect(widget, "unmap", G_CALLBACK(onFocusFallbackUnmap),
+                     nullptr);
 }
 
 void setAccessibleText(GtkWidget *widget, std::string_view name,
@@ -70,6 +101,10 @@ std::string_view settingsStyles() {
         entry.error {
             color: @error_color;
         }
+        .modernime-focus-fallback {
+            border-radius: 6px;
+            box-shadow: inset 0 0 0 2px @theme_selected_bg_color;
+        }
         entry.error {
             border-color: @error_color;
         }
@@ -93,7 +128,9 @@ void installSettingsStyles() {
 }
 
 GtkWidget *createPageShell(std::string_view title, std::string_view subtitle) {
-    auto *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    detail::GtkWidgetGuard pageGuard(
+        gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
+    auto *page = pageGuard.get();
     addStyleClass(page, "modernime-page");
     gtk_widget_set_margin_start(page, 24);
     gtk_widget_set_margin_end(page, 24);
@@ -113,12 +150,14 @@ GtkWidget *createPageShell(std::string_view title, std::string_view subtitle) {
     gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
     setAccessibleText(description, subtitle);
     gtk_box_pack_start(GTK_BOX(page), description, FALSE, FALSE, 0);
-    return page;
+    return pageGuard.release();
 }
 
 GtkWidget *createSectionCard(std::string_view title,
                              std::string_view description) {
-    auto *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    detail::GtkWidgetGuard cardGuard(
+        gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
+    auto *card = cardGuard.get();
     addStyleClass(card, kSettingsSectionClass);
     setAccessibleText(card, title, description);
     if (!title.empty()) {
@@ -136,17 +175,21 @@ GtkWidget *createSectionCard(std::string_view title,
         setAccessibleText(help, description);
         gtk_box_pack_start(GTK_BOX(card), help, FALSE, FALSE, 0);
     }
-    return card;
+    return cardGuard.release();
 }
 
 GtkWidget *createScrollablePage(GtkWidget *page) {
-    auto *surface = gtk_event_box_new();
+    detail::GtkWidgetGuard pageGuard(page);
+    detail::GtkWidgetGuard surfaceGuard(gtk_event_box_new());
+    auto *surface = surfaceGuard.get();
     addStyleClass(surface, "modernime-page-surface");
     gtk_event_box_set_visible_window(GTK_EVENT_BOX(surface), TRUE);
     gtk_widget_set_hexpand(surface, TRUE);
     gtk_widget_set_vexpand(surface, TRUE);
 
-    auto *scrolled = gtk_scrolled_window_new(nullptr, nullptr);
+    detail::GtkWidgetGuard scrolledGuard(
+        gtk_scrolled_window_new(nullptr, nullptr));
+    auto *scrolled = scrolledGuard.get();
     addStyleClass(scrolled, "modernime-page-scroller");
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scrolled),
                                         GTK_SHADOW_NONE);
@@ -158,19 +201,24 @@ GtkWidget *createScrollablePage(GtkWidget *page) {
     gtk_widget_set_vexpand(page, TRUE);
     gtk_widget_set_halign(page, GTK_ALIGN_FILL);
     gtk_widget_set_valign(page, GTK_ALIGN_FILL);
-    gtk_container_add(GTK_CONTAINER(surface), page);
+    gtk_container_add(GTK_CONTAINER(surface), pageGuard.get());
+    pageGuard.release();
     gtk_container_add(GTK_CONTAINER(scrolled), surface);
+    surfaceGuard.release();
     auto *viewport = gtk_bin_get_child(GTK_BIN(scrolled));
     if (viewport != nullptr) {
         addStyleClass(viewport, "modernime-page-viewport");
     }
-    return scrolled;
+    return scrolledGuard.release();
 }
 
 GtkWidget *createSettingRow(std::string_view title,
                             std::string_view description,
                             GtkWidget *control) {
-    auto *row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    detail::GtkWidgetGuard controlGuard(control);
+    detail::GtkWidgetGuard rowGuard(
+        gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
+    auto *row = rowGuard.get();
     setAccessibleText(row, title, description);
     auto *label = gtk_label_new(std::string(title).c_str());
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -187,21 +235,26 @@ GtkWidget *createSettingRow(std::string_view title,
     if (control != nullptr) {
         setAccessibleText(control, title, description);
         gtk_box_pack_start(GTK_BOX(row), control, FALSE, FALSE, 0);
+        controlGuard.release();
     }
-    return row;
+    return rowGuard.release();
 }
 
 GtkWidget *createStatusPill(std::string_view text) {
-    auto *status = gtk_label_new(std::string(text).c_str());
+    detail::GtkWidgetGuard statusGuard(
+        gtk_label_new(std::string(text).c_str()));
+    auto *status = statusGuard.get();
     addStyleClass(status, "modernime-status");
     gtk_widget_set_halign(status, GTK_ALIGN_START);
     setAccessibleText(status, text);
-    return status;
+    return statusGuard.release();
 }
 
 GtkWidget *createEmptyState(std::string_view title,
                             std::string_view description) {
-    auto *state = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    detail::GtkWidgetGuard stateGuard(
+        gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
+    auto *state = stateGuard.get();
     setAccessibleText(state, title, description);
     auto *heading = gtk_label_new(std::string(title).c_str());
     gtk_widget_set_halign(heading, GTK_ALIGN_START);
@@ -215,7 +268,7 @@ GtkWidget *createEmptyState(std::string_view title,
         setAccessibleText(help, description);
         gtk_box_pack_start(GTK_BOX(state), help, FALSE, FALSE, 0);
     }
-    return state;
+    return stateGuard.release();
 }
 
 bool focusWidgetOrFallback(GtkWidget *target, GtkWidget *fallback) {
@@ -229,14 +282,24 @@ bool focusWidgetOrFallback(GtkWidget *target, GtkWidget *fallback) {
         return gtk_widget_has_focus(widget);
     };
 
+    const auto fallbackAvailable = [](GtkWidget *widget) {
+        return widget != nullptr && gtk_widget_get_visible(widget) &&
+               gtk_widget_is_sensitive(widget);
+    };
     const auto destination = chooseSettingsFocusDestination(
-        focusable(target), focusable(fallback));
+        focusable(target), fallbackAvailable(fallback));
     if (destination == SettingsFocusDestination::Target &&
         grabAndVerify(target)) {
         return true;
     }
-    if (focusable(fallback) && grabAndVerify(fallback)) {
-        return true;
+    if (destination == SettingsFocusDestination::Fallback) {
+        gtk_widget_set_can_focus(fallback, TRUE);
+        addStyleClass(fallback, kSettingsFocusFallbackClass);
+        if (grabAndVerify(fallback)) {
+            ensureFocusFallbackCleanup(fallback);
+            return true;
+        }
+        restoreFocusFallback(fallback);
     }
     return false;
 }

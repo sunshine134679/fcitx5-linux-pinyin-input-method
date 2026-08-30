@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/diagnostics_page.h"
 
 #include "modernime/settings/detail/diagnostics_lifetime.h"
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -67,21 +68,23 @@ public:
         : fcitx(std::move(fcitxPath)), remote(std::move(remotePath)),
           environment(std::move(currentEnvironment)),
           notify(std::move(notifyCallback)) {
-        lifetime = G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr));
+        lifetime = detail::GObjectHandle<GObject>::adopt(
+            G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr)));
         state = std::make_shared<Lifetime>(this);
         g_object_set_data_full(
-            lifetime, kStateKey, new SharedLifetime(state),
+            lifetime.get(), kStateKey, new SharedLifetime(state),
             [](gpointer value) {
                 delete static_cast<SharedLifetime *>(value);
             });
+        detail::GtkWidgetGuard pageGuard(createPageShell(
+            "系统与诊断", "检查 Fcitx5、ModernIME 插件和当前激活状态"));
+        page = pageGuard.get();
         buildPage();
         refresh();
+        pageGuard.release();
     }
 
-    ~Impl() {
-        state->deactivate();
-        g_object_unref(lifetime);
-    }
+    ~Impl() { state->deactivate(); }
 
     GtkWidget *widget() const { return page; }
 
@@ -153,10 +156,9 @@ private:
     }
 
     void buildPage() {
-        page = createPageShell(
-            "系统与诊断", "检查 Fcitx5、ModernIME 插件和当前激活状态");
         auto *section = createSectionCard(
             "运行状态", "如果状态异常，可以在这里重新加载 ModernIME。");
+        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
         statusMessage = gtk_label_new("正在读取 Fcitx5 状态…");
         addStyleClass(statusMessage, "modernime-status");
@@ -197,7 +199,6 @@ private:
         gtk_box_pack_start(GTK_BOX(actions), refreshButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(actions), reloadButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section), actions, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         g_signal_connect_data(
             refreshButton, "clicked", G_CALLBACK(onRefresh),
             new SharedLifetime(state), destroySignalState,
@@ -221,7 +222,8 @@ private:
             setLabel(statusMessage, "正在检测 Fcitx5 状态…");
         }
 
-        auto *task = g_task_new(lifetime, nullptr, taskFinished, nullptr);
+        auto *task =
+            g_task_new(lifetime.get(), nullptr, taskFinished, nullptr);
         auto *request = new RuntimeTask{reloadRequest, fcitx, remote,
                                         environment};
         g_task_set_task_data(task, request, [](gpointer value) {
@@ -307,7 +309,7 @@ private:
     std::filesystem::path remote;
     Environment environment;
     std::function<void(std::string)> notify;
-    GObject *lifetime = nullptr;
+    detail::GObjectHandle<GObject> lifetime;
     SharedLifetime state;
     bool busy = false;
     GtkWidget *page = nullptr;

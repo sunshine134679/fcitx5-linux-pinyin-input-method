@@ -1,5 +1,6 @@
 #include "modernime/settings/pages/overview_page.h"
 
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include <gtk/gtk.h>
@@ -73,7 +74,9 @@ class OverviewPage::Impl final {
 public:
     explicit Impl(std::function<void(SettingsPageId)> navigateCallback)
         : navigate(std::move(navigateCallback)) {
-        page = createPageShell("概览", "查看 ModernIME 设置和本地数据概况");
+        detail::GtkWidgetGuard pageGuard(
+            createPageShell("概览", "查看 ModernIME 设置和本地数据概况"));
+        page = pageGuard.get();
         content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         gtk_widget_set_hexpand(content, TRUE);
         gtk_box_pack_start(GTK_BOX(page), content, TRUE, TRUE, 0);
@@ -82,6 +85,7 @@ public:
             createEmptyState("正在加载概览…",
                              "正在后台读取运行状态和本地数据摘要。"),
             FALSE, FALSE, 0);
+        pageGuard.release();
     }
 
     void setSnapshot(const OverviewSnapshot &snapshot) {

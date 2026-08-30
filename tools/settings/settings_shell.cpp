@@ -1,6 +1,7 @@
 #include "modernime/settings/settings_shell.h"
 
 #include "modernime/settings/detail/diagnostics_lifetime.h"
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/overview_model.h"
 #include "modernime/settings/pages/clipboard_page.h"
 #include "modernime/settings/pages/diagnostics_page.h"
@@ -172,7 +173,9 @@ public:
     GtkWidget *window() const { return windowOwner.get(); }
 
     void present() {
-        requestOverviewRefresh();
+        if (overviewPresentation.presentedAndNeedsRefresh()) {
+            requestOverviewRefresh();
+        }
         gtk_widget_show_all(windowOwner.get());
         gtk_window_present(GTK_WINDOW(windowOwner.get()));
     }
@@ -310,18 +313,28 @@ private:
         g_signal_connect(windowOwner.get(), "delete-event",
                          G_CALLBACK(onWindowDelete), this);
 
-        auto *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-        auto *body = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        detail::GtkWidgetGuard rootGuard(
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
+        auto *root = rootGuard.get();
+        gtk_container_add(GTK_CONTAINER(windowOwner.get()), root);
+        rootGuard.release();
+
+        detail::GtkWidgetGuard bodyGuard(
+            gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
+        auto *body = bodyGuard.get();
+        gtk_box_pack_start(GTK_BOX(root), body, TRUE, TRUE, 0);
+        bodyGuard.release();
+
         gtk_box_pack_start(GTK_BOX(body), buildSidebar(), FALSE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(body), buildPageStack(), TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(root), body, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), buildBottomBar(), FALSE, FALSE, 0);
-        gtk_container_add(GTK_CONTAINER(windowOwner.get()), root);
         updateActionState();
     }
 
     GtkWidget *buildSidebar() {
-        auto *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        detail::GtkWidgetGuard sidebarGuard(
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 10));
+        auto *sidebar = sidebarGuard.get();
         addStyleClass(sidebar, kSettingsSidebarClass);
         gtk_widget_set_size_request(sidebar, 220, -1);
 
@@ -367,11 +380,12 @@ private:
                 new NavigationAction{this, definition.id},
                 destroyNavigationAction, static_cast<GConnectFlags>(0));
         }
-        return sidebar;
+        return sidebarGuard.release();
     }
 
     GtkWidget *buildPageStack() {
-        stack = gtk_stack_new();
+        detail::GtkWidgetGuard stackGuard(gtk_stack_new());
+        stack = stackGuard.get();
         addStyleClass(stack, "modernime-page-stack");
         gtk_stack_set_transition_type(GTK_STACK(stack),
                                       GTK_STACK_TRANSITION_TYPE_CROSSFADE);
@@ -381,38 +395,44 @@ private:
         };
         overviewPage = std::make_unique<OverviewPage>(
             [this](SettingsPageId page) { show(page, {}); });
+        addPage(SettingsPageId::Overview, overviewPage->widget());
         inputPage = std::make_unique<InputPage>(model, [this] {
             updateActionState();
         });
+        addPage(SettingsPageId::Input, inputPage->widget());
+        addInputPageMenu();
         dictionaryPage =
             std::make_unique<DictionaryPage>(paths.userDictionary, notify);
+        addPage(SettingsPageId::Dictionary, dictionaryPage->widget());
         clipboardPage = std::make_unique<ClipboardPage>(
             model, paths.clipboardHistory,
             [this] { updateActionState(); }, notify);
+        addPage(SettingsPageId::Clipboard, clipboardPage->widget());
         learningPage = std::make_unique<LearningPage>(
             model, paths.learningStore,
             [this] { updateActionState(); }, notify);
+        addPage(SettingsPageId::Learning, learningPage->widget());
         diagnosticsPage = std::make_unique<DiagnosticsPage>(
             fcitx, remote, environment, notify);
-
-        addPage(SettingsPageId::Overview, overviewPage->widget());
-        addPage(SettingsPageId::Input, inputPage->widget());
-        addInputPageMenu();
-        addPage(SettingsPageId::Dictionary, dictionaryPage->widget());
-        addPage(SettingsPageId::Clipboard, clipboardPage->widget());
-        addPage(SettingsPageId::Learning, learningPage->widget());
         addPage(SettingsPageId::Diagnostics, diagnosticsPage->widget());
-        return stack;
+
+        return stackGuard.release();
     }
 
     void addPage(SettingsPageId page, GtkWidget *widget) {
+        detail::GtkWidgetGuard pageGuard(widget);
         const auto &definition = pageDefinition(page);
-        gtk_stack_add_named(GTK_STACK(stack), createScrollablePage(widget),
-                            std::string(definition.name).c_str());
+        const auto name = std::string(definition.name);
+        detail::GtkWidgetGuard scrolledGuard(
+            createScrollablePage(pageGuard.release()));
+        gtk_stack_add_named(GTK_STACK(stack), scrolledGuard.get(),
+                            name.c_str());
+        scrolledGuard.release();
     }
 
     void addInputPageMenu() {
-        auto *menu = gtk_menu_new();
+        detail::GtkWidgetGuard menuGuard(gtk_menu_new());
+        auto *menu = menuGuard.get();
         auto *defaults = gtk_menu_item_new_with_label("恢复默认");
         gtk_widget_set_tooltip_text(
             defaults, "只修改当前设置草稿，不删除个人词典或学习数据");
@@ -421,18 +441,23 @@ private:
         g_signal_connect(defaults, "activate", G_CALLBACK(onEditDefaults),
                          this);
 
-        auto *menuButton = gtk_menu_button_new();
+        detail::GtkWidgetGuard menuButtonGuard(gtk_menu_button_new());
+        auto *menuButton = menuButtonGuard.get();
         gtk_button_set_label(GTK_BUTTON(menuButton), "更多");
         gtk_widget_set_halign(menuButton, GTK_ALIGN_END);
         gtk_widget_set_tooltip_text(menuButton, "打开输入体验的更多操作");
         gtk_menu_button_set_popup(GTK_MENU_BUTTON(menuButton), menu);
+        menuGuard.release();
         gtk_box_pack_start(GTK_BOX(inputPage->widget()), menuButton, FALSE,
                            FALSE, 0);
+        menuButtonGuard.release();
         gtk_box_reorder_child(GTK_BOX(inputPage->widget()), menuButton, 2);
     }
 
     GtkWidget *buildBottomBar() {
-        auto *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        detail::GtkWidgetGuard barGuard(
+            gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8));
+        auto *bar = barGuard.get();
         gtk_widget_set_margin_start(bar, 12);
         gtk_widget_set_margin_end(bar, 12);
         gtk_widget_set_margin_top(bar, 8);
@@ -464,7 +489,7 @@ private:
         g_signal_connect(applyButton, "clicked", G_CALLBACK(onApply), this);
         g_signal_connect(saveButton, "clicked", G_CALLBACK(onSaveAndClose),
                          this);
-        return bar;
+        return barGuard.release();
     }
 
     void updateNavigation(SettingsPageId selected) {
@@ -791,6 +816,7 @@ private:
     std::unique_ptr<DiagnosticsPage> diagnosticsPage;
     GtkWidgetOwner windowOwner;
     OverviewRefreshState overviewRefresh;
+    OverviewPresentationState overviewPresentation;
     GObjectOwner overviewLifetime;
     ScopedLifetimeDeactivation<Lifetime> lifetimeGuard;
 };

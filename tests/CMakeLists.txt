@@ -132,6 +132,37 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_shell_state_tests
     )
 
+    add_executable(modernime_settings_gtk_raii_tests
+        settings/settings_gtk_raii_test.cpp
+    )
+    target_include_directories(modernime_settings_gtk_raii_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_settings_gtk_raii_tests PRIVATE
+        PkgConfig::GTK3
+    )
+    add_test(NAME modernime_settings_gtk_raii
+        COMMAND modernime_settings_gtk_raii_tests
+    )
+
+    add_executable(modernime_settings_focus_gtk_tests
+        settings/settings_focus_gtk_test.cpp
+        ../tools/settings/settings_widgets.cpp
+        ../tools/settings/settings_shell_state.cpp
+    )
+    target_include_directories(modernime_settings_focus_gtk_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_settings_focus_gtk_tests PRIVATE
+        PkgConfig::GTK3
+    )
+    add_test(NAME modernime_settings_focus_gtk
+        COMMAND modernime_settings_focus_gtk_tests
+    )
+    set_tests_properties(modernime_settings_focus_gtk PROPERTIES
+        SKIP_RETURN_CODE 77
+    )
+
     add_executable(modernime_settings_widgets_contract_tests
         settings/settings_widgets_contract_test.cpp
         ../tools/settings/settings_widgets.cpp

@@ -13,6 +13,8 @@ inline constexpr std::string_view kSettingsPrimaryButtonClass =
     "suggested-action";
 inline constexpr std::string_view kSettingsDangerButtonClass =
     "destructive-action";
+inline constexpr std::string_view kSettingsFocusFallbackClass =
+    "modernime-focus-fallback";
 
 void installSettingsStyles();
 std::string_view settingsStyles();

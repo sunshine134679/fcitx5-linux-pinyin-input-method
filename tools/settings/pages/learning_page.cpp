@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/learning_page.h"
 
 #include "modernime/settings/data_controller.h"
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include <gtk/gtk.h>
@@ -45,16 +46,19 @@ public:
         : model(settingsModel), path(std::move(learningStore)),
           settingsChanged(std::move(settingsChangedCallback)),
           notify(std::move(notifyCallback)) {
+        detail::GtkWidgetGuard pageGuard(createPageShell(
+            "智能学习", "让 ModernIME 记住你的候选选择，并结合上下文优化排序"));
+        page = pageGuard.get();
         buildPage();
         refreshSettings();
         refresh(false);
+        pageGuard.release();
     }
 
     void buildPage() {
-        page = createPageShell(
-            "智能学习", "让 ModernIME 记住你的候选选择，并结合上下文优化排序");
         auto *learningSection = createSectionCard(
             "学习行为", "关闭后不会删除已经保存的学习数据。");
+        gtk_box_pack_start(GTK_BOX(page), learningSection, FALSE, FALSE, 0);
 
         learningEnabled = gtk_check_button_new_with_label("记忆用户候选选择");
         contextLearning = gtk_check_button_new_with_label(
@@ -68,8 +72,6 @@ public:
                            FALSE, 0);
         gtk_box_pack_start(GTK_BOX(learningSection), contextLearning, FALSE,
                            FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), learningSection, FALSE, FALSE, 0);
-
         const auto pathText = "学习数据库：" + path.string();
         learningPath = gtk_label_new(pathText.c_str());
         addStyleClass(learningPath, "modernime-path");
@@ -78,8 +80,8 @@ public:
         gtk_label_set_line_wrap(GTK_LABEL(learningPath), TRUE);
         auto *dataSection = createSectionCard(
             "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
+        gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
         learningDataFallback = dataSection;
-        gtk_widget_set_can_focus(learningDataFallback, TRUE);
         learningCount = gtk_label_new("正在读取学习记录…");
         addStyleClass(learningCount, "modernime-description");
         gtk_widget_set_halign(learningCount, GTK_ALIGN_START);
@@ -95,8 +97,6 @@ public:
                                     "备份后清空 ModernIME 的学习排序");
         gtk_box_pack_start(GTK_BOX(dataSection), clearLearningButton, FALSE,
                            FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
-
         g_signal_connect(learningEnabled, "toggled", G_CALLBACK(onChanged),
                          this);
         g_signal_connect(contextLearning, "toggled", G_CALLBACK(onChanged),

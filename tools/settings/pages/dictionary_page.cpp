@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/dictionary_page.h"
 
 #include "modernime/settings/data_controller.h"
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include "modernime/pinyin/user_dictionary.h"
@@ -91,15 +92,18 @@ public:
     Impl(std::filesystem::path dictionaryPath,
          std::function<void(std::string)> notifyCallback)
         : path(std::move(dictionaryPath)), notify(std::move(notifyCallback)) {
+        detail::GtkWidgetGuard pageGuard(createPageShell(
+            "用户词典", "维护个人词条和专业名词，重载 ModernIME 后生效"));
+        page = pageGuard.get();
         buildPage();
         refresh();
+        pageGuard.release();
     }
 
     void buildPage() {
-        page = createPageShell(
-            "用户词典", "维护个人词条和专业名词，重载 ModernIME 后生效");
         auto *section = createSectionCard(
             "词条列表", "拼音、词条和权重会在保存时统一校验；导入前会确认整体替换，失败不会覆盖原词典。");
+        gtk_box_pack_start(GTK_BOX(page), section, TRUE, TRUE, 0);
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
         auto *searchLabel = gtk_label_new("搜索");
@@ -120,10 +124,13 @@ public:
         gtk_widget_set_halign(dictionaryCount, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(section), dictionaryCount, FALSE, FALSE, 0);
 
-        dictionaryStore = gtk_list_store_new(
-            4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT);
+        auto dictionaryStoreOwner =
+            detail::GObjectHandle<GtkListStore>::adopt(gtk_list_store_new(
+                4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT));
+        dictionaryStore = dictionaryStoreOwner.get();
         dictionaryView =
             gtk_tree_view_new_with_model(GTK_TREE_MODEL(dictionaryStore));
+        dictionaryStoreOwner.reset();
         gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(dictionaryView), TRUE);
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(dictionaryView), FALSE);
         gtk_widget_set_tooltip_text(dictionaryView,
@@ -146,8 +153,6 @@ public:
         gtk_widget_set_halign(dictionaryState, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(dictionaryState), TRUE);
         gtk_box_pack_start(GTK_BOX(section), dictionaryState, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), section, TRUE, TRUE, 0);
-
         auto *selection =
             gtk_tree_view_get_selection(GTK_TREE_VIEW(dictionaryView));
         gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);

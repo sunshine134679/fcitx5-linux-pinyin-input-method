@@ -34,6 +34,11 @@ int main() {
     assert(clipboard->target == "clipboard-trigger");
     assert(!settingsFocusRouteForIssue("unknown.issue").has_value());
 
+    OverviewPresentationState presentation;
+    assert(!presentation.presentedAndNeedsRefresh());
+    assert(presentation.presentedAndNeedsRefresh());
+    assert(presentation.presentedAndNeedsRefresh());
+
     OverviewRefreshState refresh;
     const auto first = refresh.request();
     assert(first.has_value() && *first == 1);

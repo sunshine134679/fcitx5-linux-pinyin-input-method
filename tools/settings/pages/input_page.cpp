@@ -1,5 +1,6 @@
 #include "modernime/settings/pages/input_page.h"
 
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include <gtk/gtk.h>
@@ -34,18 +35,21 @@ public:
     Impl(SettingsWindowModel &settingsModel,
          std::function<void()> changedCallback)
         : model(settingsModel), changed(std::move(changedCallback)) {
-        page = createPageShell("输入体验",
-                               "配置输入状态、快捷键、标点和候选行为");
+        detail::GtkWidgetGuard pageGuard(createPageShell(
+            "输入体验", "配置输入状态、快捷键、标点和候选行为"));
+        page = pageGuard.get();
         buildInputStatusSection();
         buildShortcutSection();
         buildPunctuationSection();
         buildCandidateBehaviorSection();
         refresh();
+        pageGuard.release();
     }
 
     void buildInputStatusSection() {
         auto *section = createSectionCard(
             "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
+        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         inputEnabled = gtk_check_button_new_with_label("启用 ModernIME");
         setTarget(inputEnabled, "input-enabled");
         gtk_box_pack_start(GTK_BOX(section),
@@ -61,11 +65,8 @@ public:
         setTarget(defaultMode, "default-mode");
         defaultModeFallback = createSettingRow(
             "默认输入状态", "选择启动时默认使用中文或英文。", defaultMode);
-        gtk_widget_set_can_focus(defaultModeFallback, TRUE);
         gtk_box_pack_start(GTK_BOX(section), defaultModeFallback, FALSE, FALSE,
                            0);
-        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-
         g_signal_connect(inputEnabled, "toggled", G_CALLBACK(onChanged), this);
         g_signal_connect(defaultMode, "changed", G_CALLBACK(onChanged), this);
     }
@@ -73,37 +74,36 @@ public:
     void buildShortcutSection() {
         auto *section = createSectionCard(
             "快捷键", "设置在中文和英文输入状态之间切换的按键。");
+        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         toggleKey = gtk_entry_new();
         gtk_entry_set_placeholder_text(GTK_ENTRY(toggleKey), "例如 Ctrl+Space");
         gtk_widget_set_hexpand(toggleKey, TRUE);
         setTarget(toggleKey, "toggle-key");
         toggleKeyFallback = createSettingRow(
             "中英文切换快捷键", "只能包含字母、数字、+ 或 -。", toggleKey);
-        gtk_widget_set_can_focus(toggleKeyFallback, TRUE);
         gtk_box_pack_start(GTK_BOX(section), toggleKeyFallback, FALSE, FALSE,
                            0);
-        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         g_signal_connect(toggleKey, "changed", G_CALLBACK(onChanged), this);
     }
 
     void buildPunctuationSection() {
         auto *section = createSectionCard(
             "标点", "配置中文输入状态下的标点输出方式。");
+        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         punctuation = gtk_check_button_new_with_label(
             "中文标点使用全角（，。？！等）");
         setTarget(punctuation, "punctuation");
         punctuationFallback = createSettingRow(
             "中文标点", "在中文状态下使用全角标点。", punctuation);
-        gtk_widget_set_can_focus(punctuationFallback, TRUE);
         gtk_box_pack_start(GTK_BOX(section), punctuationFallback, FALSE, FALSE,
                            0);
-        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         g_signal_connect(punctuation, "toggled", G_CALLBACK(onChanged), this);
     }
 
     void buildCandidateBehaviorSection() {
         auto *section = createSectionCard(
             "候选行为", "关闭某项后，对应按键会交给其他输入行为处理。");
+        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         numberSelection = gtk_check_button_new_with_label("数字键选择候选");
         gtk_widget_set_tooltip_text(numberSelection, "使用数字键选择当前候选项");
         setTarget(numberSelection, "number-selection");
@@ -130,7 +130,6 @@ public:
                                             "使用上下方向键和 + / = 翻页。",
                                             pageNavigation),
                            FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         for (auto *control : {numberSelection, arrowNavigation, pageNavigation}) {
             g_signal_connect(control, "toggled", G_CALLBACK(onChanged), this);
         }

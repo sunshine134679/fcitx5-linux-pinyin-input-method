@@ -41,6 +41,18 @@ private:
     bool pending_ = false;
 };
 
+class OverviewPresentationState final {
+public:
+    bool presentedAndNeedsRefresh() {
+        const bool needsRefresh = presented_;
+        presented_ = true;
+        return needsRefresh;
+    }
+
+private:
+    bool presented_ = false;
+};
+
 template <typename Lifetime>
 class ScopedLifetimeDeactivation final {
 public:

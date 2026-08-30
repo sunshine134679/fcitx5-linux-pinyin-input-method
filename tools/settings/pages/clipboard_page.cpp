@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/clipboard_page.h"
 
 #include "modernime/settings/clipboard_history_model.h"
+#include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -47,15 +48,18 @@ public:
         : model(settingsModel), history(std::move(historyPath)),
           settingsChanged(std::move(settingsChangedCallback)),
           notify(std::move(notifyCallback)) {
+        detail::GtkWidgetGuard pageGuard(createPageShell(
+            "剪贴板", "配置 V+2 功能并查看保存在本地的剪贴板历史"));
+        page = pageGuard.get();
         buildPage();
         refreshSettings();
+        pageGuard.release();
     }
 
     void buildPage() {
-        page = createPageShell(
-            "剪贴板", "配置 V+2 功能并查看保存在本地的剪贴板历史");
         auto *settingsSection = createSectionCard(
             "触发方式", "仅在中文输入状态且当前没有正在输入拼音时触发。");
+        gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
 
         clipboardEnabled = gtk_check_button_new_with_label("启用 V+2 剪贴板");
         setTarget(clipboardEnabled, "clipboard-enabled");
@@ -64,7 +68,6 @@ public:
 
         auto *grid = gtk_grid_new();
         clipboardTriggerFallback = grid;
-        gtk_widget_set_can_focus(clipboardTriggerFallback, TRUE);
         atk_object_set_name(gtk_widget_get_accessible(clipboardTriggerFallback),
                             "剪贴板触发键");
         atk_object_set_description(
@@ -92,18 +95,21 @@ public:
         gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
         gtk_box_pack_start(GTK_BOX(settingsSection), description, FALSE, FALSE,
                            0);
-        gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
-
         auto *historySection = createSectionCard(
             "剪贴板历史", "按最近使用顺序显示，最多保留 30 条内容。");
+        gtk_box_pack_start(GTK_BOX(page), historySection, TRUE, TRUE, 0);
         historyCount = gtk_label_new("正在读取…");
         addStyleClass(historyCount, "modernime-description");
         gtk_widget_set_halign(historyCount, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(historySection), historyCount, FALSE, FALSE,
                            0);
 
-        historyStore = gtk_list_store_new(2, G_TYPE_UINT, G_TYPE_STRING);
+        auto historyStoreOwner =
+            detail::GObjectHandle<GtkListStore>::adopt(
+                gtk_list_store_new(2, G_TYPE_UINT, G_TYPE_STRING));
+        historyStore = historyStoreOwner.get();
         historyView = gtk_tree_view_new_with_model(GTK_TREE_MODEL(historyStore));
+        historyStoreOwner.reset();
         setTarget(historyView, "clipboard-history");
         gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(historyView), TRUE);
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(historyView), TRUE);
@@ -158,8 +164,6 @@ public:
         gtk_widget_set_tooltip_text(refreshButton, "重新读取磁盘上的剪贴板历史");
         gtk_box_pack_start(GTK_BOX(historySection), refreshButton, FALSE, FALSE,
                            0);
-        gtk_box_pack_start(GTK_BOX(page), historySection, TRUE, TRUE, 0);
-
         g_signal_connect(refreshButton, "clicked", G_CALLBACK(onRefresh), this);
         g_signal_connect(copyButton, "clicked", G_CALLBACK(onCopy), this);
         g_signal_connect(deleteButton, "clicked", G_CALLBACK(onDelete), this);
