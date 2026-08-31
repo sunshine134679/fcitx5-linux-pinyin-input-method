@@ -126,6 +126,22 @@ void testDictionaryImportIsStrictAndNonDestructive() {
                    validSource, imported, &error) && imported.size() == 2 &&
                    error.empty(),
                "valid import returns all normalized entries");
+
+    const auto emptySource = directory / "empty-source.txt";
+    {
+        std::ofstream output(emptySource);
+        output << "# only a comment\n\n";
+    }
+    error.clear();
+    std::vector<modernime::pinyin::UserDictionaryEntry> emptyImport;
+    assertTrue(!modernime::settings::DataController::importDictionary(
+                   emptySource, emptyImport, &error) &&
+                   !error.empty() && emptyImport.empty(),
+               "an import with no valid entries is rejected");
+    assertTrue(modernime::settings::DataController::loadDictionary(target)
+                   .front()
+                   .phrase == "原词条",
+               "rejected empty import does not wipe the existing dictionary");
 }
 
 void testLearningBackupThenClear() {

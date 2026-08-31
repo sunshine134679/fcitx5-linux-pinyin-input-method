@@ -88,6 +88,10 @@ bool DataController::importDictionary(
     }
 
     entries = dictionary.entries();
+    if (entries.empty()) {
+        setError(error, "导入文件中没有有效词条（需拼音、词条、权重三列），已取消导入");
+        return false;
+    }
     return true;
 }
 
