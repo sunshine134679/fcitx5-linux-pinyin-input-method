@@ -34,9 +34,7 @@ enum class KeyKind {
     NextClipboardItem,
     PreviousPage,
     NextPage,
-    OpenFeatureMenu,
     OpenClipboard,
-    CommitLiteral,
     Punctuation,
 };
 
@@ -44,39 +42,6 @@ struct KeyEvent final {
     KeyKind kind = KeyKind::Character;
     char character = 0;
     char digit = 0;
-};
-
-struct ClipboardTriggerResult final {
-    bool consumed = false;
-    bool openFeatureMenu = false;
-    char featurePrefix = 0;
-    char featureDigit = 0;
-    bool openClipboard = false;
-    std::optional<KeyEvent> replay;
-};
-
-class ClipboardTrigger final {
-public:
-    explicit ClipboardTrigger(std::string_view trigger = "V+2");
-
-    ClipboardTriggerResult feed(const KeyEvent &event, bool eligible);
-    void reset();
-
-    bool pending() const { return pending_; }
-
-private:
-    bool valid() const { return first_ != 0 && second_ != 0; }
-    bool isFirst(const KeyEvent &event) const;
-    bool isSecond(const KeyEvent &event) const;
-    KeyEvent replayEvent() const {
-        const auto prefix = static_cast<char>(std::toupper(
-            static_cast<unsigned char>(first_)));
-        return {KeyKind::CommitLiteral, prefix, 0};
-    }
-
-    char first_ = 0;
-    char second_ = 0;
-    bool pending_ = false;
 };
 
 struct ControllerOptions final {
@@ -134,7 +99,6 @@ private:
     bool commitPunctuation(char ascii);
     bool moveCursor(std::ptrdiff_t delta);
     bool movePage(std::ptrdiff_t delta);
-    bool openFeatureMenu(char prefix, char digit);
     bool openClipboard();
 
     EngineHost &host_;

@@ -79,34 +79,9 @@ int main() {
     controller.setClipboardEntries({"first clipboard", "second clipboard",
                                     "third clipboard", "fourth clipboard",
                                     "fifth clipboard", "sixth clipboard"});
-    modernime::fcitx5::ClipboardTrigger featureTrigger;
-    host.setBeforeCandidateSelection(
-        [&featureTrigger] { featureTrigger.reset(); });
-    featureTrigger.feed(
-        {modernime::fcitx5::KeyKind::Character, 'v', 0}, true);
-    assertTrue(featureTrigger.pending(),
-               "feature trigger is pending before a candidate click");
     assertTrue(controller.handle(
-                   {modernime::fcitx5::KeyKind::OpenFeatureMenu, 'V', '2'}),
-               "feature menu is published before the clipboard list");
-    const auto featureList = inputContext.inputPanel().candidateList();
-    assertTrue(featureList != nullptr &&
-                   featureList->layoutHint() ==
-                       fcitx::CandidateLayoutHint::Horizontal &&
-                   inputContext.inputPanel().preedit().toString() == "V" &&
-                   featureList->size() == 1 &&
-                   featureList->label(0).toString() == "2" &&
-                   featureList->candidate(0).text().toString() == "剪切板",
-               "feature menu uses the horizontal candidate panel");
-    featureList->candidate(0).select(&inputContext);
-    assertTrue(!featureTrigger.pending() && controller.clipboardMode(),
-               "clicking a function candidate clears the pending trigger");
-    assertTrue(controller.handle(
-                   {modernime::fcitx5::KeyKind::OpenFeatureMenu, 'V', '2'}),
-               "feature menu reopens after clicking its candidate");
-    assertTrue(controller.handle(
-                   {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
-               "feature menu digit opens the clipboard list");
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode publishes the clipboard list");
     const auto clipboardList = inputContext.inputPanel().candidateList();
     assertTrue(clipboardList != nullptr &&
                    clipboardList->layoutHint() ==

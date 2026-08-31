@@ -38,74 +38,6 @@ bool isAsciiText(std::string_view text) {
 
 } // namespace
 
-ClipboardTrigger::ClipboardTrigger(std::string_view trigger) {
-    if (trigger.size() != 3 || trigger[1] != '+') {
-        return;
-    }
-    const auto first = static_cast<unsigned char>(trigger[0]);
-    const auto second = static_cast<unsigned char>(trigger[2]);
-    const bool letter = (first >= 'A' && first <= 'Z') ||
-                        (first >= 'a' && first <= 'z');
-    if (!letter || second < '1' || second > '9') {
-        return;
-    }
-    first_ = static_cast<char>(std::tolower(first));
-    second_ = static_cast<char>(second);
-}
-
-bool ClipboardTrigger::isFirst(const KeyEvent &event) const {
-    if (event.kind != KeyKind::Character) {
-        return false;
-    }
-    return static_cast<char>(std::tolower(
-               static_cast<unsigned char>(event.character))) == first_;
-}
-
-bool ClipboardTrigger::isSecond(const KeyEvent &event) const {
-    return event.kind == KeyKind::Digit && event.digit == second_;
-}
-
-ClipboardTriggerResult ClipboardTrigger::feed(const KeyEvent &event,
-                                              bool eligible) {
-    ClipboardTriggerResult result;
-    if (!valid()) {
-        return result;
-    }
-
-    if (pending_) {
-        if (isSecond(event)) {
-            pending_ = false;
-            result.consumed = true;
-            result.openClipboard = true;
-            return result;
-        }
-        if (event.kind == KeyKind::Escape) {
-            // 取消剪贴板触发：只清除待定状态，不重放字符也不消费 Esc，
-            // 让 Esc 由控制器按是否有组合内容决定是否吞掉。
-            pending_ = false;
-            return result;
-        }
-        result.replay = replayEvent();
-        pending_ = false;
-        if (event.kind == KeyKind::Enter) {
-            result.consumed = true;
-        }
-    }
-
-    if (eligible && isFirst(event)) {
-        pending_ = true;
-        result.consumed = true;
-        result.openFeatureMenu = true;
-        result.featurePrefix = replayEvent().character;
-        result.featureDigit = second_;
-    }
-    return result;
-}
-
-void ClipboardTrigger::reset() {
-    pending_ = false;
-}
-
 ModernIMEController::ModernIMEController(EngineHost &host,
                                          core::CandidateProvider *provider,
                                          ControllerOptions options)
@@ -172,27 +104,14 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         reset();
         return true;
     case KeyKind::Escape:
-        // 只在有内容需要取消时（拼音组合、剪贴板或功能菜单）消费 Escape；
+        // 只在有内容需要取消时（拼音组合或剪贴板模式）消费 Escape；
         // 空闲状态下必须放行给应用（vim 退出插入模式、对话框取消等）。
         if (page_.preedit.empty() && !clipboardMode_) {
             return false;
         }
         reset();
         return true;
-    case KeyKind::CommitLiteral:
-        if (event.character == 0) {
-            return false;
-        }
-        {
-            const auto literal = event.character;
-            reset();
-            host_.commit(std::string_view(&literal, 1));
-        }
-        return true;
     case KeyKind::Enter:
-        if (page_.mode == core::CandidatePageMode::FunctionMenu) {
-            return commitRawPreedit();
-        }
         if (!page_.items.empty()) {
             return commitCurrent();
         }
@@ -225,14 +144,6 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         }
         if (event.digit < '1' || event.digit > '9') {
             return false;
-        }
-        if (page_.mode == core::CandidatePageMode::FunctionMenu) {
-            if (page_.items.empty()) {
-                return false;
-            }
-            const auto functionDigit = static_cast<char>(
-                '1' + page_.items.front().sourceIndex);
-            return event.digit == functionDigit && select(0);
         }
         const auto index = static_cast<std::size_t>(event.digit - '1');
         const auto pageStart = currentPageIndex() * pageSize();
@@ -270,8 +181,6 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return movePage(1);
     case KeyKind::OpenClipboard:
         return openClipboard();
-    case KeyKind::OpenFeatureMenu:
-        return openFeatureMenu(event.character, event.digit);
     case KeyKind::Toggle:
         break;
     }
@@ -281,9 +190,6 @@ bool ModernIMEController::handle(const KeyEvent &event) {
 bool ModernIMEController::select(std::size_t index) {
     if (!active_ || index >= page_.items.size()) {
         return false;
-    }
-    if (page_.mode == core::CandidatePageMode::FunctionMenu) {
-        return openClipboard();
     }
     if (clipboardMode_) {
         const auto text = page_.items[index].text;
@@ -476,26 +382,6 @@ void ModernIMEController::refreshPage() {
         page_.items.push_back({input_.text(), input_.text(), 0});
     }
     host_.publishPage(page_);
-}
-
-bool ModernIMEController::openFeatureMenu(char prefix, char digit) {
-    if (!active_ || prefix == 0 || digit < '1' || digit > '9') {
-        return false;
-    }
-
-    if (provider_ != nullptr) {
-        provider_->reset();
-    } else {
-        input_.clear();
-    }
-    page_.clear();
-    page_.mode = core::CandidatePageMode::FunctionMenu;
-    page_.preedit = std::string(1, prefix);
-    page_.items.push_back({"剪切板", {},
-                           static_cast<std::size_t>(digit - '1')});
-    clipboardMode_ = false;
-    host_.publishPage(page_);
-    return true;
 }
 
 bool ModernIMEController::openClipboard() {

@@ -35,6 +35,11 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
 std::optional<KeyEvent> translateKey(const fcitx::Key &key,
                                      const KeyBindings &bindings = {});
 
+// 两段式剪贴板触发判定：拼音组合恰好是触发字母（默认 v）且当前按键是
+// 触发数字（默认 2、无 Ctrl/Alt/Super 修饰）时返回 true。
+bool clipboardTriggerFire(std::string_view preedit, const fcitx::Key &key,
+                          std::string_view trigger);
+
 // Heavyweight resources created once per input method engine and shared by
 // every input context.
 struct FcitxEngineResources final {
@@ -50,9 +55,6 @@ public:
     void setController(ModernIMEController &controller) {
         controller_ = &controller;
     }
-    void setBeforeCandidateSelection(std::function<void()> callback) {
-        beforeCandidateSelection_ = std::move(callback);
-    }
 
     void publishPage(const core::CandidatePage &page) override;
     void commit(std::string_view text) override;
@@ -60,7 +62,6 @@ public:
 private:
     fcitx::InputContext *inputContext_;
     ModernIMEController *controller_ = nullptr;
-    std::function<void()> beforeCandidateSelection_;
 };
 
 class FcitxInputContextState final : public fcitx::InputContextProperty {
@@ -77,11 +78,6 @@ public:
     std::uint64_t settingsGeneration() const { return settingsGeneration_; }
 
     ModernIMEController &controller() { return controller_; }
-    ClipboardTriggerResult processClipboardTrigger(const KeyEvent &event,
-                                                   bool eligible) {
-        return clipboardTrigger_.feed(event, eligible);
-    }
-    void resetClipboardTrigger() { clipboardTrigger_.reset(); }
     void setClipboardEntries(std::vector<std::string> entries) {
         controller_.setClipboardEntries(std::move(entries));
     }
@@ -91,7 +87,6 @@ private:
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::unique_ptr<pinyin::PinyinCandidateProvider> provider_;
 #endif
-    ClipboardTrigger clipboardTrigger_;
     ModernIMEController controller_;
     std::uint64_t settingsGeneration_ = 0;
 };

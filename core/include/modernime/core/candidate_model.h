@@ -9,7 +9,7 @@
 namespace modernime::core {
 
 enum class CandidateSource { Engine, UserDictionary, Learned, Raw };
-enum class CandidatePageMode { Pinyin, FunctionMenu, Clipboard };
+enum class CandidatePageMode { Pinyin, Clipboard };
 
 std::string candidateOrderKey(std::string_view text,
                               std::string_view fullPinyin);

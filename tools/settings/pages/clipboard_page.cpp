@@ -58,7 +58,8 @@ public:
 
     void buildPage() {
         auto *settingsSection = createSectionCard(
-            "触发方式", "仅在中文输入状态且当前没有正在输入拼音时触发。");
+            "触发方式",
+            "中文输入状态下输入触发字母后紧跟触发数字即可打开剪贴板。");
         gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
 
         clipboardEnabled = gtk_check_button_new_with_label("启用 V+2 剪贴板");
@@ -91,8 +92,8 @@ public:
         gtk_box_pack_start(GTK_BOX(settingsSection), grid, FALSE, FALSE, 0);
 
         auto *description = gtk_label_new(
-            "仅在中文输入状态且当前没有正在输入的拼音时触发。按第一个字母后，"
-            "可继续选择对应功能或直接按回车输出字母。");
+            "输入触发字母（默认 v）后立即按下触发数字（默认 2）即可打开剪贴板。"
+            "触发字母本身按正常拼音输入处理，不会被吞掉或改写。");
         addStyleClass(description, "modernime-description");
         gtk_widget_set_halign(description, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);

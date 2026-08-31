@@ -1,4 +1,7 @@
 #include "modernime/fcitx5/engine.h"
+#include "modernime/fcitx5/fcitx_engine.h"
+
+#include <fcitx-utils/keysymgen.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -13,82 +16,43 @@ void assertTrue(bool condition, std::string_view message) {
     }
 }
 
-modernime::fcitx5::KeyEvent character(char value) {
-    return {modernime::fcitx5::KeyKind::Character, value, 0};
-}
-
-modernime::fcitx5::KeyEvent digit(char value) {
-    return {modernime::fcitx5::KeyKind::Digit, 0, value};
+bool fires(std::string_view preedit, const fcitx::Key &key,
+           std::string_view trigger) {
+    return modernime::fcitx5::clipboardTriggerFire(preedit, key, trigger);
 }
 
 } // namespace
 
 int main() {
-    modernime::fcitx5::ClipboardTrigger trigger;
+    const fcitx::Key digitTwo(FcitxKey_2);
+    const fcitx::Key digitOne(FcitxKey_1);
+    const fcitx::Key digitSeven(FcitxKey_7);
+    const fcitx::Key ctrlDigitTwo(
+        FcitxKey_2, fcitx::KeyStates(fcitx::KeyState::Ctrl));
+    const auto shift = fcitx::KeyStates(fcitx::KeyState::Shift);
+    const fcitx::Key shiftDigitTwo(FcitxKey_2, shift);
 
-    const auto first = trigger.feed(character('v'), true);
-    assertTrue(first.consumed && first.openFeatureMenu &&
-                   first.featurePrefix == 'V' && first.featureDigit == '2' &&
-                   !first.openClipboard && !first.replay,
-               "first V opens the feature menu and waits for the second key");
-    assertTrue(trigger.pending(), "first V creates a pending sequence");
+    // 组合恰好是单个触发字母时，触发数字打开剪贴板。
+    assertTrue(fires("v", digitTwo, "V+2"),
+               "single-letter preedit fires with the trigger digit");
+    assertTrue(fires("V", digitTwo, "V+2"),
+               "preedit case is normalized before matching");
+    assertTrue(fires("b", digitSeven, "B+7"), "custom trigger letter fires");
+    assertTrue(fires("B", digitSeven, "B+7"), "custom uppercase letter fires");
 
-    const auto opened = trigger.feed(digit('2'), true);
-    assertTrue(opened.consumed && opened.openClipboard && !opened.replay,
-               "V+2 opens the clipboard sequence");
-    assertTrue(!trigger.pending(), "completed sequence is cleared");
-
-    trigger.reset();
-    trigger.feed(character('v'), true);
-    const auto wrongSecond = trigger.feed(digit('1'), true);
-    assertTrue(!wrongSecond.consumed && !wrongSecond.openClipboard &&
-                   wrongSecond.replay.has_value() &&
-                   wrongSecond.replay->kind ==
-                       modernime::fcitx5::KeyKind::CommitLiteral &&
-                   wrongSecond.replay->character == 'V',
-               "a non-matching second key replays V");
-    assertTrue(!trigger.pending(), "wrong second key clears the sequence");
-
-    trigger.feed(character('v'), true);
-    const auto delayedOpen = trigger.feed(digit('2'), true);
-    assertTrue(delayedOpen.consumed && delayedOpen.openClipboard &&
-                   !delayedOpen.replay,
-               "V can enter the clipboard after a long wait");
-    assertTrue(!trigger.pending(), "delayed feature selection clears the trigger");
-
-    trigger.reset();
-    trigger.feed(character('v'), true);
-    const auto enter = trigger.feed(
-        {modernime::fcitx5::KeyKind::Enter, 0, 0}, true);
-    assertTrue(enter.consumed && enter.replay.has_value() &&
-                   enter.replay->kind ==
-                       modernime::fcitx5::KeyKind::CommitLiteral &&
-                   enter.replay->character == 'V',
-               "enter commits the pending V instead of reaching the client");
-
-    trigger.reset();
-    trigger.feed(character('v'), true);
-    const auto escape = trigger.feed(
-        {modernime::fcitx5::KeyKind::Escape, 0, 0}, true);
-    assertTrue(!escape.consumed && !escape.openClipboard &&
-                   !escape.openFeatureMenu && !escape.replay,
-               "escape cancels the pending trigger without replaying V");
-    assertTrue(!trigger.pending(), "escape clears the pending sequence");
-
-    trigger.reset();
-    const auto ineligible = trigger.feed(character('v'), false);
-    assertTrue(!ineligible.consumed && !trigger.pending(),
-               "V is not intercepted while a preedit already exists");
-
-    modernime::fcitx5::ClipboardTrigger custom("B+7");
-    custom.feed(character('b'), true);
-    const auto customOpened = custom.feed(digit('7'), true);
-    assertTrue(customOpened.openClipboard,
-               "configured letter and digit are honored");
-
-    modernime::fcitx5::ClipboardTrigger invalid("V+0");
-    const auto invalidResult = invalid.feed(character('v'), true);
-    assertTrue(!invalidResult.consumed && !invalid.pending(),
-               "invalid trigger is disabled safely");
+    // 组合不是单个触发字母或按键不匹配时，不触发任何东西。
+    assertTrue(!fires("vn", digitTwo, "V+2"),
+               "a longer preedit never fires the trigger");
+    assertTrue(!fires("", digitTwo, "V+2"), "an empty preedit never fires");
+    assertTrue(!fires("v", digitOne, "V+2"),
+               "a different digit never fires the trigger");
+    assertTrue(!fires("v", digitTwo, "B+7"),
+               "a matching key with a different trigger does not fire");
+    assertTrue(!fires("v", shiftDigitTwo, "V+2"),
+               "shift-modified digits never fire");
+    assertTrue(!fires("v", ctrlDigitTwo, "V+2"),
+               "ctrl-modified digits never fire");
+    assertTrue(!fires("v", digitTwo, "V+0"),
+               "an invalid trigger never fires");
     return EXIT_SUCCESS;
 }

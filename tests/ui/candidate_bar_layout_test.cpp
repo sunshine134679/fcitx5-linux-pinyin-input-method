@@ -107,18 +107,17 @@ int main() {
                "each candidate mode uses its own text measurement");
 
     modernime::core::CandidatePage featurePage;
-    featurePage.mode = modernime::core::CandidatePageMode::FunctionMenu;
-    featurePage.preedit = "V";
-    featurePage.items = {{"剪切板", {}, 1}};
+    featurePage.preedit = "v";
+    featurePage.items = {{"于", "v", 0}};
     const auto featureLayout = modernime::ui::CandidateBarLayout::measure(
         featurePage, metrics);
     assertTrue(featureLayout.candidates.size() == 1 &&
-                   featureLayout.candidates.front().displayText == "2.剪切板" &&
+                   featureLayout.candidates.front().displayText == "1.于" &&
                    featureLayout.candidates.front().selected,
-               "feature menu renders clipboard as function two");
+               "a single-letter pinyin preedit renders as a normal candidate");
     assertTrue(featureLayout.panel.width == metrics.panelWidth &&
                    featureLayout.panel.height == metrics.panelHeight,
-               "feature menu keeps the existing pinyin panel dimensions");
+               "single candidate keeps the existing pinyin panel dimensions");
 
     modernime::core::CandidatePage clipboardPage;
     clipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;

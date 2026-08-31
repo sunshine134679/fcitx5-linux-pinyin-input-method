@@ -139,32 +139,13 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
     }
     const int cursor = candidates->cursorIndex();
     page.cursor = cursor >= 0 ? static_cast<std::size_t>(cursor) : 0;
-    const auto preedit = page.preedit;
-    const bool functionMenu =
-        candidates->layoutHint() == fcitx::CandidateLayoutHint::Horizontal &&
-        preedit.size() == 1 &&
-        std::isupper(static_cast<unsigned char>(preedit.front())) != 0 &&
-        candidates->size() == 1 &&
-        candidates->candidate(0).text().toString() == "剪切板";
-    if (candidates->layoutHint() == fcitx::CandidateLayoutHint::Vertical) {
-        page.mode = core::CandidatePageMode::Clipboard;
-    } else if (functionMenu) {
-        page.mode = core::CandidatePageMode::FunctionMenu;
-    } else {
-        page.mode = core::CandidatePageMode::Pinyin;
-    }
+    page.mode = candidates->layoutHint() == fcitx::CandidateLayoutHint::Vertical
+                    ? core::CandidatePageMode::Clipboard
+                    : core::CandidatePageMode::Pinyin;
     for (int index = 0; index < candidates->size(); ++index) {
         const auto &candidate = candidates->candidate(index);
-        std::size_t sourceIndex = static_cast<std::size_t>(index);
-        if (functionMenu) {
-            const auto label = candidates->label(index).toString();
-            if (label.size() == 1 && label.front() >= '1' &&
-                label.front() <= '9') {
-                sourceIndex = static_cast<std::size_t>(label.front() - '1');
-            }
-        }
         page.items.push_back({candidate.text().toString(), {},
-                              sourceIndex});
+                              static_cast<std::size_t>(index)});
     }
     return page;
 }
