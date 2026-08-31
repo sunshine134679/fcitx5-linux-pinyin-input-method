@@ -117,6 +117,7 @@ private:
     fcitx::AddonInstance *clipboardAddon_ = nullptr;
     bool clipboardAddonLookupAttempted_ = false;
     core::PersistentClipboardHistory clipboardHistory_;
+    std::string lastHistoryError_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     std::unique_ptr<fcitx::EventSourceTime> fileTimer_;
     std::filesystem::file_time_type settingsMtime_{};

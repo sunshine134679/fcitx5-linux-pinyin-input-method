@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -80,5 +81,59 @@ int main() {
                "reloaded history reflects the external state");
     assertTrue(!history.reloadIfExternallyChanged(&error),
                "an unchanged file does not trigger another reload");
+
+    // A corrupt history file must be quarantined and rebuilt instead of
+    // permanently disabling the clipboard feature.
+    const auto corruptPath = directory / "corrupt-history.bin";
+    {
+        std::ofstream output(corruptPath, std::ios::binary);
+        output << "not a clipboard history file at all";
+        output.close();
+        assertTrue(output.good(), "corrupt fixture file is written");
+    }
+    modernime::core::PersistentClipboardHistory corrupt(corruptPath);
+    assertTrue(corrupt.load(&error),
+               "a corrupt history file is recovered on load: " + error);
+    assertTrue(corrupt.entries().empty(),
+               "recovered history starts empty");
+    int corruptBackups = 0;
+    for (const auto &entry :
+         std::filesystem::directory_iterator(directory, filesystemError)) {
+        if (entry.path().filename().string().rfind("corrupt-history.bin.corrupt-",
+                                                   0) == 0) {
+            ++corruptBackups;
+        }
+    }
+    assertTrue(!filesystemError && corruptBackups >= 1,
+               "the corrupt file is preserved under a backup name");
+    assertTrue(corrupt.observe("fresh after corruption", &error),
+               "recovered history accepts new observations: " + error);
+
+    // 外部把文件写坏后，重新加载同样自愈而不是永久失效。
+    const auto externallyCorruptPath = directory / "externally-corrupt.bin";
+    modernime::core::PersistentClipboardHistory externallyCorrupt(
+        externallyCorruptPath);
+    assertTrue(externallyCorrupt.load(&error),
+               "external corruption fixture loads: " + error);
+    assertTrue(externallyCorrupt.observe("before corruption", &error),
+               "external corruption fixture starts with one entry: " + error);
+    {
+        std::ofstream output(externallyCorruptPath, std::ios::trunc);
+        output << "garbage";
+        output.close();
+    }
+    {
+        std::error_code mtimeError;
+        const auto bumped = std::filesystem::last_write_time(
+                                externallyCorruptPath, mtimeError) +
+                            std::chrono::seconds(2);
+        std::filesystem::last_write_time(externallyCorruptPath, bumped,
+                                         mtimeError);
+        assertTrue(!mtimeError, "external corruption timestamp is applied");
+    }
+    assertTrue(externallyCorrupt.reloadIfExternallyChanged(&error),
+               "a corrupt external rewrite triggers recovery");
+    assertTrue(externallyCorrupt.entries().empty(),
+               "recovery discards the corrupt rewrite");
     return EXIT_SUCCESS;
 }

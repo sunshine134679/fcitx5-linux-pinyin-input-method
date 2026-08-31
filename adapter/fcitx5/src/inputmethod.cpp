@@ -491,8 +491,15 @@ void ModernIMEInputMethod::pollClipboard() {
         std::string historyError;
         clipboardHistory_.observe(text, &historyError);
         if (!historyError.empty()) {
-            FCITX_ERROR() << "Failed to save ModernIME clipboard history: "
-                          << historyError;
+            // 剪贴板每 50ms 轮询一次；同一错误只在首次出现时记录，
+            // 避免日志刷屏。
+            if (historyError != lastHistoryError_) {
+                FCITX_ERROR() << "Failed to save ModernIME clipboard history: "
+                              << historyError;
+                lastHistoryError_ = historyError;
+            }
+        } else if (!lastHistoryError_.empty()) {
+            lastHistoryError_.clear();
         }
     } catch (const std::exception &) {
         // A third-party or older clipboard addon may not expose this optional

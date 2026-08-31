@@ -30,6 +30,9 @@ public:
 
 private:
     bool persist(std::string *error);
+    // 把无法读取的剪贴板历史文件改名备份（.corrupt-<时间戳>），
+    // 使剪贴板功能可以从空历史继续运行而不是永久失效。
+    bool quarantineCorruptFile() const;
 
     std::filesystem::path path_;
     ClipboardHistory history_;
