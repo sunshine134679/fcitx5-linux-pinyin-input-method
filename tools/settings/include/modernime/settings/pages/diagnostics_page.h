@@ -4,6 +4,7 @@
 #include "modernime/settings/runtime_controller.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -22,7 +23,9 @@ public:
     DiagnosticsPage(std::filesystem::path fcitx,
                     std::filesystem::path remote,
                     Environment environment,
-                    std::function<void(std::string)> notify);
+                    std::function<void(std::string)> notify,
+                    std::function<std::uint64_t()> reloadRevision,
+                    std::function<void(std::uint64_t)> reloadSucceeded);
     ~DiagnosticsPage();
 
     DiagnosticsPage(const DiagnosticsPage &) = delete;

@@ -3,6 +3,7 @@
 #include "modernime/core/settings.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,6 +12,8 @@ namespace modernime::settings {
 
 class SettingsWindowModel final {
 public:
+    using Revision = std::uint64_t;
+
     explicit SettingsWindowModel(std::filesystem::path path);
 
     const core::ModernIMESettings &settings() const { return edited_; }
@@ -30,8 +33,13 @@ public:
     void editDefaults();
     bool save(std::string *error = nullptr);
     void resetEdits();
-    bool reloadRequired() const { return reloadRequired_; }
-    void markReloaded() { reloadRequired_ = false; }
+    bool reloadRequired() const { return reloadedRevision_ < savedRevision_; }
+    Revision savedRevision() const { return savedRevision_; }
+    void markReloaded(Revision revision) {
+        if (revision == savedRevision_) {
+            reloadedRevision_ = revision;
+        }
+    }
     std::string_view validationError() const { return lastError_; }
 
 private:
@@ -41,7 +49,8 @@ private:
     std::vector<std::string> loadDiagnostics_;
     std::string lastError_;
     bool defaultsEdited_ = false;
-    bool reloadRequired_ = false;
+    Revision savedRevision_ = 0;
+    Revision reloadedRevision_ = 0;
 };
 
 } // namespace modernime::settings

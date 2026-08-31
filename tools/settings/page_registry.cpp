@@ -23,6 +23,18 @@ constexpr std::array kPages{
 };
 
 constexpr std::array kSearchEntries{
+    SettingsSearchEntry{SettingsPageId::Overview, "", "概览",
+                        "查看 ModernIME 设置和本地数据概况", "overview home"},
+    SettingsSearchEntry{SettingsPageId::Input, "", "输入体验",
+                        "配置输入状态、快捷键、标点和候选行为", "input"},
+    SettingsSearchEntry{SettingsPageId::Dictionary, "", "个人词典",
+                        "维护个人词条和专业名词", "dictionary"},
+    SettingsSearchEntry{SettingsPageId::Clipboard, "", "剪贴板",
+                        "管理 V+2 剪贴板功能和历史内容", "clipboard"},
+    SettingsSearchEntry{SettingsPageId::Learning, "", "智能学习",
+                        "管理用户习惯学习和上下文排序", "learning"},
+    SettingsSearchEntry{SettingsPageId::Diagnostics, "", "系统与诊断",
+                        "检查 Fcitx5 和 ModernIME 运行状态", "diagnostics system"},
     SettingsSearchEntry{SettingsPageId::Input, "input-enabled", "启用 ModernIME",
                         "控制 ModernIME 是否接收键盘输入", "enable input"},
     SettingsSearchEntry{SettingsPageId::Input, "default-mode", "默认输入状态",

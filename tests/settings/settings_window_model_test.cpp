@@ -43,7 +43,7 @@ int main() {
     assertTrue(model.save(&error), "edited defaults save: " + error);
     assertTrue(!model.reloadRequired(),
                "saving equal defaults does not require an engine reload");
-    model.markReloaded();
+    model.markReloaded(model.savedRevision());
     assertTrue(!model.reloadRequired(),
                "marking the engine reloaded clears reload state");
 
@@ -56,11 +56,26 @@ int main() {
     assertTrue(!model.dirty(), "saved model is clean");
     assertTrue(model.reloadRequired(),
                "saving changed settings requires an engine reload");
+    const auto firstSavedRevision = model.savedRevision();
+    auto settingsDuringReload = model.settings();
+    settingsDuringReload.contextLearningEnabled = false;
+    model.setSettings(settingsDuringReload);
+    assertTrue(model.save(&error), "settings save during reload: " + error);
+    const auto secondSavedRevision = model.savedRevision();
+    assertTrue(secondSavedRevision > firstSavedRevision,
+               "changed saves advance the saved configuration revision");
+    model.markReloaded(firstSavedRevision);
+    assertTrue(model.reloadRequired(),
+               "an older reload cannot acknowledge a newer saved revision");
+    model.markReloaded(secondSavedRevision);
+    assertTrue(!model.reloadRequired(),
+               "the current saved revision can be acknowledged as reloaded");
 
     modernime::settings::SettingsWindowModel reloaded(path);
     assertTrue(!reloaded.settings().inputEnabled &&
                    reloaded.settings().defaultMode ==
-                       modernime::core::InputMode::English,
+                       modernime::core::InputMode::English &&
+                   !reloaded.settings().contextLearningEnabled,
                "saved settings reload into a new model");
 
     auto editedAgain = reloaded.settings();

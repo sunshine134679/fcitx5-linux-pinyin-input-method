@@ -202,12 +202,11 @@ private:
         const auto backup = learningBackupPath(impl->path);
         std::string error;
         if (DataController::backupAndClearLearning(impl->path, backup, &error)) {
-            impl->refresh(false);
             impl->notifyMessage("学习记录已清空，备份位于 " + backup.string());
         } else {
             impl->notifyMessage(error);
         }
-        gtk_widget_set_sensitive(impl->clearLearningButton, TRUE);
+        impl->refresh(false);
     }
 
     GtkWindow *parentWindow() const {

@@ -1,5 +1,6 @@
 #include "modernime/settings/settings_shell.h"
 #include "modernime/settings/settings_widgets.h"
+#include "modernime/core/learning_store.h"
 
 #include <gtk/gtk.h>
 
@@ -135,6 +136,26 @@ GtkWidget *findAccessibleWidget(GtkWidget *widget, GType type,
     for (auto *item = children; item != nullptr && result == nullptr;
          item = item->next) {
         result = findAccessibleWidget(GTK_WIDGET(item->data), type, name);
+    }
+    g_list_free(children);
+    return result;
+}
+
+GtkWidget *findLabelText(GtkWidget *widget, std::string_view text) {
+    if (GTK_IS_LABEL(widget)) {
+        const auto *value = gtk_label_get_text(GTK_LABEL(widget));
+        if (value != nullptr && text == value) {
+            return widget;
+        }
+    }
+    if (!GTK_IS_CONTAINER(widget)) {
+        return nullptr;
+    }
+    auto *children = gtk_container_get_children(GTK_CONTAINER(widget));
+    GtkWidget *result = nullptr;
+    for (auto *item = children; item != nullptr && result == nullptr;
+         item = item->next) {
+        result = findLabelText(GTK_WIDGET(item->data), text);
     }
     g_list_free(children);
     return result;
@@ -313,6 +334,68 @@ gboolean inspectDictionaryDialog(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+struct ConfirmationProbe final {
+    bool ran = false;
+    std::size_t attempts = 0;
+};
+
+gboolean confirmVisibleMessageDialog(gpointer data) {
+    auto *probe = static_cast<ConfirmationProbe *>(data);
+    auto *windows = gtk_window_list_toplevels();
+    GtkWidget *dialog = nullptr;
+    for (auto *item = windows; item != nullptr; item = item->next) {
+        auto *candidate = GTK_WIDGET(item->data);
+        if (GTK_IS_MESSAGE_DIALOG(candidate) &&
+            gtk_widget_get_visible(candidate) &&
+            gtk_widget_get_mapped(candidate)) {
+            dialog = candidate;
+            break;
+        }
+    }
+    g_list_free(windows);
+    if (dialog == nullptr) {
+        ++probe->attempts;
+        assert(probe->attempts < 200);
+        return G_SOURCE_CONTINUE;
+    }
+    probe->ran = true;
+    gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_YES);
+    return G_SOURCE_REMOVE;
+}
+
+struct CloseApplicationProbe final {
+    modernime::core::SettingsPaths paths;
+    std::unique_ptr<modernime::settings::SettingsShell> shell;
+    GtkApplication *application = nullptr;
+    guint watchdog = 0;
+    bool activated = false;
+    bool watchdogFired = false;
+};
+
+gboolean closeSettingsWindow(gpointer data) {
+    auto *probe = static_cast<CloseApplicationProbe *>(data);
+    gtk_window_close(GTK_WINDOW(probe->shell->window()));
+    return G_SOURCE_REMOVE;
+}
+
+gboolean closeApplicationWatchdog(gpointer data) {
+    auto *probe = static_cast<CloseApplicationProbe *>(data);
+    probe->watchdogFired = true;
+    g_application_quit(G_APPLICATION(probe->application));
+    return G_SOURCE_REMOVE;
+}
+
+void activateCloseApplication(GtkApplication *application, gpointer data) {
+    auto *probe = static_cast<CloseApplicationProbe *>(data);
+    probe->application = application;
+    probe->activated = true;
+    probe->shell = std::make_unique<modernime::settings::SettingsShell>(
+        application, probe->paths);
+    probe->shell->present();
+    g_idle_add(closeSettingsWindow, probe);
+    probe->watchdog = g_timeout_add(1500, closeApplicationWatchdog, probe);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -345,7 +428,8 @@ int main(int argc, char **argv) {
                   "printf 'attempt\\n' >> \""
                << fcitxLog.string()
                << "\"\n"
-                  "exit 7\n";
+                  "sleep 0.35\n"
+                  "exit 0\n";
     }
     std::filesystem::permissions(
         remote, std::filesystem::perms::owner_all,
@@ -370,6 +454,12 @@ int main(int argc, char **argv) {
     modernime::core::SettingsPaths paths{
         root / "config/settings.conf", root / "data/user.dict",
         root / "data/learning.db", root / "data/clipboard.history"};
+    {
+        modernime::core::LearningStore learning(paths.learningStore);
+        assert(learning.open());
+        assert(learning.recordSelection("你好", "nihao", {}, {}, 1000));
+        learning.close();
+    }
     {
         modernime::settings::SettingsShell shell(application, paths);
         auto *window = shell.window();
@@ -474,6 +564,24 @@ int main(int argc, char **argv) {
                        !gtk_widget_get_mapped(popover);
             }));
 
+        gtk_entry_set_text(GTK_ENTRY(search), "刷新状态");
+        assert(waitUntil(
+            [popover] { return gtk_widget_get_visible(popover); }));
+        auto *refreshSearchResult = findAccessibleWidget(
+            popover, GTK_TYPE_BUTTON, "刷新状态");
+        assert(refreshSearchResult != nullptr);
+        gtk_button_clicked(GTK_BUTTON(refreshSearchResult));
+        auto *searchedRefresh = findTarget(window, "diagnostics-refresh");
+        assert(searchedRefresh != nullptr);
+        assert(waitUntil([searchedRefresh] {
+            return gtk_widget_get_sensitive(searchedRefresh) &&
+                   gtk_widget_has_focus(searchedRefresh);
+        }));
+
+        shell.show(modernime::settings::SettingsPageId::Input,
+                   "input-enabled");
+        drainEvents();
+
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
                                      !initialInputEnabled);
         drainEvents();
@@ -484,6 +592,26 @@ int main(int argc, char **argv) {
         assert(std::filesystem::exists(paths.settingsFile));
         assert(!gtk_widget_get_sensitive(apply));
 
+        shell.show(modernime::settings::SettingsPageId::Diagnostics);
+        auto *raceReload = findTarget(window, "diagnostics-reload");
+        assert(raceReload != nullptr);
+        assert(waitUntil(
+            [raceReload] { return gtk_widget_get_sensitive(raceReload); }));
+        gtk_button_clicked(GTK_BUTTON(raceReload));
+        assert(!gtk_widget_get_sensitive(raceReload));
+        shell.show(modernime::settings::SettingsPageId::Input,
+                   "input-enabled");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
+                                     initialInputEnabled);
+        drainEvents();
+        assert(gtk_widget_get_sensitive(apply));
+        gtk_button_clicked(GTK_BUTTON(apply));
+        assert(!gtk_widget_get_sensitive(apply));
+        assert(waitUntil(
+            [raceReload] { return gtk_widget_get_sensitive(raceReload); }));
+        assert(findLabelText(window,
+                             "设置已保存，需要重新加载 ModernIME") != nullptr);
+
         shell.show(modernime::settings::SettingsPageId::Dictionary);
         drainEvents();
         auto *add = findTarget(window, "dictionary-add");
@@ -493,12 +621,22 @@ int main(int argc, char **argv) {
         gtk_button_clicked(GTK_BUTTON(add));
         assert(dialogProbe.ran);
 
+        shell.show(modernime::settings::SettingsPageId::Learning);
+        auto *clearLearning = findTarget(window, "learning-data");
+        assert(clearLearning != nullptr &&
+               gtk_widget_get_sensitive(clearLearning));
+        ConfirmationProbe confirmation;
+        g_timeout_add(10, confirmVisibleMessageDialog, &confirmation);
+        gtk_button_clicked(GTK_BUTTON(clearLearning));
+        assert(confirmation.ran);
+        assert(!gtk_widget_get_sensitive(clearLearning));
+
         shell.show(modernime::settings::SettingsPageId::Diagnostics);
         auto *refresh = findTarget(window, "diagnostics-refresh");
         auto *reload = findTarget(window, "diagnostics-reload");
         assert(refresh != nullptr && reload != nullptr);
         assert(waitUntil([reload] { return gtk_widget_get_sensitive(reload); }));
-        for (std::size_t attempt = 1; attempt <= 2; ++attempt) {
+        for (std::size_t attempt = 2; attempt <= 3; ++attempt) {
             gtk_button_clicked(GTK_BUTTON(reload));
             assert(!gtk_widget_get_sensitive(refresh));
             assert(!gtk_widget_get_sensitive(reload));
@@ -507,6 +645,18 @@ int main(int argc, char **argv) {
             assert(lineCount(fcitxLog) == attempt);
         }
     }
+
+    CloseApplicationProbe closeProbe;
+    closeProbe.paths = paths;
+    g_signal_connect(application, "activate",
+                     G_CALLBACK(activateCloseApplication), &closeProbe);
+    assert(g_application_run(G_APPLICATION(application), 0, nullptr) == 0);
+    assert(closeProbe.activated);
+    if (!closeProbe.watchdogFired) {
+        g_source_remove(closeProbe.watchdog);
+    }
+    assert(!closeProbe.watchdogFired);
+    closeProbe.shell.reset();
     g_object_unref(application);
     std::filesystem::remove_all(root, error);
     return 0;

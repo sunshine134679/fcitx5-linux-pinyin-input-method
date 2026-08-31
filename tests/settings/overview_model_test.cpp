@@ -97,18 +97,29 @@ void testUnreadablePathsProduceDiagnosticsNotice() {
 
     const auto snapshot = modernime::settings::collectOverviewSnapshot(
         paths, modernime::core::defaultSettings(), runtime);
-    assertTrue(!snapshot.notices.empty(),
-               "unreadable data paths produce a notice");
-    bool hasDiagnosticsNotice = false;
+    bool hasDictionaryNotice = false;
+    bool hasClipboardNotice = false;
+    bool hasLearningNotice = false;
     for (const auto &notice : snapshot.notices) {
         if (notice.destination ==
             modernime::settings::SettingsPageId::Diagnostics) {
-            hasDiagnosticsNotice = true;
-            break;
+            hasDictionaryNotice =
+                hasDictionaryNotice ||
+                notice.message.find("个人词典") != std::string::npos;
+            hasClipboardNotice =
+                hasClipboardNotice ||
+                notice.message.find("剪贴板历史") != std::string::npos;
+            hasLearningNotice =
+                hasLearningNotice ||
+                notice.message.find("学习记录") != std::string::npos;
         }
     }
-    assertTrue(hasDiagnosticsNotice,
-               "unreadable data notice links to diagnostics");
+    assertTrue(hasDictionaryNotice,
+               "unreadable dictionary notice links to diagnostics");
+    assertTrue(hasClipboardNotice,
+               "unreadable clipboard notice links to diagnostics");
+    assertTrue(hasLearningNotice,
+               "unreadable learning notice links to diagnostics");
 }
 
 } // namespace

@@ -33,6 +33,7 @@ void setLabel(GtkWidget *label, const char *text) {
 
 struct RuntimeTask final {
     bool reload = false;
+    std::uint64_t reloadRevision = 0;
     std::filesystem::path fcitxExecutable;
     std::filesystem::path remoteExecutable;
     Environment environment;
@@ -64,10 +65,14 @@ public:
     Impl(std::filesystem::path fcitxPath,
          std::filesystem::path remotePath,
          Environment currentEnvironment,
-         std::function<void(std::string)> notifyCallback)
+         std::function<void(std::string)> notifyCallback,
+         std::function<std::uint64_t()> reloadRevisionCallback,
+         std::function<void(std::uint64_t)> reloadSucceededCallback)
         : fcitx(std::move(fcitxPath)), remote(std::move(remotePath)),
           environment(std::move(currentEnvironment)),
-          notify(std::move(notifyCallback)) {
+          notify(std::move(notifyCallback)),
+          reloadRevision(std::move(reloadRevisionCallback)),
+          reloadSucceeded(std::move(reloadSucceededCallback)) {
         lifetime = detail::GObjectHandle<GObject>::adopt(
             G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr)));
         state = std::make_shared<Lifetime>(this);
@@ -97,6 +102,10 @@ public:
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
+                if (!gtk_widget_get_sensitive(control)) {
+                    pendingFocusTarget = target;
+                    return true;
+                }
                 return focusWidgetOrFallback(control);
             }
         }
@@ -137,8 +146,9 @@ private:
             auto *reloadResult = static_cast<RuntimeResult *>(
                 g_task_propagate_pointer(task, &error));
             if (state != nullptr) {
-                (*state)->withOwner([reloadResult, error](Impl &owner) {
-                    owner.finishReload(reloadResult, error);
+                const auto revision = request->reloadRevision;
+                (*state)->withOwner([reloadResult, error, revision](Impl &owner) {
+                    owner.finishReload(reloadResult, error, revision);
                 });
             }
             delete reloadResult;
@@ -229,8 +239,10 @@ private:
 
         auto *task =
             g_task_new(lifetime.get(), nullptr, taskFinished, nullptr);
-        auto *request = new RuntimeTask{reloadRequest, fcitx, remote,
-                                        environment};
+        auto *request = new RuntimeTask{
+            reloadRequest,
+            reloadRequest && reloadRevision ? reloadRevision() : 0,
+            fcitx, remote, environment};
         g_task_set_task_data(task, request, [](gpointer value) {
             delete static_cast<RuntimeTask *>(value);
         });
@@ -248,8 +260,10 @@ private:
         setBusy(false);
     }
 
-    void finishReload(const RuntimeResult *result, const GError *error) {
-        setBusy(false);
+    void finishReload(const RuntimeResult *result, const GError *error,
+                      std::uint64_t revision) {
+        const bool success = result != nullptr && result->success;
+        setBusy(false, !success);
         if (result == nullptr) {
             notifyMessage(error == nullptr ? "ModernIME 重载失败"
                                            : error->message);
@@ -258,6 +272,9 @@ private:
         notifyMessage(result->success ? "ModernIME 已重新加载并激活"
                                       : result->message);
         if (result->success) {
+            if (reloadSucceeded) {
+                reloadSucceeded(revision);
+            }
             refresh();
         }
     }
@@ -298,10 +315,15 @@ private:
                      : message);
     }
 
-    void setBusy(bool value) {
+    void setBusy(bool value, bool resolvePendingFocus = true) {
         busy = value;
         gtk_widget_set_sensitive(refreshButton, !busy);
         gtk_widget_set_sensitive(reloadButton, !busy);
+        if (!busy && resolvePendingFocus && !pendingFocusTarget.empty()) {
+            const auto target = std::move(pendingFocusTarget);
+            pendingFocusTarget.clear();
+            focusTarget(target);
+        }
     }
 
     void notifyMessage(std::string message) const {
@@ -314,9 +336,12 @@ private:
     std::filesystem::path remote;
     Environment environment;
     std::function<void(std::string)> notify;
+    std::function<std::uint64_t()> reloadRevision;
+    std::function<void(std::uint64_t)> reloadSucceeded;
     detail::GObjectHandle<GObject> lifetime;
     SharedLifetime state;
     bool busy = false;
+    std::string pendingFocusTarget;
     GtkWidget *page = nullptr;
     GtkWidget *statusMessage = nullptr;
     GtkWidget *availability = nullptr;
@@ -330,10 +355,14 @@ private:
 DiagnosticsPage::DiagnosticsPage(std::filesystem::path fcitx,
                                  std::filesystem::path remote,
                                  Environment environment,
-                                 std::function<void(std::string)> notify)
+                                 std::function<void(std::string)> notify,
+                                 std::function<std::uint64_t()> reloadRevision,
+                                 std::function<void(std::uint64_t)> reloadSucceeded)
     : impl_(std::make_unique<Impl>(std::move(fcitx), std::move(remote),
                                    std::move(environment),
-                                   std::move(notify))) {}
+                                   std::move(notify),
+                                   std::move(reloadRevision),
+                                   std::move(reloadSucceeded))) {}
 
 DiagnosticsPage::~DiagnosticsPage() = default;
 

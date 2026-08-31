@@ -444,7 +444,12 @@ private:
             [this] { updateActionState(); }, notify);
         addPage(SettingsPageId::Learning, learningPage->widget());
         diagnosticsPage = std::make_unique<DiagnosticsPage>(
-            fcitx, remote, environment, notify);
+            fcitx, remote, environment, notify,
+            [this] { return model.savedRevision(); },
+            [this](SettingsWindowModel::Revision revision) {
+                model.markReloaded(revision);
+                updateActionState();
+            });
         addPage(SettingsPageId::Diagnostics, diagnosticsPage->widget());
 
         return stackGuard.release();
@@ -780,13 +785,10 @@ private:
     void hideWindow() {
         gtk_popover_popdown(GTK_POPOVER(searchPopover));
         gtk_widget_hide(windowOwner.get());
+        g_application_quit(G_APPLICATION(application));
     }
 
     void onPageMessage(std::string message) {
-        if (message == "ModernIME 已重新加载并激活") {
-            model.markReloaded();
-            updateActionState();
-        }
         presentError(message);
     }
 

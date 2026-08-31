@@ -55,7 +55,9 @@ bool SettingsWindowModel::save(std::string *error) {
     }
     loaded_ = edited_;
     defaultsEdited_ = false;
-    reloadRequired_ = reloadRequired_ || changed;
+    if (changed) {
+        ++savedRevision_;
+    }
     lastError_.clear();
     if (error != nullptr) {
         error->clear();
