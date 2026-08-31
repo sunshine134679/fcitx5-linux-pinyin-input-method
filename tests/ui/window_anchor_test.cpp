@@ -21,10 +21,14 @@ int main() {
     assertTrue(anchor.capture(120, 240), "first cursor position is captured");
     assertTrue(anchor.x == 120 && anchor.y == 240,
                "captured position is retained");
-    assertTrue(!anchor.capture(420, 640),
-               "subsequent cursor positions do not move the window");
+    assertTrue(!anchor.capture(120, 240),
+               "an unchanged cursor position does not move the window");
     assertTrue(anchor.x == 120 && anchor.y == 240,
-               "window remains at the first position");
+               "window remains at the same position");
+    assertTrue(anchor.capture(420, 640),
+               "a moved cursor repositions the window");
+    assertTrue(anchor.x == 420 && anchor.y == 640,
+               "window follows the new cursor position");
 
     anchor.reset();
     assertTrue(anchor.capture(420, 640),

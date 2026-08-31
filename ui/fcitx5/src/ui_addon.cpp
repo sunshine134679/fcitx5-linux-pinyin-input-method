@@ -18,6 +18,7 @@
 #include <libayatana-appindicator/app-indicator.h>
 #include <pango/pango.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <memory>
@@ -42,15 +43,62 @@ struct ModernIMEUserInterface::Impl final {
     static constexpr double originY = 0.0;
 
     void setWindowSize(double scale) {
-        const int width = static_cast<int>(std::ceil(
-            (layout.panel.x + layout.panel.width + style.shadowSpread - originX) *
+        gtk_widget_set_size_request(drawingArea, windowWidth(scale),
+                                    windowHeight(scale));
+        gtk_window_resize(GTK_WINDOW(window), windowWidth(scale),
+                          windowHeight(scale));
+    }
+
+    int windowWidth(double scale) const {
+        return static_cast<int>(std::ceil(
+            (layout.panel.x + layout.panel.width + style.shadowSpread -
+             originX) *
             scale));
-        const int height = static_cast<int>(std::ceil(
-            (layout.panel.y + layout.panel.height + style.shadowSpread - originY +
-             style.shadowOffsetY) *
+    }
+
+    int windowHeight(double scale) const {
+        return static_cast<int>(std::ceil(
+            (layout.panel.y + layout.panel.height + style.shadowSpread -
+             originY + style.shadowOffsetY) *
             scale));
-        gtk_widget_set_size_request(drawingArea, width, height);
-        gtk_window_resize(GTK_WINDOW(window), width, height);
+    }
+
+    // 把候选栏锚定到输入光标下方；光标所在显示器放不下时翻到光标上方，
+    // 并把窗口完全钳制在工作区内（X11 下有效；Wayland 的 gtk_window_move
+    // 是空操作，由合成器定位）。
+    void positionWindow(fcitx::InputContext *inputContext) {
+        if (inputContext == nullptr) {
+            return;
+        }
+        const auto &cursor = inputContext->cursorRect();
+        if (cursor.isEmpty()) {
+            return;  // 前端未提供有效光标，保留上次位置
+        }
+        const auto scale = inputContext->scaleFactor();
+        int desiredX = cursor.left();
+        int desiredY = cursor.top() + cursor.height();
+        const auto panelWidth = windowWidth(scale);
+        const auto panelHeight = windowHeight(scale);
+        if (GdkDisplay *display = gtk_widget_get_display(window);
+            display != nullptr) {
+            GdkRectangle workarea{};
+            GdkMonitor *monitor = gdk_display_get_monitor_at_point(
+                display, desiredX, desiredY);
+            gdk_monitor_get_workarea(monitor, &workarea);
+            const auto maxX = std::max(
+                workarea.x, workarea.x + workarea.width - panelWidth);
+            desiredX = std::clamp(desiredX, workarea.x, maxX);
+            if (desiredY + panelHeight > workarea.y + workarea.height) {
+                desiredY = cursor.top() - panelHeight;
+            }
+            const auto maxY = std::max(
+                workarea.y, workarea.y + workarea.height - panelHeight);
+            desiredY = std::clamp(desiredY, workarea.y, maxY);
+        }
+        if (windowAnchor.capture(desiredX, desiredY)) {
+            gtk_window_move(GTK_WINDOW(window), windowAnchor.x,
+                            windowAnchor.y);
+        }
     }
 
     double textWidth(std::string_view value,
@@ -221,37 +269,35 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         return;
     }
     impl_->updateIndicator(inputContext);
-    if (component != fcitx::UserInterfaceComponent::InputPanel) {
-        return;
-    }
-    const auto page = pageFromInputPanel(inputContext->inputPanel());
-    if (page.items.empty()) {
-        gtk_widget_hide(impl_->window);
-        impl_->windowAnchor.reset();
-        return;
-    }
+    if (component == fcitx::UserInterfaceComponent::InputPanel) {
+        const auto page = pageFromInputPanel(inputContext->inputPanel());
+        if (page.items.empty()) {
+            gtk_widget_hide(impl_->window);
+            impl_->windowAnchor.reset();
+            return;
+        }
 
-    const auto textWidth = candidateTextWidthForMode(
-        page.mode,
-        [impl = impl_.get()](std::string_view value) {
-            return impl->textWidth(value);
-        },
-        [impl = impl_.get()](std::string_view value) {
-            return impl->textWidth(value, impl->style.clipboardText);
-        });
-    impl_->layout = CandidateBarLayout::measure(
-        page, impl_->metrics, textWidth);
-    impl_->setWindowSize(inputContext->scaleFactor());
-    const auto &cursor = inputContext->cursorRect();
-    if (impl_->windowAnchor.capture(cursor.left(),
-                                    cursor.top() + cursor.height())) {
-        gtk_window_move(GTK_WINDOW(impl_->window), impl_->windowAnchor.x,
-                        impl_->windowAnchor.y);
+        const auto textWidth = candidateTextWidthForMode(
+            page.mode,
+            [impl = impl_.get()](std::string_view value) {
+                return impl->textWidth(value);
+            },
+            [impl = impl_.get()](std::string_view value) {
+                return impl->textWidth(value, impl->style.clipboardText);
+            });
+        impl_->layout = CandidateBarLayout::measure(
+            page, impl_->metrics, textWidth);
+        impl_->setWindowSize(inputContext->scaleFactor());
+        impl_->positionWindow(inputContext);
+        gtk_widget_queue_draw(impl_->drawingArea);
+        if (!impl_->suspended) {
+            gtk_widget_show_all(impl_->window);
+        }
+        return;
     }
-    gtk_widget_queue_draw(impl_->drawingArea);
-    if (!impl_->suspended) {
-        gtk_widget_show_all(impl_->window);
-    }
+    // 光标移动（CursorRect）通知也重新跟随光标定位；
+    // 无效光标时保留上次位置。
+    impl_->positionWindow(inputContext);
 }
 
 bool ModernIMEUserInterface::available() { return impl_->gtkAvailable; }
