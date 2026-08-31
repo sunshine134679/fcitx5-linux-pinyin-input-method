@@ -8,6 +8,7 @@
 #endif
 
 #include <fcitx/candidatelist.h>
+#include <fcitx/inputpanel.h>
 #include <fcitx-utils/event.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
@@ -39,6 +40,32 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
 // 触发数字（默认 2、无 Ctrl/Alt/Super 修饰）时返回 true。
 bool clipboardTriggerFire(std::string_view preedit, const fcitx::Key &key,
                           std::string_view trigger);
+
+// 数字键选择的目标候选是否已被候选栏 UI 标记为不可见（布局放不下）。
+// 命中时输入法把数字键放行给应用，避免提交用户看不见的词条。
+bool digitSelectsPlaceholder(const fcitx::InputPanel &panel,
+                             std::size_t pageStart, char digit);
+
+// 发布到 Fcitx5 候选列表的候选项；候选栏 UI 在放不下时把它标记为
+// 占位，输入法侧据此放行数字键。
+class FcitxCandidateWord final : public fcitx::CandidateWord {
+public:
+    FcitxCandidateWord(std::string text, ModernIMEController *controller,
+                       std::size_t index)
+        : CandidateWord(fcitx::Text(std::move(text))), controller_(controller),
+          index_(index) {}
+
+    void select(fcitx::InputContext *) const override {
+        if (controller_ != nullptr) {
+            controller_->select(index_);
+        }
+    }
+    void markAsNotDisplayed() { setPlaceHolder(true); }
+
+private:
+    ModernIMEController *controller_;
+    std::size_t index_;
+};
 
 // Heavyweight resources created once per input method engine and shared by
 // every input context.

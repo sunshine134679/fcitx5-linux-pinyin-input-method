@@ -27,24 +27,6 @@
 namespace modernime::fcitx5 {
 namespace {
 
-class FcitxCandidateWord final : public fcitx::CandidateWord {
-public:
-    FcitxCandidateWord(std::string text, ModernIMEController *controller,
-                       std::size_t index)
-        : CandidateWord(fcitx::Text(std::move(text))), controller_(controller),
-          index_(index) {}
-
-    void select(fcitx::InputContext *) const override {
-        if (controller_ != nullptr) {
-            controller_->select(index_);
-        }
-    }
-
-private:
-    ModernIMEController *controller_;
-    std::size_t index_;
-};
-
 constexpr std::string_view statePropertyName = "modernime-fcitx5-state";
 
 bool hasNonShiftModifier(const fcitx::Key &key) {
@@ -110,6 +92,18 @@ KeyBindings keyBindings(const core::ModernIMESettings &settings) {
 }
 
 } // namespace
+
+bool digitSelectsPlaceholder(const fcitx::InputPanel &panel,
+                             std::size_t pageStart, char digit) {
+    const auto list = panel.candidateList();
+    if (list == nullptr || digit < '1' || digit > '9') {
+        return false;
+    }
+    const auto index =
+        pageStart + static_cast<std::size_t>(digit - '1');
+    return index < static_cast<std::size_t>(list->size()) &&
+           list->candidate(static_cast<int>(index)).isPlaceHolder();
+}
 
 std::optional<char> clipboardTriggerDigit(const fcitx::Key &key,
                                           std::string_view trigger) {
@@ -570,6 +564,18 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         return;
     }
     if (!modernEvent.has_value()) {
+        return;
+    }
+
+    // 布局放不下的候选被 UI 标记为占位，数字键对它们放行给应用，
+    // 避免提交用户看不见的词条。
+    if (modernEvent->kind == KeyKind::Digit &&
+        !contextState->controller().clipboardMode() &&
+        digitSelectsPlaceholder(
+            event.inputContext()->inputPanel(),
+            contextState->controller().currentPageIndex() *
+                contextState->controller().pageSize(),
+            modernEvent->digit)) {
         return;
     }
 

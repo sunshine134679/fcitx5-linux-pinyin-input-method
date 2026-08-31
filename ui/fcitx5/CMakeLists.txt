@@ -26,6 +26,7 @@ if(MODERNIME_BUILD_FCITX5)
     )
     target_include_directories(modernime_ui PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../adapter/fcitx5/include
     )
     target_link_libraries(modernime_ui PRIVATE
         modernime_ui_layout

@@ -1,5 +1,6 @@
 #include "modernime/ui/ui_addon.h"
 
+#include "modernime/fcitx5/fcitx_engine.h"
 #include "modernime/ui/cairo_render_surface.h"
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_bar_renderer.h"
@@ -306,6 +307,21 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
             });
         impl_->layout = CandidateBarLayout::measure(
             page, impl_->metrics, textWidth);
+        // 布局放不下的候选标记为占位：输入法侧把针对它们的数字键
+        // 放行给应用，避免提交用户看不见的词条。
+        if (const auto list = inputContext->inputPanel().candidateList();
+            list != nullptr) {
+            for (int index = static_cast<int>(impl_->layout.candidates.size());
+                 index < list->size(); ++index) {
+                auto &candidate =
+                    const_cast<fcitx::CandidateWord &>(list->candidate(index));
+                if (auto *word =
+                        dynamic_cast<fcitx5::FcitxCandidateWord *>(&candidate);
+                    word != nullptr) {
+                    word->markAsNotDisplayed();
+                }
+            }
+        }
         impl_->setWindowSize();
         impl_->positionWindow(inputContext);
         gtk_widget_queue_draw(impl_->drawingArea);

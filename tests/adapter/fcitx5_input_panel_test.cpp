@@ -106,5 +106,31 @@ int main() {
                    secondClipboardList->candidate(0).text().toString() ==
                        "sixth",
                "clipboard publication selects the requested page");
+
+    // 候选栏 UI 把布局放不下的候选标记为占位后，数字键选择被放行。
+    modernime::core::CandidatePage widePage;
+    widePage.preedit = "rengongzhineng";
+    for (std::size_t index = 0; index < 3; ++index) {
+        widePage.items.push_back({std::string("人工智能") + std::to_string(index),
+                                  {}, index});
+    }
+    host.publishPage(widePage);
+    const auto wideList = inputContext.inputPanel().candidateList();
+    assertTrue(wideList != nullptr && wideList->size() == 3,
+               "wide pinyin page publishes its candidates");
+    assertTrue(!modernime::fcitx5::digitSelectsPlaceholder(
+                   inputContext.inputPanel(), 0, '1'),
+               "visible candidates are selectable by digit");
+    auto *hiddenWord = dynamic_cast<modernime::fcitx5::FcitxCandidateWord *>(
+        &const_cast<fcitx::CandidateWord &>(wideList->candidate(2)));
+    assertTrue(hiddenWord != nullptr,
+               "published candidates are Fcitx candidate words");
+    hiddenWord->markAsNotDisplayed();
+    assertTrue(modernime::fcitx5::digitSelectsPlaceholder(
+                   inputContext.inputPanel(), 0, '3'),
+               "placeholder candidates are not selectable by digit");
+    assertTrue(!modernime::fcitx5::digitSelectsPlaceholder(
+                   inputContext.inputPanel(), 9, '1'),
+               "digit targets beyond the published list are ignored");
     return EXIT_SUCCESS;
 }
