@@ -293,6 +293,10 @@ private:
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO, "确定删除选中的用户词条吗？");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_YES,
+                                       "删除", "删除选中的个人词典词条");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
+                                       "取消", "保留词条并关闭对话框");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         if (response != GTK_RESPONSE_YES) {
@@ -309,6 +313,11 @@ private:
         auto *dialog = gtk_file_chooser_dialog_new(
             "导入用户词典", impl->parentWindow(), GTK_FILE_CHOOSER_ACTION_OPEN,
             "取消", GTK_RESPONSE_CANCEL, "导入", GTK_RESPONSE_ACCEPT, nullptr);
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+                                       "取消", "关闭文件选择器且不导入词典");
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "导入",
+            "读取选中的文本文件并进入整体替换确认");
         gchar *filename = nullptr;
         if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
             filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
@@ -330,6 +339,11 @@ private:
             GTK_BUTTONS_YES_NO,
             "导入将替换现有全部 %zu 条词条（导入文件含 %zu 条），确定继续吗？",
             impl->dictionaryEntries.size(), imported.size());
+        setDialogResponseAccessibility(
+            GTK_DIALOG(confirm), GTK_RESPONSE_YES, "替换词典",
+            "使用导入内容整体替换当前个人词典");
+        setDialogResponseAccessibility(GTK_DIALOG(confirm), GTK_RESPONSE_NO,
+                                       "取消", "保留当前个人词典");
         const auto confirmed = gtk_dialog_run(GTK_DIALOG(confirm));
         gtk_widget_destroy(confirm);
         if (confirmed == GTK_RESPONSE_YES) {
@@ -344,6 +358,11 @@ private:
         auto *dialog = gtk_file_chooser_dialog_new(
             "导出用户词典", impl->parentWindow(), GTK_FILE_CHOOSER_ACTION_SAVE,
             "取消", GTK_RESPONSE_CANCEL, "导出", GTK_RESPONSE_ACCEPT, nullptr);
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+                                       "取消", "关闭文件选择器且不导出词典");
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "导出",
+            "将当前个人词典写入选择的文件");
         gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dialog),
                                                        TRUE);
         if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
@@ -404,6 +423,10 @@ private:
             selected.has_value() ? "编辑用户词条" : "添加用户词条",
             parentWindow(), GTK_DIALOG_MODAL, "取消", GTK_RESPONSE_CANCEL,
             "保存", GTK_RESPONSE_ACCEPT, nullptr);
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+                                       "取消", "关闭对话框且不保存词条修改");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT,
+                                       "保存", "校验并保存当前词条");
         auto *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
         auto *grid = gtk_grid_new();
         gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
@@ -448,13 +471,14 @@ private:
                                                GTK_RESPONSE_ACCEPT)};
         setAccessibleWidgetText(state.accept, "保存",
                                 "校验通过后保存当前词条");
-        if (auto *cancel = gtk_dialog_get_widget_for_response(
-                GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
-            cancel != nullptr) {
+        auto *cancel = gtk_dialog_get_widget_for_response(
+            GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+        if (cancel != nullptr) {
             setAccessibleWidgetText(cancel, "取消",
                                     "关闭对话框且不保存词条修改");
         }
-        setSettingsFocusChain(content, {pinyin, phrase, weight, state.accept});
+        setSettingsFocusChain(dialog,
+                              {pinyin, phrase, weight, cancel, state.accept});
         gtk_dialog_set_default_response(GTK_DIALOG(dialog),
                                         GTK_RESPONSE_ACCEPT);
         gtk_entry_set_activates_default(GTK_ENTRY(pinyin), TRUE);

@@ -3,7 +3,10 @@
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_shell_state.h"
 
+#include <algorithm>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace modernime::settings {
 namespace {
@@ -66,16 +69,81 @@ void setSettingsFocusChain(
     if (!GTK_IS_CONTAINER(container)) {
         return;
     }
-    GList *chain = nullptr;
-    for (auto *widget : focusableWidgets) {
-        if (widget != nullptr) {
-            chain = g_list_append(chain, widget);
+
+    std::unordered_map<GtkWidget *, std::vector<GtkWidget *>> chains;
+    for (auto *focusable : focusableWidgets) {
+        if (focusable == nullptr || focusable == container) {
+            continue;
+        }
+        std::vector<GtkWidget *> path;
+        auto *current = focusable;
+        while (current != nullptr && current != container) {
+            path.push_back(current);
+            current = gtk_widget_get_parent(current);
+        }
+        if (current != container) {
+            continue;
+        }
+
+        auto *parent = container;
+        for (auto item = path.rbegin(); item != path.rend(); ++item) {
+            auto *child = *item;
+            if (!GTK_IS_CONTAINER(parent)) {
+                break;
+            }
+            auto &chain = chains[parent];
+            if (std::find(chain.begin(), chain.end(), child) == chain.end()) {
+                chain.push_back(child);
+            }
+            parent = child;
         }
     }
+
+    for (const auto &[focusContainer, widgets] : chains) {
+        GList *chain = nullptr;
+        for (auto *widget : widgets) {
+            chain = g_list_append(chain, widget);
+        }
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        gtk_container_set_focus_chain(GTK_CONTAINER(focusContainer), chain);
+        G_GNUC_END_IGNORE_DEPRECATIONS
+        g_list_free(chain);
+    }
+}
+
+void prependSettingsFocusChainChild(GtkWidget *container, GtkWidget *child) {
+    if (!GTK_IS_CONTAINER(container) || child == nullptr ||
+        gtk_widget_get_parent(child) != container) {
+        return;
+    }
+    GList *chain = nullptr;
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    const bool hasChain =
+        gtk_container_get_focus_chain(GTK_CONTAINER(container), &chain);
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    if (!hasChain) {
+        g_list_free(chain);
+        return;
+    }
+    chain = g_list_remove(chain, child);
+    chain = g_list_prepend(chain, child);
     G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     gtk_container_set_focus_chain(GTK_CONTAINER(container), chain);
     G_GNUC_END_IGNORE_DEPRECATIONS
     g_list_free(chain);
+}
+
+void setDialogResponseAccessibility(GtkDialog *dialog, int response,
+                                    std::string_view name,
+                                    std::string_view description) {
+    if (dialog == nullptr) {
+        return;
+    }
+    auto *button = gtk_dialog_get_widget_for_response(dialog, response);
+    if (GTK_IS_BUTTON(button) && !name.empty()) {
+        gtk_button_set_label(GTK_BUTTON(button), std::string(name).c_str());
+    }
+    setAccessibleWidgetText(button, name, description);
 }
 
 std::string_view settingsStyles() {

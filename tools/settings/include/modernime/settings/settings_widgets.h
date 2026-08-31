@@ -24,7 +24,10 @@ void setAccessibleWidgetText(GtkWidget *widget, std::string_view name,
 void setSettingsFocusChain(
     GtkWidget *container,
     std::initializer_list<GtkWidget *> focusableWidgets);
-
+void prependSettingsFocusChainChild(GtkWidget *container, GtkWidget *child);
+void setDialogResponseAccessibility(GtkDialog *dialog, int response,
+                                    std::string_view name,
+                                    std::string_view description);
 GtkWidget *createPageShell(std::string_view title, std::string_view subtitle);
 GtkWidget *createSectionCard(std::string_view title,
                              std::string_view description);

@@ -310,6 +310,11 @@ private:
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO, "确定删除第 %s 条剪贴板历史吗？", number.c_str());
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_YES, "删除",
+            "删除选中的本地剪贴板历史");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
+                                       "取消", "保留剪贴板历史并关闭对话框");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         if (response != GTK_RESPONSE_YES) {
@@ -336,6 +341,11 @@ private:
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
             "确定清空全部 %s 条剪贴板历史吗？此操作不可撤销。", count.c_str());
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_YES, "清空",
+            "清空全部本地剪贴板历史且无法撤销");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
+                                       "取消", "保留全部剪贴板历史");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         if (response != GTK_RESPONSE_YES) {

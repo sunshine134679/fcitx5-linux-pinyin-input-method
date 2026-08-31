@@ -163,6 +163,44 @@ if(MODERNIME_BUILD_SETTINGS)
         SKIP_RETURN_CODE 77
     )
 
+    add_executable(modernime_settings_shell_gtk_tests
+        settings/settings_shell_gtk_test.cpp
+        ../tools/settings/data_controller.cpp
+        ../tools/settings/settings_model.cpp
+        ../tools/settings/runtime_controller.cpp
+        ../tools/settings/clipboard_history_model.cpp
+        ../tools/settings/overview_model.cpp
+        ../tools/settings/page_registry.cpp
+        ../tools/settings/settings_widgets.cpp
+        ../tools/settings/settings_shell.cpp
+        ../tools/settings/settings_shell_state.cpp
+        ../tools/settings/pages/clipboard_page.cpp
+        ../tools/settings/pages/diagnostics_page.cpp
+        ../tools/settings/pages/dictionary_page.cpp
+        ../tools/settings/pages/input_page.cpp
+        ../tools/settings/pages/learning_page.cpp
+        ../tools/settings/pages/overview_page.cpp
+    )
+    target_include_directories(modernime_settings_shell_gtk_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_settings_shell_gtk_tests PRIVATE
+        modernime_core
+        modernime_pinyin
+        PkgConfig::GTK3
+    )
+    target_compile_definitions(modernime_settings_shell_gtk_tests PRIVATE
+        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+        MODERNIME_SYSTEM_FCITX5_ADDON_DIR=""
+    )
+    add_test(NAME modernime_settings_shell_gtk
+        COMMAND modernime_settings_shell_gtk_tests
+    )
+    set_tests_properties(modernime_settings_shell_gtk PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 20
+    )
+
     add_executable(modernime_settings_widgets_contract_tests
         settings/settings_widgets_contract_test.cpp
         ../tools/settings/settings_widgets.cpp

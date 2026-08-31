@@ -187,6 +187,11 @@ private:
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
             "清空后将无法恢复当前学习排序，是否先备份并清空？");
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_YES, "备份并清空",
+            "创建并验证备份后清空本地学习排序");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
+                                       "取消", "保留当前学习记录");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         if (response != GTK_RESPONSE_YES) {

@@ -297,7 +297,7 @@ private:
             }
             return TRUE;
         }
-        if (event->keyval == GDK_KEY_Escape &&
+        if (modifiers == 0 && event->keyval == GDK_KEY_Escape &&
             gtk_widget_get_visible(owner->searchPopover)) {
             gtk_popover_popdown(GTK_POPOVER(owner->searchPopover));
             return TRUE;
@@ -355,6 +355,12 @@ private:
         gtk_box_pack_start(GTK_BOX(body), buildSidebar(), FALSE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(body), buildPageStack(), TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), buildBottomBar(), FALSE, FALSE, 0);
+        g_object_set_data(G_OBJECT(windowOwner.get()),
+                          "modernime-settings-search-entry", searchEntry);
+        g_object_set_data(G_OBJECT(windowOwner.get()),
+                          "modernime-settings-search-popover", searchPopover);
+        g_object_set_data(G_OBJECT(windowOwner.get()),
+                          "modernime-settings-apply-button", applyButton);
         updateActionState();
     }
 
@@ -482,10 +488,14 @@ private:
         gtk_widget_set_tooltip_text(menuButton, "打开输入体验的更多操作");
         setAccessibleWidgetText(menuButton, "更多",
                                 "打开输入体验的更多操作菜单");
+        g_object_set_data_full(G_OBJECT(menuButton),
+                               "modernime-settings-target",
+                               g_strdup("input-more"), g_free);
         gtk_menu_button_set_popup(GTK_MENU_BUTTON(menuButton), menu);
         menuGuard.release();
         gtk_box_pack_start(GTK_BOX(inputPage->widget()), menuButton, FALSE,
                            FALSE, 0);
+        prependSettingsFocusChainChild(inputPage->widget(), menuButton);
         menuButtonGuard.release();
         gtk_box_reorder_child(GTK_BOX(inputPage->widget()), menuButton, 2);
     }
@@ -712,6 +722,11 @@ private:
             GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
             "这只会修改 ModernIME 设置草稿，不会删除学习记录或个人词典。继续吗？");
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_YES, "恢复默认",
+            "将当前设置草稿恢复为默认值但不立即保存");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
+                                       "取消", "保留当前设置草稿");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         if (response != GTK_RESPONSE_YES) {
@@ -745,6 +760,15 @@ private:
                               GTK_RESPONSE_REJECT);
         gtk_dialog_add_button(GTK_DIALOG(dialog), "保存并关闭",
                               GTK_RESPONSE_ACCEPT);
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL, "继续编辑",
+            "关闭提示并继续编辑当前设置草稿");
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_REJECT, "放弃修改",
+            "丢弃当前会话内尚未保存的设置修改并关闭窗口");
+        setDialogResponseAccessibility(
+            GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "保存并关闭",
+            "保存当前设置草稿，成功后关闭窗口");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
 
