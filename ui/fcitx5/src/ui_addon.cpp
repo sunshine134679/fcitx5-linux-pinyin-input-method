@@ -44,25 +44,25 @@ struct ModernIMEUserInterface::Impl final {
     static constexpr double originX = 0.0;
     static constexpr double originY = 0.0;
 
-    void setWindowSize(double scale) {
-        gtk_widget_set_size_request(drawingArea, windowWidth(scale),
-                                    windowHeight(scale));
-        gtk_window_resize(GTK_WINDOW(window), windowWidth(scale),
-                          windowHeight(scale));
+    void setWindowSize() {
+        gtk_widget_set_size_request(drawingArea, windowWidth(),
+                                    windowHeight());
+        gtk_window_resize(GTK_WINDOW(window), windowWidth(), windowHeight());
     }
 
-    int windowWidth(double scale) const {
+    // 窗口与绘制内容共用逻辑坐标；GTK3 在 HiDPI 显示器上会自动按设备
+    // 缩放放大（绘制上下文已应用 scale），这里不能再乘 scaleFactor，
+    // 否则会双重缩放导致面板尺寸和位置全面错位。
+    int windowWidth() const {
         return static_cast<int>(std::ceil(
-            (layout.panel.x + layout.panel.width + style.shadowSpread -
-             originX) *
-            scale));
+            layout.panel.x + layout.panel.width + style.shadowSpread -
+            originX));
     }
 
-    int windowHeight(double scale) const {
+    int windowHeight() const {
         return static_cast<int>(std::ceil(
-            (layout.panel.y + layout.panel.height + style.shadowSpread -
-             originY + style.shadowOffsetY) *
-            scale));
+            layout.panel.y + layout.panel.height + style.shadowSpread -
+            originY + style.shadowOffsetY));
     }
 
     // 把候选栏锚定到输入光标下方；光标所在显示器放不下时翻到光标上方，
@@ -88,11 +88,10 @@ struct ModernIMEUserInterface::Impl final {
         if (cursor.isEmpty()) {
             return;  // 前端未提供有效光标，保留上次位置
         }
-        const auto scale = inputContext->scaleFactor();
         int desiredX = cursor.left();
         int desiredY = cursor.top() + cursor.height();
-        const auto panelWidth = windowWidth(scale);
-        const auto panelHeight = windowHeight(scale);
+        const auto panelWidth = windowWidth();
+        const auto panelHeight = windowHeight();
         if (GdkDisplay *display = gtk_widget_get_display(window);
             display != nullptr) {
             GdkRectangle workarea{};
@@ -307,7 +306,7 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
             });
         impl_->layout = CandidateBarLayout::measure(
             page, impl_->metrics, textWidth);
-        impl_->setWindowSize(inputContext->scaleFactor());
+        impl_->setWindowSize();
         impl_->positionWindow(inputContext);
         gtk_widget_queue_draw(impl_->drawingArea);
         if (!impl_->suspended) {
