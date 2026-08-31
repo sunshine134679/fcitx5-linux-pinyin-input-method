@@ -37,6 +37,8 @@ struct ModernIMEUserInterface::Impl final {
     CandidateBarMetrics metrics = CandidateBarMetrics::reference();
     bool gtkAvailable = false;
     bool suspended = false;
+    bool wayland = false;
+    bool waylandAnchorWarningLogged = false;
     std::unique_ptr<fcitx::EventSourceTime> gtkEventSource;
 
     static constexpr double originX = 0.0;
@@ -64,10 +66,22 @@ struct ModernIMEUserInterface::Impl final {
     }
 
     // 把候选栏锚定到输入光标下方；光标所在显示器放不下时翻到光标上方，
-    // 并把窗口完全钳制在工作区内（X11 下有效；Wayland 的 gtk_window_move
-    // 是空操作，由合成器定位）。
+    // 并把窗口完全钳制在工作区内。
+    // 注意：Wayland 不支持客户端定位浮动窗口（gtk_window_move 是空操作），
+    // 位置由合成器决定；尚未接入 fcitx5 窗口系统（windowing）接口前，
+    // Wayland 会话中的候选栏定位属于平台限制。
     void positionWindow(fcitx::InputContext *inputContext) {
         if (inputContext == nullptr) {
+            return;
+        }
+        if (wayland) {
+            if (!waylandAnchorWarningLogged) {
+                g_warning(
+                    "ModernIME candidate bar cannot be anchored on Wayland; "
+                    "the compositor decides its position. X11 sessions anchor "
+                    "the bar to the text cursor.");
+                waylandAnchorWarningLogged = true;
+            }
             return;
         }
         const auto &cursor = inputContext->cursorRect();
@@ -209,6 +223,12 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     }
     impl_->window = gtk_window_new(GTK_WINDOW_POPUP);
     configureWindow(impl_->window);
+    if (GdkDisplay *display = gtk_widget_get_display(impl_->window);
+        display != nullptr) {
+        const auto *backendName = gdk_display_get_name(display);
+        impl_->wayland = backendName != nullptr &&
+                         std::string_view(backendName).starts_with("wayland");
+    }
     impl_->indicator = app_indicator_new(
         "modernime-fcitx5", std::string(StatusIndicator::iconName()).c_str(),
         APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
