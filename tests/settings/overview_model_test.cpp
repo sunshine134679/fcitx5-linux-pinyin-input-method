@@ -70,7 +70,7 @@ void testCollectsOverviewFromPersistedData() {
                "active runtime summary is reported");
     assertTrue(snapshot.defaultMode == "中文",
                "default input mode is localized");
-    assertTrue(snapshot.toggleKey == "Ctrl+Space",
+    assertTrue(snapshot.toggleKey == "Ctrl+Shift+Space",
                "toggle shortcut is copied from settings");
     assertTrue(snapshot.dictionaryEntries == 2,
                "dictionary entry count is collected");

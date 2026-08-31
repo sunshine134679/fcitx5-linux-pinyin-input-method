@@ -12,7 +12,7 @@ enum class InputMode { Chinese, English };
 struct ModernIMESettings final {
     bool inputEnabled = true;
     InputMode defaultMode = InputMode::Chinese;
-    std::string toggleKey = "Ctrl+Space";
+    std::string toggleKey = "Ctrl+Shift+Space";
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;

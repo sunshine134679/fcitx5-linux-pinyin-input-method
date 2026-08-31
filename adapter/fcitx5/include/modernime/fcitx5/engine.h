@@ -53,7 +53,7 @@ struct ControllerOptions final {
 };
 
 struct KeyBindings final {
-    std::string toggleKey = "Ctrl+Space";
+    std::string toggleKey = "Ctrl+Shift+Space";
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;

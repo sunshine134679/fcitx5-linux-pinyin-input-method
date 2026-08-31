@@ -40,12 +40,24 @@ int main() {
 
     const auto ctrl = fcitx::KeyStates(fcitx::KeyState::Ctrl);
     const auto shift = fcitx::KeyStates(fcitx::KeyState::Shift);
+    const auto ctrlShift = fcitx::KeyStates(
+        {fcitx::KeyState::Ctrl, fcitx::KeyState::Shift});
     const modernime::fcitx5::KeyBindings defaultBindings;
-    const auto defaultToggle = modernime::fcitx5::translateKey(
-        fcitx::Key(FcitxKey_space, ctrl), defaultBindings);
-    assertTrue(defaultToggle.has_value() &&
-                   defaultToggle->kind == modernime::fcitx5::KeyKind::Toggle,
-               "default toggle binding maps Ctrl+Space");
+    assertTrue(modernime::fcitx5::translateKey(
+                   fcitx::Key(FcitxKey_space, ctrlShift), defaultBindings)
+                   .has_value(),
+               "default toggle binding maps Ctrl+Shift+Space");
+    assertTrue(!modernime::fcitx5::translateKey(
+                    fcitx::Key(FcitxKey_space, ctrl), defaultBindings)
+                    .has_value(),
+               "Ctrl+Space no longer toggles by default");
+    auto explicitCtrlSpaceBindings = defaultBindings;
+    explicitCtrlSpaceBindings.toggleKey = "Ctrl+Space";
+    const auto explicitToggle = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_space, ctrl), explicitCtrlSpaceBindings);
+    assertTrue(explicitToggle.has_value() &&
+                   explicitToggle->kind == modernime::fcitx5::KeyKind::Toggle,
+               "manually configured Ctrl+Space still toggles");
     auto alternateBindings = defaultBindings;
     alternateBindings.toggleKey = "Alt+Space";
     const auto alternateToggle = modernime::fcitx5::translateKey(

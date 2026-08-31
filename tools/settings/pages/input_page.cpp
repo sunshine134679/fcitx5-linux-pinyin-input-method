@@ -79,7 +79,8 @@ public:
             "快捷键", "设置在中文和英文输入状态之间切换的按键。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         toggleKey = gtk_entry_new();
-        gtk_entry_set_placeholder_text(GTK_ENTRY(toggleKey), "例如 Ctrl+Space");
+        gtk_entry_set_placeholder_text(GTK_ENTRY(toggleKey),
+                                       "例如 Ctrl+Shift+Space");
         gtk_widget_set_hexpand(toggleKey, TRUE);
         setTarget(toggleKey, "toggle-key");
         toggleKeyFallback = createSettingRow(

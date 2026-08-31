@@ -145,7 +145,7 @@ int main() {
         output << "input.toggle_key=Ctrl Space\n";
     }
     modernime::settings::SettingsWindowModel diagnosticModel(diagnosticPath);
-    assertTrue(diagnosticModel.settings().toggleKey == "Ctrl+Space",
+    assertTrue(diagnosticModel.settings().toggleKey == "Ctrl+Shift+Space",
                "invalid loaded key falls back to the default");
     assertTrue(!diagnosticModel.loadDiagnostics().empty(),
                "loaded settings diagnostics are exposed to the client");
