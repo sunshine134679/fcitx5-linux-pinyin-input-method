@@ -355,12 +355,6 @@ private:
         gtk_box_pack_start(GTK_BOX(body), buildSidebar(), FALSE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(body), buildPageStack(), TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), buildBottomBar(), FALSE, FALSE, 0);
-        g_object_set_data(G_OBJECT(windowOwner.get()),
-                          "modernime-settings-search-entry", searchEntry);
-        g_object_set_data(G_OBJECT(windowOwner.get()),
-                          "modernime-settings-search-popover", searchPopover);
-        g_object_set_data(G_OBJECT(windowOwner.get()),
-                          "modernime-settings-apply-button", applyButton);
         updateActionState();
     }
 

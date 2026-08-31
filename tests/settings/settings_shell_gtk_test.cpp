@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -22,6 +23,7 @@ void drainEvents() {
 }
 
 void dispatchKey(GtkWidget *window, guint keyval, GdkModifierType state) {
+    static guint32 lastEventTime = 0;
     assert(GTK_IS_WINDOW(window));
     auto *focus = gtk_window_get_focus(GTK_WINDOW(window));
     assert(focus != nullptr);
@@ -29,36 +31,65 @@ void dispatchKey(GtkWidget *window, guint keyval, GdkModifierType state) {
     assert(eventWindow != nullptr);
     auto *display = gtk_widget_get_display(window);
     auto *keymap = gdk_keymap_get_for_display(display);
-    GdkKeymapKey *keys = nullptr;
-    gint keyCount = 0;
-    assert(gdk_keymap_get_entries_for_keyval(keymap, keyval, &keys,
-                                             &keyCount));
-    assert(keys != nullptr && keyCount > 0);
-    assert(keys[0].keycode <= G_MAXUINT16);
-    assert(keys[0].group >= 0 && keys[0].group <= G_MAXUINT8);
     auto *seat = gdk_display_get_default_seat(display);
     assert(seat != nullptr);
     auto *keyboard = gdk_seat_get_keyboard(seat);
     assert(keyboard != nullptr);
-    for (const auto type : {GDK_KEY_PRESS, GDK_KEY_RELEASE}) {
+    const auto sendEvent = [&](GdkEventType type, guint eventKeyval,
+                               GdkModifierType eventState,
+                               bool isModifier) {
+        GdkKeymapKey *keys = nullptr;
+        gint keyCount = 0;
+        assert(gdk_keymap_get_entries_for_keyval(keymap, eventKeyval, &keys,
+                                                 &keyCount));
+        assert(keys != nullptr && keyCount > 0);
+        assert(keys[0].keycode <= G_MAXUINT16);
+        assert(keys[0].group >= 0 && keys[0].group <= G_MAXUINT8);
         auto *event = gdk_event_new(type);
         event->key.window = GDK_WINDOW(g_object_ref(eventWindow));
         event->key.send_event = TRUE;
-        event->key.time =
+        auto eventTime =
             static_cast<guint32>(g_get_monotonic_time() / 1000);
-        event->key.state = state;
-        event->key.keyval = keyval;
+        if (eventTime <= lastEventTime) {
+            eventTime = lastEventTime + 1;
+        }
+        event->key.time = eventTime;
+        lastEventTime = eventTime;
+        event->key.state = eventState;
+        event->key.keyval = eventKeyval;
         event->key.hardware_keycode = static_cast<guint16>(keys[0].keycode);
         event->key.group = static_cast<guint8>(keys[0].group);
-        event->key.is_modifier = FALSE;
+        event->key.is_modifier = isModifier;
         event->key.length = 0;
         event->key.string = nullptr;
         gdk_event_set_device(event, keyboard);
         gdk_event_set_source_device(event, keyboard);
         gtk_main_do_event(event);
         gdk_event_free(event);
+        g_free(keys);
+    };
+    struct ModifierKey final {
+        GdkModifierType mask;
+        guint keyval;
+    };
+    constexpr ModifierKey modifierKeys[] = {
+        {GDK_SHIFT_MASK, GDK_KEY_Shift_L},
+        {GDK_CONTROL_MASK, GDK_KEY_Control_L},
+        {GDK_MOD1_MASK, GDK_KEY_Alt_L},
+    };
+    for (const auto &modifier : modifierKeys) {
+        if ((state & modifier.mask) != 0) {
+            sendEvent(GDK_KEY_PRESS, modifier.keyval, GdkModifierType{}, true);
+        }
     }
-    g_free(keys);
+    sendEvent(GDK_KEY_PRESS, keyval, state, false);
+    sendEvent(GDK_KEY_RELEASE, keyval, state, false);
+    for (auto item = std::rbegin(modifierKeys);
+         item != std::rend(modifierKeys); ++item) {
+        if ((state & item->mask) != 0) {
+            sendEvent(GDK_KEY_RELEASE, item->keyval, state, true);
+        }
+    }
     drainEvents();
 }
 
@@ -109,6 +140,33 @@ GtkWidget *findAccessibleWidget(GtkWidget *widget, GType type,
     return result;
 }
 
+struct WidgetTypeSearch final {
+    GType type;
+    GtkWidget *result = nullptr;
+};
+
+GtkWidget *findWidgetByType(GtkWidget *widget, GType type);
+
+void findWidgetByTypeChild(GtkWidget *child, gpointer data) {
+    auto *search = static_cast<WidgetTypeSearch *>(data);
+    if (search->result == nullptr) {
+        search->result = findWidgetByType(child, search->type);
+    }
+}
+
+GtkWidget *findWidgetByType(GtkWidget *widget, GType type) {
+    if (g_type_is_a(G_OBJECT_TYPE(widget), type)) {
+        return widget;
+    }
+    if (!GTK_IS_CONTAINER(widget)) {
+        return nullptr;
+    }
+    WidgetTypeSearch search{type};
+    gtk_container_forall(GTK_CONTAINER(widget), findWidgetByTypeChild,
+                         &search);
+    return search.result;
+}
+
 template <typename Predicate>
 bool waitUntil(Predicate predicate,
                std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
@@ -140,8 +198,28 @@ bool hasFocusWithin(GtkWidget *window, GtkWidget *widget) {
            (focused != nullptr && gtk_widget_is_ancestor(focused, widget));
 }
 
-gboolean observeKeyPress(GtkWidget *, GdkEventKey *, gpointer data) {
-    ++*static_cast<std::size_t *>(data);
+struct KeyPressObservation final {
+    std::size_t count = 0;
+    guint keyval = 0;
+    GdkModifierType modifiers{};
+};
+
+gboolean observeKeyPress(GtkWidget *, GdkEventKey *event, gpointer data) {
+    auto *observation = static_cast<KeyPressObservation *>(data);
+    ++observation->count;
+    observation->keyval = event->keyval;
+    observation->modifiers = static_cast<GdkModifierType>(
+        event->state & gtk_accelerator_get_default_mod_mask());
+    return FALSE;
+}
+
+gboolean observeControllerKey(GtkEventControllerKey *, guint keyval, guint,
+                              GdkModifierType state, gpointer data) {
+    auto *observation = static_cast<KeyPressObservation *>(data);
+    ++observation->count;
+    observation->keyval = keyval;
+    observation->modifiers = static_cast<GdkModifierType>(
+        state & gtk_accelerator_get_default_mod_mask());
     return FALSE;
 }
 
@@ -215,17 +293,19 @@ gboolean inspectDictionaryDialog(gpointer data) {
     assert(actionChain->data == cancel);
     assert(actionChain->next->data == save);
     g_list_free(actionChain);
-    std::size_t cancelKeyEvents = 0;
-    std::size_t saveKeyEvents = 0;
+    KeyPressObservation cancelKeyEvents;
+    KeyPressObservation saveKeyEvents;
     g_signal_connect(cancel, "key-press-event", G_CALLBACK(observeKeyPress),
                      &cancelKeyEvents);
     g_signal_connect(save, "key-press-event", G_CALLBACK(observeKeyPress),
                      &saveKeyEvents);
     dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
-    assert(cancelKeyEvents == 1);
+    assert(cancelKeyEvents.count == 1);
     assert(hasFocusWithin(dialog, save));
     dispatchKey(dialog, GDK_KEY_ISO_Left_Tab, GDK_SHIFT_MASK);
-    assert(saveKeyEvents == 1);
+    assert(saveKeyEvents.count > 0);
+    assert(saveKeyEvents.keyval == GDK_KEY_ISO_Left_Tab);
+    assert(saveKeyEvents.modifiers == GDK_SHIFT_MASK);
     assert(hasFocusWithin(dialog, cancel));
 
     probe->ran = true;
@@ -305,13 +385,10 @@ int main(int argc, char **argv) {
         gtk_window_get_size(GTK_WINDOW(window), &width, &height);
         assert(width == 720 && height == 520);
 
-        auto *search = GTK_WIDGET(g_object_get_data(
-            G_OBJECT(window), "modernime-settings-search-entry"));
-        auto *popover = GTK_WIDGET(g_object_get_data(
-            G_OBJECT(window), "modernime-settings-search-popover"));
-        auto *apply = GTK_WIDGET(g_object_get_data(
-            G_OBJECT(window), "modernime-settings-apply-button"));
-        assert(search != nullptr && popover != nullptr && apply != nullptr);
+        auto *search =
+            findAccessibleWidget(window, GTK_TYPE_SEARCH_ENTRY, "搜索设置");
+        auto *apply = findAccessibleWidget(window, GTK_TYPE_BUTTON, "应用");
+        assert(search != nullptr && apply != nullptr);
 
         shell.show(modernime::settings::SettingsPageId::Input,
                    "input-enabled");
@@ -354,12 +431,42 @@ int main(int argc, char **argv) {
         dispatchKey(window, GDK_KEY_f, GDK_CONTROL_MASK);
         assert(gtk_widget_has_focus(search));
         gtk_entry_set_text(GTK_ENTRY(search), "a");
+        auto *popover = findWidgetByType(window, GTK_TYPE_POPOVER);
+        assert(popover != nullptr);
         assert(waitUntil(
             [popover] { return gtk_widget_get_visible(popover); }));
+        KeyPressObservation escapeObservation;
+        auto *escapeController = gtk_event_controller_key_new(window);
+        gtk_event_controller_set_propagation_phase(escapeController,
+                                                   GTK_PHASE_CAPTURE);
+        g_signal_connect(escapeController, "key-pressed",
+                         G_CALLBACK(observeControllerKey), &escapeObservation);
         dispatchKey(window, GDK_KEY_Escape, GDK_CONTROL_MASK);
+        assert(escapeObservation.count > 0);
+        assert(escapeObservation.keyval == GDK_KEY_Escape);
+        assert(escapeObservation.modifiers == GDK_CONTROL_MASK);
         assert(gtk_widget_get_visible(popover));
+        g_object_unref(escapeController);
+        gtk_entry_set_text(GTK_ENTRY(search), "");
+        assert(waitUntil([popover] {
+            return !gtk_widget_get_visible(popover) &&
+                   !gtk_widget_get_mapped(popover);
+        }));
+        gtk_entry_set_text(GTK_ENTRY(search), "a");
+        assert(waitUntil(
+            [popover] { return gtk_widget_get_visible(popover); }));
+        escapeObservation = {};
+        escapeController = gtk_event_controller_key_new(window);
+        gtk_event_controller_set_propagation_phase(escapeController,
+                                                   GTK_PHASE_CAPTURE);
+        g_signal_connect(escapeController, "key-pressed",
+                         G_CALLBACK(observeControllerKey), &escapeObservation);
         dispatchKey(window, GDK_KEY_Escape, GDK_MOD1_MASK);
+        assert(escapeObservation.count > 0);
+        assert(escapeObservation.keyval == GDK_KEY_Escape);
+        assert(escapeObservation.modifiers == GDK_MOD1_MASK);
         assert(gtk_widget_get_visible(popover));
+        g_object_unref(escapeController);
         dispatchKey(window, GDK_KEY_Escape, GdkModifierType{});
         assert(waitUntil(
             [popover] {
