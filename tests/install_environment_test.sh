@@ -16,6 +16,9 @@ exit 0
 EOF
 cat >"$fake_bin/ctest" <<'EOF'
 #!/usr/bin/env bash
+printf 'ctest|DISPLAY=%s|WAYLAND=%s|GDK=%s|BROADWAY=%s\n' \
+    "${DISPLAY-}" "${WAYLAND_DISPLAY-}" "${GDK_BACKEND-}" \
+    "${BROADWAY_DISPLAY-}" >>"$FAKE_LOG"
 exit 0
 EOF
 cat >"$fake_bin/pkg-config" <<'EOF'
@@ -67,6 +70,7 @@ env \
     bash ./install.sh >/dev/null
 
 expected_addons="$test_root/prefix/lib/fcitx5:/fake/lib/fcitx5"
+grep -F 'ctest|DISPLAY=|WAYLAND=|GDK=|BROADWAY=' "$log_file" >/dev/null
 grep -F "DISPLAY=:0|DBUS=unix:path=/run/user/1000/bus|RUNTIME=/run/user/1000|ADDONS=$expected_addons" \
     "$log_file" >/dev/null
 grep -F "remote:-s|DISPLAY=:0|DBUS=unix:path=/run/user/1000/bus|RUNTIME=/run/user/1000|ADDONS=$expected_addons" \
