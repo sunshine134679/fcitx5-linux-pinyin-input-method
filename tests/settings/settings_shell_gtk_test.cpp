@@ -22,12 +22,43 @@ void drainEvents() {
 }
 
 void dispatchKey(GtkWidget *window, guint keyval, GdkModifierType state) {
-    GdkEventKey event{};
-    event.type = GDK_KEY_PRESS;
-    event.state = state;
-    event.keyval = keyval;
-    gboolean handled = FALSE;
-    g_signal_emit_by_name(window, "key-press-event", &event, &handled);
+    assert(GTK_IS_WINDOW(window));
+    auto *focus = gtk_window_get_focus(GTK_WINDOW(window));
+    assert(focus != nullptr);
+    auto *eventWindow = gtk_widget_get_window(window);
+    assert(eventWindow != nullptr);
+    auto *display = gtk_widget_get_display(window);
+    auto *keymap = gdk_keymap_get_for_display(display);
+    GdkKeymapKey *keys = nullptr;
+    gint keyCount = 0;
+    assert(gdk_keymap_get_entries_for_keyval(keymap, keyval, &keys,
+                                             &keyCount));
+    assert(keys != nullptr && keyCount > 0);
+    assert(keys[0].keycode <= G_MAXUINT16);
+    assert(keys[0].group >= 0 && keys[0].group <= G_MAXUINT8);
+    auto *seat = gdk_display_get_default_seat(display);
+    assert(seat != nullptr);
+    auto *keyboard = gdk_seat_get_keyboard(seat);
+    assert(keyboard != nullptr);
+    for (const auto type : {GDK_KEY_PRESS, GDK_KEY_RELEASE}) {
+        auto *event = gdk_event_new(type);
+        event->key.window = GDK_WINDOW(g_object_ref(eventWindow));
+        event->key.send_event = TRUE;
+        event->key.time =
+            static_cast<guint32>(g_get_monotonic_time() / 1000);
+        event->key.state = state;
+        event->key.keyval = keyval;
+        event->key.hardware_keycode = static_cast<guint16>(keys[0].keycode);
+        event->key.group = static_cast<guint8>(keys[0].group);
+        event->key.is_modifier = FALSE;
+        event->key.length = 0;
+        event->key.string = nullptr;
+        gdk_event_set_device(event, keyboard);
+        gdk_event_set_source_device(event, keyboard);
+        gtk_main_do_event(event);
+        gdk_event_free(event);
+    }
+    g_free(keys);
     drainEvents();
 }
 
@@ -109,6 +140,11 @@ bool hasFocusWithin(GtkWidget *window, GtkWidget *widget) {
            (focused != nullptr && gtk_widget_is_ancestor(focused, widget));
 }
 
+gboolean observeKeyPress(GtkWidget *, GdkEventKey *, gpointer data) {
+    ++*static_cast<std::size_t *>(data);
+    return FALSE;
+}
+
 struct DictionaryDialogProbe final {
     bool ran = false;
     std::size_t attempts = 0;
@@ -161,11 +197,11 @@ gboolean inspectDictionaryDialog(gpointer data) {
 
     gtk_window_set_focus(GTK_WINDOW(dialog), pinyin);
     assert(hasFocusWithin(dialog, pinyin));
-    assert(gtk_widget_child_focus(dialog, GTK_DIR_TAB_FORWARD));
+    dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
     assert(hasFocusWithin(dialog, phrase));
-    assert(gtk_widget_child_focus(dialog, GTK_DIR_TAB_FORWARD));
+    dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
     assert(hasFocusWithin(dialog, weight));
-    assert(gtk_widget_child_focus(dialog, GTK_DIR_TAB_FORWARD));
+    dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
     assert(hasFocusWithin(dialog, cancel));
     auto *actionArea = gtk_widget_get_parent(cancel);
     assert(actionArea != nullptr &&
@@ -179,9 +215,17 @@ gboolean inspectDictionaryDialog(gpointer data) {
     assert(actionChain->data == cancel);
     assert(actionChain->next->data == save);
     g_list_free(actionChain);
-    gtk_window_set_focus(GTK_WINDOW(dialog), save);
+    std::size_t cancelKeyEvents = 0;
+    std::size_t saveKeyEvents = 0;
+    g_signal_connect(cancel, "key-press-event", G_CALLBACK(observeKeyPress),
+                     &cancelKeyEvents);
+    g_signal_connect(save, "key-press-event", G_CALLBACK(observeKeyPress),
+                     &saveKeyEvents);
+    dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
+    assert(cancelKeyEvents == 1);
     assert(hasFocusWithin(dialog, save));
-    gtk_window_set_focus(GTK_WINDOW(dialog), cancel);
+    dispatchKey(dialog, GDK_KEY_ISO_Left_Tab, GDK_SHIFT_MASK);
+    assert(saveKeyEvents == 1);
     assert(hasFocusWithin(dialog, cancel));
 
     probe->ran = true;
@@ -318,12 +362,17 @@ int main(int argc, char **argv) {
         assert(gtk_widget_get_visible(popover));
         dispatchKey(window, GDK_KEY_Escape, GdkModifierType{});
         assert(waitUntil(
-            [popover] { return !gtk_widget_get_visible(popover); }));
+            [popover] {
+                return !gtk_widget_get_visible(popover) &&
+                       !gtk_widget_get_mapped(popover);
+            }));
 
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
                                      !initialInputEnabled);
         drainEvents();
         assert(gtk_widget_get_sensitive(apply));
+        gtk_widget_grab_focus(inputEnabled);
+        assert(gtk_widget_has_focus(inputEnabled));
         dispatchKey(window, GDK_KEY_Return, GDK_CONTROL_MASK);
         assert(std::filesystem::exists(paths.settingsFile));
         assert(!gtk_widget_get_sensitive(apply));
