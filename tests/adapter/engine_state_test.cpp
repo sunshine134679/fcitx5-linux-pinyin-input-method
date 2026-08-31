@@ -160,6 +160,9 @@ int main() {
     RecordingHost host;
     modernime::fcitx5::ModernIMEController controller(host);
 
+    assertTrue(!controller.handle({modernime::fcitx5::KeyKind::Escape, 0, 0}),
+               "escape passes through when nothing is being composed");
+
     type(controller, "hail");
     assertTrue(controller.page().preedit == "hail", "preedit is published");
     assertTrue(controller.page().items.size() == 9, "nine sample candidates exist");
@@ -255,6 +258,17 @@ int main() {
                    clipboardController.page().items.empty() &&
                    clipboardHost.commits.empty(),
                "exiting clipboard mode does not commit a history entry");
+    clipboardController.setClipboardEntries({"one"});
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode reopens for escape exit");
+    assertTrue(clipboardController.handle(
+                   {modernime::fcitx5::KeyKind::Escape, 0, 0}),
+               "escape exits clipboard mode");
+    assertTrue(!clipboardController.clipboardMode() &&
+                   clipboardController.page().items.empty() &&
+                   clipboardHost.commits.empty(),
+               "escape closes the clipboard panel without committing");
     clipboardController.setClipboardEntries(
         {"second clipboard", "first clipboard", "third clipboard",
          "fourth clipboard", "fifth clipboard", "sixth clipboard"});

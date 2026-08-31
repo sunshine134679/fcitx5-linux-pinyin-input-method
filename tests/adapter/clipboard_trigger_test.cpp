@@ -67,6 +67,15 @@ int main() {
                "enter commits the pending V instead of reaching the client");
 
     trigger.reset();
+    trigger.feed(character('v'), true);
+    const auto escape = trigger.feed(
+        {modernime::fcitx5::KeyKind::Escape, 0, 0}, true);
+    assertTrue(!escape.consumed && !escape.openClipboard &&
+                   !escape.openFeatureMenu && !escape.replay,
+               "escape cancels the pending trigger without replaying V");
+    assertTrue(!trigger.pending(), "escape clears the pending sequence");
+
+    trigger.reset();
     const auto ineligible = trigger.feed(character('v'), false);
     assertTrue(!ineligible.consumed && !trigger.pending(),
                "V is not intercepted while a preedit already exists");

@@ -79,6 +79,12 @@ ClipboardTriggerResult ClipboardTrigger::feed(const KeyEvent &event,
             result.openClipboard = true;
             return result;
         }
+        if (event.kind == KeyKind::Escape) {
+            // 取消剪贴板触发：只清除待定状态，不重放字符也不消费 Esc，
+            // 让 Esc 由控制器按是否有组合内容决定是否吞掉。
+            pending_ = false;
+            return result;
+        }
         result.replay = replayEvent();
         pending_ = false;
         if (event.kind == KeyKind::Enter) {
@@ -166,6 +172,11 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         reset();
         return true;
     case KeyKind::Escape:
+        // 只在有内容需要取消时（拼音组合、剪贴板或功能菜单）消费 Escape；
+        // 空闲状态下必须放行给应用（vim 退出插入模式、对话框取消等）。
+        if (page_.preedit.empty() && !clipboardMode_) {
+            return false;
+        }
         reset();
         return true;
     case KeyKind::CommitLiteral:
