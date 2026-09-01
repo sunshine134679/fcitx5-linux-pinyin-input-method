@@ -302,8 +302,25 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
             [impl = impl_.get()](std::string_view value) {
                 return impl->textWidth(value, impl->style.clipboardText);
             });
+        auto layoutMetrics = impl_->metrics;
+        if (GdkDisplay *display = gtk_widget_get_display(impl_->window);
+            display != nullptr) {
+            const auto &cursor = inputContext->cursorRect();
+            if (GdkMonitor *monitor = gdk_display_get_monitor_at_point(
+                    display, cursor.left(), cursor.top());
+                monitor != nullptr) {
+                GdkRectangle workarea{};
+                gdk_monitor_get_workarea(monitor, &workarea);
+                const auto widthLimit = candidatePanelWidthLimit(
+                    static_cast<double>(workarea.width),
+                    layoutMetrics.maxPanelWidth);
+                layoutMetrics.panelWidth =
+                    std::min(layoutMetrics.panelWidth, widthLimit);
+                layoutMetrics.maxPanelWidth = widthLimit;
+            }
+        }
         impl_->layout = CandidateBarLayout::measure(
-            page, impl_->metrics, textWidth);
+            page, layoutMetrics, textWidth);
         // 布局放不下的候选标记为占位：输入法侧把针对它们的数字键
         // 放行给应用，避免提交用户看不见的词条。
         if (const auto list = inputContext->inputPanel().candidateList();

@@ -93,6 +93,7 @@ public:
     const core::CandidatePage &page() const { return page_; }
 
 private:
+    void clearComposition();
     void refreshPage();
     bool commitCurrent();
     bool commitRawPreedit(std::string_view suffix = {});

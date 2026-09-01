@@ -561,6 +561,96 @@ int main() {
                    punctuationHost.commits.back() == "“",
                "reset restores the quote pairing state");
 
+    RecordingHost quoteCompositionHost;
+    modernime::fcitx5::ModernIMEController quoteCompositionController(
+        quoteCompositionHost);
+    assertTrue(quoteCompositionController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   quoteCompositionHost.commits.back() == "“",
+               "a quote pair opens before composition");
+    type(quoteCompositionController, "hail");
+    assertTrue(quoteCompositionController.handle(
+                   {modernime::fcitx5::KeyKind::Space, 0, 0}) &&
+                   quoteCompositionHost.commits.back() == "还",
+               "candidate commit clears the completed composition");
+    quoteCompositionController.setContext("“还", "");
+    assertTrue(quoteCompositionController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   quoteCompositionHost.commits.back() == "”",
+               "candidate commit preserves the pending closing quote");
+
+    RecordingHost existingQuoteHost;
+    modernime::fcitx5::ModernIMEController existingQuoteController(
+        existingQuoteHost);
+    existingQuoteController.setContext("已有“未闭合", "");
+    assertTrue(existingQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   existingQuoteHost.commits.back() == "”",
+               "activation inside an existing double quote closes it");
+    existingQuoteController.setContext("已有‘未闭合", "");
+    assertTrue(existingQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '\'', 0}) &&
+                   existingQuoteHost.commits.back() == "’",
+               "activation inside an existing single quote closes it");
+    existingQuoteController.setContext("可见前文被截断", "仍在引号内”");
+    assertTrue(existingQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   existingQuoteHost.commits.back() == "”",
+               "a visible closing double quote locates the cursor inside it");
+    existingQuoteController.setContext("可见前文被截断", "仍在引号内’");
+    assertTrue(existingQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '\'', 0}) &&
+                   existingQuoteHost.commits.back() == "’",
+               "a visible closing single quote locates the cursor inside it");
+
+    RecordingHost movedCursorQuoteHost;
+    modernime::fcitx5::ModernIMEController movedCursorQuoteController(
+        movedCursorQuoteHost);
+    assertTrue(movedCursorQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   movedCursorQuoteHost.commits.back() == "“",
+               "double quote opens before the cursor moves");
+    assertTrue(movedCursorQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '\'', 0}) &&
+                   movedCursorQuoteHost.commits.back() == "‘",
+               "single quote opens before the cursor moves");
+    movedCursorQuoteController.setContext("无引号位置", "");
+    assertTrue(movedCursorQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   movedCursorQuoteHost.commits.back() == "“",
+               "moving outside a double quote starts a new pair");
+    assertTrue(movedCursorQuoteController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '\'', 0}) &&
+                   movedCursorQuoteHost.commits.back() == "‘",
+               "moving outside a single quote starts a new pair");
+
+    RecordingHost unavailableContextHost;
+    modernime::fcitx5::ModernIMEController unavailableContextController(
+        unavailableContextHost);
+    unavailableContextController.setContext("", "");
+    assertTrue(unavailableContextController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   unavailableContextHost.commits.back() == "“",
+               "quote opens when surrounding text is unavailable");
+    unavailableContextController.setContext("", "");
+    assertTrue(unavailableContextController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
+                   unavailableContextHost.commits.back() == "”",
+               "empty surrounding text preserves the internal quote pair");
+
+    RecordingHost mixedContextHost;
+    modernime::fcitx5::ModernIMEController mixedContextController(
+        mixedContextHost);
+    mixedContextController.setContext("第3", "章");
+    assertTrue(mixedContextController.handle(
+                   {modernime::fcitx5::KeyKind::Punctuation, ',', 0}) &&
+                   mixedContextHost.commits.back() == "，",
+               "a trailing digit inside Chinese context keeps Chinese punctuation");
+    mixedContextController.setContext("3", "");
+    assertTrue(!mixedContextController.handle(
+                    {modernime::fcitx5::KeyKind::Punctuation, ',', 0}),
+               "a standalone ASCII number keeps half-width punctuation");
+
     modernime::fcitx5::ModernIMEController legacyController(punctuationHost);
     modernime::fcitx5::ControllerOptions legacyOptions;
     legacyOptions.punctuationEnabled = false;

@@ -141,6 +141,29 @@ void testFailedSavePreservesExistingTarget() {
     assertTrue(content == "preserve", "failed save preserves target data");
 }
 
+void testSharedValidationAcceptsOnlyRuntimeToggleKeys() {
+    for (const auto *toggleKey : {"Ctrl+Space", "Alt+Space", "Super+Space",
+                                  "Ctrl+Shift+Space"}) {
+        auto settings = modernime::core::defaultSettings();
+        settings.toggleKey = toggleKey;
+        const auto validation = modernime::core::validateSettings(settings);
+        assertTrue(validation.valid,
+                   std::string("runtime toggle key is accepted: ") + toggleKey);
+    }
+
+    auto settings = modernime::core::defaultSettings();
+    settings.toggleKey = "Ctrl+A";
+    const auto unsupported = modernime::core::validateSettings(settings);
+    assertTrue(!unsupported.valid, "unsupported runtime toggle key is rejected");
+    assertTrue(unsupported.issues.size() == 1,
+               "unsupported toggle key produces one validation issue");
+    assertTrue(unsupported.issues.front().key == "input.toggle_key",
+               "unsupported toggle key identifies its settings field");
+    assertTrue(unsupported.issues.front().message.find("仅支持") !=
+                   std::string::npos,
+               "unsupported toggle key explains the supported choices");
+}
+
 void testSharedValidationRejectsInvalidValues() {
     auto settings = modernime::core::defaultSettings();
     settings.toggleKey = "Ctrl Space";
@@ -171,6 +194,7 @@ int main() {
     testDefaultsAndRoundTrip();
     testDiagnosticsAndPerKeyFallback();
     testFailedSavePreservesExistingTarget();
+    testSharedValidationAcceptsOnlyRuntimeToggleKeys();
     testSharedValidationRejectsInvalidValues();
     return EXIT_SUCCESS;
 }

@@ -2,8 +2,9 @@
 
 #include "modernime/core/learning_store.h"
 
-#include <vector>
+#include <chrono>
 #include <utility>
+#include <vector>
 
 namespace modernime::core {
 
@@ -24,6 +25,10 @@ LearningWriter::LearningWriter(std::filesystem::path path)
 }
 
 LearningWriter::~LearningWriter() {
+    // Give retained events one final bounded persistence cycle before asking
+    // the worker to stop. flush() never waits past a completed retry cycle, so
+    // a permanently unavailable store still cannot deadlock destruction.
+    flush();
     {
         std::lock_guard lock(mutex_);
         stopping_ = true;
@@ -43,14 +48,9 @@ bool LearningWriter::enqueueSelection(
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSelection(phrase, pinyin, contextBefore, contextAfter, nowMs);
     snapshot_ = std::move(next);
-    if (!storageAvailable_ || stopping_) {
-        return false;
-    }
-    events_.push({EventKind::Selection, std::string(phrase),
-                  std::string(pinyin), std::string(contextBefore),
-                  std::string(contextAfter), nowMs});
-    wakeup_.notify_one();
-    return true;
+    return enqueueForPersistence(
+        {EventKind::Selection, std::string(phrase), std::string(pinyin),
+         std::string(contextBefore), std::string(contextAfter), nowMs});
 }
 
 bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
@@ -59,13 +59,9 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordNegativeFeedback(phrase, pinyin);
     snapshot_ = std::move(next);
-    if (!storageAvailable_ || stopping_) {
-        return false;
-    }
-    events_.push({EventKind::NegativeFeedback, std::string(phrase),
-                  std::string(pinyin), {}, {}, 0});
-    wakeup_.notify_one();
-    return true;
+    return enqueueForPersistence({EventKind::NegativeFeedback,
+                                  std::string(phrase), std::string(pinyin),
+                                  {}, {}, 0});
 }
 
 bool LearningWriter::enqueueSuppression(std::string_view phrase,
@@ -74,21 +70,36 @@ bool LearningWriter::enqueueSuppression(std::string_view phrase,
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSuppression(phrase, pinyin);
     snapshot_ = std::move(next);
-    if (!storageAvailable_ || stopping_) {
+    return enqueueForPersistence({EventKind::Suppression, std::string(phrase),
+                                  std::string(pinyin), {}, {}, 0});
+}
+
+bool LearningWriter::enqueueForPersistence(Event event) {
+    const bool durablyAvailable = storageAvailable_;
+    if (stopping_ ||
+        (!durablyAvailable && !processing_ && events_.empty())) {
         return false;
     }
-    events_.push({EventKind::Suppression, std::string(phrase),
-                  std::string(pinyin), {}, {}, 0});
+    events_.push_back(std::move(event));
+    if (!durablyAvailable && retryExhausted_ && !processing_) {
+        retryExhausted_ = false;
+        automaticRetryCyclesRemaining_ = 1;
+    }
     wakeup_.notify_one();
-    return true;
+    return durablyAvailable;
 }
 
 bool LearningWriter::flush() {
     std::unique_lock lock(mutex_);
+    if (!events_.empty() && retryExhausted_ && !processing_) {
+        retryExhausted_ = false;
+        automaticRetryCyclesRemaining_ = 1;
+        wakeup_.notify_one();
+    }
     drained_.wait(lock, [this] {
-        return events_.empty() && !processing_;
+        return !processing_ && (events_.empty() || retryExhausted_);
     });
-    return storageAvailable_;
+    return storageAvailable_ && events_.empty();
 }
 
 std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
@@ -96,52 +107,81 @@ std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
     return snapshot_;
 }
 
+bool LearningWriter::persistBatch(const std::vector<Event> &events) {
+    constexpr int kMaxAttemptsPerCycle = 3;
+    std::vector<LearningEvent> storeEvents;
+    storeEvents.reserve(events.size());
+    for (const auto &event : events) {
+        const auto kind = event.kind == EventKind::Selection
+                              ? LearningEvent::Kind::Selection
+                              : event.kind == EventKind::NegativeFeedback
+                                    ? LearningEvent::Kind::NegativeFeedback
+                                    : LearningEvent::Kind::Suppression;
+        storeEvents.push_back({kind, event.phrase, event.pinyin,
+                               event.contextBefore, event.contextAfter,
+                               event.nowMs});
+    }
+
+    for (int attempt = 0; attempt < kMaxAttemptsPerCycle; ++attempt) {
+        if (!store_->open()) {
+            store_->close();
+            continue;
+        }
+        if (store_->recordBatch(storeEvents)) {
+            return true;
+        }
+        store_->close();
+    }
+    return false;
+}
+
 void LearningWriter::run() {
     while (true) {
         std::vector<Event> events;
         {
             std::unique_lock lock(mutex_);
+            if (!stopping_ && retryExhausted_ && !events_.empty() &&
+                automaticRetryCyclesRemaining_ > 0) {
+                wakeup_.wait_for(lock, std::chrono::milliseconds(250),
+                                 [this] {
+                                     return stopping_ || !retryExhausted_;
+                                 });
+                if (!stopping_ && retryExhausted_) {
+                    retryExhausted_ = false;
+                    --automaticRetryCyclesRemaining_;
+                }
+            }
             wakeup_.wait(lock, [this] {
-                return stopping_ || !events_.empty();
+                return stopping_ || (!events_.empty() && !retryExhausted_);
             });
-            if (stopping_ && events_.empty()) {
+            if (stopping_ && (events_.empty() || retryExhausted_)) {
                 return;
             }
             events.reserve(events_.size());
             while (!events_.empty()) {
                 events.push_back(std::move(events_.front()));
-                events_.pop();
+                events_.pop_front();
             }
             processing_ = true;
         }
 
-        std::vector<LearningEvent> storeEvents;
-        storeEvents.reserve(events.size());
-        for (const auto &event : events) {
-            const auto kind = event.kind == EventKind::Selection
-                                  ? LearningEvent::Kind::Selection
-                                  : event.kind == EventKind::NegativeFeedback
-                                        ? LearningEvent::Kind::NegativeFeedback
-                                        : LearningEvent::Kind::Suppression;
-            storeEvents.push_back({
-                kind,
-                event.phrase, event.pinyin, event.contextBefore,
-                event.contextAfter, event.nowMs});
-        }
-        const bool success = store_->recordBatch(storeEvents);
+        const bool success = persistBatch(events);
 
         {
             std::lock_guard lock(mutex_);
             if (!success) {
+                events_.insert(events_.begin(),
+                               std::make_move_iterator(events.begin()),
+                               std::make_move_iterator(events.end()));
                 storageAvailable_ = false;
-                while (!events_.empty()) {
-                    events_.pop();
-                }
+                retryExhausted_ = true;
+            } else {
+                storageAvailable_ = true;
+                retryExhausted_ = false;
+                automaticRetryCyclesRemaining_ = 1;
             }
             processing_ = false;
-            if (events_.empty()) {
-                drained_.notify_all();
-            }
+            drained_.notify_all();
         }
     }
 }

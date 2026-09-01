@@ -20,13 +20,13 @@ int main() {
 
     settings = model.settings();
     settings.inputEnabled = false;
-    settings.toggleKey = "Ctrl Space";
+    settings.toggleKey = "Ctrl+A";
     model.setSettings(settings);
 
     const auto state = modernime::settings::deriveInputPageState(model);
     assert(!state.dependentControlsSensitive);
     assert(!state.toggleKeyValid);
-    assert(state.toggleKeyMessage.find("只能包含") != std::string::npos);
+    assert(state.toggleKeyMessage.find("仅支持") != std::string::npos);
     assert(!state.canApply);
     return 0;
 }

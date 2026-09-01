@@ -356,12 +356,18 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
             return false;
         }
     }
+    // Keep housekeeping in the same transaction as the events. Otherwise a
+    // pruning failure can be reported after COMMIT, and LearningWriter's safe
+    // retry would apply already-committed selections a second time.
+    if (!pruneContextVariants() || !pruneTotalEntries()) {
+        execute("ROLLBACK;");
+        return false;
+    }
     if (!execute("COMMIT;")) {
         execute("ROLLBACK;");
         return false;
     }
-    // Housekeeping runs once per batch instead of once per event.
-    return pruneContextVariants() && pruneTotalEntries();
+    return true;
 }
 
 std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(

@@ -111,7 +111,7 @@ int main() {
                "clipboard options persist");
 
     auto invalidSettings = clipboardReloaded.settings();
-    invalidSettings.toggleKey = "Ctrl Space";
+    invalidSettings.toggleKey = "Ctrl+A";
     clipboardReloaded.setSettings(invalidSettings);
     assertTrue(!clipboardReloaded.validation().valid &&
                    !clipboardReloaded.validation().issues.empty(),
@@ -142,7 +142,7 @@ int main() {
     const auto diagnosticPath = directory / "diagnostic-settings.conf";
     {
         std::ofstream output(diagnosticPath);
-        output << "input.toggle_key=Ctrl Space\n";
+        output << "input.toggle_key=Ctrl+A\n";
     }
     modernime::settings::SettingsWindowModel diagnosticModel(diagnosticPath);
     assertTrue(diagnosticModel.settings().toggleKey == "Ctrl+Shift+Space",

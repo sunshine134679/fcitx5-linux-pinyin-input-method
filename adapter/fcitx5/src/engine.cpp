@@ -17,14 +17,29 @@ namespace {
 const std::array<std::string_view, 9> sampleCandidates{
     "还", "海", "害", "嗨", "咳", "亥", "孩", "骇", "氦"};
 
-bool endsWithAsciiAlnum(std::string_view text) {
+bool endsWithAsciiAlnum(std::string_view text, std::string_view after) {
     if (text.empty()) {
         return false;
     }
     const auto last = static_cast<unsigned char>(text.back());
-    return (last >= '0' && last <= '9') ||
-           (last >= 'a' && last <= 'z') ||
-           (last >= 'A' && last <= 'Z');
+    if ((last >= 'a' && last <= 'z') || (last >= 'A' && last <= 'Z')) {
+        return true;
+    }
+    if (last < '0' || last > '9') {
+        return false;
+    }
+
+    auto digitStart = text.size() - 1;
+    while (digitStart > 0 && text[digitStart - 1] >= '0' &&
+           text[digitStart - 1] <= '9') {
+        --digitStart;
+    }
+    const bool precededByChinese =
+        digitStart > 0 &&
+        static_cast<unsigned char>(text[digitStart - 1]) >= 0x80;
+    const bool followedByChinese =
+        !after.empty() && static_cast<unsigned char>(after.front()) >= 0x80;
+    return !precededByChinese && !followedByChinese;
 }
 
 bool isAsciiText(std::string_view text) {
@@ -34,6 +49,22 @@ bool isAsciiText(std::string_view text) {
         }
     }
     return true;
+}
+
+bool quoteIsOpenAtCursor(std::string_view before, std::string_view after,
+                         std::string_view left, std::string_view right) {
+    const auto lastLeft = before.rfind(left);
+    const auto lastRight = before.rfind(right);
+    if (lastLeft != std::string_view::npos ||
+        lastRight != std::string_view::npos) {
+        return lastLeft != std::string_view::npos &&
+               (lastRight == std::string_view::npos || lastLeft > lastRight);
+    }
+
+    const auto firstLeft = after.find(left);
+    const auto firstRight = after.find(right);
+    return firstRight != std::string_view::npos &&
+           (firstLeft == std::string_view::npos || firstRight < firstLeft);
 }
 
 } // namespace
@@ -47,6 +78,18 @@ ModernIMEController::ModernIMEController(EngineHost &host,
 void ModernIMEController::setContext(std::string before, std::string after) {
     contextBefore_ = std::move(before);
     contextAfter_ = std::move(after);
+    // Empty/empty also means that the client does not expose surrounding
+    // text (common in terminals and password fields). With no evidence about
+    // the cursor location, keep the internal pair state instead of turning
+    // every quote into an opening quote.
+    if (!contextBefore_.empty() || !contextAfter_.empty()) {
+        doubleQuoteOpen_ = quoteIsOpenAtCursor(
+            contextBefore_, contextAfter_, core::kLeftDoubleQuote,
+            core::kRightDoubleQuote);
+        singleQuoteOpen_ = quoteIsOpenAtCursor(
+            contextBefore_, contextAfter_, core::kLeftSingleQuote,
+            core::kRightSingleQuote);
+    }
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
     }
@@ -87,7 +130,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return true;
     case KeyKind::Backspace:
         if (clipboardMode_) {
-            reset();
+            clearComposition();
             return true;
         }
         if (provider_ ? !provider_->eraseLast() : !input_.eraseLast()) {
@@ -101,7 +144,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (!clipboardMode_) {
             return false;
         }
-        reset();
+        clearComposition();
         return true;
     case KeyKind::Escape:
         // 只在有内容需要取消时（拼音组合或剪贴板模式）消费 Escape；
@@ -109,7 +152,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (page_.preedit.empty() && !clipboardMode_) {
             return false;
         }
-        reset();
+        clearComposition();
         return true;
     case KeyKind::Enter:
         if (!page_.items.empty()) {
@@ -204,7 +247,7 @@ bool ModernIMEController::select(std::size_t index) {
     if (clipboardMode_) {
         const auto text = page_.items[index].text;
         host_.commit(text);
-        reset();
+        clearComposition();
         return true;
     }
     if (provider_) {
@@ -213,7 +256,7 @@ bool ModernIMEController::select(std::size_t index) {
             return false;
         }
         host_.commit(text);
-        reset();
+        clearComposition();
         return true;
     }
     page_.cursor = index;
@@ -271,7 +314,7 @@ bool ModernIMEController::commitPunctuation(char ascii) {
     // "3.14", "1,000" and English fragments survive. During composition the
     // pending candidate decides: committing Chinese goes with full-width,
     // committing a raw ASCII fragment goes half-width.
-    bool afterAscii = endsWithAsciiAlnum(contextBefore_);
+    bool afterAscii = endsWithAsciiAlnum(contextBefore_, contextAfter_);
     if (!page_.preedit.empty()) {
         std::string_view pending = page_.preedit;
         if (!page_.items.empty()) {
@@ -322,7 +365,7 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
         return false;
     }
     const auto preedit = page_.preedit;
-    reset();
+    clearComposition();
     host_.commit(preedit);
     if (!suffix.empty()) {
         host_.commit(suffix);
@@ -330,12 +373,10 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
     return true;
 }
 
-void ModernIMEController::reset() {
+void ModernIMEController::clearComposition() {
     contextBefore_.clear();
     contextAfter_.clear();
     clipboardMode_ = false;
-    doubleQuoteOpen_ = false;
-    singleQuoteOpen_ = false;
     clipboardEntries_.clear();
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
@@ -348,6 +389,12 @@ void ModernIMEController::reset() {
         page_.clear();
     }
     host_.publishPage(page_);
+}
+
+void ModernIMEController::reset() {
+    clearComposition();
+    doubleQuoteOpen_ = false;
+    singleQuoteOpen_ = false;
 }
 
 void ModernIMEController::setActive(bool active) {
@@ -424,7 +471,7 @@ bool ModernIMEController::commitCurrent() {
         return false;
     }
     host_.commit(text);
-    reset();
+    clearComposition();
     return true;
 }
 

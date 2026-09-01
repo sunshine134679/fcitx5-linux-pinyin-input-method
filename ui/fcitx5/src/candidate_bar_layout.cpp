@@ -156,6 +156,7 @@ CandidateBarMetrics CandidateBarMetrics::reference() {
     metrics.panelX = 2.0;
     metrics.panelY = 2.0;
     metrics.panelWidth = 610.0;
+    metrics.maxPanelWidth = 900.0;
     metrics.panelHeight = 54.0;
     metrics.panelRadius = 14.0;
     metrics.borderWidth = 1.0;
@@ -200,6 +201,13 @@ std::function<double(std::string_view)> candidateTextWidthForMode(
                : std::move(pinyinTextWidth);
 }
 
+double candidatePanelWidthLimit(double workareaWidth,
+                                double preferredMaximumWidth) {
+    constexpr double desktopMargin = 16.0;
+    return std::max(1.0, std::min(preferredMaximumWidth,
+                                  workareaWidth - desktopMargin));
+}
+
 std::size_t CandidateBarLayout::visibleItems(const core::CandidatePage &page) {
     const auto limit = page.mode == core::CandidatePageMode::Clipboard
                            ? kClipboardVisibleRows
@@ -220,23 +228,67 @@ CandidateBarLayout CandidateBarLayout::measure(
     }
 
     CandidateBarLayout layout;
-    layout.panel = {metrics.panelX, metrics.panelY, metrics.panelWidth,
-                    metrics.panelHeight};
     layout.preedit = page.preedit;
     layout.preeditX = metrics.preeditX;
     layout.preeditBaseline = metrics.preeditBaseline;
     layout.candidateBaseline = metrics.candidateBaseline;
 
     const auto count = visibleItems(page);
+    double requiredPanelWidth = 2.0 * metrics.horizontalPadding;
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto selected = index == page.cursor;
+        const auto displayText =
+            std::to_string(index + 1) + "." + page.items[index].text;
+        double slotWidth = metrics.candidateWidth;
+        double selectedWidth = metrics.selectedWidth;
+        if (textWidth) {
+            const auto measuredWidth = std::max(0.0, textWidth(displayText));
+            slotWidth = std::max(
+                slotWidth,
+                measuredWidth + 2.0 * metrics.candidateTextPadding);
+            selectedWidth = std::max(
+                selectedWidth,
+                measuredWidth + 2.0 * metrics.selectedTextPadding);
+        }
+        requiredPanelWidth += selected ? std::max(slotWidth, selectedWidth)
+                                       : slotWidth;
+        if (index + 1 < count) {
+            requiredPanelWidth += metrics.candidateGap;
+        }
+    }
+    const auto maximumPanelWidth =
+        std::max(metrics.panelWidth, metrics.maxPanelWidth);
+    const bool labelsNeedEllipsis =
+        textWidth && requiredPanelWidth > maximumPanelWidth;
+    layout.panel = {metrics.panelX, metrics.panelY,
+                    std::clamp(requiredPanelWidth, metrics.panelWidth,
+                               maximumPanelWidth),
+                    metrics.panelHeight};
     layout.candidates.reserve(count);
     double nextX = metrics.panelX + metrics.horizontalPadding;
-    const double rightEdge = metrics.panelX + metrics.panelWidth -
+    const double rightEdge = layout.panel.x + layout.panel.width -
                              metrics.horizontalPadding;
     for (std::size_t index = 0; index < count; ++index) {
         const auto selected = index == page.cursor;
         const auto number = index + 1;
-        const auto displayText =
+        auto displayText =
             std::to_string(number) + "." + page.items[index].text;
+        if (labelsNeedEllipsis) {
+            const auto totalGap =
+                count > 0 ? static_cast<double>(count - 1) *
+                                metrics.candidateGap
+                          : 0.0;
+            const auto slotBudget =
+                (layout.panel.width - 2.0 * metrics.horizontalPadding -
+                 totalGap) /
+                static_cast<double>(count);
+            const auto textPadding =
+                selected ? metrics.selectedTextPadding
+                         : metrics.candidateTextPadding;
+            displayText = ellipsize(
+                displayText, std::max(0.0, slotBudget - 2.0 * textPadding),
+                textWidth);
+        }
         double slotWidth = metrics.candidateWidth;
         double selectedWidth = metrics.selectedWidth;
         if (textWidth) {

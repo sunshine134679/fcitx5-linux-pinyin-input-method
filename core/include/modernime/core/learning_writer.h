@@ -4,13 +4,14 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
-#include <queue>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 namespace modernime::core {
 
@@ -49,19 +50,26 @@ private:
         std::int64_t nowMs = 0;
     };
 
+    bool enqueueForPersistence(Event event);
+    bool persistBatch(const std::vector<Event> &events);
     void run();
 
     std::unique_ptr<LearningStore> store_;
     mutable std::mutex mutex_;
     std::condition_variable wakeup_;
     std::condition_variable drained_;
-    std::queue<Event> events_;
+    std::deque<Event> events_;
     // Copy-on-write: enqueue replaces this pointer with a mutated clone, so
     // snapshots handed out by snapshot() stay immutable even if a future
     // caller reads them from another thread.
     std::shared_ptr<const LearningSnapshot> snapshot_;
     bool stopping_ = false;
     bool processing_ = false;
+    // A failed batch stays queued. flush() explicitly starts the next bounded
+    // retry cycle, which gives callers a deterministic failure result instead
+    // of either dropping the batch or waiting forever.
+    bool retryExhausted_ = false;
+    int automaticRetryCyclesRemaining_ = 1;
     bool storageAvailable_ = false;
     std::thread worker_;
 };

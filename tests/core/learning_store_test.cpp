@@ -6,11 +6,14 @@
 #include <sqlite3.h>
 
 #include <cstdlib>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -371,6 +374,264 @@ void testWriterFlushesSelectionBeforeReopen() {
     std::filesystem::remove(path, error);
 }
 
+void testWriterRetainsFailedBatchAndRecoversAfterStoreUnlocks() {
+    const auto path = testPath("writer-retry.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+
+        sqlite3 *locker = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &locker) == SQLITE_OK,
+                   "retry test opens a competing database connection");
+        char *error = nullptr;
+        assertTrue(sqlite3_exec(locker, "BEGIN IMMEDIATE;", nullptr, nullptr,
+                                &error) == SQLITE_OK,
+                   "retry test holds the database write lock");
+        sqlite3_free(error);
+
+        assertTrue(writer.enqueueSelection("重试词", "chongshici", {}, {},
+                                           1000),
+                   "writer accepts an event before the temporary failure");
+        assertTrue(!writer.flush(),
+                   "flush reports failure after a bounded retry cycle");
+
+        error = nullptr;
+        assertTrue(sqlite3_exec(locker, "ROLLBACK;", nullptr, nullptr,
+                                &error) == SQLITE_OK,
+                   "retry test releases the database write lock");
+        sqlite3_free(error);
+        sqlite3_close(locker);
+
+        bool recoveredWithoutAnotherEnqueue = false;
+        const auto recoveryDeadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < recoveryDeadline) {
+            modernime::core::LearningStore observer(path);
+            if (observer.open()) {
+                const auto observed = observer.snapshot(1000);
+                const auto *entry =
+                    observed->entry("重试词", "chongshici", {}, {});
+                recoveredWithoutAnotherEnqueue =
+                    entry != nullptr && entry->frequency == 1;
+                observer.close();
+            }
+            if (recoveredWithoutAnotherEnqueue) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        assertTrue(recoveredWithoutAnotherEnqueue,
+                   "retained events resume automatically after the store recovers");
+        assertTrue(writer.flush(),
+                   "flush reports success after autonomous recovery");
+    }
+
+    modernime::core::LearningStore reopened(path);
+    assertTrue(reopened.open(), "recovered writer store reopens");
+    const auto snapshot = reopened.snapshot(1000);
+    const auto *entry = snapshot->entry("重试词", "chongshici", {}, {});
+    assertTrue(entry != nullptr && entry->frequency == 1,
+               "the failed batch is recovered exactly once");
+    reopened.close();
+
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
+void testWriterAutomaticallyRecoversFromTemporaryWriteLock() {
+    using namespace std::chrono_literals;
+    const auto path = testPath("writer-auto-retry.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        sqlite3 *locker = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &locker) == SQLITE_OK,
+                   "automatic retry test opens a competing connection");
+        char *error = nullptr;
+        assertTrue(sqlite3_exec(locker, "BEGIN IMMEDIATE;", nullptr, nullptr,
+                                &error) == SQLITE_OK,
+                   "automatic retry test holds the database write lock");
+        sqlite3_free(error);
+
+        assertTrue(writer.enqueueSelection("自动恢复词", "zidonghuifu", {},
+                                           {}, 1000),
+                   "writer accepts an event before a temporary lock");
+        auto flushResult = std::async(std::launch::async,
+                                      [&writer] { return writer.flush(); });
+
+        std::this_thread::sleep_for(1500ms);
+        error = nullptr;
+        assertTrue(sqlite3_exec(locker, "ROLLBACK;", nullptr, nullptr,
+                                &error) == SQLITE_OK,
+                   "automatic retry test releases the temporary lock");
+        sqlite3_free(error);
+        sqlite3_close(locker);
+
+        assertTrue(flushResult.wait_for(4s) == std::future_status::ready,
+                   "flush completes after the temporary fault clears");
+        assertTrue(flushResult.get(),
+                   "flush succeeds through the bounded automatic retry cycle");
+    }
+
+    modernime::core::LearningStore reopened(path);
+    assertTrue(reopened.open(), "automatically recovered store reopens");
+    const auto snapshot = reopened.snapshot(1000);
+    const auto *entry = snapshot->entry("自动恢复词", "zidonghuifu", {}, {});
+    assertTrue(entry != nullptr && entry->frequency == 1,
+               "automatic retry persists the event exactly once");
+    reopened.close();
+
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
+void testWriterQueuesSelectionsArrivingDuringRecovery() {
+    using namespace std::chrono_literals;
+    const auto path = testPath("writer-recovery-window.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        sqlite3 *faultInjector = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
+                   "recovery-window test opens its fault injector");
+        char *error = nullptr;
+        const auto trigger =
+            "CREATE TRIGGER fail_writer_insert BEFORE INSERT ON "
+            "learning_entries BEGIN SELECT RAISE(ABORT, 'temporary writer "
+            "failure'); END;";
+        assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr,
+                                &error) == SQLITE_OK,
+                   "recovery-window test injects a write failure");
+        sqlite3_free(error);
+
+        assertTrue(writer.enqueueSelection("故障前词", "guzhangqian", {}, {},
+                                           1000),
+                   "writer accepts the selection that encounters the fault");
+        assertTrue(!writer.flush(),
+                   "flush reports the first bounded failure cycle");
+        std::this_thread::sleep_for(500ms);
+
+        assertTrue(!writer.enqueueSelection("恢复中词", "huifuzhong", {}, {},
+                                            2000),
+                   "enqueue reports that durability is not yet restored");
+
+        error = nullptr;
+        assertTrue(sqlite3_exec(faultInjector,
+                                "DROP TRIGGER fail_writer_insert;", nullptr,
+                                nullptr, &error) == SQLITE_OK,
+                   "recovery-window test clears the write failure");
+        sqlite3_free(error);
+        sqlite3_close(faultInjector);
+
+        assertTrue(writer.flush(),
+                   "flush persists retained and recovery-window selections");
+    }
+
+    modernime::core::LearningStore reopened(path);
+    assertTrue(reopened.open(), "recovery-window store reopens");
+    const auto snapshot = reopened.snapshot(2000);
+    assertTrue(snapshot->entry("故障前词", "guzhangqian", {}, {}) != nullptr,
+               "the selection that hit the fault is retained");
+    assertTrue(snapshot->entry("恢复中词", "huifuzhong", {}, {}) != nullptr,
+               "a selection arriving during recovery is persisted");
+    reopened.close();
+
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
+void testWriterDestructorRetriesRetainedBatchAfterFaultClears() {
+    using namespace std::chrono_literals;
+    const auto path = testPath("writer-destructor-recovery.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        sqlite3 *faultInjector = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
+                   "destructor recovery test opens its fault injector");
+        char *error = nullptr;
+        const auto trigger =
+            "CREATE TRIGGER fail_destructor_insert BEFORE INSERT ON "
+            "learning_entries BEGIN SELECT RAISE(ABORT, 'temporary writer "
+            "failure'); END;";
+        assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr,
+                                &error) == SQLITE_OK,
+                   "destructor recovery test injects a write failure");
+        sqlite3_free(error);
+
+        assertTrue(writer.enqueueSelection("析构恢复词", "xigouhuifu", {}, {},
+                                           1000),
+                   "writer accepts the selection before destructor recovery");
+        assertTrue(!writer.flush(),
+                   "destructor recovery test observes a bounded failure");
+        std::this_thread::sleep_for(500ms);
+
+        error = nullptr;
+        assertTrue(sqlite3_exec(faultInjector,
+                                "DROP TRIGGER fail_destructor_insert;",
+                                nullptr, nullptr, &error) == SQLITE_OK,
+                   "destructor recovery test clears the write failure");
+        sqlite3_free(error);
+        sqlite3_close(faultInjector);
+    }
+
+    modernime::core::LearningStore reopened(path);
+    assertTrue(reopened.open(), "destructor-recovered store reopens");
+    assertTrue(reopened.snapshot(1000)->entry("析构恢复词", "xigouhuifu",
+                                              {}, {}) != nullptr,
+               "destructor performs a bounded final write of the retained batch");
+    reopened.close();
+
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
+void testWriterDestructorReturnsUnderPermanentFailure() {
+    using namespace std::chrono_literals;
+    const auto path = testPath("writer-destructor-permanent-failure.sqlite3");
+    sqlite3 *faultInjector = nullptr;
+    const auto started = std::chrono::steady_clock::now();
+    {
+        modernime::core::LearningWriter writer(path);
+        assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
+                   "permanent-failure test opens its fault injector");
+        char *error = nullptr;
+        const auto trigger =
+            "CREATE TRIGGER fail_permanent_insert BEFORE INSERT ON "
+            "learning_entries BEGIN SELECT RAISE(ABORT, 'permanent writer "
+            "failure'); END;";
+        assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr,
+                                &error) == SQLITE_OK,
+                   "permanent-failure test injects a persistent write failure");
+        sqlite3_free(error);
+        assertTrue(writer.enqueueSelection("永久故障词", "yongjiuguzhang", {},
+                                           {}, 1000),
+                   "writer accepts the selection before permanent failure");
+        assertTrue(!writer.flush(),
+                   "permanent-failure flush completes with failure");
+        std::this_thread::sleep_for(500ms);
+    }
+    assertTrue(std::chrono::steady_clock::now() - started < 3s,
+               "destructor remains bounded under a permanent storage failure");
+
+    char *error = nullptr;
+    assertTrue(sqlite3_exec(faultInjector,
+                            "DROP TRIGGER fail_permanent_insert;", nullptr,
+                            nullptr, &error) == SQLITE_OK,
+               "permanent-failure test clears its injected trigger");
+    sqlite3_free(error);
+    sqlite3_close(faultInjector);
+
+    std::error_code errorCode;
+    std::filesystem::remove(path, errorCode);
+    std::filesystem::remove(path.string() + "-wal", errorCode);
+    std::filesystem::remove(path.string() + "-shm", errorCode);
+}
+
 void testLearningBatchPersistsAsOneLogicalUpdate() {
     const auto path = testPath("learning-batch.sqlite3");
     modernime::core::LearningStore store(path);
@@ -391,6 +652,56 @@ void testLearningBatchPersistsAsOneLogicalUpdate() {
     store.close();
     std::error_code error;
     std::filesystem::remove(path, error);
+}
+
+void testFailedBatchCanBeRetriedWithoutDuplicatingCommittedSelections() {
+    const auto path = testPath("learning-batch-rollback.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "retry-safe batch store opens");
+
+    sqlite3 *faultInjector = nullptr;
+    assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
+               "batch retry test opens its fault-injection connection");
+    char *error = nullptr;
+    const auto trigger =
+        "CREATE TRIGGER fail_learning_prune BEFORE DELETE ON "
+        "learning_entries BEGIN SELECT RAISE(ABORT, 'injected prune "
+        "failure'); END;";
+    assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr, &error) ==
+                   SQLITE_OK,
+               "batch retry test injects a deterministic prune failure");
+    sqlite3_free(error);
+
+    std::vector<modernime::core::LearningEvent> events;
+    for (int index = 0; index < 9; ++index) {
+        events.push_back({modernime::core::LearningEvent::Kind::Selection,
+                          "事务重试词", "shiwuchongshi",
+                          "前文" + std::to_string(index), "后文", 1000 + index});
+    }
+    assertTrue(!store.recordBatch(events),
+               "injected housekeeping failure fails the whole batch");
+
+    error = nullptr;
+    assertTrue(sqlite3_exec(faultInjector, "DROP TRIGGER fail_learning_prune;",
+                            nullptr, nullptr, &error) == SQLITE_OK,
+               "batch retry test clears the injected failure");
+    sqlite3_free(error);
+    sqlite3_close(faultInjector);
+
+    assertTrue(store.recordBatch(events), "the same batch succeeds on retry");
+    const auto snapshot = store.snapshot();
+    assertTrue(snapshot->entries().size() == 8,
+               "context pruning still applies to the retried batch");
+    for (const auto &entry : snapshot->entries()) {
+        assertTrue(entry.frequency == 1,
+                   "a retried batch never duplicates a committed selection");
+    }
+    store.close();
+
+    std::error_code errorCode;
+    std::filesystem::remove(path, errorCode);
+    std::filesystem::remove(path.string() + "-wal", errorCode);
+    std::filesystem::remove(path.string() + "-shm", errorCode);
 }
 
 void testTotalEntryLimitEvictsSuppressedThenOldest() {
@@ -538,7 +849,13 @@ int main() {
     testWriterReportsUnavailableStoreAndKeepsMemorySnapshot();
     testWriterRejectsMalformedStoreAtStartup();
     testWriterFlushesSelectionBeforeReopen();
+    testWriterRetainsFailedBatchAndRecoversAfterStoreUnlocks();
+    testWriterAutomaticallyRecoversFromTemporaryWriteLock();
+    testWriterQueuesSelectionsArrivingDuringRecovery();
+    testWriterDestructorRetriesRetainedBatchAfterFaultClears();
+    testWriterDestructorReturnsUnderPermanentFailure();
     testLearningBatchPersistsAsOneLogicalUpdate();
+    testFailedBatchCanBeRetriedWithoutDuplicatingCommittedSelections();
     testTotalEntryLimitEvictsSuppressedThenOldest();
     testSnapshotAppliesTotalEntryLimit();
     testFrequencyAccumulatesAcrossContextVariants();

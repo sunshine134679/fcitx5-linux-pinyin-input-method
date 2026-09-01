@@ -84,7 +84,9 @@ public:
         gtk_widget_set_hexpand(toggleKey, TRUE);
         setTarget(toggleKey, "toggle-key");
         toggleKeyFallback = createSettingRow(
-            "中英文切换快捷键", "只能包含字母、数字、+ 或 -。", toggleKey);
+            "中英文切换快捷键",
+            "支持 Ctrl+Space、Alt+Space、Super+Space 或 Ctrl+Shift+Space。",
+            toggleKey);
         gtk_box_pack_start(GTK_BOX(section), toggleKeyFallback, FALSE, FALSE,
                            0);
         g_signal_connect(toggleKey, "changed", G_CALLBACK(onChanged), this);

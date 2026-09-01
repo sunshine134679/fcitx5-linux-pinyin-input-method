@@ -28,18 +28,8 @@ bool parseBoolean(std::string_view value, bool &result) {
 }
 
 bool validToggleKey(std::string_view value) {
-    if (value.empty() || value.size() > 64) {
-        return false;
-    }
-    for (const char character : value) {
-        const bool letter = (character >= 'A' && character <= 'Z') ||
-                            (character >= 'a' && character <= 'z');
-        const bool digit = character >= '0' && character <= '9';
-        if (!letter && !digit && character != '+' && character != '-') {
-            return false;
-        }
-    }
-    return true;
+    return value == "Ctrl+Space" || value == "Alt+Space" ||
+           value == "Super+Space" || value == "Ctrl+Shift+Space";
 }
 
 bool validClipboardTrigger(std::string_view value) {
@@ -72,7 +62,9 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     SettingsValidationResult result;
     if (!validToggleKey(settings.toggleKey)) {
         result.issues.push_back(
-            {"input.toggle_key", "中英文切换快捷键不能为空，且只能包含字母、数字、+ 或 -"});
+            {"input.toggle_key",
+             "中英文切换快捷键仅支持 Ctrl+Space、Alt+Space、Super+Space 或 "
+             "Ctrl+Shift+Space"});
     }
     if (!validClipboardTrigger(settings.clipboardTrigger)) {
         result.issues.push_back(

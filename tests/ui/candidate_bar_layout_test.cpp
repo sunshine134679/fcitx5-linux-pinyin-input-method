@@ -18,6 +18,11 @@ void assertTrue(bool condition, std::string_view message) {
 } // namespace
 
 int main() {
+    assertTrue(modernime::ui::candidatePanelWidthLimit(800.0, 900.0) ==
+                   784.0 &&
+                   modernime::ui::candidatePanelWidthLimit(1920.0, 900.0) ==
+                       900.0,
+               "panel width respects both workarea margin and design cap");
     modernime::core::CandidatePage page;
     page.preedit = "hail";
     for (std::size_t index = 0; index < 12; ++index) {
@@ -74,10 +79,10 @@ int main() {
     const auto longWordLayout = modernime::ui::CandidateBarLayout::measure(
         longWordPage, metrics,
         [](std::string_view) { return 47.0; });
-    assertTrue(longWordLayout.panel.width == metrics.panelWidth,
-               "panel keeps the fixed reference width");
-    assertTrue(longWordLayout.candidates.size() == 7,
-               "only candidates that fit the fixed panel are displayed");
+    assertTrue(longWordLayout.panel.width > metrics.panelWidth,
+               "panel grows when normal page candidates need more room");
+    assertTrue(longWordLayout.candidates.size() == 9,
+               "every numbered candidate remains visible on its page");
     assertTrue(longWordLayout.selectedPill.width == 63.0,
                "selected pill has wider horizontal padding");
     for (std::size_t index = 1; index < longWordLayout.candidates.size();
@@ -89,8 +94,28 @@ int main() {
     }
     const auto &lastCandidate = longWordLayout.candidates.back().bounds;
     assertTrue(lastCandidate.x + lastCandidate.width <=
-                   metrics.panelX + metrics.panelWidth - metrics.horizontalPadding,
+                   longWordLayout.panel.x + longWordLayout.panel.width -
+                       metrics.horizontalPadding,
                "last displayed candidate stays inside the panel");
+
+    modernime::core::CandidatePage extremeWordPage;
+    extremeWordPage.preedit = "changci";
+    for (std::size_t index = 0; index < 9; ++index) {
+        extremeWordPage.items.push_back(
+            {"这是一个异常长并且不应该撑出屏幕边界的候选词条", "changci",
+             index});
+    }
+    const auto extremeWordLayout = modernime::ui::CandidateBarLayout::measure(
+        extremeWordPage, metrics,
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 10);
+        });
+    assertTrue(extremeWordLayout.panel.width <= metrics.maxPanelWidth,
+               "candidate panel has a desktop-safe maximum width");
+    assertTrue(extremeWordLayout.candidates.size() == 9,
+               "width limiting never hides numbered candidates");
+    assertTrue(extremeWordLayout.candidates.front().displayText.ends_with("…"),
+               "overlong candidate labels are visibly ellipsized");
 
     const auto pinyinWidth = modernime::ui::candidateTextWidthForMode(
         modernime::core::CandidatePageMode::Pinyin,
