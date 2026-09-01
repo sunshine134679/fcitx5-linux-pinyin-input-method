@@ -494,6 +494,25 @@ public:
         return true;
     }
 
+    bool replaceInput(std::string_view input) {
+        if (!input.empty() &&
+            !core::PinyinMatchPolicy::validComposition(input)) {
+            return false;
+        }
+        const auto previous = context->userInput();
+        context->clear();
+        if (!input.empty() && !context->type(input)) {
+            context->clear();
+            if (!previous.empty()) {
+                context->type(previous);
+            }
+            refresh();
+            return false;
+        }
+        refresh();
+        return true;
+    }
+
     bool select(std::size_t index) {
         if (index >= page_.items.size()) {
             return false;
@@ -709,6 +728,10 @@ bool PinyinCandidateProvider::append(std::string_view input) {
 }
 
 bool PinyinCandidateProvider::eraseLast() { return impl_->eraseLast(); }
+
+bool PinyinCandidateProvider::replaceInput(std::string_view input) {
+    return impl_->replaceInput(input);
+}
 
 bool PinyinCandidateProvider::select(std::size_t index) {
     return impl_->select(index);

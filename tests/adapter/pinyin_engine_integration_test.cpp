@@ -55,5 +55,27 @@ int main() {
         assertTrue(controller.page().preedit.empty(),
                    "commit clears the controller page");
     }
+
+    for (const char character : std::string_view("nihao")) {
+        assertTrue(controller.handle(
+                       {modernime::fcitx5::KeyKind::Character, character, 0}),
+                   "editable pinyin input is accepted");
+    }
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::MoveCompositionLeft, 0, 0}) &&
+                   controller.handle(
+                       {modernime::fcitx5::KeyKind::MoveCompositionLeft, 0, 0}),
+               "composition cursor moves inside segmented pinyin");
+    assertTrue(controller.page().preedit == "ni'hao" &&
+                   controller.page().preeditCursor == 4,
+               "raw cursor maps across an automatically inserted separator");
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::Character, 'n', 0}),
+               "LibIME composition accepts insertion in the middle");
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::Backspace, 0, 0}) &&
+                   controller.page().preedit == "ni'hao" &&
+                   controller.page().items.front().text == "你好",
+               "middle backspace restores candidates without retyping the phrase");
     return EXIT_SUCCESS;
 }

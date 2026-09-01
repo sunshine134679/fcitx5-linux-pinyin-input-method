@@ -52,6 +52,7 @@ public:
 
     bool append(std::string_view input) override;
     bool eraseLast() override;
+    bool replaceInput(std::string_view input) override;
     bool select(std::size_t index) override;
     bool remove(std::size_t index) override;
     void reset() override;

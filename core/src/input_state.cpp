@@ -24,6 +24,17 @@ bool InputState::eraseLast() {
     return true;
 }
 
+bool InputState::replace(std::string_view value) {
+    if (std::any_of(value.begin(), value.end(), [](char byte) {
+            return static_cast<unsigned char>(byte) >= 0x80;
+        })) {
+        return false;
+    }
+    text_.assign(value);
+    ++generation_;
+    return true;
+}
+
 void InputState::clear() {
     text_.clear();
     ++generation_;

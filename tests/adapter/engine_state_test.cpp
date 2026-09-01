@@ -176,6 +176,47 @@ int main() {
                "escape is handled");
     assertTrue(controller.page().preedit.empty(), "escape clears preedit");
 
+    RecordingHost editingHost;
+    modernime::fcitx5::ModernIMEController editingController(editingHost);
+    type(editingController, "nihao");
+    assertTrue(editingController.page().preeditCursor == 5,
+               "new input leaves the composition cursor at the end");
+    assertTrue(editingController.handle(
+                   {modernime::fcitx5::KeyKind::MoveCompositionLeft, 0, 0}) &&
+                   editingController.handle(
+                       {modernime::fcitx5::KeyKind::MoveCompositionLeft, 0, 0}),
+               "left moves inside the active composition");
+    assertTrue(editingController.page().preeditCursor == 3,
+               "composition cursor moves to the requested insertion point");
+    assertTrue(editingController.handle(
+                   {modernime::fcitx5::KeyKind::Character, 'n', 0}) &&
+                   editingController.page().preedit == "nihnao" &&
+                   editingController.page().preeditCursor == 4,
+               "typing inserts at the composition cursor");
+    assertTrue(editingController.handle(
+                   {modernime::fcitx5::KeyKind::Backspace, 0, 0}) &&
+                   editingController.page().preedit == "nihao" &&
+                   editingController.page().preeditCursor == 3,
+               "backspace removes the character before the cursor");
+    assertTrue(editingController.handle(
+                   {modernime::fcitx5::KeyKind::DeleteForward, 0, 0}) &&
+                   editingController.page().preedit == "niho" &&
+                   editingController.page().preeditCursor == 3,
+               "delete removes the character after the cursor");
+    assertTrue(editingController.handle(
+                   {modernime::fcitx5::KeyKind::MoveCompositionRight, 0, 0}) &&
+                   editingController.page().preeditCursor == 4,
+               "right moves toward the end of the composition");
+    RecordingHost deleteOnlyHost;
+    modernime::fcitx5::ModernIMEController deleteOnlyController(deleteOnlyHost);
+    type(deleteOnlyController, "n");
+    assertTrue(deleteOnlyController.handle(
+                   {modernime::fcitx5::KeyKind::MoveCompositionLeft, 0, 0}) &&
+                   deleteOnlyController.handle(
+                       {modernime::fcitx5::KeyKind::DeleteForward, 0, 0}) &&
+                   deleteOnlyController.page().preedit.empty(),
+               "forward delete can remove the final remaining character");
+
     type(controller, "hail");
     assertTrue(controller.select(1), "candidate index selection is handled");
     assertTrue(host.commits.back() == "海", "candidate index commits second item");
@@ -448,10 +489,17 @@ int main() {
         removableHost, &removableProvider);
     type(removableController, "nihao");
     assertTrue(removableController.handle(
+                   {modernime::fcitx5::KeyKind::MoveCompositionLeft, 0, 0}) &&
+                   removableController.handle(
+                       {modernime::fcitx5::KeyKind::MoveCompositionLeft, 0, 0}),
+               "composition cursor moves before candidate deletion");
+    assertTrue(removableController.handle(
                    {modernime::fcitx5::KeyKind::DeleteCandidate, 0, 0}),
                "delete key is handled");
     assertTrue(removableProvider.removeCount == 1,
                "provider receives current candidate deletion");
+    assertTrue(removableController.page().preeditCursor == 3,
+               "candidate deletion preserves the composition insertion point");
 
     ManyCandidateProvider manyProvider;
     RecordingHost manyHost;
@@ -493,9 +541,9 @@ int main() {
     type(verticalController, "n");
     assertTrue(verticalController.handle(
                    {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}),
-               "down remains handled in the normal candidate mode");
-    assertTrue(verticalController.page().cursor == 9,
-               "down keeps page navigation in the normal candidate mode");
+               "down moves the highlighted candidate in normal mode");
+    assertTrue(verticalController.page().cursor == 1,
+               "down selects the next candidate while page-down still pages");
 
     ManyCandidateProvider pagedProvider;
     RecordingHost pagedHost;

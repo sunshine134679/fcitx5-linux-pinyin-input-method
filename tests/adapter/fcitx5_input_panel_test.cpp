@@ -47,13 +47,14 @@ int main() {
 
     modernime::core::CandidatePage page;
     page.preedit = "df";
+    page.preeditCursor = 1;
     page.items.push_back({"地方", "df", 0});
     host.publishPage(page);
 
     assertTrue(inputContext.inputPanel().clientPreedit().toString() == "df",
                "preedit is published to the client input area");
-    assertTrue(inputContext.inputPanel().clientPreedit().cursor() == 2,
-               "client preedit cursor follows the end of the input");
+    assertTrue(inputContext.inputPanel().clientPreedit().cursor() == 1,
+               "client preedit cursor follows the controller insertion point");
     assertTrue(inputContext.preeditUpdates == 1,
                "client preedit update is sent");
     inputContext.inputPanel().candidateList()->candidate(0).select(

@@ -112,12 +112,13 @@ public:
         numberSelection = gtk_check_button_new_with_label("数字键选择候选");
         gtk_widget_set_tooltip_text(numberSelection, "使用数字键选择当前候选项");
         setTarget(numberSelection, "number-selection");
-        arrowNavigation = gtk_check_button_new_with_label("左右方向键切换候选");
-        gtk_widget_set_tooltip_text(arrowNavigation, "使用左右方向键切换候选项");
+        arrowNavigation = gtk_check_button_new_with_label("方向键编辑与选词");
+        gtk_widget_set_tooltip_text(
+            arrowNavigation, "左右移动拼音光标，上下切换候选项");
         setTarget(arrowNavigation, "arrow-navigation");
         pageNavigation = gtk_check_button_new_with_label("候选翻页");
         gtk_widget_set_tooltip_text(pageNavigation,
-                                    "使用上下方向键或 + / = 翻页");
+                                    "使用 PageUp / PageDown 或 + / = 翻页");
         setTarget(pageNavigation, "page-navigation");
         gtk_box_pack_start(GTK_BOX(section),
                            createSettingRow("数字键选择候选",
@@ -125,13 +126,13 @@ public:
                                             numberSelection),
                            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section),
-                           createSettingRow("左右方向键切换候选",
-                                            "使用左右方向键切换候选项。",
+                           createSettingRow("方向键编辑与选词",
+                                            "左右移动拼音光标，上下切换候选项。",
                                             arrowNavigation),
                            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section),
                            createSettingRow("候选翻页",
-                                            "使用上下方向键和 + / = 翻页。",
+                                            "使用 PageUp / PageDown 和 + / = 翻页。",
                                             pageNavigation),
                            FALSE, FALSE, 0);
         for (auto *control : {numberSelection, arrowNavigation, pageNavigation}) {

@@ -10,6 +10,7 @@ class InputState final {
 public:
     bool append(std::string_view value);
     bool eraseLast();
+    bool replace(std::string_view value);
     void clear();
 
     const std::string &text() const { return text_; }

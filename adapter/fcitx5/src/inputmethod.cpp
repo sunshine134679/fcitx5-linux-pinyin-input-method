@@ -181,7 +181,11 @@ FcitxEngineHost::FcitxEngineHost(fcitx::InputContext &inputContext)
 
 void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     fcitx::Text preedit(page.preedit);
-    preedit.setCursor(static_cast<int>(preedit.textLength()));
+    const auto requestedCursor =
+        page.preeditCursor == core::CandidatePage::kCursorAtEnd
+            ? preedit.textLength()
+            : std::min(page.preeditCursor, preedit.textLength());
+    preedit.setCursor(static_cast<int>(requestedCursor));
     if (page.items.empty()) {
         inputContext_->inputPanel().reset();
         inputContext_->inputPanel().setPreedit(preedit);
@@ -354,7 +358,7 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         return event;
     }
     if (key.check(FcitxKey_Delete)) {
-        event.kind = KeyKind::CloseClipboard;
+        event.kind = KeyKind::DeleteForward;
         return event;
     }
     if (key.check(FcitxKey_BackSpace)) {
@@ -377,11 +381,11 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::NextPage;
         return event;
     }
-    if (bindings.pageNavigation && key.check(FcitxKey_Up)) {
+    if (bindings.arrowNavigation && key.check(FcitxKey_Up)) {
         event.kind = KeyKind::PreviousClipboardItem;
         return event;
     }
-    if (bindings.pageNavigation && key.check(FcitxKey_Down)) {
+    if (bindings.arrowNavigation && key.check(FcitxKey_Down)) {
         event.kind = KeyKind::NextClipboardItem;
         return event;
     }
@@ -392,11 +396,11 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         return event;
     }
     if (bindings.arrowNavigation && key.check(FcitxKey_Left)) {
-        event.kind = KeyKind::PreviousCandidate;
+        event.kind = KeyKind::MoveCompositionLeft;
         return event;
     }
     if (bindings.arrowNavigation && key.check(FcitxKey_Right)) {
-        event.kind = KeyKind::NextCandidate;
+        event.kind = KeyKind::MoveCompositionRight;
         return event;
     }
     if (bindings.arrowNavigation &&

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,7 +23,10 @@ struct CandidateItem final {
 };
 
 struct CandidatePage final {
+    static constexpr std::size_t kCursorAtEnd =
+        std::numeric_limits<std::size_t>::max();
     std::string preedit;
+    std::size_t preeditCursor = kCursorAtEnd;
     std::vector<CandidateItem> items;
     std::size_t cursor = 0;
     std::uint64_t generation = 0;

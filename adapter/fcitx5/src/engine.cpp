@@ -67,6 +67,32 @@ bool quoteIsOpenAtCursor(std::string_view before, std::string_view after,
            (firstLeft == std::string_view::npos || firstRight < firstLeft);
 }
 
+std::size_t displayedPreeditCursor(std::string_view displayed,
+                                   std::string_view raw,
+                                   std::size_t rawCursor) {
+    rawCursor = std::min(rawCursor, raw.size());
+    std::size_t displayedOffset = 0;
+    std::size_t rawOffset = 0;
+    while (displayedOffset < displayed.size() && rawOffset < rawCursor) {
+        if (rawOffset < raw.size() &&
+            displayed[displayedOffset] == raw[rawOffset]) {
+            ++displayedOffset;
+            ++rawOffset;
+        } else {
+            ++displayedOffset;
+        }
+    }
+    // An automatically inserted apostrophe belongs to the syllable boundary
+    // before the next raw letter, so place the caret after it. A user-typed
+    // apostrophe remains on the right side until that raw byte is consumed.
+    while (displayedOffset < displayed.size() &&
+           displayed[displayedOffset] == '\'' &&
+           (rawOffset >= raw.size() || raw[rawOffset] != '\'')) {
+        ++displayedOffset;
+    }
+    return displayedOffset;
+}
+
 } // namespace
 
 ModernIMEController::ModernIMEController(EngineHost &host,
@@ -111,20 +137,26 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         {
-            std::string nextInput = provider_ ? provider_->page().preedit
-                                               : input_.text();
-            nextInput.push_back(event.character);
+            std::string nextInput = compositionInput_;
+            nextInput.insert(compositionCursor_, 1, event.character);
             if (!core::PinyinMatchPolicy::validComposition(nextInput)) {
                 return false;
             }
-        }
-        if (provider_ &&
-            !provider_->append(std::string_view(&event.character, 1))) {
-            return false;
-        }
-        if (!provider_ &&
-            !input_.append(std::string_view(&event.character, 1))) {
-            return false;
+            const bool appending = compositionCursor_ == compositionInput_.size();
+            const bool changed = provider_
+                                     ? (appending
+                                            ? provider_->append(std::string_view(
+                                                  &event.character, 1))
+                                            : provider_->replaceInput(nextInput))
+                                     : (appending
+                                            ? input_.append(std::string_view(
+                                                  &event.character, 1))
+                                            : input_.replace(nextInput));
+            if (!changed) {
+                return false;
+            }
+            compositionInput_ = std::move(nextInput);
+            ++compositionCursor_;
         }
         refreshPage();
         return true;
@@ -133,8 +165,27 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             clearComposition();
             return true;
         }
-        if (provider_ ? !provider_->eraseLast() : !input_.eraseLast()) {
+        if (compositionInput_.empty()) {
             return false;
+        }
+        if (compositionCursor_ == 0) {
+            return true;
+        }
+        {
+            auto nextInput = compositionInput_;
+            nextInput.erase(compositionCursor_ - 1, 1);
+            const auto nextCursor = compositionCursor_ - 1;
+            const bool erasingLast = compositionCursor_ == compositionInput_.size();
+            const bool changed = provider_
+                                     ? (erasingLast ? provider_->eraseLast()
+                                                    : provider_->replaceInput(nextInput))
+                                     : (erasingLast ? input_.eraseLast()
+                                                    : input_.replace(nextInput));
+            if (!changed) {
+                return false;
+            }
+            compositionInput_ = std::move(nextInput);
+            compositionCursor_ = nextCursor;
         }
         refreshPage();
         return true;
@@ -145,6 +196,26 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         clearComposition();
+        return true;
+    case KeyKind::DeleteForward:
+        if (clipboardMode_) {
+            clearComposition();
+            return true;
+        }
+        if (compositionInput_.empty()) {
+            return false;
+        }
+        if (compositionCursor_ >= compositionInput_.size()) {
+            return true;
+        }
+        {
+            auto nextInput = compositionInput_;
+            nextInput.erase(compositionCursor_, 1);
+            if (!replaceComposition(std::move(nextInput), compositionCursor_)) {
+                return false;
+            }
+        }
+        refreshPage();
         return true;
     case KeyKind::Escape:
         // 只在有内容需要取消时（拼音组合或剪贴板模式）消费 Escape；
@@ -212,16 +283,36 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         return moveCursor(1);
+    case KeyKind::MoveCompositionLeft:
+        if (compositionInput_.empty()) {
+            return false;
+        }
+        if (compositionCursor_ > 0) {
+            --compositionCursor_;
+            updatePreeditCursor();
+            host_.publishPage(page_);
+        }
+        return true;
+    case KeyKind::MoveCompositionRight:
+        if (compositionInput_.empty()) {
+            return false;
+        }
+        if (compositionCursor_ < compositionInput_.size()) {
+            ++compositionCursor_;
+            updatePreeditCursor();
+            host_.publishPage(page_);
+        }
+        return true;
     case KeyKind::PreviousClipboardItem:
-        if (!options_.pageNavigation) {
+        if (!options_.arrowNavigation) {
             return false;
         }
-        return clipboardMode_ ? moveCursor(-1) : movePage(-1);
+        return moveCursor(-1);
     case KeyKind::NextClipboardItem:
-        if (!options_.pageNavigation) {
+        if (!options_.arrowNavigation) {
             return false;
         }
-        return clipboardMode_ ? moveCursor(1) : movePage(1);
+        return moveCursor(1);
     case KeyKind::PreviousPage:
         if (!options_.pageNavigation) {
             return false;
@@ -272,6 +363,7 @@ bool ModernIMEController::removeCurrent() {
         return false;
     }
     page_ = provider_->page();
+    updatePreeditCursor();
     host_.publishPage(page_);
     return true;
 }
@@ -364,7 +456,8 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
     if (page_.preedit.empty()) {
         return false;
     }
-    const auto preedit = page_.preedit;
+    const auto preedit = compositionInput_.empty() ? page_.preedit
+                                                   : compositionInput_;
     clearComposition();
     host_.commit(preedit);
     if (!suffix.empty()) {
@@ -378,6 +471,8 @@ void ModernIMEController::clearComposition() {
     contextAfter_.clear();
     clipboardMode_ = false;
     clipboardEntries_.clear();
+    compositionInput_.clear();
+    compositionCursor_ = 0;
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
     }
@@ -423,12 +518,14 @@ void ModernIMEController::refreshPage() {
     }
     if (provider_) {
         page_ = provider_->page();
+        updatePreeditCursor();
         host_.publishPage(page_);
         return;
     }
     page_.clear();
     page_.preedit = input_.text();
     page_.generation = input_.generation();
+    updatePreeditCursor();
     if (input_.text() == "hail") {
         page_.items.reserve(sampleCandidates.size());
         for (std::size_t index = 0; index < sampleCandidates.size(); ++index) {
@@ -439,6 +536,27 @@ void ModernIMEController::refreshPage() {
         page_.items.push_back({input_.text(), input_.text(), 0});
     }
     host_.publishPage(page_);
+}
+
+bool ModernIMEController::replaceComposition(std::string nextInput,
+                                             std::size_t nextCursor) {
+    if (!nextInput.empty() &&
+        !core::PinyinMatchPolicy::validComposition(nextInput)) {
+        return false;
+    }
+    const bool changed = provider_ ? provider_->replaceInput(nextInput)
+                                   : input_.replace(nextInput);
+    if (!changed) {
+        return false;
+    }
+    compositionInput_ = std::move(nextInput);
+    compositionCursor_ = std::min(nextCursor, compositionInput_.size());
+    return true;
+}
+
+void ModernIMEController::updatePreeditCursor() {
+    page_.preeditCursor = displayedPreeditCursor(
+        page_.preedit, compositionInput_, compositionCursor_);
 }
 
 bool ModernIMEController::openClipboard() {
@@ -453,6 +571,8 @@ bool ModernIMEController::openClipboard() {
     }
     page_.clear();
     page_.mode = core::CandidatePageMode::Clipboard;
+    compositionInput_.clear();
+    compositionCursor_ = 0;
     clipboardMode_ = true;
     page_.items.reserve(clipboardEntries_.size());
     for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {

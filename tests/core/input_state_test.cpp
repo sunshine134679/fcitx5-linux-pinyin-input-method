@@ -26,6 +26,10 @@ int main() {
     assertTrue(state.eraseLast(), "second erase removes the final byte");
     assertTrue(state.eraseLast(), "third erase removes the final byte");
     assertTrue(!state.eraseLast(), "erase on empty input is rejected");
+    assertTrue(state.replace("nihao"), "replace accepts a complete ASCII composition");
+    assertTrue(state.text() == "nihao", "replace updates the whole composition");
+    assertTrue(!state.replace("你") && state.text() == "nihao",
+               "invalid replacement leaves the previous composition intact");
 
     modernime::core::CandidatePage page;
     page.preedit = "hai";

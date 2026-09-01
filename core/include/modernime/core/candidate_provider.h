@@ -13,6 +13,10 @@ public:
 
     virtual bool append(std::string_view input) = 0;
     virtual bool eraseLast() = 0;
+    virtual bool replaceInput(std::string_view input) {
+        reset();
+        return input.empty() || append(input);
+    }
     virtual bool select(std::size_t index) = 0;
     virtual bool remove(std::size_t) { return false; }
     virtual void setContext(std::string_view, std::string_view) {}

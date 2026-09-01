@@ -23,6 +23,7 @@ enum class KeyKind {
     Backspace,
     DeleteCandidate,
     CloseClipboard,
+    DeleteForward,
     Escape,
     Enter,
     Space,
@@ -30,6 +31,8 @@ enum class KeyKind {
     Toggle,
     PreviousCandidate,
     NextCandidate,
+    MoveCompositionLeft,
+    MoveCompositionRight,
     PreviousClipboardItem,
     NextClipboardItem,
     PreviousPage,
@@ -101,6 +104,9 @@ private:
     bool moveCursor(std::ptrdiff_t delta);
     bool movePage(std::ptrdiff_t delta);
     bool openClipboard();
+    bool replaceComposition(std::string nextInput,
+                            std::size_t nextCursor);
+    void updatePreeditCursor();
 
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;
@@ -113,6 +119,8 @@ private:
     bool clipboardMode_ = false;
     bool doubleQuoteOpen_ = false;
     bool singleQuoteOpen_ = false;
+    std::string compositionInput_;
+    std::size_t compositionCursor_ = 0;
     std::vector<std::string> clipboardEntries_;
 };
 

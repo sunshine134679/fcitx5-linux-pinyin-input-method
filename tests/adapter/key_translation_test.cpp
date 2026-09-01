@@ -83,6 +83,21 @@ int main() {
                     fcitx::Key(FcitxKey_Up), disabledBindings)
                     .has_value(),
                "disabled page navigation does not translate arrows");
+    auto arrowDisabledBindings = defaultBindings;
+    arrowDisabledBindings.arrowNavigation = false;
+    assertTrue(!modernime::fcitx5::translateKey(
+                    fcitx::Key(FcitxKey_Up), arrowDisabledBindings)
+                    .has_value(),
+               "arrow setting controls up/down candidate navigation");
+    auto pagingDisabledBindings = defaultBindings;
+    pagingDisabledBindings.pageNavigation = false;
+    assertTrue(modernime::fcitx5::translateKey(
+                   fcitx::Key(FcitxKey_Down), pagingDisabledBindings)
+                   .has_value() &&
+                   !modernime::fcitx5::translateKey(
+                        fcitx::Key(FcitxKey_Page_Down), pagingDisabledBindings)
+                        .has_value(),
+               "paging setting only disables explicit page controls");
     const auto ctrlDelete = modernime::fcitx5::translateKey(
         fcitx::Key(FcitxKey_Delete, ctrl));
     assertTrue(ctrlDelete.has_value() &&
@@ -95,8 +110,14 @@ int main() {
                    shiftDelete->kind ==
                        modernime::fcitx5::KeyKind::DeleteCandidate,
                "shift delete maps to candidate deletion");
-    assertKind(FcitxKey_Delete, modernime::fcitx5::KeyKind::CloseClipboard,
-               "plain delete maps to closing clipboard mode");
+    assertKind(FcitxKey_Delete, modernime::fcitx5::KeyKind::DeleteForward,
+               "plain delete maps to forward composition deletion");
+    assertKind(FcitxKey_Left,
+               modernime::fcitx5::KeyKind::MoveCompositionLeft,
+               "left maps to composition cursor movement");
+    assertKind(FcitxKey_Right,
+               modernime::fcitx5::KeyKind::MoveCompositionRight,
+               "right maps to composition cursor movement");
     assertKind(FcitxKey_Return, modernime::fcitx5::KeyKind::Enter,
                "main enter maps to candidate submission");
     assertKind(FcitxKey_KP_Enter, modernime::fcitx5::KeyKind::Enter,
