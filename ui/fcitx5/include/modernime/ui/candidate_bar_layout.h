@@ -23,7 +23,6 @@ struct CandidateBarMetrics final {
     double panelX = 0.0;
     double panelY = 0.0;
     double panelWidth = 0.0;
-    double maxPanelWidth = 0.0;
     double panelHeight = 0.0;
     double panelRadius = 0.0;
     double borderWidth = 0.0;
@@ -65,9 +64,6 @@ std::function<double(std::string_view)> candidateTextWidthForMode(
     core::CandidatePageMode mode,
     std::function<double(std::string_view)> pinyinTextWidth,
     std::function<double(std::string_view)> clipboardTextWidth);
-
-double candidatePanelWidthLimit(double workareaWidth,
-                                double preferredMaximumWidth);
 
 struct CandidateGeometry final {
     Rect bounds;
