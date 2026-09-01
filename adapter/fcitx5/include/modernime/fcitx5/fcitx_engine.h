@@ -36,6 +36,11 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
 std::optional<KeyEvent> translateKey(const fcitx::Key &key,
                                      const KeyBindings &bindings = {});
 
+// 中英混输边界：大写字母或直通数字到来时，先提交已有拼音组合，再把
+// 当前按键原样交给应用；带 Ctrl/Alt/Super 的快捷键不触发提交。
+bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
+                                              const fcitx::Key &key);
+
 // 两段式剪贴板触发判定：拼音组合恰好是触发字母（默认 v）且当前按键是
 // 触发数字（默认 2、无 Ctrl/Alt/Super 修饰）时返回 true。
 bool clipboardTriggerFire(std::string_view preedit, const fcitx::Key &key,

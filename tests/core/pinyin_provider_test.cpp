@@ -1,6 +1,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include "modernime/core/learning_store.h"
+#include "modernime/core/pinyin_match.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -189,6 +190,23 @@ int main() {
                "system dictionary produces the expected top candidate");
     assertTrue(provider.page().items.front().fullPinyin == "ni'hao",
                "candidate retains full pinyin segmentation");
+
+    provider.reset();
+    assertTrue(provider.append("xign"), "a common transposition typo is accepted");
+    bool foundCorrectedXing = false;
+    for (const auto &candidate : provider.page().items) {
+        if (candidate.source != modernime::core::CandidateSource::Raw &&
+            modernime::core::PinyinMatchPolicy::canonical(
+                candidate.fullPinyin) == "xing") {
+            foundCorrectedXing = true;
+            break;
+        }
+    }
+    assertTrue(foundCorrectedXing,
+               "common pinyin transposition xign is corrected to xing");
+
+    provider.reset();
+    assertTrue(provider.append("nihao"), "full pinyin is accepted again");
 
     assertTrue(provider.eraseLast(), "last pinyin byte can be erased");
     assertTrue(provider.page().preedit == "ni'ha",

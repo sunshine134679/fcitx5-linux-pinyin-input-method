@@ -119,5 +119,20 @@ int main() {
                    apostrophe->kind == modernime::fcitx5::KeyKind::Character &&
                    apostrophe->character == '\'',
                "apostrophe maps to a character event");
+    const fcitx::Key uppercaseN(FcitxKey_N, shift);
+    assertTrue(!modernime::fcitx5::translateKey(uppercaseN).has_value(),
+               "uppercase letters pass through instead of entering pinyin");
+    assertTrue(modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
+                   "ni", uppercaseN),
+               "uppercase input commits an existing composition first");
+    assertTrue(!modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
+                   "", uppercaseN),
+               "uppercase input at idle passes through directly");
+    assertTrue(modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
+                   "ni", fcitx::Key(FcitxKey_0)),
+               "a literal digit commits an existing composition first");
+    assertTrue(!modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
+                   "ni", fcitx::Key(FcitxKey_N, ctrlShift)),
+               "modified shortcuts never force a composition commit");
     return EXIT_SUCCESS;
 }

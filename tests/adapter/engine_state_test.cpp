@@ -338,6 +338,13 @@ int main() {
     assertTrue(emptyHost.commits.size() == 4 && emptyHost.commits[2] == "y" &&
                    emptyHost.commits[3] == ";",
                "punctuation is preserved after raw fallback");
+    type(emptyController, "abc");
+    assertTrue(!emptyController.handle(
+                   {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "a literal digit passes through after raw fallback");
+    assertTrue(emptyHost.commits.back() == "abc" &&
+                   emptyController.page().preedit.empty(),
+               "raw composition commits before a literal digit");
 
     controller.handle({modernime::fcitx5::KeyKind::Toggle, 0, 0});
     assertTrue(!controller.active(), "toggle disables input");
@@ -405,6 +412,13 @@ int main() {
                "controller delegates character input to provider");
     assertTrue(providerController.page().items.front().text == "你好",
                "controller publishes provider candidates");
+    const auto commitsBeforeUnavailableDigit = providerHost.commits.size();
+    assertTrue(providerController.handle(
+                   {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "an unavailable candidate digit is consumed during composition");
+    assertTrue(providerController.page().preedit == "nihao" &&
+                   providerHost.commits.size() == commitsBeforeUnavailableDigit,
+               "an unavailable candidate digit neither leaks nor commits");
     assertTrue(providerController.select(0), "provider selection is handled");
     assertTrue(provider.selectCount == 1,
                "controller delegates candidate selection to provider");
@@ -446,6 +460,11 @@ int main() {
     type(manyController, "n");
     assertTrue(manyController.page().items.size() == 20,
                "all candidates remain available to the controller");
+    assertTrue(manyController.handle(
+                   {modernime::fcitx5::KeyKind::PreviousCandidate, 0, 0}),
+               "candidate navigation is consumed at the first boundary");
+    assertTrue(manyController.page().cursor == 0,
+               "the first-boundary navigation keeps the current candidate");
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}),
                "next candidate moves the cursor");

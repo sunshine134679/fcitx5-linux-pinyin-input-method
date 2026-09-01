@@ -442,6 +442,7 @@ PinyinCandidateProvider::createSharedResources(
 
     resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
                                                          std::move(model));
+    resources->ime->setFuzzyFlags(libime::PinyinFuzzyFlag::CommonTypo);
     resources->ime->setNBest(32);
     if (options.learningEnabled) {
         resources->learning =

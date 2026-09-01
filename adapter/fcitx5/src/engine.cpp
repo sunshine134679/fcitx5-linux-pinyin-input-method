@@ -147,7 +147,17 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         }
         const auto index = static_cast<std::size_t>(event.digit - '1');
         const auto pageStart = currentPageIndex() * pageSize();
-        return select(pageStart + index);
+        if (page_.items.empty()) {
+            if (!page_.preedit.empty()) {
+                commitRawPreedit();
+            }
+            return false;
+        }
+        const auto candidateIndex = pageStart + index;
+        if (candidateIndex >= page_.items.size()) {
+            return true;
+        }
+        return select(candidateIndex);
     }
     case KeyKind::PreviousCandidate:
         if (!options_.arrowNavigation) {
@@ -232,7 +242,7 @@ bool ModernIMEController::moveCursor(std::ptrdiff_t delta) {
     const auto last = static_cast<std::ptrdiff_t>(page_.items.size() - 1);
     const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
     if (next == current) {
-        return false;
+        return true;
     }
     page_.cursor = static_cast<std::size_t>(next);
     host_.publishPage(page_);
@@ -249,7 +259,7 @@ bool ModernIMEController::movePage(std::ptrdiff_t delta) {
         (page_.items.size() - 1) / pageSize());
     const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
     if (next == current) {
-        return false;
+        return true;
     }
     page_.cursor = static_cast<std::size_t>(next) * pageSize();
     host_.publishPage(page_);

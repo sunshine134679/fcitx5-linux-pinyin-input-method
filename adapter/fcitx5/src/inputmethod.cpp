@@ -422,9 +422,7 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
     if (!hasNonShiftModifier(key)) {
         const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
         if (unicode >= 'A' && unicode <= 'Z') {
-            event.kind = KeyKind::Character;
-            event.character = static_cast<char>(unicode - 'A' + 'a');
-            return event;
+            return std::nullopt;
         }
         if (unicode >= 'a' && unicode <= 'z') {
             event.kind = KeyKind::Character;
@@ -443,6 +441,16 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         }
     }
     return std::nullopt;
+}
+
+bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
+                                              const fcitx::Key &key) {
+    if (preedit.empty() || hasNonShiftModifier(key)) {
+        return false;
+    }
+    const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
+    return (unicode >= 'A' && unicode <= 'Z') ||
+           (unicode >= '0' && unicode <= '9');
 }
 
 void ModernIMEInputMethod::pollClipboard() {
@@ -564,6 +572,10 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         return;
     }
     if (!modernEvent.has_value()) {
+        if (shouldCommitCompositionBeforePassThrough(
+                contextState->controller().page().preedit, event.key())) {
+            contextState->controller().handle({KeyKind::Enter, 0, 0});
+        }
         return;
     }
 
