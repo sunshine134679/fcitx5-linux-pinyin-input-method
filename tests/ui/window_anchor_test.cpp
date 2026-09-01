@@ -16,6 +16,11 @@ void assertTrue(bool condition, std::string_view message) {
 } // namespace
 
 int main() {
+    assertTrue(modernime::ui::cursorAnchorBottom(360, 0) == 370,
+               "zero-height caret still has a usable anchor below it");
+    assertTrue(modernime::ui::cursorAnchorBottom(360, 22) == 382,
+               "reported caret height is preserved");
+
     modernime::ui::WindowAnchor anchor;
 
     assertTrue(anchor.capture(120, 240), "first cursor position is captured");

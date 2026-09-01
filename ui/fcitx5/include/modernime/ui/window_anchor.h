@@ -2,6 +2,12 @@
 
 namespace modernime::ui {
 
+// 一些 GTK/IBus 前端会提供正确的光标坐标，但把光标高度报告为 0。
+// 此时仍应使用坐标，并给候选栏留出一个最小的下方间距。
+constexpr int cursorAnchorBottom(int top, int height) {
+    return top + (height > 0 ? height : 10);
+}
+
 struct WindowAnchor final {
     int x = 0;
     int y = 0;

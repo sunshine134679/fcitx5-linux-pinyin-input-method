@@ -86,11 +86,8 @@ struct ModernIMEUserInterface::Impl final {
             return;
         }
         const auto &cursor = inputContext->cursorRect();
-        if (cursor.isEmpty()) {
-            return;  // 前端未提供有效光标，保留上次位置
-        }
         int desiredX = cursor.left();
-        int desiredY = cursor.top() + cursor.height();
+        int desiredY = cursorAnchorBottom(cursor.top(), cursor.height());
         const auto panelWidth = windowWidth();
         const auto panelHeight = windowHeight();
         if (GdkDisplay *display = gtk_widget_get_display(window);
