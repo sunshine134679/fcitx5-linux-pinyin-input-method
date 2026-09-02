@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -144,6 +145,57 @@ std::string candidateKey(std::string_view pinyin, std::string_view text) {
     key.push_back('\x1f');
     key.append(text);
     return key;
+}
+
+std::vector<std::size_t> syllablePrefixEnds(std::string_view rawInput,
+                                            std::string_view segmentedInput) {
+    std::vector<std::size_t> result;
+    std::size_t rawOffset = 0;
+    for (const char character : segmentedInput) {
+        if (character != '\'') {
+            while (rawOffset < rawInput.size() && rawInput[rawOffset] == '\'') {
+                ++rawOffset;
+            }
+            if (rawOffset < rawInput.size()) {
+                ++rawOffset;
+            }
+            continue;
+        }
+        if (rawOffset < rawInput.size() && rawInput[rawOffset] == '\'') {
+            ++rawOffset;
+        }
+        if (rawOffset > 0 && rawOffset < rawInput.size()) {
+            result.push_back(rawOffset);
+        }
+    }
+    return result;
+}
+
+std::string prefixInput(std::string_view rawInput, std::size_t consumedBytes) {
+    auto prefix = std::string(rawInput.substr(0, consumedBytes));
+    while (!prefix.empty() && prefix.back() == '\'') {
+        prefix.pop_back();
+    }
+    return prefix;
+}
+
+bool isSingleUtf8Character(std::string_view text) {
+    return !text.empty() &&
+           std::count_if(text.begin(), text.end(), [](const char character) {
+               return (static_cast<unsigned char>(character) & 0xC0U) != 0x80U;
+           }) == 1;
+}
+
+std::string_view afterFirstUtf8Character(std::string_view text) {
+    if (text.empty()) {
+        return text;
+    }
+    std::size_t offset = 1;
+    while (offset < text.size() &&
+           (static_cast<unsigned char>(text[offset]) & 0xC0U) == 0x80U) {
+        ++offset;
+    }
+    return text.substr(offset);
 }
 
 bool coversPinyinInput(std::string_view userInput,
@@ -528,6 +580,23 @@ public:
                                        contextBefore_, contextAfter_,
                                        nowMilliseconds());
         }
+        const auto rawInput = context->userInput();
+        if (candidate.consumedInputBytes > 0 &&
+            candidate.consumedInputBytes < rawInput.size()) {
+            auto remainder = rawInput.substr(candidate.consumedInputBytes);
+            while (!remainder.empty() && remainder.front() == '\'') {
+                remainder.erase(remainder.begin());
+            }
+            context->clear();
+            if (!remainder.empty() && !context->type(remainder)) {
+                context->clear();
+                context->type(rawInput);
+                refresh();
+                return false;
+            }
+            refresh();
+            return true;
+        }
         context->select(page_.items[index].sourceIndex);
         refresh();
         return true;
@@ -633,6 +702,7 @@ private:
         }
         page_.clear();
         const auto rawInput = context->userInput();
+        page_.rawInput = rawInput;
         page_.preedit = rawInput;
         ++generation;
         page_.generation = generation;
@@ -647,7 +717,10 @@ private:
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), nowMilliseconds(),
             contextBefore_, contextAfter_, previousOrder);
-        page_.items.reserve(result.order.size() + 1);
+        const auto segmentedInput =
+            automaticallySegmentedPreedit(rawInput, result);
+        const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);
+        page_.items.reserve(result.order.size() + 4);
         const bool hasPinyinCoverage = std::any_of(
             result.scored.begin(), result.scored.end(),
             [&rawInput](const auto &candidate) {
@@ -658,6 +731,10 @@ private:
         std::size_t manualCount = 0;
         std::unordered_set<std::string> seen;
         seen.reserve(result.order.size());
+        std::vector<core::CandidateItem> fullItems;
+        fullItems.reserve(result.order.size());
+        std::vector<core::CandidateItem> partialPool;
+        partialPool.reserve(result.order.size());
         for (const auto sourceIndex : result.order) {
             const auto &candidate = result.scored[sourceIndex];
             const bool isManual = userDictionary().contains(
@@ -688,18 +765,146 @@ private:
             if (isManual) {
                 ++manualCount;
             }
+            item.consumedInputBytes = rawInput.size();
+            if (core::PinyinMatchPolicy::priority(
+                    rawInput, candidate.full_pinyin) == -1) {
+                const auto candidatePinyin =
+                    core::PinyinMatchPolicy::canonical(candidate.full_pinyin);
+                for (const auto prefixEnd : prefixEnds) {
+                    if (core::PinyinMatchPolicy::canonical(
+                            prefixInput(rawInput, prefixEnd)) == candidatePinyin) {
+                        item.consumedInputBytes = prefixEnd;
+                        break;
+                    }
+                }
+            }
+            if (item.consumedInputBytes < rawInput.size()) {
+                partialPool.push_back(std::move(item));
+            } else {
+                fullItems.push_back(std::move(item));
+            }
+        }
+
+        std::vector<core::CandidateItem> partialItems;
+        if (pinyinLetterCount(rawInput) >= 5 && !partialPool.empty()) {
+            for (auto iterator = prefixEnds.rbegin();
+                 iterator != prefixEnds.rend() && partialItems.size() < 4;
+                 ++iterator) {
+                // On long input, committing everything except the final
+                // syllable usually produces a decoder fragment such as
+                // “你好啊老”. Start one boundary earlier so the recovery
+                // candidates are complete phrases rather than dangling stems.
+                if (iterator == prefixEnds.rbegin() && prefixEnds.size() >= 3) {
+                    continue;
+                }
+                const auto prefix = prefixInput(rawInput, *iterator);
+                if (pinyinLetterCount(prefix) < 4) {
+                    continue;
+                }
+                const auto prefixSyllableCount =
+                    prefixEnds.size() - static_cast<std::size_t>(
+                                            std::distance(prefixEnds.rbegin(),
+                                                          iterator));
+                const auto candidateLimit =
+                    prefixSyllableCount == 2 ? std::size_t{3} : std::size_t{1};
+                std::size_t addedForPrefix = 0;
+                std::string basePhrase;
+                std::string baseFullPinyin;
+                for (auto &candidate : partialPool) {
+                    if (candidate.text.empty() ||
+                        candidate.consumedInputBytes != *iterator) {
+                        continue;
+                    }
+                    if (basePhrase.empty()) {
+                        basePhrase = candidate.text;
+                        baseFullPinyin = candidate.fullPinyin;
+                    }
+                    partialItems.push_back(std::move(candidate));
+                    candidate.text.clear();
+                    ++addedForPrefix;
+                    if (addedForPrefix >= candidateLimit ||
+                        partialItems.size() >= 4) {
+                        break;
+                    }
+                }
+                if (prefixSyllableCount == 2 &&
+                    addedForPrefix < candidateLimit &&
+                    partialItems.size() < 4 && !basePhrase.empty()) {
+                    const auto phraseSuffix = afterFirstUtf8Character(basePhrase);
+                    const auto separator = baseFullPinyin.find('\'');
+                    const auto firstPinyin =
+                        std::string_view(baseFullPinyin).substr(0, separator);
+                    context->setCursor(prefixEnds.front());
+                    const auto &cursorCandidates = context->candidatesToCursor();
+                    for (std::size_t cursorIndex = 0;
+                         cursorIndex < cursorCandidates.size(); ++cursorIndex) {
+                        const auto firstCharacter =
+                            cursorCandidates[cursorIndex].toString();
+                        const auto candidatePinyin = context->candidateFullPinyin(
+                            cursorCandidates[cursorIndex]);
+                        if (!isSingleUtf8Character(firstCharacter) ||
+                            core::PinyinMatchPolicy::canonical(candidatePinyin) !=
+                                core::PinyinMatchPolicy::canonical(firstPinyin)) {
+                            continue;
+                        }
+                        auto text = firstCharacter + std::string(phraseSuffix);
+                        const auto key = candidateKey(baseFullPinyin, text);
+                        if (!seen.emplace(key).second) {
+                            continue;
+                        }
+                        core::CandidateItem item;
+                        item.text = std::move(text);
+                        item.fullPinyin = baseFullPinyin;
+                        const bool isManual = userDictionary().contains(
+                            item.fullPinyin, item.text);
+                        const bool isLearned =
+                            !isManual && learning != nullptr &&
+                            learning->hasPositiveFrequency(item.text,
+                                                           item.fullPinyin);
+                        item.source =
+                            isManual
+                                ? core::CandidateSource::UserDictionary
+                                : (isLearned ? core::CandidateSource::Learned
+                                             : core::CandidateSource::Engine);
+                        item.consumedInputBytes = *iterator;
+                        partialItems.push_back(std::move(item));
+                        ++addedForPrefix;
+                        if (addedForPrefix >= candidateLimit ||
+                            partialItems.size() >= 4) {
+                            break;
+                        }
+                    }
+                    context->setCursor(rawInput.size());
+                }
+            }
+        }
+
+        if (!fullItems.empty()) {
+            page_.items.push_back(std::move(fullItems.front()));
+        }
+        for (auto &item : partialItems) {
             page_.items.push_back(std::move(item));
+        }
+        for (std::size_t index = fullItems.empty() ? 0 : 1;
+             index < fullItems.size(); ++index) {
+            page_.items.push_back(std::move(fullItems[index]));
+        }
+        for (auto &item : partialPool) {
+            if (!item.text.empty()) {
+                page_.items.push_back(std::move(item));
+            }
         }
 
         core::CandidateItem rawCandidate;
         rawCandidate.text = rawInput;
         rawCandidate.source = core::CandidateSource::Raw;
+        rawCandidate.consumedInputBytes = rawInput.size();
         if (!hasPinyinCoverage && rawInput.size() >= 3) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
         } else {
             page_.items.push_back(std::move(rawCandidate));
         }
-        page_.preedit = automaticallySegmentedPreedit(rawInput, result);
+        page_.preedit = segmentedInput;
     }
 
     std::shared_ptr<SharedResources> shared_;

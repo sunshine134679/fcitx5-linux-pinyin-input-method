@@ -21,6 +21,7 @@ bool CandidatePage::select(std::size_t index) {
 }
 
 void CandidatePage::clear() {
+    rawInput.clear();
     preedit.clear();
     preeditCursor = kCursorAtEnd;
     items.clear();

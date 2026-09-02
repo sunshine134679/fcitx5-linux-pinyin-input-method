@@ -28,6 +28,16 @@ struct RecordingHost final : modernime::fcitx5::EngineHost {
     void commit(std::string_view text) override { commits.emplace_back(text); }
 };
 
+std::size_t indexOf(const modernime::core::CandidatePage &page,
+                    std::string_view text) {
+    for (std::size_t index = 0; index < page.items.size(); ++index) {
+        if (page.items[index].text == text) {
+            return index;
+        }
+    }
+    return page.items.size();
+}
+
 } // namespace
 
 int main() {
@@ -77,5 +87,23 @@ int main() {
                    controller.page().preedit == "ni'hao" &&
                    controller.page().items.front().text == "你好",
                "middle backspace restores candidates without retyping the phrase");
+
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "edited composition is committed before the partial test");
+    for (const char character : std::string_view("nihaoalaodi")) {
+        assertTrue(controller.handle(
+                       {modernime::fcitx5::KeyKind::Character, character, 0}),
+                   "long pinyin input is accepted");
+    }
+    const auto phraseIndex = indexOf(controller.page(), "你好啊");
+    assertTrue(phraseIndex < controller.page().items.size(),
+               "controller exposes the phrase-prefix candidate");
+    assertTrue(controller.select(phraseIndex),
+               "controller selects the phrase-prefix candidate");
+    assertTrue(host.commits.back() == "你好啊",
+               "partial selection commits only the selected phrase");
+    assertTrue(controller.page().rawInput == "laodi" &&
+                   controller.page().preedit == "lao'di",
+               "controller keeps the remaining pinyin active");
     return EXIT_SUCCESS;
 }

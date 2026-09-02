@@ -342,11 +342,23 @@ bool ModernIMEController::select(std::size_t index) {
         return true;
     }
     if (provider_) {
-        const auto text = page_.items[index].text;
+        const auto candidate = page_.items[index];
+        const auto text = candidate.text;
+        const bool partialSelection = candidate.consumedInputBytes > 0 &&
+                                      candidate.consumedInputBytes <
+                                          page_.rawInput.size();
         if (!provider_->select(index)) {
             return false;
         }
         host_.commit(text);
+        page_ = provider_->page();
+        if (partialSelection && !page_.rawInput.empty()) {
+            compositionInput_ = page_.rawInput;
+            compositionCursor_ = compositionInput_.size();
+            updatePreeditCursor();
+            host_.publishPage(page_);
+            return true;
+        }
         clearComposition();
         return true;
     }
@@ -586,10 +598,10 @@ bool ModernIMEController::commitCurrent() {
     if (page_.items.empty() || page_.cursor >= page_.items.size()) {
         return false;
     }
-    const auto text = page_.items[page_.cursor].text;
-    if (!clipboardMode_ && provider_ && !provider_->select(page_.cursor)) {
-        return false;
+    if (clipboardMode_ || provider_ != nullptr) {
+        return select(page_.cursor);
     }
+    const auto text = page_.items[page_.cursor].text;
     host_.commit(text);
     clearComposition();
     return true;

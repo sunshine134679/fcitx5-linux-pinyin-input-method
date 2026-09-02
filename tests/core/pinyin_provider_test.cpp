@@ -3,6 +3,7 @@
 #include "modernime/core/learning_store.h"
 #include "modernime/core/pinyin_match.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -45,6 +46,48 @@ std::size_t indexOf(const modernime::core::CandidatePage &page,
 bool hasText(const modernime::core::CandidatePage &page,
              std::string_view text) {
     return indexOf(page, text) < page.items.size();
+}
+
+void testLongInputMixesUsefulPhrasePrefixes() {
+    const auto learningPath = testPath("multigranularity-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    assertTrue(provider.append("nihaoalaodi"),
+               "long continuous pinyin is accepted");
+    const auto &page = provider.page();
+    assertTrue(!page.items.empty() && page.items.front().text == "你好啊老弟",
+               "best full-sentence conversion stays first");
+    assertTrue(indexOf(page, "你好啊") < std::min<std::size_t>(9, page.items.size()),
+               "first page includes a useful three-syllable prefix");
+    assertTrue(indexOf(page, "你好") < std::min<std::size_t>(9, page.items.size()),
+               "first page includes a useful two-syllable prefix");
+    assertTrue(indexOf(page, "拟好") < std::min<std::size_t>(5, page.items.size()),
+               "visible candidates include a distinct short homophone option");
+
+    std::size_t fullSentenceVariants = 0;
+    const auto firstPageSize = std::min<std::size_t>(5, page.items.size());
+    for (std::size_t index = 0; index < firstPageSize; ++index) {
+        if (page.items[index].fullPinyin == "ni'hao'a'lao'di") {
+            ++fullSentenceVariants;
+        }
+    }
+    assertTrue(fullSentenceVariants == 1,
+               "first page is not filled with same-prefix sentence variants");
+
+    const auto phraseIndex = indexOf(page, "你好啊");
+    assertTrue(provider.select(phraseIndex),
+               "phrase-prefix candidate can be selected");
+    assertTrue(provider.page().rawInput == "laodi" &&
+                   provider.page().preedit == "lao'di",
+               "partial selection preserves the unconsumed pinyin suffix");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
 }
 
 void testExtensionDictionaryIsLoadedAsOfflineKnowledge() {
@@ -178,6 +221,7 @@ void testRepeatedSelectionAcrossContextsStillPromotes() {
 } // namespace
 
 int main() {
+    testLongInputMixesUsefulPhrasePrefixes();
     testAbbreviationPhraseOutranksRawEnglishFallback();
     testAbbreviationInputIsAutomaticallySegmentedInPreedit();
     testFullPinyinInputIsAutomaticallySegmentedInPreedit();
