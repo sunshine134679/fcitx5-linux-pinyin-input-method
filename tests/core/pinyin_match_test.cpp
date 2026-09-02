@@ -34,6 +34,16 @@ int main() {
                "abbreviation match has secondary priority");
     assertTrue(PinyinMatchPolicy::priority("nihaoma", "ni'hao") == -1,
                "prefix candidate is marked as incomplete");
+    assertTrue(PinyinMatchPolicy::priority("zongguo", "zong'guo") == 2,
+               "exact pinyin keeps the highest priority");
+    assertTrue(PinyinMatchPolicy::priority("zongguo", "zhong'guo") == 0,
+               "fuzzy pinyin does not receive exact-match priority");
+    assertTrue(PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                   "wsm", "wei'shen'me", "为什么"),
+               "common phrase with an exact initial key is trusted");
+    assertTrue(!PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                   "who", "wo'hen'hao", "我很好"),
+               "ordinary English-shaped initials are not broadly trusted");
 
     std::vector<CandidateScore> candidates{
         {0, "你", "ni", 0.0F}, {1, "你好", "ni'hao", 0.0F}};
@@ -42,5 +52,13 @@ int main() {
                "exact candidate outranks a prefix candidate");
     assertTrue(candidates[1].match_priority == 2,
                "ranker stores match priority");
+
+    std::vector<CandidateScore> fuzzyCandidates{
+        {0, "中国", "zhong'guo", -100.0F},
+        {1, "总过", "zong'guo", 100.0F},
+    };
+    const auto fuzzyOrder = CandidateRanker::rank("zongguo", fuzzyCandidates);
+    assertTrue(fuzzyOrder.size() == 2 && fuzzyOrder[0] == 1,
+               "exact pinyin outranks a stronger fuzzy decoder candidate");
     return EXIT_SUCCESS;
 }

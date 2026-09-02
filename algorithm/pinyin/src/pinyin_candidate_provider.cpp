@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -243,6 +244,32 @@ bool coversPinyinInput(std::string_view userInput,
         return false;
     }
     return inputOffset == input.size() && consumedFullSyllable;
+}
+
+void promoteStrongerFuzzyCandidate(
+    std::string_view rawInput,
+    std::vector<core::CandidateItem> &fullCandidates) {
+    if (fullCandidates.size() < 2 ||
+        core::PinyinMatchPolicy::priority(
+            rawInput, fullCandidates.front().fullPinyin) != 2) {
+        return;
+    }
+
+    const auto fuzzy = std::find_if(
+        std::next(fullCandidates.begin()), fullCandidates.end(),
+        [&rawInput, &fullCandidates](const auto &candidate) {
+            return core::PinyinMatchPolicy::priority(
+                       rawInput, candidate.fullPinyin) == 0 &&
+                   candidate.sourceIndex < fullCandidates.front().sourceIndex;
+        });
+    if (fuzzy == fullCandidates.end()) {
+        return;
+    }
+
+    auto promoted = std::move(*fuzzy);
+    fullCandidates.erase(fuzzy);
+    fullCandidates.insert(std::next(fullCandidates.begin()),
+                          std::move(promoted));
 }
 
 struct PreeditAlignment final {
@@ -475,7 +502,15 @@ PinyinCandidateProvider::createSharedResources(
 
     resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
                                                          std::move(model));
-    resources->ime->setFuzzyFlags(libime::PinyinFuzzyFlag::CommonTypo);
+    resources->ime->setFuzzyFlags(libime::PinyinFuzzyFlags{
+        libime::PinyinFuzzyFlag::CommonTypo,
+        libime::PinyinFuzzyFlag::Z_ZH,
+        libime::PinyinFuzzyFlag::C_CH,
+        libime::PinyinFuzzyFlag::S_SH,
+        libime::PinyinFuzzyFlag::L_N,
+        libime::PinyinFuzzyFlag::EN_ENG,
+        libime::PinyinFuzzyFlag::IN_ING,
+    });
     resources->ime->setNBest(32);
     if (options.learningEnabled) {
         resources->learning =
@@ -766,10 +801,21 @@ private:
             }
         }
 
+        promoteStrongerFuzzyCandidate(rawInput, fullItems);
         const auto *bestFullSentence =
             fullItems.empty() ? nullptr : &fullItems.front();
         page_.items = mixCandidateItems(fullItems, partialPool,
                                         bestFullSentence, prefixEnds, rawInput);
+
+        const bool hasTrustedShortAbbreviation =
+            std::any_of(page_.items.begin(), page_.items.end(),
+                        [&rawInput](const auto &item) {
+                            return item.source != core::CandidateSource::Raw &&
+                                   core::PinyinMatchPolicy::
+                                       trustedShortAbbreviationMatch(
+                                           rawInput, item.fullPinyin,
+                                           item.text);
+                        });
 
         core::CandidateItem rawCandidate;
         rawCandidate.text = rawInput;
@@ -783,7 +829,8 @@ private:
         if (alreadyHasRawCandidate) {
             // The mixer uses raw input as the fifth-slot fallback when no
             // distinct decoded homophone can enforce the full-sentence quota.
-        } else if (!hasPinyinCoverage && rawInput.size() >= 3) {
+        } else if (!hasPinyinCoverage && rawInput.size() >= 3 &&
+                   !hasTrustedShortAbbreviation) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
         } else {
             page_.items.push_back(std::move(rawCandidate));

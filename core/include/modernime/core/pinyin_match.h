@@ -13,6 +13,9 @@ public:
     static bool isAbbreviationInput(std::string_view userInput);
     static bool exactInputMatch(std::string_view userInput,
                                 std::string_view fullPinyin);
+    static bool trustedShortAbbreviationMatch(std::string_view userInput,
+                                              std::string_view fullPinyin,
+                                              std::string_view text);
     static int priority(std::string_view userInput,
                         std::string_view fullPinyin);
 };

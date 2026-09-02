@@ -1,5 +1,6 @@
 #include "modernime/core/pinyin_match.h"
 
+#include <array>
 #include <cctype>
 
 namespace modernime::core {
@@ -71,6 +72,29 @@ bool PinyinMatchPolicy::isAbbreviationInput(std::string_view userInput) {
 bool PinyinMatchPolicy::exactInputMatch(std::string_view userInput,
                                         std::string_view fullPinyin) {
     return canonical(fullPinyin) == canonical(userInput);
+}
+
+bool PinyinMatchPolicy::trustedShortAbbreviationMatch(
+    std::string_view userInput, std::string_view fullPinyin,
+    std::string_view text) {
+    if (userInput.size() != 3 || !isAbbreviationInput(userInput) ||
+        abbreviationKey(fullPinyin) != userInput) {
+        return false;
+    }
+
+    static constexpr std::array commonPhrases{
+        std::string_view{"为什么"}, std::string_view{"没什么"},
+        std::string_view{"怎么样"}, std::string_view{"怎么办"},
+        std::string_view{"不知道"}, std::string_view{"没问题"},
+        std::string_view{"对不起"}, std::string_view{"没关系"},
+        std::string_view{"谢谢你"}, std::string_view{"我知道"},
+    };
+    for (const auto phrase : commonPhrases) {
+        if (text == phrase) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int PinyinMatchPolicy::priority(std::string_view userInput,

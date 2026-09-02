@@ -235,6 +235,50 @@ void testAbbreviationPhraseOutranksRawEnglishFallback() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testCommonFuzzyAndShortAbbreviationRanking() {
+    const auto learningPath = testPath("fuzzy-abbreviation-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    assertTrue(provider.append("zongguo"),
+               "fuzzy initial input is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   modernime::core::PinyinMatchPolicy::priority(
+                       "zongguo",
+                       provider.page().items.front().fullPinyin) == 2,
+               "an exact pinyin candidate remains ahead of fuzzy matches");
+    assertTrue(indexOf(provider.page(), "中国") < 3,
+               "z/zh fuzzy match is recoverable near the front");
+
+    provider.reset();
+    assertTrue(provider.append("wsm"),
+               "common short abbreviation is accepted");
+    assertTrue(hasText(provider.page(), "为什么"),
+               "common short abbreviation has a real LibIME candidate");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "为什么",
+               "common short abbreviation outranks raw letters");
+    assertTrue(indexOf(provider.page(), "wsm") < provider.page().items.size(),
+               "raw short abbreviation remains available");
+
+    provider.reset();
+    assertTrue(provider.append("who"), "ordinary English word is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "who" &&
+                   provider.page().items.front().source ==
+                       modernime::core::CandidateSource::Raw,
+               "ordinary English word stays raw first");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 void testAbbreviationInputIsAutomaticallySegmentedInPreedit() {
     const auto learningPath = testPath("abbreviation-preedit-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
@@ -315,6 +359,7 @@ int main() {
     testMixerUsesRawFallbackWhenNoHomophoneExists();
     testLongInputMixesUsefulPhrasePrefixes();
     testLongInputMixingPrioritizesTrustedPrefixesAndSentences();
+    testCommonFuzzyAndShortAbbreviationRanking();
     testAbbreviationPhraseOutranksRawEnglishFallback();
     testAbbreviationInputIsAutomaticallySegmentedInPreedit();
     testFullPinyinInputIsAutomaticallySegmentedInPreedit();
