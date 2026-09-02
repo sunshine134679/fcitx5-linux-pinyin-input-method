@@ -145,6 +145,71 @@ struct EmptyCandidateProvider final : modernime::core::CandidateProvider {
     }
 };
 
+struct FreshRepublishProvider final : modernime::core::CandidateProvider {
+    enum class Scenario { PartialSelection, Removal };
+
+    explicit FreshRepublishProvider(Scenario selectedScenario)
+        : scenario(selectedScenario) {}
+
+    bool append(std::string_view input) override {
+        current.rawInput.append(input);
+        current.preedit = current.rawInput;
+        current.pageBoundaries.clear();
+        if (scenario == Scenario::PartialSelection) {
+            current.items = {{"部分", current.rawInput, 0,
+                              modernime::core::CandidateSource::Engine, 1}};
+        } else {
+            populate("移除后", 12);
+        }
+        return true;
+    }
+
+    bool eraseLast() override { return false; }
+
+    bool select(std::size_t index) override {
+        if (index >= current.items.size()) {
+            return false;
+        }
+        if (scenario == Scenario::PartialSelection && !partialSelected) {
+            partialSelected = true;
+            current.rawInput = "i";
+            current.preedit = "i";
+            populate("剩余", 11);
+        }
+        return true;
+    }
+
+    bool remove(std::size_t index) override {
+        if (scenario != Scenario::Removal || index >= current.items.size()) {
+            return false;
+        }
+        current.items.erase(current.items.begin() +
+                            static_cast<std::ptrdiff_t>(index));
+        current.pageBoundaries.clear();
+        return true;
+    }
+
+    void reset() override { current.clear(); }
+
+    const modernime::core::CandidatePage &page() const override {
+        return current;
+    }
+
+    void populate(std::string_view prefix, std::size_t count) {
+        current.items.clear();
+        current.pageBoundaries.clear();
+        for (std::size_t index = 0; index < count; ++index) {
+            current.items.push_back({std::string(prefix) +
+                                         std::to_string(index + 1),
+                                     current.rawInput, index});
+        }
+    }
+
+    Scenario scenario;
+    modernime::core::CandidatePage current;
+    bool partialSelected = false;
+};
+
 void type(modernime::fcitx5::ModernIMEController &controller,
           std::string_view text) {
     for (const char character : text) {
@@ -500,6 +565,49 @@ int main() {
                "provider receives current candidate deletion");
     assertTrue(removableController.page().preeditCursor == 3,
                "candidate deletion preserves the composition insertion point");
+
+    FreshRepublishProvider partialRepublishProvider(
+        FreshRepublishProvider::Scenario::PartialSelection);
+    RecordingHost partialRepublishHost;
+    modernime::fcitx5::ModernIMEController partialRepublishController(
+        partialRepublishHost, &partialRepublishProvider);
+    type(partialRepublishController, "ni");
+    assertTrue(partialRepublishController.select(0),
+               "partial candidate selection republishes remaining candidates");
+    assertTrue(partialRepublishController.page().items.size() == 11 &&
+                   partialRepublishController.page().pageBoundaries ==
+                       std::vector<modernime::core::PageBoundary>{{0, 9},
+                                                                  {9, 11}},
+               "partial selection applies fallback to the fresh provider page");
+    assertTrue(partialRepublishController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   partialRepublishController.handle(
+                       {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "partial selection remainder reaches its eleventh candidate");
+    assertTrue(partialRepublishHost.commits.back() == "剩余11",
+               "partial remainder digit maps through the shared boundary");
+
+    FreshRepublishProvider removalRepublishProvider(
+        FreshRepublishProvider::Scenario::Removal);
+    RecordingHost removalRepublishHost;
+    modernime::fcitx5::ModernIMEController removalRepublishController(
+        removalRepublishHost, &removalRepublishProvider);
+    type(removalRepublishController, "n");
+    assertTrue(removalRepublishController.handle(
+                   {modernime::fcitx5::KeyKind::DeleteCandidate, 0, 0}),
+               "candidate removal republishes remaining candidates");
+    assertTrue(removalRepublishController.page().items.size() == 11 &&
+                   removalRepublishController.page().pageBoundaries ==
+                       std::vector<modernime::core::PageBoundary>{{0, 9},
+                                                                  {9, 11}},
+               "candidate removal applies fallback to the fresh provider page");
+    assertTrue(removalRepublishController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   removalRepublishController.handle(
+                       {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "removal remainder reaches its eleventh candidate");
+    assertTrue(removalRepublishHost.commits.back() == "移除后12",
+               "removal remainder digit maps through the shared boundary");
 
     ManyCandidateProvider manyProvider;
     RecordingHost manyHost;

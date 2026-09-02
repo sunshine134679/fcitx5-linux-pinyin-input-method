@@ -351,12 +351,8 @@ bool ModernIMEController::select(std::size_t index) {
             return false;
         }
         host_.commit(text);
-        page_ = provider_->page();
-        if (partialSelection && !page_.rawInput.empty()) {
-            compositionInput_ = page_.rawInput;
-            compositionCursor_ = compositionInput_.size();
-            updatePreeditCursor();
-            host_.publishPage(page_);
+        if (partialSelection && !provider_->page().rawInput.empty()) {
+            publishProviderPage(true);
             return true;
         }
         clearComposition();
@@ -374,9 +370,7 @@ bool ModernIMEController::removeCurrent() {
     if (!provider_->remove(page_.cursor)) {
         return false;
     }
-    page_ = provider_->page();
-    updatePreeditCursor();
-    host_.publishPage(page_);
+    publishProviderPage();
     return true;
 }
 
@@ -457,12 +451,12 @@ void ModernIMEController::clearComposition() {
     }
     if (provider_) {
         provider_->reset();
-        page_ = provider_->page();
+        publishProviderPage();
     } else {
         input_.clear();
         page_.clear();
+        host_.publishPage(page_);
     }
-    host_.publishPage(page_);
 }
 
 void ModernIMEController::reset() {
@@ -510,15 +504,23 @@ void ModernIMEController::ensurePageBoundaries() {
     }
 }
 
+void ModernIMEController::publishProviderPage(bool adoptRemainingComposition) {
+    page_ = provider_->page();
+    if (adoptRemainingComposition && !page_.rawInput.empty()) {
+        compositionInput_ = page_.rawInput;
+        compositionCursor_ = compositionInput_.size();
+    }
+    updatePreeditCursor();
+    ensurePageBoundaries();
+    host_.publishPage(page_);
+}
+
 void ModernIMEController::refreshPage() {
     if (clipboardMode_) {
         return;
     }
     if (provider_) {
-        page_ = provider_->page();
-        updatePreeditCursor();
-        ensurePageBoundaries();
-        host_.publishPage(page_);
+        publishProviderPage();
         return;
     }
     page_.clear();

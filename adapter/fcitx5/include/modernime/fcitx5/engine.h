@@ -177,6 +177,7 @@ private:
     bool openClipboard();
     bool replaceComposition(std::string nextInput,
                             std::size_t nextCursor);
+    void publishProviderPage(bool adoptRemainingComposition = false);
     void updatePreeditCursor();
     void ensurePageBoundaries();
     core::PageBoundary currentPageBoundary() const;

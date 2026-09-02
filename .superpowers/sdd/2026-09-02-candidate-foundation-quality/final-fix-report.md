@@ -72,3 +72,59 @@ git diff --check
 
 - 无已知功能阻塞或回归。
 - 当前环境未安装 `clang-format`；修改已按现有样式人工检查，并由完整编译和 `git diff --check` 验证。
+
+## Final fix round 2：provider fresh page 统一发布
+
+### 根因
+
+首轮 fallback 只在 `refreshPage()` 中补齐。partial selection 和 candidate removal 都会直接执行 `page_ = provider_->page()` 后发布；provider 返回的新页没有 GTK 测量边界时，这两条路径再次暴露空边界，10 项以上的剩余候选会被 Fcitx 列表退化为单页。
+
+### RED
+
+新增 deterministic provider fake，但所有操作都通过真实 `ModernIMEController` 公共路径完成：
+
+- 选择消费部分输入的候选后，provider 返回 11 项 fresh remainder；
+- 删除候选后，provider 返回 11 项 fresh remainder；
+- 两者均要求 controller 生成字面边界 `{0,9},{9,11}`，再用 PageDown + 数字 `2` 提交全局第 11 项。
+
+```bash
+cmake --build build/fcitx5-debug --target modernime_adapter_tests -j2
+./build/fcitx5-debug/tests/modernime_adapter_tests
+```
+
+生产代码未改时构建成功，测试稳定失败于：
+
+```text
+engine state test failed: partial selection applies fallback to the fresh provider page
+```
+
+### 实现与 GREEN
+
+- 新增唯一的 `publishProviderPage(...)`：复制 provider page；partial remainder 场景先更新 composition；随后统一更新 preedit cursor、补齐 fallback、发布。
+- partial selection、removal、reset/clear 和常规 refresh 的 provider page 接收都走该 helper；源码中只剩 helper 内一处 `page_ = provider_->page()`。
+- 完整候选选择不发布中间 provider page，仍只发布 reset 后空页，避免重复刷新。
+- `ensurePageBoundaries()` 对已有非空边界早退，因此 GTK 实测边界仍可替换并持续保留。
+
+聚焦验证：
+
+```bash
+cmake --build build/fcitx5-debug --target modernime_adapter_tests modernime_fcitx5_input_panel_tests modernime_pinyin_engine_tests modernime_fcitx5_candidate_list_tests -j2
+ctest --test-dir build/fcitx5-debug --output-on-failure -R 'modernime_(engine_state|fcitx5_input_panel|pinyin_engine|fcitx5_candidate_list)$'
+```
+
+结果：4/4 PASS，0 failed。
+
+完整验证：
+
+```bash
+cmake --build build/fcitx5-debug -j2
+ctest --test-dir build/fcitx5-debug --output-on-failure
+git diff --check
+```
+
+结果：完整 Debug build 成功；46 项 CTest 中 0 failed，2 项既有 GTK 测试因无显示环境 SKIP；diff check 无错误。
+
+### Round 2 concerns
+
+- 无已知功能阻塞或回归。
+- deterministic fake 仅构造 fresh provider page；分页、选择、删除、PageDown 和数字提交全部执行真实 controller 代码。
