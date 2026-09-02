@@ -498,6 +498,18 @@ core::PageBoundary ModernIMEController::currentPageBoundary() const {
     return page_.pageBoundaries[currentPageIndex()];
 }
 
+void ModernIMEController::ensurePageBoundaries() {
+    if (!page_.pageBoundaries.empty()) {
+        return;
+    }
+    for (std::size_t begin = 0; begin < page_.items.size();
+         begin += kFallbackCandidatePageSize) {
+        page_.pageBoundaries.push_back(
+            {begin, std::min(begin + kFallbackCandidatePageSize,
+                             page_.items.size())});
+    }
+}
+
 void ModernIMEController::refreshPage() {
     if (clipboardMode_) {
         return;
@@ -505,6 +517,7 @@ void ModernIMEController::refreshPage() {
     if (provider_) {
         page_ = provider_->page();
         updatePreeditCursor();
+        ensurePageBoundaries();
         host_.publishPage(page_);
         return;
     }
@@ -521,6 +534,7 @@ void ModernIMEController::refreshPage() {
     } else if (!input_.text().empty()) {
         page_.items.push_back({input_.text(), input_.text(), 0});
     }
+    ensurePageBoundaries();
     host_.publishPage(page_);
 }
 

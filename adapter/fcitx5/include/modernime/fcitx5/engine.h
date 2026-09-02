@@ -17,6 +17,7 @@
 namespace modernime::fcitx5 {
 
 inline constexpr std::size_t kClipboardPageSize = 5;
+inline constexpr std::size_t kFallbackCandidatePageSize = 9;
 
 enum class KeyKind {
     Character,
@@ -177,6 +178,7 @@ private:
     bool replaceComposition(std::string nextInput,
                             std::size_t nextCursor);
     void updatePreeditCursor();
+    void ensurePageBoundaries();
     core::PageBoundary currentPageBoundary() const;
 
     EngineHost &host_;

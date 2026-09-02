@@ -3,8 +3,15 @@
 #include "modernime/core/pinyin_match.h"
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
+
+#include <unistd.h>
 
 namespace {
 
@@ -25,17 +32,95 @@ std::size_t indexOf(const modernime::core::CandidatePage &page,
     return page.items.size();
 }
 
-modernime::pinyin::PinyinCandidateProvider makeProvider() {
+bool hasUserDictionaryText(const modernime::core::CandidatePage &page,
+                           std::string_view text) {
+    for (const auto &item : page.items) {
+        if (item.text == text &&
+            item.source == modernime::core::CandidateSource::UserDictionary) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class QualityTestEnvironment final {
+public:
+    QualityTestEnvironment()
+        : directory_(createDirectory()),
+          isolatedDictionary_(directory_ / "absent-user-dictionary.txt") {
+        if (const auto *value = std::getenv("XDG_DATA_HOME")) {
+            previousDataHome_ = value;
+        }
+        std::error_code error;
+        std::filesystem::create_directories(directory_ / "modernime", error);
+        assertTrue(!error, "isolated quality directory is created");
+        std::ofstream dictionary(directory_ / "modernime" /
+                                 "user-dictionary.txt");
+        dictionary << "ce'shi'zhang'hu'ci'dian\t测试账户词典\t999999\n";
+        dictionary.close();
+        assertTrue(dictionary.good(),
+                   "controlled account dictionary is written");
+        assertTrue(::setenv("XDG_DATA_HOME", directory_.c_str(), 1) == 0,
+                   "controlled account data home is installed");
+        assertTrue(!std::filesystem::exists(isolatedDictionary_),
+                   "isolated quality dictionary starts absent");
+    }
+
+    ~QualityTestEnvironment() {
+        if (previousDataHome_) {
+            ::setenv("XDG_DATA_HOME", previousDataHome_->c_str(), 1);
+        } else {
+            ::unsetenv("XDG_DATA_HOME");
+        }
+        std::error_code error;
+        std::filesystem::remove_all(directory_, error);
+    }
+
+    const std::filesystem::path &isolatedDictionary() const {
+        return isolatedDictionary_;
+    }
+
+private:
+    static std::filesystem::path createDirectory() {
+        auto pattern = (std::filesystem::temp_directory_path() /
+                        "modernime-pinyin-quality-XXXXXX")
+                           .string();
+        std::vector<char> writablePattern(pattern.begin(), pattern.end());
+        writablePattern.push_back('\0');
+        const auto *created = ::mkdtemp(writablePattern.data());
+        assertTrue(created != nullptr,
+                   "unique isolated quality directory is created");
+        return created;
+    }
+
+    std::filesystem::path directory_;
+    std::filesystem::path isolatedDictionary_;
+    std::optional<std::string> previousDataHome_;
+};
+
+modernime::pinyin::PinyinCandidateProvider
+makeProvider(const std::filesystem::path &isolatedDictionary) {
     modernime::pinyin::PinyinDataPaths paths;
     paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.userDictionary = isolatedDictionary.string();
     modernime::pinyin::PinyinProviderOptions options;
     options.learningEnabled = false;
     options.contextLearningEnabled = false;
     return modernime::pinyin::PinyinCandidateProvider(paths, options);
 }
 
-void testFrequentSentencesAndPartialSelection() {
-    auto provider = makeProvider();
+void testQualityProviderIgnoresAccountDictionary(
+    const std::filesystem::path &isolatedDictionary) {
+    auto provider = makeProvider(isolatedDictionary);
+    assertTrue(provider.append("ceshizhanghucidian"),
+               "controlled account-dictionary input is accepted");
+    assertTrue(!hasUserDictionaryText(provider.page(), "测试账户词典"),
+               "quality provider ignores account dictionary data");
+}
+
+void testFrequentSentencesAndPartialSelection(
+    const std::filesystem::path &isolatedDictionary) {
+    auto provider = makeProvider(isolatedDictionary);
 
     assertTrue(provider.append("jintiantianqihenhao"),
                "weather sentence input is accepted");
@@ -64,8 +149,9 @@ void testFrequentSentencesAndPartialSelection() {
                "semantic ambiguous request is in the top three");
 }
 
-void testOfflineFuzzyTypoAndAbbreviationRecovery() {
-    auto provider = makeProvider();
+void testOfflineFuzzyTypoAndAbbreviationRecovery(
+    const std::filesystem::path &isolatedDictionary) {
+    auto provider = makeProvider(isolatedDictionary);
 
     assertTrue(provider.append("zongguo"),
                "fuzzy initial input is accepted");
@@ -104,7 +190,11 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery() {
 } // namespace
 
 int main() {
-    testFrequentSentencesAndPartialSelection();
-    testOfflineFuzzyTypoAndAbbreviationRecovery();
+    QualityTestEnvironment environment;
+    testQualityProviderIgnoresAccountDictionary(
+        environment.isolatedDictionary());
+    testFrequentSentencesAndPartialSelection(environment.isolatedDictionary());
+    testOfflineFuzzyTypoAndAbbreviationRecovery(
+        environment.isolatedDictionary());
     return EXIT_SUCCESS;
 }

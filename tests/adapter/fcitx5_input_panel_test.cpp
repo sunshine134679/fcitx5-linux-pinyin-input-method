@@ -82,6 +82,16 @@ void publishTenCandidates(
     host.publishPage(controller.page());
 }
 
+void publishFreshTenCandidates(
+    modernime::fcitx5::ModernIMEController &controller) {
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::Character, 'n', 0}),
+               "test composition publishes a fresh ten-candidate page");
+    assertTrue(!controller.page().pageBoundaries.empty(),
+               "controller supplies conservative boundaries before UI "
+               "measurement");
+}
+
 } // namespace
 
 int main() {
@@ -157,6 +167,29 @@ int main() {
     TenCandidateProvider provider;
     modernime::fcitx5::ModernIMEController pagedController(host, &provider);
     host.setController(pagedController);
+
+    publishFreshTenCandidates(pagedController);
+    auto freshList = inputContext.inputPanel().candidateList();
+    assertTrue(freshList != nullptr && freshList->size() <= 9 &&
+                   freshList->toPageable() != nullptr &&
+                   freshList->toPageable()->totalPages() == 2,
+               "fresh controller pages conservatively expose at most nine rows");
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::Digit, 0, '1'}),
+               "page down and a local digit reach the tenth fresh candidate");
+    assertTrue(inputContext.commits.back() == "候选10",
+               "fresh fallback boundaries map the tenth candidate globally");
+
+    publishFreshTenCandidates(pagedController);
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "page down and space reach the tenth fresh candidate");
+    assertTrue(inputContext.commits.back() == "候选10",
+               "space follows the shared fresh fallback boundary");
 
     publishTenCandidates(pagedController, host);
     auto pagedList = inputContext.inputPanel().candidateList();
