@@ -775,7 +775,15 @@ private:
         rawCandidate.text = rawInput;
         rawCandidate.source = core::CandidateSource::Raw;
         rawCandidate.consumedInputBytes = rawInput.size();
-        if (!hasPinyinCoverage && rawInput.size() >= 3) {
+        const bool alreadyHasRawCandidate =
+            std::any_of(page_.items.begin(), page_.items.end(),
+                        [](const auto &item) {
+                            return item.source == core::CandidateSource::Raw;
+                        });
+        if (alreadyHasRawCandidate) {
+            // The mixer uses raw input as the fifth-slot fallback when no
+            // distinct decoded homophone can enforce the full-sentence quota.
+        } else if (!hasPinyinCoverage && rawInput.size() >= 3) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
         } else {
             page_.items.push_back(std::move(rawCandidate));

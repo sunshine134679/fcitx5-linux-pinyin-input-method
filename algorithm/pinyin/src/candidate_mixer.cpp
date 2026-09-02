@@ -168,6 +168,18 @@ std::vector<core::CandidateItem> mixCandidateItems(
         break;
     }
 
+    const bool enforcesTopFiveFullSentenceQuota =
+        runnerUpFullSentence != nullptr && threeSyllable.has_value() &&
+        twoSyllable.has_value();
+    if (homophone == nullptr && enforcesTopFiveFullSentenceQuota &&
+        result.size() < 5) {
+        core::CandidateItem rawFallback;
+        rawFallback.text = rawPinyin;
+        rawFallback.source = core::CandidateSource::Raw;
+        rawFallback.consumedInputBytes = rawPinyin.size();
+        append(rawFallback);
+    }
+
     for (const auto &candidate : fullCandidates) {
         if (&candidate != runnerUpFullSentence) {
             append(candidate);

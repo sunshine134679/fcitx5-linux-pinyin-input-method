@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/candidate_mixer.h"
 
 #include "modernime/core/learning_store.h"
 #include "modernime/core/pinyin_match.h"
@@ -46,6 +47,56 @@ std::size_t indexOf(const modernime::core::CandidatePage &page,
 bool hasText(const modernime::core::CandidatePage &page,
              std::string_view text) {
     return indexOf(page, text) < page.items.size();
+}
+
+void testMixerUsesRawFallbackWhenNoHomophoneExists() {
+    const std::string rawPinyin = "jiayibingding";
+    const std::vector<modernime::core::CandidateItem> fullCandidates{
+        {.text = "甲乙丙丁",
+         .fullPinyin = "jia'yi'bing'ding",
+         .sourceIndex = 10,
+         .source = modernime::core::CandidateSource::Engine,
+         .consumedInputBytes = 13},
+        {.text = "甲乙丙钉",
+         .fullPinyin = "jia'yi'bing'ding",
+         .sourceIndex = 11,
+         .source = modernime::core::CandidateSource::Engine,
+         .consumedInputBytes = 13},
+        {.text = "甲乙丙订",
+         .fullPinyin = "jia'yi'bing'ding",
+         .sourceIndex = 12,
+         .source = modernime::core::CandidateSource::Engine,
+         .consumedInputBytes = 13},
+    };
+    const std::vector<modernime::core::CandidateItem> partialCandidates{
+        {.text = "旁",
+         .fullPinyin = "pang",
+         .sourceIndex = 20,
+         .source = modernime::core::CandidateSource::Engine,
+         .consumedInputBytes = 3},
+    };
+
+    const auto mixed = modernime::pinyin::mixCandidateItems(
+        fullCandidates, partialCandidates, &fullCandidates.front(),
+        {3, 5, 9}, rawPinyin);
+
+    assertTrue(mixed.size() >= 6,
+               "missing homophone fallback retains deferred candidates");
+    assertTrue(mixed[4].source == modernime::core::CandidateSource::Raw &&
+                   mixed[4].text == rawPinyin,
+               "raw pinyin fills the fifth slot when no homophone qualifies");
+    assertTrue(mixed[5].text == "甲乙丙订",
+               "the third full sentence is deferred beyond the top five");
+
+    std::size_t topFiveFullSentences = 0;
+    for (std::size_t index = 0; index < 5; ++index) {
+        if (mixed[index].source != modernime::core::CandidateSource::Raw &&
+            mixed[index].consumedInputBytes == rawPinyin.size()) {
+            ++topFiveFullSentences;
+        }
+    }
+    assertTrue(topFiveFullSentences == 2,
+               "the first five contain exactly two full sentences");
 }
 
 void testLongInputMixesUsefulPhrasePrefixes() {
@@ -261,6 +312,7 @@ void testRepeatedSelectionAcrossContextsStillPromotes() {
 } // namespace
 
 int main() {
+    testMixerUsesRawFallbackWhenNoHomophoneExists();
     testLongInputMixesUsefulPhrasePrefixes();
     testLongInputMixingPrioritizesTrustedPrefixesAndSentences();
     testAbbreviationPhraseOutranksRawEnglishFallback();
