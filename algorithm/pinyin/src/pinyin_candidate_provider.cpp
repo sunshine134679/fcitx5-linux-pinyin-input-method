@@ -1,5 +1,6 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
+#include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/user_dictionary.h"
 
@@ -17,7 +18,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -177,25 +177,6 @@ std::string prefixInput(std::string_view rawInput, std::size_t consumedBytes) {
         prefix.pop_back();
     }
     return prefix;
-}
-
-bool isSingleUtf8Character(std::string_view text) {
-    return !text.empty() &&
-           std::count_if(text.begin(), text.end(), [](const char character) {
-               return (static_cast<unsigned char>(character) & 0xC0U) != 0x80U;
-           }) == 1;
-}
-
-std::string_view afterFirstUtf8Character(std::string_view text) {
-    if (text.empty()) {
-        return text;
-    }
-    std::size_t offset = 1;
-    while (offset < text.size() &&
-           (static_cast<unsigned char>(text[offset]) & 0xC0U) == 0x80U) {
-        ++offset;
-    }
-    return text.substr(offset);
 }
 
 bool coversPinyinInput(std::string_view userInput,
@@ -785,115 +766,10 @@ private:
             }
         }
 
-        std::vector<core::CandidateItem> partialItems;
-        if (pinyinLetterCount(rawInput) >= 5 && !partialPool.empty()) {
-            for (auto iterator = prefixEnds.rbegin();
-                 iterator != prefixEnds.rend() && partialItems.size() < 4;
-                 ++iterator) {
-                // On long input, committing everything except the final
-                // syllable usually produces a decoder fragment such as
-                // “你好啊老”. Start one boundary earlier so the recovery
-                // candidates are complete phrases rather than dangling stems.
-                if (iterator == prefixEnds.rbegin() && prefixEnds.size() >= 3) {
-                    continue;
-                }
-                const auto prefix = prefixInput(rawInput, *iterator);
-                if (pinyinLetterCount(prefix) < 4) {
-                    continue;
-                }
-                const auto prefixSyllableCount =
-                    prefixEnds.size() - static_cast<std::size_t>(
-                                            std::distance(prefixEnds.rbegin(),
-                                                          iterator));
-                const auto candidateLimit =
-                    prefixSyllableCount == 2 ? std::size_t{3} : std::size_t{1};
-                std::size_t addedForPrefix = 0;
-                std::string basePhrase;
-                std::string baseFullPinyin;
-                for (auto &candidate : partialPool) {
-                    if (candidate.text.empty() ||
-                        candidate.consumedInputBytes != *iterator) {
-                        continue;
-                    }
-                    if (basePhrase.empty()) {
-                        basePhrase = candidate.text;
-                        baseFullPinyin = candidate.fullPinyin;
-                    }
-                    partialItems.push_back(std::move(candidate));
-                    candidate.text.clear();
-                    ++addedForPrefix;
-                    if (addedForPrefix >= candidateLimit ||
-                        partialItems.size() >= 4) {
-                        break;
-                    }
-                }
-                if (prefixSyllableCount == 2 &&
-                    addedForPrefix < candidateLimit &&
-                    partialItems.size() < 4 && !basePhrase.empty()) {
-                    const auto phraseSuffix = afterFirstUtf8Character(basePhrase);
-                    const auto separator = baseFullPinyin.find('\'');
-                    const auto firstPinyin =
-                        std::string_view(baseFullPinyin).substr(0, separator);
-                    context->setCursor(prefixEnds.front());
-                    const auto &cursorCandidates = context->candidatesToCursor();
-                    for (std::size_t cursorIndex = 0;
-                         cursorIndex < cursorCandidates.size(); ++cursorIndex) {
-                        const auto firstCharacter =
-                            cursorCandidates[cursorIndex].toString();
-                        const auto candidatePinyin = context->candidateFullPinyin(
-                            cursorCandidates[cursorIndex]);
-                        if (!isSingleUtf8Character(firstCharacter) ||
-                            core::PinyinMatchPolicy::canonical(candidatePinyin) !=
-                                core::PinyinMatchPolicy::canonical(firstPinyin)) {
-                            continue;
-                        }
-                        auto text = firstCharacter + std::string(phraseSuffix);
-                        const auto key = candidateKey(baseFullPinyin, text);
-                        if (!seen.emplace(key).second) {
-                            continue;
-                        }
-                        core::CandidateItem item;
-                        item.text = std::move(text);
-                        item.fullPinyin = baseFullPinyin;
-                        const bool isManual = userDictionary().contains(
-                            item.fullPinyin, item.text);
-                        const bool isLearned =
-                            !isManual && learning != nullptr &&
-                            learning->hasPositiveFrequency(item.text,
-                                                           item.fullPinyin);
-                        item.source =
-                            isManual
-                                ? core::CandidateSource::UserDictionary
-                                : (isLearned ? core::CandidateSource::Learned
-                                             : core::CandidateSource::Engine);
-                        item.consumedInputBytes = *iterator;
-                        partialItems.push_back(std::move(item));
-                        ++addedForPrefix;
-                        if (addedForPrefix >= candidateLimit ||
-                            partialItems.size() >= 4) {
-                            break;
-                        }
-                    }
-                    context->setCursor(rawInput.size());
-                }
-            }
-        }
-
-        if (!fullItems.empty()) {
-            page_.items.push_back(std::move(fullItems.front()));
-        }
-        for (auto &item : partialItems) {
-            page_.items.push_back(std::move(item));
-        }
-        for (std::size_t index = fullItems.empty() ? 0 : 1;
-             index < fullItems.size(); ++index) {
-            page_.items.push_back(std::move(fullItems[index]));
-        }
-        for (auto &item : partialPool) {
-            if (!item.text.empty()) {
-                page_.items.push_back(std::move(item));
-            }
-        }
+        const auto *bestFullSentence =
+            fullItems.empty() ? nullptr : &fullItems.front();
+        page_.items = mixCandidateItems(fullItems, partialPool,
+                                        bestFullSentence, prefixEnds, rawInput);
 
         core::CandidateItem rawCandidate;
         rawCandidate.text = rawInput;

@@ -2,6 +2,7 @@ find_package(LibIMECore REQUIRED)
 find_package(LibIMEPinyin REQUIRED)
 
 add_library(modernime_pinyin STATIC
+    src/candidate_mixer.cpp
     src/candidate_pipeline.cpp
     src/pinyin_candidate_provider.cpp
     src/user_dictionary.cpp

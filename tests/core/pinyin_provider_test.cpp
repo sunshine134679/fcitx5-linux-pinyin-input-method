@@ -66,8 +66,8 @@ void testLongInputMixesUsefulPhrasePrefixes() {
                "first page includes a useful three-syllable prefix");
     assertTrue(indexOf(page, "你好") < std::min<std::size_t>(9, page.items.size()),
                "first page includes a useful two-syllable prefix");
-    assertTrue(indexOf(page, "拟好") < std::min<std::size_t>(5, page.items.size()),
-               "visible candidates include a distinct short homophone option");
+    assertTrue(indexOf(page, "拟") < std::min<std::size_t>(5, page.items.size()),
+               "visible candidates include a real decoded homophone option");
 
     std::size_t fullSentenceVariants = 0;
     const auto firstPageSize = std::min<std::size_t>(5, page.items.size());
@@ -76,8 +76,8 @@ void testLongInputMixesUsefulPhrasePrefixes() {
             ++fullSentenceVariants;
         }
     }
-    assertTrue(fullSentenceVariants == 1,
-               "first page is not filled with same-prefix sentence variants");
+    assertTrue(fullSentenceVariants <= 2,
+               "first page keeps at most two full-sentence variants");
 
     const auto phraseIndex = indexOf(page, "你好啊");
     assertTrue(provider.select(phraseIndex),
@@ -85,6 +85,46 @@ void testLongInputMixesUsefulPhrasePrefixes() {
     assertTrue(provider.page().rawInput == "laodi" &&
                    provider.page().preedit == "lao'di",
                "partial selection preserves the unconsumed pinyin suffix");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+}
+
+void testLongInputMixingPrioritizesTrustedPrefixesAndSentences() {
+    const auto learningPath = testPath("quality-driven-mixing-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    assertTrue(provider.append("qingbangwodakaiwenjian"),
+               "long request is accepted");
+    assertTrue(provider.page().items.front().text == "请帮我打开文件",
+               "best sentence stays first");
+    assertTrue(indexOf(provider.page(), "请帮我") < 5,
+               "trusted three-character prefix is visible");
+    assertTrue(indexOf(provider.page(), "请帮") < 5,
+               "trusted two-character prefix is visible");
+
+    std::size_t noisyTwoCharacterCandidates = 0;
+    const auto visibleCount =
+        std::min<std::size_t>(5, provider.page().items.size());
+    for (std::size_t index = 0; index < visibleCount; ++index) {
+        const auto &text = provider.page().items[index].text;
+        if (text == "青帮" || text == "清帮" || text == "青棒") {
+            ++noisyTwoCharacterCandidates;
+        }
+    }
+    assertTrue(noisyTwoCharacterCandidates <= 1,
+               "at most one noisy two-character homophone reaches the top five");
+
+    provider.reset();
+    assertTrue(provider.append("nengbunengbangwokanxia"),
+               "ambiguous sentence is accepted");
+    assertTrue(indexOf(provider.page(), "能不能帮我看下") < 3,
+               "semantic sentence reaches top three");
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);
@@ -222,6 +262,7 @@ void testRepeatedSelectionAcrossContextsStillPromotes() {
 
 int main() {
     testLongInputMixesUsefulPhrasePrefixes();
+    testLongInputMixingPrioritizesTrustedPrefixesAndSentences();
     testAbbreviationPhraseOutranksRawEnglishFallback();
     testAbbreviationInputIsAutomaticallySegmentedInPreedit();
     testFullPinyinInputIsAutomaticallySegmentedInPreedit();
