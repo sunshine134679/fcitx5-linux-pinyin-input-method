@@ -380,42 +380,6 @@ bool ModernIMEController::removeCurrent() {
     return true;
 }
 
-bool ModernIMEController::moveCursor(std::ptrdiff_t delta) {
-    if (page_.items.empty() || delta == 0) {
-        return false;
-    }
-
-    const auto current = static_cast<std::ptrdiff_t>(page_.cursor);
-    const auto last = static_cast<std::ptrdiff_t>(page_.items.size() - 1);
-    const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
-    if (next == current) {
-        return true;
-    }
-    page_.cursor = static_cast<std::size_t>(next);
-    host_.publishPage(page_);
-    return true;
-}
-
-bool ModernIMEController::movePage(std::ptrdiff_t delta) {
-    if (page_.items.empty() || delta == 0) {
-        return false;
-    }
-
-    const auto current = static_cast<std::ptrdiff_t>(currentPageIndex());
-    const auto last = static_cast<std::ptrdiff_t>(
-        page_.pageBoundaries.empty() ? 0 : page_.pageBoundaries.size() - 1);
-    const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
-    if (next == current) {
-        return true;
-    }
-    page_.cursor = page_.pageBoundaries.empty()
-                       ? 0
-                       : page_.pageBoundaries[static_cast<std::size_t>(next)]
-                             .begin;
-    host_.publishPage(page_);
-    return true;
-}
-
 bool ModernIMEController::commitPunctuation(char ascii) {
     // Punctuation inside an ASCII run stays half-width so inputs such as
     // "3.14", "1,000" and English fragments survive. During composition the
@@ -517,19 +481,6 @@ void ModernIMEController::setActive(bool active) {
 void ModernIMEController::setClipboardEntries(
     std::vector<std::string> entries) {
     clipboardEntries_ = std::move(entries);
-}
-
-std::size_t ModernIMEController::currentPageIndex() const {
-    if (page_.items.empty() || page_.pageBoundaries.empty()) {
-        return 0;
-    }
-    for (std::size_t index = 0; index < page_.pageBoundaries.size(); ++index) {
-        const auto &boundary = page_.pageBoundaries[index];
-        if (page_.cursor >= boundary.begin && page_.cursor < boundary.end) {
-            return index;
-        }
-    }
-    return page_.pageBoundaries.size() - 1;
 }
 
 std::size_t ModernIMEController::pageSize() const {

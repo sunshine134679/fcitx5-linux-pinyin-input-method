@@ -5,6 +5,7 @@
 #include "modernime/core/input_state.h"
 #include "modernime/core/settings.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cctype>
 #include <cstdint>
@@ -84,7 +85,20 @@ public:
     void reset();
     void setActive(bool active);
 
-    std::size_t currentPageIndex() const;
+    std::size_t currentPageIndex() const {
+        if (page_.items.empty() || page_.pageBoundaries.empty()) {
+            return 0;
+        }
+        for (std::size_t index = 0; index < page_.pageBoundaries.size();
+             ++index) {
+            const auto &boundary = page_.pageBoundaries[index];
+            if (page_.cursor >= boundary.begin &&
+                page_.cursor < boundary.end) {
+                return index;
+            }
+        }
+        return page_.pageBoundaries.size() - 1;
+    }
     std::size_t pageSize() const;
     void setPageBoundaries(std::vector<core::PageBoundary> boundaries) {
         if (!boundaries.empty()) {
@@ -108,6 +122,43 @@ public:
             page_.cursor = std::min(page_.cursor, page_.items.size() - 1);
         }
     }
+    bool moveCursor(std::ptrdiff_t delta) {
+        if (page_.items.empty() || delta == 0) {
+            return false;
+        }
+
+        const auto current = static_cast<std::ptrdiff_t>(page_.cursor);
+        const auto last = static_cast<std::ptrdiff_t>(page_.items.size() - 1);
+        const auto next =
+            std::clamp(current + delta, std::ptrdiff_t{0}, last);
+        if (next == current) {
+            return true;
+        }
+        page_.cursor = static_cast<std::size_t>(next);
+        host_.publishPage(page_);
+        return true;
+    }
+    bool movePage(std::ptrdiff_t delta) {
+        if (page_.items.empty() || delta == 0) {
+            return false;
+        }
+
+        const auto current = static_cast<std::ptrdiff_t>(currentPageIndex());
+        const auto last = static_cast<std::ptrdiff_t>(
+            page_.pageBoundaries.empty() ? 0
+                                         : page_.pageBoundaries.size() - 1);
+        const auto next =
+            std::clamp(current + delta, std::ptrdiff_t{0}, last);
+        if (next == current) {
+            return true;
+        }
+        page_.cursor = page_.pageBoundaries.empty()
+                           ? 0
+                           : page_.pageBoundaries[static_cast<std::size_t>(next)]
+                                 .begin;
+        host_.publishPage(page_);
+        return true;
+    }
 
     void setClipboardEntries(std::vector<std::string> entries);
     void setOptions(ControllerOptions options) { options_ = options; }
@@ -122,8 +173,6 @@ private:
     bool commitCurrent();
     bool commitRawPreedit(std::string_view suffix = {});
     bool commitPunctuation(char ascii);
-    bool moveCursor(std::ptrdiff_t delta);
-    bool movePage(std::ptrdiff_t delta);
     bool openClipboard();
     bool replaceComposition(std::string nextInput,
                             std::size_t nextCursor);

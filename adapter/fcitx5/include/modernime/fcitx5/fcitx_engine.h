@@ -120,13 +120,27 @@ public:
     }
     void prev() override {
         if (hasPrev()) {
-            setPage(currentPage() - 1);
+            if (controller_ != nullptr) {
+                auto *controller = controller_;
+                controller->movePage(-1);
+                return;
+            }
+            setGlobalCursorIndex(static_cast<int>(
+                boundaries_[static_cast<std::size_t>(currentPage() - 1)]
+                    .begin));
         }
     }
     void next() override {
         if (hasNext()) {
             usedNextBefore_ = true;
-            setPage(currentPage() + 1);
+            if (controller_ != nullptr) {
+                auto *controller = controller_;
+                controller->movePage(1);
+                return;
+            }
+            setGlobalCursorIndex(static_cast<int>(
+                boundaries_[static_cast<std::size_t>(currentPage() + 1)]
+                    .begin));
         }
     }
     bool usedNextBefore() const override { return usedNextBefore_; }
@@ -151,6 +165,14 @@ public:
             return;
         }
         page = std::clamp(page, 0, totalPages() - 1);
+        if (controller_ != nullptr) {
+            auto *controller = controller_;
+            const auto delta = static_cast<std::ptrdiff_t>(page) -
+                               static_cast<std::ptrdiff_t>(
+                                   controller->currentPageIndex());
+            controller->movePage(delta);
+            return;
+        }
         setGlobalCursorIndex(
             static_cast<int>(boundaries_[static_cast<std::size_t>(page)].begin));
     }
@@ -158,12 +180,22 @@ public:
     void prevCandidate() override {
         const auto global = globalCursorIndex();
         if (global > 0) {
+            if (controller_ != nullptr) {
+                auto *controller = controller_;
+                controller->moveCursor(-1);
+                return;
+            }
             setGlobalCursorIndex(global - 1);
         }
     }
     void nextCandidate() override {
         const auto global = globalCursorIndex();
         if (global >= 0 && global + 1 < totalSize()) {
+            if (controller_ != nullptr) {
+                auto *controller = controller_;
+                controller->moveCursor(1);
+                return;
+            }
             setGlobalCursorIndex(global + 1);
         }
     }

@@ -47,7 +47,7 @@ public:
         current_.preedit.append(input);
         current_.rawInput = current_.preedit;
         current_.items.clear();
-        for (std::size_t index = 0; index < 10; ++index) {
+        for (std::size_t index = 0; index < candidateCount_; ++index) {
             current_.items.push_back({"候选" + std::to_string(index + 1),
                                       current_.preedit, index});
         }
@@ -62,9 +62,14 @@ public:
     const modernime::core::CandidatePage &page() const override {
         return current_;
     }
+    void setCandidateCount(std::size_t count, std::size_t cursor) {
+        candidateCount_ = count;
+        current_.cursor = cursor;
+    }
 
 private:
     modernime::core::CandidatePage current_;
+    std::size_t candidateCount_ = 10;
 };
 
 void publishTenCandidates(
@@ -205,5 +210,86 @@ int main() {
     pagedList->candidate(2).select(&inputContext);
     assertTrue(inputContext.commits.back() == "候选10",
                "mouse selection maps the local row to global index nine");
+
+    publishTenCandidates(pagedController, host);
+    pagedList = inputContext.inputPanel().candidateList();
+    auto *pageable = pagedList->toPageable();
+    assertTrue(pageable != nullptr, "variable list remains pageable");
+    const auto *firstPageList = pagedList.get();
+    pageable->next();
+    auto republishedList = inputContext.inputPanel().candidateList();
+    assertTrue(republishedList.get() != firstPageList &&
+                   pagedController.page().cursor == 4 &&
+                   republishedList->toPageable()->currentPage() == 1,
+               "standard pageable next republishes the shared controller page");
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "digit selection follows standard pageable navigation");
+    assertTrue(inputContext.commits.back() == "候选6",
+               "pageable next and local digit share global index five");
+
+    publishTenCandidates(pagedController, host);
+    pagedList = inputContext.inputPanel().candidateList();
+    pageable = pagedList->toPageable();
+    pageable->setPage(2);
+    republishedList = inputContext.inputPanel().candidateList();
+    assertTrue(pagedController.page().cursor == 7 &&
+                   republishedList->toPageable()->currentPage() == 2,
+               "standard setPage moves the shared global cursor");
+    republishedList->toPageable()->prev();
+    assertTrue(pagedController.page().cursor == 4,
+               "standard pageable prev uses the preceding variable boundary");
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space follows standard setPage and prev navigation");
+    assertTrue(inputContext.commits.back() == "候选5",
+               "pageable prev and space share global index four");
+
+    publishTenCandidates(pagedController, host);
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
+               "cursor-movable test enters the second page");
+    pagedList = inputContext.inputPanel().candidateList();
+    auto *movable = pagedList->toCursorMovable();
+    assertTrue(movable != nullptr, "variable list remains cursor movable");
+    const auto *beforeCursorMove = pagedList.get();
+    movable->nextCandidate();
+    republishedList = inputContext.inputPanel().candidateList();
+    assertTrue(republishedList.get() != beforeCursorMove &&
+                   pagedController.page().cursor == 5,
+               "standard nextCandidate republishes the shared global cursor");
+    republishedList->toCursorMovable()->prevCandidate();
+    assertTrue(pagedController.page().cursor == 4,
+               "standard prevCandidate retreats the shared global cursor");
+    inputContext.inputPanel()
+        .candidateList()
+        ->toCursorMovable()
+        ->nextCandidate();
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space follows standard cursor-movable navigation");
+    assertTrue(inputContext.commits.back() == "候选6",
+               "cursor-movable navigation and space share global index five");
+
+    publishTenCandidates(pagedController, host);
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
+               "shortening test starts with a cursor on the final page");
+    provider.setCandidateCount(3, 9);
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::Character, 'i', 0}),
+               "changed content is republished before automatic pagination");
+    pagedList = inputContext.inputPanel().candidateList();
+    auto *variableList =
+        dynamic_cast<modernime::fcitx5::FcitxCandidateList *>(pagedList.get());
+    assertTrue(variableList != nullptr,
+               "production list accepts recalculated UI boundaries");
+    variableList->setPageBoundaries({{0, 2}, {2, 3}});
+    assertTrue(pagedController.page().items.size() == 3 &&
+                   pagedController.page().cursor == 2 &&
+                   variableList->currentPage() == 1,
+               "automatic repagination clamps a stale global cursor");
     return EXIT_SUCCESS;
 }
