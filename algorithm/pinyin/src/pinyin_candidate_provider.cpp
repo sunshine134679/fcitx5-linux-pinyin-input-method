@@ -246,7 +246,11 @@ bool coversPinyinInput(std::string_view userInput,
     return inputOffset == input.size() && consumedFullSyllable;
 }
 
-void promoteStrongerFuzzyCandidate(
+// Preserve the strongest exact conversion at index zero. If LibIME's native
+// order ranks a fuzzy full conversion ahead of that exact conversion, place
+// the fuzzy item second so low-value exact homophone variants follow it. Move
+// the complete CandidateItem so selection metadata remains intact.
+void interleaveHigherNativeRankFuzzyCandidate(
     std::string_view rawInput,
     std::vector<core::CandidateItem> &fullCandidates) {
     if (fullCandidates.size() < 2 ||
@@ -801,7 +805,7 @@ private:
             }
         }
 
-        promoteStrongerFuzzyCandidate(rawInput, fullItems);
+        interleaveHigherNativeRankFuzzyCandidate(rawInput, fullItems);
         const auto *bestFullSentence =
             fullItems.empty() ? nullptr : &fullItems.front();
         page_.items = mixCandidateItems(fullItems, partialPool,

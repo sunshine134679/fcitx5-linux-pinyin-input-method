@@ -251,8 +251,27 @@ void testCommonFuzzyAndShortAbbreviationRanking() {
                        "zongguo",
                        provider.page().items.front().fullPinyin) == 2,
                "an exact pinyin candidate remains ahead of fuzzy matches");
-    assertTrue(indexOf(provider.page(), "中国") < 3,
+    const auto chinaIndex = indexOf(provider.page(), "中国");
+    assertTrue(chinaIndex < provider.page().items.size() && chinaIndex < 3,
                "z/zh fuzzy match is recoverable near the front");
+    const auto exactBeforeChina = std::count_if(
+        provider.page().items.begin(),
+        provider.page().items.begin() + chinaIndex,
+        [](const auto &item) {
+            return modernime::core::PinyinMatchPolicy::priority(
+                       "zongguo", item.fullPinyin) == 2;
+        });
+    assertTrue(exactBeforeChina == 1,
+               "one exact candidate stays before the native-best fuzzy item");
+    const auto exactAfterChina = std::count_if(
+        provider.page().items.begin() + chinaIndex + 1,
+        provider.page().items.end(),
+        [](const auto &item) {
+            return modernime::core::PinyinMatchPolicy::priority(
+                       "zongguo", item.fullPinyin) == 2;
+        });
+    assertTrue(exactAfterChina > 0,
+               "exact homophone variants remain after the fuzzy item");
 
     provider.reset();
     assertTrue(provider.append("wsm"),
