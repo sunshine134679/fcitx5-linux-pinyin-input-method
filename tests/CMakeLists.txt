@@ -331,6 +331,10 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     target_link_libraries(modernime_pinyin_provider_tests PRIVATE modernime_pinyin)
     add_test(NAME modernime_pinyin_provider COMMAND modernime_pinyin_provider_tests)
 
+    add_executable(modernime_pinyin_quality_tests core/pinyin_quality_test.cpp)
+    target_link_libraries(modernime_pinyin_quality_tests PRIVATE modernime_pinyin)
+    add_test(NAME modernime_pinyin_quality COMMAND modernime_pinyin_quality_tests)
+
     add_executable(modernime_pinyin_engine_tests
         adapter/pinyin_engine_integration_test.cpp
     )
