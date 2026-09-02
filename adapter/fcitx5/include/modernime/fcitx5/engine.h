@@ -15,7 +15,6 @@
 
 namespace modernime::fcitx5 {
 
-inline constexpr std::size_t kCandidatePageSize = 9;
 inline constexpr std::size_t kClipboardPageSize = 5;
 
 enum class KeyKind {
@@ -87,6 +86,28 @@ public:
 
     std::size_t currentPageIndex() const;
     std::size_t pageSize() const;
+    void setPageBoundaries(std::vector<core::PageBoundary> boundaries) {
+        if (!boundaries.empty()) {
+            std::size_t expectedBegin = 0;
+            for (const auto &boundary : boundaries) {
+                if (boundary.begin != expectedBegin ||
+                    boundary.begin >= boundary.end ||
+                    boundary.end > page_.items.size()) {
+                    page_.pageBoundaries.clear();
+                    return;
+                }
+                expectedBegin = boundary.end;
+            }
+            if (expectedBegin != page_.items.size()) {
+                page_.pageBoundaries.clear();
+                return;
+            }
+        }
+        page_.pageBoundaries = std::move(boundaries);
+        if (!page_.items.empty()) {
+            page_.cursor = std::min(page_.cursor, page_.items.size() - 1);
+        }
+    }
 
     void setClipboardEntries(std::vector<std::string> entries);
     void setOptions(ControllerOptions options) { options_ = options; }
@@ -107,6 +128,7 @@ private:
     bool replaceComposition(std::string nextInput,
                             std::size_t nextCursor);
     void updatePreeditCursor();
+    core::PageBoundary currentPageBoundary() const;
 
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;

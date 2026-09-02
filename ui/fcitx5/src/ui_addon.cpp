@@ -3,6 +3,7 @@
 #include "modernime/fcitx5/fcitx_engine.h"
 #include "modernime/ui/cairo_render_surface.h"
 #include "modernime/ui/candidate_bar_layout.h"
+#include "modernime/ui/candidate_pagination.h"
 #include "modernime/ui/candidate_bar_renderer.h"
 #include "modernime/ui/status_indicator.h"
 #include "modernime/ui/window_anchor.h"
@@ -201,10 +202,15 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
     page.mode = candidates->layoutHint() == fcitx::CandidateLayoutHint::Vertical
                     ? core::CandidatePageMode::Clipboard
                     : core::CandidatePageMode::Pinyin;
+    const auto *variableCandidates =
+        dynamic_cast<const fcitx5::FcitxCandidateList *>(candidates.get());
+    const auto pageBegin = variableCandidates == nullptr
+                               ? std::size_t{0}
+                               : variableCandidates->pageBegin();
     for (int index = 0; index < candidates->size(); ++index) {
         const auto &candidate = candidates->candidate(index);
         page.items.push_back({candidate.text().toString(), {},
-                              static_cast<std::size_t>(index)});
+                              pageBegin + static_cast<std::size_t>(index)});
     }
     return page;
 }
@@ -287,38 +293,47 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
     }
     impl_->updateIndicator(inputContext);
     if (component == fcitx::UserInterfaceComponent::InputPanel) {
-        const auto page = pageFromInputPanel(inputContext->inputPanel());
-        if (page.items.empty()) {
+        auto &panel = inputContext->inputPanel();
+        const auto list = panel.candidateList();
+        if (list == nullptr || list->empty()) {
             gtk_widget_hide(impl_->window);
             impl_->windowAnchor.reset();
             return;
         }
 
+        const auto mode =
+            list->layoutHint() == fcitx::CandidateLayoutHint::Vertical
+                ? core::CandidatePageMode::Clipboard
+                : core::CandidatePageMode::Pinyin;
         const auto textWidth = candidateTextWidthForMode(
-            page.mode,
+            mode,
             [impl = impl_.get()](std::string_view value) {
                 return impl->textWidth(value);
             },
             [impl = impl_.get()](std::string_view value) {
                 return impl->textWidth(value, impl->style.clipboardText);
             });
-        impl_->layout = CandidateBarLayout::measure(
-            page, impl_->metrics, textWidth);
-        // 布局放不下的候选标记为占位：输入法侧把针对它们的数字键
-        // 放行给应用，避免提交用户看不见的词条。
-        if (const auto list = inputContext->inputPanel().candidateList();
-            list != nullptr) {
-            for (int index = static_cast<int>(impl_->layout.candidates.size());
-                 index < list->size(); ++index) {
-                auto &candidate =
-                    const_cast<fcitx::CandidateWord &>(list->candidate(index));
-                if (auto *word =
-                        dynamic_cast<fcitx5::FcitxCandidateWord *>(&candidate);
-                    word != nullptr) {
-                    word->markAsNotDisplayed();
+        if (mode == core::CandidatePageMode::Pinyin) {
+            if (auto *variableCandidates =
+                    dynamic_cast<fcitx5::FcitxCandidateList *>(list.get());
+                variableCandidates != nullptr) {
+                std::vector<core::CandidateItem> allItems;
+                const auto *bulk = list->toBulk();
+                const auto total = bulk == nullptr ? 0 : bulk->totalSize();
+                allItems.reserve(static_cast<std::size_t>(std::max(0, total)));
+                for (int index = 0; index < total; ++index) {
+                    allItems.push_back(
+                        {bulk->candidateFromAll(index).text().toString(), {},
+                         static_cast<std::size_t>(index)});
                 }
+                variableCandidates->setPageBoundaries(
+                    CandidatePagination::partition(allItems, impl_->metrics,
+                                                   textWidth));
             }
         }
+        const auto page = pageFromInputPanel(panel);
+        impl_->layout = CandidateBarLayout::measure(
+            page, impl_->metrics, textWidth);
         impl_->setWindowSize();
         impl_->positionWindow(inputContext);
         gtk_widget_queue_draw(impl_->drawingArea);

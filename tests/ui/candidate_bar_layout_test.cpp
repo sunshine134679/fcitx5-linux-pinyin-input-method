@@ -1,9 +1,11 @@
 #include "modernime/core/candidate_model.h"
 #include "modernime/ui/candidate_bar_layout.h"
+#include "modernime/ui/candidate_pagination.h"
 
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <vector>
 #include <string_view>
 
 namespace {
@@ -18,6 +20,47 @@ void assertTrue(bool condition, std::string_view message) {
 } // namespace
 
 int main() {
+    modernime::core::CandidatePage paginationPage;
+    for (std::size_t index = 0; index < 10; ++index) {
+        paginationPage.items.push_back(
+            {std::string(1, static_cast<char>('a' + index)), {}, index});
+    }
+    auto paginationMetrics = modernime::ui::CandidateBarMetrics::reference();
+    paginationMetrics.panelX = 0.0;
+    paginationMetrics.panelWidth = 100.0;
+    paginationMetrics.horizontalPadding = 0.0;
+    paginationMetrics.candidateWidth = 0.0;
+    paginationMetrics.selectedWidth = 0.0;
+    paginationMetrics.candidateTextPadding = 0.0;
+    paginationMetrics.selectedTextPadding = 0.0;
+    paginationMetrics.candidateGap = 0.0;
+    const std::vector<double> handMeasuredWidths{
+        20.0, 20.0, 20.0, 40.0, 30.0,
+        30.0, 40.0, 20.0, 40.0, 40.0};
+    const auto boundaries = modernime::ui::CandidatePagination::partition(
+        paginationPage.items, paginationMetrics,
+        [&handMeasuredWidths](std::string_view value) {
+            const auto suffix = value.empty() ? 'a' : value.back();
+            return handMeasuredWidths.at(
+                static_cast<std::size_t>(suffix - 'a'));
+        });
+    assertTrue(boundaries ==
+                   std::vector<modernime::core::PageBoundary>(
+                       {{0, 4}, {4, 7}, {7, 10}}),
+               "mixed candidate widths produce hand-derived page boundaries");
+    std::vector<std::size_t> coveredIndices;
+    for (const auto &boundary : boundaries) {
+        assertTrue(boundary.begin < boundary.end,
+                   "every candidate page is non-empty");
+        for (auto index = boundary.begin; index < boundary.end; ++index) {
+            coveredIndices.push_back(index);
+        }
+    }
+    assertTrue(coveredIndices ==
+                   std::vector<std::size_t>({0, 1, 2, 3, 4,
+                                             5, 6, 7, 8, 9}),
+               "variable pages cover every global candidate exactly once");
+
     modernime::core::CandidatePage page;
     page.preedit = "hail";
     for (std::size_t index = 0; index < 12; ++index) {
@@ -107,8 +150,15 @@ int main() {
         });
     assertTrue(extremeWordLayout.panel.width == metrics.panelWidth,
                "extreme words never resize the pinyin panel");
-    assertTrue(extremeWordLayout.candidates.empty(),
-               "a candidate that cannot fit completely is not truncated");
+    assertTrue(extremeWordLayout.candidates.size() == 1 &&
+                   extremeWordLayout.candidates.front().displayText.ends_with(
+                       "…"),
+               "an over-wide singleton remains visible with an ellipsis");
+    assertTrue(extremeWordLayout.candidates.front().bounds.x +
+                       extremeWordLayout.candidates.front().bounds.width <=
+                   metrics.panelX + metrics.panelWidth -
+                       metrics.horizontalPadding,
+               "an over-wide singleton stays inside the fixed panel");
 
     const auto pinyinWidth = modernime::ui::candidateTextWidthForMode(
         modernime::core::CandidatePageMode::Pinyin,

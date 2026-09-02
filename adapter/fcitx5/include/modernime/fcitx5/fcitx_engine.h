@@ -14,6 +14,7 @@
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/surroundingtext.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -46,13 +47,8 @@ bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
 bool clipboardTriggerFire(std::string_view preedit, const fcitx::Key &key,
                           std::string_view trigger);
 
-// 数字键选择的目标候选是否已被候选栏 UI 标记为不可见（布局放不下）。
-// 命中时输入法把数字键放行给应用，避免提交用户看不见的词条。
-bool digitSelectsPlaceholder(const fcitx::InputPanel &panel,
-                             std::size_t pageStart, char digit);
-
-// 发布到 Fcitx5 候选列表的候选项；候选栏 UI 在放不下时把它标记为
-// 占位，输入法侧据此放行数字键。
+// Every published word keeps its original global index. Page-local labels and
+// mouse selection therefore share the controller's global candidate model.
 class FcitxCandidateWord final : public fcitx::CandidateWord {
 public:
     FcitxCandidateWord(std::string text, ModernIMEController *controller,
@@ -65,11 +61,140 @@ public:
             controller_->select(index_);
         }
     }
-    void markAsNotDisplayed() { setPlaceHolder(true); }
-
 private:
     ModernIMEController *controller_;
     std::size_t index_;
+};
+
+// CommonCandidateList stores every candidate, while this subclass exposes the
+// current variable [begin, end) slice through the normal Fcitx CandidateList
+// interface. This preserves Fcitx's pageable and bulk-list contracts without
+// padding or hiding candidates.
+class FcitxCandidateList final : public fcitx::CommonCandidateList {
+public:
+    explicit FcitxCandidateList(ModernIMEController *controller)
+        : controller_(controller) {}
+
+    void setPageBoundaries(std::vector<core::PageBoundary> boundaries,
+                           bool notifyController = true) {
+        const auto total = static_cast<std::size_t>(totalSize());
+        if (!validBoundaries(boundaries, total)) {
+            boundaries.clear();
+        }
+        const bool explicitBoundaries = !boundaries.empty();
+        if (boundaries.empty() && total > 0) {
+            boundaries.push_back({0, total});
+        }
+        boundaries_ = std::move(boundaries);
+        if (notifyController && controller_ != nullptr &&
+            explicitBoundaries) {
+            controller_->setPageBoundaries(boundaries_);
+        }
+    }
+
+    std::size_t pageBegin() const { return currentBoundary().begin; }
+
+    const fcitx::CandidateWord &candidate(int index) const override {
+        return candidateFromAll(
+            static_cast<int>(currentBoundary().begin) + index);
+    }
+
+    int size() const override {
+        const auto boundary = currentBoundary();
+        return static_cast<int>(boundary.end - boundary.begin);
+    }
+
+    int cursorIndex() const override {
+        const auto global = globalCursorIndex();
+        const auto boundary = currentBoundary();
+        if (global < 0 || static_cast<std::size_t>(global) < boundary.begin ||
+            static_cast<std::size_t>(global) >= boundary.end) {
+            return -1;
+        }
+        return global - static_cast<int>(boundary.begin);
+    }
+
+    bool hasPrev() const override { return currentPage() > 0; }
+    bool hasNext() const override {
+        return currentPage() + 1 < totalPages();
+    }
+    void prev() override {
+        if (hasPrev()) {
+            setPage(currentPage() - 1);
+        }
+    }
+    void next() override {
+        if (hasNext()) {
+            usedNextBefore_ = true;
+            setPage(currentPage() + 1);
+        }
+    }
+    bool usedNextBefore() const override { return usedNextBefore_; }
+    int totalPages() const override {
+        return static_cast<int>(boundaries_.size());
+    }
+    int currentPage() const override {
+        if (boundaries_.empty()) {
+            return 0;
+        }
+        const auto global = std::max(0, globalCursorIndex());
+        for (std::size_t index = 0; index < boundaries_.size(); ++index) {
+            if (static_cast<std::size_t>(global) >= boundaries_[index].begin &&
+                static_cast<std::size_t>(global) < boundaries_[index].end) {
+                return static_cast<int>(index);
+            }
+        }
+        return static_cast<int>(boundaries_.size() - 1);
+    }
+    void setPage(int page) override {
+        if (boundaries_.empty()) {
+            return;
+        }
+        page = std::clamp(page, 0, totalPages() - 1);
+        setGlobalCursorIndex(
+            static_cast<int>(boundaries_[static_cast<std::size_t>(page)].begin));
+    }
+
+    void prevCandidate() override {
+        const auto global = globalCursorIndex();
+        if (global > 0) {
+            setGlobalCursorIndex(global - 1);
+        }
+    }
+    void nextCandidate() override {
+        const auto global = globalCursorIndex();
+        if (global >= 0 && global + 1 < totalSize()) {
+            setGlobalCursorIndex(global + 1);
+        }
+    }
+
+private:
+    static bool validBoundaries(const std::vector<core::PageBoundary> &values,
+                                std::size_t total) {
+        if (values.empty()) {
+            return total == 0;
+        }
+        std::size_t expected = 0;
+        for (const auto &value : values) {
+            if (value.begin != expected || value.begin >= value.end ||
+                value.end > total) {
+                return false;
+            }
+            expected = value.end;
+        }
+        return expected == total;
+    }
+
+    core::PageBoundary currentBoundary() const {
+        if (boundaries_.empty()) {
+            return {};
+        }
+        return boundaries_[static_cast<std::size_t>(currentPage())];
+    }
+
+    ModernIMEController *controller_ = nullptr;
+    std::vector<core::PageBoundary> boundaries_;
+    bool usedNextBefore_ = false;
 };
 
 // Heavyweight resources created once per input method engine and shared by

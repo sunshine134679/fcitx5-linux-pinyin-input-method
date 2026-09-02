@@ -260,15 +260,15 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         const auto index = static_cast<std::size_t>(event.digit - '1');
-        const auto pageStart = currentPageIndex() * pageSize();
+        const auto boundary = currentPageBoundary();
         if (page_.items.empty()) {
             if (!page_.preedit.empty()) {
                 commitRawPreedit();
             }
             return false;
         }
-        const auto candidateIndex = pageStart + index;
-        if (candidateIndex >= page_.items.size()) {
+        const auto candidateIndex = boundary.begin + index;
+        if (candidateIndex >= boundary.end) {
             return true;
         }
         return select(candidateIndex);
@@ -403,12 +403,15 @@ bool ModernIMEController::movePage(std::ptrdiff_t delta) {
 
     const auto current = static_cast<std::ptrdiff_t>(currentPageIndex());
     const auto last = static_cast<std::ptrdiff_t>(
-        (page_.items.size() - 1) / pageSize());
+        page_.pageBoundaries.empty() ? 0 : page_.pageBoundaries.size() - 1);
     const auto next = std::clamp(current + delta, std::ptrdiff_t{0}, last);
     if (next == current) {
         return true;
     }
-    page_.cursor = static_cast<std::size_t>(next) * pageSize();
+    page_.cursor = page_.pageBoundaries.empty()
+                       ? 0
+                       : page_.pageBoundaries[static_cast<std::size_t>(next)]
+                             .begin;
     host_.publishPage(page_);
     return true;
 }
@@ -517,11 +520,31 @@ void ModernIMEController::setClipboardEntries(
 }
 
 std::size_t ModernIMEController::currentPageIndex() const {
-    return page_.items.empty() ? 0 : page_.cursor / pageSize();
+    if (page_.items.empty() || page_.pageBoundaries.empty()) {
+        return 0;
+    }
+    for (std::size_t index = 0; index < page_.pageBoundaries.size(); ++index) {
+        const auto &boundary = page_.pageBoundaries[index];
+        if (page_.cursor >= boundary.begin && page_.cursor < boundary.end) {
+            return index;
+        }
+    }
+    return page_.pageBoundaries.size() - 1;
 }
 
 std::size_t ModernIMEController::pageSize() const {
-    return clipboardMode_ ? kClipboardPageSize : kCandidatePageSize;
+    const auto boundary = currentPageBoundary();
+    return boundary.end - boundary.begin;
+}
+
+core::PageBoundary ModernIMEController::currentPageBoundary() const {
+    if (page_.items.empty()) {
+        return {};
+    }
+    if (page_.pageBoundaries.empty()) {
+        return {0, page_.items.size()};
+    }
+    return page_.pageBoundaries[currentPageIndex()];
 }
 
 void ModernIMEController::refreshPage() {
@@ -589,6 +612,11 @@ bool ModernIMEController::openClipboard() {
     page_.items.reserve(clipboardEntries_.size());
     for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {
         page_.items.push_back({clipboardEntries_[index], {}, index});
+    }
+    for (std::size_t begin = 0; begin < page_.items.size();
+         begin += kClipboardPageSize) {
+        page_.pageBoundaries.push_back(
+            {begin, std::min(begin + kClipboardPageSize, page_.items.size())});
     }
     host_.publishPage(page_);
     return true;

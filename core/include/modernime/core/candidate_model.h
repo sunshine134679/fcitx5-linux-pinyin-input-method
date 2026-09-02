@@ -12,6 +12,13 @@ namespace modernime::core {
 enum class CandidateSource { Engine, UserDictionary, Learned, Raw };
 enum class CandidatePageMode { Pinyin, Clipboard };
 
+struct PageBoundary final {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+
+    bool operator==(const PageBoundary &) const = default;
+};
+
 std::string candidateOrderKey(std::string_view text,
                               std::string_view fullPinyin);
 
@@ -32,6 +39,7 @@ struct CandidatePage final {
     std::string preedit;
     std::size_t preeditCursor = kCursorAtEnd;
     std::vector<CandidateItem> items;
+    std::vector<PageBoundary> pageBoundaries;
     std::size_t cursor = 0;
     std::uint64_t generation = 0;
     CandidatePageMode mode = CandidatePageMode::Pinyin;

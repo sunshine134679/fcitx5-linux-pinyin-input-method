@@ -3,6 +3,7 @@ pkg_check_modules(PANGOCAIRO REQUIRED IMPORTED_TARGET pangocairo)
 
 add_library(modernime_ui_layout STATIC
     src/candidate_bar_layout.cpp
+    src/candidate_pagination.cpp
     src/candidate_bar_renderer.cpp
     src/cairo_render_surface.cpp
 )

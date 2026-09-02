@@ -426,6 +426,7 @@ target_include_directories(modernime_ui_tests PRIVATE
 target_link_libraries(modernime_ui_tests PRIVATE modernime_core)
 target_sources(modernime_ui_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
 )
 add_test(NAME modernime_candidate_bar_layout COMMAND modernime_ui_tests)
 
@@ -448,6 +449,7 @@ target_include_directories(modernime_candidate_bar_renderer_tests PRIVATE
 target_sources(modernime_candidate_bar_renderer_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_renderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
 )
 target_link_libraries(modernime_candidate_bar_renderer_tests PRIVATE modernime_core)
 add_test(NAME modernime_candidate_bar_renderer COMMAND modernime_candidate_bar_renderer_tests)

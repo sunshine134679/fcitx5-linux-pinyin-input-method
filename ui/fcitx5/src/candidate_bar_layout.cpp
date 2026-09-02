@@ -235,7 +235,7 @@ CandidateBarLayout CandidateBarLayout::measure(
     for (std::size_t index = 0; index < count; ++index) {
         const auto selected = index == page.cursor;
         const auto number = index + 1;
-        const auto displayText =
+        auto displayText =
             std::to_string(number) + "." + page.items[index].text;
         double slotWidth = metrics.candidateWidth;
         double selectedWidth = metrics.selectedWidth;
@@ -247,10 +247,31 @@ CandidateBarLayout CandidateBarLayout::measure(
                 selectedWidth, measuredWidth + 2.0 * metrics.selectedTextPadding);
         }
         const auto x = nextX;
-        const auto occupiedWidth =
+        auto occupiedWidth =
             selected ? std::max(slotWidth, selectedWidth) : slotWidth;
         if (x + occupiedWidth > rightEdge) {
-            break;
+            if (index > 0 || !textWidth) {
+                break;
+            }
+            const auto textPadding = std::max(metrics.candidateTextPadding,
+                                              metrics.selectedTextPadding);
+            displayText = ellipsize(displayText,
+                                    rightEdge - x - 2.0 * textPadding,
+                                    textWidth);
+            const auto measuredWidth =
+                std::max(0.0, textWidth(displayText));
+            slotWidth = std::min(
+                rightEdge - x,
+                std::max(metrics.candidateWidth,
+                         measuredWidth +
+                             2.0 * metrics.candidateTextPadding));
+            selectedWidth = std::min(
+                rightEdge - x,
+                std::max(metrics.selectedWidth,
+                         measuredWidth +
+                             2.0 * metrics.selectedTextPadding));
+            occupiedWidth =
+                selected ? std::max(slotWidth, selectedWidth) : slotWidth;
         }
         const auto y = metrics.panelY +
                        (metrics.panelHeight - metrics.candidateHeight) / 2.0;

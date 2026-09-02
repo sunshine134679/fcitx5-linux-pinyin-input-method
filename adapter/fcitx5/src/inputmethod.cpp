@@ -93,18 +93,6 @@ KeyBindings keyBindings(const core::ModernIMESettings &settings) {
 
 } // namespace
 
-bool digitSelectsPlaceholder(const fcitx::InputPanel &panel,
-                             std::size_t pageStart, char digit) {
-    const auto list = panel.candidateList();
-    if (list == nullptr || digit < '1' || digit > '9') {
-        return false;
-    }
-    const auto index =
-        pageStart + static_cast<std::size_t>(digit - '1');
-    return index < static_cast<std::size_t>(list->size()) &&
-           list->candidate(static_cast<int>(index)).isPlaceHolder();
-}
-
 std::optional<char> clipboardTriggerDigit(const fcitx::Key &key,
                                           std::string_view trigger) {
     if (trigger.size() != 3 || trigger[1] != '+' ||
@@ -195,10 +183,8 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
         return;
     }
 
-    auto candidates = std::make_unique<fcitx::CommonCandidateList>();
+    auto candidates = std::make_unique<FcitxCandidateList>(controller_);
     const bool clipboard = page.mode == core::CandidatePageMode::Clipboard;
-    const auto pageSize = clipboard ? kClipboardPageSize : kCandidatePageSize;
-    candidates->setPageSize(static_cast<int>(pageSize));
     candidates->setLayoutHint(clipboard ? fcitx::CandidateLayoutHint::Vertical
                                         : fcitx::CandidateLayoutHint::Horizontal);
     candidates->setCursorIncludeUnselected(true);
@@ -210,7 +196,16 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     // before selecting the requested page.
     const auto cursor = std::min<std::size_t>(page.cursor, page.items.size() - 1);
     candidates->setGlobalCursorIndex(static_cast<int>(cursor));
-    candidates->setPage(static_cast<int>(cursor / pageSize));
+    auto boundaries = page.pageBoundaries;
+    if (clipboard && boundaries.empty()) {
+        for (std::size_t begin = 0; begin < page.items.size();
+             begin += kClipboardPageSize) {
+            boundaries.push_back(
+                {begin,
+                 std::min(begin + kClipboardPageSize, page.items.size())});
+        }
+    }
+    candidates->setPageBoundaries(std::move(boundaries), false);
 
     inputContext_->inputPanel().setPreedit(preedit);
     inputContext_->inputPanel().setClientPreedit(preedit);
@@ -580,18 +575,6 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                 contextState->controller().page().preedit, event.key())) {
             contextState->controller().handle({KeyKind::Enter, 0, 0});
         }
-        return;
-    }
-
-    // 布局放不下的候选被 UI 标记为占位，数字键对它们放行给应用，
-    // 避免提交用户看不见的词条。
-    if (modernEvent->kind == KeyKind::Digit &&
-        !contextState->controller().clipboardMode() &&
-        digitSelectsPlaceholder(
-            event.inputContext()->inputPanel(),
-            contextState->controller().currentPageIndex() *
-                contextState->controller().pageSize(),
-            modernEvent->digit)) {
         return;
     }
 

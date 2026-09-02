@@ -5,7 +5,9 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -28,13 +30,52 @@ public:
     const char *frontend() const override { return "modernime-test"; }
 
     int preeditUpdates = 0;
+    std::vector<std::string> commits;
 
 protected:
-    void commitStringImpl(const std::string &) override {}
+    void commitStringImpl(const std::string &text) override {
+        commits.push_back(text);
+    }
     void deleteSurroundingTextImpl(int, unsigned int) override {}
     void forwardKeyImpl(const fcitx::ForwardKeyEvent &) override {}
     void updatePreeditImpl() override { ++preeditUpdates; }
 };
+
+class TenCandidateProvider final : public modernime::core::CandidateProvider {
+public:
+    bool append(std::string_view input) override {
+        current_.preedit.append(input);
+        current_.rawInput = current_.preedit;
+        current_.items.clear();
+        for (std::size_t index = 0; index < 10; ++index) {
+            current_.items.push_back({"候选" + std::to_string(index + 1),
+                                      current_.preedit, index});
+        }
+        return true;
+    }
+
+    bool eraseLast() override { return false; }
+    bool select(std::size_t index) override {
+        return index < current_.items.size();
+    }
+    void reset() override { current_.clear(); }
+    const modernime::core::CandidatePage &page() const override {
+        return current_;
+    }
+
+private:
+    modernime::core::CandidatePage current_;
+};
+
+void publishTenCandidates(
+    modernime::fcitx5::ModernIMEController &controller,
+    modernime::fcitx5::FcitxEngineHost &host) {
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::Character, 'n', 0}),
+               "test composition publishes ten candidates");
+    controller.setPageBoundaries({{0, 4}, {4, 7}, {7, 10}});
+    host.publishPage(controller.page());
+}
 
 } // namespace
 
@@ -108,30 +149,61 @@ int main() {
                        "sixth",
                "clipboard publication selects the requested page");
 
-    // 候选栏 UI 把布局放不下的候选标记为占位后，数字键选择被放行。
-    modernime::core::CandidatePage widePage;
-    widePage.preedit = "rengongzhineng";
-    for (std::size_t index = 0; index < 3; ++index) {
-        widePage.items.push_back({std::string("人工智能") + std::to_string(index),
-                                  {}, index});
+    TenCandidateProvider provider;
+    modernime::fcitx5::ModernIMEController pagedController(host, &provider);
+    host.setController(pagedController);
+
+    publishTenCandidates(pagedController, host);
+    auto pagedList = inputContext.inputPanel().candidateList();
+    assertTrue(pagedList != nullptr && pagedList->size() == 4 &&
+                   pagedList->toPageable() != nullptr &&
+                   pagedList->toPageable()->totalPages() == 3,
+               "Fcitx exposes the first variable-width candidate page");
+    for (int index = 0; index < pagedList->size(); ++index) {
+        assertTrue(!pagedList->candidate(index).isPlaceHolder(),
+                   "published candidates never use placeholder hiding");
     }
-    host.publishPage(widePage);
-    const auto wideList = inputContext.inputPanel().candidateList();
-    assertTrue(wideList != nullptr && wideList->size() == 3,
-               "wide pinyin page publishes its candidates");
-    assertTrue(!modernime::fcitx5::digitSelectsPlaceholder(
-                   inputContext.inputPanel(), 0, '1'),
-               "visible candidates are selectable by digit");
-    auto *hiddenWord = dynamic_cast<modernime::fcitx5::FcitxCandidateWord *>(
-        &const_cast<fcitx::CandidateWord &>(wideList->candidate(2)));
-    assertTrue(hiddenWord != nullptr,
-               "published candidates are Fcitx candidate words");
-    hiddenWord->markAsNotDisplayed();
-    assertTrue(modernime::fcitx5::digitSelectsPlaceholder(
-                   inputContext.inputPanel(), 0, '3'),
-               "placeholder candidates are not selectable by digit");
-    assertTrue(!modernime::fcitx5::digitSelectsPlaceholder(
-                   inputContext.inputPanel(), 9, '1'),
-               "digit targets beyond the published list are ignored");
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::Digit, 0, '1'}),
+               "page down and a local digit select the fifth candidate");
+    assertTrue(inputContext.commits.back() == "候选5",
+               "the fifth candidate maps to global index four");
+
+    publishTenCandidates(pagedController, host);
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "two page downs and a local digit select the ninth candidate");
+    assertTrue(inputContext.commits.back() == "候选9",
+               "the ninth candidate maps to global index eight");
+
+    publishTenCandidates(pagedController, host);
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::Digit, 0, '3'}),
+               "two page downs and a local digit select the tenth candidate");
+    assertTrue(inputContext.commits.back() == "候选10",
+               "the tenth candidate maps to global index nine");
+
+    publishTenCandidates(pagedController, host);
+    assertTrue(pagedController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   pagedController.handle(
+                       {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
+               "mouse selection can reach the final candidate page");
+    pagedList = inputContext.inputPanel().candidateList();
+    assertTrue(pagedList != nullptr && pagedList->size() == 3,
+               "the final variable page exposes candidates eight through ten");
+    pagedList->candidate(2).select(&inputContext);
+    assertTrue(inputContext.commits.back() == "候选10",
+               "mouse selection maps the local row to global index nine");
     return EXIT_SUCCESS;
 }

@@ -25,6 +25,7 @@ void CandidatePage::clear() {
     preedit.clear();
     preeditCursor = kCursorAtEnd;
     items.clear();
+    pageBoundaries.clear();
     cursor = 0;
     generation = 0;
     mode = CandidatePageMode::Pinyin;

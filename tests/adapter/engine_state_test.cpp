@@ -506,6 +506,8 @@ int main() {
     modernime::fcitx5::ModernIMEController manyController(manyHost,
                                                            &manyProvider);
     type(manyController, "n");
+    manyController.setPageBoundaries(
+        {{0, 4}, {4, 7}, {7, 10}, {10, 14}, {14, 17}, {17, 20}});
     assertTrue(manyController.page().items.size() == 20,
                "all candidates remain available to the controller");
     assertTrue(manyController.handle(
@@ -521,17 +523,17 @@ int main() {
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::NextPage, 0, 0}),
                "next page moves by one page");
-    assertTrue(manyController.page().cursor == 9,
+    assertTrue(manyController.page().cursor == 4,
                "next page selects the first item on the next page");
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::PreviousCandidate, 0, 0}),
                "previous candidate moves back");
-    assertTrue(manyController.page().cursor == 8,
+    assertTrue(manyController.page().cursor == 3,
                "previous candidate selects the prior item");
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::Enter, 0, 0}),
                "enter commits the highlighted candidate");
-    assertTrue(manyHost.commits.back() == "候选9",
+    assertTrue(manyHost.commits.back() == "候选4",
                "the highlighted paged candidate is committed");
 
     ManyCandidateProvider verticalProvider;
@@ -550,10 +552,12 @@ int main() {
     modernime::fcitx5::ModernIMEController pagedController(pagedHost,
                                                               &pagedProvider);
     type(pagedController, "n");
-    for (int index = 0; index < 8; ++index) {
+    pagedController.setPageBoundaries(
+        {{0, 4}, {4, 7}, {7, 10}, {10, 14}, {14, 17}, {17, 20}});
+    for (int index = 0; index < 3; ++index) {
         assertTrue(pagedController.handle(
                        {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}),
-                   "cursor reaches the ninth candidate");
+                   "cursor reaches the fourth candidate");
     }
     assertTrue(pagedController.currentPageIndex() == 0,
                "cursor is still on the first page");
@@ -562,13 +566,53 @@ int main() {
                "page down works from the first page");
     assertTrue(pagedController.currentPageIndex() == 1,
                "page down enters the second page");
-    assertTrue(pagedController.page().cursor == 9,
-               "page down starts at item ten");
+    assertTrue(pagedController.page().cursor == 4,
+               "page down starts at item five");
     assertTrue(pagedController.handle(
                    {modernime::fcitx5::KeyKind::Digit, 0, '1'}),
                "digit selects from the current page");
-    assertTrue(pagedHost.commits.back() == "候选10",
+    assertTrue(pagedHost.commits.back() == "候选5",
                "page digit selects the first item on the current page");
+
+    ManyCandidateProvider unifiedNavigationProvider;
+    RecordingHost unifiedNavigationHost;
+    modernime::fcitx5::ModernIMEController unifiedNavigationController(
+        unifiedNavigationHost, &unifiedNavigationProvider);
+    type(unifiedNavigationController, "n");
+    unifiedNavigationController.setPageBoundaries(
+        {{0, 4}, {4, 7}, {7, 10}, {10, 14}, {14, 17}, {17, 20}});
+    assertTrue(unifiedNavigationController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   unifiedNavigationController.page().cursor == 4,
+               "page down uses the next variable boundary");
+    assertTrue(unifiedNavigationController.handle(
+                   {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}) &&
+                   unifiedNavigationController.page().cursor == 5,
+               "tab advances the global cursor inside a variable page");
+    assertTrue(unifiedNavigationController.handle(
+                   {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}) &&
+                   unifiedNavigationController.page().cursor == 6,
+               "down advances the same global cursor");
+    assertTrue(unifiedNavigationController.handle(
+                   {modernime::fcitx5::KeyKind::PreviousCandidate, 0, 0}) &&
+                   unifiedNavigationController.handle(
+                       {modernime::fcitx5::KeyKind::PreviousClipboardItem, 0,
+                        0}) &&
+                   unifiedNavigationController.page().cursor == 4,
+               "shift-tab and up retreat the same global cursor");
+    assertTrue(unifiedNavigationController.handle(
+                   {modernime::fcitx5::KeyKind::PreviousPage, 0, 0}) &&
+                   unifiedNavigationController.page().cursor == 0,
+               "page up uses the previous variable boundary");
+    assertTrue(unifiedNavigationController.handle(
+                   {modernime::fcitx5::KeyKind::NextPage, 0, 0}) &&
+                   unifiedNavigationController.handle(
+                       {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}) &&
+                   unifiedNavigationController.handle(
+                       {modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space commits the globally highlighted candidate");
+    assertTrue(unifiedNavigationHost.commits.back() == "候选6",
+               "space maps the page-local highlight to global index five");
 
     RecordingHost punctuationHost;
     modernime::fcitx5::ModernIMEController punctuationController(
