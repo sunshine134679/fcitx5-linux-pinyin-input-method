@@ -179,7 +179,10 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
         inputContext_->inputPanel().setPreedit(preedit);
         inputContext_->inputPanel().setClientPreedit(preedit);
         inputContext_->updatePreedit();
-        inputContext_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+        // immediate=true 让候选面板更新在本键处理内同步送达 UI addon，
+        // 不再等事件循环的 defer event 下一轮才 flush。
+        inputContext_->updateUserInterface(
+            fcitx::UserInterfaceComponent::InputPanel, true);
         return;
     }
 
@@ -211,7 +214,10 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     inputContext_->inputPanel().setClientPreedit(preedit);
     inputContext_->inputPanel().setCandidateList(std::move(candidates));
     inputContext_->updatePreedit();
-    inputContext_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+    // immediate=true 让候选面板更新在本键处理内同步送达 UI addon，
+    // 不再等事件循环的 defer event 下一轮才 flush。
+    inputContext_->updateUserInterface(
+        fcitx::UserInterfaceComponent::InputPanel, true);
 }
 
 void FcitxEngineHost::commit(std::string_view text) {
