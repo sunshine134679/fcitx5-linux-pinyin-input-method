@@ -652,21 +652,25 @@ public:
             return true;
         }
 
-        if (candidate.source == core::CandidateSource::Learned) {
+        if (candidate.source == core::CandidateSource::Learned ||
+            candidate.source == core::CandidateSource::Engine) {
+            // Engine 源候选来自系统词典，无法像用户词典那样物理删除；
+            // 插入会话级屏蔽集合，让 refresh() 把它过滤出候选列表，
+            // 否则用户按删词后系统词典词原地复活，删词形同虚设。
             suppressedLearned_.insert(
                 candidateKey(candidate.fullPinyin, candidate.text));
         }
-        if (learningWriter() == nullptr) {
-            return false;
+        if (learningWriter() != nullptr) {
+            learningWriter()->enqueueSuppression(candidate.text,
+                                                 candidate.fullPinyin);
         }
-        learningWriter()->enqueueSuppression(candidate.text,
-                                             candidate.fullPinyin);
         refresh();
         return true;
     }
 
     void reset() {
-        suppressedLearned_.clear();
+        // 删词屏蔽跨输入组合持续生效：用户明确删除的词不应在下一个
+        // composition 里复活，屏蔽集合生命周期与 provider 一致。
         context->clear();
         refresh();
     }
