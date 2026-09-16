@@ -24,6 +24,8 @@
 #include <cmath>
 #include <cctype>
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 namespace modernime::ui {
 
@@ -42,6 +44,17 @@ struct ModernIMEUserInterface::Impl final {
     bool wayland = false;
     bool waylandAnchorWarningLogged = false;
     std::unique_ptr<fcitx::EventSourceTime> gtkEventSource;
+    // 测量缓存：textWidth 在每次按键的布局/分页路径上对全部候选反复调用，
+    // 原实现每次都新建再销毁 PangoLayout 和字体描述，并重复测量相同文本。
+    // 复用单个布局对象 + 按样式缓存字体描述 + 按文本缓存测量结果。
+    mutable PangoLayout *sharedTextLayout = nullptr;
+    mutable std::unordered_map<std::string, PangoFontDescription *>
+        sharedFontCache;
+    mutable std::unordered_map<std::string, double> sharedWidthCache;
+    // AppIndicator 的 set_label/set_title 每次调用都会触发 DBus 属性通知，
+    // 值未变化时跳过，避免每键一次 DBus 往返。
+    std::string lastIndicatorLabel;
+    std::string lastIndicatorTitle;
 
     static constexpr double originX = 0.0;
     static constexpr double originY = 0.0;
@@ -113,10 +126,27 @@ struct ModernIMEUserInterface::Impl final {
         }
     }
 
-    double textWidth(std::string_view value,
-                     const TextStyle &textStyle) const {
-        PangoContext *context = gtk_widget_get_pango_context(drawingArea);
-        PangoLayout *textLayout = pango_layout_new(context);
+    // 复用单个 PangoLayout 测量文本；布局对象在首次测量时创建，
+    // 之后仅更新字体与文本，避免每候选每键一次 layout 创建销毁。
+    PangoLayout *acquireTextLayout() const {
+        if (sharedTextLayout == nullptr) {
+            PangoContext *context = gtk_widget_get_pango_context(drawingArea);
+            sharedTextLayout = pango_layout_new(context);
+        }
+        return sharedTextLayout;
+    }
+
+    const PangoFontDescription *fontForStyle(
+        const TextStyle &textStyle) const {
+        std::string key = textStyle.family;
+        key += '|';
+        key += std::to_string(textStyle.size);
+        key += '|';
+        key += std::to_string(textStyle.weight);
+        if (const auto found = sharedFontCache.find(key);
+            found != sharedFontCache.end()) {
+            return found->second;
+        }
         PangoFontDescription *font = pango_font_description_new();
         pango_font_description_set_family(font, textStyle.family.c_str());
         pango_font_description_set_absolute_size(
@@ -124,26 +154,48 @@ struct ModernIMEUserInterface::Impl final {
         pango_font_description_set_weight(
             font, textStyle.weight >= 700 ? PANGO_WEIGHT_BOLD
                                           : PANGO_WEIGHT_NORMAL);
-        pango_layout_set_font_description(textLayout, font);
+        sharedFontCache.emplace(std::move(key), font);
+        return font;
+    }
+
+    double textWidth(std::string_view value,
+                     const TextStyle &textStyle) const {
+        PangoLayout *textLayout = acquireTextLayout();
+        pango_layout_set_font_description(textLayout,
+                                          fontForStyle(textStyle));
         pango_layout_set_text(textLayout, value.data(),
                               static_cast<int>(value.size()));
         int width = 0;
         int height = 0;
         pango_layout_get_pixel_size(textLayout, &width, &height);
         (void)height;
-        pango_font_description_free(font);
-        g_object_unref(textLayout);
         return static_cast<double>(width);
     }
 
     double textWidth(std::string_view value) const {
+        // 按完整文本缓存测量结果：同一次组合里布局与分页会反复测量
+        // 相同候选，缓存命中时完全跳过 Pango。缓存超限时整体清空，
+        // 防止长会话下无限增长（候选串空间有限，通常远达不到上限）。
+        const std::string cacheKey(value);
+        if (const auto found = sharedWidthCache.find(cacheKey);
+            found != sharedWidthCache.end()) {
+            return found->second;
+        }
+        double width = 0.0;
         const auto separator = value.find('.');
         if (separator == std::string_view::npos) {
-            return textWidth(value, style.candidateText);
+            width = textWidth(value, style.candidateText);
+        } else {
+            width = textWidth(value.substr(0, separator + 1),
+                              style.candidateNumberText) +
+                    textWidth(value.substr(separator + 1),
+                              style.candidateText);
         }
-        return textWidth(value.substr(0, separator + 1),
-                         style.candidateNumberText) +
-               textWidth(value.substr(separator + 1), style.candidateText);
+        if (sharedWidthCache.size() >= 4096) {
+            sharedWidthCache.clear();
+        }
+        sharedWidthCache.emplace(cacheKey, width);
+        return width;
     }
 
     void updateIndicator(fcitx::InputContext *inputContext) {
@@ -155,8 +207,14 @@ struct ModernIMEUserInterface::Impl final {
             std::string(StatusIndicator::labelForInputMethod(inputMethod));
         const auto title =
             std::string(StatusIndicator::titleForInputMethod(inputMethod));
-        app_indicator_set_label(indicator, label.c_str(), "");
-        app_indicator_set_title(indicator, title.c_str());
+        if (label != lastIndicatorLabel) {
+            app_indicator_set_label(indicator, label.c_str(), "");
+            lastIndicatorLabel = std::move(label);
+        }
+        if (title != lastIndicatorTitle) {
+            app_indicator_set_title(indicator, title.c_str());
+            lastIndicatorTitle = std::move(title);
+        }
     }
 };
 
