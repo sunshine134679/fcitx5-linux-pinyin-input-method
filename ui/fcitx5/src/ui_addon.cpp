@@ -79,7 +79,13 @@ struct ModernIMEUserInterface::Impl final {
     // 标记请求，真正送到 X server 要等 GTK 主循环运转；这里同步泵一次，
     // 让候选窗在本键处理内就完成显示/隐藏/重绘请求的下发，而不是等
     // 下一个周期泵（活跃期 8ms、空闲期 50ms）。
-    void pumpPendingGtkEvents() { g_main_context_iteration(nullptr, FALSE); }
+    void pumpPendingGtkEvents() {
+        int iterations = 32;
+        while (iterations-- > 0 && g_main_context_iteration(nullptr, FALSE)) {}
+        if (auto *disp = gdk_display_get_default()) {
+            gdk_display_flush(disp);
+        }
+    }
 
     // 窗口与绘制内容共用逻辑坐标；GTK3 在 HiDPI 显示器上会自动按设备
     // 缩放放大（绘制上下文已应用 scale），这里不能再乘 scaleFactor，
@@ -325,6 +331,10 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     gtk_container_add(GTK_CONTAINER(impl_->window), impl_->drawingArea);
     g_signal_connect(impl_->drawingArea, "draw", G_CALLBACK(drawCallback), this);
     gtk_widget_set_size_request(impl_->drawingArea, 1, 1);
+    gtk_widget_realize(impl_->window);
+    // 预热 Pango 布局与 Fontconfig 字体库缓存，消除首键测量中文字体的冷启动开销
+    impl_->textWidth("你好世界");
+    impl_->textWidth("1234567890");
     if (instance != nullptr) {
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 30000, 30000,
@@ -419,6 +429,10 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         gtk_widget_queue_draw(impl_->drawingArea);
         if (!impl_->suspended) {
             gtk_widget_show_all(impl_->window);
+            if (impl_->gtkEventSource) {
+                impl_->gtkEventSource->setNextInterval(8000);
+                impl_->gtkEventSource->setEnabled(true);
+            }
         }
         impl_->pumpPendingGtkEvents();
         return;
