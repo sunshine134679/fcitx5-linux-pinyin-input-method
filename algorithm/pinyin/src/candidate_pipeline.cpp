@@ -57,7 +57,9 @@ double dictionaryBonus(const libime::PinyinDictionary &dictionary,
                 systemBonus = std::max(systemBonus,
                                        core::systemDictionaryBonus(cost));
             }
-            return true;
+            // 同一 phrase 在用户词典与系统词典中可能各出现一次，
+            // 两种来源都命中后即可提前终止，无需继续遍历剩余前缀子树。
+            return userBonus <= 0.0 || systemBonus <= 0.0;
         });
     return core::combinedDictionaryBonus(userBonus, systemBonus);
 }
