@@ -166,6 +166,20 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery(
                "common short abbreviation is the first candidate");
 
     provider.reset();
+    assertTrue(provider.append("bj"),
+               "common initialism bj is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "北京",
+               "common initialism bj yields 北京 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("dl"),
+               "common initialism dl is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "登录",
+               "common initialism dl yields 登录 as first candidate");
+
+    provider.reset();
     assertTrue(provider.append("who"), "ordinary English input is accepted");
     assertTrue(!provider.page().items.empty() &&
                    provider.page().items.front().text == "who",

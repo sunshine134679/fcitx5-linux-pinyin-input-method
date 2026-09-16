@@ -44,6 +44,16 @@ int main() {
     assertTrue(!PinyinMatchPolicy::trustedShortAbbreviationMatch(
                    "who", "wo'hen'hao", "我很好"),
                "ordinary English-shaped initials are not broadly trusted");
+    assertTrue(PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                   "bj", "bei'jing", "北京"),
+               "high-frequency initialism bj for 北京 is trusted");
+    assertTrue(PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                   "dl", "deng'lu", "登录"),
+               "high-frequency initialism dl for 登录 is trusted");
+    assertTrue(PinyinMatchPolicy::initialsMatch("yqch", "yi'qi'chi"),
+               "compound initial ch matches syllables");
+    assertTrue(PinyinMatchPolicy::initialsMatch("bj", "bei'jing"),
+               "initialsMatch handles regular syllables");
 
     std::vector<CandidateScore> candidates{
         {0, "你", "ni", 0.0F}, {1, "你好", "ni'hao", 0.0F}};

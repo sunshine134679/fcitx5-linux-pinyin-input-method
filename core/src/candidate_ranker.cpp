@@ -68,12 +68,19 @@ CandidateRanker::rank(std::string_view userInput,
             }
         }
     }
-    std::stable_sort(order.begin(), order.end(), [&candidates](std::size_t left,
+    std::stable_sort(order.begin(), order.end(), [&candidates, userInput](std::size_t left,
                                                                 std::size_t right) {
         const auto &a = candidates[left];
         const auto &b = candidates[right];
         if (a.match_priority != b.match_priority) {
             return a.match_priority > b.match_priority;
+        }
+        const bool aTrusted = a.match_priority == 1 &&
+            PinyinMatchPolicy::trustedShortAbbreviationMatch(userInput, a.full_pinyin, a.text);
+        const bool bTrusted = b.match_priority == 1 &&
+            PinyinMatchPolicy::trustedShortAbbreviationMatch(userInput, b.full_pinyin, b.text);
+        if (aTrusted != bTrusted) {
+            return aTrusted;
         }
         if (a.final_score() != b.final_score()) {
             return a.final_score() < b.final_score();

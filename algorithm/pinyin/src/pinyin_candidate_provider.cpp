@@ -228,7 +228,8 @@ bool coversPinyinInput(std::string_view userInput,
     // initials, which also covers the normal four-character idiom case.
     if (userInput.size() >= 4 &&
         core::PinyinMatchPolicy::isAbbreviationInput(userInput) &&
-        core::PinyinMatchPolicy::abbreviationKey(fullPinyin) == userInput) {
+        (core::PinyinMatchPolicy::abbreviationKey(fullPinyin) == userInput ||
+         core::PinyinMatchPolicy::initialsMatch(userInput, fullPinyin))) {
         return true;
     }
 
