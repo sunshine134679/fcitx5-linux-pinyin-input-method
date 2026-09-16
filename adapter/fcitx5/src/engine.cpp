@@ -3,7 +3,6 @@
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/punctuation.h"
 
-#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -13,9 +12,6 @@
 
 namespace modernime::fcitx5 {
 namespace {
-
-const std::array<std::string_view, 9> sampleCandidates{
-    "还", "海", "害", "嗨", "咳", "亥", "孩", "骇", "氦"};
 
 bool endsWithAsciiAlnum(std::string_view text, std::string_view after) {
     if (text.empty()) {
@@ -530,13 +526,9 @@ void ModernIMEController::refreshPage() {
     page_.preedit = input_.text();
     page_.generation = input_.generation();
     updatePreeditCursor();
-    if (input_.text() == "hail") {
-        page_.items.reserve(sampleCandidates.size());
-        for (std::size_t index = 0; index < sampleCandidates.size(); ++index) {
-            page_.items.push_back(
-                {std::string(sampleCandidates[index]), input_.text(), index});
-        }
-    } else if (!input_.text().empty()) {
+    // 无 provider 的降级路径（正常安装不会出现）：唯一候选就是原始
+    // 输入本身，保持行为可预期，不再注入开发期示例候选。
+    if (!input_.text().empty()) {
         page_.items.push_back({input_.text(), input_.text(), 0});
     }
     ensurePageBoundaries();

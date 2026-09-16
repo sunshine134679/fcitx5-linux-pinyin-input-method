@@ -230,9 +230,10 @@ int main() {
 
     type(controller, "hail");
     assertTrue(controller.page().preedit == "hail", "preedit is published");
-    assertTrue(controller.page().items.size() == 9, "nine sample candidates exist");
-    assertTrue(controller.page().items.front().text == "还",
-               "first sample candidate is visible");
+    assertTrue(controller.page().items.size() == 1,
+               "fallback candidate exists");
+    assertTrue(controller.page().items.front().text == "hail",
+               "fallback candidate echoes the raw input");
 
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0}),
                "backspace is handled");
@@ -283,14 +284,15 @@ int main() {
                "forward delete can remove the final remaining character");
 
     type(controller, "hail");
-    assertTrue(controller.select(1), "candidate index selection is handled");
-    assertTrue(host.commits.back() == "海", "candidate index commits second item");
+    assertTrue(controller.select(0), "candidate index selection is handled");
+    assertTrue(host.commits.back() == "hail",
+               "candidate index commits the fallback item");
     assertTrue(controller.page().preedit.empty(), "index selection clears page");
 
     type(controller, "hail");
-    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '1'}),
                "digit selection is handled");
-    assertTrue(host.commits.back() == "海", "second candidate is committed");
+    assertTrue(host.commits.back() == "hail", "first candidate is committed");
     assertTrue(controller.page().preedit.empty(), "selection clears page");
 
     RecordingHost clipboardHost;
@@ -400,7 +402,7 @@ int main() {
     type(controller, "hail");
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
                "space selects first candidate");
-    assertTrue(host.commits.back() == "还", "space commits first candidate");
+    assertTrue(host.commits.back() == "hail", "space commits first candidate");
 
     type(controller, "x");
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Enter, 0, 0}),
