@@ -311,10 +311,10 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     gtk_widget_set_size_request(impl_->drawingArea, 1, 1);
     if (instance != nullptr) {
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
-            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 10000, 1000,
+            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 30000, 30000,
             [](fcitx::EventSourceTime *source, uint64_t) {
                 g_main_context_iteration(nullptr, FALSE);
-                source->setNextInterval(10000);
+                source->setNextInterval(30000);
                 source->setEnabled(true);
                 return true;
             });

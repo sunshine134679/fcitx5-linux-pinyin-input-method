@@ -293,10 +293,10 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
         instance_->inputContextManager().registerProperty(
             std::string(statePropertyName), &stateFactory_);
         clipboardTimer_ = instance_->eventLoop().addTimeEvent(
-            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 50000, 50000,
+            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 500000, 500000,
             [this](fcitx::EventSourceTime *source, std::uint64_t) {
                 pollClipboard();
-                source->setNextInterval(50000);
+                source->setNextInterval(500000);
                 source->setEnabled(true);
                 return true;
             });
@@ -457,13 +457,8 @@ void ModernIMEInputMethod::pollClipboard() {
         instance_ == nullptr) {
         return;
     }
-    if (!clipboardAddonLookupAttempted_) {
-        clipboardAddon_ = manager_->addon("clipboard", true);
-        clipboardAddonLookupAttempted_ = true;
-    }
-    if (clipboardAddon_ == nullptr) {
-        return;
-    }
+    // 先做最廉价的短路判断再查 addon：ModernIME 非当前输入法时
+    // 完全跳过后续的 addon 查找与调用，轮询空转成本降到最低。
     auto *inputContext =
         instance_->inputContextManager().mostRecentInputContext();
     if (inputContext == nullptr) {
@@ -473,6 +468,13 @@ void ModernIMEInputMethod::pollClipboard() {
     // content copied under other input methods or keyboard layouts must not
     // end up in the history file.
     if (instance_->inputMethod(inputContext) != "modernime") {
+        return;
+    }
+    if (!clipboardAddonLookupAttempted_) {
+        clipboardAddon_ = manager_->addon("clipboard", true);
+        clipboardAddonLookupAttempted_ = true;
+    }
+    if (clipboardAddon_ == nullptr) {
         return;
     }
     // The settings client may have deleted or cleared the history file since
@@ -492,7 +494,7 @@ void ModernIMEInputMethod::pollClipboard() {
         std::string historyError;
         clipboardHistory_.observe(text, &historyError);
         if (!historyError.empty()) {
-            // 剪贴板每 50ms 轮询一次；同一错误只在首次出现时记录，
+            // 剪贴板每 500ms 轮询一次；同一错误只在首次出现时记录，
             // 避免日志刷屏。
             if (historyError != lastHistoryError_) {
                 FCITX_ERROR() << "Failed to save ModernIME clipboard history: "
