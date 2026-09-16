@@ -108,6 +108,46 @@ std::filesystem::path extensionDictionaryPath(
     return {};
 }
 
+std::filesystem::path hotwordDictionaryPath(std::string_view configuredPath) {
+    if (!configuredPath.empty()) {
+        return std::filesystem::path(configuredPath);
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    if (const auto *environment = std::getenv(
+            "MODERNIME_PINYIN_HOTWORDS_DICTIONARY");
+        environment != nullptr && *environment != '\0') {
+        candidates.emplace_back(environment);
+    }
+
+    const auto *dataHome = std::getenv("XDG_DATA_HOME");
+    if (dataHome != nullptr && *dataHome != '\0') {
+        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime" /
+                                "pinyin" / "modernime-hotwords.dict");
+    } else if (const auto *home = std::getenv("HOME"); home != nullptr &&
+               *home != '\0') {
+        candidates.emplace_back(std::filesystem::path(home) / ".local" /
+                                "share" / "modernime" / "pinyin" /
+                                "modernime-hotwords.dict");
+    }
+
+#ifdef MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY
+    candidates.emplace_back(MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY);
+#endif
+#ifdef MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY
+    candidates.emplace_back(MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY);
+#endif
+    candidates.emplace_back(
+        "/usr/share/modernime/pinyin/modernime-hotwords.dict");
+
+    for (const auto &candidate : candidates) {
+        if (isRegularFile(candidate)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
 void loadExtensionDictionary(libime::PinyinDictionary &dictionary,
                              const std::filesystem::path &path) {
     if (!isRegularFile(path)) {
@@ -496,6 +536,10 @@ PinyinCandidateProvider::createSharedResources(
     loadExtensionDictionary(
         *dictionary,
         extensionDictionaryPath(paths.extensionDictionary));
+    // 热词表加载在知识库之后的下一层（当前为 layer 3）；正 cost 让
+    // 简拼命中的热词越过系统词典组合，排在候选列表前列。
+    loadExtensionDictionary(
+        *dictionary, hotwordDictionaryPath(paths.hotwordDictionary));
 
     std::unique_ptr<libime::UserLanguageModel> model;
     if (std::filesystem::is_regular_file(paths.languageModel)) {

@@ -476,6 +476,7 @@ if(BASH_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/pinyin_knowledge_data_test.sh
             ${CMAKE_CURRENT_SOURCE_DIR}/../data/pinyin/modernime-knowledge.tsv
             ${CMAKE_CURRENT_SOURCE_DIR}/../data/pinyin/modernime-knowledge.raw
+            ${CMAKE_CURRENT_SOURCE_DIR}/../data/pinyin/modernime-hotwords.raw
     )
     add_test(NAME modernime_install_runtime
         COMMAND ${BASH_EXECUTABLE}

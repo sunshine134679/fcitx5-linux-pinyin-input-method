@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-    echo "usage: $0 DATA_FILE RAW_FILE" >&2
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+    echo "usage: $0 DATA_FILE RAW_FILE [HOTWORDS_FILE]" >&2
     exit 2
 fi
 
 data_file=$1
 raw_file=$2
+hotwords_file=${3:-$(dirname "$raw_file")/modernime-hotwords.raw}
 
 if [[ ! -s "$data_file" ]]; then
     echo "拼音知识库数据文件不存在或为空：$data_file" >&2
@@ -90,4 +91,48 @@ if (( raw_count != data_count )); then
     exit 1
 fi
 
-echo "拼音知识库数据测试通过：$data_count 条，raw $raw_count 条"
+# 网络热词表：可选第三参数显式指定；缺省探测 raw 同目录下的
+# modernime-hotwords.raw，存在才校验。
+if [[ -n "${3:-}" && ! -s "$hotwords_file" ]]; then
+    echo "网络热词数据文件不存在或为空：$hotwords_file" >&2
+    exit 1
+fi
+
+hotwords_count=0
+if [[ -s "$hotwords_file" ]]; then
+    hotwords_count=$(awk -F '\t' '
+        NF != 3 || $1 == "" || $2 !~ /^[a-z]+('\''[a-z]+)*$/ || $3 != "5" { bad = 1 }
+        { count++ }
+        END { if (bad) exit 1; print count + 0 }
+    ' "$hotwords_file")
+    if (( hotwords_count < 10 )); then
+        echo "网络热词条目过少：$hotwords_count（要求至少 10）" >&2
+        exit 1
+    fi
+
+    check_hotword() {
+        local phrase=$1
+        local pinyin=$2
+        if ! awk -F '\t' -v wanted_phrase="$phrase" \
+            -v wanted_pinyin="$pinyin" \
+            '$1 == wanted_phrase && $2 == wanted_pinyin { found = 1 }
+             END { exit !found }' "$hotwords_file"; then
+            echo "网络热词缺少代表词条：$phrase / $pinyin" >&2
+            exit 1
+        fi
+    }
+    check_hotword "永远的神" "yong'yuan'de'shen"
+    check_hotword "显眼包" "xian'yan'bao"
+
+    # 热词与知识库 raw 重复会让同一词条进入多层词典，产生重复候选。
+    if ! awk -F '\t' '
+        NR == FNR { seen[$1 SUBSEP $2] = 1; next }
+        seen[$1 SUBSEP $2] { dup = 1 }
+        END { exit dup ? 1 : 0 }
+    ' "$raw_file" "$hotwords_file"; then
+        echo "网络热词与知识库 raw 存在重复词条（会造成重复候选）" >&2
+        exit 1
+    fi
+fi
+
+echo "拼音知识库数据测试通过：$data_count 条，raw $raw_count 条，热词 $hotwords_count 条"

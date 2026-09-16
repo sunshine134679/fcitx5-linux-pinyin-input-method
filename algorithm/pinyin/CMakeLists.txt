@@ -22,10 +22,14 @@ set_target_properties(modernime_pinyin PROPERTIES POSITION_INDEPENDENT_CODE ON)
 modernime_enable_warnings(modernime_pinyin)
 
 if(MODERNIME_BUILD_LIBIME_PINYIN)
-    add_dependencies(modernime_pinyin modernime_pinyin_knowledge_dictionary)
+    add_dependencies(modernime_pinyin
+        modernime_pinyin_knowledge_dictionary
+        modernime_pinyin_hotwords_dictionary)
     target_compile_definitions(modernime_pinyin
         PUBLIC
             "MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY=\"${CMAKE_BINARY_DIR}/data/pinyin/modernime-knowledge.dict\""
             "MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-knowledge.dict\""
+            "MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY=\"${CMAKE_BINARY_DIR}/data/pinyin/modernime-hotwords.dict\""
+            "MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-hotwords.dict\""
     )
 endif()

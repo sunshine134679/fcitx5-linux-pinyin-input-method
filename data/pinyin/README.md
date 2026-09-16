@@ -6,6 +6,7 @@
 
 - `modernime-knowledge.tsv`：带类别、来源、基础频率和首字母缩写元数据的规范化词库。
 - `modernime-knowledge.raw`：供 `libime_pinyndict` 构建二进制词典的派生文本，格式是“词语、完整拼音、cost”。
+- `modernime-hotwords.raw`：网络热词表（词语、完整拼音、cost=5），构建为独立的 `modernime-hotwords.dict` 并作为 libime 第三层词典加载；正 cost 让简拼（如 yyds）命中的热词排在系统词典组合之前。新增热词直接在此文件追加一行（保持 cost 为 5），并避免与 `modernime-knowledge.raw` 或系统词典 `sc.dict` 收录的词条重复。
 - `SOURCES.json`：源项目、固定提交号、下载地址和过滤规则。
 - `THIRD_PARTY_NOTICES.md`：随派生数据发布的许可证和归属说明。
 

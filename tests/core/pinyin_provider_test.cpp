@@ -235,6 +235,48 @@ void testAbbreviationPhraseOutranksRawEnglishFallback() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testInternetHotwordsTopRanking() {
+    const auto learningPath = testPath("hotwords-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.hotwordDictionary = MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+
+    assertTrue(provider.append("yyds"),
+               "hotword abbreviation input is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "永远的神",
+               "hotword yyds outranks system dictionary combinations");
+
+    provider.reset();
+    assertTrue(provider.append("xyb"),
+               "hotword abbreviation xyb is accepted");
+    // 三字母输入保留英文 fallback 置顶（与 "who" 行为一致），
+    // 热词应紧随其后进入前二。
+    assertTrue(indexOf(provider.page(), "显眼包") < 2,
+               "hotword xyb reaches top two behind the short raw fallback");
+
+    provider.reset();
+    assertTrue(provider.append("xswl"),
+               "hotword abbreviation xswl is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "笑死我了",
+               "hotword xswl ranks first");
+
+    provider.reset();
+    assertTrue(provider.append("yongyuandeshen"),
+               "hotword full pinyin input is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "永远的神",
+               "hotword full pinyin keeps ranking first");
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 void testCommonFuzzyAndShortAbbreviationRanking() {
     const auto learningPath = testPath("fuzzy-abbreviation-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
@@ -380,6 +422,7 @@ int main() {
     testLongInputMixingPrioritizesTrustedPrefixesAndSentences();
     testCommonFuzzyAndShortAbbreviationRanking();
     testAbbreviationPhraseOutranksRawEnglishFallback();
+    testInternetHotwordsTopRanking();
     testAbbreviationInputIsAutomaticallySegmentedInPreedit();
     testFullPinyinInputIsAutomaticallySegmentedInPreedit();
     modernime::pinyin::PinyinCandidateProvider provider;
