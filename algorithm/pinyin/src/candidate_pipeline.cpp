@@ -33,27 +33,43 @@ bool validFullPinyin(std::string_view fullPinyin) {
     return true;
 }
 
+std::size_t utf8CodePointCount(std::string_view text) {
+    std::size_t count = 0;
+    for (const char character : text) {
+        if ((static_cast<unsigned char>(character) & 0xC0) != 0x80) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 double dictionaryBonus(const libime::PinyinDictionary &dictionary,
                        std::string_view fullPinyin,
                        std::string_view phrase) {
     if (!validFullPinyin(fullPinyin)) {
         return 0.0;
     }
+    // 单字不加系统词典加分：libime 语言模型对单字 unigram 的原生排序
+    // 更可靠（如 de→的、a→啊），sc.dict 的离散权重（0=中性、负=加权）
+    // 反而会把高频单字顶离首位。用户词典层（cost>=0）不受此限制，
+    // 用户手动收录的单字仍然可以上位。
+    const bool singleCharacter = utf8CodePointCount(phrase) == 1;
     const auto encoded = libime::PinyinEncoder::encodeFullPinyin(fullPinyin);
     double userBonus = 0.0;
     double systemBonus = 0.0;
     dictionary.matchWords(
         encoded.data(), encoded.size(),
-        [&userBonus, &systemBonus, phrase](std::string_view,
-                                            std::string_view hanzi,
-                                            float cost) {
+        [&userBonus, &systemBonus, phrase,
+         singleCharacter](std::string_view,
+                          std::string_view hanzi,
+                          float cost) {
             if (hanzi != phrase) {
                 return true;
             }
             if (cost >= 0.0F) {
                 userBonus = std::max(userBonus,
                                      core::curatedDictionaryBonus(cost));
-            } else {
+            } else if (!singleCharacter) {
                 systemBonus = std::max(systemBonus,
                                        core::systemDictionaryBonus(cost));
             }

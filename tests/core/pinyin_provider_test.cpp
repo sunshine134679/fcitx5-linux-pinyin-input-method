@@ -547,8 +547,8 @@ int main() {
     modernime::pinyin::PinyinCandidateProvider repeatedProvider(repeatedPaths);
     assertTrue(repeatedProvider.append("a"),
                "single-syllable input is accepted");
-    assertTrue(indexOf(repeatedProvider.page(), "啊") == 1,
-               "啊 starts as the second candidate");
+    assertTrue(indexOf(repeatedProvider.page(), "啊") == 0,
+               "啊 starts as the top candidate");
     for (int count = 0; count < 5; ++count) {
         const auto currentIndex = indexOf(repeatedProvider.page(), "啊");
         assertTrue(currentIndex < repeatedProvider.page().items.size(),
