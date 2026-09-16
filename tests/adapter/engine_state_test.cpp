@@ -653,9 +653,14 @@ int main() {
     type(verticalController, "n");
     assertTrue(verticalController.handle(
                    {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}),
-               "down moves the highlighted candidate in normal mode");
-    assertTrue(verticalController.page().cursor == 1,
-               "down selects the next candidate while page-down still pages");
+               "down flips to the next candidate page in normal mode");
+    assertTrue(verticalController.page().cursor == 9,
+               "down selects the next page boundary in normal mode");
+    assertTrue(verticalController.handle(
+                   {modernime::fcitx5::KeyKind::PreviousClipboardItem, 0, 0}),
+               "up flips back to the previous candidate page in normal mode");
+    assertTrue(verticalController.page().cursor == 0,
+               "up selects the previous page boundary in normal mode");
 
     ManyCandidateProvider pagedProvider;
     RecordingHost pagedHost;
@@ -701,15 +706,19 @@ int main() {
                "tab advances the global cursor inside a variable page");
     assertTrue(unifiedNavigationController.handle(
                    {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}) &&
-                   unifiedNavigationController.page().cursor == 6,
-               "down advances the same global cursor");
+                   unifiedNavigationController.page().cursor == 7,
+               "down flips to the next candidate page in normal mode");
     assertTrue(unifiedNavigationController.handle(
-                   {modernime::fcitx5::KeyKind::PreviousCandidate, 0, 0}) &&
+                   {modernime::fcitx5::KeyKind::PreviousClipboardItem, 0, 0}) &&
+                   unifiedNavigationController.page().cursor == 4,
+               "up flips back to the previous candidate page in normal mode");
+    assertTrue(unifiedNavigationController.handle(
+                   {modernime::fcitx5::KeyKind::NextCandidate, 0, 0}) &&
                    unifiedNavigationController.handle(
-                       {modernime::fcitx5::KeyKind::PreviousClipboardItem, 0,
+                       {modernime::fcitx5::KeyKind::PreviousCandidate, 0,
                         0}) &&
                    unifiedNavigationController.page().cursor == 4,
-               "shift-tab and up retreat the same global cursor");
+               "tab and shift-tab advance and retreat the candidate cursor");
     assertTrue(unifiedNavigationController.handle(
                    {modernime::fcitx5::KeyKind::PreviousPage, 0, 0}) &&
                    unifiedNavigationController.page().cursor == 0,

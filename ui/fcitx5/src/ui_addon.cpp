@@ -14,6 +14,7 @@
 #include <fcitx/addonmanager.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontext.h>
+#include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
 #include <fcitx-utils/event.h>
@@ -33,6 +34,7 @@ namespace modernime::ui {
 
 struct ModernIMEUserInterface::Impl final {
     fcitx::Instance *instance = nullptr;
+    fcitx::InputContext *currentInputContext = nullptr;
     GtkWidget *window = nullptr;
     GtkWidget *drawingArea = nullptr;
     AppIndicator *indicator = nullptr;
@@ -287,6 +289,17 @@ void drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
     static_cast<ModernIMEUserInterface *>(data)->draw(context);
 }
 
+gboolean buttonPressCallback(GtkWidget *, GdkEventButton *event, gpointer data) {
+    if (event->type != GDK_BUTTON_PRESS || event->button != 1) {
+        return FALSE;
+    }
+    auto *ui = static_cast<ModernIMEUserInterface *>(data);
+    if (ui != nullptr) {
+        return ui->handleButtonPress(event->x, event->y) ? TRUE : FALSE;
+    }
+    return FALSE;
+}
+
 void configureWindow(GtkWidget *window) {
     gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
     gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
@@ -363,8 +376,16 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     app_indicator_set_menu(impl_->indicator,
                            GTK_MENU(impl_->indicatorMenu));
     impl_->drawingArea = gtk_drawing_area_new();
+    gtk_widget_add_events(impl_->drawingArea,
+                          GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
+    gtk_widget_add_events(impl_->window,
+                          GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
     gtk_container_add(GTK_CONTAINER(impl_->window), impl_->drawingArea);
     g_signal_connect(impl_->drawingArea, "draw", G_CALLBACK(drawCallback), this);
+    g_signal_connect(impl_->drawingArea, "button-press-event",
+                     G_CALLBACK(buttonPressCallback), this);
+    g_signal_connect(impl_->window, "button-press-event",
+                     G_CALLBACK(buttonPressCallback), this);
     gtk_widget_set_size_request(impl_->drawingArea, 1, 1);
     gtk_widget_realize(impl_->window);
     // 预热 Pango 布局与 Fontconfig 字体库缓存，消除首键测量中文字体的冷启动开销
@@ -374,7 +395,8 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 30000, 30000,
             [this](fcitx::EventSourceTime *source, uint64_t) {
-                g_main_context_iteration(nullptr, FALSE);
+                int iterations = 16;
+                while (iterations-- > 0 && g_main_context_iteration(nullptr, FALSE)) {}
                 // 候选窗可见（正在打字）时用 8ms 快泵，及时处理 X 的异步
                 // 回包（expose/configure 等）；空闲时退到 50ms 慢泵保底
                 // 处理托盘菜单等零星 GTK 事件，避免高频空转。
@@ -421,11 +443,13 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         auto &panel = inputContext->inputPanel();
         const auto list = panel.candidateList();
         if (list == nullptr || list->empty()) {
+            impl_->currentInputContext = nullptr;
             gtk_widget_hide(impl_->window);
             impl_->windowAnchor.reset();
             impl_->pumpPendingGtkEvents();
             return;
         }
+        impl_->currentInputContext = inputContext;
 
         const auto mode =
             list->layoutHint() == fcitx::CandidateLayoutHint::Vertical
@@ -483,12 +507,42 @@ bool ModernIMEUserInterface::available() { return impl_->gtkAvailable; }
 
 void ModernIMEUserInterface::suspend() {
     impl_->suspended = true;
+    impl_->currentInputContext = nullptr;
     if (impl_->window != nullptr) {
         gtk_widget_hide(impl_->window);
     }
 }
 
 void ModernIMEUserInterface::resume() { impl_->suspended = false; }
+
+bool ModernIMEUserInterface::handleButtonPress(double x, double y) {
+    if (impl_->suspended) {
+        return false;
+    }
+    auto *inputContext = impl_->currentInputContext;
+    if (inputContext == nullptr && impl_->instance != nullptr) {
+        inputContext =
+            impl_->instance->inputContextManager().mostRecentInputContext();
+    }
+    if (inputContext == nullptr) {
+        return false;
+    }
+    auto &panel = inputContext->inputPanel();
+    const auto list = panel.candidateList();
+    if (list == nullptr || list->empty()) {
+        return false;
+    }
+
+    const int index = hitTestCandidate(impl_->layout, impl_->metrics, x, y);
+    if (index >= 0 && index < list->size()) {
+        list->candidate(index).select(inputContext);
+        inputContext->updateUserInterface(
+            fcitx::UserInterfaceComponent::InputPanel, true);
+        return true;
+    }
+    return true;
+}
+
 
 } // namespace modernime::ui
 

@@ -328,4 +328,65 @@ CandidateBarLayout CandidateBarLayout::measure(
     return layout;
 }
 
+int hitTestCandidate(const CandidateBarLayout &layout,
+                     const CandidateBarMetrics &metrics,
+                     double x, double y) noexcept {
+    if (layout.candidates.empty()) {
+        return -1;
+    }
+
+    const double panelTop = metrics.panelY;
+    const double panelBottom = metrics.panelY + layout.panel.height;
+    const double panelLeft = metrics.panelX;
+    const double panelRight = metrics.panelX + layout.panel.width;
+    if (x < panelLeft || x > panelRight || y < panelTop || y > panelBottom) {
+        return -1;
+    }
+
+    if (layout.clipboardMode) {
+        // In clipboard mode, rows are vertically stacked.
+        for (std::size_t i = 0; i < layout.candidates.size(); ++i) {
+            const auto &bounds = layout.candidates[i].bounds;
+            if (x >= bounds.x && x <= bounds.x + bounds.width &&
+                y >= bounds.y && y <= bounds.y + bounds.height) {
+                return static_cast<int>(i);
+            }
+        }
+
+        for (std::size_t i = 0; i < layout.candidates.size(); ++i) {
+            const auto slotY = metrics.panelY + metrics.clipboardVerticalPadding +
+                               static_cast<double>(i) *
+                                   (metrics.clipboardRowHeight +
+                                    metrics.clipboardSeparatorHeight);
+            const auto slotHeight = metrics.clipboardRowHeight +
+                                    metrics.clipboardSeparatorHeight;
+            if (y >= slotY && y < slotY + slotHeight) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
+    // Horizontal pinyin mode
+    for (std::size_t i = 0; i < layout.candidates.size(); ++i) {
+        const auto &bounds = layout.candidates[i].bounds;
+        if (x >= bounds.x && x <= bounds.x + bounds.width &&
+            y >= bounds.y && y <= bounds.y + bounds.height) {
+            return static_cast<int>(i);
+        }
+    }
+
+    for (std::size_t i = 0; i < layout.candidates.size(); ++i) {
+        const auto &bounds = layout.candidates[i].bounds;
+        const double halfGap = metrics.candidateGap / 2.0;
+        const double left = (i == 0) ? panelLeft : (bounds.x - halfGap);
+        const double right = bounds.x + bounds.width + halfGap;
+        if (x >= left && x <= right) {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
+}
+
 } // namespace modernime::ui

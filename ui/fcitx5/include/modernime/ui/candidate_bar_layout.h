@@ -94,4 +94,8 @@ struct CandidateBarLayout final {
     static std::size_t visibleItems(const core::CandidatePage &page, const CandidateBarMetrics *metrics = nullptr);
 };
 
+int hitTestCandidate(const CandidateBarLayout &layout,
+                     const CandidateBarMetrics &metrics,
+                     double x, double y) noexcept;
+
 } // namespace modernime::ui

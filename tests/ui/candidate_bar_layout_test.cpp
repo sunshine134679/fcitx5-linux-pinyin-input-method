@@ -225,5 +225,46 @@ int main() {
                    longClipboardLayout.candidates.front().displayText.ends_with(
                        "…"),
                "long clipboard rows use an ellipsis instead of wrapping");
+
+    // Tests for hitTestCandidate
+    modernime::core::CandidatePage hitTestHPage;
+    hitTestHPage.items = {{"你好", {}, 0}, {"拟好", {}, 1}, {"你好啊", {}, 2}};
+    const auto hitTestHLayout = modernime::ui::CandidateBarLayout::measure(
+        hitTestHPage, metrics,
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 10);
+        });
+    assertTrue(hitTestHLayout.candidates.size() == 3, "horizontal layout has 3 items");
+    const auto &hc0 = hitTestHLayout.candidates[0].bounds;
+    const auto &hc1 = hitTestHLayout.candidates[1].bounds;
+    const auto &hc2 = hitTestHLayout.candidates[2].bounds;
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc0.x + hc0.width / 2.0, hc0.y + hc0.height / 2.0) == 0,
+               "center of candidate 0 hits candidate 0");
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc1.x + hc1.width / 2.0, hc1.y + hc1.height / 2.0) == 1,
+               "center of candidate 1 hits candidate 1");
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc2.x + hc2.width / 2.0, hc2.y + hc2.height / 2.0) == 2,
+               "center of candidate 2 hits candidate 2");
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, -10.0, hc0.y) == -1,
+               "negative x misses");
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc0.x, -5.0) == -1,
+               "negative y misses");
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc0.x, hitTestHLayout.panel.y + hitTestHLayout.panel.height + 10.0) == -1,
+               "below panel misses");
+
+    const auto &clip0 = clipboardLayout.candidates[0].bounds;
+    const auto &clip1 = clipboardLayout.candidates[1].bounds;
+    assertTrue(modernime::ui::hitTestCandidate(clipboardLayout, metrics, clip0.x + 20.0, clip0.y + clip0.height / 2.0) == 0,
+               "clicking row 0 hits clipboard candidate 0");
+    assertTrue(modernime::ui::hitTestCandidate(clipboardLayout, metrics, clip1.x + 20.0, clip1.y + clip1.height / 2.0) == 1,
+               "clicking row 1 hits clipboard candidate 1");
+    assertTrue(modernime::ui::hitTestCandidate(clipboardLayout, metrics, -10.0, clip0.y) == -1,
+               "negative x misses clipboard panel");
+    assertTrue(modernime::ui::hitTestCandidate(clipboardLayout, metrics, clip0.x, clipboardLayout.panel.y + clipboardLayout.panel.height + 10.0) == -1,
+               "below clipboard panel misses");
+
+    modernime::ui::CandidateBarLayout emptyLayout;
+    assertTrue(modernime::ui::hitTestCandidate(emptyLayout, metrics, 50.0, 50.0) == -1,
+               "empty layout returns -1");
+
     return EXIT_SUCCESS;
 }

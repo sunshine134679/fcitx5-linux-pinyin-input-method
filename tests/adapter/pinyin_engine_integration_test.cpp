@@ -191,5 +191,30 @@ int main() {
     assertTrue(host.commits.back() == "apple",
                "apple is committed");
 
+
+    // Test Up/Down key page flipping in normal candidate mode
+    for (const char character : std::string_view("hao")) {
+        assertTrue(controller.handle({
+                       modernime::fcitx5::KeyKind::Character, character, 0}),
+                   "hao character is handled");
+    }
+    assertTrue(!controller.page().items.empty(), "hao has candidates");
+    const auto initialCursor = controller.page().cursor;
+    assertTrue(initialCursor == 0, "initial cursor is at 0");
+    assertTrue(controller.page().pageBoundaries.size() > 1,
+               "hao has multiple candidate pages");
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::NextClipboardItem, 0, 0}),
+               "Down key moves to next candidate page");
+    assertTrue(controller.page().cursor == controller.page().pageBoundaries[1].begin,
+               "cursor advanced to next page boundary");
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::PreviousClipboardItem, 0, 0}),
+               "Up key moves back to previous candidate page");
+    assertTrue(controller.page().cursor == 0,
+               "cursor returned to first page boundary");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space commits top candidate");
+
     return EXIT_SUCCESS;
 }

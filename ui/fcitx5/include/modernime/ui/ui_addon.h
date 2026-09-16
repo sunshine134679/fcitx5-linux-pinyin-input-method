@@ -23,6 +23,7 @@ public:
     void suspend() override;
     void resume() override;
     void draw(cairo_t *context);
+    bool handleButtonPress(double x, double y);
 
 private:
     struct Impl;

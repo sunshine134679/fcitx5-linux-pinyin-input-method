@@ -306,12 +306,18 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (!options_.arrowNavigation) {
             return false;
         }
-        return moveCursor(-1);
+        if (clipboardMode_) {
+            return moveCursor(-1);
+        }
+        return movePage(-1);
     case KeyKind::NextClipboardItem:
         if (!options_.arrowNavigation) {
             return false;
         }
-        return moveCursor(1);
+        if (clipboardMode_) {
+            return moveCursor(1);
+        }
+        return movePage(1);
     case KeyKind::PreviousPage:
         if (!options_.pageNavigation) {
             return false;

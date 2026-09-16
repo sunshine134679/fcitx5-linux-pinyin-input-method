@@ -149,6 +149,14 @@ int main() {
     assertTrue(clipboardList->toPageable() != nullptr &&
                    clipboardList->toPageable()->totalPages() == 2,
                "clipboard candidates retain paging information");
+    clipboardList->candidate(1).select(&inputContext);
+    assertTrue(inputContext.commits.back() == "second clipboard",
+               "clicking candidate in clipboard list commits the clicked entry");
+    assertTrue(!controller.clipboardMode(),
+               "selecting clipboard item exits clipboard mode");
+    assertTrue(controller.handle(
+                   {modernime::fcitx5::KeyKind::OpenClipboard, 0, 0}),
+               "clipboard mode reopens for subsequent tests");
 
     modernime::core::CandidatePage secondClipboardPage;
     secondClipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
