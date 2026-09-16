@@ -5,6 +5,7 @@
 #include "modernime/pinyin/user_dictionary.h"
 
 #include "modernime/core/pinyin_match.h"
+#include "modernime/core/english_dictionary.h"
 #include "modernime/core/learning_writer.h"
 #include "modernime/core/settings.h"
 
@@ -867,6 +868,17 @@ private:
         page_.items = mixCandidateItems(fullItems, partialPool,
                                         bestFullSentence, prefixEnds, rawInput);
 
+        const bool isEnglish =
+            core::EnglishDictionary::isEnglishWord(rawInput);
+
+        const bool hasExactFullPinyinMatch = std::any_of(
+            page_.items.begin(), page_.items.end(),
+            [&rawInput](const auto &item) {
+                return item.source != core::CandidateSource::Raw &&
+                       core::PinyinMatchPolicy::priority(
+                           rawInput, item.fullPinyin) == 2;
+            });
+
         const bool hasTrustedShortAbbreviation =
             std::any_of(page_.items.begin(), page_.items.end(),
                         [&rawInput](const auto &item) {
@@ -881,21 +893,39 @@ private:
         rawCandidate.text = rawInput;
         rawCandidate.source = core::CandidateSource::Raw;
         rawCandidate.consumedInputBytes = rawInput.size();
-        const bool alreadyHasRawCandidate =
-            std::any_of(page_.items.begin(), page_.items.end(),
-                        [](const auto &item) {
-                            return item.source == core::CandidateSource::Raw;
-                        });
-        if (alreadyHasRawCandidate) {
-            // The mixer uses raw input as the fifth-slot fallback when no
-            // distinct decoded homophone can enforce the full-sentence quota.
-        } else if (!hasPinyinCoverage && rawInput.size() >= 3 &&
-                   !hasTrustedShortAbbreviation) {
+
+        const auto existingRaw = std::find_if(
+            page_.items.begin(), page_.items.end(),
+            [](const auto &item) {
+                return item.source == core::CandidateSource::Raw;
+            });
+        const bool alreadyHasRawCandidate = existingRaw != page_.items.end();
+
+        const bool promoteToFirst =
+            !hasTrustedShortAbbreviation &&
+            ((isEnglish && !hasExactFullPinyinMatch) ||
+             (!hasPinyinCoverage && rawInput.size() >= 3));
+
+        if (promoteToFirst) {
+            if (alreadyHasRawCandidate) {
+                page_.items.erase(existingRaw);
+            }
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
-        } else {
+            page_.preedit = std::string(rawInput);
+        } else if (isEnglish && hasExactFullPinyinMatch) {
+            if (alreadyHasRawCandidate) {
+                page_.items.erase(existingRaw);
+            }
+            const auto insertPos =
+                page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
+            page_.items.insert(insertPos, std::move(rawCandidate));
+            page_.preedit = segmentedInput;
+        } else if (!alreadyHasRawCandidate) {
             page_.items.push_back(std::move(rawCandidate));
+            page_.preedit = segmentedInput;
+        } else {
+            page_.preedit = segmentedInput;
         }
-        page_.preedit = segmentedInput;
     }
 
     std::shared_ptr<SharedResources> shared_;

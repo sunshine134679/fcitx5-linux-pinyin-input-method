@@ -1,5 +1,6 @@
 add_library(modernime_core STATIC
     src/candidate_model.cpp
+    src/english_dictionary.cpp
     src/input_state.cpp
     src/candidate_ranker.cpp
     src/pinyin_match.cpp

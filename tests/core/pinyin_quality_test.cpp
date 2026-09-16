@@ -186,6 +186,40 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery(
                "ordinary English remains the first candidate");
 
     provider.reset();
+    assertTrue(provider.append("fact"), "ordinary English word fact is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "fact",
+               "English word fact is the first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("good"), "ordinary English word good is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "good",
+               "English word good is the first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("apple"), "ordinary English word apple is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "apple",
+               "English word apple is the first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("test"), "ordinary English word test is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "test",
+               "English word test is the first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("can"), "dual-attribute word can is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().source !=
+                       modernime::core::CandidateSource::Raw,
+               "exact Chinese full-pinyin remains first candidate for can");
+    assertTrue(provider.page().items.size() > 1 &&
+                   provider.page().items[1].text == "can",
+               "English word can is immediately available as second candidate");
+
+    provider.reset();
     assertTrue(provider.append("xign"),
                "common transposition input is accepted");
     bool foundCorrectedXing = false;

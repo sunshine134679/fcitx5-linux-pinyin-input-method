@@ -105,5 +105,47 @@ int main() {
     assertTrue(controller.page().rawInput == "laodi" &&
                    controller.page().preedit == "lao'di",
                "controller keeps the remaining pinyin active");
+    // Commit the remaining "laodi" from previous test
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "commit remaining partial pinyin");
+    assertTrue(controller.page().preedit.empty(), "controller is clear");
+
+    // Test English words: fact, good, apple, test commit directly with space
+    for (const char* word : {"fact", "good", "apple", "test"}) {
+        for (const char character : std::string_view(word)) {
+            assertTrue(controller.handle({
+                           modernime::fcitx5::KeyKind::Character, character, 0}),
+                       "character is handled");
+        }
+        if (controller.page().items.empty() || controller.page().items.front().text != word) {
+            std::cerr << "FAILED on word: " << word << ", actual top: " 
+                      << (controller.page().items.empty() ? "EMPTY" : controller.page().items.front().text) 
+                      << " (source: " << (controller.page().items.empty() ? -1 : (int)controller.page().items.front().source) << ")" << std::endl;
+        }
+        assertTrue(!controller.page().items.empty() &&
+                       controller.page().items.front().text == word,
+                   "English word is the top candidate");
+        assertTrue(controller.page().preedit == word,
+                   "English preedit has no apostrophe segmentation");
+        assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+                   "space commits the English word");
+        assertTrue(host.commits.back() == word,
+                   "the English word is committed");
+    }
+
+    // Test trusted abbreviation: bj commits 北京
+    for (const char character : std::string_view("bj")) {
+        assertTrue(controller.handle({
+                       modernime::fcitx5::KeyKind::Character, character, 0}),
+                   "bj character is handled");
+    }
+    assertTrue(!controller.page().items.empty() &&
+                   controller.page().items.front().text == "北京",
+               "bj top candidate is 北京");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space commits 北京");
+    assertTrue(host.commits.back() == "北京",
+               "北京 is committed");
+
     return EXIT_SUCCESS;
 }

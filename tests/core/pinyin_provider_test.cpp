@@ -469,6 +469,30 @@ int main() {
                "selecting the English candidate clears the preedit");
 
     provider.reset();
+    assertTrue(provider.append("fact"), "English word fact is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "fact" &&
+                   provider.page().items.front().source ==
+                       modernime::core::CandidateSource::Raw,
+               "English input fact exposes the original text as the first candidate");
+    assertTrue(provider.select(0),
+               "the English candidate fact can be selected");
+    assertTrue(provider.page().preedit.empty(),
+               "selecting the English candidate clears the preedit");
+
+    provider.reset();
+    assertTrue(provider.append("good"), "English word good is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "good" &&
+                   provider.page().items.front().source ==
+                       modernime::core::CandidateSource::Raw,
+               "English input good exposes the original text as the first candidate");
+    assertTrue(provider.select(0),
+               "the English candidate good can be selected");
+    assertTrue(provider.page().preedit.empty(),
+               "selecting the English candidate clears the preedit");
+
+    provider.reset();
     assertTrue(provider.append("woshin"),
                "in-progress pinyin input is accepted");
     const auto inProgressRawIndex = indexOf(provider.page(), "woshin");
