@@ -55,15 +55,31 @@ struct ModernIMEUserInterface::Impl final {
     // 值未变化时跳过，避免每键一次 DBus 往返。
     std::string lastIndicatorLabel;
     std::string lastIndicatorTitle;
+    // 最近一次下发的窗口尺寸：布局尺寸不变时跳过 resize，避免每键
+    // 一次 XConfigureWindow 往返。
+    int lastWindowWidth = -1;
+    int lastWindowHeight = -1;
 
     static constexpr double originX = 0.0;
     static constexpr double originY = 0.0;
 
     void setWindowSize() {
-        gtk_widget_set_size_request(drawingArea, windowWidth(),
-                                    windowHeight());
-        gtk_window_resize(GTK_WINDOW(window), windowWidth(), windowHeight());
+        const int width = windowWidth();
+        const int height = windowHeight();
+        if (width == lastWindowWidth && height == lastWindowHeight) {
+            return;
+        }
+        lastWindowWidth = width;
+        lastWindowHeight = height;
+        gtk_widget_set_size_request(drawingArea, width, height);
+        gtk_window_resize(GTK_WINDOW(window), width, height);
     }
+
+    // 立刻派发已就绪的 GTK 事件。update() 里的 queue_draw/show/hide 只
+    // 标记请求，真正送到 X server 要等 GTK 主循环运转；这里同步泵一次，
+    // 让候选窗在本键处理内就完成显示/隐藏/重绘请求的下发，而不是等
+    // 下一个周期泵（活跃期 8ms、空闲期 50ms）。
+    void pumpPendingGtkEvents() { g_main_context_iteration(nullptr, FALSE); }
 
     // 窗口与绘制内容共用逻辑坐标；GTK3 在 HiDPI 显示器上会自动按设备
     // 缩放放大（绘制上下文已应用 scale），这里不能再乘 scaleFactor，
@@ -312,9 +328,14 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     if (instance != nullptr) {
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 30000, 30000,
-            [](fcitx::EventSourceTime *source, uint64_t) {
+            [this](fcitx::EventSourceTime *source, uint64_t) {
                 g_main_context_iteration(nullptr, FALSE);
-                source->setNextInterval(30000);
+                // 候选窗可见（正在打字）时用 8ms 快泵，及时处理 X 的异步
+                // 回包（expose/configure 等）；空闲时退到 50ms 慢泵保底
+                // 处理托盘菜单等零星 GTK 事件，避免高频空转。
+                const bool typing = impl_->window != nullptr &&
+                                    gtk_widget_get_visible(impl_->window);
+                source->setNextInterval(typing ? 8000 : 50000);
                 source->setEnabled(true);
                 return true;
             });
@@ -356,6 +377,7 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         if (list == nullptr || list->empty()) {
             gtk_widget_hide(impl_->window);
             impl_->windowAnchor.reset();
+            impl_->pumpPendingGtkEvents();
             return;
         }
 
@@ -398,11 +420,13 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         if (!impl_->suspended) {
             gtk_widget_show_all(impl_->window);
         }
+        impl_->pumpPendingGtkEvents();
         return;
     }
     // 光标移动（CursorRect）通知也重新跟随光标定位；
     // 无效光标时保留上次位置。
     impl_->positionWindow(inputContext);
+    impl_->pumpPendingGtkEvents();
 }
 
 bool ModernIMEUserInterface::available() { return impl_->gtkAvailable; }
