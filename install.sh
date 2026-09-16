@@ -3,6 +3,13 @@ set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" && -z "${MODERNIME_ALLOW_ROOT:-}" ]]; then
+    printf 'Error: Running install.sh with sudo is not recommended and will create files owned by root in %s.\n' "$HOME" >&2
+    printf 'Install ModernIME for your current user by running: ./install.sh\n' >&2
+    printf 'If you really want to install as root, set MODERNIME_ALLOW_ROOT=1.\n' >&2
+    exit 1
+fi
+
 required_commands=(cmake ctest pkg-config)
 for required_command in "${required_commands[@]}"; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
@@ -64,8 +71,9 @@ if [[ -n "${MODERNIME_BOOST_ROOT:-}" ]]; then
     cmake_args+=("-DBoost_ROOT=$MODERNIME_BOOST_ROOT")
 fi
 
+build_jobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc 2>/dev/null || echo 2)}"
 cmake -S "$project_root" -B "$build_dir" -G "$generator" "${cmake_args[@]}"
-cmake --build "$build_dir"
+cmake --build "$build_dir" --parallel "$build_jobs"
 (
     unset MODERNIME_SKIP_FCITX_RESTART
     # The GTK focus integration tests require a controlled compositor. Running
@@ -75,8 +83,15 @@ cmake --build "$build_dir"
     # remaining suite still runs normally. The original desktop environment is
     # restored automatically when this subshell exits.
     unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
-    ctest --test-dir "$build_dir" --output-on-failure
+    ctest --test-dir "$build_dir" --output-on-failure --parallel "$build_jobs"
 )
+for check_file in "$prefix/bin/modernime-settings" \
+                  "$prefix/lib/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib/fcitx5/modernime_ui.so"; do
+    if [[ -e "$check_file" && ! -w "$check_file" ]]; then
+        rm -f -- "$check_file" 2>/dev/null || true
+    fi
+done
 cmake --install "$build_dir"
 
 mkdir -p "$desktop_dir"
@@ -92,14 +107,20 @@ desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
     printf '%s\n' 'Categories=Settings;Utility;'
 } > "$desktop_tmp"
 if [[ -e "$desktop_shortcut" ]]; then
-    if [[ ! -f "$desktop_shortcut" ]] ||
-       ! cmp -s "$desktop_tmp" "$desktop_shortcut"; then
+    if [[ -f "$desktop_shortcut" ]] &&
+       grep -Fqx '[Desktop Entry]' "$desktop_shortcut" &&
+       grep -Fqx 'Name=ModernIME 设置' "$desktop_shortcut"; then
+        mv -f -- "$desktop_tmp" "$desktop_shortcut"
+        desktop_tmp=""
+        chmod +x "$desktop_shortcut"
+    elif [[ -f "$desktop_shortcut" ]] && cmp -s "$desktop_tmp" "$desktop_shortcut"; then
+        rm -f -- "$desktop_tmp"
+        desktop_tmp=""
+    else
         printf 'Refusing to overwrite existing desktop shortcut: %s\n' \
             "$desktop_shortcut" >&2
         exit 1
     fi
-    rm -f -- "$desktop_tmp"
-    desktop_tmp=""
 else
     mv -- "$desktop_tmp" "$desktop_shortcut"
     desktop_tmp=""
@@ -108,8 +129,12 @@ fi
 
 environment_line="FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
 if [[ -e "$environment_file" ]]; then
-    if [[ "$(wc -l < "$environment_file")" -ne 1 ]] ||
-       [[ "$(sed -n '1p' "$environment_file")" != "$environment_line" ]]; then
+    if [[ -f "$environment_file" ]] &&
+       grep -Fq 'FCITX_ADDON_DIRS=' "$environment_file"; then
+        mkdir -p "$environment_dir"
+        printf '%s\n' "$environment_line" > "$environment_file"
+    elif [[ "$(wc -l < "$environment_file")" -ne 1 ]] ||
+         [[ "$(sed -n '1p' "$environment_file")" != "$environment_line" ]]; then
         printf 'Refusing to overwrite existing file: %s\n' "$environment_file" >&2
         exit 1
     fi
@@ -120,8 +145,21 @@ fi
 
 autostart_exec="env FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir fcitx5 -d -u modernime-ui"
 if [[ -e "$autostart_file" ]]; then
-    if [[ "$(wc -l < "$autostart_file")" -ne 8 ]] ||
-       ! grep -Fqx "Exec=$autostart_exec" "$autostart_file"; then
+    if [[ -f "$autostart_file" ]] &&
+       grep -Fqx 'Name=ModernIME Fcitx5' "$autostart_file"; then
+        mkdir -p "$autostart_dir"
+        {
+            printf '%s\n' '[Desktop Entry]'
+            printf '%s\n' 'Type=Application'
+            printf '%s\n' 'Name=ModernIME Fcitx5'
+            printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
+            printf 'Exec=%s\n' "$autostart_exec"
+            printf '%s\n' 'Terminal=false'
+            printf '%s\n' 'X-GNOME-Autostart-enabled=true'
+            printf '%s\n' 'NoDisplay=true'
+        } > "$autostart_file"
+    elif [[ "$(wc -l < "$autostart_file")" -ne 8 ]] ||
+         ! grep -Fqx "Exec=$autostart_exec" "$autostart_file"; then
         printf 'Refusing to overwrite existing file: %s\n' "$autostart_file" >&2
         exit 1
     fi
