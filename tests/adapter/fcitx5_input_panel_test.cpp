@@ -191,6 +191,7 @@ int main() {
     assertTrue(inputContext.commits.back() == "候选10",
                "space follows the shared fresh fallback boundary");
 
+    provider.setCandidateCount(10, 0);
     publishTenCandidates(pagedController, host);
     auto pagedList = inputContext.inputPanel().candidateList();
     assertTrue(pagedList != nullptr && pagedList->size() == 4 &&
@@ -324,5 +325,35 @@ int main() {
                    pagedController.page().cursor == 2 &&
                    variableList->currentPage() == 1,
                "automatic repagination clamps a stale global cursor");
+
+    provider.setCandidateCount(10, 0);
+    publishTenCandidates(pagedController, host);
+    pagedList = inputContext.inputPanel().candidateList();
+    variableList =
+        dynamic_cast<modernime::fcitx5::FcitxCandidateList *>(pagedList.get());
+    assertTrue(variableList != nullptr,
+               "production list is valid for label contract verification");
+    for (int index = 0; index < variableList->size(); ++index) {
+        assertTrue(!variableList->label(index).toString().empty(),
+                   "page-local candidates provide non-empty labels");
+    }
+    assertTrue(variableList->label(0).toString() == "1. ",
+               "first candidate label is 1.");
+    assertTrue(variableList->label(2).toString() == "3. ",
+               "third candidate label is 3.");
+    assertTrue(variableList->label(-1).toString().empty(),
+               "negative candidate index returns empty label");
+    assertTrue(variableList->label(variableList->size()).toString().empty(),
+               "out-of-bounds candidate index returns empty label");
+
+    // 验证多于 5 个候选词（如 9 个候选词的大页面）时，索引 >= 5 正常返回对应标号，绝不抛出异常
+    variableList->setPageBoundaries({{0, 9}, {9, 10}});
+    assertTrue(variableList->size() == 9, "page size is expanded to nine");
+    assertTrue(variableList->label(0).toString() == "1. ", "label 0 is 1.");
+    assertTrue(variableList->label(4).toString() == "5. ", "label 4 is 5.");
+    assertTrue(variableList->label(5).toString() == "6. ", "label 5 is 6.");
+    assertTrue(variableList->label(8).toString() == "9. ", "label 8 is 9.");
+    assertTrue(variableList->label(9).toString().empty(), "label 9 is out of bounds");
+
     return EXIT_SUCCESS;
 }

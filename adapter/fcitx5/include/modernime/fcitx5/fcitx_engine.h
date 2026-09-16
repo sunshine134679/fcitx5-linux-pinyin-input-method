@@ -100,6 +100,23 @@ public:
             static_cast<int>(currentBoundary().begin) + index);
     }
 
+    const fcitx::Text &label(int index) const override {
+        static const std::vector<fcitx::Text> defaultLabels = {
+            fcitx::Text("1. "), fcitx::Text("2. "), fcitx::Text("3. "),
+            fcitx::Text("4. "), fcitx::Text("5. "), fcitx::Text("6. "),
+            fcitx::Text("7. "), fcitx::Text("8. "), fcitx::Text("9. "),
+            fcitx::Text("0. ")
+        };
+        static const fcitx::Text emptyLabel("");
+        if (index < 0 || index >= size()) {
+            return emptyLabel;
+        }
+        if (static_cast<std::size_t>(index) < defaultLabels.size()) {
+            return defaultLabels[static_cast<std::size_t>(index)];
+        }
+        return emptyLabel;
+    }
+
     int size() const override {
         const auto boundary = currentBoundary();
         return static_cast<int>(boundary.end - boundary.begin);
