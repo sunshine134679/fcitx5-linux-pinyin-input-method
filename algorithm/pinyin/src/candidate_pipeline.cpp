@@ -74,8 +74,17 @@ CandidatePipelineResult buildCandidatePipeline(
     const std::vector<std::string> &previousOrder) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
-    result.scored.reserve(nativeCandidates.size());
-    for (std::size_t index = 0; index < nativeCandidates.size(); ++index) {
+    // libime 的候选已按解码代价升序排列。简拼输入（如 yyds）会展开出
+    // 数千个候选，全部进入学习 boost + 词典加分评分循环会让单键耗时
+    // 超过 100ms；用户翻页永远看不到 128 名以外的候选，这里按 libime
+    // 原生顺序截断头部再评分，保证评分管线只在有限集合上工作。
+    constexpr std::size_t kMaxScoredCandidates = 128;
+    const std::size_t scoreLimit =
+        nativeCandidates.size() < kMaxScoredCandidates
+            ? nativeCandidates.size()
+            : kMaxScoredCandidates;
+    result.scored.reserve(scoreLimit);
+    for (std::size_t index = 0; index < scoreLimit; ++index) {
         core::CandidateScore candidate;
         candidate.source_index = index;
         candidate.text = nativeCandidates[index].toString();
