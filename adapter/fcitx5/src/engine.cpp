@@ -226,8 +226,11 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         clearComposition();
         return true;
     case KeyKind::Enter:
-        if (!page_.items.empty()) {
-            return commitCurrent();
+        // 拼音组合中回车一律上屏原始拼音（主流拼音输入法惯例），
+        // 不再提交第一个候选；剪贴板模式保持回车提交当前条目；
+        // 空闲状态放行回车给应用。
+        if (clipboardMode_) {
+            return page_.items.empty() ? false : commitCurrent();
         }
         if (page_.preedit.empty()) {
             return false;

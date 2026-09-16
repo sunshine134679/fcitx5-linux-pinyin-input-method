@@ -640,9 +640,9 @@ int main() {
                "previous candidate selects the prior item");
     assertTrue(manyController.handle(
                    {modernime::fcitx5::KeyKind::Enter, 0, 0}),
-               "enter commits the highlighted candidate");
-    assertTrue(manyHost.commits.back() == "候选4",
-               "the highlighted paged candidate is committed");
+               "enter commits the raw pinyin input");
+    assertTrue(manyHost.commits.back() == "n",
+               "enter commits the typed pinyin instead of the candidate");
 
     ManyCandidateProvider verticalProvider;
     RecordingHost verticalHost;
