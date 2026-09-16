@@ -474,7 +474,7 @@ public:
 
 std::shared_ptr<PinyinCandidateProvider::SharedResources>
 PinyinCandidateProvider::createSharedResources(
-    const PinyinDataPaths &paths, const PinyinProviderOptions &options) {
+    const PinyinDataPaths &paths, const PinyinProviderOptions & /*options*/) {
     auto resources = std::make_shared<SharedResources>();
     resources->userDictionaryPath =
         paths.userDictionary.empty()
@@ -517,10 +517,10 @@ PinyinCandidateProvider::createSharedResources(
         libime::PinyinFuzzyFlag::IN_ING,
     });
     resources->ime->setNBest(32);
-    if (options.learningEnabled) {
-        resources->learning =
-            std::make_unique<core::LearningWriter>(resources->learningStorePath);
-    }
+    // 学习写入器不再在启动时立即构造（需全表加载最多两万条学习数据，
+    // 拖慢 fcitx5 加载 addon）；SharedResources::ensureLearningWriter 已
+    // 支持懒创建，学习开关语义由 learningWriter() 访问器统一把关，
+    // 首次真正需要学习数据时才付出加载成本。
     return resources;
 }
 
