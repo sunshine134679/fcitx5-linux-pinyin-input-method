@@ -495,10 +495,11 @@ void ModernIMEController::ensurePageBoundaries() {
     if (!page_.pageBoundaries.empty()) {
         return;
     }
+    const auto step = options_.pageSize > 0 ? options_.pageSize : kFallbackCandidatePageSize;
     for (std::size_t begin = 0; begin < page_.items.size();
-         begin += kFallbackCandidatePageSize) {
+         begin += step) {
         page_.pageBoundaries.push_back(
-            {begin, std::min(begin + kFallbackCandidatePageSize,
+            {begin, std::min(begin + step,
                              page_.items.size())});
     }
 }

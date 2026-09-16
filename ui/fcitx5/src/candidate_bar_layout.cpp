@@ -1,6 +1,7 @@
 #include "modernime/ui/candidate_bar_layout.h"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -149,34 +150,69 @@ CandidateBarLayout measureClipboard(
 
 } // namespace
 
-CandidateBarMetrics CandidateBarMetrics::reference() {
+CandidateBarMetrics CandidateBarMetrics::reference(double fontSize,
+                                                   std::size_t maxCandidates) {
     CandidateBarMetrics metrics;
-    metrics.canvasWidth = 614.0;
-    metrics.canvasHeight = 62.0;
-    metrics.panelX = 2.0;
-    metrics.panelY = 2.0;
-    metrics.panelWidth = 610.0;
-    metrics.panelHeight = 54.0;
-    metrics.panelRadius = 14.0;
-    metrics.borderWidth = 1.0;
-    metrics.shadowRadius = 4.0;
-    metrics.shadowOpacity = 0.12;
-    metrics.horizontalPadding = 8.0;
-    metrics.candidateTextPadding = 0.0;
-    metrics.selectedTextPadding = 8.0;
-    metrics.candidateGap = 33.0;
-    metrics.candidateAdvance = 38.0;
-    metrics.candidateWidth = 34.0;
-    metrics.candidateHeight = 38.0;
-    metrics.selectedWidth = 36.0;
-    metrics.selectedHeight = 38.0;
-    metrics.selectedRadius = 19.0;
-    metrics.preeditX = 8.0;
-    metrics.preeditBaseline = 0.0;
-    metrics.candidateBaseline = 43.0;
+    metrics.candidateFontSize = fontSize;
+    metrics.preeditFontSize = std::max(12.0, fontSize - 2.0);
+    metrics.maxCandidates = maxCandidates;
+
+    if (fontSize == 20.0 && maxCandidates == 9) {
+        metrics.canvasWidth = 614.0;
+        metrics.canvasHeight = 62.0;
+        metrics.panelX = 2.0;
+        metrics.panelY = 2.0;
+        metrics.panelWidth = 610.0;
+        metrics.panelHeight = 54.0;
+        metrics.panelRadius = 14.0;
+        metrics.borderWidth = 1.0;
+        metrics.shadowRadius = 4.0;
+        metrics.shadowOpacity = 0.12;
+        metrics.horizontalPadding = 8.0;
+        metrics.candidateTextPadding = 0.0;
+        metrics.selectedTextPadding = 8.0;
+        metrics.candidateGap = 33.0;
+        metrics.candidateAdvance = 38.0;
+        metrics.candidateWidth = 34.0;
+        metrics.candidateHeight = 38.0;
+        metrics.selectedWidth = 36.0;
+        metrics.selectedHeight = 38.0;
+        metrics.selectedRadius = 19.0;
+        metrics.preeditX = 8.0;
+        metrics.preeditBaseline = 0.0;
+        metrics.candidateBaseline = 43.0;
+    } else {
+        const double fontScale = fontSize / 20.0;
+        const double countScale = static_cast<double>(maxCandidates) / 9.0;
+
+        metrics.panelHeight = std::round(54.0 * fontScale);
+        metrics.candidateHeight = std::round(38.0 * fontScale);
+        metrics.selectedHeight = std::round(38.0 * fontScale);
+        metrics.selectedRadius = metrics.selectedHeight / 2.0;
+        metrics.candidateBaseline = std::round(43.0 * fontScale);
+
+        metrics.panelWidth = std::max(360.0, std::round(610.0 * fontScale * std::max(0.65, countScale)));
+        metrics.canvasWidth = metrics.panelWidth + 4.0;
+        metrics.canvasHeight = metrics.panelHeight + 8.0;
+
+        metrics.panelX = 2.0;
+        metrics.panelY = 2.0;
+        metrics.panelRadius = 14.0;
+        metrics.borderWidth = 1.0;
+        metrics.shadowRadius = 4.0;
+        metrics.shadowOpacity = 0.12;
+        metrics.horizontalPadding = 8.0;
+        metrics.candidateTextPadding = 0.0;
+        metrics.selectedTextPadding = 8.0;
+        metrics.candidateGap = std::round(33.0 * fontScale);
+        metrics.candidateAdvance = std::round(38.0 * fontScale);
+        metrics.candidateWidth = std::round(34.0 * fontScale);
+        metrics.selectedWidth = std::round(36.0 * fontScale);
+        metrics.preeditX = 8.0;
+        metrics.preeditBaseline = 0.0;
+    }
+
     metrics.fontFamily = "Noto Sans CJK SC";
-    metrics.preeditFontSize = 18.0;
-    metrics.candidateFontSize = 20.0;
     metrics.fontWeight = 400;
     metrics.clipboardPanelRadius = 14.0;
     metrics.clipboardRowHeight = 56.0;
@@ -200,10 +236,13 @@ std::function<double(std::string_view)> candidateTextWidthForMode(
                : std::move(pinyinTextWidth);
 }
 
-std::size_t CandidateBarLayout::visibleItems(const core::CandidatePage &page) {
+std::size_t CandidateBarLayout::visibleItems(const core::CandidatePage &page,
+                                            const CandidateBarMetrics *metrics) {
     const auto limit = page.mode == core::CandidatePageMode::Clipboard
                            ? kClipboardVisibleRows
-                           : std::size_t{9};
+                           : (metrics != nullptr && metrics->maxCandidates > 0
+                                  ? metrics->maxCandidates
+                                  : std::size_t{9});
     return std::min(limit, page.items.size());
 }
 
@@ -227,7 +266,7 @@ CandidateBarLayout CandidateBarLayout::measure(
     layout.preeditBaseline = metrics.preeditBaseline;
     layout.candidateBaseline = metrics.candidateBaseline;
 
-    const auto count = visibleItems(page);
+    const auto count = visibleItems(page, &metrics);
     layout.candidates.reserve(count);
     double nextX = metrics.panelX + metrics.horizontalPadding;
     const double rightEdge = metrics.panelX + metrics.panelWidth -

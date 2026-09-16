@@ -21,6 +21,14 @@ void SettingsWindowModel::setSettings(core::ModernIMESettings settings) {
     lastError_.clear();
 }
 
+void SettingsWindowModel::setCandidateAppearance(int candidatePageSize,
+                                                 int candidateFontSize) {
+    auto settings = edited_;
+    settings.candidatePageSize = candidatePageSize;
+    settings.candidateFontSize = candidateFontSize;
+    setSettings(std::move(settings));
+}
+
 void SettingsWindowModel::setCandidateOptions(bool numberSelection,
                                               bool arrowNavigation,
                                               bool pageNavigation) {

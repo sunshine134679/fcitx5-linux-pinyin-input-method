@@ -29,6 +29,7 @@ public:
     void setSettings(core::ModernIMESettings settings);
     void setCandidateOptions(bool numberSelection, bool arrowNavigation,
                              bool pageNavigation);
+    void setCandidateAppearance(int candidatePageSize, int candidateFontSize);
     void setClipboardOptions(bool enabled, std::string trigger);
     void editDefaults();
     bool save(std::string *error = nullptr);

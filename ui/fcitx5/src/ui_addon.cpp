@@ -1,4 +1,6 @@
 #include "modernime/ui/ui_addon.h"
+#include "modernime/core/settings.h"
+#include <filesystem>
 
 #include "modernime/fcitx5/fcitx_engine.h"
 #include "modernime/ui/cairo_render_surface.h"
@@ -59,6 +61,38 @@ struct ModernIMEUserInterface::Impl final {
     // 一次 XConfigureWindow 往返。
     int lastWindowWidth = -1;
     int lastWindowHeight = -1;
+
+    std::filesystem::file_time_type lastSettingsMtime{};
+    int currentFontSize = 20;
+    int currentPageSize = 9;
+
+    void refreshSettingsIfNeeded() {
+        const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+        const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
+        const auto *home = std::getenv("HOME");
+        const auto path = core::SettingsPaths::fromEnvironment(
+            xdgConfigHome == nullptr ? std::string_view{} : std::string_view(xdgConfigHome),
+            xdgDataHome == nullptr ? std::string_view{} : std::string_view(xdgDataHome),
+            home == nullptr ? std::string_view{} : std::string_view(home)).settingsFile;
+
+        std::error_code ec;
+        const auto mtime = std::filesystem::last_write_time(path, ec);
+        if (!ec && mtime != lastSettingsMtime) {
+            lastSettingsMtime = mtime;
+            const auto loaded = core::SettingsStore::load(path).settings;
+            if (loaded.candidateFontSize != currentFontSize ||
+                loaded.candidatePageSize != currentPageSize) {
+                currentFontSize = loaded.candidateFontSize;
+                currentPageSize = loaded.candidatePageSize;
+                metrics = CandidateBarMetrics::reference(
+                    static_cast<double>(currentFontSize),
+                    static_cast<std::size_t>(currentPageSize));
+                sharedWidthCache.clear();
+                lastWindowWidth = -1;
+                lastWindowHeight = -1;
+            }
+        }
+    }
 
     static constexpr double originX = 0.0;
     static constexpr double originY = 0.0;
@@ -304,6 +338,7 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     if (!impl_->gtkAvailable) {
         return;
     }
+    impl_->refreshSettingsIfNeeded();
     impl_->window = gtk_window_new(GTK_WINDOW_POPUP);
     configureWindow(impl_->window);
     if (GdkDisplay *display = gtk_widget_get_display(impl_->window);
@@ -380,6 +415,7 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
     if (!impl_->gtkAvailable || inputContext == nullptr) {
         return;
     }
+    impl_->refreshSettingsIfNeeded();
     impl_->updateIndicator(inputContext);
     if (component == fcitx::UserInterfaceComponent::InputPanel) {
         auto &panel = inputContext->inputPanel();

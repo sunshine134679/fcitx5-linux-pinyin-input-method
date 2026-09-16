@@ -24,8 +24,11 @@ std::vector<core::PageBoundary> CandidatePagination::partition(
         auto end = begin;
         double baseWidth = 0.0;
         double maximumSelectedExtra = 0.0;
+        const auto maxNumbered = metrics.maxCandidates > 0
+                                     ? metrics.maxCandidates
+                                     : kMaximumNumberedCandidates;
         while (end < items.size() &&
-               end - begin < kMaximumNumberedCandidates) {
+               end - begin < maxNumbered) {
             const auto localIndex = end - begin;
             const auto displayText = std::to_string(localIndex + 1) + "." +
                                      items[end].text;

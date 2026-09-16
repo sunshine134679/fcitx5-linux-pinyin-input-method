@@ -56,8 +56,10 @@ struct CandidateBarMetrics final {
     double clipboardSubmitIconHeight = 0.0;
     double clipboardSubmitIconGap = 0.0;
     double clipboardSeparatorHeight = 0.0;
+    std::size_t maxCandidates = 9;
 
-    static CandidateBarMetrics reference();
+    static CandidateBarMetrics reference(double fontSize = 20.0,
+                                         std::size_t maxCandidates = 9);
 };
 
 std::function<double(std::string_view)> candidateTextWidthForMode(
@@ -89,7 +91,7 @@ struct CandidateBarLayout final {
     static CandidateBarLayout measure(
         const core::CandidatePage &page, const CandidateBarMetrics &metrics,
         const std::function<double(std::string_view)> &textWidth);
-    static std::size_t visibleItems(const core::CandidatePage &page);
+    static std::size_t visibleItems(const core::CandidatePage &page, const CandidateBarMetrics *metrics = nullptr);
 };
 
 } // namespace modernime::ui

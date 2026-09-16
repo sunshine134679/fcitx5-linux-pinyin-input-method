@@ -51,6 +51,10 @@ void testDefaultsAndRoundTrip() {
                "missing file uses mode default");
     assertTrue(missing.settings.toggleKey == defaults.toggleKey,
                "missing file uses toggle default");
+    assertTrue(missing.settings.candidatePageSize == defaults.candidatePageSize,
+               "missing file uses candidate page size default");
+    assertTrue(missing.settings.candidateFontSize == defaults.candidateFontSize,
+               "missing file uses candidate font size default");
     assertTrue(missing.settings.clipboardEnabled == defaults.clipboardEnabled,
                "missing file uses clipboard enabled default");
     assertTrue(missing.settings.clipboardTrigger == defaults.clipboardTrigger,
@@ -60,6 +64,8 @@ void testDefaultsAndRoundTrip() {
     expected.inputEnabled = false;
     expected.defaultMode = modernime::core::InputMode::English;
     expected.toggleKey = "Alt+Space";
+    expected.candidatePageSize = 5;
+    expected.candidateFontSize = 24;
     expected.numberSelection = false;
     expected.arrowNavigation = false;
     expected.pageNavigation = false;
@@ -78,6 +84,10 @@ void testDefaultsAndRoundTrip() {
                "mode round-trips");
     assertTrue(loaded.settings.toggleKey == expected.toggleKey,
                "toggle key round-trips");
+    assertTrue(loaded.settings.candidatePageSize == expected.candidatePageSize,
+               "candidate page size round-trips");
+    assertTrue(loaded.settings.candidateFontSize == expected.candidateFontSize,
+               "candidate font size round-trips");
     assertTrue(loaded.settings.numberSelection == expected.numberSelection &&
                    loaded.settings.arrowNavigation == expected.arrowNavigation &&
                    loaded.settings.pageNavigation == expected.pageNavigation,
@@ -174,6 +184,16 @@ void testSharedValidationRejectsInvalidValues() {
                "toggle key validation explains the error");
     assertTrue(invalidToggle.issues.front().key == "input.toggle_key",
                "toggle key validation identifies its settings field");
+
+    settings = modernime::core::defaultSettings();
+    settings.candidatePageSize = 2;
+    const auto invalidPageSize = modernime::core::validateSettings(settings);
+    assertTrue(!invalidPageSize.valid, "invalid candidate page size is rejected");
+
+    settings = modernime::core::defaultSettings();
+    settings.candidateFontSize = 10;
+    const auto invalidFontSize = modernime::core::validateSettings(settings);
+    assertTrue(!invalidFontSize.valid, "invalid candidate font size is rejected");
 
     settings = modernime::core::defaultSettings();
     settings.clipboardTrigger = "bad-trigger";

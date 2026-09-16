@@ -54,6 +54,7 @@ struct ControllerOptions final {
     bool arrowNavigation = true;
     bool pageNavigation = true;
     bool punctuationEnabled = true;
+    std::size_t pageSize = 9;
 };
 
 struct KeyBindings final {

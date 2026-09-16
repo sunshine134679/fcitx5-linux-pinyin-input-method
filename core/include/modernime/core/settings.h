@@ -13,6 +13,8 @@ struct ModernIMESettings final {
     bool inputEnabled = true;
     InputMode defaultMode = InputMode::Chinese;
     std::string toggleKey = "Ctrl+Shift+Space";
+    int candidatePageSize = 9;
+    int candidateFontSize = 20;
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;
@@ -34,6 +36,14 @@ struct SettingsValidationResult final {
     bool valid = true;
     std::vector<SettingsValidationIssue> issues;
 };
+
+inline constexpr int kMinimumCandidatePageSize = 3;
+inline constexpr int kMaximumCandidatePageSize = 9;
+inline constexpr int kDefaultCandidatePageSize = 9;
+
+inline constexpr int kMinimumCandidateFontSize = 14;
+inline constexpr int kMaximumCandidateFontSize = 28;
+inline constexpr int kDefaultCandidateFontSize = 20;
 
 ModernIMESettings defaultSettings();
 SettingsValidationResult validateSettings(const ModernIMESettings &settings);

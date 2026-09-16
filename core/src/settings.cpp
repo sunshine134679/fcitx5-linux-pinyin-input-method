@@ -27,6 +27,21 @@ bool parseBoolean(std::string_view value, bool &result) {
     return false;
 }
 
+bool parseInteger(std::string_view value, int &result) {
+    if (value.empty()) {
+        return false;
+    }
+    int accumulator = 0;
+    for (const char character : value) {
+        if (character < '0' || character > '9') {
+            return false;
+        }
+        accumulator = accumulator * 10 + (character - '0');
+    }
+    result = accumulator;
+    return true;
+}
+
 bool validToggleKey(std::string_view value) {
     return value == "Ctrl+Space" || value == "Alt+Space" ||
            value == "Super+Space" || value == "Ctrl+Shift+Space";
@@ -65,6 +80,16 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
             {"input.toggle_key",
              "中英文切换快捷键仅支持 Ctrl+Space、Alt+Space、Super+Space 或 "
              "Ctrl+Shift+Space"});
+    }
+    if (settings.candidatePageSize < kMinimumCandidatePageSize ||
+        settings.candidatePageSize > kMaximumCandidatePageSize) {
+        result.issues.push_back(
+            {"candidate.page_size", "每页候选词数仅支持 3 到 9 之间的整数"});
+    }
+    if (settings.candidateFontSize < kMinimumCandidateFontSize ||
+        settings.candidateFontSize > kMaximumCandidateFontSize) {
+        result.issues.push_back(
+            {"candidate.font_size", "候选框字号仅支持 14 到 28 之间的整数"});
     }
     if (!validClipboardTrigger(settings.clipboardTrigger)) {
         result.issues.push_back(
@@ -138,6 +163,20 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
         } else if (key == "input.toggle_key") {
             if (validToggleKey(value)) {
                 result.settings.toggleKey = value;
+                parsed = true;
+            }
+        } else if (key == "candidate.page_size") {
+            int val = 0;
+            if (parseInteger(value, val) && val >= kMinimumCandidatePageSize &&
+                val <= kMaximumCandidatePageSize) {
+                result.settings.candidatePageSize = val;
+                parsed = true;
+            }
+        } else if (key == "candidate.font_size") {
+            int val = 0;
+            if (parseInteger(value, val) && val >= kMinimumCandidateFontSize &&
+                val <= kMaximumCandidateFontSize) {
+                result.settings.candidateFontSize = val;
                 parsed = true;
             }
         } else if (key == "candidate.number_selection") {
@@ -216,6 +255,8 @@ bool SettingsStore::save(const std::filesystem::path &path,
                                                             : "english")
            << '\n'
            << "input.toggle_key=" << settings.toggleKey << '\n'
+           << "candidate.page_size=" << settings.candidatePageSize << '\n'
+           << "candidate.font_size=" << settings.candidateFontSize << '\n'
            << "candidate.number_selection="
            << (settings.numberSelection ? "true" : "false") << '\n'
            << "candidate.arrow_navigation="

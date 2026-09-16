@@ -82,7 +82,8 @@ core::ModernIMESettings loadSettings() {
 ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
     return {settings.inputEnabled, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
-            settings.punctuationEnabled};
+            settings.punctuationEnabled,
+            static_cast<std::size_t>(settings.candidatePageSize)};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {

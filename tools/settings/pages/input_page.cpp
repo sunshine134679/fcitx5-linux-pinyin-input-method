@@ -42,9 +42,11 @@ public:
         buildShortcutSection();
         buildPunctuationSection();
         buildCandidateBehaviorSection();
+        buildCandidateAppearanceSection();
         setSettingsFocusChain(
             page, {inputEnabled, defaultMode, toggleKey, punctuation,
-                   numberSelection, arrowNavigation, pageNavigation});
+                   numberSelection, arrowNavigation, pageNavigation,
+                   candidatePageSize, candidateFontSize});
         refresh();
         pageGuard.release();
     }
@@ -140,6 +142,35 @@ public:
         }
     }
 
+    void buildCandidateAppearanceSection() {
+        auto *section = createSectionCard(
+            "候选外观与排版", "调整候选框的显示字号与每页候选词容量。");
+        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
+
+        candidatePageSize = gtk_spin_button_new_with_range(
+            core::kMinimumCandidatePageSize, core::kMaximumCandidatePageSize, 1.0);
+        gtk_widget_set_tooltip_text(candidatePageSize, "设置每页最多展示的候选词数量（3 ~ 9）");
+        setTarget(candidatePageSize, "candidate-page-size");
+        candidatePageSizeFallback = createSettingRow(
+            "每页候选词数", "每页展示的候选词数量（支持 3 ~ 9 个，默认 9 个）。",
+            candidatePageSize);
+        gtk_box_pack_start(GTK_BOX(section), candidatePageSizeFallback, FALSE,
+                           FALSE, 0);
+
+        candidateFontSize = gtk_spin_button_new_with_range(
+            core::kMinimumCandidateFontSize, core::kMaximumCandidateFontSize, 1.0);
+        gtk_widget_set_tooltip_text(candidateFontSize, "设置候选词显示的字体大小（14 ~ 28 pt）");
+        setTarget(candidateFontSize, "candidate-font-size");
+        candidateFontSizeFallback = createSettingRow(
+            "候选字号大小", "候选窗显示的文字大小（支持 14 ~ 28 pt，默认 20 pt）。",
+            candidateFontSize);
+        gtk_box_pack_start(GTK_BOX(section), candidateFontSizeFallback, FALSE,
+                           FALSE, 0);
+
+        g_signal_connect(candidatePageSize, "value-changed", G_CALLBACK(onChanged), this);
+        g_signal_connect(candidateFontSize, "value-changed", G_CALLBACK(onChanged), this);
+    }
+
     static void onChanged(GtkWidget *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
         if (impl->refreshing) {
@@ -161,6 +192,10 @@ public:
             GTK_TOGGLE_BUTTON(impl->arrowNavigation));
         settings.pageNavigation = gtk_toggle_button_get_active(
             GTK_TOGGLE_BUTTON(impl->pageNavigation));
+        settings.candidatePageSize = gtk_spin_button_get_value_as_int(
+            GTK_SPIN_BUTTON(impl->candidatePageSize));
+        settings.candidateFontSize = gtk_spin_button_get_value_as_int(
+            GTK_SPIN_BUTTON(impl->candidateFontSize));
         impl->model.setSettings(std::move(settings));
         impl->updateState();
         impl->changed();
@@ -184,6 +219,10 @@ public:
                                      settings.arrowNavigation);
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pageNavigation),
                                      settings.pageNavigation);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidatePageSize),
+                                  settings.candidatePageSize);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFontSize),
+                                  settings.candidateFontSize);
         refreshing = false;
         updateState();
     }
@@ -206,6 +245,8 @@ public:
             std::pair{numberSelection, static_cast<GtkWidget *>(nullptr)},
             std::pair{arrowNavigation, static_cast<GtkWidget *>(nullptr)},
             std::pair{pageNavigation, static_cast<GtkWidget *>(nullptr)},
+            std::pair{candidatePageSize, candidatePageSizeFallback},
+            std::pair{candidateFontSize, candidateFontSizeFallback},
         };
         for (const auto &[control, fallback] : controls) {
             const auto *id = static_cast<const char *>(g_object_get_data(
@@ -230,6 +271,10 @@ public:
     GtkWidget *numberSelection = nullptr;
     GtkWidget *arrowNavigation = nullptr;
     GtkWidget *pageNavigation = nullptr;
+    GtkWidget *candidatePageSize = nullptr;
+    GtkWidget *candidatePageSizeFallback = nullptr;
+    GtkWidget *candidateFontSize = nullptr;
+    GtkWidget *candidateFontSizeFallback = nullptr;
     bool refreshing = false;
 };
 
