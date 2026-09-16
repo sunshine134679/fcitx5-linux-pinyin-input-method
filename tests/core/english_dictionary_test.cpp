@@ -8,7 +8,8 @@ namespace {
 
 void assertTrue(bool condition, std::string_view message) {
     if (!condition) {
-        (void)message; std::abort();
+        std::cerr << "Assertion failed: " << message << std::endl;
+        std::abort();
         std::exit(EXIT_FAILURE);
     }
 }
@@ -47,12 +48,51 @@ int main() {
     assertTrue(!EnglishDictionary::isEnglishWord("wsm"), "wsm is excluded");
     assertTrue(!EnglishDictionary::isEnglishWord("yyds"), "yyds is excluded");
 
-    // Boundary conditions
+    // Boundary conditions for isEnglishWord
     assertTrue(!EnglishDictionary::isEnglishWord(""), "empty string is false");
     assertTrue(!EnglishDictionary::isEnglishWord("a"), "single char is false");
     assertTrue(!EnglishDictionary::isEnglishWord("123"), "numbers are false");
     assertTrue(!EnglishDictionary::isEnglishWord("fact!"), "punctuation is false");
     assertTrue(!EnglishDictionary::isEnglishWord("nonexistentwordxyz"), "nonsense word is false");
+
+    // Prediction tests
+    {
+        const auto garaPred = EnglishDictionary::predictWords("gara", 3);
+        assertTrue(!garaPred.empty(), "gara yields predictions");
+        assertTrue(garaPred.front() == "garage", "gara predicts garage as first candidate");
+    }
+    {
+        const auto garagPred = EnglishDictionary::predictWords("garag", 3);
+        assertTrue(!garagPred.empty(), "garag yields predictions");
+        assertTrue(garagPred.front() == "garage", "garag predicts garage as first candidate");
+    }
+    {
+        const auto applPred = EnglishDictionary::predictWords("appl", 3);
+        assertTrue(!applPred.empty(), "appl yields predictions");
+        assertTrue(applPred.front() == "apple", "appl predicts apple as first candidate");
+    }
+    {
+        const auto systPred = EnglishDictionary::predictWords("syst", 3);
+        assertTrue(!systPred.empty(), "syst yields predictions");
+        assertTrue(systPred.front() == "system", "syst predicts system as first candidate");
+    }
+    {
+        const auto windoPred = EnglishDictionary::predictWords("windo", 3);
+        assertTrue(!windoPred.empty(), "windo yields predictions");
+        assertTrue(windoPred.front() == "window", "windo predicts window as first candidate");
+    }
+    {
+        const auto progrPred = EnglishDictionary::predictWords("progr", 3);
+        assertTrue(!progrPred.empty(), "progr yields predictions");
+        assertTrue(progrPred.front() == "program", "progr predicts program as first candidate");
+    }
+
+    // Boundary conditions for predictWords
+    assertTrue(EnglishDictionary::predictWords("", 3).empty(), "empty prefix yields empty");
+    assertTrue(EnglishDictionary::predictWords("a", 3).empty(), "single char prefix yields empty");
+    assertTrue(EnglishDictionary::predictWords("123", 3).empty(), "numbers prefix yields empty");
+    assertTrue(EnglishDictionary::predictWords("gara", 0).empty(), "maxCount 0 yields empty");
+    assertTrue(EnglishDictionary::predictWords("nonexistentwordxyz", 3).empty(), "nonsense prefix yields empty");
 
     return EXIT_SUCCESS;
 }

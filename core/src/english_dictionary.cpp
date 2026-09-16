@@ -73651,4 +73651,59 @@ bool EnglishDictionary::isEnglishWord(std::string_view word) noexcept {
     return std::binary_search(std::begin(kEnglishWords), std::end(kEnglishWords), lowerWord);
 }
 
+
+std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view prefix,
+                                                              std::size_t maxCount) noexcept {
+    if (prefix.size() < 2 || prefix.size() > 20 || maxCount == 0) {
+        return {};
+    }
+    char buffer[24];
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        char c = prefix[i];
+        if (c >= 65 && c <= 90) {
+            c = static_cast<char>(c + 32);
+        } else if (c < 97 || c > 122) {
+            return {};
+        }
+        buffer[i] = c;
+    }
+    std::string_view lowerPrefix(buffer, prefix.size());
+
+    auto it = std::lower_bound(std::begin(kEnglishWords), std::end(kEnglishWords), lowerPrefix);
+    if (it == std::end(kEnglishWords)) {
+        return {};
+    }
+
+    std::vector<std::string_view> matches;
+    matches.reserve(16);
+    while (it != std::end(kEnglishWords) && it->starts_with(lowerPrefix)) {
+        matches.push_back(*it);
+        ++it;
+        if (matches.size() >= 128) {
+            break;
+        }
+    }
+
+    if (matches.empty()) {
+        return {};
+    }
+
+    std::stable_sort(matches.begin(), matches.end(), [lowerPrefix](std::string_view a, std::string_view b) {
+        const bool aExact = (a == lowerPrefix);
+        const bool bExact = (b == lowerPrefix);
+        if (aExact != bExact) {
+            return aExact;
+        }
+        if (a.size() != b.size()) {
+            return a.size() < b.size();
+        }
+        return a < b;
+    });
+
+    if (matches.size() > maxCount) {
+        matches.resize(maxCount);
+    }
+    return matches;
+}
+
 } // namespace modernime::core

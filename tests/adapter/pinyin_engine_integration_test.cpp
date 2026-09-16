@@ -147,5 +147,49 @@ int main() {
     assertTrue(host.commits.back() == "北京",
                "北京 is committed");
 
+    // Test English prefix prediction: gara commits garage with Space
+    for (const char character : std::string_view("gara")) {
+        assertTrue(controller.handle({
+                       modernime::fcitx5::KeyKind::Character, character, 0}),
+                   "gara character is handled");
+    }
+    assertTrue(!controller.page().items.empty() &&
+                   controller.page().items.front().text == "garage",
+               "gara top candidate is garage");
+    assertTrue(controller.page().items.size() > 1 &&
+                   controller.page().items[1].text == "gara",
+               "gara second candidate is raw gara");
+    assertTrue(controller.page().preedit == "gara",
+               "gara preedit has no apostrophes");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space commits garage");
+    assertTrue(host.commits.back() == "garage",
+               "garage is committed");
+
+    // Test English prefix raw selection: gara with 2 commits raw gara
+    for (const char character : std::string_view("gara")) {
+        assertTrue(controller.handle({
+                       modernime::fcitx5::KeyKind::Character, character, 0}),
+                   "gara character is handled");
+    }
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '2'}),
+               "digit 2 selects raw gara");
+    assertTrue(host.commits.back() == "gara",
+               "raw gara is committed");
+
+    // Test English prefix prediction: appl commits apple with Space
+    for (const char character : std::string_view("appl")) {
+        assertTrue(controller.handle({
+                       modernime::fcitx5::KeyKind::Character, character, 0}),
+                   "appl character is handled");
+    }
+    assertTrue(!controller.page().items.empty() &&
+                   controller.page().items.front().text == "apple",
+               "appl top candidate is apple");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+               "space commits apple");
+    assertTrue(host.commits.back() == "apple",
+               "apple is committed");
+
     return EXIT_SUCCESS;
 }

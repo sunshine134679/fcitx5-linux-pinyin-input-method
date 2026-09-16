@@ -219,6 +219,55 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery(
                    provider.page().items[1].text == "can",
                "English word can is immediately available as second candidate");
 
+    // English prefix predictions
+    provider.reset();
+    assertTrue(provider.append("gara"), "English prefix gara is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "garage",
+               "gara predicts garage as first candidate");
+    assertTrue(provider.page().items.size() > 1 &&
+                   provider.page().items[1].text == "gara",
+               "gara keeps raw input as second candidate");
+    assertTrue(provider.page().preedit == "gara",
+               "gara preedit is clean raw input");
+
+    provider.reset();
+    assertTrue(provider.append("garag"), "English prefix garag is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "garage",
+               "garag predicts garage as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("appl"), "English prefix appl is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "apple",
+               "appl predicts apple as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("syst"), "English prefix syst is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "system",
+               "syst predicts system as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("windo"), "English prefix windo is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "window",
+               "windo predicts window as first candidate");
+
+    // Chinese prefix non-regression tests: beij, shangh
+    provider.reset();
+    assertTrue(provider.append("beij"), "Chinese prefix beij is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "北京",
+               "beij yields 北京 as first candidate without English hijacking");
+
+    provider.reset();
+    assertTrue(provider.append("shangh"), "Chinese prefix shangh is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "上海",
+               "shangh yields 上海 as first candidate without English hijacking");
+
     provider.reset();
     assertTrue(provider.append("xign"),
                "common transposition input is accepted");

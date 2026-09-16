@@ -221,6 +221,33 @@ std::string prefixInput(std::string_view rawInput, std::size_t consumedBytes) {
     return prefix;
 }
 
+bool hasInvalidInternalPinyinSegment(std::string_view segmentedInput) {
+    if (segmentedInput.empty()) {
+        return false;
+    }
+    std::size_t start = 0;
+    while (start < segmentedInput.size()) {
+        const auto pos = segmentedInput.find('\'', start);
+        if (pos == std::string_view::npos) {
+            break;
+        }
+        const auto segment = segmentedInput.substr(start, pos - start);
+        start = pos + 1;
+        if (segment.empty()) {
+            continue;
+        }
+        const bool hasVowel =
+            std::any_of(segment.begin(), segment.end(), [](char c) {
+                return c == 'a' || c == 'e' || c == 'i' || c == 'o' ||
+                       c == 'u' || c == 'v';
+            });
+        if (!hasVowel) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool coversPinyinInput(std::string_view userInput,
                        const std::string &canonicalInput,
                        std::string_view fullPinyin) {
@@ -889,41 +916,51 @@ private:
                                            item.text);
                         });
 
+        const bool shouldPredictEnglish =
+            !isEnglish && !hasTrustedShortAbbreviation &&
+            !hasExactFullPinyinMatch &&
+            (!hasPinyinCoverage ||
+             hasInvalidInternalPinyinSegment(segmentedInput)) &&
+            rawInput.size() >= 2;
+
+        const auto predictedWords =
+            shouldPredictEnglish
+                ? core::EnglishDictionary::predictWords(rawInput, 3)
+                : std::vector<std::string_view>{};
+
         core::CandidateItem rawCandidate;
         rawCandidate.text = rawInput;
         rawCandidate.source = core::CandidateSource::Raw;
         rawCandidate.consumedInputBytes = rawInput.size();
 
-        const auto existingRaw = std::find_if(
-            page_.items.begin(), page_.items.end(),
-            [](const auto &item) {
-                return item.source == core::CandidateSource::Raw;
-            });
-        const bool alreadyHasRawCandidate = existingRaw != page_.items.end();
+        page_.items.erase(
+            std::remove_if(page_.items.begin(), page_.items.end(),
+                           [](const auto &item) {
+                               return item.source == core::CandidateSource::Raw;
+                           }),
+            page_.items.end());
 
-        const bool promoteToFirst =
-            !hasTrustedShortAbbreviation &&
-            ((isEnglish && !hasExactFullPinyinMatch) ||
-             (!hasPinyinCoverage && rawInput.size() >= 3));
+        if (!predictedWords.empty()) {
+            core::CandidateItem predictedCandidate;
+            predictedCandidate.text = std::string(predictedWords.front());
+            predictedCandidate.source = core::CandidateSource::Raw;
+            predictedCandidate.consumedInputBytes = rawInput.size();
 
-        if (promoteToFirst) {
-            if (alreadyHasRawCandidate) {
-                page_.items.erase(existingRaw);
-            }
+            page_.items.insert(page_.items.begin(), std::move(rawCandidate));
+            page_.items.insert(page_.items.begin(), std::move(predictedCandidate));
+            page_.preedit = std::string(rawInput);
+        } else if (!hasTrustedShortAbbreviation &&
+                   ((isEnglish && !hasExactFullPinyinMatch) ||
+                    (!hasPinyinCoverage && rawInput.size() >= 3))) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
             page_.preedit = std::string(rawInput);
         } else if (isEnglish && hasExactFullPinyinMatch) {
-            if (alreadyHasRawCandidate) {
-                page_.items.erase(existingRaw);
-            }
             const auto insertPos =
                 page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
             page_.items.insert(insertPos, std::move(rawCandidate));
             page_.preedit = segmentedInput;
-        } else if (!alreadyHasRawCandidate) {
-            page_.items.push_back(std::move(rawCandidate));
-            page_.preedit = segmentedInput;
         } else {
+            page_.items.push_back(std::move(rawCandidate));
             page_.preedit = segmentedInput;
         }
     }
