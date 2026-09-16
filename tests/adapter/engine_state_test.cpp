@@ -424,10 +424,10 @@ int main() {
                    {modernime::fcitx5::KeyKind::Punctuation, ',', 0}),
                "punctuation commits the selected candidate");
     assertTrue(host.commits.size() >= 2 &&
-                   host.commits[host.commits.size() - 2] == "还",
+                   host.commits[host.commits.size() - 2] == "hail",
                "punctuation keeps the selected candidate");
-    assertTrue(host.commits.back() == "，",
-               "punctuation after a Chinese candidate is full-width");
+    assertTrue(host.commits.back() == ",",
+               "punctuation after an ASCII fallback stays half-width");
 
     EmptyCandidateProvider emptyProvider;
     RecordingHost emptyHost;
@@ -773,9 +773,9 @@ int main() {
     type(quoteCompositionController, "hail");
     assertTrue(quoteCompositionController.handle(
                    {modernime::fcitx5::KeyKind::Space, 0, 0}) &&
-                   quoteCompositionHost.commits.back() == "还",
+                   quoteCompositionHost.commits.back() == "hail",
                "candidate commit clears the completed composition");
-    quoteCompositionController.setContext("“还", "");
+    quoteCompositionController.setContext("“好", "");
     assertTrue(quoteCompositionController.handle(
                    {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
                    quoteCompositionHost.commits.back() == "”",
