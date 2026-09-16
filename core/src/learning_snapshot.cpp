@@ -338,8 +338,16 @@ void LearningSnapshot::recordSelection(
     candidate->suppressed = false;
     candidate->frequency = saturatingIncrement(candidate->frequency);
     candidate->lastSelectedMs = nowMs;
-    pruneContextVariants();
-    pruneTotalEntries();
+    // prune（全表排序+重建）成本随学习条目增长，且选词发生在按键线程；
+    // 延迟到累计若干次选词或总量超限时执行一次，单次选词保持 O(1)。
+    // 总量上限保证内存仍有界，上下文变体规则的收敛仅被推迟，不改变结果。
+    ++selectionsSincePrune_;
+    if (entries_.size() > totalEntryLimit_ ||
+        selectionsSincePrune_ >= 32) {
+        pruneContextVariants();
+        pruneTotalEntries();
+        selectionsSincePrune_ = 0;
+    }
 }
 
 void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,

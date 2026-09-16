@@ -79,6 +79,9 @@ private:
     std::size_t totalEntryLimit_ = kMaxLearningEntries;
     mutable std::unordered_map<std::string, std::vector<std::size_t>> index_;
     mutable bool indexDirty_ = true;
+    // 选词热路径不再每次 prune（排序+重建为 O(n log n)），改为计数
+    // 达阈值或条目超限时才执行；不参与持久化，拷贝语义无影响。
+    std::uint32_t selectionsSincePrune_ = 0;
 };
 
 } // namespace modernime::core
