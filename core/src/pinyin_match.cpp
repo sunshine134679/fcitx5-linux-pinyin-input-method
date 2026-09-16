@@ -99,15 +99,19 @@ bool PinyinMatchPolicy::trustedShortAbbreviationMatch(
 
 int PinyinMatchPolicy::priority(std::string_view userInput,
                                 std::string_view fullPinyin) {
-    if (exactInputMatch(userInput, fullPinyin)) {
+    // 原实现经 exactInputMatch 兜底各调一次 canonical（每候选四次字符串
+    // 分配）；ranker 对每个候选调用本函数，这里直接算一次复用。
+    const auto input = canonical(userInput);
+    const auto candidate = canonical(fullPinyin);
+    if (candidate == input) {
         return 2;
     }
+    // isAbbreviationInput 只依赖 userInput，对所有候选结果相同，
+    // 先短路再做依赖候选的 abbreviationKey。
     if (isAbbreviationInput(userInput) &&
         abbreviationKey(fullPinyin) == userInput) {
         return 1;
     }
-    const auto input = canonical(userInput);
-    const auto candidate = canonical(fullPinyin);
     if (!candidate.empty() && candidate.size() < input.size() &&
         input.substr(0, candidate.size()) == candidate) {
         return -1;

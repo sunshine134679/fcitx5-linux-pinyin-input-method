@@ -181,6 +181,7 @@ std::string prefixInput(std::string_view rawInput, std::size_t consumedBytes) {
 }
 
 bool coversPinyinInput(std::string_view userInput,
+                       const std::string &canonicalInput,
                        std::string_view fullPinyin) {
     // Keep short ASCII words such as "who" as the English fallback. Chinese
     // initialisms become a reliable signal once they contain at least four
@@ -191,7 +192,7 @@ bool coversPinyinInput(std::string_view userInput,
         return true;
     }
 
-    const auto input = core::PinyinMatchPolicy::canonical(userInput);
+    const auto &input = canonicalInput;
     const auto candidate = core::PinyinMatchPolicy::canonical(fullPinyin);
     if (input.empty()) {
         return false;
@@ -741,10 +742,15 @@ private:
             automaticallySegmentedPreedit(rawInput, result);
         const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);
         page_.items.reserve(result.order.size() + 4);
+        // canonical(userInput) 对全部候选相同，循环外算一次传入，
+        // 避免每个候选重复做一次规范化字符串分配。
+        const auto canonicalInput =
+            core::PinyinMatchPolicy::canonical(rawInput);
         const bool hasPinyinCoverage = std::any_of(
             result.scored.begin(), result.scored.end(),
-            [&rawInput](const auto &candidate) {
-                return coversPinyinInput(rawInput, candidate.full_pinyin);
+            [&rawInput, &canonicalInput](const auto &candidate) {
+                return coversPinyinInput(rawInput, canonicalInput,
+                                         candidate.full_pinyin);
             });
         const auto manualLimit =
             pinyinLetterCount(rawInput) < 3 ? std::size_t{2} : std::size_t{8};
