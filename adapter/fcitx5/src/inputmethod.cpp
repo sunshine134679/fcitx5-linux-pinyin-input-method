@@ -262,14 +262,35 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
       clipboardHistory_(settingsPaths().clipboardHistory),
       settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
       stateFactory_([this](fcitx::InputContext &inputContext) {
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+          // 首个输入上下文创建时加入后台预热（通常早已完成），
+          // 保证首键路径不再承担全量词典加载。
+          ensurePinyinResources();
+#endif
           return new FcitxInputContextState(inputContext, settings_,
                                             resources_, settingsGeneration_);
       }) {
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // One dictionary/language-model/learning-writer set for the whole engine;
-    // every input context only adds its own composition state.
-    resources_.pinyin = pinyin::PinyinCandidateProvider::createSharedResources(
-        pinyinPaths(), pinyinOptions(settings_));
+    // every input context only adds its own composition state. The load
+    // takes roughly 400ms, so it runs on a detached background thread while
+    // addon construction returns immediately; state creation joins it.
+    {
+        auto promise = std::make_shared<std::promise<
+            std::shared_ptr<pinyin::PinyinCandidateProvider::SharedResources>>>();
+        pinyinResourcesFuture_ = promise->get_future();
+        const auto paths = pinyinPaths();
+        const auto options = pinyinOptions(settings_);
+        std::thread([promise, paths, options]() {
+            try {
+                promise->set_value(
+                    pinyin::PinyinCandidateProvider::createSharedResources(
+                        paths, options));
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+        }).detach();
+    }
 #endif
     {
         std::error_code mtimeError;
@@ -309,6 +330,16 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
                 return true;
             });
     }
+}
+
+ModernIMEInputMethod::~ModernIMEInputMethod() {
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    // 后台线程只持有 promise/paths/options 的值拷贝，不引用 this；
+    // 这里等待加载结果落地，避免析构先于 set_value 完成。
+    if (pinyinResourcesFuture_.valid()) {
+        pinyinResourcesFuture_.wait();
+    }
+#endif
 }
 
 std::vector<fcitx::InputMethodEntry> ModernIMEInputMethod::listInputMethods() {
@@ -532,6 +563,7 @@ void ModernIMEInputMethod::pollFileChanges() {
     if (!error && dictionaryTime != userDictionaryMtime_) {
         userDictionaryMtime_ = dictionaryTime;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
+        ensurePinyinResources();
         if (pinyin::PinyinCandidateProvider::reloadUserDictionary(
                 resources_.pinyin)) {
             FCITX_INFO() << "ModernIME user dictionary reloaded from "
@@ -540,6 +572,21 @@ void ModernIMEInputMethod::pollFileChanges() {
 #endif
     }
 }
+
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+void ModernIMEInputMethod::ensurePinyinResources() {
+    if (pinyinResourcesResolved_ || !pinyinResourcesFuture_.valid()) {
+        return;
+    }
+    pinyinResourcesResolved_ = true;
+    try {
+        resources_.pinyin = pinyinResourcesFuture_.get();
+    } catch (const std::exception &error) {
+        FCITX_ERROR() << "ModernIME background dictionary load failed: "
+                      << error.what();
+    }
+}
+#endif
 
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                                     fcitx::KeyEvent &event) {

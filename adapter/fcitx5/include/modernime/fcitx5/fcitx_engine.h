@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -283,7 +284,7 @@ private:
 class ModernIMEInputMethod final : public fcitx::InputMethodEngine {
 public:
     explicit ModernIMEInputMethod(fcitx::AddonManager *manager);
-    ~ModernIMEInputMethod() override = default;
+    ~ModernIMEInputMethod() override;
 
     std::vector<fcitx::InputMethodEntry> listInputMethods() override;
     void save() override;
@@ -300,6 +301,12 @@ private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
     void pollClipboard();
     void pollFileChanges();
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    // 阻塞等待后台词典预热完成并落地 resources_.pinyin；fcitx5 事件循环
+    // 串行调用本引擎，主线程内无需加锁。加载失败仅记录日志，保持空资源，
+    // 引擎退化为每个上下文独立构造 provider 的旧路径。
+    void ensurePinyinResources();
+#endif
 
     fcitx::AddonManager *manager_ = nullptr;
     fcitx::Instance *instance_ = nullptr;
@@ -315,6 +322,12 @@ private:
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
     FcitxEngineResources resources_;
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    std::future<
+        std::shared_ptr<pinyin::PinyinCandidateProvider::SharedResources>>
+        pinyinResourcesFuture_;
+    bool pinyinResourcesResolved_ = false;
+#endif
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };
 
