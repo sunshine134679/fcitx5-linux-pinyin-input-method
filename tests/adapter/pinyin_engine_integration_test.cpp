@@ -112,7 +112,7 @@ int main() {
     assertTrue(controller.page().preedit.empty(), "controller is clear");
 
     // Test English words: fact, good, apple, test commit directly with space
-    for (const char* word : {"fact", "good", "apple", "test"}) {
+    for (const char* word : {"fact", "good", "apple", "test", "date"}) {
         for (const char character : std::string_view(word)) {
             assertTrue(controller.handle({
                            modernime::fcitx5::KeyKind::Character, character, 0}),
@@ -220,6 +220,48 @@ int main() {
 
     // Test repeated selection habit: selecting deep candidate elevates it to rank 0
     const auto repeatLearningDbPath = "/tmp/integration_repeat_learn.sqlite3";
+
+    // Test dual-attribute word like adaptive elevation in controller
+    const auto dualLearningDbPath = "/tmp/integration_dual_learn.sqlite3";
+    std::filesystem::remove(dualLearningDbPath);
+    std::filesystem::remove(std::string(dualLearningDbPath) + "-wal");
+    std::filesystem::remove(std::string(dualLearningDbPath) + "-shm");
+    {
+        modernime::pinyin::PinyinDataPaths dualPaths;
+        dualPaths.learningStore = dualLearningDbPath;
+        modernime::pinyin::PinyinCandidateProvider dualProvider(dualPaths);
+        RecordingHost dualHost;
+        modernime::fcitx5::ModernIMEController dualController(dualHost, &dualProvider);
+
+        // Initially typing like: candidate 0 is 立刻, candidate 1 is like
+        for (char c : std::string_view("like")) {
+            dualController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!dualController.page().items.empty() &&
+                   dualController.page().items.front().text == "立刻",
+                   "initially like defaults to 立刻");
+        const auto likeIdx = indexOf(dualController.page(), "like");
+        assertTrue(likeIdx == 1, "like is candidate 1");
+        
+        // Select candidate 1 (English like)
+        dualController.select(1);
+        assertTrue(dualHost.commits.back() == "like", "like is committed by select(1)");
+
+        // Re-type like: now like is elevated to top candidate 0
+        for (char c : std::string_view("like")) {
+            dualController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!dualController.page().items.empty() &&
+                   dualController.page().items.front().text == "like",
+                   "after selection, like is elevated to top candidate (rank 0)");
+        assertTrue(dualController.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+                   "space commits like");
+        assertTrue(dualHost.commits.back() == "like", "like is committed directly by space");
+    }
+    std::filesystem::remove(dualLearningDbPath);
+    std::filesystem::remove(std::string(dualLearningDbPath) + "-wal");
+    std::filesystem::remove(std::string(dualLearningDbPath) + "-shm");
+
     std::filesystem::remove(repeatLearningDbPath);
     std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
     std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");

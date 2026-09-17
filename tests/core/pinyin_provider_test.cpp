@@ -493,6 +493,32 @@ int main() {
                "selecting the English candidate clears the preedit");
 
     provider.reset();
+    assertTrue(provider.append("date"), "English word date is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "date" &&
+                   provider.page().items.front().source ==
+                       modernime::core::CandidateSource::Raw,
+               "date defaults to the top candidate over synthetic Chinese syllables");
+    assertTrue(provider.page().items.size() > 1 &&
+                   provider.page().items[1].text == "打特",
+               "synthetic Chinese syllable sequence remains as secondary candidate");
+    assertTrue(provider.page().preedit == "date",
+               "clean English word is shown in preedit instead of da'te");
+    assertTrue(provider.select(0), "date can be selected");
+    assertTrue(provider.page().preedit.empty(),
+               "selecting date clears preedit");
+
+    provider.reset();
+    assertTrue(provider.append("like"), "dual-attribute word like is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text != "like" &&
+                   provider.page().items.front().source !=
+                       modernime::core::CandidateSource::Raw,
+               "like defaults to Chinese candidate because 立刻 is a real dictionary word");
+    const auto likeRawIndex = indexOf(provider.page(), "like");
+    assertTrue(likeRawIndex == 1, "English word like is the second candidate initially");
+
+    provider.reset();
     assertTrue(provider.append("woshin"),
                "in-progress pinyin input is accepted");
     const auto inProgressRawIndex = indexOf(provider.page(), "woshin");
@@ -631,6 +657,27 @@ int main() {
     std::filesystem::remove(repeatedPath, error);
     std::filesystem::remove(repeatedPath.string() + "-wal", error);
     std::filesystem::remove(repeatedPath.string() + "-shm", error);
+
+    const auto englishLearnPath = testPath("english-learned.sqlite3");
+    modernime::pinyin::PinyinDataPaths englishLearnPaths;
+    englishLearnPaths.learningStore = englishLearnPath.string();
+    {
+        modernime::pinyin::PinyinCandidateProvider elProvider(englishLearnPaths);
+        assertTrue(elProvider.append("like"), "dual-attribute word like is accepted");
+        const auto initialLikeIdx = indexOf(elProvider.page(), "like");
+        assertTrue(initialLikeIdx == 1, "like starts at index 1");
+        assertTrue(elProvider.select(initialLikeIdx), "select English like");
+        elProvider.reset();
+        assertTrue(elProvider.append("like"), "like re-entered");
+        assertTrue(!elProvider.page().items.empty() &&
+                   elProvider.page().items.front().text == "like",
+                   "after selecting like, it is elevated to rank 0 by user learning");
+        assertTrue(elProvider.page().preedit == "like",
+                   "clean English word is displayed in preedit when elevated");
+    }
+    std::filesystem::remove(englishLearnPath, error);
+    std::filesystem::remove(englishLearnPath.string() + "-wal", error);
+    std::filesystem::remove(englishLearnPath.string() + "-shm", error);
 
     const auto disabledLearningPath = testPath("disabled-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths disabledLearningPaths;

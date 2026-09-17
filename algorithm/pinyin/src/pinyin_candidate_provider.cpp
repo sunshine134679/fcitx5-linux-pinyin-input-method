@@ -248,6 +248,16 @@ bool hasInvalidInternalPinyinSegment(std::string_view segmentedInput) {
     return false;
 }
 
+std::size_t utf8CodePointCount(std::string_view text) {
+    std::size_t count = 0;
+    for (const unsigned char character : text) {
+        if ((character & 0xc0U) != 0x80U) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 bool coversPinyinInput(std::string_view userInput,
                        const std::string &canonicalInput,
                        std::string_view fullPinyin) {
@@ -666,6 +676,15 @@ public:
         }
         const auto &candidate = page_.items[index];
         if (candidate.source == core::CandidateSource::Raw) {
+            if (auto *learning = learningWriter(); learning != nullptr) {
+                const auto rawInput = context->userInput();
+                const auto pinyinKey = candidate.fullPinyin.empty()
+                                           ? std::string(rawInput)
+                                           : candidate.fullPinyin;
+                learning->enqueueSelection(candidate.text, pinyinKey,
+                                           contextBefore_, contextAfter_,
+                                           nowMilliseconds());
+            }
             context->clear();
             refresh();
             return true;
@@ -703,6 +722,15 @@ public:
         }
         const auto candidate = page_.items[index];
         if (candidate.source == core::CandidateSource::Raw) {
+            if (learningWriter() != nullptr) {
+                const auto pinyinKey = candidate.fullPinyin.empty()
+                                           ? std::string(page_.rawInput)
+                                           : candidate.fullPinyin;
+                learningWriter()->enqueueSuppression(candidate.text, pinyinKey);
+                suppressedLearned_.insert(candidateKey(pinyinKey, candidate.text));
+                refresh();
+                return true;
+            }
             return false;
         }
         const auto rawInput = context->userInput();
@@ -928,8 +956,71 @@ private:
                 ? core::EnglishDictionary::predictWords(rawInput, 3)
                 : std::vector<std::string_view>{};
 
+        const bool isEnglishSuppressed =
+            suppressedLearned_.contains(candidateKey(rawInput, rawInput)) ||
+            (learning != nullptr && learning->isSuppressed(rawInput, rawInput));
+
+        const double englishLearningBoost =
+            (!isEnglishSuppressed && learning != nullptr)
+                ? learning->boostAt(rawInput, rawInput, nowMilliseconds())
+                : 0.0;
+
+        bool preferEnglishOverChinese = false;
+        if (isEnglish && !isEnglishSuppressed) {
+
+            if (englishLearningBoost > 0.0) {
+                // 用户曾经选择过该英文单词，自适应学习具有最高优先级
+                preferEnglishOverChinese = true;
+            } else if (!page_.items.empty()) {
+                const auto &topChinese = page_.items.front();
+                bool isTopChineseLexical = false;
+                if (topChinese.source == core::CandidateSource::UserDictionary) {
+                    isTopChineseLexical = true;
+                } else if (topChinese.sourceIndex < result.scored.size() &&
+                           result.scored[topChinese.sourceIndex].dictionary_bonus > 0.0) {
+                    isTopChineseLexical = true;
+                } else if (utf8CodePointCount(topChinese.text) == 1 &&
+                           rawInput.size() <= 3) {
+                    isTopChineseLexical = true;
+                }
+
+                const double chineseLearningBoost =
+                    (topChinese.sourceIndex < result.scored.size())
+                        ? result.scored[topChinese.sourceIndex].learning_boost
+                        : 0.0;
+
+                bool matchedInDictionary = false;
+                const auto encoded = libime::PinyinEncoder::encodeFullPinyin(topChinese.fullPinyin);
+                ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
+                    if (hanzi == topChinese.text) {
+                        matchedInDictionary = true;
+                        return false;
+                    }
+                    return true;
+                });
+                if (matchedInDictionary) {
+                    isTopChineseLexical = true;
+                }
+
+                if (!isTopChineseLexical) {
+                    // 非词典的散字拼凑（如 date -> “打特”），除非用户极高频选择（boost >= 2.5），
+                    // 否则标准核心英文词默认置顶
+                    if (chineseLearningBoost < 2.5) {
+                        preferEnglishOverChinese = true;
+                    }
+                }
+            } else {
+                preferEnglishOverChinese = true;
+            }
+
+            if (hasTrustedShortAbbreviation && englishLearningBoost <= 0.0) {
+                preferEnglishOverChinese = false;
+            }
+        }
+
         core::CandidateItem rawCandidate;
         rawCandidate.text = rawInput;
+        rawCandidate.fullPinyin = std::string(rawInput);
         rawCandidate.source = core::CandidateSource::Raw;
         rawCandidate.consumedInputBytes = rawInput.size();
 
@@ -943,6 +1034,7 @@ private:
         if (!predictedWords.empty()) {
             core::CandidateItem predictedCandidate;
             predictedCandidate.text = std::string(predictedWords.front());
+            predictedCandidate.fullPinyin = std::string(rawInput);
             predictedCandidate.source = core::CandidateSource::Raw;
             predictedCandidate.consumedInputBytes = rawInput.size();
 
@@ -955,10 +1047,15 @@ private:
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
             page_.preedit = std::string(rawInput);
         } else if (isEnglish && hasExactFullPinyinMatch) {
-            const auto insertPos =
-                page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
-            page_.items.insert(insertPos, std::move(rawCandidate));
-            page_.preedit = segmentedInput;
+            if (preferEnglishOverChinese) {
+                page_.items.insert(page_.items.begin(), std::move(rawCandidate));
+                page_.preedit = std::string(rawInput);
+            } else {
+                const auto insertPos =
+                    page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
+                page_.items.insert(insertPos, std::move(rawCandidate));
+                page_.preedit = segmentedInput;
+            }
         } else {
             page_.items.push_back(std::move(rawCandidate));
             page_.preedit = segmentedInput;
