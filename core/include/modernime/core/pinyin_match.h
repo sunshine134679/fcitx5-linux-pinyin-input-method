@@ -17,6 +17,12 @@ public:
     static bool trustedShortAbbreviationMatch(std::string_view userInput,
                                               std::string_view fullPinyin,
                                               std::string_view text);
+    static std::size_t matchTypoSyllable(std::string_view input,
+                                         std::string_view syllable);
+    static bool isTypoPrefix(std::string_view input,
+                             std::string_view syllable);
+    static bool isFullTypoMatch(std::string_view userInput,
+                                std::string_view fullPinyin);
     static int priority(std::string_view userInput,
                         std::string_view fullPinyin);
 };

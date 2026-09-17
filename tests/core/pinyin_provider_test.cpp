@@ -386,6 +386,51 @@ void testFullPinyinInputIsAutomaticallySegmentedInPreedit() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testTypoCorrectionTransposition() {
+    modernime::pinyin::PinyinDataPaths paths;
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+
+    // 1. yuedign -> 约定 (Rank 0), preedit -> yue'dign
+    assertTrue(provider.append("yuedign"), "yuedign input accepted");
+    assertTrue(!provider.page().items.empty(), "yuedign has candidates");
+    assertTrue(provider.page().items.front().text == "约定",
+               "yuedign typo correction ranks 约定 at index 0");
+    assertTrue(provider.page().items.front().consumedInputBytes == 7,
+               "约定 consumes full 7 bytes of yuedign");
+    assertTrue(provider.page().preedit == "yue'dign",
+               "yuedign preedit aligns to yue'dign");
+    provider.reset();
+
+    // 2. xiagn -> 向 or 想 (Rank 0)
+    assertTrue(provider.append("xiagn"), "xiagn input accepted");
+    assertTrue(!provider.page().items.empty(), "xiagn has candidates");
+    assertTrue(provider.page().items.front().text == "向" ||
+               provider.page().items.front().text == "想",
+               "xiagn typo correction ranks 向/想 at index 0");
+    provider.reset();
+
+    // 3. zhogn -> 中 (Rank 0)
+    assertTrue(provider.append("zhogn"), "zhogn input accepted");
+    assertTrue(!provider.page().items.empty(), "zhogn has candidates");
+    assertTrue(provider.page().items.front().text == "中",
+               "zhogn typo correction ranks 中 at index 0");
+    provider.reset();
+
+    // 4. zhegn -> 正 (Rank 0)
+    assertTrue(provider.append("zhegn"), "zhegn input accepted");
+    assertTrue(!provider.page().items.empty(), "zhegn has candidates");
+    assertTrue(provider.page().items.front().text == "正",
+               "zhegn typo correction ranks 正 at index 0");
+    provider.reset();
+
+    // 5. English word date is not hijacked
+    assertTrue(provider.append("date"), "date input accepted");
+    assertTrue(!provider.page().items.empty(), "date has candidates");
+    assertTrue(provider.page().items.front().text == "date",
+               "date remains at rank 0");
+    provider.reset();
+}
+
 void testRepeatedSelectionAcrossContextsStillPromotes() {
     const auto learningPath = testPath("context-promotion-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
@@ -694,5 +739,6 @@ int main() {
                "disabled learning does not create a database");
     testExtensionDictionaryIsLoadedAsOfflineKnowledge();
     testRepeatedSelectionAcrossContextsStillPromotes();
+    testTypoCorrectionTransposition();
     return EXIT_SUCCESS;
 }

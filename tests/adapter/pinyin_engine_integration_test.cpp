@@ -301,5 +301,24 @@ int main() {
     std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
     std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");
 
+    // Test typo transposition yuedign -> 约定 space commit
+    {
+        modernime::pinyin::PinyinDataPaths typoPaths;
+        modernime::pinyin::PinyinCandidateProvider typoProvider(typoPaths);
+        RecordingHost typoHost;
+        modernime::fcitx5::ModernIMEController typoController(typoHost, &typoProvider);
+
+        for (char c : std::string_view("yuedign")) {
+            typoController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!typoController.page().items.empty(), "yuedign has candidates in engine");
+        assertTrue(typoController.page().items.front().text == "约定",
+                   "yuedign typo candidate ranks 约定 at rank 0");
+        assertTrue(typoController.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+                   "space commits 约定");
+        assertTrue(typoHost.commits.back() == "约定",
+                   "yuedign committed 约定 directly by space");
+    }
+
     return EXIT_SUCCESS;
 }

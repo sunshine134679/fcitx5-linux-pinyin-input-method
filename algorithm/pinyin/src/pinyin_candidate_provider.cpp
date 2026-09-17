@@ -22,6 +22,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -258,6 +259,168 @@ std::size_t utf8CodePointCount(std::string_view text) {
     return count;
 }
 
+// Check if input substring matches a standard pinyin syllable with typo tolerance.
+// Returns the number of characters consumed from input; 0 if no match.
+std::size_t matchTypoSyllable(std::string_view input, std::string_view syllable) {
+    if (input.empty() || syllable.empty()) {
+        return 0;
+    }
+    // 1. gn <-> ng (e.g. input "dign" vs syllable "ding")
+    //    mg -> ng (adjacent key slip: input "dimg" vs syllable "ding")
+    if (syllable.ends_with("ng")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen)) {
+            const auto tail = input.substr(prefixLen, 2);
+            if (tail == "gn" || tail == "mg") {
+                return syllable.size();
+            }
+        }
+    }
+    // 2. ina <-> ian (e.g. input "tina" vs syllable "tian")
+    if (syllable.ends_with("ian")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "ina") {
+            return syllable.size();
+        }
+    }
+    // 3. una <-> uan (e.g. input "guna" vs syllable "guan")
+    if (syllable.ends_with("uan")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "una") {
+            return syllable.size();
+        }
+    }
+    // 4. uei -> ui (e.g. input "shuei" vs syllable "shui")
+    if (syllable.ends_with("ui")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() + 1 &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "uei") {
+            return syllable.size() + 1;
+        }
+    }
+    // 5. iou -> iu (e.g. input "jiou" vs syllable "jiu")
+    if (syllable.ends_with("iu")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() + 1 &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "iou") {
+            return syllable.size() + 1;
+        }
+    }
+    // 6. uen -> un (e.g. input "luen" vs syllable "lun")
+    if (syllable.ends_with("un")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() + 1 &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "uen") {
+            return syllable.size() + 1;
+        }
+    }
+    // 7. ve -> ue (e.g. input "lve" vs syllable "lue")
+    if (syllable.ends_with("ue")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 2) == "ve") {
+            return syllable.size();
+        }
+    }
+    return 0;
+}
+
+bool isTypoPrefix(std::string_view input, std::string_view syllable) {
+    if (input.empty() || syllable.empty()) {
+        return false;
+    }
+    if (syllable.ends_with("ng")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "g" || tail == "m") {
+                return true;
+            }
+        }
+    }
+    if (syllable.ends_with("ui")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "u" || tail == "ue") {
+                return true;
+            }
+        }
+    }
+    if (syllable.ends_with("iu")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "i" || tail == "io") {
+                return true;
+            }
+        }
+    }
+    if (syllable.ends_with("un")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "u" || tail == "ue") {
+                return true;
+            }
+        }
+    }
+    if (syllable.ends_with("ian")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "i" || tail == "in") {
+                return true;
+            }
+        }
+    }
+    if (syllable.ends_with("uan")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "u" || tail == "un") {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::string correctTypoInput(std::string_view input) {
+    if (input.size() < 3) {
+        return std::string(input);
+    }
+    std::string s(input);
+    static const std::regex gn_regex("([aeiou])gn");
+    s = std::regex_replace(s, gn_regex, "$1ng");
+
+    static const std::regex mg_regex("([aeiou])mg");
+    s = std::regex_replace(s, mg_regex, "$1ng");
+
+    static const std::regex uei_regex("([b-df-hj-np-tv-z]|zh|ch|sh)uei");
+    s = std::regex_replace(s, uei_regex, "$1ui");
+
+    static const std::regex iou_regex("([b-df-hj-np-tv-z])iou");
+    s = std::regex_replace(s, iou_regex, "$1iu");
+
+    static const std::regex uen_regex("([b-df-hj-np-tv-z]|zh|ch|sh)uen");
+    s = std::regex_replace(s, uen_regex, "$1un");
+
+    static const std::regex ve_regex("([ln])ve");
+    s = std::regex_replace(s, ve_regex, "$1ue");
+
+    return s;
+}
+
 bool coversPinyinInput(std::string_view userInput,
                        const std::string &canonicalInput,
                        std::string_view fullPinyin) {
@@ -312,8 +475,19 @@ bool coversPinyinInput(std::string_view userInput,
             consumedFullSyllable = true;
             continue;
         }
+        if (!abbreviationMode) {
+            const auto typoLen = matchTypoSyllable(remaining, syllable);
+            if (typoLen > 0) {
+                inputOffset += typoLen;
+                consumedFullSyllable = true;
+                continue;
+            }
+        }
         if (remaining.size() <= syllable.size() &&
             syllable.compare(0, remaining.size(), remaining) == 0) {
+            return consumedFullSyllable;
+        }
+        if (isTypoPrefix(remaining, syllable)) {
             return consumedFullSyllable;
         }
         if (remaining.front() == syllable.front()) {
@@ -461,6 +635,11 @@ std::optional<PreeditAlignment> alignPreeditToCandidate(
             consider(syllable.size(), true, false);
         }
 
+        const auto typoLen = matchTypoSyllable(remaining, syllable);
+        if (typoLen > 0) {
+            consider(typoLen, true, false);
+        }
+
         if (remaining.front() == syllable.front()) {
             consider(1, false, true);
         }
@@ -479,6 +658,17 @@ std::optional<PreeditAlignment> alignPreeditToCandidate(
                                  std::move(alignment))
                            : best;
             }
+        }
+
+        if (isTypoPrefix(remaining, syllable) &&
+            remaining.size() == rawInput.size() - inputOffset) {
+            PreeditAlignment alignment;
+            alignment.text = std::string(remaining);
+            best = !best.has_value() ||
+                           isBetterPreeditAlignment(alignment, *best)
+                       ? std::optional<PreeditAlignment>(
+                             std::move(alignment))
+                       : best;
         }
 
         memo[index] = best;
@@ -592,6 +782,9 @@ PinyinCandidateProvider::createSharedResources(
                                                          std::move(model));
     resources->ime->setFuzzyFlags(libime::PinyinFuzzyFlags{
         libime::PinyinFuzzyFlag::CommonTypo,
+        libime::PinyinFuzzyFlag::AdvancedTypo,
+        libime::PinyinFuzzyFlag::VE_UE,
+        libime::PinyinFuzzyFlag::V_U,
         libime::PinyinFuzzyFlag::Z_ZH,
         libime::PinyinFuzzyFlag::C_CH,
         libime::PinyinFuzzyFlag::S_SH,
@@ -841,9 +1034,16 @@ private:
             auto *writer = learningWriter();
             return writer != nullptr ? writer->snapshot() : nullptr;
         }();
+        std::unique_ptr<libime::PinyinContext> typoContext;
+        const auto correctedInput = correctTypoInput(rawInput);
+        if (correctedInput != rawInput) {
+            typoContext =
+                std::make_unique<libime::PinyinContext>(shared_->ime.get());
+            typoContext->type(correctedInput);
+        }
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), nowMilliseconds(),
-            contextBefore_, contextAfter_, previousOrder);
+            contextBefore_, contextAfter_, previousOrder, typoContext.get());
         const auto segmentedInput =
             automaticallySegmentedPreedit(rawInput, result);
         const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);

@@ -70,5 +70,51 @@ int main() {
     const auto fuzzyOrder = CandidateRanker::rank("zongguo", fuzzyCandidates);
     assertTrue(fuzzyOrder.size() == 2 && fuzzyOrder[0] == 1,
                "exact pinyin outranks a stronger fuzzy decoder candidate");
+
+    // Typo matching tests (gn <-> ng, mg -> ng, ina <-> ian, uei -> ui, etc.)
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("dign", "ding") == 4,
+               "dign typo-matches ding");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("xiagn", "xiang") == 5,
+               "xiagn typo-matches xiang");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("zhogn", "zhong") == 5,
+               "zhogn typo-matches zhong");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("zhegn", "zheng") == 5,
+               "zhegn typo-matches zheng");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("dimg", "ding") == 4,
+               "dimg typo-matches ding (m/n adjacent)");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("tina", "tian") == 4,
+               "tina typo-matches tian");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("guna", "guan") == 4,
+               "guna typo-matches guan");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("shuei", "shui") == 5,
+               "shuei typo-matches shui");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("jiou", "jiu") == 4,
+               "jiou typo-matches jiu");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("luen", "lun") == 4,
+               "luen typo-matches lun");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("lve", "lue") == 3,
+               "lve typo-matches lue");
+
+    assertTrue(PinyinMatchPolicy::isTypoPrefix("dig", "ding"),
+               "dig is a typo prefix for ding");
+    assertTrue(PinyinMatchPolicy::isTypoPrefix("shue", "shui"),
+               "shue is a typo prefix for shui");
+
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("yuedign", "yue'ding"),
+               "yuedign is a full typo match for yue'ding");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("xiagn", "xiang"),
+               "xiagn is a full typo match for xiang");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("zhogn", "zhong"),
+               "zhogn is a full typo match for zhong");
+    assertTrue(!PinyinMatchPolicy::isFullTypoMatch("nihao", "ni'hao"),
+               "exact match is not a typo match");
+
+    assertTrue(PinyinMatchPolicy::priority("yuedign", "yue'ding") == 2,
+               "full typo match receives priority 2");
+    assertTrue(PinyinMatchPolicy::priority("xiagn", "xiang") == 2,
+               "xiagn full typo match receives priority 2");
+    assertTrue(PinyinMatchPolicy::priority("zhogn", "zhong") == 2,
+               "zhogn full typo match receives priority 2");
+
     return EXIT_SUCCESS;
 }
