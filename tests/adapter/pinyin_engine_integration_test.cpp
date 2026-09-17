@@ -2,6 +2,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -215,6 +216,48 @@ int main() {
                "cursor returned to first page boundary");
     assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
                "space commits top candidate");
+
+
+    // Test repeated selection habit: selecting deep candidate elevates it to rank 0
+    const auto repeatLearningDbPath = "/tmp/integration_repeat_learn.sqlite3";
+    std::filesystem::remove(repeatLearningDbPath);
+    std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
+    std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");
+    {
+        modernime::pinyin::PinyinDataPaths repeatPaths;
+        repeatPaths.learningStore = repeatLearningDbPath;
+        modernime::pinyin::PinyinCandidateProvider repeatProvider(repeatPaths);
+        RecordingHost repeatHost;
+        modernime::fcitx5::ModernIMEController repeatController(repeatHost, &repeatProvider);
+
+        // Initially type zd: '中断' is around index 53
+        for (char c : std::string_view("zd")) {
+            repeatController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        std::size_t initialZhongduanIdx = indexOf(repeatController.page(), "中断");
+        assertTrue(initialZhongduanIdx > 10, "initially 中断 is not on first two pages");
+
+        // Repeat select 中断 10 times
+        for (int cycle = 0; cycle < 10; ++cycle) {
+            std::size_t idx = indexOf(repeatController.page(), "中断");
+            if (idx < repeatController.page().items.size()) {
+                repeatController.select(idx);
+            }
+            for (char c : std::string_view("zd")) {
+                repeatController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            }
+        }
+        assertTrue(!repeatController.page().items.empty() &&
+                   repeatController.page().items.front().text == "中断",
+                   "after 10 selections, 中断 is elevated to top candidate (rank 0)");
+        assertTrue(repeatController.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+                   "space commits 中断");
+        assertTrue(repeatHost.commits.back() == "中断",
+                   "中断 is committed directly by space");
+    }
+    std::filesystem::remove(repeatLearningDbPath);
+    std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
+    std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");
 
     return EXIT_SUCCESS;
 }

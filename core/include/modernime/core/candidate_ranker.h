@@ -14,10 +14,21 @@ inline constexpr double DictionaryPriorWeight = 12.0;
 inline constexpr double LearningPriorWeight = 4.0;
 // Deep enough that a steadily accumulated learning boost can carry a
 // frequently selected candidate from the tail of the engine list to the
-// front page, while still bounded so learning never overrides match
-// priority (input coverage) itself.
-inline constexpr double LearningPriorCap = 16.0;
+// front page / rank 0, overcoming system dictionary and native rank.
+inline constexpr double LearningPriorCap = 180.0;
 inline constexpr double DecoderPriorWeight = 0.25;
+
+inline double computeAdaptiveLearning(double learning_boost) {
+    if (learning_boost <= 0.0) {
+        return std::max(-16.0, LearningPriorWeight * learning_boost);
+    }
+    // Base linear weight provides immediate moderate boost for initial selections
+    // while the progressive power term enables frequent selections (5~10+ uses)
+    // to rise from the engine tail (source_index 50~100+) straight to page 1 / rank 0.
+    const double progressive = 6.0 * std::pow(learning_boost, 2.3);
+    return std::min(LearningPriorCap,
+                    LearningPriorWeight * learning_boost + progressive);
+}
 
 struct CandidateScore final {
     std::size_t source_index = 0;
@@ -32,12 +43,10 @@ struct CandidateScore final {
     double context_bonus = 0.0;
 
     double final_score() const {
-        const double adaptive_learning = std::clamp(
-            LearningPriorWeight * learning_boost, -LearningPriorCap,
-            LearningPriorCap);
-        return static_cast<double>(source_index) - adaptive_learning -
-               stability_bonus - DictionaryPriorWeight * dictionary_bonus -
-               context_bonus - DecoderPriorWeight * decoder_bonus;
+        return static_cast<double>(source_index) -
+               computeAdaptiveLearning(learning_boost) - stability_bonus -
+               DictionaryPriorWeight * dictionary_bonus - context_bonus -
+               DecoderPriorWeight * decoder_bonus;
     }
 };
 

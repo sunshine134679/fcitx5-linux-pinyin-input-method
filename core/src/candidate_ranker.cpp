@@ -80,6 +80,12 @@ CandidateRanker::rank(std::string_view userInput,
         const bool bTrusted = b.match_priority == 1 &&
             PinyinMatchPolicy::trustedShortAbbreviationMatch(userInput, b.full_pinyin, b.text);
         if (aTrusted != bTrusted) {
+            const auto &trusted = aTrusted ? a : b;
+            const auto &other = aTrusted ? b : a;
+            if (other.learning_boost >= 2.5 &&
+                other.final_score() < trusted.final_score()) {
+                return a.final_score() < b.final_score();
+            }
             return aTrusted;
         }
         if (a.final_score() != b.final_score()) {

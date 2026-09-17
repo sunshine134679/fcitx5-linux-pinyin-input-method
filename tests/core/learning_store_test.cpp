@@ -816,6 +816,22 @@ void testHighFrequencyBoostExceedsTheOldCeiling() {
     assertTrue(boost <= 4.0, "the learning boost stays bounded");
 }
 
+void testHighFrequencyDeepCandidateReachesTheTop() {
+    std::vector<modernime::core::CandidateScore> candidates;
+    for (std::size_t index = 0; index < 60; ++index) {
+        candidates.push_back({index, "词" + std::to_string(index), "zd", 0.0F});
+    }
+    const auto initialOrder =
+        modernime::core::CandidateRanker::rank("zd", candidates);
+    assertTrue(initialOrder[53] == 53, "initially candidate 53 is at rank 53");
+
+    candidates[53].learning_boost = 2.94;
+    const auto learnedOrder =
+        modernime::core::CandidateRanker::rank("zd", candidates);
+    assertTrue(learnedOrder.front() == 53,
+               "frequently selected deep candidate rises to the very top (rank 0)");
+}
+
 void testDeeplyLearnedCandidateReachesTheFront() {
     std::vector<modernime::core::CandidateScore> candidates;
     for (std::size_t index = 0; index < 13; ++index) {
@@ -860,6 +876,7 @@ int main() {
     testSnapshotAppliesTotalEntryLimit();
     testFrequencyAccumulatesAcrossContextVariants();
     testHighFrequencyBoostExceedsTheOldCeiling();
+    testHighFrequencyDeepCandidateReachesTheTop();
     testDeeplyLearnedCandidateReachesTheFront();
     return EXIT_SUCCESS;
 }
