@@ -320,5 +320,27 @@ int main() {
                    "yuedign committed 约定 directly by space");
     }
 
+    
+    // Stress test: rapid typing and short/incomplete syllables
+    {
+        modernime::pinyin::PinyinDataPaths stressPaths;
+        modernime::pinyin::PinyinCandidateProvider stressProvider(stressPaths);
+        RecordingHost stressHost;
+        modernime::fcitx5::ModernIMEController stressController(stressHost, &stressProvider);
+
+        for (char c1 = 'a'; c1 <= 'z'; ++c1) {
+            stressController.handle({modernime::fcitx5::KeyKind::Character, c1, 0});
+            stressController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+        }
+
+        for (char c1 = 'a'; c1 <= 'f'; ++c1) {
+            for (char c2 = 'a'; c2 <= 'f'; ++c2) {
+                stressController.handle({modernime::fcitx5::KeyKind::Character, c1, 0});
+                stressController.handle({modernime::fcitx5::KeyKind::Character, c2, 0});
+                stressController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+            }
+        }
+    }
+
     return EXIT_SUCCESS;
 }

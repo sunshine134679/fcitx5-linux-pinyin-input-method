@@ -110,7 +110,11 @@ CandidatePipelineResult buildCandidatePipeline(
         core::CandidateScore candidate;
         candidate.source_index = index;
         candidate.text = nativeCandidates[index].toString();
-        candidate.full_pinyin = context.candidateFullPinyin(index);
+        try {
+            candidate.full_pinyin = context.candidateFullPinyin(index);
+        } catch (const std::exception &) {
+            candidate.full_pinyin.clear();
+        }
         candidate.decoder_score = nativeCandidates[index].score();
         candidate.dictionary_bonus = dictionaryBonus(
             dictionary, candidate.full_pinyin, candidate.text);
@@ -131,7 +135,15 @@ CandidatePipelineResult buildCandidatePipeline(
             std::min<std::size_t>(typoCandidates.size(), 16);
         for (std::size_t index = 0; index < typoLimit; ++index) {
             const auto text = typoCandidates[index].toString();
-            const auto fullPinyin = typoContext->candidateFullPinyin(index);
+            std::string fullPinyin;
+            try {
+                fullPinyin = typoContext->candidateFullPinyin(index);
+            } catch (const std::exception &) {
+                fullPinyin.clear();
+            }
+            if (fullPinyin.empty()) {
+                continue;
+            }
             const auto key = core::candidateOrderKey(text, fullPinyin);
             if (seenKeys.contains(key)) {
                 continue;

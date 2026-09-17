@@ -400,23 +400,59 @@ std::string correctTypoInput(std::string_view input) {
         return std::string(input);
     }
     std::string s(input);
-    static const std::regex gn_regex("([aeiou])gn");
-    s = std::regex_replace(s, gn_regex, "$1ng");
+    const auto isVowel = [](char c) {
+        return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
+    };
 
-    static const std::regex mg_regex("([aeiou])mg");
-    s = std::regex_replace(s, mg_regex, "$1ng");
+    // 1. gn -> ng (e.g. dign -> ding), mg -> ng (e.g. dimg -> ding)
+    for (std::size_t i = 1; i + 1 < s.size(); ++i) {
+        if ((s[i] == 'g' || s[i] == 'm') && s[i + 1] == 'n' && isVowel(s[i - 1])) {
+            s[i] = 'n';
+            s[i + 1] = 'g';
+        } else if (s[i] == 'm' && s[i + 1] == 'g' && isVowel(s[i - 1])) {
+            s[i] = 'n';
+            s[i + 1] = 'g';
+        }
+    }
 
-    static const std::regex uei_regex("([b-df-hj-np-tv-z]|zh|ch|sh)uei");
-    s = std::regex_replace(s, uei_regex, "$1ui");
+    // 2. uei -> ui (e.g. shuei -> shui)
+    std::size_t pos = 0;
+    while ((pos = s.find("uei", pos)) != std::string::npos) {
+        if (pos > 0 && !isVowel(s[pos - 1])) {
+            s.erase(pos + 1, 1);
+        } else {
+            ++pos;
+        }
+    }
 
-    static const std::regex iou_regex("([b-df-hj-np-tv-z])iou");
-    s = std::regex_replace(s, iou_regex, "$1iu");
+    // 3. iou -> iu (e.g. jiou -> jiu)
+    pos = 0;
+    while ((pos = s.find("iou", pos)) != std::string::npos) {
+        if (pos > 0 && !isVowel(s[pos - 1])) {
+            s.erase(pos + 1, 1);
+        } else {
+            ++pos;
+        }
+    }
 
-    static const std::regex uen_regex("([b-df-hj-np-tv-z]|zh|ch|sh)uen");
-    s = std::regex_replace(s, uen_regex, "$1un");
+    // 4. uen -> un (e.g. luen -> lun)
+    pos = 0;
+    while ((pos = s.find("uen", pos)) != std::string::npos) {
+        if (pos > 0 && !isVowel(s[pos - 1])) {
+            s.erase(pos + 1, 1);
+        } else {
+            ++pos;
+        }
+    }
 
-    static const std::regex ve_regex("([ln])ve");
-    s = std::regex_replace(s, ve_regex, "$1ue");
+    // 5. ve -> ue (e.g. lve -> lue, nve -> nue)
+    pos = 0;
+    while ((pos = s.find("ve", pos)) != std::string::npos) {
+        if (pos > 0 && (s[pos - 1] == 'l' || s[pos - 1] == 'n')) {
+            s[pos] = 'u';
+        }
+        pos += 2;
+    }
 
     return s;
 }
@@ -782,9 +818,6 @@ PinyinCandidateProvider::createSharedResources(
                                                          std::move(model));
     resources->ime->setFuzzyFlags(libime::PinyinFuzzyFlags{
         libime::PinyinFuzzyFlag::CommonTypo,
-        libime::PinyinFuzzyFlag::AdvancedTypo,
-        libime::PinyinFuzzyFlag::VE_UE,
-        libime::PinyinFuzzyFlag::V_U,
         libime::PinyinFuzzyFlag::Z_ZH,
         libime::PinyinFuzzyFlag::C_CH,
         libime::PinyinFuzzyFlag::S_SH,
@@ -904,7 +937,15 @@ public:
             refresh();
             return true;
         }
-        context->select(page_.items[index].sourceIndex);
+        try {
+            if (page_.items[index].sourceIndex < context->candidates().size()) {
+                context->select(page_.items[index].sourceIndex);
+            } else {
+                context->clear();
+            }
+        } catch (const std::exception &) {
+            context->clear();
+        }
         refresh();
         return true;
     }
@@ -1037,9 +1078,13 @@ private:
         std::unique_ptr<libime::PinyinContext> typoContext;
         const auto correctedInput = correctTypoInput(rawInput);
         if (correctedInput != rawInput) {
-            typoContext =
-                std::make_unique<libime::PinyinContext>(shared_->ime.get());
-            typoContext->type(correctedInput);
+            try {
+                typoContext =
+                    std::make_unique<libime::PinyinContext>(shared_->ime.get());
+                typoContext->type(correctedInput);
+            } catch (const std::exception &) {
+                typoContext.reset();
+            }
         }
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), nowMilliseconds(),

@@ -600,42 +600,48 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
     if (event.isRelease()) {
         return;
     }
-    auto *contextState = state(event.inputContext());
-    if (contextState == nullptr) {
-        return;
-    }
-    if (contextState->settingsGeneration() != settingsGeneration_) {
-        contextState->applySettings(settings_, settingsGeneration_);
-    }
-    const auto context = extractSurroundingContext(
-        event.inputContext()->surroundingText(), 32);
-    contextState->controller().setContext(context.first, context.second);
-    auto modernEvent = translateKey(event.key(), keyBindings_);
-    const bool clipboardActive = keyBindings_.clipboardEnabled &&
-                                  contextState->controller().active();
-    // 两段式剪贴板触发：拼音组合恰好是触发字母（默认 v）时，下一键为
-    // 触发数字（默认 2）则丢弃组合并打开剪贴板。触发字母本身始终按
-    // 正常输入处理，不会被消费或改写；数字选择关闭时同样生效。
-    if (clipboardActive &&
-        clipboardTriggerFire(contextState->controller().page().preedit,
-                             event.key(), keyBindings_.clipboardTrigger)) {
-        contextState->setClipboardEntries(clipboardHistory_.entries());
-        if (contextState->controller().handle(
-                {KeyKind::OpenClipboard, 0, 0})) {
+    try {
+        auto *contextState = state(event.inputContext());
+        if (contextState == nullptr) {
+            return;
+        }
+        if (contextState->settingsGeneration() != settingsGeneration_) {
+            contextState->applySettings(settings_, settingsGeneration_);
+        }
+        const auto context = extractSurroundingContext(
+            event.inputContext()->surroundingText(), 32);
+        contextState->controller().setContext(context.first, context.second);
+        auto modernEvent = translateKey(event.key(), keyBindings_);
+        const bool clipboardActive = keyBindings_.clipboardEnabled &&
+                                      contextState->controller().active();
+        // 两段式剪贴板触发：拼音组合恰好是触发字母（默认 v）时，下一键为
+        // 触发数字（默认 2）则丢弃组合并打开剪贴板。触发字母本身始终按
+        // 正常输入处理，不会被消费或改写；数字选择关闭时同样生效。
+        if (clipboardActive &&
+            clipboardTriggerFire(contextState->controller().page().preedit,
+                                 event.key(), keyBindings_.clipboardTrigger)) {
+            contextState->setClipboardEntries(clipboardHistory_.entries());
+            if (contextState->controller().handle(
+                    {KeyKind::OpenClipboard, 0, 0})) {
+                event.filterAndAccept();
+            }
+            return;
+        }
+        if (!modernEvent.has_value()) {
+            if (shouldCommitCompositionBeforePassThrough(
+                    contextState->controller().page().preedit, event.key())) {
+                contextState->controller().handle({KeyKind::Enter, 0, 0});
+            }
+            return;
+        }
+
+        if (contextState->controller().handle(*modernEvent)) {
             event.filterAndAccept();
         }
-        return;
-    }
-    if (!modernEvent.has_value()) {
-        if (shouldCommitCompositionBeforePassThrough(
-                contextState->controller().page().preedit, event.key())) {
-            contextState->controller().handle({KeyKind::Enter, 0, 0});
-        }
-        return;
-    }
-
-    if (contextState->controller().handle(*modernEvent)) {
-        event.filterAndAccept();
+    } catch (const std::exception &error) {
+        FCITX_ERROR() << "ModernIME keyEvent caught exception: " << error.what();
+    } catch (...) {
+        FCITX_ERROR() << "ModernIME keyEvent caught unknown exception";
     }
 }
 
