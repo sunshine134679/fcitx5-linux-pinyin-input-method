@@ -60,9 +60,8 @@ public:
             "学习行为", "关闭后不会删除已经保存的学习数据。");
         gtk_box_pack_start(GTK_BOX(page), learningSection, FALSE, FALSE, 0);
 
-        learningEnabled = gtk_check_button_new_with_label("记忆用户候选选择");
-        contextLearning = gtk_check_button_new_with_label(
-            "根据光标前后文调整候选排序");
+        learningEnabled = gtk_switch_new();
+        contextLearning = gtk_switch_new();
         setTarget(learningEnabled, "learning-enabled");
         setTarget(contextLearning, "context-learning");
         gtk_widget_set_tooltip_text(learningEnabled, "记录你主动选择的候选词");
@@ -73,10 +72,16 @@ public:
         setAccessibleWidgetText(contextLearning,
                                 "根据光标前后文调整候选排序",
                                 "启用或关闭本地上下文候选排序");
-        gtk_box_pack_start(GTK_BOX(learningSection), learningEnabled, FALSE,
-                           FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(learningSection), contextLearning, FALSE,
-                           FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(learningSection),
+                           createSettingRow("记忆用户候选选择",
+                                            "记录您主动选择的高频候选词，自适应学习并调频置顶。",
+                                            learningEnabled),
+                           FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(learningSection),
+                           createSettingRow("根据前后文调整候选排序",
+                                            "根据输入光标前后的上下文语境动态推荐候选词。",
+                                            contextLearning),
+                           FALSE, FALSE, 0);
         const auto pathText = "学习数据库：" + path.string();
         learningPath = gtk_label_new(pathText.c_str());
         addStyleClass(learningPath, "modernime-path");
@@ -106,9 +111,9 @@ public:
                                 "先创建并验证备份，再清空本地学习排序");
         gtk_box_pack_start(GTK_BOX(dataSection), clearLearningButton, FALSE,
                            FALSE, 0);
-        g_signal_connect(learningEnabled, "toggled", G_CALLBACK(onChanged),
+        g_signal_connect(learningEnabled, "notify::active", G_CALLBACK(onSwitchChanged),
                          this);
-        g_signal_connect(contextLearning, "toggled", G_CALLBACK(onChanged),
+        g_signal_connect(contextLearning, "notify::active", G_CALLBACK(onSwitchChanged),
                          this);
         g_signal_connect(clearLearningButton, "clicked", G_CALLBACK(onClear),
                          this);
@@ -141,10 +146,10 @@ public:
     void refreshSettings() {
         refreshing = true;
         const auto &settings = model.settings();
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(learningEnabled),
-                                     settings.learningEnabled);
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(contextLearning),
-                                     settings.contextLearningEnabled);
+        gtk_switch_set_active(GTK_SWITCH(learningEnabled),
+                              settings.learningEnabled);
+        gtk_switch_set_active(GTK_SWITCH(contextLearning),
+                              settings.contextLearningEnabled);
         refreshing = false;
     }
 
@@ -167,16 +172,20 @@ public:
     GtkWidget *widget() const { return page; }
 
 private:
+    static void onSwitchChanged(GObject *, GParamSpec *, gpointer data) {
+        onChanged(nullptr, data);
+    }
+
     static void onChanged(GtkWidget *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
         if (impl->refreshing) {
             return;
         }
         auto settings = impl->model.settings();
-        settings.learningEnabled = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->learningEnabled));
-        settings.contextLearningEnabled = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->contextLearning));
+        settings.learningEnabled = gtk_switch_get_active(
+            GTK_SWITCH(impl->learningEnabled));
+        settings.contextLearningEnabled = gtk_switch_get_active(
+            GTK_SWITCH(impl->contextLearning));
         impl->model.setSettings(std::move(settings));
         impl->settingsChanged();
     }

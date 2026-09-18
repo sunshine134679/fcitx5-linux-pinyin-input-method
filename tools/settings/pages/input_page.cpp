@@ -5,22 +5,24 @@
 
 #include <gtk/gtk.h>
 
+#include <algorithm>
 #include <array>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace modernime::settings {
 namespace {
 
-void setWidgetError(GtkWidget *widget, bool invalid, std::string_view message) {
-    auto *context = gtk_widget_get_style_context(widget);
-    if (invalid) {
-        gtk_style_context_add_class(context, "error");
-        gtk_widget_set_tooltip_text(widget, std::string(message).c_str());
-    } else {
-        gtk_style_context_remove_class(context, "error");
-        gtk_widget_set_tooltip_text(widget, nullptr);
-    }
+void addStyleClass(GtkWidget *widget, std::string_view className) {
+    gtk_style_context_add_class(gtk_widget_get_style_context(widget),
+                                std::string(className).c_str());
+}
+
+void removeStyleClass(GtkWidget *widget, std::string_view className) {
+    gtk_style_context_remove_class(gtk_widget_get_style_context(widget),
+                                   std::string(className).c_str());
 }
 
 void setTarget(GtkWidget *widget, std::string_view target) {
@@ -28,15 +30,25 @@ void setTarget(GtkWidget *widget, std::string_view target) {
                            g_strdup(std::string(target).c_str()), g_free);
 }
 
+void setWidgetError(GtkWidget *widget, bool error,
+                    std::string_view tooltip) {
+    if (error) {
+        addStyleClass(widget, "error");
+    } else {
+        removeStyleClass(widget, "error");
+    }
+    gtk_widget_set_tooltip_text(
+        widget, tooltip.empty() ? nullptr : std::string(tooltip).c_str());
+}
+
 } // namespace
 
 class InputPage::Impl final {
 public:
-    Impl(SettingsWindowModel &settingsModel,
-         std::function<void()> changedCallback)
-        : model(settingsModel), changed(std::move(changedCallback)) {
+    Impl(SettingsWindowModel &modelRef, std::function<void()> changedCallback)
+        : model(modelRef), changed(std::move(changedCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "输入体验", "配置输入状态、快捷键、标点和候选行为"));
+            "输入体验", "调整默认输入状态、快捷键、标点和候选外观"));
         page = pageGuard.get();
         buildInputStatusSection();
         buildShortcutSection();
@@ -55,24 +67,26 @@ public:
         auto *section = createSectionCard(
             "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-        inputEnabled = gtk_check_button_new_with_label("启用 ModernIME");
+
+        inputEnabled = gtk_check_button_new();
         setTarget(inputEnabled, "input-enabled");
         gtk_box_pack_start(GTK_BOX(section),
                            createSettingRow("启用 ModernIME",
-                                            "控制 ModernIME 是否接收键盘输入。",
+                                            "控制 ModernIME 是否接收键盘输入并弹出候选框。",
                                             inputEnabled),
                            FALSE, FALSE, 0);
 
         defaultMode = gtk_combo_box_text_new();
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(defaultMode), "中文");
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(defaultMode), "英文");
-        gtk_widget_set_hexpand(defaultMode, TRUE);
+        gtk_widget_set_hexpand(defaultMode, FALSE);
         setTarget(defaultMode, "default-mode");
         defaultModeFallback = createSettingRow(
-            "默认输入状态", "选择启动时默认使用中文或英文。", defaultMode);
+            "默认输入状态", "选择启动或重置时默认使用中文或英文。", defaultMode);
         gtk_box_pack_start(GTK_BOX(section), defaultModeFallback, FALSE, FALSE,
                            0);
-        g_signal_connect(inputEnabled, "toggled", G_CALLBACK(onChanged), this);
+
+        g_signal_connect(inputEnabled, "notify::active", G_CALLBACK(onSwitchChanged), this);
         g_signal_connect(defaultMode, "changed", G_CALLBACK(onChanged), this);
     }
 
@@ -83,7 +97,7 @@ public:
         toggleKey = gtk_entry_new();
         gtk_entry_set_placeholder_text(GTK_ENTRY(toggleKey),
                                        "例如 Ctrl+Shift+Space");
-        gtk_widget_set_hexpand(toggleKey, TRUE);
+        gtk_widget_set_hexpand(toggleKey, FALSE);
         setTarget(toggleKey, "toggle-key");
         toggleKeyFallback = createSettingRow(
             "中英文切换快捷键",
@@ -98,47 +112,51 @@ public:
         auto *section = createSectionCard(
             "标点", "配置中文输入状态下的标点输出方式。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-        punctuation = gtk_check_button_new_with_label("中文标点");
+        punctuation = gtk_switch_new();
         setTarget(punctuation, "punctuation");
         punctuationFallback = createSettingRow(
-            "中文标点", "在中文状态下使用全角标点。", punctuation);
+            "默认中文标点", "在中文状态下使用全角标点符号（，。！？）。", punctuation);
         gtk_box_pack_start(GTK_BOX(section), punctuationFallback, FALSE, FALSE,
                            0);
-        g_signal_connect(punctuation, "toggled", G_CALLBACK(onChanged), this);
+        g_signal_connect(punctuation, "notify::active", G_CALLBACK(onSwitchChanged), this);
     }
 
     void buildCandidateBehaviorSection() {
         auto *section = createSectionCard(
             "候选行为", "关闭某项后，对应按键会交给其他输入行为处理。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-        numberSelection = gtk_check_button_new_with_label("数字键选择候选");
+
+        numberSelection = gtk_switch_new();
         gtk_widget_set_tooltip_text(numberSelection, "使用数字键选择当前候选项");
         setTarget(numberSelection, "number-selection");
-        arrowNavigation = gtk_check_button_new_with_label("方向键编辑与选词");
+
+        arrowNavigation = gtk_switch_new();
         gtk_widget_set_tooltip_text(
             arrowNavigation, "左右移动拼音光标，上下切换候选项");
         setTarget(arrowNavigation, "arrow-navigation");
-        pageNavigation = gtk_check_button_new_with_label("候选翻页");
+
+        pageNavigation = gtk_switch_new();
         gtk_widget_set_tooltip_text(pageNavigation,
                                     "使用 PageUp / PageDown 或 + / = 翻页");
         setTarget(pageNavigation, "page-navigation");
+
         gtk_box_pack_start(GTK_BOX(section),
                            createSettingRow("数字键选择候选",
-                                            "使用数字键选择当前候选项。",
+                                            "使用键盘顶部 1~9 数字键快速选择对应候选项上屏。",
                                             numberSelection),
                            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section),
                            createSettingRow("方向键编辑与选词",
-                                            "左右移动拼音光标，上下切换候选项。",
+                                            "左右键移动拼音光标，上下键快速整页翻页与切换候选项。",
                                             arrowNavigation),
                            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section),
                            createSettingRow("候选翻页",
-                                            "使用 PageUp / PageDown 和 + / = 翻页。",
+                                            "使用 PageUp / PageDown 和 + / = 键进行前后翻页。",
                                             pageNavigation),
                            FALSE, FALSE, 0);
         for (auto *control : {numberSelection, arrowNavigation, pageNavigation}) {
-            g_signal_connect(control, "toggled", G_CALLBACK(onChanged), this);
+            g_signal_connect(control, "notify::active", G_CALLBACK(onSwitchChanged), this);
         }
     }
 
@@ -167,8 +185,42 @@ public:
         gtk_box_pack_start(GTK_BOX(section), candidateFontSizeFallback, FALSE,
                            FALSE, 0);
 
+        // Live Preview Box
+        previewBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+        addStyleClass(previewBox, "modernime-preview-bar");
+        auto *previewTitle = gtk_label_new("候选栏排版实时预览");
+        addStyleClass(previewTitle, "modernime-setting-desc");
+        gtk_widget_set_halign(previewTitle, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(previewBox), previewTitle, FALSE, FALSE, 0);
+
+        previewLabel = gtk_label_new("");
+        gtk_widget_set_halign(previewLabel, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(previewBox), previewLabel, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(section), previewBox, FALSE, FALSE, 0);
+
         g_signal_connect(candidatePageSize, "value-changed", G_CALLBACK(onChanged), this);
         g_signal_connect(candidateFontSize, "value-changed", G_CALLBACK(onChanged), this);
+    }
+
+    void updatePreview(int pageSize, int fontSize) {
+        if (previewLabel == nullptr) return;
+        std::ostringstream ss;
+        ss << "<span font='" << fontSize << "pt'>";
+        for (int i = 1; i <= std::min(pageSize, 5); ++i) {
+            if (i > 1) ss << "   ";
+            ss << "<span alpha='65%'>" << i << ".</span> ";
+            if (i == 1) ss << "你好";
+            else if (i == 2) ss << "世界";
+            else if (i == 3) ss << "现代";
+            else if (i == 4) ss << "拼音";
+            else ss << "输入法";
+        }
+        ss << "</span>";
+        gtk_label_set_markup(GTK_LABEL(previewLabel), ss.str().c_str());
+    }
+
+    static void onSwitchChanged(GObject *, GParamSpec *, gpointer data) {
+        onChanged(nullptr, data);
     }
 
     static void onChanged(GtkWidget *, gpointer data) {
@@ -184,20 +236,21 @@ public:
                                    ? core::InputMode::English
                                    : core::InputMode::Chinese;
         settings.toggleKey = gtk_entry_get_text(GTK_ENTRY(impl->toggleKey));
-        settings.punctuationEnabled = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->punctuation));
-        settings.numberSelection = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->numberSelection));
-        settings.arrowNavigation = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->arrowNavigation));
-        settings.pageNavigation = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->pageNavigation));
+        settings.punctuationEnabled = gtk_switch_get_active(
+            GTK_SWITCH(impl->punctuation));
+        settings.numberSelection = gtk_switch_get_active(
+            GTK_SWITCH(impl->numberSelection));
+        settings.arrowNavigation = gtk_switch_get_active(
+            GTK_SWITCH(impl->arrowNavigation));
+        settings.pageNavigation = gtk_switch_get_active(
+            GTK_SWITCH(impl->pageNavigation));
         settings.candidatePageSize = gtk_spin_button_get_value_as_int(
             GTK_SPIN_BUTTON(impl->candidatePageSize));
         settings.candidateFontSize = gtk_spin_button_get_value_as_int(
             GTK_SPIN_BUTTON(impl->candidateFontSize));
         impl->model.setSettings(std::move(settings));
         impl->updateState();
+        impl->updatePreview(settings.candidatePageSize, settings.candidateFontSize);
         impl->changed();
     }
 
@@ -211,18 +264,19 @@ public:
                                      ? 1
                                      : 0);
         gtk_entry_set_text(GTK_ENTRY(toggleKey), settings.toggleKey.c_str());
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(punctuation),
-                                     settings.punctuationEnabled);
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(numberSelection),
-                                     settings.numberSelection);
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(arrowNavigation),
-                                     settings.arrowNavigation);
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pageNavigation),
-                                     settings.pageNavigation);
+        gtk_switch_set_active(GTK_SWITCH(punctuation),
+                              settings.punctuationEnabled);
+        gtk_switch_set_active(GTK_SWITCH(numberSelection),
+                              settings.numberSelection);
+        gtk_switch_set_active(GTK_SWITCH(arrowNavigation),
+                              settings.arrowNavigation);
+        gtk_switch_set_active(GTK_SWITCH(pageNavigation),
+                              settings.pageNavigation);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidatePageSize),
                                   settings.candidatePageSize);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFontSize),
                                   settings.candidateFontSize);
+        updatePreview(settings.candidatePageSize, settings.candidateFontSize);
         refreshing = false;
         updateState();
     }
@@ -275,6 +329,8 @@ public:
     GtkWidget *candidatePageSizeFallback = nullptr;
     GtkWidget *candidateFontSize = nullptr;
     GtkWidget *candidateFontSizeFallback = nullptr;
+    GtkWidget *previewBox = nullptr;
+    GtkWidget *previewLabel = nullptr;
     bool refreshing = false;
 };
 

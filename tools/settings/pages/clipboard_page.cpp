@@ -62,12 +62,15 @@ public:
             "中文输入状态下输入触发字母后紧跟触发数字即可打开剪贴板。");
         gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
 
-        clipboardEnabled = gtk_check_button_new_with_label("启用 V+2 剪贴板");
+        clipboardEnabled = gtk_switch_new();
         setAccessibleWidgetText(clipboardEnabled, "启用 V+2 剪贴板",
                                 "启用或关闭本地剪贴板历史入口");
         setTarget(clipboardEnabled, "clipboard-enabled");
-        gtk_box_pack_start(GTK_BOX(settingsSection), clipboardEnabled, FALSE,
-                           FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(settingsSection),
+                           createSettingRow("启用 V+2 剪贴板",
+                                            "中文输入状态下输入触发字母后紧跟数字即可打开剪贴板。",
+                                            clipboardEnabled),
+                           FALSE, FALSE, 0);
 
         auto *grid = gtk_grid_new();
         clipboardTriggerFallback = grid;
@@ -183,7 +186,7 @@ public:
         g_signal_connect(copyButton, "clicked", G_CALLBACK(onCopy), this);
         g_signal_connect(deleteButton, "clicked", G_CALLBACK(onDelete), this);
         g_signal_connect(clearButton, "clicked", G_CALLBACK(onClear), this);
-        g_signal_connect(clipboardEnabled, "toggled", G_CALLBACK(onChanged),
+        g_signal_connect(clipboardEnabled, "notify::active", G_CALLBACK(onSwitchChanged),
                          this);
         g_signal_connect(clipboardTrigger, "changed", G_CALLBACK(onChanged),
                          this);
@@ -236,8 +239,8 @@ public:
     void refreshSettings() {
         refreshing = true;
         const auto &settings = model.settings();
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(clipboardEnabled),
-                                     settings.clipboardEnabled);
+        gtk_switch_set_active(GTK_SWITCH(clipboardEnabled),
+                              settings.clipboardEnabled);
         gtk_entry_set_text(GTK_ENTRY(clipboardTrigger),
                            settings.clipboardTrigger.c_str());
         refreshing = false;
@@ -263,13 +266,17 @@ public:
     GtkWidget *widget() const { return page; }
 
 private:
+    static void onSwitchChanged(GObject *, GParamSpec *, gpointer data) {
+        onChanged(nullptr, data);
+    }
+
     static void onChanged(GtkWidget *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
         if (impl->refreshing) {
             return;
         }
         impl->model.setClipboardOptions(
-            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(impl->clipboardEnabled)),
+            gtk_switch_get_active(GTK_SWITCH(impl->clipboardEnabled)),
             gtk_entry_get_text(GTK_ENTRY(impl->clipboardTrigger)));
         impl->updateSettingsState();
         impl->settingsChanged();
@@ -393,7 +400,7 @@ private:
     void updateSettingsState() {
         gtk_widget_set_sensitive(
             clipboardTrigger,
-            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(clipboardEnabled)));
+            gtk_switch_get_active(GTK_SWITCH(clipboardEnabled)));
         const auto validation = model.validation();
         for (const auto &issue : validation.issues) {
             if (issue.key == "clipboard.trigger") {

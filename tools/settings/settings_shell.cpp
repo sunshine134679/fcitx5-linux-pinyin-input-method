@@ -148,6 +148,24 @@ void overviewTaskFunction(GTask *task, gpointer, gpointer data,
         [](gpointer value) { delete static_cast<OverviewSnapshot *>(value); });
 }
 
+const char *iconForPage(SettingsPageId page) {
+    switch (page) {
+    case SettingsPageId::Overview:
+        return "go-home-symbolic";
+    case SettingsPageId::Input:
+        return "input-keyboard-symbolic";
+    case SettingsPageId::Dictionary:
+        return "accessories-dictionary-symbolic";
+    case SettingsPageId::Clipboard:
+        return "edit-paste-symbolic";
+    case SettingsPageId::Learning:
+        return "starred-symbolic";
+    case SettingsPageId::Diagnostics:
+        return "utilities-system-monitor-symbolic";
+    }
+    return "emblem-default-symbolic";
+}
+
 } // namespace
 
 class SettingsShell::Impl final {
@@ -366,6 +384,7 @@ private:
         gtk_widget_set_size_request(sidebar, 220, -1);
 
         searchEntry = gtk_search_entry_new();
+        addStyleClass(searchEntry, "modernime-search-box");
         gtk_entry_set_placeholder_text(GTK_ENTRY(searchEntry), "搜索设置");
         gtk_widget_set_tooltip_text(searchEntry,
                                     "仅在本地搜索设置名称和说明");
@@ -386,20 +405,34 @@ private:
         for (const auto &definition : settingsPageDefinitions()) {
             if (definition.group != previousGroup) {
                 auto *group = gtk_label_new(std::string(definition.group).c_str());
-                addStyleClass(group, "modernime-description");
+                addStyleClass(group, "modernime-sidebar-group");
                 gtk_widget_set_halign(group, GTK_ALIGN_START);
-                gtk_widget_set_margin_top(group, previousGroup.empty() ? 0 : 8);
                 gtk_box_pack_start(GTK_BOX(sidebar), group, FALSE, FALSE, 0);
                 previousGroup = definition.group;
             }
-            auto *button =
-                gtk_button_new_with_label(std::string(definition.title).c_str());
+            auto *button = gtk_button_new();
+            addStyleClass(button, "modernime-nav-button");
             gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
-            auto *label = gtk_bin_get_child(GTK_BIN(button));
-            if (label != nullptr) {
-                gtk_widget_set_halign(label, GTK_ALIGN_START);
-            }
             gtk_widget_set_hexpand(button, TRUE);
+
+            auto *btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+            gtk_widget_set_margin_start(btnBox, 4);
+            gtk_widget_set_margin_end(btnBox, 4);
+            gtk_widget_set_margin_top(btnBox, 1);
+            gtk_widget_set_margin_bottom(btnBox, 1);
+
+            auto *icon = gtk_image_new_from_icon_name(
+                iconForPage(definition.id), GTK_ICON_SIZE_BUTTON);
+            addStyleClass(icon, "modernime-nav-icon");
+            gtk_box_pack_start(GTK_BOX(btnBox), icon, FALSE, FALSE, 0);
+
+            auto *label = gtk_label_new(std::string(definition.title).c_str());
+            addStyleClass(label, "modernime-nav-label");
+            gtk_widget_set_halign(label, GTK_ALIGN_START);
+            gtk_box_pack_start(GTK_BOX(btnBox), label, TRUE, TRUE, 0);
+
+            gtk_container_add(GTK_CONTAINER(button), btnBox);
+
             gtk_widget_set_tooltip_text(
                 button, std::string(definition.subtitle).c_str());
             setAccessibleWidgetText(button, definition.title,
@@ -419,7 +452,7 @@ private:
         stack = stackGuard.get();
         addStyleClass(stack, "modernime-page-stack");
         gtk_stack_set_transition_type(GTK_STACK(stack),
-                                      GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+                                      GTK_STACK_TRANSITION_TYPE_NONE);
 
         const auto notify = [this](std::string message) {
             onPageMessage(std::move(message));
@@ -503,10 +536,11 @@ private:
         detail::GtkWidgetGuard barGuard(
             gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8));
         auto *bar = barGuard.get();
+        addStyleClass(bar, "modernime-bottom-bar");
         gtk_widget_set_margin_start(bar, 12);
         gtk_widget_set_margin_end(bar, 12);
-        gtk_widget_set_margin_top(bar, 8);
-        gtk_widget_set_margin_bottom(bar, 8);
+        gtk_widget_set_margin_top(bar, 4);
+        gtk_widget_set_margin_bottom(bar, 4);
 
         editState = gtk_label_new("所有设置已保存");
         addStyleClass(editState, "modernime-status");
