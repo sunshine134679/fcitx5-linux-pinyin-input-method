@@ -37,6 +37,8 @@ public:
     // Wait until queued events have been processed. Returns false when the
     // backing store was unavailable or a write failed.
     bool flush();
+    // Re-reads the snapshot from the underlying persistent store.
+    bool reload();
     std::shared_ptr<const LearningSnapshot> snapshot() const;
 
 private:

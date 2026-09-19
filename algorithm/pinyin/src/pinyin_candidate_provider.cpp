@@ -15,6 +15,47 @@
 #include <libime/pinyin/pinyinime.h>
 
 #include <algorithm>
+#include <ctime>
+
+namespace {
+
+std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    std::vector<std::string> results;
+    if (rawInput == "rq") {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%d年%d月%d日", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+        results.push_back(buf);
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+        results.push_back(buf);
+    } else if (rawInput == "sj") {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+        results.push_back(buf);
+        std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
+        results.push_back(buf);
+    } else if (rawInput == "xq") {
+        static const char *const kWeekdays[] = {
+            "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"
+        };
+        static const char *const kZhou[] = {
+            "周日", "周一", "周二", "周三", "周四", "周五", "周六"
+        };
+        if (tm.tm_wday >= 0 && tm.tm_wday <= 6) {
+            results.push_back(kWeekdays[tm.tm_wday]);
+            results.push_back(kZhou[tm.tm_wday]);
+        }
+    }
+    return results;
+}
+
+} // namespace
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -775,6 +816,13 @@ public:
         userDictionary = std::move(updated);
         return true;
     }
+
+    bool reloadLearningStore() {
+        if (learning != nullptr) {
+            return learning->reload();
+        }
+        return false;
+    }
 };
 
 std::shared_ptr<PinyinCandidateProvider::SharedResources>
@@ -840,6 +888,14 @@ bool PinyinCandidateProvider::reloadUserDictionary(
         return false;
     }
     return resources->reloadUserDictionary();
+}
+
+bool PinyinCandidateProvider::reloadLearningStore(
+    std::shared_ptr<SharedResources> &resources) {
+    if (resources == nullptr) {
+        return false;
+    }
+    return resources->reloadLearningStore();
 }
 
 class PinyinCandidateProvider::Impl final {
@@ -1168,6 +1224,24 @@ private:
         page_.items = mixCandidateItems(fullItems, partialPool,
                                         bestFullSentence, prefixEnds, rawInput);
 
+        const auto macroCandidates = generateMacroCandidates(rawInput);
+        if (!macroCandidates.empty()) {
+            std::size_t insertPos = page_.items.empty() ? 0 : 1;
+            for (const auto &macroText : macroCandidates) {
+                core::CandidateItem item;
+                item.text = macroText;
+                item.fullPinyin = std::string(rawInput);
+                item.source = core::CandidateSource::Engine;
+                item.consumedInputBytes = rawInput.size();
+                if (insertPos < page_.items.size()) {
+                    page_.items.insert(page_.items.begin() + insertPos, std::move(item));
+                } else {
+                    page_.items.push_back(std::move(item));
+                }
+                ++insertPos;
+            }
+        }
+
         const bool isEnglish =
             core::EnglishDictionary::isEnglishWord(rawInput);
 
@@ -1235,14 +1309,24 @@ private:
                         : 0.0;
 
                 bool matchedInDictionary = false;
-                const auto encoded = libime::PinyinEncoder::encodeFullPinyin(topChinese.fullPinyin);
-                ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
-                    if (hanzi == topChinese.text) {
-                        matchedInDictionary = true;
-                        return false;
+                try {
+                    std::string cleanPinyin = topChinese.fullPinyin;
+                    while (!cleanPinyin.empty() && cleanPinyin.back() == '\'') {
+                        cleanPinyin.pop_back();
                     }
-                    return true;
-                });
+                    if (!cleanPinyin.empty()) {
+                        const auto encoded = libime::PinyinEncoder::encodeFullPinyin(cleanPinyin);
+                        ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
+                            if (hanzi == topChinese.text) {
+                                matchedInDictionary = true;
+                                return false;
+                            }
+                            return true;
+                        });
+                    }
+                } catch (const std::exception &) {
+                    matchedInDictionary = false;
+                }
                 if (matchedInDictionary) {
                     isTopChineseLexical = true;
                 }

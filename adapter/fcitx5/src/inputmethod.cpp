@@ -311,6 +311,11 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
         if (mtimeError) {
             userDictionaryMtime_ = {};
         }
+        learningStoreMtime_ = std::filesystem::last_write_time(
+            settingsPaths().learningStore, mtimeError);
+        if (mtimeError) {
+            learningStoreMtime_ = {};
+        }
     }
     std::string historyError;
     if (!clipboardHistory_.load(&historyError)) {
@@ -406,7 +411,9 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::Enter;
         return event;
     }
-    if (bindings.pageNavigation && key.check(FcitxKey_Page_Up)) {
+    if (bindings.pageNavigation &&
+        (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_minus) ||
+         key.check(FcitxKey_KP_Subtract))) {
         event.kind = KeyKind::PreviousPage;
         return event;
     }
@@ -578,6 +585,20 @@ void ModernIMEInputMethod::pollFileChanges() {
         }
 #endif
     }
+    const auto learningFile = settingsPaths().learningStore;
+    const auto learningTime =
+        std::filesystem::last_write_time(learningFile, error);
+    if (!error && learningTime != learningStoreMtime_) {
+        learningStoreMtime_ = learningTime;
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+        ensurePinyinResources();
+        if (pinyin::PinyinCandidateProvider::reloadLearningStore(
+                resources_.pinyin)) {
+            FCITX_INFO() << "ModernIME learning store reloaded from "
+                         << learningFile.string();
+        }
+#endif
+    }
 }
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -598,7 +619,31 @@ void ModernIMEInputMethod::ensurePinyinResources() {
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                                     fcitx::KeyEvent &event) {
     if (event.isRelease()) {
+        if (event.key().check(FcitxKey_Shift_L) ||
+            event.key().check(FcitxKey_Shift_R)) {
+            if (shiftPressed_ && !otherKeyPressedWhileShift_) {
+                shiftPressed_ = false;
+                auto *contextState = state(event.inputContext());
+                if (contextState != nullptr) {
+                    if (!contextState->controller().page().preedit.empty()) {
+                        contextState->controller().handle({KeyKind::Enter, 0, 0});
+                    }
+                    contextState->controller().handle({KeyKind::Toggle, 0, 0});
+                    event.filterAndAccept();
+                    return;
+                }
+            }
+            shiftPressed_ = false;
+        }
         return;
+    }
+
+    if (event.key().check(FcitxKey_Shift_L) ||
+        event.key().check(FcitxKey_Shift_R)) {
+        shiftPressed_ = true;
+        otherKeyPressedWhileShift_ = false;
+    } else {
+        otherKeyPressedWhileShift_ = true;
     }
     try {
         auto *contextState = state(event.inputContext());
@@ -659,6 +704,8 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
 
 void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
                                       fcitx::InputContextEvent &event) {
+    shiftPressed_ = false;
+    otherKeyPressedWhileShift_ = false;
     reset(entry, event);
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().setActive(false);
@@ -667,6 +714,8 @@ void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
 
 void ModernIMEInputMethod::reset(const fcitx::InputMethodEntry &,
                                  fcitx::InputContextEvent &event) {
+    shiftPressed_ = false;
+    otherKeyPressedWhileShift_ = false;
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().reset();
     }

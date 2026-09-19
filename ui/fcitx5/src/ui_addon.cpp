@@ -89,6 +89,11 @@ struct ModernIMEUserInterface::Impl final {
                 metrics = CandidateBarMetrics::reference(
                     static_cast<double>(currentFontSize),
                     static_cast<std::size_t>(currentPageSize));
+                style.candidateText.size = static_cast<double>(currentFontSize);
+                style.candidateNumberText.size =
+                    std::max(10.0, static_cast<double>(currentFontSize) - 4.0);
+                style.preeditText.size =
+                    std::max(12.0, static_cast<double>(currentFontSize) - 2.0);
                 sharedWidthCache.clear();
                 lastWindowWidth = -1;
                 lastWindowHeight = -1;

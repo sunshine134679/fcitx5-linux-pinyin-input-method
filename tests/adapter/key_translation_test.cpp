@@ -130,6 +130,10 @@ int main() {
                "down maps to the next clipboard item");
     assertKind(FcitxKey_Page_Down, modernime::fcitx5::KeyKind::NextPage,
                "page down maps to next page");
+    assertKind(FcitxKey_minus, modernime::fcitx5::KeyKind::PreviousPage,
+               "minus maps to previous page");
+    assertKind(FcitxKey_KP_Subtract, modernime::fcitx5::KeyKind::PreviousPage,
+               "keypad subtract maps to previous page");
     assertKind(FcitxKey_equal, modernime::fcitx5::KeyKind::NextPage,
                "equal maps to next page");
     assertKind(FcitxKey_plus, modernime::fcitx5::KeyKind::NextPage,

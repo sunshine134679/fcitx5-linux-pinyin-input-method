@@ -107,6 +107,22 @@ std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
     return snapshot_;
 }
 
+bool LearningWriter::reload() {
+    flush();
+    std::lock_guard lock(mutex_);
+    if (!store_->open()) {
+        store_->close();
+        return false;
+    }
+    auto loaded = store_->snapshot();
+    if (loaded != nullptr) {
+        snapshot_ = std::move(loaded);
+        storageAvailable_ = true;
+        return true;
+    }
+    return false;
+}
+
 bool LearningWriter::persistBatch(const std::vector<Event> &events) {
     constexpr int kMaxAttemptsPerCycle = 3;
     std::vector<LearningEvent> storeEvents;

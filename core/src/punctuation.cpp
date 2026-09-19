@@ -22,6 +22,22 @@ std::optional<std::string> fullWidthPunctuation(char ascii) {
         return std::string("）");
     case '~':
         return std::string("～");
+    case '\\':
+        return std::string("、");
+    case '<':
+        return std::string("《");
+    case '>':
+        return std::string("》");
+    case '[':
+        return std::string("【");
+    case ']':
+        return std::string("】");
+    case '^':
+        return std::string("……");
+    case '_':
+        return std::string("——");
+    case '$':
+        return std::string("￥");
     default:
         return std::nullopt;
     }

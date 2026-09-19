@@ -42,6 +42,11 @@ public:
     static bool reloadUserDictionary(
         std::shared_ptr<SharedResources> &resources);
 
+    // Re-reads the learning store from disk into the shared resources so
+    // external clears/edits apply without restarting; false when null.
+    static bool reloadLearningStore(
+        std::shared_ptr<SharedResources> &resources);
+
     // Constructs a provider that owns all of its resources. Convenience for
     // tests and single-instance tools.
     explicit PinyinCandidateProvider(PinyinDataPaths paths = {},

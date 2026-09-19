@@ -189,14 +189,30 @@ std::string_view settingsStyles() {
         }
 
         .modernime-nav-button.suggested-action,
-        .modernime-nav-button:checked {
+        .modernime-nav-button.suggested-action:hover,
+        .modernime-nav-button.suggested-action:active,
+        .modernime-nav-button.suggested-action:focus,
+        .modernime-nav-button.suggested-action:focus:hover,
+        .modernime-nav-button.suggested-action:focus:active,
+        .modernime-nav-button:checked,
+        .modernime-nav-button:checked:hover,
+        .modernime-nav-button:checked:active,
+        .modernime-nav-button:checked:focus {
             background-color: @theme_selected_bg_color;
+            background-image: none;
             color: @theme_selected_fg_color;
+            border: 1px solid transparent;
+            outline: none;
+            box-shadow: none;
             font-weight: 600;
         }
 
         .modernime-nav-button.suggested-action image,
-        .modernime-nav-button.suggested-action label {
+        .modernime-nav-button.suggested-action label,
+        .modernime-nav-button.suggested-action *,
+        .modernime-nav-button:checked image,
+        .modernime-nav-button:checked label,
+        .modernime-nav-button:checked * {
             color: @theme_selected_fg_color;
         }
 
@@ -375,10 +391,26 @@ std::string_view settingsStyles() {
             transition: all 120ms ease;
         }
 
-        button.suggested-action {
+        button.suggested-action,
+        button.suggested-action:hover,
+        button.suggested-action:active,
+        button.suggested-action:focus,
+        button.suggested-action:focus:hover,
+        button.suggested-action:focus:active {
             background-color: @theme_selected_bg_color;
+            background-image: none;
             color: @theme_selected_fg_color;
+            border-color: transparent;
+            outline: none;
+            box-shadow: none;
             font-weight: 600;
+        }
+
+        button.suggested-action *,
+        button.suggested-action:hover *,
+        button.suggested-action:active *,
+        button.suggested-action:focus * {
+            color: @theme_selected_fg_color;
         }
     )css";
 }
@@ -395,7 +427,7 @@ void installSettingsStyles() {
                                     nullptr);
     gtk_style_context_add_provider_for_screen(
         screen, GTK_STYLE_PROVIDER(provider),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        GTK_STYLE_PROVIDER_PRIORITY_USER);
     g_object_unref(provider);
 }
 

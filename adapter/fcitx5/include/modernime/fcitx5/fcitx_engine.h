@@ -335,6 +335,9 @@ private:
     std::unique_ptr<fcitx::EventSourceTime> fileTimer_;
     std::filesystem::file_time_type settingsMtime_{};
     std::filesystem::file_time_type userDictionaryMtime_{};
+    std::filesystem::file_time_type learningStoreMtime_{};
+    bool shiftPressed_ = false;
+    bool otherKeyPressedWhileShift_ = false;
     std::uint64_t settingsGeneration_ = 0;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
