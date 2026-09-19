@@ -41,6 +41,9 @@ void testFixedMappings() {
     assertTrue(modernime::core::fullWidthPunctuation('~') ==
                    std::optional<std::string>("～"),
                "tilde converts to full-width");
+    assertTrue(modernime::core::fullWidthPunctuation('/') ==
+                   std::optional<std::string>("、"),
+               "slash converts to full-width enumeration comma");
     assertTrue(modernime::core::fullWidthPunctuation('\\') ==
                    std::optional<std::string>("、"),
                "backslash converts to full-width enumeration comma");
@@ -68,7 +71,7 @@ void testFixedMappings() {
 }
 
 void testUnmappedCharactersStayHalfWidth() {
-    for (const char ascii : {'@', '#', '/', '+', '=', '&', '%'}) {
+    for (const char ascii : {'@', '#', '+', '=', '&', '%'}) {
         assertTrue(!modernime::core::fullWidthPunctuation(ascii).has_value(),
                    "characters without a mapping have no conversion");
     }

@@ -22,6 +22,7 @@ std::optional<std::string> fullWidthPunctuation(char ascii) {
         return std::string("）");
     case '~':
         return std::string("～");
+    case '/':
     case '\\':
         return std::string("、");
     case '<':
