@@ -15,7 +15,10 @@ sudo apt install \
     libimecore-dev libimepinyin-dev \
     libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
 
-git clone git@github.com:sunshine134679/fcitx5-linux-pinyin-input-method.git
+# 克隆仓库 (推荐 HTTPS)
+git clone https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method.git
+# 或使用 SSH:
+# git clone git@github.com:sunshine134679/fcitx5-linux-pinyin-input-method.git
 cd fcitx5-linux-pinyin-input-method
 ./install.sh
 ```
