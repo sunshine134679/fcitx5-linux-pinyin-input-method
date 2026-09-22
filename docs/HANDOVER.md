@@ -97,12 +97,17 @@
 1. **依赖对齐**：凡引入新头文件或库，必须同步在 `README.md` 的 `sudo apt install` 与 `CMakeLists.txt` 中更新，绝不允许存在本地未声明的隐式依赖；
 2. **离线自包含**：所有扩展词库与数据必须随仓库内置或离线自动生成，严禁让 `./install.sh` 依赖外部不可靠的实时网络下载；
 3. **安装卸载对称闭环**：`install.sh` 创建的桌面快捷方式、环境变量、autostart 和 manifest，必须能被 `./uninstall.sh` 干净、无残留地全部回滚；
-4. **沙箱回归验证**：每次较大变更推送到远程前，必须在临时目录完整验证一次克隆与安装：
+4. **沙箱回归验证**：每次较大变更推送到远程前，必须在临时目录完整验证一次克隆与安装（需显式传入配置与桌面隔离目录）：
    ```bash
    git clone . /tmp/test-fresh-clone
    cd /tmp/test-fresh-clone
-   MODERNIME_PREFIX=/tmp/test-prefix MODERNIME_SKIP_FCITX_RESTART=1 ./install.sh
-   MODERNIME_PREFIX=/tmp/test-prefix ./uninstall.sh
+   MODERNIME_PREFIX=/tmp/test-prefix \
+   MODERNIME_CONFIG_HOME=/tmp/test-prefix/config \
+   MODERNIME_DESKTOP_DIR=/tmp/test-prefix/Desktop \
+   MODERNIME_SKIP_FCITX_RESTART=1 ./install.sh
+   MODERNIME_PREFIX=/tmp/test-prefix \
+   MODERNIME_CONFIG_HOME=/tmp/test-prefix/config \
+   MODERNIME_DESKTOP_DIR=/tmp/test-prefix/Desktop ./uninstall.sh
    rm -rf /tmp/test-fresh-clone /tmp/test-prefix
    ```
 

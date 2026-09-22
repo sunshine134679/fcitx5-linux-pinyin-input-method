@@ -63,6 +63,8 @@ run_install() {
     local name=$1
     shift
     env \
+        -u MODERNIME_CONFIG_HOME \
+        -u MODERNIME_DESKTOP_DIR \
         HOME="$test_root/$name-home" \
         XDG_CONFIG_HOME="$test_root/$name-config" \
         MODERNIME_PREFIX="$test_root/$name-prefix" \
@@ -93,6 +95,8 @@ ln -s "$(command -v env)" "$no_fcitx_bin/env"
 
 no_fcitx_output="$test_root/no-fcitx-output"
 env \
+    -u MODERNIME_CONFIG_HOME \
+    -u MODERNIME_DESKTOP_DIR \
     HOME="$test_root/no-fcitx-home" \
     XDG_CONFIG_HOME="$test_root/no-fcitx-config" \
     MODERNIME_PREFIX="$test_root/no-fcitx-prefix" \
@@ -130,6 +134,8 @@ chmod +x "$crashing_bin/fcitx5" "$crashing_bin/fcitx5-remote" \
 crash_log="$test_root/crash.log"
 crash_output="$test_root/crash-output"
 env \
+    -u MODERNIME_CONFIG_HOME \
+    -u MODERNIME_DESKTOP_DIR \
     HOME="$test_root/crash-home" \
     XDG_CONFIG_HOME="$test_root/crash-config" \
     MODERNIME_PREFIX="$test_root/crash-prefix" \

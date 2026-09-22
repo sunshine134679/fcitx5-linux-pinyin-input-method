@@ -49,6 +49,8 @@ mkdir -p "$prefix/share/applications" "$test_root/home/Desktop"
 printf '%s\n' unrelated >"$prefix/share/applications/unrelated.desktop"
 printf '%s\n' unrelated >"$test_root/home/Desktop/unrelated.desktop"
 env \
+    -u MODERNIME_CONFIG_HOME \
+    -u MODERNIME_DESKTOP_DIR \
     HOME="$test_root/home" \
     XDG_CONFIG_HOME="$config" \
     MODERNIME_PREFIX="$prefix" \
@@ -73,6 +75,8 @@ grep -Fqx "Exec=$prefix/bin/modernime-settings" \
     "$test_root/home/Desktop/modernime-settings.desktop"
 
 env \
+    -u MODERNIME_CONFIG_HOME \
+    -u MODERNIME_DESKTOP_DIR \
     HOME="$test_root/home" \
     XDG_CONFIG_HOME="$config" \
     MODERNIME_PREFIX="$prefix" \

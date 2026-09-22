@@ -3,7 +3,7 @@ set -euo pipefail
 
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 manifest="$prefix/share/modernime/install-manifest.txt"
-config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
+config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
 environment_file="$config_home/environment.d/90-modernime.conf"
 autostart_file="$config_home/autostart/modernime-fcitx5-session.desktop"
 system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
@@ -11,13 +11,13 @@ system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
 system_addon_dir="$system_libdir/fcitx5"
 environment_line="FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
 autostart_exec="env FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir fcitx5 -d -u modernime-ui"
-desktop_dir="$HOME/Desktop"
-if command -v xdg-user-dir >/dev/null 2>&1; then
+desktop_dir=${MODERNIME_DESKTOP_DIR:-"$HOME/Desktop"}
+if [[ -z "${MODERNIME_DESKTOP_DIR:-}" ]] && command -v xdg-user-dir >/dev/null 2>&1; then
     configured_desktop_dir=$(xdg-user-dir DESKTOP || true)
     if [[ -n "$configured_desktop_dir" ]]; then
         desktop_dir="$configured_desktop_dir"
     fi
-elif [[ ! -d "$desktop_dir" && -d "$HOME/桌面" ]]; then
+elif [[ -z "${MODERNIME_DESKTOP_DIR:-}" && ! -d "$desktop_dir" && -d "$HOME/桌面" ]]; then
     desktop_dir="$HOME/桌面"
 fi
 desktop_shortcut="$desktop_dir/modernime-settings.desktop"

@@ -22,7 +22,7 @@ done
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
-config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
+config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
 environment_dir="$config_home/environment.d"
 environment_file="$environment_dir/90-modernime.conf"
 autostart_dir="$config_home/autostart"
@@ -31,13 +31,13 @@ system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
 system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
 system_addon_dir="$system_libdir/fcitx5"
 
-desktop_dir="$HOME/Desktop"
-if command -v xdg-user-dir >/dev/null 2>&1; then
+desktop_dir=${MODERNIME_DESKTOP_DIR:-"$HOME/Desktop"}
+if [[ -z "${MODERNIME_DESKTOP_DIR:-}" ]] && command -v xdg-user-dir >/dev/null 2>&1; then
     configured_desktop_dir=$(xdg-user-dir DESKTOP || true)
     if [[ -n "$configured_desktop_dir" ]]; then
         desktop_dir="$configured_desktop_dir"
     fi
-elif [[ ! -d "$desktop_dir" && -d "$HOME/桌面" ]]; then
+elif [[ -z "${MODERNIME_DESKTOP_DIR:-}" && ! -d "$desktop_dir" && -d "$HOME/桌面" ]]; then
     desktop_dir="$HOME/桌面"
 fi
 desktop_shortcut="$desktop_dir/modernime-settings.desktop"
@@ -76,6 +76,7 @@ cmake -S "$project_root" -B "$build_dir" -G "$generator" "${cmake_args[@]}"
 cmake --build "$build_dir" --parallel "$build_jobs"
 (
     unset MODERNIME_SKIP_FCITX_RESTART
+    unset MODERNIME_PREFIX MODERNIME_BUILD_DIR MODERNIME_CONFIG_HOME MODERNIME_DESKTOP_DIR
     # The GTK focus integration tests require a controlled compositor. Running
     # them inside an arbitrary desktop session makes window-manager focus
     # stealing prevention look like a product failure. Keep the installer test

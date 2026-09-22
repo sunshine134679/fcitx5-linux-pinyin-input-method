@@ -57,6 +57,8 @@ chmod +x "$fake_bin"/*
 log_file="$test_root/calls.log"
 state_file="$test_root/pgrep.state"
 env \
+    -u MODERNIME_CONFIG_HOME \
+    -u MODERNIME_DESKTOP_DIR \
     HOME="$test_root/home" \
     XDG_CONFIG_HOME="$test_root/config" \
     MODERNIME_PREFIX="$test_root/prefix" \
