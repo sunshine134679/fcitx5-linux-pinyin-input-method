@@ -116,5 +116,51 @@ int main() {
     assertTrue(PinyinMatchPolicy::priority("zhogn", "zhong") == 2,
                "zhogn full typo match receives priority 2");
 
+    // normalizeTypoInput: debounce, omission, transposition, adjacent keys
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("zhoongguo") == "zhongguo",
+               "zhoongguo debounces to zhongguo");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("sheeng") == "sheng",
+               "sheeng debounces to sheng");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("good") == "good",
+               "English word good retains double vowels");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("garag") == "garag",
+               "English prefix garag is protected from typo corruption");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("zhogguo") == "zhongguo",
+               "zhogguo omission recovery to zhongguo");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("xuesheg") == "xuesheng",
+               "xuesheg omission recovery to xuesheng");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("beijig") == "beijing",
+               "beijig omission recovery to beijing");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("pengyo") == "pengyou",
+               "pengyo omission recovery to pengyou");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("chifna") == "chifan",
+               "chifna transposition to chifan");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("yop") == "you",
+               "yop adjacent key slip to you");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("xiab") == "xian",
+               "xiab adjacent key slip to xian");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("bucup") == "bucuo",
+               "bucup adjacent key slip to bucuo");
+
+    // matchTypoSyllable with omission and adjacent
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("zhog", "zhong") == 4,
+               "zhog typo matches zhong");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("yo", "you") == 2,
+               "yo typo matches you");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("yop", "you") == 3,
+               "yop typo matches you");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("fna", "fan") == 3,
+               "fna typo matches fan");
+
+    // isFullTypoMatch with compound words
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("zhogguo", "zhong'guo"),
+               "zhogguo is a full typo match for zhong'guo");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("pengyo", "peng'you"),
+               "pengyo is a full typo match for peng'you");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("beijig", "bei'jing"),
+               "beijig is a full typo match for bei'jing");
+    assertTrue(!PinyinMatchPolicy::isFullTypoMatch("garag", "ga'rang"),
+               "English prefix garag is not considered a typo for ga'rang");
+
     return EXIT_SUCCESS;
 }

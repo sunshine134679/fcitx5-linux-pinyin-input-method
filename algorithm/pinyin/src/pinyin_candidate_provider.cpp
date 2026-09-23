@@ -303,204 +303,24 @@ std::size_t utf8CodePointCount(std::string_view text) {
 // Check if input substring matches a standard pinyin syllable with typo tolerance.
 // Returns the number of characters consumed from input; 0 if no match.
 std::size_t matchTypoSyllable(std::string_view input, std::string_view syllable) {
-    if (input.empty() || syllable.empty()) {
-        return 0;
-    }
-    // 1. gn <-> ng (e.g. input "dign" vs syllable "ding")
-    //    mg -> ng (adjacent key slip: input "dimg" vs syllable "ding")
-    if (syllable.ends_with("ng")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.size() >= syllable.size() &&
-            input.substr(0, prefixLen) == syllable.substr(0, prefixLen)) {
-            const auto tail = input.substr(prefixLen, 2);
-            if (tail == "gn" || tail == "mg") {
-                return syllable.size();
-            }
-        }
-    }
-    // 2. ina <-> ian (e.g. input "tina" vs syllable "tian")
-    if (syllable.ends_with("ian")) {
-        const auto prefixLen = syllable.size() - 3;
-        if (input.size() >= syllable.size() &&
-            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
-            input.substr(prefixLen, 3) == "ina") {
-            return syllable.size();
-        }
-    }
-    // 3. una <-> uan (e.g. input "guna" vs syllable "guan")
-    if (syllable.ends_with("uan")) {
-        const auto prefixLen = syllable.size() - 3;
-        if (input.size() >= syllable.size() &&
-            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
-            input.substr(prefixLen, 3) == "una") {
-            return syllable.size();
-        }
-    }
-    // 4. uei -> ui (e.g. input "shuei" vs syllable "shui")
-    if (syllable.ends_with("ui")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.size() >= syllable.size() + 1 &&
-            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
-            input.substr(prefixLen, 3) == "uei") {
-            return syllable.size() + 1;
-        }
-    }
-    // 5. iou -> iu (e.g. input "jiou" vs syllable "jiu")
-    if (syllable.ends_with("iu")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.size() >= syllable.size() + 1 &&
-            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
-            input.substr(prefixLen, 3) == "iou") {
-            return syllable.size() + 1;
-        }
-    }
-    // 6. uen -> un (e.g. input "luen" vs syllable "lun")
-    if (syllable.ends_with("un")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.size() >= syllable.size() + 1 &&
-            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
-            input.substr(prefixLen, 3) == "uen") {
-            return syllable.size() + 1;
-        }
-    }
-    // 7. ve -> ue (e.g. input "lve" vs syllable "lue")
-    if (syllable.ends_with("ue")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.size() >= syllable.size() &&
-            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
-            input.substr(prefixLen, 2) == "ve") {
-            return syllable.size();
-        }
-    }
-    return 0;
+    return core::PinyinMatchPolicy::matchTypoSyllable(input, syllable);
 }
 
 bool isTypoPrefix(std::string_view input, std::string_view syllable) {
-    if (input.empty() || syllable.empty()) {
-        return false;
-    }
-    if (syllable.ends_with("ng")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.starts_with(syllable.substr(0, prefixLen))) {
-            const auto tail = input.substr(prefixLen);
-            if (tail == "g" || tail == "m") {
-                return true;
-            }
-        }
-    }
-    if (syllable.ends_with("ui")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.starts_with(syllable.substr(0, prefixLen))) {
-            const auto tail = input.substr(prefixLen);
-            if (tail == "u" || tail == "ue") {
-                return true;
-            }
-        }
-    }
-    if (syllable.ends_with("iu")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.starts_with(syllable.substr(0, prefixLen))) {
-            const auto tail = input.substr(prefixLen);
-            if (tail == "i" || tail == "io") {
-                return true;
-            }
-        }
-    }
-    if (syllable.ends_with("un")) {
-        const auto prefixLen = syllable.size() - 2;
-        if (input.starts_with(syllable.substr(0, prefixLen))) {
-            const auto tail = input.substr(prefixLen);
-            if (tail == "u" || tail == "ue") {
-                return true;
-            }
-        }
-    }
-    if (syllable.ends_with("ian")) {
-        const auto prefixLen = syllable.size() - 3;
-        if (input.starts_with(syllable.substr(0, prefixLen))) {
-            const auto tail = input.substr(prefixLen);
-            if (tail == "i" || tail == "in") {
-                return true;
-            }
-        }
-    }
-    if (syllable.ends_with("uan")) {
-        const auto prefixLen = syllable.size() - 3;
-        if (input.starts_with(syllable.substr(0, prefixLen))) {
-            const auto tail = input.substr(prefixLen);
-            if (tail == "u" || tail == "un") {
-                return true;
-            }
-        }
-    }
-    return false;
+    return core::PinyinMatchPolicy::isTypoPrefix(input, syllable);
 }
 
 std::string correctTypoInput(std::string_view input) {
-    if (input.size() < 3) {
-        return std::string(input);
-    }
-    std::string s(input);
-    const auto isVowel = [](char c) {
-        return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
-    };
-
-    // 1. gn -> ng (e.g. dign -> ding), mg -> ng (e.g. dimg -> ding)
-    for (std::size_t i = 1; i + 1 < s.size(); ++i) {
-        if ((s[i] == 'g' || s[i] == 'm') && s[i + 1] == 'n' && isVowel(s[i - 1])) {
-            s[i] = 'n';
-            s[i + 1] = 'g';
-        } else if (s[i] == 'm' && s[i + 1] == 'g' && isVowel(s[i - 1])) {
-            s[i] = 'n';
-            s[i + 1] = 'g';
-        }
-    }
-
-    // 2. uei -> ui (e.g. shuei -> shui)
-    std::size_t pos = 0;
-    while ((pos = s.find("uei", pos)) != std::string::npos) {
-        if (pos > 0 && !isVowel(s[pos - 1])) {
-            s.erase(pos + 1, 1);
-        } else {
-            ++pos;
-        }
-    }
-
-    // 3. iou -> iu (e.g. jiou -> jiu)
-    pos = 0;
-    while ((pos = s.find("iou", pos)) != std::string::npos) {
-        if (pos > 0 && !isVowel(s[pos - 1])) {
-            s.erase(pos + 1, 1);
-        } else {
-            ++pos;
-        }
-    }
-
-    // 4. uen -> un (e.g. luen -> lun)
-    pos = 0;
-    while ((pos = s.find("uen", pos)) != std::string::npos) {
-        if (pos > 0 && !isVowel(s[pos - 1])) {
-            s.erase(pos + 1, 1);
-        } else {
-            ++pos;
-        }
-    }
-
-    // 5. ve -> ue (e.g. lve -> lue, nve -> nue)
-    pos = 0;
-    while ((pos = s.find("ve", pos)) != std::string::npos) {
-        if (pos > 0 && (s[pos - 1] == 'l' || s[pos - 1] == 'n')) {
-            s[pos] = 'u';
-        }
-        pos += 2;
-    }
-
-    return s;
+    return core::PinyinMatchPolicy::normalizeTypoInput(input);
 }
 
 bool coversPinyinInput(std::string_view userInput,
                        const std::string &canonicalInput,
                        std::string_view fullPinyin) {
+    if (core::PinyinMatchPolicy::isFullTypoMatch(userInput, fullPinyin)) {
+        return true;
+    }
+
     // Keep short ASCII words such as "who" as the English fallback. Chinese
     // initialisms become a reliable signal once they contain at least four
     // initials, which also covers the normal four-character idiom case.
@@ -1249,8 +1069,8 @@ private:
             page_.items.begin(), page_.items.end(),
             [&rawInput](const auto &item) {
                 return item.source != core::CandidateSource::Raw &&
-                       core::PinyinMatchPolicy::priority(
-                           rawInput, item.fullPinyin) == 2;
+                       core::PinyinMatchPolicy::exactInputMatch(
+                           rawInput, item.fullPinyin);
             });
 
         const bool hasTrustedShortAbbreviation =

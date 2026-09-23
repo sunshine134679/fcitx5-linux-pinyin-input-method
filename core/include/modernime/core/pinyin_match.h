@@ -17,6 +17,7 @@ public:
     static bool trustedShortAbbreviationMatch(std::string_view userInput,
                                               std::string_view fullPinyin,
                                               std::string_view text);
+    static std::string normalizeTypoInput(std::string_view input);
     static std::size_t matchTypoSyllable(std::string_view input,
                                          std::string_view syllable);
     static bool isTypoPrefix(std::string_view input,

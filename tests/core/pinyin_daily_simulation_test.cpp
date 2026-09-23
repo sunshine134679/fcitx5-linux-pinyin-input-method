@@ -346,22 +346,76 @@ void testSmartLearningDynamics(const std::filesystem::path &learningPath) {
     }
 }
 
+// 5. 智能拼音容错引擎日常测试（漏击补全、抖动去重、邻键置换、倒序修复）
+void testSmartTypoCorrectionEngine(const std::filesystem::path &learningPath) {
+    auto provider = makeSimulationProvider(learningPath);
+
+    struct TypoCase {
+        std::string_view input;
+        std::string_view expected;
+        std::string_view desc;
+        std::size_t maxRank = 0;
+    };
+
+    const std::vector<TypoCase> testCases = {
+        // 漏打韵尾/三元音
+        {"zhogguo", "中国", "zhogguo 漏打n自动纠错补全为中国", 0},
+        {"xuesheg", "学生", "xuesheg 漏打n自动纠错补全为学生", 0},
+        {"beijig", "北京", "beijig 漏打n自动纠错补全为北京", 0},
+        {"shaghai", "上海", "shaghai 漏打n自动纠错补全为上海", 0},
+        {"pengyo", "朋友", "pengyo 漏打u自动纠错呈现朋友于前二", 1},
+        {"guag", "光", "guag 漏打n自动纠错补全为光", 0},
+        {"fagzi", "房子", "fagzi 漏打n自动纠错补全为房子", 0},
+        // 连续双元音抖动
+        {"zhoongguo", "中国", "zhoongguo 双元音抖动自动去重为中国", 0},
+        {"sheeng", "生", "sheeng 双元音抖动自动去重为生", 0},
+        // 邻键置换与字母颠倒
+        {"yop", "有", "yop 邻键误触纠错为有", 0},
+        {"xiab", "先", "xiab 邻键误触纠错为先", 0},
+        {"yuedign", "约定", "yuedign 颠倒纠错为约定", 0},
+        {"zhegn", "正", "zhegn 颠倒纠错为正", 0},
+        {"shuei", "水", "shuei 三元音纠错为水", 0},
+        {"luen", "论", "luen 纠错为论", 0},
+        {"tina", "天", "tina 倒序纠错为天", 0},
+        // 长句复合容错
+        {"jintiantianqibucuo", "今天天气不错", "正确长句准确识别", 0},
+        {"jintiantianqibucup", "今天天气不错", "jintiantianqibucup 邻键误触长句纠错为今天天气不错", 0},
+    };
+
+    for (const auto &tc : testCases) {
+        provider.reset();
+        assertTrue(provider.append(tc.input),
+                   std::string("append typo input: ") + std::string(tc.input));
+        assertTrue(!provider.page().items.empty(),
+                   std::string("candidates exist for: ") + std::string(tc.input));
+        const auto idx = indexOf(provider.page(), tc.expected);
+        assertTrue(idx <= tc.maxRank,
+                   std::string("candidate for ") + std::string(tc.input) +
+                   " should be rank <= " + std::to_string(tc.maxRank) +
+                   ", but got rank " + std::to_string(idx) + " (first is " +
+                   provider.page().items.front().text + ") (" + std::string(tc.desc) + ")");
+    }
+}
+
 } // namespace
 
 int main() {
     const auto learningPath = testPath("daily-simulation-learning.sqlite3");
 
-    std::cout << "[1/4] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
+    std::cout << "[1/5] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
     testSinglePinyinPriorities(learningPath);
 
-    std::cout << "[2/4] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
+    std::cout << "[2/5] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
     testMultiSyllablePhrasesAndHotwords(learningPath);
 
-    std::cout << "[3/4] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
+    std::cout << "[3/5] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
     testAbbreviationsAndInitialisms(learningPath);
 
-    std::cout << "[4/4] Running Smart Learning Dynamic Evolution Tests...\n";
+    std::cout << "[4/5] Running Smart Learning Dynamic Evolution Tests...\n";
     testSmartLearningDynamics(learningPath);
+
+    std::cout << "[5/5] Running Smart Typo Correction Engine Tests...\n";
+    testSmartTypoCorrectionEngine(learningPath);
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);

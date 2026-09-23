@@ -1,4 +1,5 @@
 #include "modernime/core/pinyin_match.h"
+#include "modernime/core/english_dictionary.h"
 
 #include <array>
 #include <cctype>
@@ -232,6 +233,206 @@ bool PinyinMatchPolicy::trustedShortAbbreviationMatch(
     return false;
 }
 
+std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
+    if (input.empty()) {
+        return "";
+    }
+    // 保护合法英文前缀（如 garag -> garage, appl -> apple），避免被拼音容错改写为伪拼音
+    const auto englishPredictions = EnglishDictionary::predictWords(input, 1);
+    if (!englishPredictions.empty() && englishPredictions.front() != input) {
+        return std::string(input);
+    }
+
+    // 保护合法英文单词（尤其是含连续重元音的英文如 good, book, deep 等），避免被抗抖误去重
+    const bool isKnownEnglish = EnglishDictionary::isEnglishWord(input);
+
+    const auto isVowel = [](char c) {
+        return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' || c == 'v';
+    };
+    const auto isConsonant = [&isVowel](char c) {
+        return (c >= 'a' && c <= 'z') && !isVowel(c);
+    };
+
+    std::string s(input);
+
+    // 1. 抗抖去重：消除单音节内的非法连续双元音 (oo->o, ee->e, aa->a, ii->i, uu->u)
+    if (!isKnownEnglish) {
+        std::string debounced;
+        debounced.reserve(s.size());
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            if (i > 0 && isVowel(s[i]) && s[i] == s[i - 1]) {
+                continue;
+            }
+            if (i > 0 && isConsonant(s[i]) && s[i] == s[i - 1] && (i == 1 || s[i - 2] == '\'')) {
+                continue;
+            }
+            debounced.push_back(s[i]);
+        }
+        s = std::move(debounced);
+    }
+
+    // 2. QWERTY 邻键误触置换 (在漏字补全前优先处理)
+    // 2.1 yop -> you (e.g. yop -> you, womenyopqu -> womenyouqu)
+    std::size_t pos = 0;
+    while ((pos = s.find("yop", pos)) != std::string::npos) {
+        const bool atEndOrConsonant = (pos + 3 == s.size() || s[pos + 3] == '\'' || isConsonant(s[pos + 3]));
+        if (atEndOrConsonant) {
+            s.replace(pos, 3, "you");
+            pos += 3;
+        } else {
+            pos += 3;
+        }
+    }
+
+    // 2.2 omg -> ong (e.g. zhomg -> zhong)
+    pos = 0;
+    while ((pos = s.find("omg", pos)) != std::string::npos) {
+        s.replace(pos, 3, "ong");
+        pos += 3;
+    }
+
+    // 2.3 末尾 up -> uo (e.g. bucup -> bucuo)
+    if (s.size() >= 3 && s.ends_with("up") && isConsonant(s[s.size() - 3])) {
+        s[s.size() - 1] = 'o';
+    }
+
+    // 2.4 xiab / jiab / qiab -> xian / jian / qian (b <-> n)
+    for (const auto &pre : {"xiab", "jiab", "qiab", "liab", "guab", "kuab"}) {
+        pos = 0;
+        while ((pos = s.find(pre, pos)) != std::string::npos) {
+            const bool atEndOrConsonant = (pos + 4 == s.size() || s[pos + 4] == '\'' || isConsonant(s[pos + 4]));
+            if (atEndOrConsonant) {
+                s[pos + 3] = 'n';
+                pos += 4;
+            } else {
+                pos += 4;
+            }
+        }
+    }
+
+    // 3. 倒序换位修复 (Transpositions)
+    // 3.1 gn -> ng, mg -> ng
+    for (std::size_t i = 1; i + 1 < s.size(); ++i) {
+        if ((s[i] == 'g' || s[i] == 'm') && s[i + 1] == 'n' && isVowel(s[i - 1])) {
+            s[i] = 'n';
+            s[i + 1] = 'g';
+        } else if (s[i] == 'm' && s[i + 1] == 'g' && isVowel(s[i - 1])) {
+            s[i] = 'n';
+            s[i + 1] = 'g';
+        }
+    }
+
+    // 3.2 agn -> ang, ogn -> ong, ugn -> ung, egn -> eng, ign -> ing
+    for (const auto &p : {std::pair{"agn", "ang"}, std::pair{"ogn", "ong"},
+                          std::pair{"ugn", "ung"}, std::pair{"egn", "eng"},
+                          std::pair{"ign", "ing"}}) {
+        pos = 0;
+        while ((pos = s.find(p.first, pos)) != std::string::npos) {
+            s.replace(pos, 3, p.second);
+            pos += 3;
+        }
+    }
+
+    // 3.3 fna -> fan
+    pos = 0;
+    while ((pos = s.find("fna", pos)) != std::string::npos) {
+        s.replace(pos, 3, "fan");
+        pos += 3;
+    }
+
+    // 3.4 ina -> ian (e.g. tina -> tian, xina -> xian)
+    pos = 0;
+    while ((pos = s.find("ina", pos)) != std::string::npos) {
+        if (pos > 0 && isConsonant(s[pos - 1])) {
+            s.replace(pos, 3, "ian");
+            pos += 3;
+        } else {
+            ++pos;
+        }
+    }
+
+    // 3.5 una -> uan (e.g. guna -> guan, kuna -> kuan, tuna -> tuan)
+    pos = 0;
+    while ((pos = s.find("una", pos)) != std::string::npos) {
+        if (pos > 0 && isConsonant(s[pos - 1])) {
+            s.replace(pos, 3, "uan");
+            pos += 3;
+        } else {
+            ++pos;
+        }
+    }
+
+    // 3.6 三元音简化 uei -> ui, iou -> iu, uen -> un
+    pos = 0;
+    while ((pos = s.find("uei", pos)) != std::string::npos) {
+        if (pos > 0 && !isVowel(s[pos - 1])) {
+            s.erase(pos + 1, 1);
+        } else {
+            ++pos;
+        }
+    }
+    pos = 0;
+    while ((pos = s.find("iou", pos)) != std::string::npos) {
+        if (pos > 0 && !isVowel(s[pos - 1])) {
+            s.erase(pos + 1, 1);
+        } else {
+            ++pos;
+        }
+    }
+    pos = 0;
+    while ((pos = s.find("uen", pos)) != std::string::npos) {
+        if (pos > 0 && !isVowel(s[pos - 1])) {
+            s.erase(pos + 1, 1);
+        } else {
+            ++pos;
+        }
+    }
+    // 3.7 lue -> lve, nue -> nve (LibIME 内部采用 v 代替 ü)
+    pos = 0;
+    while ((pos = s.find("ue", pos)) != std::string::npos) {
+        if (pos > 0 && (s[pos - 1] == 'l' || s[pos - 1] == 'n')) {
+            s[pos] = 'v';
+        }
+        pos += 2;
+    }
+
+    // 4. 残缺韵尾漏字母补全 (Omission Recovery)
+    // 4.1 漏打后鼻音 n: *og -> *ong, *eg -> *eng, *ig -> *ing, *ag -> *ang
+    std::string omissionRes;
+    omissionRes.reserve(s.size() + 4);
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        omissionRes.push_back(s[i]);
+        if (s[i] == 'g') {
+            if (i >= 1 && isVowel(s[i - 1]) && (i < 2 || s[i - 2] != 'n')) {
+                const bool atEnd = (i + 1 == s.size());
+                const bool nextIsConsonant = (i + 1 < s.size() && isConsonant(s[i + 1]));
+                const bool nextIsSep = (i + 1 < s.size() && s[i + 1] == '\'');
+                if (atEnd || nextIsConsonant || nextIsSep) {
+                    omissionRes.pop_back();
+                    omissionRes.push_back('n');
+                    omissionRes.push_back('g');
+                }
+            }
+        }
+    }
+    s = std::move(omissionRes);
+
+    // 4.2 漏打三元音 u: *yo -> *you (例如 pengyo -> pengyou)
+    pos = 0;
+    while ((pos = s.find("yo", pos)) != std::string::npos) {
+        const bool afterConsonant = (pos > 0 && isConsonant(s[pos - 1]));
+        const bool atEndOrSep = (pos + 2 == s.size() || s[pos + 2] == '\'' || isConsonant(s[pos + 2]));
+        if (afterConsonant && atEndOrSep) {
+            s.insert(pos + 2, "u");
+            pos += 3;
+        } else {
+            pos += 2;
+        }
+    }
+
+    return s;
+}
+
 std::size_t PinyinMatchPolicy::matchTypoSyllable(std::string_view input,
                                                 std::string_view syllable) {
     if (input.empty() || syllable.empty()) {
@@ -294,13 +495,112 @@ std::size_t PinyinMatchPolicy::matchTypoSyllable(std::string_view input,
             return syllable.size() + 1;
         }
     }
-    // 7. ve -> ue (e.g. input "lve" vs syllable "lue")
+    // 7. ve -> ue (e.g. input "lve" vs syllable "lue", or input "lue" vs syllable "lve")
+    if (syllable.ends_with("ve")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            (input.substr(prefixLen, 2) == "ue" || input.substr(prefixLen, 2) == "ve")) {
+            return syllable.size();
+        }
+    }
     if (syllable.ends_with("ue")) {
         const auto prefixLen = syllable.size() - 2;
         if (input.size() >= syllable.size() &&
             input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
             input.substr(prefixLen, 2) == "ve") {
             return syllable.size();
+        }
+    }
+    // 8. 漏打 n 的后鼻音残缺: *og->ong, *eg->eng, *ig->ing, *ag->ang
+    for (const auto &suffix : {"ong", "eng", "ing", "ang"}) {
+        if (syllable.ends_with(suffix)) {
+            const auto prefixLen = syllable.size() - 3;
+            if (input.size() >= syllable.size() - 1 &&
+                input.substr(0, prefixLen) == syllable.substr(0, prefixLen)) {
+                const std::string shortSuffix{suffix[0], suffix[2]};
+                if (input.substr(prefixLen, 2) == shortSuffix) {
+                    return syllable.size() - 1;
+                }
+            }
+        }
+    }
+    // 9. 邻键误触: omg -> ong, op -> ou, ab -> an, up -> uo (优先于漏字判定)
+    if (syllable.ends_with("ong")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "omg") {
+            return syllable.size();
+        }
+    }
+    if (syllable.ends_with("ou")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 2) == "op") {
+            return syllable.size();
+        }
+    }
+    if (syllable.ends_with("an")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 2) == "ab") {
+            return syllable.size();
+        }
+    }
+    if (syllable.ends_with("uo")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 2) == "up") {
+            return syllable.size();
+        }
+    }
+    // 10. 漏打 u 的三元音残缺: yo -> you (e.g. input "yo" vs syllable "you")
+    if (syllable.ends_with("ou")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() - 1 &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input[prefixLen] == 'o') {
+            return syllable.size() - 1;
+        }
+    }
+    // 11. 音节内换位: na -> an (e.g. chifna -> chifan)
+    if (syllable.ends_with("an")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 2) == "na") {
+            return syllable.size();
+        }
+    }
+    // agn -> ang, ogn -> ong
+    for (const auto &suffix : {"ang", "ong"}) {
+        if (syllable.ends_with(suffix)) {
+            const auto prefixLen = syllable.size() - 3;
+            if (input.size() >= syllable.size() &&
+                input.substr(0, prefixLen) == syllable.substr(0, prefixLen)) {
+                const std::string swappedSuffix{suffix[0], suffix[2], suffix[1]};
+                if (input.substr(prefixLen, 3) == swappedSuffix) {
+                    return syllable.size();
+                }
+            }
+        }
+    }
+    // 12. 抗抖双元音连击: e.g. oo in zhoong vs o in zhong, ee in sheeng vs e in sheng
+    if (syllable.size() >= 2) {
+        for (std::size_t i = 1; i < syllable.size(); ++i) {
+            char v = syllable[i];
+            if (v == 'a' || v == 'e' || v == 'i' || v == 'o' || v == 'u') {
+                if (input.size() >= syllable.size() + 1 &&
+                    input.substr(0, i) == syllable.substr(0, i) &&
+                    input[i] == v && input[i + 1] == v &&
+                    input.substr(i + 2, syllable.size() - (i + 1)) == syllable.substr(i + 1)) {
+                    return syllable.size() + 1;
+                }
+            }
         }
     }
     return 0;
@@ -315,8 +615,19 @@ bool PinyinMatchPolicy::isTypoPrefix(std::string_view input,
         const auto prefixLen = syllable.size() - 2;
         if (input.starts_with(syllable.substr(0, prefixLen))) {
             const auto tail = input.substr(prefixLen);
-            if (tail == "g" || tail == "m") {
+            if (tail == "g" || tail == "m" || tail == "gn" || tail == "mg") {
                 return true;
+            }
+        }
+    }
+    for (const auto &suffix : {"ong", "eng", "ing", "ang"}) {
+        if (syllable.ends_with(suffix)) {
+            const auto prefixLen = syllable.size() - 3;
+            if (input.starts_with(syllable.substr(0, prefixLen))) {
+                const auto tail = input.substr(prefixLen);
+                if (tail.size() >= 1 && tail.front() == suffix[0]) {
+                    return true;
+                }
             }
         }
     }
@@ -351,7 +662,7 @@ bool PinyinMatchPolicy::isTypoPrefix(std::string_view input,
         const auto prefixLen = syllable.size() - 3;
         if (input.starts_with(syllable.substr(0, prefixLen))) {
             const auto tail = input.substr(prefixLen);
-            if (tail == "i" || tail == "in") {
+            if (tail == "i" || tail == "in" || tail == "ina") {
                 return true;
             }
         }
@@ -360,7 +671,16 @@ bool PinyinMatchPolicy::isTypoPrefix(std::string_view input,
         const auto prefixLen = syllable.size() - 3;
         if (input.starts_with(syllable.substr(0, prefixLen))) {
             const auto tail = input.substr(prefixLen);
-            if (tail == "u" || tail == "un") {
+            if (tail == "u" || tail == "un" || tail == "una") {
+                return true;
+            }
+        }
+    }
+    if (syllable.ends_with("ou")) {
+        const auto prefixLen = syllable.size() - 2;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "y" || tail == "yo" || tail == "o" || tail == "op") {
                 return true;
             }
         }
@@ -371,6 +691,11 @@ bool PinyinMatchPolicy::isTypoPrefix(std::string_view input,
 bool PinyinMatchPolicy::isFullTypoMatch(std::string_view userInput,
                                         std::string_view fullPinyin) {
     if (userInput.empty() || fullPinyin.empty()) {
+        return false;
+    }
+    const auto preds = EnglishDictionary::predictWords(userInput, 1);
+    if (!preds.empty() && preds.front() != userInput &&
+        !exactInputMatch(userInput, fullPinyin)) {
         return false;
     }
     std::vector<std::string_view> syllables;
