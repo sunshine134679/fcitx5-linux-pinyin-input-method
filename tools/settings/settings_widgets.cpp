@@ -385,27 +385,130 @@ std::string_view settingsStyles() {
             margin-top: 8px;
         }
 
-        /* Clipboard History Inspector */
-        .modernime-clipboard-inspector {
+        /* Clipboard History Cards & Color Blocks */
+        .modernime-clipboard-list {
+            background-color: transparent;
+        }
+
+        .modernime-clipboard-list row {
+            background-color: transparent;
+            padding: 3px 0;
+            border: none;
+        }
+
+        .modernime-clipboard-list row:selected {
+            background-color: transparent;
+        }
+
+        .modernime-clipboard-card {
             border: 1px solid @borders;
             border-radius: 10px;
             background-color: rgba(128, 128, 128, 0.05);
-            padding: 10px 12px;
-            margin-top: 4px;
+            padding: 10px 14px;
+            margin: 2px 2px;
+            transition: all 120ms ease;
         }
 
-        .modernime-clipboard-inspector-header {
-            font-size: 12px;
+        .modernime-clipboard-card:hover {
+            background-color: rgba(128, 128, 128, 0.09);
+            border-color: rgba(128, 128, 128, 0.35);
+        }
+
+        .modernime-clipboard-list row:selected .modernime-clipboard-card {
+            border-color: @theme_selected_bg_color;
+            background-color: rgba(59, 130, 246, 0.08);
+            box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
+        }
+
+        .modernime-card-index {
+            font-weight: 700;
+            font-size: 11px;
+            padding: 2px 7px;
+            border-radius: 6px;
+            background-color: rgba(128, 128, 128, 0.16);
+            color: @theme_fg_color;
+        }
+
+        .modernime-badge-code {
+            background-color: rgba(59, 130, 246, 0.18);
+            color: #2563eb;
+            font-size: 11px;
             font-weight: 600;
-            color: @insensitive_fg_color;
-            margin-bottom: 6px;
+            border-radius: 6px;
+            padding: 2px 8px;
         }
 
-        .modernime-clipboard-view {
+        .modernime-badge-url {
+            background-color: rgba(16, 185, 129, 0.18);
+            color: #059669;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 6px;
+            padding: 2px 8px;
+        }
+
+        .modernime-badge-multiline {
+            background-color: rgba(245, 158, 11, 0.18);
+            color: #d97706;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 6px;
+            padding: 2px 8px;
+        }
+
+        .modernime-badge-text {
+            background-color: rgba(128, 128, 128, 0.14);
+            color: @insensitive_fg_color;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 6px;
+            padding: 2px 8px;
+        }
+
+        .modernime-card-meta {
+            font-size: 11.5px;
+            color: @insensitive_fg_color;
+        }
+
+        .modernime-card-preview {
+            font-size: 13px;
+            color: @theme_fg_color;
+            margin-top: 5px;
+        }
+
+        .modernime-card-expanded-box {
+            margin-top: 6px;
+            border-radius: 8px;
+            background-color: rgba(0, 0, 0, 0.04);
+            border: 1px dashed rgba(128, 128, 128, 0.25);
+            padding: 8px 10px;
+        }
+
+        .modernime-card-code {
             font-family: monospace, DejaVu Sans Mono, Liberation Mono, monospace;
             font-size: 12px;
             background-color: transparent;
             color: @theme_fg_color;
+        }
+
+        .modernime-toggle-btn {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 10px;
+            border-radius: 6px;
+            color: @theme_selected_bg_color;
+            border: 1px solid rgba(59, 130, 246, 0.35);
+            background-color: rgba(59, 130, 246, 0.06);
+        }
+
+        .modernime-toggle-btn:hover {
+            background-color: rgba(59, 130, 246, 0.15);
+        }
+
+        .modernime-card-btn {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 6px;
         }
 
         button {
