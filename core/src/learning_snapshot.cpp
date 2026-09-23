@@ -282,14 +282,14 @@ double LearningSnapshot::contextBoost(
         if (candidate.contextBefore == contextBefore &&
             candidate.contextAfter == contextAfter &&
             !contextBefore.empty() && !contextAfter.empty()) {
-            bestBoost = std::max(bestBoost, 0.8);
+            bestBoost = std::max(bestBoost, 0.9);
             continue;
         }
         if ((candidate.contextBefore == contextBefore &&
              !contextBefore.empty() && candidate.contextAfter.empty()) ||
             (candidate.contextAfter == contextAfter &&
              !contextAfter.empty() && candidate.contextBefore.empty())) {
-            bestBoost = std::max(bestBoost, 0.4);
+            bestBoost = std::max(bestBoost, 0.7);
             continue;
         }
         const auto beforeMatch = commonSuffixCharacters(

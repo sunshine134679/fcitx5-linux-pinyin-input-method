@@ -12,6 +12,7 @@ namespace modernime::core {
 
 inline constexpr double DictionaryPriorWeight = 12.0;
 inline constexpr double LearningPriorWeight = 4.0;
+inline constexpr double ContextPriorWeight = 12.0;
 // Deep enough that a steadily accumulated learning boost can carry a
 // frequently selected candidate from the tail of the engine list to the
 // front page / rank 0, overcoming system dictionary and native rank.
@@ -52,7 +53,8 @@ struct CandidateScore final {
     double final_score() const {
         return static_cast<double>(source_index) -
                computeAdaptiveLearning(learning_boost) - stability_bonus -
-               DictionaryPriorWeight * dictionary_bonus - context_bonus -
+               DictionaryPriorWeight * dictionary_bonus -
+               ContextPriorWeight * context_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor;
     }
 };
