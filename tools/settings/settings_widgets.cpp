@@ -385,6 +385,29 @@ std::string_view settingsStyles() {
             margin-top: 8px;
         }
 
+        /* Clipboard History Inspector */
+        .modernime-clipboard-inspector {
+            border: 1px solid @borders;
+            border-radius: 10px;
+            background-color: rgba(128, 128, 128, 0.05);
+            padding: 10px 12px;
+            margin-top: 4px;
+        }
+
+        .modernime-clipboard-inspector-header {
+            font-size: 12px;
+            font-weight: 600;
+            color: @insensitive_fg_color;
+            margin-bottom: 6px;
+        }
+
+        .modernime-clipboard-view {
+            font-family: monospace, DejaVu Sans Mono, Liberation Mono, monospace;
+            font-size: 12px;
+            background-color: transparent;
+            color: @theme_fg_color;
+        }
+
         button {
             border-radius: 8px;
             padding: 5px 12px;

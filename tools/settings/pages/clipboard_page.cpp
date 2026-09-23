@@ -38,6 +38,122 @@ void setWidgetError(GtkWidget *widget, bool invalid, std::string_view message) {
     }
 }
 
+std::size_t countUtf8Characters(std::string_view text) {
+    std::size_t count = 0;
+    for (char c : text) {
+        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::size_t countLines(std::string_view text) {
+    if (text.empty()) {
+        return 0;
+    }
+    std::size_t lines = 1;
+    for (char c : text) {
+        if (c == '\n') {
+            ++lines;
+        }
+    }
+    return lines;
+}
+
+std::string sanitizePreview(std::string_view text, std::size_t maxChars = 100) {
+    std::string result;
+    result.reserve(std::min<std::size_t>(text.size(), maxChars + 10));
+    bool inWhitespace = false;
+    for (char c : text) {
+        if (c == '\r' || c == '\n' || c == '\t' || c == ' ') {
+            if (!inWhitespace && !result.empty()) {
+                result.push_back(' ');
+                inWhitespace = true;
+            }
+        } else {
+            result.push_back(c);
+            inWhitespace = false;
+        }
+    }
+    while (!result.empty() && result.back() == ' ') {
+        result.pop_back();
+    }
+    if (result.empty()) {
+        return "(空白内容)";
+    }
+    if (countUtf8Characters(result) > maxChars) {
+        std::size_t chars = 0;
+        std::size_t byteIdx = 0;
+        while (byteIdx < result.size() && chars < maxChars) {
+            unsigned char byte = static_cast<unsigned char>(result[byteIdx]);
+            std::size_t charLen = 1;
+            if ((byte & 0xE0) == 0xC0) charLen = 2;
+            else if ((byte & 0xF0) == 0xE0) charLen = 3;
+            else if ((byte & 0xF8) == 0xF0) charLen = 4;
+            if (byteIdx + charLen > result.size()) break;
+            byteIdx += charLen;
+            ++chars;
+        }
+        result.resize(byteIdx);
+        result += "…";
+    }
+    return result;
+}
+
+struct ClipboardItemMeta {
+    std::string typeBadge;
+    std::string preview;
+    std::string sizeLabel;
+    std::size_t lineCount;
+    std::size_t charCount;
+};
+
+ClipboardItemMeta analyzeClipboardContent(std::string_view text) {
+    const auto lines = countLines(text);
+    const auto chars = countUtf8Characters(text);
+    const auto preview = sanitizePreview(text, 90);
+
+    std::string badge;
+    if (text.rfind("http://", 0) == 0 || text.rfind("https://", 0) == 0 ||
+        text.rfind("ftp://", 0) == 0 || text.rfind("file://", 0) == 0) {
+        badge = "🔗 链接";
+    } else if (lines > 1) {
+        static const std::array<std::string_view, 14> codeKeywords = {
+            "#include", "import ", "def ", "class ", "func ", "function",
+            "void ", "int ", "const ", "var ", "let ", ":=", "$(", "all:"
+        };
+        bool isCode = false;
+        for (const auto &kw : codeKeywords) {
+            if (text.find(kw) != std::string_view::npos) {
+                isCode = true;
+                break;
+            }
+        }
+        if (!isCode && (text.find('{') != std::string_view::npos && text.find('}') != std::string_view::npos)) {
+            isCode = true;
+        }
+        if (!isCode && (text.find(" = ") != std::string_view::npos && text.find('\t') != std::string_view::npos)) {
+            isCode = true;
+        }
+        if (isCode) {
+            badge = "💻 代码 (" + std::to_string(lines) + "行)";
+        } else {
+            badge = "📄 多行 (" + std::to_string(lines) + "行)";
+        }
+    } else {
+        badge = "📝 文本";
+    }
+
+    return ClipboardItemMeta{
+        badge,
+        preview,
+        std::to_string(chars) + " 字",
+        lines,
+        chars
+    };
+}
+
 } // namespace
 
 class ClipboardPage::Impl final {
@@ -113,39 +229,107 @@ public:
 
         auto historyStoreOwner =
             detail::GObjectHandle<GtkListStore>::adopt(
-                gtk_list_store_new(2, G_TYPE_UINT, G_TYPE_STRING));
+                gtk_list_store_new(5, G_TYPE_UINT, G_TYPE_STRING,
+                                   G_TYPE_STRING, G_TYPE_STRING,
+                                   G_TYPE_STRING));
         historyStore = historyStoreOwner.get();
         historyView = gtk_tree_view_new_with_model(GTK_TREE_MODEL(historyStore));
         historyStoreOwner.reset();
         setTarget(historyView, "clipboard-history");
         setAccessibleWidgetText(
             historyView, "剪贴板历史",
-            "选择一条本地历史后可以复制或删除");
+            "选择一条本地历史后可以查看详情、复制或删除");
         gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(historyView), TRUE);
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(historyView), TRUE);
         gtk_widget_set_tooltip_text(
-            historyView, "选择一条历史后可以复制、删除；也可以使用键盘上下键移动");
+            historyView, "选择一条历史后可以复制、删除；双击行可直接复制；支持键盘上下键移动浏览");
+
         auto *numberRenderer = gtk_cell_renderer_text_new();
+        g_object_set(numberRenderer, "xalign", 0.5f, nullptr);
         auto *numberColumn = gtk_tree_view_column_new_with_attributes(
             "序号", numberRenderer, "text", 0, nullptr);
-        gtk_tree_view_column_set_resizable(numberColumn, TRUE);
+        gtk_tree_view_column_set_min_width(numberColumn, 52);
+        gtk_tree_view_column_set_resizable(numberColumn, FALSE);
         gtk_tree_view_append_column(GTK_TREE_VIEW(historyView), numberColumn);
+
+        auto *typeRenderer = gtk_cell_renderer_text_new();
+        auto *typeColumn = gtk_tree_view_column_new_with_attributes(
+            "类型", typeRenderer, "text", 1, nullptr);
+        gtk_tree_view_column_set_min_width(typeColumn, 110);
+        gtk_tree_view_column_set_resizable(typeColumn, TRUE);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(historyView), typeColumn);
+
         auto *textRenderer = gtk_cell_renderer_text_new();
+        g_object_set(textRenderer, "ellipsize", PANGO_ELLIPSIZE_END,
+                     "single-paragraph-mode", TRUE, nullptr);
         auto *textColumn = gtk_tree_view_column_new_with_attributes(
-            "内容", textRenderer, "text", 1, nullptr);
+            "内容预览", textRenderer, "text", 2, nullptr);
         gtk_tree_view_column_set_expand(textColumn, TRUE);
         gtk_tree_view_column_set_resizable(textColumn, TRUE);
         gtk_tree_view_append_column(GTK_TREE_VIEW(historyView), textColumn);
+
+        auto *sizeRenderer = gtk_cell_renderer_text_new();
+        g_object_set(sizeRenderer, "xalign", 1.0f, nullptr);
+        auto *sizeColumn = gtk_tree_view_column_new_with_attributes(
+            "字数", sizeRenderer, "text", 3, nullptr);
+        gtk_tree_view_column_set_min_width(sizeColumn, 68);
+        gtk_tree_view_column_set_resizable(sizeColumn, FALSE);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(historyView), sizeColumn);
+
         auto *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(historyView));
         gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
         g_signal_connect(selection, "changed", G_CALLBACK(onSelectionChanged),
                          this);
+        g_signal_connect(historyView, "row-activated",
+                         G_CALLBACK(onRowActivated), this);
+
         auto *historyScrolled = gtk_scrolled_window_new(nullptr, nullptr);
         gtk_widget_set_vexpand(historyScrolled, TRUE);
         gtk_widget_set_hexpand(historyScrolled, TRUE);
-        gtk_widget_set_size_request(historyScrolled, -1, 160);
+        gtk_widget_set_size_request(historyScrolled, -1, 150);
         gtk_container_add(GTK_CONTAINER(historyScrolled), historyView);
         gtk_box_pack_start(GTK_BOX(historySection), historyScrolled, TRUE, TRUE,
+                           0);
+
+        // Detail Inspector Card
+        inspectorCard = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+        addStyleClass(inspectorCard, "modernime-clipboard-inspector");
+        setAccessibleWidgetText(inspectorCard, "详细内容检查器",
+                                "显示选中的剪贴板历史完整格式化内容");
+
+        inspectorTitle = gtk_label_new("详细内容预览");
+        addStyleClass(inspectorTitle, "modernime-clipboard-inspector-header");
+        gtk_widget_set_halign(inspectorTitle, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(inspectorCard), inspectorTitle, FALSE, FALSE,
+                           0);
+
+        auto *inspectorScrolled = gtk_scrolled_window_new(nullptr, nullptr);
+        gtk_widget_set_size_request(inspectorScrolled, -1, 120);
+        gtk_scrolled_window_set_shadow_type(
+            GTK_SCROLLED_WINDOW(inspectorScrolled), GTK_SHADOW_IN);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(inspectorScrolled),
+                                       GTK_POLICY_AUTOMATIC,
+                                       GTK_POLICY_AUTOMATIC);
+
+        inspectorTextView = gtk_text_view_new();
+        inspectorBuffer =
+            gtk_text_view_get_buffer(GTK_TEXT_VIEW(inspectorTextView));
+        gtk_text_view_set_editable(GTK_TEXT_VIEW(inspectorTextView), FALSE);
+        gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(inspectorTextView), FALSE);
+        gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(inspectorTextView),
+                                    GTK_WRAP_WORD_CHAR);
+        gtk_text_view_set_left_margin(GTK_TEXT_VIEW(inspectorTextView), 8);
+        gtk_text_view_set_right_margin(GTK_TEXT_VIEW(inspectorTextView), 8);
+        gtk_text_view_set_top_margin(GTK_TEXT_VIEW(inspectorTextView), 6);
+        gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(inspectorTextView), 6);
+        addStyleClass(inspectorTextView, "modernime-clipboard-view");
+        setAccessibleWidgetText(inspectorTextView, "详细内容预览",
+                                "显示选中的剪贴板历史完整格式化内容");
+
+        gtk_container_add(GTK_CONTAINER(inspectorScrolled), inspectorTextView);
+        gtk_box_pack_start(GTK_BOX(inspectorCard), inspectorScrolled, TRUE,
+                           TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(historySection), inspectorCard, FALSE, FALSE,
                            0);
 
         historyState = gtk_label_new("正在读取…");
@@ -205,6 +389,9 @@ public:
                                              : ("无法读取剪贴板历史：" + error)
                                                    .c_str());
             gtk_widget_set_visible(historyState, TRUE);
+            if (inspectorCard != nullptr) {
+                gtk_widget_set_visible(inspectorCard, FALSE);
+            }
             updateHistoryActionState();
             if (shouldNotify) {
                 notifyMessage(error);
@@ -218,18 +405,36 @@ public:
                                ? "暂无剪贴板历史；复制内容后会自动记录"
                                : "");
         gtk_widget_set_visible(historyState, entries.empty());
+        if (inspectorCard != nullptr) {
+            gtk_widget_set_visible(inspectorCard, !entries.empty());
+        }
         for (std::size_t index = 0; index < entries.size(); ++index) {
+            const auto &entry = entries[index];
+            const auto meta = analyzeClipboardContent(entry);
             GtkTreeIter iter;
             gtk_list_store_append(historyStore, &iter);
-            gtk_list_store_set(historyStore, &iter, 0,
-                               static_cast<guint>(index + 1), 1,
-                               entries[index].c_str(), -1);
+            gtk_list_store_set(historyStore, &iter,
+                               0, static_cast<guint>(index + 1),
+                               1, meta.typeBadge.c_str(),
+                               2, meta.preview.c_str(),
+                               3, meta.sizeLabel.c_str(),
+                               4, entry.c_str(),
+                               -1);
         }
         gtk_label_set_text(
             GTK_LABEL(historyCount),
             ("当前 " + std::to_string(entries.size()) + " 条，最多保存 " +
              std::to_string(core::ClipboardHistory::kMaxEntries) + " 条")
                 .c_str());
+
+        if (!entries.empty()) {
+            auto *selection =
+                gtk_tree_view_get_selection(GTK_TREE_VIEW(historyView));
+            GtkTreePath *path = gtk_tree_path_new_first();
+            gtk_tree_selection_select_path(selection, path);
+            gtk_tree_path_free(path);
+        }
+
         updateHistoryActionState();
         if (shouldNotify) {
             notifyMessage("剪贴板历史已刷新");
@@ -369,6 +574,11 @@ private:
         }
     }
 
+    static void onRowActivated(GtkTreeView *, GtkTreePath *,
+                               GtkTreeViewColumn *, gpointer data) {
+        onCopy(nullptr, data);
+    }
+
     std::optional<std::size_t> selectedHistoryIndex() const {
         auto *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(historyView));
         GtkTreeModel *treeModel = nullptr;
@@ -390,11 +600,39 @@ private:
     }
 
     void updateHistoryActionState() {
-        const bool hasSelected = selectedHistoryIndex().has_value();
+        const auto selected = selectedHistoryIndex();
+        const bool hasSelected = selected.has_value();
         const bool hasEntries = !history.entries().empty();
         gtk_widget_set_sensitive(copyButton, hasSelected);
         gtk_widget_set_sensitive(deleteButton, hasSelected);
         gtk_widget_set_sensitive(clearButton, hasEntries);
+        updateInspector(selected);
+    }
+
+    void updateInspector(std::optional<std::size_t> selected) {
+        if (inspectorCard == nullptr || inspectorBuffer == nullptr) {
+            return;
+        }
+        if (!selected.has_value()) {
+            gtk_label_set_text(GTK_LABEL(inspectorTitle),
+                               "详细内容预览（请在上方列表中选择一条记录）");
+            gtk_text_buffer_set_text(inspectorBuffer, "", -1);
+            return;
+        }
+        const auto &entries = history.entries();
+        if (*selected >= entries.size()) {
+            gtk_label_set_text(GTK_LABEL(inspectorTitle), "详细内容预览");
+            gtk_text_buffer_set_text(inspectorBuffer, "", -1);
+            return;
+        }
+        const auto &entry = entries[*selected];
+        const auto meta = analyzeClipboardContent(entry);
+        const auto title = "详细内容预览 · 第 " + std::to_string(*selected + 1) +
+                           " 条 · " + meta.typeBadge + " · " +
+                           std::to_string(meta.lineCount) + " 行，" +
+                           std::to_string(meta.charCount) + " 字符";
+        gtk_label_set_text(GTK_LABEL(inspectorTitle), title.c_str());
+        gtk_text_buffer_set_text(inspectorBuffer, entry.c_str(), -1);
     }
 
     void updateSettingsState() {
@@ -434,6 +672,10 @@ private:
     GtkWidget *historyCount = nullptr;
     GtkWidget *historyState = nullptr;
     GtkWidget *historyView = nullptr;
+    GtkWidget *inspectorCard = nullptr;
+    GtkWidget *inspectorTitle = nullptr;
+    GtkWidget *inspectorTextView = nullptr;
+    GtkTextBuffer *inspectorBuffer = nullptr;
     GtkWidget *copyButton = nullptr;
     GtkWidget *deleteButton = nullptr;
     GtkWidget *clearButton = nullptr;
