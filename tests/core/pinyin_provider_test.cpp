@@ -387,7 +387,11 @@ void testFullPinyinInputIsAutomaticallySegmentedInPreedit() {
 }
 
 void testTypoCorrectionTransposition() {
+    const auto learningPath = testPath("typo-transposition-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
+    paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.hotwordDictionary = MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
     modernime::pinyin::PinyinCandidateProvider provider(paths);
 
     // 1. yuedign -> 约定 (Rank 0), preedit -> yue'dign
@@ -429,6 +433,11 @@ void testTypoCorrectionTransposition() {
     assertTrue(provider.page().items.front().text == "date",
                "date remains at rank 0");
     provider.reset();
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
 void testRepeatedSelectionAcrossContextsStillPromotes() {

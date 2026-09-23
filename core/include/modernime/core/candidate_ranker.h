@@ -22,12 +22,18 @@ inline double computeAdaptiveLearning(double learning_boost) {
     if (learning_boost <= 0.0) {
         return std::max(-16.0, LearningPriorWeight * learning_boost);
     }
-    // Base linear weight provides immediate moderate boost for initial selections
-    // while the progressive power term enables frequent selections (5~10+ uses)
-    // to rise from the engine tail (source_index 50~100+) straight to page 1 / rank 0.
-    const double progressive = 6.0 * std::pow(learning_boost, 2.3);
-    return std::min(LearningPriorCap,
-                    LearningPriorWeight * learning_boost + progressive);
+    // Base linear weight provides immediate moderate boost for initial selections,
+    // while the progressive power term activates for established habits (boost > 1.8, ~3+ uses)
+    // enabling frequent selections to rise from the engine tail (source_index 50~100+)
+    // straight to page 1 / rank 0 without allowing single casual clicks to destabilize
+    // high-confidence priors.
+    const double linear = LearningPriorWeight * learning_boost;
+    double progressive = 0.0;
+    if (learning_boost > 1.8) {
+        const double excess = learning_boost - 1.8;
+        progressive = 36.0 * std::pow(excess, 1.7);
+    }
+    return std::min(LearningPriorCap, linear + progressive);
 }
 
 struct CandidateScore final {
@@ -41,12 +47,13 @@ struct CandidateScore final {
     double stability_bonus = 0.0;
     double dictionary_bonus = 0.0;
     double context_bonus = 0.0;
+    double unigram_anchor = 0.0;
 
     double final_score() const {
         return static_cast<double>(source_index) -
                computeAdaptiveLearning(learning_boost) - stability_bonus -
                DictionaryPriorWeight * dictionary_bonus - context_bonus -
-               DecoderPriorWeight * decoder_bonus;
+               DecoderPriorWeight * decoder_bonus - unigram_anchor;
     }
 };
 

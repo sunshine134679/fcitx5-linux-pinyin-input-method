@@ -240,7 +240,13 @@ double LearningSnapshot::boostAt(std::string_view phrase,
     // couple of uses.
     const double frequency = std::min(
         3.0, 0.85 * std::log1p(static_cast<double>(totalFrequency)));
-    const double recent = std::min(1.0, 0.90 * recency);
+    // 时效性项权重随累计频次自适应分级：
+    // 单次偶发选择（totalFrequency == 1）置信度低，recency 权重限制在 0.35，避免一次选词过度膨胀；
+    // 2 次选择提升至 0.60，初步显现用户倾向；
+    // 3 次及以上确立偏好，完全释放至 0.90。
+    const double recentScale =
+        totalFrequency >= 3 ? 0.90 : (totalFrequency >= 2 ? 0.60 : 0.35);
+    const double recent = std::min(1.0, recentScale * recency);
     // The strongest negative feedback of any variant applies globally.
     const double penalty = std::min(
         2.0, 0.75 * std::log1p(static_cast<double>(

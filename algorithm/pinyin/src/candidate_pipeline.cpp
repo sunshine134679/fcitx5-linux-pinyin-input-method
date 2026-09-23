@@ -125,6 +125,9 @@ CandidatePipelineResult buildCandidatePipeline(
                 candidate.text, candidate.full_pinyin, contextBefore,
                 contextAfter);
         }
+        if (index == 0 && utf8CodePointCount(candidate.text) == 1) {
+            candidate.unigram_anchor = 3.0;
+        }
         seenKeys.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
     }
@@ -163,6 +166,9 @@ CandidatePipelineResult buildCandidatePipeline(
                 candidate.context_bonus = learning->contextBoost(
                     candidate.text, candidate.full_pinyin, contextBefore,
                     contextAfter);
+            }
+            if (index == 0 && utf8CodePointCount(candidate.text) == 1) {
+                candidate.unigram_anchor = 3.0;
             }
             result.scored.push_back(std::move(candidate));
         }
