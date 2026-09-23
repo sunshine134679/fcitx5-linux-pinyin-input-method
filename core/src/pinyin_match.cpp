@@ -43,6 +43,25 @@ bool PinyinMatchPolicy::validComposition(std::string_view userInput) {
     if (userInput.empty()) {
         return false;
     }
+    if (userInput.front() == 'v' && userInput.size() > 1) {
+        bool allDigitsOrDot = true;
+        bool hasDot = false;
+        for (std::size_t i = 1; i < userInput.size(); ++i) {
+            char character = userInput[i];
+            if (character >= '0' && character <= '9') {
+                continue;
+            }
+            if (character == '.' && !hasDot) {
+                hasDot = true;
+                continue;
+            }
+            allDigitsOrDot = false;
+            break;
+        }
+        if (allDigitsOrDot) {
+            return true;
+        }
+    }
     bool hasLetter = false;
     bool separator = false;
     for (const char character : userInput) {

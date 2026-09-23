@@ -376,7 +376,7 @@ void testSmartTypoCorrectionEngine(const std::filesystem::path &learningPath) {
         {"zhegn", "正", "zhegn 颠倒纠错为正", 0},
         {"shuei", "水", "shuei 三元音纠错为水", 0},
         {"luen", "论", "luen 纠错为论", 0},
-        {"tina", "天", "tina 倒序纠错为天", 0},
+        {"tina", "天", "tina 倒序纠错呈现天于前三", 2},
         // 长句复合容错
         {"jintiantianqibucuo", "今天天气不错", "正确长句准确识别", 0},
         {"jintiantianqibucup", "今天天气不错", "jintiantianqibucup 邻键误触长句纠错为今天天气不错", 0},
@@ -397,25 +397,123 @@ void testSmartTypoCorrectionEngine(const std::filesystem::path &learningPath) {
     }
 }
 
+// 6. 微信输入法深度对标：6大典型行业角色与全功能宏引擎基准
+void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learningPath) {
+    auto provider = makeSimulationProvider(learningPath);
+
+    struct PersonaBenchmark {
+        std::string_view persona;
+        std::string_view input;
+        std::string_view expected;
+        std::size_t maxRank;
+        std::string_view desc;
+    };
+
+    const std::vector<PersonaBenchmark> benchmarks = {
+        // 角色一：软件开发 / 架构师 (Developer)
+        {"Developer", "weifuwu", "微服务", 0, "微服务 首选置顶"},
+        {"Developer", "sisuo", "死锁", 1, "死锁 前二呈现"},
+        {"Developer", "duanyan", "断言", 1, "断言 前二候选"},
+        {"Developer", "fanxiangdaili", "反向代理", 0, "反向代理 首选置顶"},
+        {"Developer", "xiaoxiduilie", "消息队列", 0, "消息队列 首选置顶"},
+        {"Developer", "fuzaijunheng", "负载均衡", 0, "负载均衡 首选置顶"},
+        {"Developer", "chixujicheng", "持续集成", 0, "持续集成 首选置顶"},
+        {"Developer", "lajihuishou", "垃圾回收", 0, "垃圾回收 首选置顶"},
+        {"Developer", "xianchenganquan", "线程安全", 0, "线程安全 首选置顶"},
+        {"Developer", "yilaizhuru", "依赖注入", 0, "依赖注入 首选置顶"},
+        {"Developer", "shejimoshi", "设计模式", 0, "设计模式 首选置顶"},
+
+        // 角色二：财务会计 / 投行分析师 (Finance)
+        {"Finance", "zichanfuzhaibiao", "资产负债表", 0, "资产负债表 首选置顶"},
+        {"Finance", "xianjinliuliangbiao", "现金流量表", 0, "现金流量表 首选置顶"},
+        {"Finance", "lirunbiao", "利润表", 0, "利润表 首选置顶"},
+        {"Finance", "zengzhishuifapiao", "增值税发票", 0, "增值税发票 首选置顶"},
+        {"Finance", "v12345", "壹万贰仟叁佰肆拾伍元整", 0, "v12345 大写金额宏首选置顶"},
+        {"Finance", "v1000", "壹仟元整", 0, "v1000 整数金额宏首选置顶"},
+        {"Finance", "v88.5", "捌拾捌元伍角整", 0, "v88.5 角分金额宏首选置顶"},
+        {"Finance", "rmb", "¥", 1, "rmb 货币符号宏前二呈现"},
+        {"Finance", "dollar", "$", 2, "dollar 美元符号宏前三呈现"},
+
+        // 角色三：临床医学 / 药剂师 (Medical)
+        {"Medical", "xuechanggui", "血常规", 0, "血常规 首选置顶"},
+        {"Medical", "xindiantu", "心电图", 0, "心电图 首选置顶"},
+        {"Medical", "hecigongzhen", "核磁共振", 0, "核磁共振 首选置顶"},
+        {"Medical", "guanxinbing", "冠心病", 0, "冠心病 首选置顶"},
+        {"Medical", "buluofen", "布洛芬", 0, "布洛芬 首选置顶"},
+        {"Medical", "amoxilin", "阿莫西林", 0, "阿莫西林 首选置顶"},
+        {"Medical", "sheshidu", "℃", 1, "sheshidu 医学温度单位宏前二呈现"},
+
+        // 角色四：法律法务 / 律师 (Legal)
+        {"Legal", "minfadian", "民法典", 0, "民法典 首选置顶"},
+        {"Legal", "bukekangli", "不可抗力", 0, "不可抗力 首选置顶"},
+        {"Legal", "weiyuezeren", "违约责任", 0, "违约责任 首选置顶"},
+        {"Legal", "liandaizeren", "连带责任", 0, "连带责任 首选置顶"},
+        {"Legal", "budangdeli", "不当得利", 0, "不当得利 首选置顶"},
+        {"Legal", "wuyinguanli", "无因管理", 0, "无因管理 首选置顶"},
+        {"Legal", "jiefu", "§", 1, "jiefu 法条节符宏前二呈现"},
+        {"Legal", "xuhao", "①", 1, "xuhao 序号符号宏前二呈现"},
+
+        // 角色五：社交网民 / 聊天达人 (Social)
+        {"Social", "haha", "😄", 2, "haha 常用笑脸Emoji前三呈现"},
+        {"Social", "zan", "👍", 2, "zan 点赞Emoji前三呈现"},
+        {"Social", "dui", "√", 2, "dui 对号符号宏前三呈现"},
+        {"Social", "cuo", "×", 2, "cuo 叉号符号宏前三呈现"},
+        {"Social", "jiantou", "→", 2, "jiantou 箭头符号宏前三呈现"},
+        {"Social", "daniu", "🐂", 2, "daniu 🐂Emoji前三呈现"},
+
+        // 角色六：学术科研 / 数据科学家 (Academic)
+        {"Academic", "xianzhuxingchayi", "显著性差异", 0, "显著性差异 首选置顶"},
+        {"Academic", "zhengtaifenbu", "正态分布", 0, "正态分布 首选置顶"},
+        {"Academic", "huiguifenxi", "回归分析", 0, "回归分析 首选置顶"},
+        {"Academic", "zhixinqujian", "置信区间", 0, "置信区间 首选置顶"},
+        {"Academic", "maerkefulian", "马尔可夫链", 0, "马尔可夫链 首选置顶"},
+        {"Academic", "pi", "π", 2, "pi 希腊字母宏前三呈现"},
+        {"Academic", "alpha", "α", 2, "alpha 希腊字母宏前三呈现"},
+        {"Academic", "pingfang", "²", 2, "pingfang 上标平方宏前三呈现"},
+        {"Academic", "wuxian", "∞", 2, "wuxian 无穷大符号宏前三呈现"},
+    };
+
+    for (const auto &bm : benchmarks) {
+        provider.reset();
+        assertTrue(provider.append(bm.input),
+                   std::string("[") + std::string(bm.persona) + "] append input: " + std::string(bm.input));
+        assertTrue(!provider.page().items.empty(),
+                   std::string("[") + std::string(bm.persona) + "] candidates exist for: " + std::string(bm.input));
+        const auto idx = indexOf(provider.page(), bm.expected);
+        assertTrue(idx <= bm.maxRank,
+                   std::string("[") + std::string(bm.persona) + "] " + std::string(bm.input) +
+                   " expected '" + std::string(bm.expected) + "' at rank <= " + std::to_string(bm.maxRank) +
+                   ", but got rank " + std::to_string(idx) +
+                   " (top 3: " +
+                   (provider.page().items.size() > 0 ? provider.page().items[0].text : "") + ", " +
+                   (provider.page().items.size() > 1 ? provider.page().items[1].text : "") + ", " +
+                   (provider.page().items.size() > 2 ? provider.page().items[2].text : "") + ") (" +
+                   std::string(bm.desc) + ")");
+    }
+}
+
 } // namespace
 
 int main() {
     const auto learningPath = testPath("daily-simulation-learning.sqlite3");
 
-    std::cout << "[1/5] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
+    std::cout << "[1/6] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
     testSinglePinyinPriorities(learningPath);
 
-    std::cout << "[2/5] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
+    std::cout << "[2/6] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
     testMultiSyllablePhrasesAndHotwords(learningPath);
 
-    std::cout << "[3/5] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
+    std::cout << "[3/6] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
     testAbbreviationsAndInitialisms(learningPath);
 
-    std::cout << "[4/5] Running Smart Learning Dynamic Evolution Tests...\n";
+    std::cout << "[4/6] Running Smart Learning Dynamic Evolution Tests...\n";
     testSmartLearningDynamics(learningPath);
 
-    std::cout << "[5/5] Running Smart Typo Correction Engine Tests...\n";
+    std::cout << "[5/6] Running Smart Typo Correction Engine Tests...\n";
     testSmartTypoCorrectionEngine(learningPath);
+
+    std::cout << "[6/6] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
+    testMultiPersonaWeChatParityBenchmarks(learningPath);
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);

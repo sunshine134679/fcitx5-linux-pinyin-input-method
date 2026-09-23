@@ -70,8 +70,10 @@ double dictionaryBonus(const libime::PinyinDictionary &dictionary,
                 return true;
             }
             if (cost >= 0.0F) {
-                userBonus = std::max(userBonus,
-                                     core::curatedDictionaryBonus(cost));
+                if (!singleCharacter || cost > 0.0F) {
+                    userBonus = std::max(userBonus,
+                                         core::curatedDictionaryBonus(cost));
+                }
             } else if (!singleCharacter) {
                 systemBonus = std::max(systemBonus,
                                        core::systemDictionaryBonus(cost));

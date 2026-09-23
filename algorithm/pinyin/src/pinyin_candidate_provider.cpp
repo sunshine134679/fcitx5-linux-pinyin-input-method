@@ -16,8 +16,200 @@
 
 #include <algorithm>
 #include <ctime>
+#include <unordered_map>
 
 namespace {
+
+std::string toChineseFinancial(std::string_view numStr) {
+    if (numStr.empty()) {
+        return {};
+    }
+    auto dotPos = numStr.find('.');
+    auto intPart = numStr.substr(0, dotPos);
+    std::string decPart = (dotPos != std::string_view::npos) ? std::string(numStr.substr(dotPos + 1)) : "";
+
+    auto firstNonZero = intPart.find_first_not_of('0');
+    if (firstNonZero != std::string_view::npos) {
+        intPart = intPart.substr(firstNonZero);
+    } else {
+        intPart = "";
+    }
+
+    static const char *const kDigits[] = {
+        "零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"
+    };
+    static const char *const kUnits[] = {"", "拾", "佰", "仟"};
+    static const char *const kBigUnits[] = {"", "万", "亿", "兆"};
+
+    if (intPart.empty() && decPart.empty()) {
+        return "零元整";
+    }
+
+    std::string result;
+    if (intPart.empty()) {
+        result = "零元";
+    } else {
+        std::vector<std::string> groups;
+        std::string s(intPart);
+        while (!s.empty()) {
+            if (s.size() > 4) {
+                groups.push_back(s.substr(s.size() - 4));
+                s.resize(s.size() - 4);
+            } else {
+                groups.push_back(s);
+                s.clear();
+            }
+        }
+        std::vector<std::string> groupResults;
+        for (std::size_t gIdx = 0; gIdx < groups.size(); ++gIdx) {
+            const auto &grp = groups[gIdx];
+            std::size_t gLen = grp.size();
+            std::string gText;
+            bool zeroFlag = false;
+            for (std::size_t i = 0; i < gLen; ++i) {
+                int d = grp[i] - '0';
+                if (d < 0 || d > 9) continue;
+                std::size_t unitIdx = gLen - 1 - i;
+                if (d == 0) {
+                    zeroFlag = true;
+                } else {
+                    if (zeroFlag) {
+                        gText += "零";
+                        zeroFlag = false;
+                    }
+                    gText += kDigits[d];
+                    if (unitIdx < 4) {
+                        gText += kUnits[unitIdx];
+                    }
+                }
+            }
+            if (!gText.empty()) {
+                if (gIdx < 4) {
+                    gText += kBigUnits[gIdx];
+                }
+                groupResults.push_back(gText);
+            } else if (gIdx == 2) {
+                groupResults.push_back(kBigUnits[gIdx]);
+            }
+        }
+        std::string intStr;
+        for (auto it = groupResults.rbegin(); it != groupResults.rend(); ++it) {
+            intStr += *it;
+        }
+        result = intStr + "元";
+    }
+
+    if (decPart.empty() || decPart == "0" || decPart == "00") {
+        result += "整";
+    } else {
+        int jiao = (decPart.size() > 0 && decPart[0] >= '0' && decPart[0] <= '9') ? (decPart[0] - '0') : 0;
+        int fen = (decPart.size() > 1 && decPart[1] >= '0' && decPart[1] <= '9') ? (decPart[1] - '0') : 0;
+        if (jiao > 0) {
+            result += kDigits[jiao];
+            result += "角";
+        } else if (fen > 0) {
+            result += "零";
+        }
+        if (fen > 0) {
+            result += kDigits[fen];
+            result += "分";
+        } else if (jiao > 0) {
+            result += "整";
+        }
+    }
+    return result;
+}
+
+std::string toChineseStandardNumber(std::string_view numStr) {
+    if (numStr.empty()) {
+        return {};
+    }
+    auto dotPos = numStr.find('.');
+    auto intPart = numStr.substr(0, dotPos);
+    std::string decPart = (dotPos != std::string_view::npos) ? std::string(numStr.substr(dotPos + 1)) : "";
+
+    auto firstNonZero = intPart.find_first_not_of('0');
+    if (firstNonZero != std::string_view::npos) {
+        intPart = intPart.substr(firstNonZero);
+    } else {
+        intPart = "";
+    }
+
+    static const char *const kDigits[] = {
+        "零", "一", "二", "三", "四", "五", "六", "七", "八", "九"
+    };
+    static const char *const kUnits[] = {"", "十", "百", "千"};
+    static const char *const kBigUnits[] = {"", "万", "亿", "兆"};
+
+    if (intPart.empty() && decPart.empty()) {
+        return "零";
+    }
+
+    std::string result;
+    if (intPart.empty()) {
+        result = "零";
+    } else {
+        std::vector<std::string> groups;
+        std::string s(intPart);
+        while (!s.empty()) {
+            if (s.size() > 4) {
+                groups.push_back(s.substr(s.size() - 4));
+                s.resize(s.size() - 4);
+            } else {
+                groups.push_back(s);
+                s.clear();
+            }
+        }
+        std::vector<std::string> groupResults;
+        for (std::size_t gIdx = 0; gIdx < groups.size(); ++gIdx) {
+            const auto &grp = groups[gIdx];
+            std::size_t gLen = grp.size();
+            std::string gText;
+            bool zeroFlag = false;
+            for (std::size_t i = 0; i < gLen; ++i) {
+                int d = grp[i] - '0';
+                if (d < 0 || d > 9) continue;
+                std::size_t unitIdx = gLen - 1 - i;
+                if (d == 0) {
+                    zeroFlag = true;
+                } else {
+                    if (zeroFlag) {
+                        gText += "零";
+                        zeroFlag = false;
+                    }
+                    if (d == 1 && unitIdx == 1 && gLen == 2 && gIdx == groups.size() - 1 && gText.empty()) {
+                        gText += kUnits[unitIdx];
+                    } else {
+                        gText += kDigits[d];
+                        if (unitIdx < 4) {
+                            gText += kUnits[unitIdx];
+                        }
+                    }
+                }
+            }
+            if (!gText.empty()) {
+                if (gIdx < 4) {
+                    gText += kBigUnits[gIdx];
+                }
+                groupResults.push_back(gText);
+            } else if (gIdx == 2) {
+                groupResults.push_back(kBigUnits[gIdx]);
+            }
+        }
+        for (auto it = groupResults.rbegin(); it != groupResults.rend(); ++it) {
+            result += *it;
+        }
+    }
+    if (!decPart.empty()) {
+        result += "点";
+        for (char c : decPart) {
+            if (c >= '0' && c <= '9') {
+                result += kDigits[c - '0'];
+            }
+        }
+    }
+    return result;
+}
 
 std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
     std::time_t t = std::time(nullptr);
@@ -28,6 +220,28 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
     localtime_r(&t, &tm);
 #endif
     std::vector<std::string> results;
+
+    // v-mode financial & numeral converter
+    if (rawInput.size() > 1 && rawInput.front() == 'v') {
+        std::string_view numPart = rawInput.substr(1);
+        bool validNum = true;
+        bool hasDot = false;
+        for (char c : numPart) {
+            if (c >= '0' && c <= '9') continue;
+            if (c == '.' && !hasDot) { hasDot = true; continue; }
+            validNum = false;
+            break;
+        }
+        if (validNum) {
+            const auto fin = toChineseFinancial(numPart);
+            if (!fin.empty()) results.push_back(fin);
+            const auto stdNum = toChineseStandardNumber(numPart);
+            if (!stdNum.empty()) results.push_back(stdNum);
+            results.emplace_back(numPart);
+            return results;
+        }
+    }
+
     if (rawInput == "rq") {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "%d年%d月%d日", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
@@ -52,6 +266,104 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
             results.push_back(kZhou[tm.tm_wday]);
         }
     }
+
+    static const std::unordered_map<std::string_view, std::vector<const char *>> kMacroMap = {
+        // Greek letters
+        {"pi", {"π", "Π"}},
+        {"alpha", {"α", "Α"}},
+        {"beta", {"β", "Β"}},
+        {"gamma", {"γ", "Γ"}},
+        {"delta", {"δ", "Δ"}},
+        {"theta", {"θ", "Θ"}},
+        {"lambda", {"λ", "Λ"}},
+        {"mu", {"μ"}},
+        {"sigma", {"σ", "Σ"}},
+        {"omega", {"ω", "Ω"}},
+        {"epsilon", {"ε"}},
+        {"phi", {"φ", "Φ"}},
+        {"tau", {"τ"}},
+        {"rho", {"ρ"}},
+
+        // Math & physics & units
+        {"pingfang", {"²"}},
+        {"lifang", {"³"}},
+        {"du", {"°"}},
+        {"sheshidu", {"℃"}},
+        {"huashidu", {"℉"}},
+        {"zhengfu", {"±"}},
+        {"wuxian", {"∞"}},
+        {"yuedeng", {"≈"}},
+        {"budeng", {"≠"}},
+        {"xiaoyudengyu", {"≤"}},
+        {"dayudengyu", {"≥"}},
+        {"suoyi", {"∴"}},
+        {"yuanyin", {"∵"}},
+        {"chenghao", {"×"}},
+        {"chuhao", {"÷"}},
+        {"kaifang", {"√"}},
+
+        // Shapes & arrows
+        {"dui", {"√", "✔"}},
+        {"cuo", {"×", "✖"}},
+        {"jiantou", {"→", "←", "↑", "↓"}},
+        {"you", {"→"}},
+        {"zuo", {"←"}},
+        {"shang", {"↑"}},
+        {"xia", {"↓"}},
+        {"sanjiao", {"▲", "△"}},
+        {"wujiaoxing", {"★", "☆"}},
+        {"lingxing", {"◆", "◇"}},
+        {"yuan", {"●", "○"}},
+
+        // Currencies & stats
+        {"rmb", {"¥", "￥"}},
+        {"dollar", {"$"}},
+        {"ouyuan", {"€"}},
+        {"bang", {"£"}},
+        {"baifenbi", {"%"}},
+        {"qianfenbi", {"‰"}},
+
+        // Legal & Ordinals
+        {"jiefu", {"§"}},
+        {"duanluo", {"¶"}},
+        {"banquan", {"©"}},
+        {"shangbiao", {"®", "™"}},
+        {"xuhao", {"①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"}},
+        {"yuanquan", {"①", "②", "③", "④", "⑤"}},
+
+        // Emojis & Chat
+        {"haha", {"😄", "😂"}},
+        {"xixi", {"😆"}},
+        {"heihei", {"😁"}},
+        {"zan", {"👍"}},
+        {"dianzan", {"👍"}},
+        {"xin", {"❤️"}},
+        {"aixin", {"❤️"}},
+        {"ku", {"😭"}},
+        {"ok", {"👌"}},
+        {"bixin", {"🫰"}},
+        {"bai", {"👋"}},
+        {"zaijian", {"👋"}},
+        {"baoquan", {"🙏"}},
+        {"fennu", {"😡"}},
+        {"niu", {"🐂"}},
+        {"daniu", {"🐂"}},
+        {"niubi", {"🐂"}},
+        {"liuliuliu", {"🐂"}},
+        {"doge", {"🐶"}},
+        {"tangping", {"🛌"}},
+        {"jiayou", {"💪"}},
+        {"wenhao", {"❓"}},
+        {"tanhao", {"❗️"}},
+    };
+
+    auto it = kMacroMap.find(rawInput);
+    if (it != kMacroMap.end()) {
+        for (const auto *val : it->second) {
+            results.emplace_back(val);
+        }
+    }
+
     return results;
 }
 
@@ -1046,7 +1358,7 @@ private:
 
         const auto macroCandidates = generateMacroCandidates(rawInput);
         if (!macroCandidates.empty()) {
-            std::size_t insertPos = page_.items.empty() ? 0 : 1;
+            std::size_t insertPos = (page_.items.empty() || rawInput.front() == 'v') ? 0 : 1;
             for (const auto &macroText : macroCandidates) {
                 core::CandidateItem item;
                 item.text = macroText;
@@ -1084,6 +1396,7 @@ private:
                         });
 
         const bool shouldPredictEnglish =
+            (rawInput.empty() || rawInput.front() != 'v') &&
             !isEnglish && !hasTrustedShortAbbreviation &&
             !hasExactFullPinyinMatch &&
             (!hasPinyinCoverage ||
@@ -1180,7 +1493,10 @@ private:
                            }),
             page_.items.end());
 
-        if (!predictedWords.empty()) {
+        if (!macroCandidates.empty() && rawInput.front() == 'v') {
+            page_.items.push_back(std::move(rawCandidate));
+            page_.preedit = std::string(rawInput);
+        } else if (!predictedWords.empty()) {
             core::CandidateItem predictedCandidate;
             predictedCandidate.text = std::string(predictedWords.front());
             predictedCandidate.fullPinyin = std::string(rawInput);
@@ -1207,7 +1523,11 @@ private:
             }
         } else {
             page_.items.push_back(std::move(rawCandidate));
-            page_.preedit = segmentedInput;
+            if (!macroCandidates.empty() && rawInput.front() == 'v') {
+                page_.preedit = std::string(rawInput);
+            } else {
+                page_.preedit = segmentedInput;
+            }
         }
     }
 

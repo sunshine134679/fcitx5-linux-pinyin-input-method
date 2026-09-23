@@ -463,6 +463,11 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.digit = static_cast<char>('1' + selection);
         return event;
     }
+    if (key.check(FcitxKey_0) || key.check(FcitxKey_KP_0)) {
+        event.kind = KeyKind::Digit;
+        event.digit = '0';
+        return event;
+    }
     if (!hasNonShiftModifier(key)) {
         const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
         if (unicode >= 'A' && unicode <= 'Z') {
@@ -491,6 +496,12 @@ bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
                                               const fcitx::Key &key) {
     if (preedit.empty() || hasNonShiftModifier(key)) {
         return false;
+    }
+    if (preedit.front() == 'v') {
+        const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
+        if ((unicode >= '0' && unicode <= '9') || unicode == '.') {
+            return false;
+        }
     }
     const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
     return (unicode >= 'A' && unicode <= 'Z') ||

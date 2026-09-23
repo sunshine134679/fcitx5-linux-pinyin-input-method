@@ -235,6 +235,27 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::Space:
         return page_.items.empty() ? commitRawPreedit(" ") : commitCurrent();
     case KeyKind::Punctuation:
+        if (!compositionInput_.empty() && compositionInput_.front() == 'v' &&
+            event.character == '.' && compositionInput_.find('.') == std::string::npos) {
+            std::string nextInput = compositionInput_;
+            nextInput.insert(compositionCursor_, 1, event.character);
+            if (core::PinyinMatchPolicy::validComposition(nextInput)) {
+                const bool appending = compositionCursor_ == compositionInput_.size();
+                const bool changed = provider_
+                                         ? (appending
+                                                ? provider_->append(std::string_view(&event.character, 1))
+                                                : provider_->replaceInput(nextInput))
+                                         : (appending
+                                                ? input_.append(std::string_view(&event.character, 1))
+                                                : input_.replace(nextInput));
+                if (changed) {
+                    compositionInput_ = std::move(nextInput);
+                    ++compositionCursor_;
+                    refreshPage();
+                    return true;
+                }
+            }
+        }
         if (options_.punctuationEnabled &&
             commitPunctuation(event.character)) {
             return true;
@@ -252,6 +273,26 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         host_.commit(std::string_view(&event.character, 1));
         return true;
     case KeyKind::Digit: {
+        if (!compositionInput_.empty() && compositionInput_.front() == 'v') {
+            std::string nextInput = compositionInput_;
+            nextInput.insert(compositionCursor_, 1, event.digit);
+            if (core::PinyinMatchPolicy::validComposition(nextInput)) {
+                const bool appending = compositionCursor_ == compositionInput_.size();
+                const bool changed = provider_
+                                         ? (appending
+                                                ? provider_->append(std::string_view(&event.digit, 1))
+                                                : provider_->replaceInput(nextInput))
+                                         : (appending
+                                                ? input_.append(std::string_view(&event.digit, 1))
+                                                : input_.replace(nextInput));
+                if (changed) {
+                    compositionInput_ = std::move(nextInput);
+                    ++compositionCursor_;
+                    refreshPage();
+                    return true;
+                }
+            }
+        }
         if (!options_.numberSelection) {
             return false;
         }
