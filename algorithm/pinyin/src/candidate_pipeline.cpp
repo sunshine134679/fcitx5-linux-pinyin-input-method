@@ -1,6 +1,7 @@
 #include "modernime/pinyin/candidate_pipeline.h"
 
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/common_characters.h"
 #include "modernime/core/dictionary_prior.h"
 
 #include <unordered_set>
@@ -46,33 +47,41 @@ std::size_t utf8CodePointCount(std::string_view text) {
     return count;
 }
 
-double dictionaryBonus(const libime::PinyinDictionary &dictionary,
-                       std::string_view fullPinyin,
-                       std::string_view phrase) {
+struct DictBonusResult {
+    double bonus = 0.0;
+    bool is_lexical = false;
+};
+
+DictBonusResult dictionaryBonus(const libime::PinyinDictionary &dictionary,
+                               std::string_view fullPinyin,
+                               std::string_view phrase) {
     if (!validFullPinyin(fullPinyin)) {
-        return 0.0;
+        return {0.0, false};
     }
     // 单字不加系统词典加分：libime 语言模型对单字 unigram 的原生排序
     // 更可靠（如 de→的、a→啊），sc.dict 的离散权重（0=中性、负=加权）
     // 反而会把高频单字顶离首位。用户词典层（cost>=0）不受此限制，
     // 用户手动收录的单字仍然可以上位。
-    const bool singleCharacter = utf8CodePointCount(phrase) == 1;
+    const std::size_t phraseLength = utf8CodePointCount(phrase);
+    const bool singleCharacter = phraseLength == 1;
     const auto encoded = libime::PinyinEncoder::encodeFullPinyin(fullPinyin);
     double userBonus = 0.0;
     double systemBonus = 0.0;
+    bool isLexical = false;
     dictionary.matchWords(
         encoded.data(), encoded.size(),
-        [&userBonus, &systemBonus, phrase,
-         singleCharacter](std::string_view,
+        [&userBonus, &systemBonus, &isLexical, phrase,
+         singleCharacter, phraseLength](std::string_view,
                           std::string_view hanzi,
                           float cost) {
             if (hanzi != phrase) {
                 return true;
             }
+            isLexical = true;
             if (cost >= 0.0F) {
                 if (!singleCharacter || cost > 0.0F) {
                     userBonus = std::max(userBonus,
-                                         core::curatedDictionaryBonus(cost));
+                                         core::curatedDictionaryBonus(cost, phraseLength));
                 }
             } else if (!singleCharacter) {
                 systemBonus = std::max(systemBonus,
@@ -82,7 +91,7 @@ double dictionaryBonus(const libime::PinyinDictionary &dictionary,
             // 两种来源都命中后即可提前终止，无需继续遍历剩余前缀子树。
             return userBonus <= 0.0 || systemBonus <= 0.0;
         });
-    return core::combinedDictionaryBonus(userBonus, systemBonus);
+    return {core::combinedDictionaryBonus(userBonus, systemBonus), isLexical};
 }
 
 } // namespace
@@ -118,8 +127,20 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin.clear();
         }
         candidate.decoder_score = nativeCandidates[index].score();
-        candidate.dictionary_bonus = dictionaryBonus(
+        const auto dictResult = dictionaryBonus(
             dictionary, candidate.full_pinyin, candidate.text);
+        candidate.dictionary_bonus = dictResult.bonus;
+        const auto charCount = utf8CodePointCount(candidate.text);
+        if (charCount >= 2 && dictResult.is_lexical) {
+            candidate.is_lexical = true;
+        }
+        if (core::CommonCharacters::containsRare(candidate.text)) {
+            candidate.is_rare = true;
+        } else if (charCount == 1 &&
+                   core::CommonCharacters::isLevel1(
+                       core::CommonCharacters::firstCodepoint(candidate.text))) {
+            candidate.is_level1 = true;
+        }
         if (learning != nullptr) {
             candidate.learning_boost = learning->boostAt(
                 candidate.text, candidate.full_pinyin, nowMs);
@@ -127,7 +148,7 @@ CandidatePipelineResult buildCandidatePipeline(
                 candidate.text, candidate.full_pinyin, contextBefore,
                 contextAfter);
         }
-        if (index == 0 && utf8CodePointCount(candidate.text) == 1) {
+        if (index == 0 && charCount == 1) {
             candidate.unigram_anchor = 3.0;
         }
         seenKeys.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
@@ -160,8 +181,20 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = fullPinyin;
             // 容错补充候选稍加惩罚（+0.8F 解码代价），避免在原词完全合法时过度喧宾夺主
             candidate.decoder_score = typoCandidates[index].score() + 0.8F;
-            candidate.dictionary_bonus = dictionaryBonus(
+            const auto dictResult = dictionaryBonus(
                 dictionary, candidate.full_pinyin, candidate.text);
+            candidate.dictionary_bonus = dictResult.bonus;
+            const auto charCount = utf8CodePointCount(candidate.text);
+            if (charCount >= 2 && dictResult.is_lexical) {
+                candidate.is_lexical = true;
+            }
+            if (core::CommonCharacters::containsRare(candidate.text)) {
+                candidate.is_rare = true;
+            } else if (charCount == 1 &&
+                       core::CommonCharacters::isLevel1(
+                           core::CommonCharacters::firstCodepoint(candidate.text))) {
+                candidate.is_level1 = true;
+            }
             if (learning != nullptr) {
                 candidate.learning_boost = learning->boostAt(
                     candidate.text, candidate.full_pinyin, nowMs);
@@ -169,7 +202,7 @@ CandidatePipelineResult buildCandidatePipeline(
                     candidate.text, candidate.full_pinyin, contextBefore,
                     contextAfter);
             }
-            if (index == 0 && utf8CodePointCount(candidate.text) == 1) {
+            if (index == 0 && charCount == 1) {
                 candidate.unigram_anchor = 3.0;
             }
             result.scored.push_back(std::move(candidate));

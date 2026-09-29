@@ -801,6 +801,19 @@ bool coversPinyinInput(std::string_view userInput,
     return inputOffset == input.size() && consumedFullSyllable;
 }
 
+std::size_t pinyinSyllableCount(std::string_view fullPinyin) {
+    std::string_view trimmed = fullPinyin;
+    while (!trimmed.empty() && trimmed.back() == '\'') {
+        trimmed.remove_suffix(1);
+    }
+    if (trimmed.empty()) {
+        return 0;
+    }
+    return static_cast<std::size_t>(
+               std::count(trimmed.begin(), trimmed.end(), '\'')) +
+           1;
+}
+
 // Preserve the strongest exact conversion at index zero. If LibIME's native
 // order ranks a fuzzy full conversion ahead of that exact conversion, place
 // the fuzzy item second so low-value exact homophone variants follow it. Move
@@ -811,6 +824,13 @@ void interleaveHigherNativeRankFuzzyCandidate(
     if (fullCandidates.size() < 2 ||
         core::PinyinMatchPolicy::priority(
             rawInput, fullCandidates.front().fullPinyin) != 2) {
+        return;
+    }
+
+    // Only allow fuzzy candidate interleaving for multi-syllable input (>= 2 syllables).
+    // Single-syllable inputs (e.g. cang, cao, cai, bin) must strictly preserve exact homophone matches,
+    // and never interleave fuzzy homophones (e.g. chang/常, chao/超, chai/柴, bing/并) into rank 1.
+    if (pinyinSyllableCount(fullCandidates.front().fullPinyin) <= 1) {
         return;
     }
 
@@ -1472,8 +1492,9 @@ private:
             }
         }
 
+        const bool isInitialConsonant = (rawInput == "sh" || rawInput == "ch" || rawInput == "zh");
         const bool isEnglish =
-            core::EnglishDictionary::isEnglishWord(rawInput);
+            !isInitialConsonant && core::EnglishDictionary::isEnglishWord(rawInput);
 
         const bool hasExactFullPinyinMatch = std::any_of(
             page_.items.begin(), page_.items.end(),
@@ -1614,9 +1635,18 @@ private:
                 page_.items.insert(page_.items.begin(), std::move(rawCandidate));
                 page_.preedit = std::string(rawInput);
             } else {
-                const auto insertPos =
-                    page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
-                page_.items.insert(insertPos, std::move(rawCandidate));
+                bool isSingleSyllable = false;
+                if (!page_.items.empty()) {
+                    isSingleSyllable = pinyinSyllableCount(page_.items.front().fullPinyin) <= 1;
+                }
+                const bool isDualAttributeExemption = (rawInput == "can");
+                if (isSingleSyllable && !isDualAttributeExemption) {
+                    page_.items.push_back(std::move(rawCandidate));
+                } else {
+                    const auto insertPos =
+                        page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
+                    page_.items.insert(insertPos, std::move(rawCandidate));
+                }
                 page_.preedit = segmentedInput;
             }
         } else {

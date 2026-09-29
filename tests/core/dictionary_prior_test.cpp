@@ -22,6 +22,12 @@ int main() {
     assertTrue(std::isfinite(modernime::core::curatedDictionaryBonus(invalid)) &&
                    modernime::core::curatedDictionaryBonus(invalid) == 0.0,
                "non-finite user dictionary cost is ignored");
+    assertTrue(modernime::core::curatedDictionaryBonus(0.0F, 2) == 0.0,
+               "zero-cost 2-character entries receive no curated boost");
+    assertTrue(modernime::core::curatedDictionaryBonus(0.0F, 3) == 1.0,
+               "zero-cost 3-character entries receive curated boost");
+    assertTrue(modernime::core::curatedDictionaryBonus(5.0F, 2) > 1.0,
+               "explicit positive cost 2-character entries receive curated boost");
     assertTrue(std::isfinite(modernime::core::systemDictionaryBonus(invalid)) &&
                    modernime::core::systemDictionaryBonus(invalid) == 0.0,
                "non-finite system dictionary cost is ignored");

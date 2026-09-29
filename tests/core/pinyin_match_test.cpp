@@ -50,6 +50,12 @@ int main() {
     assertTrue(PinyinMatchPolicy::trustedShortAbbreviationMatch(
                    "dl", "deng'lu", "登录"),
                "high-frequency initialism dl for 登录 is trusted");
+    assertTrue(PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                   "nh", "ni'hao", "你好"),
+               "high-frequency initialism nh for 你好 is trusted");
+    assertTrue(PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                   "xa", "xi'an", "西安"),
+               "high-frequency initialism xa for 西安 is trusted");
     assertTrue(PinyinMatchPolicy::initialsMatch("yqch", "yi'qi'chi"),
                "compound initial ch matches syllables");
     assertTrue(PinyinMatchPolicy::initialsMatch("bj", "bei'jing"),

@@ -49,13 +49,25 @@ struct CandidateScore final {
     double dictionary_bonus = 0.0;
     double context_bonus = 0.0;
     double unigram_anchor = 0.0;
+    bool is_rare = false;
+    bool is_level1 = false;
+    bool is_lexical = false;
 
     double final_score() const {
-        return static_cast<double>(source_index) -
+        double score = static_cast<double>(source_index) -
                computeAdaptiveLearning(learning_boost) - stability_bonus -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor;
+        if (is_rare) {
+            score += 100.0;
+        } else if (is_level1) {
+            score -= 2.0;
+        }
+        if (is_lexical) {
+            score -= 3.0;
+        }
+        return score;
     }
 };
 

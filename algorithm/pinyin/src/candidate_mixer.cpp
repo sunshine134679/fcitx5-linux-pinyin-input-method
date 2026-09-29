@@ -1,4 +1,5 @@
 #include "modernime/pinyin/candidate_mixer.h"
+#include "modernime/core/common_characters.h"
 
 #include <algorithm>
 #include <optional>
@@ -160,7 +161,10 @@ std::vector<core::CandidateItem> mixCandidateItems(
             candidate, *bestFullSentence, syllablePrefixEnds);
         if (!bestTextPrefix.has_value() ||
             candidate.text == *bestTextPrefix ||
-            seenText.contains(candidate.text)) {
+            seenText.contains(candidate.text) ||
+            core::CommonCharacters::containsRare(candidate.text) ||
+            !core::CommonCharacters::isLevel1(
+                core::CommonCharacters::firstCodepoint(candidate.text))) {
             continue;
         }
         homophone = &candidate;

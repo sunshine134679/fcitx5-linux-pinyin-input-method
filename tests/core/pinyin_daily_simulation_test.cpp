@@ -517,28 +517,111 @@ void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learnin
     }
 }
 
+void testRareAndRadicalCharactersGovernance(const std::filesystem::path &learningPath) {
+    auto provider = makeSimulationProvider(learningPath);
+
+    // 1. 单音节英文次选消除：de 次选不得为 raw "de"，应为常用汉字 "得"
+    provider.reset();
+    assertTrue(provider.append("de"), "append de");
+    assertTrue(provider.page().items.size() >= 3, "de has at least 3 candidates");
+    assertTrue(provider.page().items[0].text == "的", "de rank 0 is 的");
+    assertTrue(provider.page().items[1].text == "得", "de rank 1 is 得 (not English de)");
+
+    // 2. 单音节英文次选消除：ge 次选不得为 raw "ge"，应为常用汉字 "个"
+    provider.reset();
+    assertTrue(provider.append("ge"), "append ge");
+    assertTrue(provider.page().items[0].text == "各", "ge rank 0 is 各");
+    assertTrue(provider.page().items[1].text == "个", "ge rank 1 is 个 (not English ge)");
+
+    // 3. 康熙部首字过滤：e 候选前 5 位不得出现 丨
+    provider.reset();
+    assertTrue(provider.append("e"), "append e");
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, provider.page().items.size()); ++i) {
+        assertTrue(provider.page().items[i].text != "丨", "e top 5 must not contain radical 丨");
+    }
+
+    // 4. 康熙部首字过滤：dian 候选前 5 位不得出现 丶
+    provider.reset();
+    assertTrue(provider.append("dian"), "append dian");
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, provider.page().items.size()); ++i) {
+        assertTrue(provider.page().items[i].text != "丶", "dian top 5 must not contain radical 丶");
+    }
+
+    // 5. 模糊音插队禁止：cang 候选不得插队翘舌音 常(chang)
+    provider.reset();
+    assertTrue(provider.append("cang"), "append cang");
+    assertTrue(provider.page().items.size() >= 2, "cang has candidates");
+    assertTrue(provider.page().items[1].text != "常", "cang rank 1 must not be fuzzy candidate 常");
+
+    // 6. 模糊音插队禁止：cao 候选不得插队翘舌音 超(chao)，且前 5 位不得出现 艹 或 屮
+    provider.reset();
+    assertTrue(provider.append("cao"), "append cao");
+    assertTrue(provider.page().items.size() >= 2, "cao has candidates");
+    assertTrue(provider.page().items[1].text != "超", "cao rank 1 must not be fuzzy candidate 超");
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, provider.page().items.size()); ++i) {
+        assertTrue(provider.page().items[i].text != "艹" && provider.page().items[i].text != "屮",
+                   "cao top 5 must not contain radicals 艹 or 屮");
+    }
+
+    // 7. 古生僻单字隔离：zenmeyang 候选前 5 位不得出现 谮
+    provider.reset();
+    assertTrue(provider.append("zenmeyang"), "append zenmeyang");
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, provider.page().items.size()); ++i) {
+        assertTrue(provider.page().items[i].text != "谮", "zenmeyang top 5 must not contain rare char 谮");
+    }
+
+    // 8. 罕见字符隔离：kaifa 候选前 5 位不得出现 嘅
+    provider.reset();
+    assertTrue(provider.append("kaifa"), "append kaifa");
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, provider.page().items.size()); ++i) {
+        assertTrue(provider.page().items[i].text.find("嘅") == std::string::npos,
+                   "kaifa top 5 must not contain rare char 嘅");
+    }
+
+    // 9. 口语变音纠错：weishime 首选必为 为什么
+    provider.reset();
+    assertTrue(provider.append("weishime"), "append weishime");
+    assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "为什么",
+               "weishime top candidate must be 为什么");
+
+    // 10. 高频问候简拼：nh 首选必为 你好
+    provider.reset();
+    assertTrue(provider.append("nh"), "append nh");
+    assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "你好",
+               "nh top candidate must be 你好");
+
+    // 11. 城市简拼：xa 首选必为 西安
+    provider.reset();
+    assertTrue(provider.append("xa"), "append xa");
+    assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "西安",
+               "xa top candidate must be 西安");
+}
+
 } // namespace
 
 int main() {
     const auto learningPath = testPath("daily-simulation-learning.sqlite3");
 
-    std::cout << "[1/6] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
+    std::cout << "[1/7] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
     testSinglePinyinPriorities(learningPath);
 
-    std::cout << "[2/6] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
+    std::cout << "[2/7] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
     testMultiSyllablePhrasesAndHotwords(learningPath);
 
-    std::cout << "[3/6] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
+    std::cout << "[3/7] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
     testAbbreviationsAndInitialisms(learningPath);
 
-    std::cout << "[4/6] Running Smart Learning Dynamic Evolution Tests...\n";
+    std::cout << "[4/7] Running Smart Learning Dynamic Evolution Tests...\n";
     testSmartLearningDynamics(learningPath);
 
-    std::cout << "[5/6] Running Smart Typo Correction Engine Tests...\n";
+    std::cout << "[5/7] Running Smart Typo Correction Engine Tests...\n";
     testSmartTypoCorrectionEngine(learningPath);
 
-    std::cout << "[6/6] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
+    std::cout << "[6/7] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
     testMultiPersonaWeChatParityBenchmarks(learningPath);
+
+    std::cout << "[7/7] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
+    testRareAndRadicalCharactersGovernance(learningPath);
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);

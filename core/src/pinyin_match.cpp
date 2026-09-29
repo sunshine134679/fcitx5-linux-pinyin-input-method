@@ -160,6 +160,8 @@ bool PinyinMatchPolicy::trustedShortAbbreviationMatch(
     };
     static constexpr std::array commonPhrases{
         // 2-letter
+        TrustedEntry{"nh", "你好"},
+        TrustedEntry{"xa", "西安"},
         TrustedEntry{"bj", "北京"},
         TrustedEntry{"dl", "登录"},
         TrustedEntry{"sh", "上海"},
@@ -256,6 +258,12 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
     if (input.empty()) {
         return "";
     }
+
+    // 零声母高频城市简拼特例: xa -> xi'an (西安)
+    if (input == "xa") {
+        return "xi'an";
+    }
+
     // 保护合法英文前缀（如 garag -> garage, appl -> apple），避免被拼音容错改写为伪拼音
     const auto englishPredictions = EnglishDictionary::predictWords(input, 1);
     if (!englishPredictions.empty() && englishPredictions.front() != input) {
@@ -357,6 +365,13 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
     while ((pos = s.find("fna", pos)) != std::string::npos) {
         s.replace(pos, 3, "fan");
         pos += 3;
+    }
+
+    // 3.4 口语及击键漏字规范: weishime -> weishenme
+    pos = 0;
+    while ((pos = s.find("weishime", pos)) != std::string::npos) {
+        s.replace(pos, 8, "weishenme");
+        pos += 9;
     }
 
     // 3.4 ina -> ian (e.g. tina -> tian, xina -> xian)
@@ -762,6 +777,10 @@ int PinyinMatchPolicy::priority(std::string_view userInput,
     const auto input = canonical(userInput);
     const auto candidate = canonical(fullPinyin);
     if (candidate == input) {
+        return 2;
+    }
+    const auto normalizedInput = canonical(normalizeTypoInput(userInput));
+    if (!normalizedInput.empty() && candidate == normalizedInput) {
         return 2;
     }
     if (isFullTypoMatch(userInput, fullPinyin)) {
