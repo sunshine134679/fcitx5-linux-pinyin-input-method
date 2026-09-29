@@ -19,6 +19,13 @@ for required_command in "${required_commands[@]}"; do
     fi
 done
 
+if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" ]]; then
+    printf 'Error: Running install.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
+    printf 'This prevents accidental installation or modification of your real user environment (%s).\n' "$HOME" >&2
+    printf 'Specify MODERNIME_PREFIX explicitly (e.g. MODERNIME_PREFIX=/tmp/test-prefix) if intended.\n' >&2
+    exit 1
+fi
+
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
@@ -126,6 +133,9 @@ else
     mv -- "$desktop_tmp" "$desktop_shortcut"
     desktop_tmp=""
     chmod +x "$desktop_shortcut"
+fi
+if [[ -f "$desktop_shortcut" ]] && command -v gio >/dev/null 2>&1; then
+    gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
 fi
 
 environment_line="FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"

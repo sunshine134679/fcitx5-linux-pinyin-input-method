@@ -32,16 +32,10 @@
 ## 4. 重大变更后的端到端验证流程 (Mandatory Verification Workflow)
 - 每次完成较大功能更改或架构调整后，推送远程前必须执行以下验证：
   1. **单元测试回归**：运行 `ctest` 确保 47 项及后续新增测试 100% 通过（包括 `modernime_install_runtime`、`modernime_install_environment`、`modernime_settings_install`）；
-  2. **模拟全新克隆构建**：在临时隔离目录验证完整流程（需显式传入配置与桌面隔离目录，避免污染宿主自启与快捷方式）：
+  2. **模拟全新克隆构建**：运行自动化沙箱验证脚本（自动创建隔离环境并验证完整安装与卸载闭环，严禁直接在 `/tmp` 下裸跑无参脚本）：
      ```bash
-     git clone . /tmp/test-fresh-clone
-     cd /tmp/test-fresh-clone
-     MODERNIME_PREFIX=/tmp/test-prefix \
-     MODERNIME_CONFIG_HOME=/tmp/test-prefix/config \
-     MODERNIME_DESKTOP_DIR=/tmp/test-prefix/Desktop \
-     MODERNIME_SKIP_FCITX_RESTART=1 ./install.sh
-     MODERNIME_PREFIX=/tmp/test-prefix \
-     MODERNIME_CONFIG_HOME=/tmp/test-prefix/config \
-     MODERNIME_DESKTOP_DIR=/tmp/test-prefix/Desktop ./uninstall.sh
+     ./tests/verify_fresh_clone.sh
      ```
+     *注：`install.sh` 与 `uninstall.sh` 已内置防误删保护，若在 `/tmp` 或 `/var/tmp` 路径下执行且未显式指定 `MODERNIME_PREFIX`，将直接拒绝执行并报警，防止误清宿主用户真实环境配置。*
   3. **文档同步更新**：同步更新 `README.md` 中的特性描述、配置项、快捷键与常见排错指南。
+

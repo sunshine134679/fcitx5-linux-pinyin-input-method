@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" ]]; then
+    printf 'Error: Running uninstall.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
+    printf 'This prevents accidental removal of your real user environment (%s).\n' "$HOME" >&2
+    printf 'Specify MODERNIME_PREFIX explicitly (e.g. MODERNIME_PREFIX=/tmp/test-prefix) if intended.\n' >&2
+    exit 1
+fi
+
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 manifest="$prefix/share/modernime/install-manifest.txt"
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
