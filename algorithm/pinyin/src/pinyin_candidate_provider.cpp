@@ -16,23 +16,9 @@
 
 #include <algorithm>
 #include <ctime>
-#include <type_traits>
 #include <unordered_map>
 
 namespace {
-
-template <typename T, typename = void>
-struct HasCommonTypo : std::false_type {};
-template <typename T>
-struct HasCommonTypo<T, std::void_t<decltype(T::CommonTypo)>> : std::true_type {};
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-template <typename T, typename = void>
-struct HasNgGn : std::false_type {};
-template <typename T>
-struct HasNgGn<T, std::void_t<decltype(T::NG_GN)>> : std::true_type {};
-#pragma GCC diagnostic pop
 
 inline libime::PinyinFuzzyFlags getDefaultFuzzyFlags() {
     libime::PinyinFuzzyFlags flags{
@@ -43,14 +29,9 @@ inline libime::PinyinFuzzyFlags getDefaultFuzzyFlags() {
         libime::PinyinFuzzyFlag::EN_ENG,
         libime::PinyinFuzzyFlag::IN_ING,
     };
-    if constexpr (HasCommonTypo<libime::PinyinFuzzyFlag>::value) {
-        flags |= libime::PinyinFuzzyFlag::CommonTypo;
-    } else if constexpr (HasNgGn<libime::PinyinFuzzyFlag>::value) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        flags |= libime::PinyinFuzzyFlag::NG_GN;
-#pragma GCC diagnostic pop
-    }
+#ifdef MODERNIME_HAS_PINYIN_COMMON_TYPO
+    flags |= libime::PinyinFuzzyFlag::CommonTypo;
+#endif
     return flags;
 }
 

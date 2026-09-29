@@ -21,6 +21,21 @@ target_compile_features(modernime_pinyin PUBLIC cxx_std_20)
 set_target_properties(modernime_pinyin PROPERTIES POSITION_INDEPENDENT_CODE ON)
 modernime_enable_warnings(modernime_pinyin)
 
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_LIBRARIES LibIME::Pinyin)
+check_cxx_source_compiles("
+#include <libime/pinyin/pinyinencoder.h>
+int main() {
+    auto f = libime::PinyinFuzzyFlag::CommonTypo;
+    (void)f;
+    return 0;
+}
+" MODERNIME_HAS_PINYIN_COMMON_TYPO)
+
+if(MODERNIME_HAS_PINYIN_COMMON_TYPO)
+    target_compile_definitions(modernime_pinyin PRIVATE MODERNIME_HAS_PINYIN_COMMON_TYPO=1)
+endif()
+
 if(MODERNIME_BUILD_LIBIME_PINYIN)
     add_dependencies(modernime_pinyin
         modernime_pinyin_knowledge_dictionary
