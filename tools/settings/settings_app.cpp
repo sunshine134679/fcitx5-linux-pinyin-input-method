@@ -88,8 +88,12 @@ int main(int argc, char **argv) {
 
     const auto paths = settingsPaths();
     ApplicationState state(paths, targetPage);
-    auto *application = gtk_application_new("com.modernime.Settings",
-                                             G_APPLICATION_DEFAULT_FLAGS);
+#if GLIB_CHECK_VERSION(2, 74, 0)
+    constexpr auto appFlags = G_APPLICATION_DEFAULT_FLAGS;
+#else
+    constexpr auto appFlags = G_APPLICATION_FLAGS_NONE;
+#endif
+    auto *application = gtk_application_new("com.modernime.Settings", appFlags);
     g_signal_connect(application, "activate", G_CALLBACK(activate), &state);
     int filteredArgc = static_cast<int>(filteredArgs.size());
     const auto result = g_application_run(G_APPLICATION(application), filteredArgc,

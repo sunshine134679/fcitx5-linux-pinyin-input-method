@@ -35,6 +35,23 @@ bool hasNonShiftModifier(const fcitx::Key &key) {
          fcitx::KeyState::Meta}));
 }
 
+int keyDigitSelection(const fcitx::Key &key) {
+    if (key.hasModifier()) {
+        return -1;
+    }
+    const auto sym = key.sym();
+    if (sym >= FcitxKey_1 && sym <= FcitxKey_9) {
+        return static_cast<int>(sym - FcitxKey_1);
+    }
+    if (sym >= FcitxKey_KP_1 && sym <= FcitxKey_KP_9) {
+        return static_cast<int>(sym - FcitxKey_KP_1);
+    }
+    if (sym == FcitxKey_0 || sym == FcitxKey_KP_0) {
+        return 9;
+    }
+    return -1;
+}
+
 bool isAsciiPunctuation(std::uint32_t unicode) {
     if (unicode > 0x7f || unicode < 0x21) {
         return false;
@@ -102,7 +119,7 @@ std::optional<char> clipboardTriggerDigit(const fcitx::Key &key,
     }
     const auto second = static_cast<unsigned char>(trigger[2]);
     if (second < '1' || second > '9' ||
-        key.digitSelection() != static_cast<int>(second - '1')) {
+        keyDigitSelection(key) != static_cast<int>(second - '1')) {
         return std::nullopt;
     }
     return static_cast<char>(second);
@@ -457,7 +474,7 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::Space;
         return event;
     }
-    const int selection = key.digitSelection();
+    const int selection = keyDigitSelection(key);
     if (bindings.numberSelection && selection >= 0 && selection < 9) {
         event.kind = KeyKind::Digit;
         event.digit = static_cast<char>('1' + selection);
