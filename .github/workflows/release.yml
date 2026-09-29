@@ -42,7 +42,7 @@ jobs:
           DEB_FILE=$(ls dist/modernime-*.deb | head -n 1)
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
           TARGET_NAME="modernime_${VERSION}_amd64_${OS_TAG}.deb"
-          cp -f "$DEB_FILE" "dist/${TARGET_NAME}"
+          mv -f "$DEB_FILE" "dist/${TARGET_NAME}"
 
       - name: Upload DEB Artifact
         uses: actions/upload-artifact@v4
@@ -89,7 +89,7 @@ jobs:
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
           RPM_FILE=$(ls dist/*.rpm | head -n 1)
           TARGET_NAME="modernime-${VERSION}-1.oe24.x86_64.rpm"
-          cp -f "$RPM_FILE" "dist/${TARGET_NAME}"
+          mv -f "$RPM_FILE" "dist/${TARGET_NAME}"
 
       - name: Upload RPM Artifact
         uses: actions/upload-artifact@v4
