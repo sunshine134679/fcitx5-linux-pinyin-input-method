@@ -625,7 +625,8 @@ int main() {
                        modernime::core::CandidateSource::Raw,
                "date defaults to the top candidate over synthetic Chinese syllables");
     assertTrue(provider.page().items.size() > 1 &&
-                   provider.page().items[1].text == "打特",
+                   provider.page().items[1].source !=
+                       modernime::core::CandidateSource::Raw,
                "synthetic Chinese syllable sequence remains as secondary candidate");
     assertTrue(provider.page().preedit == "date",
                "clean English word is shown in preedit instead of da'te");

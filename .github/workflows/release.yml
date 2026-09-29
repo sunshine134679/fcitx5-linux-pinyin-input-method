@@ -32,7 +32,7 @@ jobs:
             build-essential cmake pkg-config \
             libsqlite3-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
-            libimecore-dev libimepinyin-dev \
+            libimecore-dev libimepinyin-dev libime-data libime-data-language-model fcitx5-chinese-addons \
             libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev
 
       - name: Build and package DEB
@@ -64,6 +64,7 @@ jobs:
           echo "timeout=60" >> /etc/dnf/dnf.conf
           echo "retries=5" >> /etc/dnf/dnf.conf
           sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
+          sed -i 's/gpgcheck=1/gpgcheck=0/g' /etc/yum.repos.d/*.repo || true
           sed -i 's|repo.openeuler.org|mirrors.huaweicloud.com|g' /etc/yum.repos.d/*.repo || true
           if ! dnf list fcitx5-devel >/dev/null 2>&1; then
             cat << 'EOF' > /etc/yum.repos.d/openEuler-24.09-epol.repo
@@ -76,7 +77,7 @@ jobs:
           EOF
           fi
           dnf makecache || true
-          dnf install -y \
+          dnf install -y --nogpgcheck \
             gcc gcc-c++ cmake make pkgconf-pkg-config \
             sqlite-devel boost-devel \
             fcitx5-devel libime-devel \
@@ -110,7 +111,7 @@ jobs:
             build-essential cmake pkg-config \
             libsqlite3-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
-            libimecore-dev libimepinyin-dev \
+            libimecore-dev libimepinyin-dev libime-data libime-data-language-model fcitx5-chinese-addons \
             libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
 
       - name: Package tarball

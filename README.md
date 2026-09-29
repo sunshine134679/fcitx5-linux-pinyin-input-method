@@ -60,6 +60,8 @@ sudo apt install \
 
 #### openEuler / RHEL / Fedora 构建依赖准备
 ```bash
+# openEuler 系统需确保已启用 EPOL 扩展源（fcitx5-devel 与 libime-devel 位于 EPOL 中）：
+sudo sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
 sudo dnf install -y \
     gcc gcc-c++ cmake make pkgconf-pkg-config \
     sqlite-devel boost-devel \
