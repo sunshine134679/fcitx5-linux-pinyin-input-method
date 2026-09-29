@@ -471,6 +471,31 @@ void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learnin
         {"Academic", "alpha", "α", 2, "alpha 希腊字母宏前三呈现"},
         {"Academic", "pingfang", "²", 2, "pingfang 上标平方宏前三呈现"},
         {"Academic", "wuxian", "∞", 2, "wuxian 无穷大符号宏前三呈现"},
+
+        // 角色七：标点符号与特殊字符快速输入 (Punctuation & Symbols)
+        {"Symbol", "gantanhao", "感叹号", 0, "gantanhao 词汇首选"},
+        {"Symbol", "gantanhao", "！", 1, "gantanhao 次选直出！符号"},
+        {"Symbol", "gan'tan'hao", "感叹号", 0, "gan'tan'hao 分词首选"},
+        {"Symbol", "gan'tan'hao", "！", 1, "gan'tan'hao 次选直出！符号"},
+        {"Symbol", "wenhao", "？", 1, "wenhao 次选直出？符号"},
+        {"Symbol", "juhao", "句号", 0, "juhao 词汇首选"},
+        {"Symbol", "juhao", "。", 1, "juhao 次选直出。符号"},
+        {"Symbol", "douhao", "，", 1, "douhao 次选直出，符号"},
+        {"Symbol", "dunhao", "、", 1, "dunhao 次选直出、符号"},
+        {"Symbol", "fenhao", "；", 1, "fenhao 次选直出；符号"},
+        {"Symbol", "maohao", "：", 1, "maohao 次选直出：符号"},
+        {"Symbol", "shuminghao", "书名号", 0, "shuminghao 词汇首选"},
+        {"Symbol", "shuminghao", "《》", 1, "shuminghao 次选直出《》符号"},
+        {"Symbol", "kuohao", "括号", 0, "kuohao 词汇首选"},
+        {"Symbol", "kuohao", "（）", 1, "kuohao 次选直出（）符号"},
+        {"Symbol", "shenglvehao", "省略号", 0, "shenglvehao 词汇首选"},
+        {"Symbol", "shenglvehao", "……", 1, "shenglvehao 次选直出……符号"},
+        {"Symbol", "pozhehao", "破折号", 0, "pozhehao 词汇首选"},
+        {"Symbol", "pozhehao", "——", 1, "pozhehao 次选直出——符号"},
+        {"Symbol", "yinhao", "“”", 1, "yinhao 次选直出“”符号"},
+        {"Symbol", "jiahao", "+", 1, "jiahao 次选直出+符号"},
+        {"Symbol", "jianhao", "-", 1, "jianhao 次选直出-符号"},
+        {"Symbol", "baifenhao", "%", 1, "baifenhao 次选直出%符号"},
     };
 
     for (const auto &bm : benchmarks) {

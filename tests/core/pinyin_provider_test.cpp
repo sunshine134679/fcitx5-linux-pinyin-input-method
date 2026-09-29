@@ -440,6 +440,77 @@ void testTypoCorrectionTransposition() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testPunctuationAndSymbolMacroCandidates() {
+    const auto learningPath = testPath("macro-symbols-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+    paths.hotwordDictionary = MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+
+    // 1. gantanhao -> 感叹号 at rank 0, ！ at rank 1
+    assertTrue(provider.append("gantanhao"), "gantanhao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "gantanhao has at least 2 candidates");
+    assertTrue(provider.page().items[0].text == "感叹号", "gantanhao rank 0 is 感叹号");
+    assertTrue(provider.page().items[1].text == "！", "gantanhao rank 1 is ！");
+    assertTrue(provider.select(1), "selecting rank 1 ！ succeeds");
+    assertTrue(provider.page().items.empty(), "selecting ！ clears candidate page");
+    provider.reset();
+
+    // 2. gan'tan'hao -> 感叹号 at rank 0, ！ at rank 1
+    assertTrue(provider.append("gan'tan'hao"), "gan'tan'hao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "gan'tan'hao has at least 2 candidates");
+    assertTrue(provider.page().items[0].text == "感叹号", "gan'tan'hao rank 0 is 感叹号");
+    assertTrue(provider.page().items[1].text == "！", "gan'tan'hao rank 1 is ！");
+    provider.reset();
+
+    // 3. wenhao -> 问号/问好 at rank 0, ？ at rank 1
+    assertTrue(provider.append("wenhao"), "wenhao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "wenhao has at least 2 candidates");
+    assertTrue(provider.page().items[0].text == "问好" || provider.page().items[0].text == "问号",
+               "wenhao rank 0 is 问好 or 问号");
+    assertTrue(provider.page().items[1].text == "？", "wenhao rank 1 is ？");
+    provider.reset();
+
+    // 4. juhao -> 句号 at rank 0, 。 at rank 1
+    assertTrue(provider.append("juhao"), "juhao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "juhao has at least 2 candidates");
+    assertTrue(provider.page().items[0].text == "句号", "juhao rank 0 is 句号");
+    assertTrue(provider.page().items[1].text == "。", "juhao rank 1 is 。");
+    provider.reset();
+
+    // 5. douhao -> ， at rank 1
+    assertTrue(provider.append("douhao"), "douhao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "douhao has at least 2 candidates");
+    assertTrue(provider.page().items[1].text == "，", "douhao rank 1 is ，");
+    provider.reset();
+
+    // 6. dunhao -> 、 at rank 1
+    assertTrue(provider.append("dunhao"), "dunhao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "dunhao has at least 2 candidates");
+    assertTrue(provider.page().items[1].text == "、", "dunhao rank 1 is 、");
+    provider.reset();
+
+    // 7. shuminghao -> 书名号 at rank 0, 《》 at rank 1
+    assertTrue(provider.append("shuminghao"), "shuminghao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "shuminghao has at least 2 candidates");
+    assertTrue(provider.page().items[0].text == "书名号", "shuminghao rank 0 is 书名号");
+    assertTrue(provider.page().items[1].text == "《》", "shuminghao rank 1 is 《》");
+    provider.reset();
+
+    // 8. kuohao -> 括号 at rank 0, （） at rank 1
+    assertTrue(provider.append("kuohao"), "kuohao input accepted");
+    assertTrue(provider.page().items.size() >= 2, "kuohao has at least 2 candidates");
+    assertTrue(provider.page().items[0].text == "括号", "kuohao rank 0 is 括号");
+    assertTrue(provider.page().items[1].text == "（）", "kuohao rank 1 is （）");
+    provider.reset();
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 void testRepeatedSelectionAcrossContextsStillPromotes() {
     const auto learningPath = testPath("context-promotion-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
@@ -749,5 +820,6 @@ int main() {
     testExtensionDictionaryIsLoadedAsOfflineKnowledge();
     testRepeatedSelectionAcrossContextsStillPromotes();
     testTypoCorrectionTransposition();
+    testPunctuationAndSymbolMacroCandidates();
     return EXIT_SUCCESS;
 }

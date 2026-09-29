@@ -211,7 +211,8 @@ std::string toChineseStandardNumber(std::string_view numStr) {
     return result;
 }
 
-std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
+std::vector<std::string> generateMacroCandidates(std::string_view rawInput,
+                                                 std::string_view canonicalInput = {}) {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
 #if defined(_WIN32)
@@ -242,19 +243,21 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
         }
     }
 
-    if (rawInput == "rq") {
+    std::string_view lookupKey = canonicalInput.empty() ? rawInput : canonicalInput;
+
+    if (lookupKey == "rq" || rawInput == "rq") {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "%d年%d月%d日", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
         results.push_back(buf);
         std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
         results.push_back(buf);
-    } else if (rawInput == "sj") {
+    } else if (lookupKey == "sj" || rawInput == "sj") {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
         results.push_back(buf);
         std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
         results.push_back(buf);
-    } else if (rawInput == "xq") {
+    } else if (lookupKey == "xq" || rawInput == "xq") {
         static const char *const kWeekdays[] = {
             "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"
         };
@@ -268,6 +271,48 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
     }
 
     static const std::unordered_map<std::string_view, std::vector<const char *>> kMacroMap = {
+        // Chinese punctuation marks & symbols
+        {"gantanhao", {"！", "!", "❗️"}},
+        {"tanhao", {"！", "!", "❗️"}},
+        {"jingtanhao", {"！", "!", "❗️"}},
+        {"wenhao", {"？", "?", "❓"}},
+        {"douhao", {"，", ","}},
+        {"juhao", {"。", "."}},
+        {"dunhao", {"、"}},
+        {"fenhao", {"；", ";"}},
+        {"maohao", {"：", ":"}},
+        {"shenglvehao", {"……", "…"}},
+        {"shengvehao", {"……", "…"}},
+        {"pozhehao", {"——", "—"}},
+        {"pozehao", {"——", "—"}},
+        {"bolangxian", {"～", "~"}},
+        {"bolanghao", {"～", "~"}},
+        {"bozhehao", {"～", "~"}},
+        {"boxian", {"～", "~"}},
+        {"shuminghao", {"《》", "《", "》"}},
+        {"zuoshuminghao", {"《", "〈"}},
+        {"youshuminghao", {"》", "〉"}},
+        {"yinhao", {"“”", "‘’", "“", "”"}},
+        {"shuangyinhao", {"“”", "“", "”"}},
+        {"danyinhao", {"‘’", "‘", "’"}},
+        {"zuoyinhao", {"“", "‘"}},
+        {"youyinhao", {"”", "’"}},
+        {"kuohao", {"（）", "()", "（", "）"}},
+        {"yuankuohao", {"（）", "()"}},
+        {"xiaokuohao", {"（）", "()"}},
+        {"fangkuohao", {"【】", "[]"}},
+        {"zhongkuohao", {"【】", "[]"}},
+        {"dakuohao", {"｛｝", "{}"}},
+        {"huakuohao", {"｛｝", "{}"}},
+        {"zuokuohao", {"（", "(", "【", "["}},
+        {"youkuohao", {"）", ")", "】", "]"}},
+        {"jiangehao", {"·", "•"}},
+        {"xiahuaxian", {"_"}},
+        {"lianjiehao", {"-", "－"}},
+        {"xiegang", {"/"}},
+        {"zhengxiegang", {"/"}},
+        {"fanxiegang", {"\\"}},
+
         // Greek letters
         {"pi", {"π", "Π"}},
         {"alpha", {"α", "Α"}},
@@ -285,43 +330,89 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
         {"rho", {"ρ"}},
 
         // Math & physics & units
-        {"pingfang", {"²"}},
-        {"lifang", {"³"}},
-        {"du", {"°"}},
+        {"jiahao", {"+", "＋"}},
+        {"jianhao", {"-", "－"}},
+        {"chenghao", {"×", "*"}},
+        {"chuhao", {"÷", "/"}},
+        {"denghao", {"=", "＝"}},
+        {"dengyu", {"=", "＝"}},
+        {"budeng", {"≠"}},
+        {"budenghao", {"≠"}},
+        {"yuedeng", {"≈"}},
+        {"yuedenghao", {"≈"}},
+        {"dayu", {">", "＞"}},
+        {"dayuhao", {">", "＞"}},
+        {"xiaoyu", {"<", "＜"}},
+        {"xiaoyuhao", {"<", "＜"}},
+        {"dayudeng", {"≥"}},
+        {"dayudengyu", {"≥", ">="}},
+        {"dayudengyuhao", {"≥", ">="}},
+        {"xiaoyudeng", {"≤"}},
+        {"xiaoyudengyu", {"≤", "<="}},
+        {"xiaoyudengyuhao", {"≤", "<="}},
+        {"zhengfu", {"±"}},
+        {"zhengfuhao", {"±"}},
+        {"kaifang", {"√"}},
+        {"genghao", {"√"}},
+        {"baifenhao", {"%", "％"}},
+        {"baifenbi", {"%", "％"}},
+        {"qianfenhao", {"‰"}},
+        {"qianfenbi", {"‰"}},
+        {"wuxian", {"∞"}},
+        {"wuxianhao", {"∞"}},
+        {"wuqiong", {"∞"}},
+        {"wuqionghao", {"∞"}},
         {"sheshidu", {"℃"}},
         {"huashidu", {"℉"}},
-        {"zhengfu", {"±"}},
-        {"wuxian", {"∞"}},
-        {"yuedeng", {"≈"}},
-        {"budeng", {"≠"}},
-        {"xiaoyudengyu", {"≤"}},
-        {"dayudengyu", {"≥"}},
+        {"du", {"°"}},
+        {"jiaodu", {"°"}},
+        {"pingfang", {"²"}},
+        {"lifang", {"³"}},
         {"suoyi", {"∴"}},
         {"yuanyin", {"∵"}},
-        {"chenghao", {"×"}},
-        {"chuhao", {"÷"}},
-        {"kaifang", {"√"}},
+        {"yinwei", {"∵"}},
 
         // Shapes & arrows
         {"dui", {"√", "✔"}},
+        {"duihao", {"√", "✔"}},
+        {"gou", {"√", "✔"}},
         {"cuo", {"×", "✖"}},
+        {"cuohao", {"×", "✖"}},
+        {"cha", {"×", "✖"}},
         {"jiantou", {"→", "←", "↑", "↓"}},
+        {"xiangyou", {"→"}},
+        {"youjiantou", {"→"}},
+        {"xiangzuo", {"←"}},
+        {"zuojiantou", {"←"}},
+        {"xiangshang", {"↑"}},
+        {"shangjiantou", {"↑"}},
+        {"xiangxia", {"↓"}},
+        {"xiajiantou", {"↓"}},
         {"you", {"→"}},
         {"zuo", {"←"}},
         {"shang", {"↑"}},
         {"xia", {"↓"}},
         {"sanjiao", {"▲", "△"}},
+        {"sanjiaoxing", {"▲", "△"}},
         {"wujiaoxing", {"★", "☆"}},
+        {"xingxing", {"★", "☆"}},
         {"lingxing", {"◆", "◇"}},
         {"yuan", {"●", "○"}},
 
-        // Currencies & stats
+        // Currencies & stats & symbols
         {"rmb", {"¥", "￥"}},
-        {"dollar", {"$"}},
+        {"renminbi", {"¥", "￥"}},
+        {"dollar", {"$", "＄"}},
+        {"meiyuan", {"$", "＄"}},
         {"ouyuan", {"€"}},
         {"bang", {"£"}},
-        {"baifenbi", {"%"}},
-        {"qianfenbi", {"‰"}},
+        {"yingbang", {"£"}},
+        {"riyuan", {"¥", "円"}},
+        {"jinghao", {"#"}},
+        {"aite", {"@"}},
+        {"at", {"@"}},
+        {"yuhao", {"&"}},
+        {"and", {"&"}},
 
         // Legal & Ordinals
         {"jiefu", {"§"}},
@@ -329,7 +420,7 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
         {"banquan", {"©"}},
         {"shangbiao", {"®", "™"}},
         {"xuhao", {"①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"}},
-        {"yuanquan", {"①", "②", "③", "④", "⑤"}},
+        {"yuanquan", {"①", "②", "③", "④", "⑤", "○", "●"}},
 
         // Emojis & Chat
         {"haha", {"😄", "😂"}},
@@ -353,11 +444,12 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput) {
         {"doge", {"🐶"}},
         {"tangping", {"🛌"}},
         {"jiayou", {"💪"}},
-        {"wenhao", {"❓"}},
-        {"tanhao", {"❗️"}},
     };
 
-    auto it = kMacroMap.find(rawInput);
+    auto it = kMacroMap.find(lookupKey);
+    if (it == kMacroMap.end() && !rawInput.empty() && rawInput != lookupKey) {
+        it = kMacroMap.find(rawInput);
+    }
     if (it != kMacroMap.end()) {
         for (const auto *val : it->second) {
             results.emplace_back(val);
@@ -1356,14 +1448,20 @@ private:
         page_.items = mixCandidateItems(fullItems, partialPool,
                                         bestFullSentence, prefixEnds, rawInput);
 
-        const auto macroCandidates = generateMacroCandidates(rawInput);
+        const auto macroCandidates =
+            generateMacroCandidates(rawInput, canonicalInput);
         if (!macroCandidates.empty()) {
             std::size_t insertPos = (page_.items.empty() || rawInput.front() == 'v') ? 0 : 1;
             for (const auto &macroText : macroCandidates) {
+                if (std::any_of(page_.items.begin(), page_.items.end(),
+                                [&](const auto &existing) { return existing.text == macroText; })) {
+                    continue;
+                }
                 core::CandidateItem item;
                 item.text = macroText;
                 item.fullPinyin = std::string(rawInput);
                 item.source = core::CandidateSource::Engine;
+                item.sourceIndex = std::numeric_limits<std::size_t>::max();
                 item.consumedInputBytes = rawInput.size();
                 if (insertPos < page_.items.size()) {
                     page_.items.insert(page_.items.begin() + insertPos, std::move(item));
