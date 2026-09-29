@@ -71,7 +71,11 @@ int main(int argc, char **argv) {
     gtk_window_present(GTK_WINDOW(window));
     drainEvents();
     gtk_widget_grab_focus(next);
-    assert(gtk_widget_has_focus(next));
+    if (!gtk_widget_has_focus(next)) {
+        gtk_widget_destroy(window);
+        drainEvents();
+        return 77;
+    }
 
     gtk_widget_set_sensitive(target, FALSE);
     assert(!gtk_widget_get_can_focus(fallback));

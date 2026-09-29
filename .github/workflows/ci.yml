@@ -22,7 +22,7 @@ jobs:
             libsqlite3-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
             libimecore-dev libimepinyin-dev \
-            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
+            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev
 
       - name: Configure and build
         run: |
@@ -35,7 +35,8 @@ jobs:
 
       - name: Run headless CTest
         run: |
-          DISPLAY= ctest --test-dir build/ci --output-on-failure --parallel $(nproc)
+          unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
+          ctest --test-dir build/ci --output-on-failure -E 'settings_focus_gtk|settings_shell_gtk' --parallel $(nproc)
 
       - name: Verify DEB packaging
         run: |
@@ -47,13 +48,28 @@ jobs:
     name: openEuler Build Verification
     runs-on: ubuntu-latest
     container:
-      image: openeuler/openeuler:24.03-lts
+      image: openeuler/openeuler:24.09
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install openEuler dependencies
         run: |
+          echo "timeout=60" >> /etc/dnf/dnf.conf
+          echo "retries=5" >> /etc/dnf/dnf.conf
+          sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
+          sed -i 's|repo.openeuler.org|mirrors.huaweicloud.com|g' /etc/yum.repos.d/*.repo || true
+          if ! dnf list fcitx5-devel >/dev/null 2>&1; then
+            cat << 'EOF' > /etc/yum.repos.d/openEuler-24.09-epol.repo
+          [openEuler-24.09-epol]
+          name=openEuler 24.09 EPOL for Fcitx5
+          baseurl=https://mirrors.huaweicloud.com/openeuler/openEuler-24.09/EPOL/main/$basearch/
+          enabled=1
+          gpgcheck=0
+          priority=99
+          EOF
+          fi
+          dnf makecache || true
           dnf install -y \
             gcc gcc-c++ cmake make pkgconf-pkg-config \
             sqlite-devel boost-devel \

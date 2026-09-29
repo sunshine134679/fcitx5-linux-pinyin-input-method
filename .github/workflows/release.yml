@@ -54,13 +54,28 @@ jobs:
     name: Build openEuler RPM
     runs-on: ubuntu-latest
     container:
-      image: openeuler/openeuler:24.03-lts
+      image: openeuler/openeuler:24.09
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install openEuler dependencies
         run: |
+          echo "timeout=60" >> /etc/dnf/dnf.conf
+          echo "retries=5" >> /etc/dnf/dnf.conf
+          sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
+          sed -i 's|repo.openeuler.org|mirrors.huaweicloud.com|g' /etc/yum.repos.d/*.repo || true
+          if ! dnf list fcitx5-devel >/dev/null 2>&1; then
+            cat << 'EOF' > /etc/yum.repos.d/openEuler-24.09-epol.repo
+          [openEuler-24.09-epol]
+          name=openEuler 24.09 EPOL for Fcitx5
+          baseurl=https://mirrors.huaweicloud.com/openeuler/openEuler-24.09/EPOL/main/$basearch/
+          enabled=1
+          gpgcheck=0
+          priority=99
+          EOF
+          fi
+          dnf makecache || true
           dnf install -y \
             gcc gcc-c++ cmake make pkgconf-pkg-config \
             sqlite-devel boost-devel \
@@ -72,7 +87,7 @@ jobs:
           ./scripts/package_rpm.sh
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
           RPM_FILE=$(ls dist/*.rpm | head -n 1)
-          TARGET_NAME="modernime-${VERSION}-1.oe2403.x86_64.rpm"
+          TARGET_NAME="modernime-${VERSION}-1.oe24.x86_64.rpm"
           cp -f "$RPM_FILE" "dist/${TARGET_NAME}"
 
       - name: Upload RPM Artifact

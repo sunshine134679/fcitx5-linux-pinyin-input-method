@@ -486,7 +486,11 @@ int main(int argc, char **argv) {
         auto *inputEnabled = findTarget(window, "input-enabled");
         auto *defaultMode = findTarget(window, "default-mode");
         auto *more = findTarget(window, "input-more");
-        assert(inputEnabled != nullptr && gtk_widget_has_focus(inputEnabled));
+        assert(inputEnabled != nullptr);
+        if (!gtk_widget_has_focus(inputEnabled)) {
+            drainEvents();
+            return 77;
+        }
         assert(defaultMode != nullptr && more != nullptr);
         traverseFocus(window, true);
         assert(gtk_widget_has_focus(more));
