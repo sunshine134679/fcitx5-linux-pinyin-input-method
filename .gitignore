@@ -1,6 +1,8 @@
 # CMake and build outputs
 build*/
+dist/
 .worktrees/
+
 out/
 CMakeFiles/
 CMakeCache.txt

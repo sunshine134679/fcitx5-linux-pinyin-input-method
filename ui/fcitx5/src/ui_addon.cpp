@@ -20,7 +20,13 @@
 #include <fcitx-utils/event.h>
 
 #include <gtk/gtk.h>
+#if defined(MODERNIME_USE_AYATANA_APPINDICATOR)
 #include <libayatana-appindicator/app-indicator.h>
+#define MODERNIME_HAVE_APPINDICATOR 1
+#elif defined(MODERNIME_USE_APPINDICATOR)
+#include <libappindicator/app-indicator.h>
+#define MODERNIME_HAVE_APPINDICATOR 1
+#endif
 #include <pango/pango.h>
 
 #include <algorithm>
@@ -37,8 +43,11 @@ struct ModernIMEUserInterface::Impl final {
     fcitx::InputContext *currentInputContext = nullptr;
     GtkWidget *window = nullptr;
     GtkWidget *drawingArea = nullptr;
+#if defined(MODERNIME_HAVE_APPINDICATOR)
     AppIndicator *indicator = nullptr;
     GtkWidget *indicatorMenu = nullptr;
+#endif
+
     CandidateBarLayout layout;
     WindowAnchor windowAnchor;
     RenderStyle style = RenderStyle::reference();
@@ -262,6 +271,7 @@ struct ModernIMEUserInterface::Impl final {
     }
 
     void updateIndicator(fcitx::InputContext *inputContext) {
+#if defined(MODERNIME_HAVE_APPINDICATOR)
         if (indicator == nullptr || instance == nullptr || inputContext == nullptr) {
             return;
         }
@@ -278,6 +288,9 @@ struct ModernIMEUserInterface::Impl final {
             app_indicator_set_title(indicator, title.c_str());
             lastIndicatorTitle = std::move(title);
         }
+#else
+        (void)inputContext;
+#endif
     }
 };
 
@@ -365,6 +378,7 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
         impl_->wayland = backendName != nullptr &&
                          std::string_view(backendName).starts_with("wayland");
     }
+#if defined(MODERNIME_HAVE_APPINDICATOR)
     impl_->indicator = app_indicator_new(
         "modernime-fcitx5", std::string(StatusIndicator::iconName()).c_str(),
         APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
@@ -380,6 +394,7 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     gtk_widget_show_all(impl_->indicatorMenu);
     app_indicator_set_menu(impl_->indicator,
                            GTK_MENU(impl_->indicatorMenu));
+#endif
     impl_->drawingArea = gtk_drawing_area_new();
     gtk_widget_add_events(impl_->drawingArea,
                           GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
@@ -418,12 +433,14 @@ ModernIMEUserInterface::~ModernIMEUserInterface() {
     if (impl_->window != nullptr) {
         gtk_widget_destroy(impl_->window);
     }
+#if defined(MODERNIME_HAVE_APPINDICATOR)
     if (impl_->indicatorMenu != nullptr) {
         gtk_widget_destroy(impl_->indicatorMenu);
     }
     if (impl_->indicator != nullptr) {
         g_object_unref(impl_->indicator);
     }
+#endif
 }
 
 void ModernIMEUserInterface::draw(cairo_t *context) {

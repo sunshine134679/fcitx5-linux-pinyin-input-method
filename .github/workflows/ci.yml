@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-ubuntu:
+    name: Ubuntu Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libsqlite3-dev libboost-dev \
+            libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
+            libimecore-dev libimepinyin-dev \
+            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Debug \
+            -DMODERNIME_BUILD_FCITX5=ON \
+            -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
+            -DMODERNIME_BUILD_SETTINGS=ON \
+            -DMODERNIME_BUILD_TESTS=ON
+          cmake --build build/ci --parallel $(nproc)
+
+      - name: Run headless CTest
+        run: |
+          DISPLAY= ctest --test-dir build/ci --output-on-failure --parallel $(nproc)
+
+      - name: Verify DEB packaging
+        run: |
+          ./scripts/package_deb.sh
+          dpkg-deb -I dist/modernime-*.deb
+          dpkg-deb -c dist/modernime-*.deb
+
+  test-openeuler:
+    name: openEuler Build Verification
+    runs-on: ubuntu-latest
+    container:
+      image: openeuler/openeuler:24.03-lts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install openEuler dependencies
+        run: |
+          dnf install -y \
+            gcc gcc-c++ cmake make pkgconf-pkg-config \
+            sqlite-devel boost-devel \
+            fcitx5-devel libime-devel \
+            gtk3-devel pango-devel cairo-devel rpm-build tar
+
+      - name: Configure and build on openEuler
+        run: |
+          cmake -S . -B build/oe -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DMODERNIME_BUILD_FCITX5=ON \
+            -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
+            -DMODERNIME_BUILD_SETTINGS=ON \
+            -DMODERNIME_BUILD_TESTS=OFF
+          cmake --build build/oe --parallel $(nproc)
+
+      - name: Generate and verify RPM package
+        run: |
+          cd build/oe
+          cpack -G RPM
+          ls -lh *.rpm
+          rpm -qpi *.rpm
+          rpm -qpl *.rpm

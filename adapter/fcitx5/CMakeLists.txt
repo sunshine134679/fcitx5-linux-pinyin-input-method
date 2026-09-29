@@ -30,8 +30,9 @@ target_compile_features(modernime_fcitx5 PRIVATE cxx_std_20)
 modernime_enable_warnings(modernime_fcitx5)
 set_target_properties(modernime_fcitx5 PROPERTIES PREFIX "")
 
-install(TARGETS modernime_fcitx5 LIBRARY DESTINATION lib/fcitx5)
+install(TARGETS modernime_fcitx5 LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/fcitx5)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/addon/modernime.conf
-        DESTINATION share/fcitx5/addon)
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/fcitx5/addon)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/inputmethod/modernime.conf
-        DESTINATION share/fcitx5/inputmethod)
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/fcitx5/inputmethod)
+

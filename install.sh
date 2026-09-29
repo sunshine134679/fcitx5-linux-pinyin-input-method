@@ -35,7 +35,17 @@ environment_file="$environment_dir/90-modernime.conf"
 autostart_dir="$config_home/autostart"
 autostart_file="$autostart_dir/modernime-fcitx5-session.desktop"
 system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
-system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
+if [[ -z "$system_libdir" ]]; then
+    if [[ -d "/usr/lib64/fcitx5" ]]; then
+        system_libdir="/usr/lib64"
+    elif [[ -d "/usr/lib/x86_64-linux-gnu/fcitx5" ]]; then
+        system_libdir="/usr/lib/x86_64-linux-gnu"
+    elif [[ -d "/usr/lib/aarch64-linux-gnu/fcitx5" ]]; then
+        system_libdir="/usr/lib/aarch64-linux-gnu"
+    else
+        system_libdir="/usr/lib"
+    fi
+fi
 system_addon_dir="$system_libdir/fcitx5"
 
 desktop_dir=${MODERNIME_DESKTOP_DIR:-"$HOME/Desktop"}

@@ -2,10 +2,52 @@
 
 ModernIME 是一个面向 Linux 桌面的现代化 Fcitx5 拼音输入法，包含候选栏、用户习惯学习、用户词典、剪贴板入口，以及全新 Bento 仪表盘美学的独立 GTK3 设置客户端。深度对标商业成熟输入法（微信输入法达到 93.5% 体验对标），具备四阶智能拼音容错引擎、国家通用规范汉字分级防护与生僻字专项治理、单音节英文次选消除、微信同款 `v` 模式金融大写与数字转换、六大行业深度专业词库、符号与 Emoji 宏、首键零延迟响应、单键 Shift 极速切换、正反斜线顿号双键兼容、成对翻页键、全量中文标点规范化、高频简拼智能校准、候选外观自定义与即时热重载等特性。
 
-## 快速安装
+## 快速安装与发行包下载
 
-以下命令适用于 Ubuntu/Debian。安装脚本只写入当前用户的前缀，默认是 `~/.local`，不需要用 `sudo cmake --install`。
+ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）与 **源码一键构建安装**，全面适配 **Ubuntu / Debian** 与 **openEuler / RHEL / Fedora** 等多版本主流 Linux 操作系统。
 
+### 方式一：下载预编译安装包（推荐，开箱即用）
+
+进入 [GitHub Releases 页面](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases) 下载适合您系统架构的安装包：
+
+#### 1. Ubuntu / Debian 系统（`.deb` 包）
+```bash
+# 下载对应的 .deb 包（如 modernime_0.1.0_amd64_ubuntu24.04.deb）后执行：
+sudo dpkg -i modernime_*_amd64*.deb
+# 若系统提示缺失运行库依赖，一键自动修复补全：
+sudo apt-get install -f
+```
+
+#### 2. openEuler / RHEL / Fedora 系统（`.rpm` 包）
+```bash
+# 确保已启用 openEuler EPOL 扩展源并安装基础环境：
+sudo dnf install -y fcitx5 libime gtk3
+# 使用 dnf 本地安装（自动解析依赖）：
+sudo dnf localinstall -y modernime-*.x86_64.rpm
+# 或使用 rpm 直接安装：
+sudo rpm -ivh modernime-*.x86_64.rpm
+```
+
+#### 3. 通用 Linux 便携归档（`.tar.gz` 免编译包）
+```bash
+# 解压预编译便携包
+tar -zxvf modernime-*-linux-x86_64.tar.gz
+cd modernime-*-linux-x86_64
+
+# 用户级一键安装至 ~/.local（推荐，无需 root 权限）
+./install.sh
+
+# 或系统级安装至 /usr：
+# sudo ./install.sh /usr
+```
+
+---
+
+### 方式二：从源码一键构建安装
+
+如果您希望从最新源代码自行编译构建，请根据您的发行版准备依赖：
+
+#### Ubuntu / Debian 构建依赖准备
 ```bash
 sudo apt update
 sudo apt install \
@@ -14,14 +56,42 @@ sudo apt install \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
     libimecore-dev libimepinyin-dev \
     libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
+```
 
+#### openEuler / RHEL / Fedora 构建依赖准备
+```bash
+sudo dnf install -y \
+    gcc gcc-c++ cmake make pkgconf-pkg-config \
+    sqlite-devel boost-devel \
+    fcitx5-devel libime-devel \
+    gtk3-devel pango-devel cairo-devel rpm-build
+```
+
+#### 执行一键安装
+```bash
 # 克隆仓库 (推荐 HTTPS)
 git clone https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method.git
 # 或使用 SSH:
 # git clone git@github.com:sunshine134679/fcitx5-linux-pinyin-input-method.git
 cd fcitx5-linux-pinyin-input-method
+
+
+# 执行自动安装脚本（默认安装到 ~/.local）
 ./install.sh
 ```
+
+---
+
+### 开发者一键打包工具
+
+项目在 `scripts/` 目录下提供了标准化的本地打包脚本，可在对应系统环境中直接输出规范安装包至 `dist/` 目录：
+
+- **打包 Debian/Ubuntu `.deb`**：运行 `./scripts/package_deb.sh`
+- **打包 openEuler/Fedora `.rpm`**：运行 `./scripts/package_rpm.sh`
+- **打包通用便携归档 `.tar.gz`**：运行 `./scripts/package_tarball.sh`
+
+同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.0`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
+
 
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
 

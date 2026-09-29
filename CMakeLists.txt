@@ -43,3 +43,6 @@ endif()
 if(MODERNIME_BUILD_SETTINGS)
     add_subdirectory(tools/settings)
 endif()
+
+include(cmake/ModernIMECPack.cmake)
+
