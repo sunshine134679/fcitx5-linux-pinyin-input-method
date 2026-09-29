@@ -16,9 +16,43 @@
 
 #include <algorithm>
 #include <ctime>
+#include <type_traits>
 #include <unordered_map>
 
 namespace {
+
+template <typename T, typename = void>
+struct HasCommonTypo : std::false_type {};
+template <typename T>
+struct HasCommonTypo<T, std::void_t<decltype(T::CommonTypo)>> : std::true_type {};
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+template <typename T, typename = void>
+struct HasNgGn : std::false_type {};
+template <typename T>
+struct HasNgGn<T, std::void_t<decltype(T::NG_GN)>> : std::true_type {};
+#pragma GCC diagnostic pop
+
+inline libime::PinyinFuzzyFlags getDefaultFuzzyFlags() {
+    libime::PinyinFuzzyFlags flags{
+        libime::PinyinFuzzyFlag::Z_ZH,
+        libime::PinyinFuzzyFlag::C_CH,
+        libime::PinyinFuzzyFlag::S_SH,
+        libime::PinyinFuzzyFlag::L_N,
+        libime::PinyinFuzzyFlag::EN_ENG,
+        libime::PinyinFuzzyFlag::IN_ING,
+    };
+    if constexpr (HasCommonTypo<libime::PinyinFuzzyFlag>::value) {
+        flags |= libime::PinyinFuzzyFlag::CommonTypo;
+    } else if constexpr (HasNgGn<libime::PinyinFuzzyFlag>::value) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        flags |= libime::PinyinFuzzyFlag::NG_GN;
+#pragma GCC diagnostic pop
+    }
+    return flags;
+}
 
 std::string toChineseFinancial(std::string_view numStr) {
     if (numStr.empty()) {
@@ -1108,15 +1142,7 @@ PinyinCandidateProvider::createSharedResources(
 
     resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
                                                          std::move(model));
-    resources->ime->setFuzzyFlags(libime::PinyinFuzzyFlags{
-        libime::PinyinFuzzyFlag::CommonTypo,
-        libime::PinyinFuzzyFlag::Z_ZH,
-        libime::PinyinFuzzyFlag::C_CH,
-        libime::PinyinFuzzyFlag::S_SH,
-        libime::PinyinFuzzyFlag::L_N,
-        libime::PinyinFuzzyFlag::EN_ENG,
-        libime::PinyinFuzzyFlag::IN_ING,
-    });
+    resources->ime->setFuzzyFlags(getDefaultFuzzyFlags());
     resources->ime->setNBest(32);
     // 在后台预热线程中一体化加载学习写入器，首键打字时直接读取内存快照，
     // 避免首键触发数十毫秒的 SQLite 磁盘打开与全表反序列化。
