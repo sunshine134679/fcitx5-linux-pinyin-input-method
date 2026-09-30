@@ -4,6 +4,11 @@
 
 #include <cairo/cairo.h>
 
+struct _PangoLayout;
+typedef struct _PangoLayout PangoLayout;
+struct _PangoFontDescription;
+typedef struct _PangoFontDescription PangoFontDescription;
+
 namespace modernime::ui {
 
 class CairoRenderSurface final : public RenderSurface {
@@ -27,8 +32,14 @@ public:
               const TextStyle &style, const Color &color) override;
 
 private:
+    PangoLayout *prepareLayout(std::string_view value,
+                               const TextStyle &style) const;
+
     cairo_t *context_;
     bool ownsContext_ = true;
+    mutable PangoLayout *layout_ = nullptr;
+    mutable PangoFontDescription *fontDesc_ = nullptr;
+    mutable TextStyle lastStyle_{};
 };
 
 } // namespace modernime::ui

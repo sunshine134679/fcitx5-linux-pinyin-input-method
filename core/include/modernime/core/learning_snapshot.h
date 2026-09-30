@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -29,10 +30,15 @@ std::string normalizePinyin(std::string_view pinyin);
 
 class LearningSnapshot final {
 public:
-    LearningSnapshot() = default;
+    LearningSnapshot();
     explicit LearningSnapshot(
         std::vector<LearningEntry> entries,
         std::size_t totalEntryLimit = kMaxLearningEntries);
+    LearningSnapshot(const LearningSnapshot &other);
+    LearningSnapshot &operator=(const LearningSnapshot &other);
+    LearningSnapshot(LearningSnapshot &&other) noexcept = default;
+    LearningSnapshot &operator=(LearningSnapshot &&other) noexcept = default;
+    ~LearningSnapshot() = default;
 
     const LearningEntry *entry(std::string_view phrase,
                                std::string_view pinyin,
@@ -49,7 +55,7 @@ public:
                         std::string_view contextBefore,
                         std::string_view contextAfter) const;
 
-    const std::vector<LearningEntry> &entries() const { return entries_; }
+    const std::vector<LearningEntry> &entries() const;
 
     void recordSelection(std::string_view phrase, std::string_view pinyin,
                          std::string_view contextBefore,
@@ -60,28 +66,20 @@ public:
                            std::string_view pinyin);
 
 private:
-    // 查询索引：key = phrase\x1fpinyin -> entries_ 下标。entries_ 发生
-    // 增删或重建后置脏，下一次查询时重建一次；按键路径上的高频查询
-    // （boostAt/contextBoost/isSuppressed/hasPositiveFrequency）全部走
-    // 索引，避免对最多两万条学习记录做每键多次的全表线性扫描。
-    void ensureIndex() const;
-    const std::vector<std::size_t> *entryIndexes(
-        std::string_view phrase,
-        std::string_view normalizedPinyin) const;
-    void pruneContextVariants();
-    void pruneTotalEntries();
-    LearningEntry *mutableEntry(std::string_view phrase,
-                                std::string_view pinyin,
-                                std::string_view contextBefore,
-                                std::string_view contextAfter);
+    std::vector<const LearningEntry *> collectVariants(
+        std::string_view phrase, std::string_view normalizedPinyin) const;
+    void consolidate();
+    static void pruneContextVariants(std::vector<LearningEntry> &entries);
+    static void pruneTotalEntries(std::vector<LearningEntry> &entries, std::size_t limit);
 
-    std::vector<LearningEntry> entries_;
+    std::shared_ptr<const std::vector<LearningEntry>> baseEntries_;
+    std::shared_ptr<const std::unordered_map<std::string, std::vector<std::size_t>>> baseIndex_;
+    std::unordered_map<std::string, LearningEntry> delta_;
+    std::unordered_map<std::string, std::vector<std::string>> deltaIndex_;
     std::size_t totalEntryLimit_ = kMaxLearningEntries;
-    mutable std::unordered_map<std::string, std::vector<std::size_t>> index_;
-    mutable bool indexDirty_ = true;
-    // 选词热路径不再每次 prune（排序+重建为 O(n log n)），改为计数
-    // 达阈值或条目超限时才执行；不参与持久化，拷贝语义无影响。
     std::uint32_t selectionsSincePrune_ = 0;
+    mutable std::vector<LearningEntry> materializedEntries_;
+    mutable bool materializedDirty_ = true;
 };
 
 } // namespace modernime::core

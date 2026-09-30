@@ -182,6 +182,10 @@ void LearningWriter::run() {
         }
 
         const bool success = persistBatch(events);
+        std::shared_ptr<const LearningSnapshot> freshSnapshot;
+        if (success) {
+            freshSnapshot = store_->snapshot();
+        }
 
         {
             std::lock_guard lock(mutex_);
@@ -195,6 +199,9 @@ void LearningWriter::run() {
                 storageAvailable_ = true;
                 retryExhausted_ = false;
                 automaticRetryCyclesRemaining_ = 1;
+                if (events_.empty() && freshSnapshot != nullptr) {
+                    snapshot_ = std::move(freshSnapshot);
+                }
             }
             processing_ = false;
             drained_.notify_all();

@@ -168,16 +168,34 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
     }
 
     const auto &value = text.text();
-    const auto length = fcitx::utf8::length(value);
-    const auto cursor = std::min<std::size_t>(text.cursor(), length);
-    const auto beforeCount = std::min(maxChars, cursor);
-    const auto afterCount = std::min(maxChars, length - cursor);
-    const auto advance = [](auto iterator, std::size_t count) {
-        return count == 0 ? iterator : fcitx::utf8::nextNChar(iterator, count);
-    };
-    const auto begin = advance(value.cbegin(), cursor - beforeCount);
-    const auto cursorIterator = advance(value.cbegin(), cursor);
-    const auto end = advance(cursorIterator, afterCount);
+    if (value.empty()) {
+        return {};
+    }
+
+    const auto targetCursor = static_cast<std::size_t>(text.cursor());
+
+    std::vector<std::string::const_iterator> ring(maxChars + 1);
+    auto it = value.cbegin();
+    std::size_t charIndex = 0;
+    ring[0] = it;
+
+    while (it != value.cend() && charIndex < targetCursor) {
+        it = fcitx::utf8::nextChar(it);
+        ++charIndex;
+        ring[charIndex % (maxChars + 1)] = it;
+    }
+
+    const auto cursorIterator = it;
+    const auto beforeCount = std::min(maxChars, charIndex);
+    const auto begin = ring[(charIndex - beforeCount) % (maxChars + 1)];
+
+    auto end = cursorIterator;
+    std::size_t afterCount = 0;
+    while (end != value.cend() && afterCount < maxChars) {
+        end = fcitx::utf8::nextChar(end);
+        ++afterCount;
+    }
+
     return {std::string(begin, cursorIterator),
             std::string(cursorIterator, end)};
 }

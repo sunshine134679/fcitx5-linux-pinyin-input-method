@@ -1,6 +1,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/user_dictionary.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -194,6 +195,41 @@ void testManualCandidatesExpandForLongerInput() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testUserDictionaryFastContainsWithLargeCorpus() {
+    modernime::pinyin::UserDictionary dict;
+    const auto makePinyin = [](int index) {
+        std::string p = "ci";
+        int temp = index;
+        do {
+            p.push_back(static_cast<char>('a' + (temp % 26)));
+            temp /= 26;
+        } while (temp > 0);
+        return p;
+    };
+
+    for (int i = 0; i < 5000; ++i) {
+        dict.upsert(makePinyin(i), "短语" + std::to_string(i), 10.0F);
+    }
+    assertTrue(dict.entries().size() == 5000, "all 5000 entries upserted");
+    assertTrue(dict.contains(makePinyin(0), "短语0"), "contains first entry");
+    assertTrue(dict.contains(makePinyin(4999), "短语4999"), "contains last entry");
+    assertTrue(!dict.contains(makePinyin(5000), "短语5000"), "does not contain missing entry");
+
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10000; ++i) {
+        const int index = i % 5000;
+        assertTrue(dict.contains(makePinyin(index), "短语" + std::to_string(index)),
+                   "lookup succeeds");
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+    assertTrue(elapsed.count() < 100, "10000 contains lookups finish in < 100ms");
+
+    assertTrue(dict.remove(makePinyin(0), "短语0"), "remove first entry succeeds");
+    assertTrue(!dict.contains(makePinyin(0), "短语0"), "removed entry is no longer present");
+    assertTrue(dict.entries().size() == 4999, "entries size decremented");
+}
+
 } // namespace
 
 int main() {
@@ -205,5 +241,6 @@ int main() {
     testProfessionalPhraseAppearsFromConfiguredDictionary();
     testManualCandidatesAreCappedForShortInput();
     testManualCandidatesExpandForLongerInput();
+    testUserDictionaryFastContainsWithLargeCorpus();
     return EXIT_SUCCESS;
 }

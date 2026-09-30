@@ -119,9 +119,14 @@ void CandidateBarRenderer::render(RenderSurface &surface,
     for (const auto &candidate : layout.candidates) {
         const Rect textBounds = candidate.selected ? layout.selectedPill
                                                    : candidate.bounds;
-        const auto separator = candidate.displayText.find('.');
-        const auto indexText = candidate.displayText.substr(0, separator + 1);
-        const auto valueText = candidate.displayText.substr(separator + 1);
+        const std::string_view displayText = candidate.displayText;
+        const auto separator = displayText.find('.');
+        const auto indexText = separator != std::string_view::npos
+                                   ? displayText.substr(0, separator + 1)
+                                   : std::string_view{};
+        const auto valueText = separator != std::string_view::npos
+                                   ? displayText.substr(separator + 1)
+                                   : displayText;
         const auto indexMetrics =
             surface.textMetrics(indexText, style.candidateNumberText);
         const auto valueMetrics =

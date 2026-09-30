@@ -843,6 +843,35 @@ void testDeeplyLearnedCandidateReachesTheFront() {
                "a strongly learned tail candidate reaches the front");
 }
 
+void testDeltaOverlayCopyAndQueryPerformance() {
+    std::vector<modernime::core::LearningEntry> base;
+    base.reserve(2000);
+    for (int i = 0; i < 2000; ++i) {
+        base.push_back({"短语" + std::to_string(i), "pinyin" + std::to_string(i),
+                        "前文", "后文", 5, 1000, 0, false});
+    }
+    modernime::core::LearningSnapshot snapshot(std::move(base));
+    assertTrue(snapshot.entries().size() == 2000, "snapshot initialized with 2000 entries");
+    assertTrue(snapshot.hasPositiveFrequency("短语0", "pinyin0"), "initial query succeeds");
+
+    const auto start = std::chrono::steady_clock::now();
+    auto current = snapshot;
+    for (int i = 0; i < 1000; ++i) {
+        auto next = current;
+        next.recordSelection("短语" + std::to_string(i % 2000),
+                             "pinyin" + std::to_string(i % 2000),
+                             "前文", "后文", 2000 + i);
+        current = std::move(next);
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+    assertTrue(elapsed.count() < 1000, "1000 snapshot copy+mutations finish rapidly in Debug");
+
+    const auto *entry = current.entry("短语0", "pinyin0", "前文", "后文");
+    assertTrue(entry != nullptr, "updated entry exists");
+    assertTrue(entry->frequency > 5, "updated entry frequency reflects selections");
+}
+
 } // namespace
 
 int main() {
@@ -878,5 +907,6 @@ int main() {
     testHighFrequencyBoostExceedsTheOldCeiling();
     testHighFrequencyDeepCandidateReachesTheTop();
     testDeeplyLearnedCandidateReachesTheFront();
+    testDeltaOverlayCopyAndQueryPerformance();
     return EXIT_SUCCESS;
 }

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <unordered_map>
 
 namespace modernime::core {
 
@@ -52,17 +53,20 @@ CandidateRanker::rank(std::string_view userInput,
         for (const auto &candidate : candidates) {
             best = std::min(best, baseCost(candidate));
         }
+        std::unordered_map<std::string_view, std::size_t> previousIndex;
+        previousIndex.reserve(previousOrder.size());
+        for (std::size_t i = 0; i < previousOrder.size(); ++i) {
+            previousIndex.emplace(previousOrder[i], i);
+        }
         for (auto &candidate : candidates) {
-            const auto previous = std::find(
-                previousOrder.begin(), previousOrder.end(),
+            const auto it = previousIndex.find(
                 candidateOrderKey(candidate.text, candidate.full_pinyin));
-            if (previous == previousOrder.end()) {
+            if (it == previousIndex.end()) {
                 continue;
             }
             const auto distance = baseCost(candidate) - best;
             if (distance > 0.0 && distance <= 0.5) {
-                const auto position = static_cast<std::size_t>(
-                    std::distance(previousOrder.begin(), previous));
+                const auto position = it->second;
                 candidate.stability_bonus =
                     std::min(0.40, 0.40 / static_cast<double>(position + 1));
             }

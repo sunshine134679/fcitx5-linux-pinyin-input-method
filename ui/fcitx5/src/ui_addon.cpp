@@ -1,5 +1,6 @@
 #include "modernime/ui/ui_addon.h"
 #include "modernime/core/settings.h"
+#include <chrono>
 #include <filesystem>
 
 #include "modernime/fcitx5/fcitx_engine.h"
@@ -73,11 +74,18 @@ struct ModernIMEUserInterface::Impl final {
     int lastWindowWidth = -1;
     int lastWindowHeight = -1;
 
+    std::chrono::steady_clock::time_point lastSettingsCheckTime{};
     std::filesystem::file_time_type lastSettingsMtime{};
     int currentFontSize = 20;
     int currentPageSize = 9;
 
-    void refreshSettingsIfNeeded() {
+    void refreshSettingsIfNeeded(bool force = false) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!force && lastSettingsCheckTime.time_since_epoch().count() > 0 &&
+            (now - lastSettingsCheckTime) < std::chrono::milliseconds(1500)) {
+            return;
+        }
+        lastSettingsCheckTime = now;
         const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
         const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
         const auto *home = std::getenv("HOME");

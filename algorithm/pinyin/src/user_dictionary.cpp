@@ -182,6 +182,7 @@ UserDictionary UserDictionary::loadText(
             continue;
         }
     }
+    dictionary.entryIndex_ = std::move(positions);
     return dictionary;
 }
 
@@ -195,42 +196,36 @@ bool UserDictionary::upsert(std::string_view pinyin, std::string_view phrase,
     if (normalized.empty()) {
         return false;
     }
-    const auto iterator = std::find_if(
-        entries_.begin(), entries_.end(), [&normalized, phrase](const auto &entry) {
-            return entry.pinyin == normalized && entry.phrase == phrase;
-        });
-    if (iterator == entries_.end()) {
+    const auto key = keyFor(normalized, phrase);
+    const auto iterator = entryIndex_.find(key);
+    if (iterator == entryIndex_.end()) {
+        entryIndex_.emplace(key, entries_.size());
         entries_.push_back({normalized, std::string(phrase), weight});
     } else {
-        iterator->pinyin = normalized;
-        iterator->phrase = phrase;
-        iterator->weight = weight;
+        entries_[iterator->second].weight = weight;
     }
     return true;
 }
 
 bool UserDictionary::contains(std::string_view normalizedPinyin,
                               std::string_view phrase) const {
-    const auto normalized = modernime::core::normalizePinyin(normalizedPinyin);
-    for (const auto &entry : entries_) {
-        if (entry.pinyin == normalized && entry.phrase == phrase) {
-            return true;
-        }
-    }
-    return false;
+    const auto key = keyFor(normalizedPinyin, phrase);
+    return entryIndex_.find(key) != entryIndex_.end();
 }
 
 bool UserDictionary::remove(std::string_view normalizedPinyin,
                             std::string_view phrase) {
-    const auto normalized = modernime::core::normalizePinyin(normalizedPinyin);
-    const auto iterator = std::find_if(
-        entries_.begin(), entries_.end(), [&normalized, phrase](const auto &entry) {
-            return entry.pinyin == normalized && entry.phrase == phrase;
-        });
-    if (iterator == entries_.end()) {
+    const auto key = keyFor(normalizedPinyin, phrase);
+    const auto iterator = entryIndex_.find(key);
+    if (iterator == entryIndex_.end()) {
         return false;
     }
-    entries_.erase(iterator);
+    const auto index = iterator->second;
+    entryIndex_.erase(iterator);
+    entries_.erase(entries_.begin() + index);
+    for (std::size_t i = index; i < entries_.size(); ++i) {
+        entryIndex_[keyFor(entries_[i].pinyin, entries_[i].phrase)] = i;
+    }
     return true;
 }
 

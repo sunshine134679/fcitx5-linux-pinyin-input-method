@@ -1399,6 +1399,13 @@ private:
         const auto segmentedInput =
             automaticallySegmentedPreedit(rawInput, result);
         const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);
+        std::vector<std::pair<std::size_t, std::string>> canonicalPrefixes;
+        canonicalPrefixes.reserve(prefixEnds.size());
+        for (const auto prefixEnd : prefixEnds) {
+            canonicalPrefixes.emplace_back(
+                prefixEnd,
+                core::PinyinMatchPolicy::canonical(prefixInput(rawInput, prefixEnd)));
+        }
         page_.items.reserve(result.order.size() + 4);
         // canonical(userInput) 对全部候选相同，循环外算一次传入，
         // 避免每个候选重复做一次规范化字符串分配。
@@ -1423,7 +1430,7 @@ private:
             const auto &candidate = result.scored[sourceIndex];
             const bool isManual = userDictionary().contains(
                 candidate.full_pinyin, candidate.text);
-            const auto key = candidateKey(candidate.full_pinyin, candidate.text);
+            auto key = candidateKey(candidate.full_pinyin, candidate.text);
             if (!isManual && suppressedLearned_.contains(key)) {
                 continue;
             }
@@ -1433,9 +1440,7 @@ private:
             if (isManual && manualCount >= manualLimit) {
                 continue;
             }
-            if (!seen.emplace(candidateKey(candidate.full_pinyin,
-                                           candidate.text))
-                     .second) {
+            if (!seen.insert(std::move(key)).second) {
                 continue;
             }
             core::CandidateItem item;
@@ -1454,9 +1459,8 @@ private:
                     rawInput, candidate.full_pinyin) == -1) {
                 const auto candidatePinyin =
                     core::PinyinMatchPolicy::canonical(candidate.full_pinyin);
-                for (const auto prefixEnd : prefixEnds) {
-                    if (core::PinyinMatchPolicy::canonical(
-                            prefixInput(rawInput, prefixEnd)) == candidatePinyin) {
+                for (const auto &[prefixEnd, canonicalPrefix] : canonicalPrefixes) {
+                    if (canonicalPrefix == candidatePinyin) {
                         item.consumedInputBytes = prefixEnd;
                         break;
                     }

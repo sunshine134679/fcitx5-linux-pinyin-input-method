@@ -3,6 +3,7 @@
 #include <fcitx/surroundingtext.h>
 #include <fcitx-utils/keysymgen.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string_view>
@@ -37,6 +38,27 @@ int main() {
         modernime::fcitx5::extractSurroundingContext(surrounding, 32);
     assertTrue(invalidContext.first.empty() && invalidContext.second.empty(),
                "invalid surrounding context is ignored");
+
+    {
+        std::string longText;
+        longText.reserve(300000);
+        for (int i = 0; i < 25000; ++i) {
+            longText.append("测试文本");
+        }
+        fcitx::SurroundingText largeSurrounding;
+        largeSurrounding.setText(longText, 50000, 50000);
+
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 100; ++i) {
+            const auto largeContext =
+                modernime::fcitx5::extractSurroundingContext(largeSurrounding, 8);
+            assertTrue(!largeContext.first.empty() && !largeContext.second.empty(),
+                       "surrounding context extracted from large document");
+        }
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start);
+        assertTrue(elapsed.count() < 500, "100 extractions on 100k char doc finish rapidly");
+    }
 
     const auto ctrl = fcitx::KeyStates(fcitx::KeyState::Ctrl);
     const auto shift = fcitx::KeyStates(fcitx::KeyState::Shift);

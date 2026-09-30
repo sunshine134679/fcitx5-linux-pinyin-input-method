@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace libime {
@@ -37,6 +38,7 @@ public:
 
 private:
     std::vector<UserDictionaryEntry> entries_;
+    std::unordered_map<std::string, std::size_t> entryIndex_;
 };
 
 } // namespace modernime::pinyin

@@ -44,6 +44,12 @@ CairoRenderSurface::CairoRenderSurface(cairo_t *context)
     : context_(context), ownsContext_(false) {}
 
 CairoRenderSurface::~CairoRenderSurface() {
+    if (fontDesc_ != nullptr) {
+        pango_font_description_free(fontDesc_);
+    }
+    if (layout_ != nullptr) {
+        g_object_unref(layout_);
+    }
     if (ownsContext_) {
         cairo_destroy(context_);
     }
@@ -79,63 +85,56 @@ void CairoRenderSurface::shadowRoundedRect(const Rect &bounds, double radius,
     }
 }
 
+PangoLayout *CairoRenderSurface::prepareLayout(std::string_view value,
+                                              const TextStyle &style) const {
+    if (layout_ == nullptr) {
+        layout_ = pango_cairo_create_layout(context_);
+    }
+    if (fontDesc_ == nullptr || lastStyle_.family != style.family ||
+        lastStyle_.size != style.size || lastStyle_.weight != style.weight) {
+        if (fontDesc_ != nullptr) {
+            pango_font_description_free(fontDesc_);
+        }
+        fontDesc_ = pango_font_description_new();
+        pango_font_description_set_family(fontDesc_, style.family.c_str());
+        pango_font_description_set_absolute_size(fontDesc_, style.size * PANGO_SCALE);
+        pango_font_description_set_weight(fontDesc_, pangoWeight(style.weight));
+        pango_layout_set_font_description(layout_, fontDesc_);
+        lastStyle_ = style;
+    }
+    pango_layout_set_text(layout_, value.data(), static_cast<int>(value.size()));
+    return layout_;
+}
+
 double CairoRenderSurface::textWidth(std::string_view value,
                                      const TextStyle &style) const {
-    PangoLayout *layout = pango_cairo_create_layout(context_);
-    PangoFontDescription *font = pango_font_description_new();
-    pango_font_description_set_family(font, style.family.c_str());
-    pango_font_description_set_absolute_size(font, style.size * PANGO_SCALE);
-    pango_font_description_set_weight(font, pangoWeight(style.weight));
-    pango_layout_set_font_description(layout, font);
-    pango_layout_set_text(layout, value.data(), static_cast<int>(value.size()));
-
+    PangoLayout *layout = prepareLayout(value, style);
     int width = 0;
     int height = 0;
     pango_layout_get_pixel_size(layout, &width, &height);
     (void)height;
-    pango_font_description_free(font);
-    g_object_unref(layout);
     return static_cast<double>(width);
 }
 
 TextMetrics CairoRenderSurface::textMetrics(std::string_view value,
                                             const TextStyle &style) const {
-    PangoLayout *layout = pango_cairo_create_layout(context_);
-    PangoFontDescription *font = pango_font_description_new();
-    pango_font_description_set_family(font, style.family.c_str());
-    pango_font_description_set_absolute_size(font, style.size * PANGO_SCALE);
-    pango_font_description_set_weight(font, pangoWeight(style.weight));
-    pango_layout_set_font_description(layout, font);
-    pango_layout_set_text(layout, value.data(), static_cast<int>(value.size()));
-
+    PangoLayout *layout = prepareLayout(value, style);
     int width = 0;
     int height = 0;
     pango_layout_get_pixel_size(layout, &width, &height);
     const double baseline =
         static_cast<double>(pango_layout_get_baseline(layout)) / PANGO_SCALE;
-    pango_font_description_free(font);
-    g_object_unref(layout);
     return {static_cast<double>(width), static_cast<double>(height), baseline};
 }
 
 void CairoRenderSurface::text(std::string_view value, double x, double baseline,
                               const TextStyle &style, const Color &color) {
-    PangoLayout *layout = pango_cairo_create_layout(context_);
-    PangoFontDescription *font = pango_font_description_new();
-    pango_font_description_set_family(font, style.family.c_str());
-    pango_font_description_set_absolute_size(font, style.size * PANGO_SCALE);
-    pango_font_description_set_weight(font, pangoWeight(style.weight));
-    pango_layout_set_font_description(layout, font);
-    pango_layout_set_text(layout, value.data(), static_cast<int>(value.size()));
-
+    PangoLayout *layout = prepareLayout(value, style);
     setSource(context_, color);
     const double layoutBaseline =
         static_cast<double>(pango_layout_get_baseline(layout)) / PANGO_SCALE;
     cairo_move_to(context_, x, baseline - layoutBaseline);
     pango_cairo_show_layout(context_, layout);
-
-    pango_font_description_free(font);
-    g_object_unref(layout);
 }
 
 } // namespace modernime::ui
