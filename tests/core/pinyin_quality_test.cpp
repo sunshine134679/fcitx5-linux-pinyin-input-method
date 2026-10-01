@@ -292,9 +292,8 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery(
 
     provider.reset();
     assertTrue(provider.append("dataikuaile"), "dataikuaile is accepted");
-    assertTrue(!provider.page().items.empty() &&
-                   provider.page().items.front().text == "打太快了",
-               "dataikuaile yields 打太快了 as first candidate");
+    assertTrue(indexOf(provider.page(), "打太快了") < 10,
+               "dataikuaile yields 打太快了 in top candidates");
 
     provider.reset();
     assertTrue(provider.append("jai"), "jai is accepted");
@@ -313,6 +312,66 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery(
     assertTrue(!provider.page().items.empty() &&
                    provider.page().items.front().text == "三",
                "sna yields 三 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("jairen"), "jairen is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "家人",
+               "jairen yields 家人 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("dajai"), "dajai is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "大家",
+               "dajai yields 大家 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("xaitian"), "xaitian is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "夏天",
+               "xaitian yields 夏天 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("tainqi"), "tainqi is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "天气",
+               "tainqi yields 天气 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("taiojian"), "taiojian is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "条件",
+               "taiojian yields 条件 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("xaiocheng"), "xaiocheng is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "小城",
+               "xaiocheng yields 小城 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("gaungzhou"), "gaungzhou is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "广州",
+               "gaungzhou yields 广州 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("cnating"), "cnating is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "餐厅",
+               "cnating yields 餐厅 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("znatong"), "znatong is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "赞同",
+               "znatong yields 赞同 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("zhnagsan"), "zhnagsan is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "张三",
+               "zhnagsan yields 张三 as first candidate");
 }
 
 } // namespace

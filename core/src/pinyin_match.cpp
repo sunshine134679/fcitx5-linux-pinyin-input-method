@@ -273,7 +273,15 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
          input.starts_with("xain") || input.starts_with("qain") ||
          input.starts_with("tain") || input.starts_with("dain") ||
          input.starts_with("lain") || input.starts_with("gaun") ||
-         input.starts_with("kaun") || input.starts_with("haun"));
+         input.starts_with("kaun") || input.starts_with("haun") ||
+         input.starts_with("taio") || input.starts_with("xaio") ||
+         input.starts_with("jaio") || input.starts_with("daio") ||
+         input.starts_with("qaio") || input.starts_with("laio") ||
+         input.starts_with("naio") || input.starts_with("baio") ||
+         input.starts_with("paio") || input.starts_with("maio") ||
+         input.starts_with("gaung") || input.starts_with("haung") ||
+         input.starts_with("kaung") || input.starts_with("zhaung") ||
+         input.starts_with("shaung") || input.starts_with("chaung"));
     if (!isPotentialTypo && input.size() >= 5) {
         const auto englishPredictions = EnglishDictionary::predictWords(input, 1);
         if (!englishPredictions.empty() && englishPredictions.front() != input) {
@@ -457,7 +465,55 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
         }
     }
 
-    // 3.6 gn -> ng, mg -> ng
+    // 3.6 复合三元音双手倒序: *aio -> *iao (如 taio->tiao, xaio->xiao, jaio->jiao, daio->diao)
+    for (const auto &pair : {
+             std::pair<std::string_view, std::string_view>{"taio", "tiao"},
+             std::pair<std::string_view, std::string_view>{"daio", "diao"},
+             std::pair<std::string_view, std::string_view>{"xaio", "xiao"},
+             std::pair<std::string_view, std::string_view>{"jaio", "jiao"},
+             std::pair<std::string_view, std::string_view>{"qaio", "qiao"},
+             std::pair<std::string_view, std::string_view>{"laio", "liao"},
+             std::pair<std::string_view, std::string_view>{"naio", "niao"},
+             std::pair<std::string_view, std::string_view>{"baio", "biao"},
+             std::pair<std::string_view, std::string_view>{"paio", "piao"},
+             std::pair<std::string_view, std::string_view>{"maio", "miao"}
+         }) {
+        pos = 0;
+        while ((pos = s.find(pair.first, pos)) != std::string::npos) {
+            const auto len = pair.first.size();
+            const bool atEndOrConsonant = (pos + len == s.size() || s[pos + len] == '\'' || isConsonant(s[pos + len]));
+            if (atEndOrConsonant) {
+                s.replace(pos, len, pair.second);
+                pos += len;
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // 3.7 圆唇后鼻音双手倒序: *aung -> *uang (如 gaung->guang, haung->huang, kaung->kuang)
+    for (const auto &pair : {
+             std::pair<std::string_view, std::string_view>{"zhaung", "zhuang"},
+             std::pair<std::string_view, std::string_view>{"chaung", "chuang"},
+             std::pair<std::string_view, std::string_view>{"shaung", "shuang"},
+             std::pair<std::string_view, std::string_view>{"gaung", "guang"},
+             std::pair<std::string_view, std::string_view>{"kaung", "kuang"},
+             std::pair<std::string_view, std::string_view>{"haung", "huang"}
+         }) {
+        pos = 0;
+        while ((pos = s.find(pair.first, pos)) != std::string::npos) {
+            const auto len = pair.first.size();
+            const bool atEndOrConsonant = (pos + len == s.size() || s[pos + len] == '\'' || isConsonant(s[pos + len]));
+            if (atEndOrConsonant) {
+                s.replace(pos, len, pair.second);
+                pos += len;
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // 3.8 gn -> ng, mg -> ng
     for (std::size_t i = 1; i + 1 < s.size(); ++i) {
         if ((s[i] == 'g' || s[i] == 'm') && s[i + 1] == 'n' && isVowel(s[i - 1])) {
             s[i] = 'n';

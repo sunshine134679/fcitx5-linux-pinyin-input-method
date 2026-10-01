@@ -12,7 +12,7 @@ ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）�
 
 #### 1. Ubuntu / Debian 系统（`.deb` 包）
 ```bash
-# 下载对应的 .deb 包（如 modernime_0.1.2_amd64_ubuntu24.04.deb）后执行：
+# 下载对应的 .deb 包（如 modernime_0.1.3_amd64_ubuntu24.04.deb）后执行：
 sudo dpkg -i modernime_*_amd64*.deb
 # 若系统提示缺失运行库依赖，一键自动修复补全：
 sudo apt-get install -f
@@ -92,7 +92,7 @@ cd fcitx5-linux-pinyin-input-method
 - **打包 openEuler/Fedora `.rpm`**：运行 `./scripts/package_rpm.sh`
 - **打包通用便携归档 `.tar.gz`**：运行 `./scripts/package_tarball.sh`
 
-同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.2`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
+同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.3`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
 
 
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
