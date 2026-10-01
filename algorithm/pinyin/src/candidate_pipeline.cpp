@@ -172,6 +172,15 @@ CandidatePipelineResult buildCandidatePipeline(
             }
             const auto key = core::candidateOrderKey(text, fullPinyin);
             if (seenKeys.contains(key)) {
+                for (auto &existing : result.scored) {
+                    if (existing.text == text && existing.full_pinyin == fullPinyin) {
+                        if (index < existing.source_index) {
+                            existing.source_index = index;
+                            existing.decoder_score = typoCandidates[index].score();
+                        }
+                        break;
+                    }
+                }
                 continue;
             }
             seenKeys.insert(key);

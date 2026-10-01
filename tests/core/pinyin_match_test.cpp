@@ -168,5 +168,29 @@ int main() {
     assertTrue(!PinyinMatchPolicy::isFullTypoMatch("garag", "ga'rang"),
                "English prefix garag is not considered a typo for ga'rang");
 
+    // Fast typing two-hand and medial vowel transpositions
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("snaqian") == "sanqian",
+               "snaqian transposes to sanqian");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("jai") == "jia",
+               "jai transposes to jia");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("xai") == "xia",
+               "xai transposes to xia");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("qai") == "qia",
+               "qai transposes to qia");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("jain") == "jian",
+               "jain transposes to jian");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("gaun") == "guan",
+               "gaun transposes to guan");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("snaqian", "san'qian"),
+               "snaqian is a full typo match for san'qian");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("jai", "jia"),
+               "jai is a full typo match for jia");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("jaiting", "jia'ting"),
+               "jaiting is a full typo match for jia'ting");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("jai", "jia") == 3,
+               "jai matches jia as typo syllable");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("sna", "san") == 3,
+               "sna matches san as typo syllable");
+
     return EXIT_SUCCESS;
 }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ModernIME VERSION 0.1.1 LANGUAGES CXX)
+project(ModernIME VERSION 0.1.2 LANGUAGES CXX)
 
 option(MODERNIME_BUILD_FCITX5 "Build the Fcitx5 addon targets" OFF)
 option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" OFF)

@@ -1511,8 +1511,10 @@ private:
             page_.items.begin(), page_.items.end(),
             [&rawInput](const auto &item) {
                 return item.source != core::CandidateSource::Raw &&
-                       core::PinyinMatchPolicy::exactInputMatch(
-                           rawInput, item.fullPinyin);
+                       (core::PinyinMatchPolicy::exactInputMatch(
+                            rawInput, item.fullPinyin) ||
+                        core::PinyinMatchPolicy::isFullTypoMatch(
+                            rawInput, item.fullPinyin));
             });
 
         const bool hasTrustedShortAbbreviation =
@@ -1636,10 +1638,12 @@ private:
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
             page_.items.insert(page_.items.begin(), std::move(predictedCandidate));
             page_.preedit = std::string(rawInput);
-        } else if (!hasTrustedShortAbbreviation &&
-                   ((isEnglish && !hasExactFullPinyinMatch) ||
-                    (!hasPinyinCoverage && rawInput.size() >= 3))) {
+        } else if (!hasTrustedShortAbbreviation && isEnglish &&
+                   !hasExactFullPinyinMatch) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
+            page_.preedit = std::string(rawInput);
+        } else if (page_.items.empty()) {
+            page_.items.push_back(std::move(rawCandidate));
             page_.preedit = std::string(rawInput);
         } else if (isEnglish && hasExactFullPinyinMatch) {
             if (preferEnglishOverChinese) {

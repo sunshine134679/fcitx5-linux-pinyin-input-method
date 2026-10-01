@@ -264,10 +264,21 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
         return "xi'an";
     }
 
-    // 保护合法英文前缀（如 garag -> garage, appl -> apple），避免被拼音容错改写为伪拼音
-    const auto englishPredictions = EnglishDictionary::predictWords(input, 1);
-    if (!englishPredictions.empty() && englishPredictions.front() != input) {
-        return std::string(input);
+    // 仅对较长且非明显拼音换位的明确长英文前缀（如 garag -> garage, appl -> apple）保护，
+    // 避免短拼音换位（如 jai -> jia, xai -> xia, sna -> san）被生僻英文（如 jail）截断。
+    const bool isPotentialTypo =
+        (input == "jai" || input == "xai" || input == "qai" ||
+         input.starts_with("sna") || input.starts_with("zna") ||
+         input.starts_with("cna") || input.starts_with("jain") ||
+         input.starts_with("xain") || input.starts_with("qain") ||
+         input.starts_with("tain") || input.starts_with("dain") ||
+         input.starts_with("lain") || input.starts_with("gaun") ||
+         input.starts_with("kaun") || input.starts_with("haun"));
+    if (!isPotentialTypo && input.size() >= 5) {
+        const auto englishPredictions = EnglishDictionary::predictWords(input, 1);
+        if (!englishPredictions.empty() && englishPredictions.front() != input) {
+            return std::string(input);
+        }
     }
 
     // 保护合法英文单词（尤其是含连续重元音的英文如 good, book, deep 等），避免被抗抖误去重
@@ -338,7 +349,115 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
     }
 
     // 3. 倒序换位修复 (Transpositions)
-    // 3.1 gn -> ng, mg -> ng
+    // 3.1 双手错位: sna -> san, zna -> zan, cna -> can (打字过快右手 n 先于左手 a 落键)
+    for (const auto &pair : {std::pair{"sna", "san"}, std::pair{"zna", "zan"}, std::pair{"cna", "can"}}) {
+        pos = 0;
+        while ((pos = s.find(pair.first, pos)) != std::string::npos) {
+            const bool atEndOrConsonant = (pos + 3 == s.size() || s[pos + 3] == '\'' || isConsonant(s[pos + 3]));
+            if (atEndOrConsonant) {
+                s.replace(pos, 3, pair.second);
+                pos += 3;
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // 3.2 翘舌音内部错位: zhnag->zhang, chnag->chang, shnag->shang 等
+    for (const auto &pair : {
+             std::pair<std::string_view, std::string_view>{"zhnag", "zhang"},
+             std::pair<std::string_view, std::string_view>{"chnag", "chang"},
+             std::pair<std::string_view, std::string_view>{"shnag", "shang"},
+             std::pair<std::string_view, std::string_view>{"zhneg", "zheng"},
+             std::pair<std::string_view, std::string_view>{"chneg", "cheng"},
+             std::pair<std::string_view, std::string_view>{"shneg", "sheng"},
+             std::pair<std::string_view, std::string_view>{"zhna", "zhan"},
+             std::pair<std::string_view, std::string_view>{"chna", "chan"},
+             std::pair<std::string_view, std::string_view>{"shna", "shan"}
+         }) {
+        pos = 0;
+        while ((pos = s.find(pair.first, pos)) != std::string::npos) {
+            const auto len = pair.first.size();
+            const bool atEndOrConsonant = (pos + len == s.size() || s[pos + len] == '\'' || isConsonant(s[pos + len]));
+            if (atEndOrConsonant) {
+                s.replace(pos, len, pair.second);
+                pos += len;
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // 3.3 介音主元音反转: jai -> jia, xai -> xia, qai -> qia
+    for (const auto &pair : {std::pair<std::string_view, std::string_view>{"jai", "jia"},
+                             std::pair<std::string_view, std::string_view>{"xai", "xia"},
+                             std::pair<std::string_view, std::string_view>{"qai", "qia"}}) {
+        pos = 0;
+        while ((pos = s.find(pair.first, pos)) != std::string::npos) {
+            const bool atEndOrConsonant = (pos + 3 == s.size() || s[pos + 3] == '\'' || isConsonant(s[pos + 3]));
+            if (atEndOrConsonant) {
+                s.replace(pos, 3, pair.second);
+                pos += 3;
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // 3.4 鼻韵母双手倒序: *ain -> *ian (如 jain->jian, tain->tian, lain->lian, dain->dian)
+    for (const auto &pair : {
+             std::pair<std::string_view, std::string_view>{"jain", "jian"},
+             std::pair<std::string_view, std::string_view>{"xain", "xian"},
+             std::pair<std::string_view, std::string_view>{"qain", "qian"},
+             std::pair<std::string_view, std::string_view>{"lain", "lian"},
+             std::pair<std::string_view, std::string_view>{"tain", "tian"},
+             std::pair<std::string_view, std::string_view>{"dain", "dian"},
+             std::pair<std::string_view, std::string_view>{"bain", "bian"},
+             std::pair<std::string_view, std::string_view>{"pain", "pian"},
+             std::pair<std::string_view, std::string_view>{"main", "mian"},
+             std::pair<std::string_view, std::string_view>{"nain", "nian"}
+         }) {
+        pos = 0;
+        while ((pos = s.find(pair.first, pos)) != std::string::npos) {
+            const bool atEndOrConsonant = (pos + 4 == s.size() || s[pos + 4] == '\'' || isConsonant(s[pos + 4]));
+            if (atEndOrConsonant) {
+                s.replace(pos, 4, pair.second);
+                pos += 4;
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // 3.5 圆唇介音双手倒序: *aun -> *uan (如 gaun->guan, kaun->kuan, haun->huan, zhaun->zhuan)
+    for (const auto &pair : {
+             std::pair<std::string_view, std::string_view>{"zhaun", "zhuan"},
+             std::pair<std::string_view, std::string_view>{"chaun", "chuan"},
+             std::pair<std::string_view, std::string_view>{"shaun", "shuan"},
+             std::pair<std::string_view, std::string_view>{"gaun", "guan"},
+             std::pair<std::string_view, std::string_view>{"kaun", "kuan"},
+             std::pair<std::string_view, std::string_view>{"haun", "huan"},
+             std::pair<std::string_view, std::string_view>{"daun", "duan"},
+             std::pair<std::string_view, std::string_view>{"taun", "tuan"},
+             std::pair<std::string_view, std::string_view>{"laun", "luan"},
+             std::pair<std::string_view, std::string_view>{"caun", "cuan"},
+             std::pair<std::string_view, std::string_view>{"saun", "suan"},
+             std::pair<std::string_view, std::string_view>{"zaun", "zuan"}
+         }) {
+        pos = 0;
+        while ((pos = s.find(pair.first, pos)) != std::string::npos) {
+            const auto len = pair.first.size();
+            const bool atEndOrConsonant = (pos + len == s.size() || s[pos + len] == '\'' || isConsonant(s[pos + len]));
+            if (atEndOrConsonant) {
+                s.replace(pos, len, pair.second);
+                pos += len;
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // 3.6 gn -> ng, mg -> ng
     for (std::size_t i = 1; i + 1 < s.size(); ++i) {
         if ((s[i] == 'g' || s[i] == 'm') && s[i + 1] == 'n' && isVowel(s[i - 1])) {
             s[i] = 'n';
@@ -349,7 +468,7 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
         }
     }
 
-    // 3.2 agn -> ang, ogn -> ong, ugn -> ung, egn -> eng, ign -> ing
+    // 3.7 agn -> ang, ogn -> ong, ugn -> ung, egn -> eng, ign -> ing
     for (const auto &p : {std::pair{"agn", "ang"}, std::pair{"ogn", "ong"},
                           std::pair{"ugn", "ung"}, std::pair{"egn", "eng"},
                           std::pair{"ign", "ing"}}) {
@@ -360,14 +479,14 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
         }
     }
 
-    // 3.3 fna -> fan
+    // 3.8 fna -> fan
     pos = 0;
     while ((pos = s.find("fna", pos)) != std::string::npos) {
         s.replace(pos, 3, "fan");
         pos += 3;
     }
 
-    // 3.4 口语及击键漏字规范: weishime -> weishenme
+    // 3.9 口语及击键漏字规范: weishime -> weishenme
     pos = 0;
     while ((pos = s.find("weishime", pos)) != std::string::npos) {
         s.replace(pos, 8, "weishenme");
@@ -637,6 +756,54 @@ std::size_t PinyinMatchPolicy::matchTypoSyllable(std::string_view input,
             }
         }
     }
+
+    // 13. 双手与同手倒序换位:
+    // 13.1 介音主元音倒序: jai -> jia, xai -> xia, qai -> qia
+    if (syllable == "jia" && input.starts_with("jai")) return 3;
+    if (syllable == "xia" && input.starts_with("xai")) return 3;
+    if (syllable == "qia" && input.starts_with("qai")) return 3;
+
+    // 13.2 双手声母韵母倒序: sna -> san, zna -> zan, cna -> can
+    if (syllable == "san" && input.starts_with("sna")) return 3;
+    if (syllable == "zan" && input.starts_with("zna")) return 3;
+    if (syllable == "can" && input.starts_with("cna")) return 3;
+
+    // 13.3 鼻韵母双手倒序: *ain -> *ian (如 jain->jian, tain->tian, lain->lian, dain->dian)
+    if (syllable.ends_with("ian")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "ain") {
+            return syllable.size();
+        }
+    }
+
+    // 13.4 圆唇介音双手倒序: *aun -> *uan (如 gaun->guan, kaun->kuan, haun->huan, zhaun->zhuan)
+    if (syllable.ends_with("uan")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.size() >= syllable.size() &&
+            input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+            input.substr(prefixLen, 3) == "aun") {
+            return syllable.size();
+        }
+    }
+
+    // 13.5 双手翘舌音倒序: zhnag->zhang, chnag->chang, shnag->shang
+    for (const auto &pair : {
+             std::pair<std::string_view, std::string_view>{"zhang", "zhnag"},
+             std::pair<std::string_view, std::string_view>{"chang", "chnag"},
+             std::pair<std::string_view, std::string_view>{"shang", "shnag"},
+             std::pair<std::string_view, std::string_view>{"zheng", "zhneg"},
+             std::pair<std::string_view, std::string_view>{"cheng", "chneg"},
+             std::pair<std::string_view, std::string_view>{"sheng", "shneg"},
+             std::pair<std::string_view, std::string_view>{"zhan", "zhna"},
+             std::pair<std::string_view, std::string_view>{"chan", "chna"},
+             std::pair<std::string_view, std::string_view>{"shan", "shna"}}) {
+        if (syllable == pair.first && input.starts_with(pair.second)) {
+            return pair.second.size();
+        }
+    }
+
     return 0;
 }
 
@@ -719,6 +886,26 @@ bool PinyinMatchPolicy::isTypoPrefix(std::string_view input,
             }
         }
     }
+    if (syllable == "jia" && (input == "ja" || input == "jai")) return true;
+    if (syllable == "xia" && (input == "xa" || input == "xai")) return true;
+    if (syllable == "qia" && (input == "qa" || input == "qai")) return true;
+    if (syllable == "san" && (input == "sn" || input == "sna")) return true;
+    if (syllable == "zan" && (input == "zn" || input == "zna")) return true;
+    if (syllable == "can" && (input == "cn" || input == "cna")) return true;
+    if (syllable.ends_with("ian")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "ai" || tail == "ain") return true;
+        }
+    }
+    if (syllable.ends_with("uan")) {
+        const auto prefixLen = syllable.size() - 3;
+        if (input.starts_with(syllable.substr(0, prefixLen))) {
+            const auto tail = input.substr(prefixLen);
+            if (tail == "au" || tail == "aun") return true;
+        }
+    }
     return false;
 }
 
@@ -727,10 +914,20 @@ bool PinyinMatchPolicy::isFullTypoMatch(std::string_view userInput,
     if (userInput.empty() || fullPinyin.empty()) {
         return false;
     }
-    const auto preds = EnglishDictionary::predictWords(userInput, 1);
-    if (!preds.empty() && preds.front() != userInput &&
-        !exactInputMatch(userInput, fullPinyin)) {
-        return false;
+    const bool isPotentialTypo =
+        (userInput == "jai" || userInput == "xai" || userInput == "qai" ||
+         userInput.starts_with("sna") || userInput.starts_with("zna") ||
+         userInput.starts_with("cna") || userInput.starts_with("jain") ||
+         userInput.starts_with("xain") || userInput.starts_with("qain") ||
+         userInput.starts_with("tain") || userInput.starts_with("dain") ||
+         userInput.starts_with("lain") || userInput.starts_with("gaun") ||
+         userInput.starts_with("kaun") || userInput.starts_with("haun"));
+    if (!isPotentialTypo && userInput.size() >= 5) {
+        const auto preds = EnglishDictionary::predictWords(userInput, 1);
+        if (!preds.empty() && preds.front() != userInput &&
+            !exactInputMatch(userInput, fullPinyin)) {
+            return false;
+        }
     }
     std::vector<std::string_view> syllables;
     std::size_t start = 0;

@@ -282,6 +282,37 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery(
     }
     assertTrue(foundCorrectedXing,
                "transposed input exposes a corrected xing candidate");
+
+    // Fast typing typo and daily colloquial phrase regression tests
+    provider.reset();
+    assertTrue(provider.append("snaqian"), "snaqian is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "三千",
+               "snaqian yields 三千 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("dataikuaile"), "dataikuaile is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "打太快了",
+               "dataikuaile yields 打太快了 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("jai"), "jai is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "家",
+               "jai yields 家 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("jaiting"), "jaiting is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "家庭",
+               "jaiting yields 家庭 as first candidate");
+
+    provider.reset();
+    assertTrue(provider.append("sna"), "sna is accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "三",
+               "sna yields 三 as first candidate");
 }
 
 } // namespace
