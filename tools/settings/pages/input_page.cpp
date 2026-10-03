@@ -58,7 +58,7 @@ public:
         setSettingsFocusChain(
             page, {inputEnabled, defaultMode, toggleKey, punctuation,
                    numberSelection, arrowNavigation, pageNavigation,
-                   candidatePageSize, candidateFontSize});
+                   englishDefinition, candidatePageSize, candidateFontSize});
         refresh();
         pageGuard.release();
     }
@@ -155,7 +155,18 @@ public:
                                             "使用 PageUp / PageDown 和 + / = 键进行前后翻页。",
                                             pageNavigation),
                            FALSE, FALSE, 0);
-        for (auto *control : {numberSelection, arrowNavigation, pageNavigation}) {
+
+        englishDefinition = gtk_switch_new();
+        gtk_widget_set_tooltip_text(
+            englishDefinition, "当候选栏第 1 位是英文单词时，在第 2 位显示其中文释义");
+        setTarget(englishDefinition, "english-definition");
+        gtk_box_pack_start(GTK_BOX(section),
+                           createSettingRow("显示英文单词中文释义",
+                                            "当候选栏第 1 位是英文单词时，在第 2 位插入其简明中文释义，直接选词即可上屏释义。",
+                                            englishDefinition),
+                           FALSE, FALSE, 0);
+
+        for (auto *control : {numberSelection, arrowNavigation, pageNavigation, englishDefinition}) {
             g_signal_connect(control, "notify::active", G_CALLBACK(onSwitchChanged), this);
         }
     }
@@ -244,6 +255,8 @@ public:
             GTK_SWITCH(impl->arrowNavigation));
         settings.pageNavigation = gtk_switch_get_active(
             GTK_SWITCH(impl->pageNavigation));
+        settings.englishDefinitionEnabled = gtk_switch_get_active(
+            GTK_SWITCH(impl->englishDefinition));
         settings.candidatePageSize = gtk_spin_button_get_value_as_int(
             GTK_SPIN_BUTTON(impl->candidatePageSize));
         settings.candidateFontSize = gtk_spin_button_get_value_as_int(
@@ -272,6 +285,8 @@ public:
                               settings.arrowNavigation);
         gtk_switch_set_active(GTK_SWITCH(pageNavigation),
                               settings.pageNavigation);
+        gtk_switch_set_active(GTK_SWITCH(englishDefinition),
+                              settings.englishDefinitionEnabled);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidatePageSize),
                                   settings.candidatePageSize);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFontSize),
@@ -299,6 +314,7 @@ public:
             std::pair{numberSelection, static_cast<GtkWidget *>(nullptr)},
             std::pair{arrowNavigation, static_cast<GtkWidget *>(nullptr)},
             std::pair{pageNavigation, static_cast<GtkWidget *>(nullptr)},
+            std::pair{englishDefinition, static_cast<GtkWidget *>(nullptr)},
             std::pair{candidatePageSize, candidatePageSizeFallback},
             std::pair{candidateFontSize, candidateFontSizeFallback},
         };
@@ -325,6 +341,7 @@ public:
     GtkWidget *numberSelection = nullptr;
     GtkWidget *arrowNavigation = nullptr;
     GtkWidget *pageNavigation = nullptr;
+    GtkWidget *englishDefinition = nullptr;
     GtkWidget *candidatePageSize = nullptr;
     GtkWidget *candidatePageSizeFallback = nullptr;
     GtkWidget *candidateFontSize = nullptr;

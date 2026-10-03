@@ -33,4 +33,17 @@ int main() {
         assert(matches.front().page == pages[index].id);
         assert(matches.front().title == pageTitles[index]);
     }
+
+    for (const auto *query : {"英文", "释义", "翻译"}) {
+        const auto matches = searchSettings(query);
+        assert(!matches.empty());
+        bool found = false;
+        for (const auto &item : matches) {
+            if (item.page == SettingsPageId::Input && item.target == "english-definition") {
+                found = true;
+                break;
+            }
+        }
+        assert(found);
+    }
 }
