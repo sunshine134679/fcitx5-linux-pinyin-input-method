@@ -48,6 +48,24 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_input_page_state_tests
     )
 
+    add_executable(modernime_shortcut_recorder_tests
+        settings/shortcut_recorder_test.cpp
+        ../tools/settings/pages/input_page.cpp
+        ../tools/settings/settings_model.cpp
+        ../tools/settings/settings_widgets.cpp
+        ../tools/settings/settings_shell_state.cpp
+    )
+    target_link_libraries(modernime_shortcut_recorder_tests PRIVATE
+        modernime_core
+        PkgConfig::GTK3
+    )
+    target_include_directories(modernime_shortcut_recorder_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    add_test(NAME modernime_shortcut_recorder
+        COMMAND modernime_shortcut_recorder_tests
+    )
+
     add_executable(modernime_clipboard_page_contract_tests
         settings/clipboard_page_contract_test.cpp
     )

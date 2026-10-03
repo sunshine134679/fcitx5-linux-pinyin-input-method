@@ -35,6 +35,10 @@ inline InputPageState deriveInputPageState(const SettingsWindowModel &model) {
     return state;
 }
 
+bool isModifierKey(unsigned int keyval);
+std::string formatModifierPrompt(unsigned int keyval, unsigned int state);
+std::string buildShortcutString(unsigned int keyval, unsigned int state);
+
 class InputPage final {
 public:
     InputPage(SettingsWindowModel &model, std::function<void()> changed);

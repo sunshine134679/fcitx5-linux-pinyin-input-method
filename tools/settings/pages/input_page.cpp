@@ -11,8 +11,104 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace modernime::settings {
+
+bool isModifierKey(unsigned int keyval) {
+    switch (keyval) {
+    case GDK_KEY_Shift_L:
+    case GDK_KEY_Shift_R:
+    case GDK_KEY_Control_L:
+    case GDK_KEY_Control_R:
+    case GDK_KEY_Alt_L:
+    case GDK_KEY_Alt_R:
+    case GDK_KEY_Super_L:
+    case GDK_KEY_Super_R:
+    case GDK_KEY_Meta_L:
+    case GDK_KEY_Meta_R:
+    case GDK_KEY_Hyper_L:
+    case GDK_KEY_Hyper_R:
+    case GDK_KEY_ISO_Level3_Shift:
+    case GDK_KEY_Mode_switch:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::string formatModifierPrompt(unsigned int keyval, unsigned int state) {
+    const bool ctrl = (state & GDK_CONTROL_MASK) != 0 ||
+                      keyval == GDK_KEY_Control_L || keyval == GDK_KEY_Control_R;
+    const bool alt = (state & GDK_MOD1_MASK) != 0 ||
+                     keyval == GDK_KEY_Alt_L || keyval == GDK_KEY_Alt_R;
+    const bool super = (state & (GDK_SUPER_MASK | GDK_MOD4_MASK)) != 0 ||
+                       keyval == GDK_KEY_Super_L || keyval == GDK_KEY_Super_R ||
+                       keyval == GDK_KEY_Meta_L || keyval == GDK_KEY_Meta_R;
+    const bool shift = (state & GDK_SHIFT_MASK) != 0 ||
+                       keyval == GDK_KEY_Shift_L || keyval == GDK_KEY_Shift_R;
+
+    std::vector<std::string> parts;
+    if (ctrl) parts.emplace_back("Ctrl");
+    if (alt) parts.emplace_back("Alt");
+    if (super) parts.emplace_back("Super");
+    if (shift) parts.emplace_back("Shift");
+
+    if (parts.empty()) {
+        return "请按快捷键... (Esc取消)";
+    }
+    std::string result;
+    for (const auto &p : parts) {
+        if (!result.empty()) result += " + ";
+        result += p;
+    }
+    result += " + ...";
+    return result;
+}
+
+std::string buildShortcutString(unsigned int keyval, unsigned int state) {
+    const bool ctrl = (state & GDK_CONTROL_MASK) != 0;
+    const bool alt = (state & GDK_MOD1_MASK) != 0;
+    const bool super = (state & (GDK_SUPER_MASK | GDK_MOD4_MASK)) != 0;
+    const bool shift = (state & GDK_SHIFT_MASK) != 0;
+
+    std::string keyName;
+    if (keyval == GDK_KEY_space || keyval == GDK_KEY_KP_Space) {
+        keyName = "Space";
+    } else if (keyval >= GDK_KEY_a && keyval <= GDK_KEY_z) {
+        keyName = std::string(1, static_cast<char>(keyval - GDK_KEY_a + 'A'));
+    } else if (keyval >= GDK_KEY_A && keyval <= GDK_KEY_Z) {
+        keyName = std::string(1, static_cast<char>(keyval));
+    } else if (keyval >= GDK_KEY_0 && keyval <= GDK_KEY_9) {
+        keyName = std::string(1, static_cast<char>(keyval));
+    } else if (keyval >= GDK_KEY_F1 && keyval <= GDK_KEY_F12) {
+        keyName = "F" + std::to_string(keyval - GDK_KEY_F1 + 1);
+    } else {
+        const char *name = gdk_keyval_name(keyval);
+        if (name != nullptr) {
+            keyName = name;
+        }
+    }
+
+    if (keyName.empty()) {
+        return "";
+    }
+
+    std::vector<std::string> parts;
+    if (ctrl) parts.emplace_back("Ctrl");
+    if (alt) parts.emplace_back("Alt");
+    if (super) parts.emplace_back("Super");
+    if (shift) parts.emplace_back("Shift");
+    parts.push_back(std::move(keyName));
+
+    std::string result;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) result += "+";
+        result += parts[i];
+    }
+    return result;
+}
+
 namespace {
 
 void addStyleClass(GtkWidget *widget, std::string_view className) {
@@ -42,6 +138,7 @@ void setWidgetError(GtkWidget *widget, bool error,
 }
 
 } // namespace
+
 
 class InputPage::Impl final {
 public:
@@ -94,18 +191,24 @@ public:
         auto *section = createSectionCard(
             "快捷键", "设置在中文和英文输入状态之间切换的按键。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-        toggleKey = gtk_entry_new();
-        gtk_entry_set_placeholder_text(GTK_ENTRY(toggleKey),
-                                       "例如 Ctrl+Shift+Space");
+
+        toggleKey = gtk_button_new_with_label("");
+        addStyleClass(toggleKey, kSettingsShortcutButtonClass);
         gtk_widget_set_hexpand(toggleKey, FALSE);
         setTarget(toggleKey, "toggle-key");
+        setAccessibleWidgetText(toggleKey, "中英文切换快捷键",
+                                "点击后按下键盘按键以设置中英文切换快捷键");
         toggleKeyFallback = createSettingRow(
             "中英文切换快捷键",
             "支持 Ctrl+Space、Alt+Space、Super+Space 或 Ctrl+Shift+Space。",
             toggleKey);
         gtk_box_pack_start(GTK_BOX(section), toggleKeyFallback, FALSE, FALSE,
                            0);
-        g_signal_connect(toggleKey, "changed", G_CALLBACK(onChanged), this);
+
+        g_signal_connect(toggleKey, "clicked", G_CALLBACK(onToggleKeyClicked), this);
+        g_signal_connect(toggleKey, "key-press-event", G_CALLBACK(onToggleKeyPress), this);
+        g_signal_connect(toggleKey, "key-release-event", G_CALLBACK(onToggleKeyRelease), this);
+        g_signal_connect(toggleKey, "focus-out-event", G_CALLBACK(onToggleKeyFocusOut), this);
     }
 
     void buildPunctuationSection() {
@@ -230,6 +333,109 @@ public:
         gtk_label_set_markup(GTK_LABEL(previewLabel), ss.str().c_str());
     }
 
+    static void onToggleKeyClicked(GtkButton *, gpointer data) {
+        auto *impl = static_cast<Impl *>(data);
+        if (impl->refreshing) {
+            return;
+        }
+        if (impl->isRecording) {
+            impl->stopRecording(false);
+        } else {
+            impl->startRecording();
+        }
+    }
+
+    void startRecording() {
+        isRecording = true;
+        addStyleClass(toggleKey, "recording");
+        gtk_button_set_label(GTK_BUTTON(toggleKey), "请按快捷键... (Esc取消)");
+        gtk_widget_set_tooltip_text(toggleKey, "请在键盘上按下目标快捷键组合，按 Esc 取消");
+    }
+
+    void stopRecording(bool applyNewValue, std::string newValue = {}) {
+        if (!isRecording) {
+            return;
+        }
+        isRecording = false;
+        removeStyleClass(toggleKey, "recording");
+        if (applyNewValue && !newValue.empty()) {
+            toggleKeyValue = std::move(newValue);
+            gtk_button_set_label(GTK_BUTTON(toggleKey), toggleKeyValue.c_str());
+            onChanged(nullptr, this);
+        } else {
+            gtk_button_set_label(GTK_BUTTON(toggleKey),
+                                 toggleKeyValue.empty() ? "点击设置快捷键"
+                                                        : toggleKeyValue.c_str());
+            updateState();
+        }
+    }
+
+    static gboolean onToggleKeyPress(GtkWidget *, GdkEventKey *event, gpointer data) {
+        auto *impl = static_cast<Impl *>(data);
+        if (!impl->isRecording) {
+            return GDK_EVENT_PROPAGATE;
+        }
+
+        if (event->keyval == GDK_KEY_Escape) {
+            impl->stopRecording(false);
+            return GDK_EVENT_STOP;
+        }
+
+        if ((event->keyval == GDK_KEY_Tab || event->keyval == GDK_KEY_ISO_Left_Tab) &&
+            (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_SUPER_MASK | GDK_MOD4_MASK)) == 0) {
+            impl->stopRecording(false);
+            return GDK_EVENT_PROPAGATE;
+        }
+
+        if (isModifierKey(event->keyval)) {
+            const auto prompt = formatModifierPrompt(event->keyval, event->state);
+            gtk_button_set_label(GTK_BUTTON(impl->toggleKey), prompt.c_str());
+            return GDK_EVENT_STOP;
+        }
+
+        const auto shortcut = buildShortcutString(event->keyval, event->state);
+        if (!shortcut.empty()) {
+            impl->stopRecording(true, shortcut);
+        } else {
+            impl->stopRecording(false);
+        }
+        return GDK_EVENT_STOP;
+    }
+
+    static gboolean onToggleKeyRelease(GtkWidget *, GdkEventKey *event, gpointer data) {
+        auto *impl = static_cast<Impl *>(data);
+        if (!impl->isRecording) {
+            return GDK_EVENT_PROPAGATE;
+        }
+
+        if (isModifierKey(event->keyval)) {
+            guint remainingState = event->state;
+            if (event->keyval == GDK_KEY_Control_L || event->keyval == GDK_KEY_Control_R) {
+                remainingState &= ~GDK_CONTROL_MASK;
+            } else if (event->keyval == GDK_KEY_Alt_L || event->keyval == GDK_KEY_Alt_R) {
+                remainingState &= ~GDK_MOD1_MASK;
+            } else if (event->keyval == GDK_KEY_Super_L || event->keyval == GDK_KEY_Super_R ||
+                       event->keyval == GDK_KEY_Meta_L || event->keyval == GDK_KEY_Meta_R) {
+                remainingState &= ~(GDK_SUPER_MASK | GDK_MOD4_MASK);
+            } else if (event->keyval == GDK_KEY_Shift_L || event->keyval == GDK_KEY_Shift_R) {
+                remainingState &= ~GDK_SHIFT_MASK;
+            }
+
+            const auto prompt = formatModifierPrompt(0, remainingState);
+            gtk_button_set_label(GTK_BUTTON(impl->toggleKey), prompt.c_str());
+            return GDK_EVENT_STOP;
+        }
+        return GDK_EVENT_PROPAGATE;
+    }
+
+    static gboolean onToggleKeyFocusOut(GtkWidget *, GdkEventFocus *, gpointer data) {
+        auto *impl = static_cast<Impl *>(data);
+        if (impl->isRecording) {
+            impl->stopRecording(false);
+        }
+        return GDK_EVENT_PROPAGATE;
+    }
+
     static void onSwitchChanged(GObject *, GParamSpec *, gpointer data) {
         onChanged(nullptr, data);
     }
@@ -246,7 +452,7 @@ public:
             GTK_COMBO_BOX(impl->defaultMode)) == 1
                                    ? core::InputMode::English
                                    : core::InputMode::Chinese;
-        settings.toggleKey = gtk_entry_get_text(GTK_ENTRY(impl->toggleKey));
+        settings.toggleKey = impl->toggleKeyValue;
         settings.punctuationEnabled = gtk_switch_get_active(
             GTK_SWITCH(impl->punctuation));
         settings.numberSelection = gtk_switch_get_active(
@@ -276,7 +482,14 @@ public:
                                  settings.defaultMode == core::InputMode::English
                                      ? 1
                                      : 0);
-        gtk_entry_set_text(GTK_ENTRY(toggleKey), settings.toggleKey.c_str());
+        toggleKeyValue = settings.toggleKey;
+        if (isRecording) {
+            isRecording = false;
+            removeStyleClass(toggleKey, "recording");
+        }
+        gtk_button_set_label(GTK_BUTTON(toggleKey),
+                             toggleKeyValue.empty() ? "点击设置快捷键"
+                                                    : toggleKeyValue.c_str());
         gtk_switch_set_active(GTK_SWITCH(punctuation),
                               settings.punctuationEnabled);
         gtk_switch_set_active(GTK_SWITCH(numberSelection),
@@ -298,11 +511,18 @@ public:
 
     void updateState() {
         const auto state = deriveInputPageState(model);
+        if (!state.dependentControlsSensitive && isRecording) {
+            stopRecording(false);
+        }
         for (auto *control : {defaultMode, toggleKey, punctuation}) {
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         }
         setWidgetError(toggleKey, !state.toggleKeyValid,
                        state.toggleKeyMessage);
+        if (state.toggleKeyValid && !isRecording) {
+            gtk_widget_set_tooltip_text(
+                toggleKey, "点击以录制新的快捷键（例如 Ctrl+Space）");
+        }
     }
 
     bool focusTarget(std::string_view target) {
@@ -336,6 +556,8 @@ public:
     GtkWidget *defaultModeFallback = nullptr;
     GtkWidget *toggleKey = nullptr;
     GtkWidget *toggleKeyFallback = nullptr;
+    std::string toggleKeyValue;
+    bool isRecording = false;
     GtkWidget *punctuation = nullptr;
     GtkWidget *punctuationFallback = nullptr;
     GtkWidget *numberSelection = nullptr;

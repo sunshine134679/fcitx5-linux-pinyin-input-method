@@ -12,8 +12,11 @@ int main() {
     static_assert(kSettingsDangerButtonClass == "destructive-action");
     static_assert(kSettingsFocusFallbackClass ==
                   "modernime-focus-fallback");
+    static_assert(kSettingsShortcutButtonClass == "modernime-shortcut-btn");
     assert(settingsStyles().find("@theme_bg_color") != std::string_view::npos);
     assert(settingsStyles().find(".modernime-focus-fallback") !=
+           std::string_view::npos);
+    assert(settingsStyles().find(".modernime-shortcut-btn") !=
            std::string_view::npos);
     assert(settingsStyles().find("linear-gradient") == std::string_view::npos);
 }

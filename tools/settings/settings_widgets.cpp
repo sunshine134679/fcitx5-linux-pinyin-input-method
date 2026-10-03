@@ -356,7 +356,8 @@ std::string_view settingsStyles() {
         }
 
         .modernime-status-error,
-        entry.error {
+        entry.error,
+        button.modernime-shortcut-btn.error {
             color: @error_color;
         }
 
@@ -365,7 +366,8 @@ std::string_view settingsStyles() {
             box-shadow: inset 0 0 0 2px @theme_selected_bg_color;
         }
 
-        entry.error {
+        entry.error,
+        button.modernime-shortcut-btn.error {
             border-color: @error_color;
         }
 
@@ -509,6 +511,31 @@ std::string_view settingsStyles() {
             font-size: 11px;
             padding: 2px 8px;
             border-radius: 6px;
+        }
+
+        .modernime-shortcut-btn {
+            font-family: monospace, DejaVu Sans Mono, Liberation Mono, sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 6px 16px;
+            min-width: 140px;
+            border-radius: 8px;
+            border: 1px solid @borders;
+            background-color: rgba(128, 128, 128, 0.08);
+            color: @theme_fg_color;
+            transition: all 120ms ease;
+        }
+
+        .modernime-shortcut-btn:hover {
+            background-color: rgba(128, 128, 128, 0.15);
+            border-color: rgba(128, 128, 128, 0.4);
+        }
+
+        .modernime-shortcut-btn.recording {
+            border-color: @theme_selected_bg_color;
+            background-color: rgba(59, 130, 246, 0.12);
+            color: @theme_selected_bg_color;
+            box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
         }
 
         button {
