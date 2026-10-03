@@ -6,6 +6,7 @@
 
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/english_dictionary.h"
+#include "modernime/core/english_definition_dictionary.h"
 #include "modernime/core/learning_writer.h"
 #include "modernime/core/settings.h"
 
@@ -610,6 +611,47 @@ std::filesystem::path hotwordDictionaryPath(std::string_view configuredPath) {
     return {};
 }
 
+std::filesystem::path englishDefinitionDictionaryPath(
+    std::string_view configuredPath) {
+    if (!configuredPath.empty()) {
+        return std::filesystem::path(configuredPath);
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    if (const auto *environment = std::getenv(
+            "MODERNIME_ENGLISH_DEFINITION_DICTIONARY");
+        environment != nullptr && *environment != '\0') {
+        candidates.emplace_back(environment);
+    }
+
+    const auto *dataHome = std::getenv("XDG_DATA_HOME");
+    if (dataHome != nullptr && *dataHome != '\0') {
+        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime" /
+                                "pinyin" / "modernime-english-dict.bin");
+    } else if (const auto *home = std::getenv("HOME"); home != nullptr &&
+               *home != '\0') {
+        candidates.emplace_back(std::filesystem::path(home) / ".local" /
+                                "share" / "modernime" / "pinyin" /
+                                "modernime-english-dict.bin");
+    }
+
+#ifdef MODERNIME_ENGLISH_DICT_INSTALL_BINARY
+    candidates.emplace_back(MODERNIME_ENGLISH_DICT_INSTALL_BINARY);
+#endif
+#ifdef MODERNIME_ENGLISH_DICT_SOURCE_BINARY
+    candidates.emplace_back(MODERNIME_ENGLISH_DICT_SOURCE_BINARY);
+#endif
+    candidates.emplace_back(
+        "/usr/share/modernime/pinyin/modernime-english-dict.bin");
+
+    for (const auto &candidate : candidates) {
+        if (isRegularFile(candidate)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
 void loadExtensionDictionary(libime::PinyinDictionary &dictionary,
                              const std::filesystem::path &path) {
     if (!isRegularFile(path)) {
@@ -1057,6 +1099,8 @@ public:
     UserDictionary userDictionary;
     std::filesystem::path userDictionaryPath;
     std::filesystem::path learningStorePath;
+    core::EnglishDefinitionDictionary englishDefinitionDict;
+    std::filesystem::path englishDefinitionDictPath;
 
     core::LearningWriter *ensureLearningWriter() {
         if (learning == nullptr && !learningStorePath.empty()) {
@@ -1064,6 +1108,13 @@ public:
                 std::make_unique<core::LearningWriter>(learningStorePath);
         }
         return learning.get();
+    }
+
+    core::EnglishDefinitionDictionary *ensureEnglishDefinitionDictionary() {
+        if (!englishDefinitionDict.isLoaded() && !englishDefinitionDictPath.empty()) {
+            englishDefinitionDict.load(englishDefinitionDictPath);
+        }
+        return englishDefinitionDict.isLoaded() ? &englishDefinitionDict : nullptr;
     }
 
     // Re-reads the user dictionary file and swaps the libime dictionary
@@ -1098,6 +1149,8 @@ PinyinCandidateProvider::createSharedResources(
         paths.learningStore.empty()
             ? defaultLearningPath()
             : std::filesystem::path(paths.learningStore);
+    resources->englishDefinitionDictPath =
+        englishDefinitionDictionaryPath(paths.englishDefinitionDictionary);
 
     auto dictionary = std::make_unique<libime::PinyinDictionary>();
     if (std::filesystem::is_regular_file(paths.dictionary)) {
@@ -1158,7 +1211,8 @@ public:
          const PinyinProviderOptions &options)
         : shared_(std::move(shared)),
           contextLearningEnabled_(options.contextLearningEnabled),
-          learningEnabled_(options.learningEnabled) {
+          learningEnabled_(options.learningEnabled),
+          englishDefinitionEnabled_(options.englishDefinitionEnabled) {
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         refresh();
     }
@@ -1208,6 +1262,11 @@ public:
             return false;
         }
         const auto &candidate = page_.items[index];
+        if (candidate.source == core::CandidateSource::EnglishDefinition) {
+            context->clear();
+            refresh();
+            return true;
+        }
         if (candidate.source == core::CandidateSource::Raw) {
             if (auto *learning = learningWriter(); learning != nullptr) {
                 const auto rawInput = context->userInput();
@@ -1262,6 +1321,9 @@ public:
             return false;
         }
         const auto candidate = page_.items[index];
+        if (candidate.source == core::CandidateSource::EnglishDefinition) {
+            return false;
+        }
         if (candidate.source == core::CandidateSource::Raw) {
             if (learningWriter() != nullptr) {
                 const auto pinyinKey = candidate.fullPinyin.empty()
@@ -1335,6 +1397,13 @@ public:
         if (!enabled) {
             contextBefore_.clear();
             contextAfter_.clear();
+        }
+    }
+
+    void setEnglishDefinitionEnabled(bool enabled) {
+        if (englishDefinitionEnabled_ != enabled) {
+            englishDefinitionEnabled_ = enabled;
+            refresh();
         }
     }
 
@@ -1672,12 +1741,36 @@ private:
                 page_.preedit = segmentedInput;
             }
         }
+
+        if (englishDefinitionEnabled_ && !page_.items.empty() && shared_) {
+            const auto &top = page_.items.front();
+            if (top.source == core::CandidateSource::Raw &&
+                core::EnglishDictionary::isEnglishWord(top.text)) {
+                auto *dict = shared_->ensureEnglishDefinitionDictionary();
+                if (dict != nullptr) {
+                    const auto rawDef = dict->lookup(top.text);
+                    if (!rawDef.empty()) {
+                        auto cleaned = core::EnglishDefinitionDictionary::cleanDefinition(rawDef, 12);
+                        if (!cleaned.empty()) {
+                            core::CandidateItem defCandidate;
+                            defCandidate.text = std::move(cleaned);
+                            defCandidate.fullPinyin = top.fullPinyin.empty() ? top.text : top.fullPinyin;
+                            defCandidate.source = core::CandidateSource::EnglishDefinition;
+                            defCandidate.sourceIndex = std::numeric_limits<std::size_t>::max();
+                            defCandidate.consumedInputBytes = top.consumedInputBytes;
+                            page_.items.insert(std::next(page_.items.begin()), std::move(defCandidate));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     std::shared_ptr<SharedResources> shared_;
     std::unique_ptr<libime::PinyinContext> context;
     bool contextLearningEnabled_ = true;
     bool learningEnabled_ = true;
+    bool englishDefinitionEnabled_ = false;
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
@@ -1730,6 +1823,10 @@ void PinyinCandidateProvider::setLearningEnabled(bool enabled) {
 
 void PinyinCandidateProvider::setContextLearningEnabled(bool enabled) {
     impl_->setContextLearningEnabled(enabled);
+}
+
+void PinyinCandidateProvider::setEnglishDefinitionEnabled(bool enabled) {
+    impl_->setEnglishDefinitionEnabled(enabled);
 }
 
 } // namespace modernime::pinyin

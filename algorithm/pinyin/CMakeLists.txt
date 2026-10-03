@@ -46,5 +46,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             "MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-knowledge.dict\""
             "MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY=\"${CMAKE_BINARY_DIR}/data/pinyin/modernime-hotwords.dict\""
             "MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-hotwords.dict\""
+            "MODERNIME_ENGLISH_DICT_SOURCE_BINARY=\"${CMAKE_SOURCE_DIR}/data/pinyin/modernime-english-dict.bin\""
+            "MODERNIME_ENGLISH_DICT_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-english-dict.bin\""
     )
 endif()

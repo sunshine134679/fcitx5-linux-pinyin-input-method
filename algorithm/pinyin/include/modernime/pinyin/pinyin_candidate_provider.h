@@ -17,11 +17,13 @@ struct PinyinDataPaths final {
     std::string hotwordDictionary;
     std::string userDictionary;
     std::string learningStore;
+    std::string englishDefinitionDictionary;
 };
 
 struct PinyinProviderOptions final {
     bool learningEnabled = true;
     bool contextLearningEnabled = true;
+    bool englishDefinitionEnabled = false;
 };
 
 class PinyinCandidateProvider final : public core::CandidateProvider {
@@ -70,6 +72,7 @@ public:
     // lazily on first use after being enabled.
     void setLearningEnabled(bool enabled);
     void setContextLearningEnabled(bool enabled);
+    void setEnglishDefinitionEnabled(bool enabled);
 
 private:
     class Impl;

@@ -539,9 +539,136 @@ void testRepeatedSelectionAcrossContextsStillPromotes() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testEnglishDefinitionCandidates() {
+    std::error_code error;
+    const auto learningPath = testPath("english-def-learning.sqlite3");
+    std::filesystem::remove(learningPath, error);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+
+    modernime::pinyin::PinyinProviderOptions options;
+    options.englishDefinitionEnabled = false;
+
+    // 1. 开关关闭时：apple 第 1 位为 apple，第 2 位绝不是释义
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        assertTrue(provider.append("apple"), "append apple with def disabled");
+        assertTrue(!provider.page().items.empty(), "has candidates");
+        assertTrue(provider.page().items.front().text == "apple", "apple is at rank 0");
+        bool hasDef = false;
+        for (const auto &item : provider.page().items) {
+            if (item.source == modernime::core::CandidateSource::EnglishDefinition) {
+                hasDef = true;
+                break;
+            }
+        }
+        assertTrue(!hasDef, "no definition candidate when switch is disabled");
+    }
+
+    // 2. 开关开启时：测试纯英文置顶、前缀补全、中文置顶抑制、单音节抑制、选词上屏与学习隔离
+    options.englishDefinitionEnabled = true;
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+        // A. 纯英文置顶 (apple)
+        assertTrue(provider.append("apple"), "append apple with def enabled");
+        assertTrue(provider.page().items.size() >= 2, "at least 2 candidates for apple");
+        assertTrue(provider.page().items[0].text == "apple", "apple is top candidate");
+        assertTrue(provider.page().items[1].source ==
+                       modernime::core::CandidateSource::EnglishDefinition,
+                   "second candidate is EnglishDefinition");
+        assertTrue(provider.page().items[1].text == "苹果；家伙",
+                   "apple definition matches expected clean translation");
+
+        // B. 尝试删除释义候选：应被拒绝
+        assertTrue(!provider.remove(1), "removing EnglishDefinition is rejected");
+        assertTrue(provider.page().items[1].source ==
+                       modernime::core::CandidateSource::EnglishDefinition,
+                   "candidate still present after rejected remove");
+
+        // C. 选中释义候选：上屏并清空，不污染学习记录
+        assertTrue(provider.select(1), "select definition candidate succeeds");
+        assertTrue(provider.page().items.empty(), "page cleared after select");
+
+        // 验证学习库：没有记录 apple 或 苹果；家伙
+        modernime::core::LearningStore store(learningPath);
+        const auto snap = store.snapshot();
+        assertTrue(!snap->hasPositiveFrequency("apple", "apple"),
+                   "selecting definition candidate did not boost English word apple");
+        assertTrue(!snap->hasPositiveFrequency("苹果；家伙", "apple"),
+                   "selecting definition candidate did not write definition into learning store");
+
+        provider.reset();
+
+        // D. 前缀补全置顶 (gara -> garage)
+        assertTrue(provider.append("gara"), "append gara");
+        assertTrue(provider.page().items.size() >= 3, "at least 3 candidates for gara");
+        assertTrue(provider.page().items[0].text == "garage", "garage is top candidate for gara");
+        assertTrue(provider.page().items[1].source ==
+                       modernime::core::CandidateSource::EnglishDefinition,
+                   "second candidate is EnglishDefinition for garage");
+        assertTrue(provider.page().items[1].text == "车库；汽车修理厂",
+                   "garage definition matches expected translation");
+        assertTrue(provider.page().items[2].text == "gara",
+                   "original second candidate (gara) is shifted to third");
+
+        provider.reset();
+
+        // E. 中文置顶抑制 (like -> 立刻)
+        assertTrue(provider.append("like"), "append like");
+        assertTrue(!provider.page().items.empty(), "candidates not empty for like");
+        assertTrue(provider.page().items.front().text == "立刻", "立刻 is top candidate for like");
+        bool hasLikeDef = false;
+        for (const auto &item : provider.page().items) {
+            if (item.source == modernime::core::CandidateSource::EnglishDefinition) {
+                hasLikeDef = true;
+                break;
+            }
+        }
+        assertTrue(!hasLikeDef, "like does not insert definition when Chinese is at top");
+
+        provider.reset();
+
+        // F. 单音节拼音英文沉底抑制 (de -> 的)
+        assertTrue(provider.append("de"), "append de");
+        assertTrue(!provider.page().items.empty(), "candidates not empty for de");
+        assertTrue(provider.page().items.front().text == "的", "的 is top candidate for de");
+        bool hasDeDef = false;
+        for (const auto &item : provider.page().items) {
+            if (item.source == modernime::core::CandidateSource::EnglishDefinition) {
+                hasDeDef = true;
+                break;
+            }
+        }
+        assertTrue(!hasDeDef, "de does not insert definition when single-syllable Chinese is at top");
+
+        provider.reset();
+
+        // G. 动态运行时切换 setEnglishDefinitionEnabled
+        provider.setEnglishDefinitionEnabled(false);
+        assertTrue(provider.append("apple"), "append apple after disabling definition at runtime");
+        assertTrue(provider.page().items.size() >= 1 && provider.page().items[0].text == "apple",
+                   "apple is top candidate");
+        assertTrue(provider.page().items.size() < 2 ||
+                       provider.page().items[1].source != modernime::core::CandidateSource::EnglishDefinition,
+                   "no definition candidate after setEnglishDefinitionEnabled(false)");
+
+        provider.setEnglishDefinitionEnabled(true);
+        assertTrue(provider.page().items.size() >= 2 &&
+                       provider.page().items[1].source == modernime::core::CandidateSource::EnglishDefinition,
+                   "definition candidate reappears dynamically upon setEnglishDefinitionEnabled(true)");
+    }
+
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
+    testEnglishDefinitionCandidates();
     testMixerUsesRawFallbackWhenNoHomophoneExists();
     testLongInputMixesUsefulPhrasePrefixes();
     testLongInputMixingPrioritizesTrustedPrefixesAndSentences();
