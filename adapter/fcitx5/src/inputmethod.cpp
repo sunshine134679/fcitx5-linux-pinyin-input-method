@@ -155,7 +155,8 @@ pinyin::PinyinDataPaths pinyinPaths() {
 
 pinyin::PinyinProviderOptions pinyinOptions(
     const core::ModernIMESettings &settings) {
-    return {settings.learningEnabled, settings.contextLearningEnabled};
+    return {settings.learningEnabled, settings.contextLearningEnabled,
+            settings.englishDefinitionEnabled};
 }
 #endif
 
@@ -291,6 +292,8 @@ void FcitxInputContextState::applySettings(
         provider_->setLearningEnabled(settings.learningEnabled);
         provider_->setContextLearningEnabled(
             settings.contextLearningEnabled);
+        provider_->setEnglishDefinitionEnabled(
+            settings.englishDefinitionEnabled);
     }
 #else
     (void)settings;
