@@ -53,6 +53,14 @@
       "commit": "8595294b1a97845e30f11ecfdb3caa4e61ac398",
       "license": "MIT",
       "role": "maintenance-time pinyin annotation only"
+    },
+    {
+      "id": "ecdict",
+      "repository": "https://github.com/skywind3000/ECDICT",
+      "license": "MIT",
+      "author": "Lin Wei (Skywind)",
+      "used_fields": ["word", "translation"],
+      "role": "english word concise definition dictionary"
     }
   ]
 }

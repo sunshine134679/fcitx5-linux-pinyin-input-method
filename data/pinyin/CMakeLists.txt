@@ -48,3 +48,10 @@ add_custom_target(modernime_pinyin_hotwords_dictionary
 
 install(FILES "${MODERNIME_PINYIN_HOTWORDS_BINARY}"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/pinyin")
+
+set(MODERNIME_ENGLISH_DICT_SOURCE
+    "${CMAKE_CURRENT_SOURCE_DIR}/modernime-english-dict.bin"
+)
+
+install(FILES "${MODERNIME_ENGLISH_DICT_SOURCE}"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/pinyin")

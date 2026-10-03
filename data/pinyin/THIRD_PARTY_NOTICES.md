@@ -23,9 +23,16 @@ ModernIME 的离线拼音数据由以下固定版本的开源项目生成。仓�
 - 用途：仅在维护者重新生成数据时为 THUOCL 词条标注完整拼音，不是 ModernIME 的运行时依赖。
 - 许可证：MIT，版权归原项目作者所有。
 
+## ECDICT
+
+- 项目：<https://github.com/skywind3000/ECDICT>
+- 作者：Lin Wei (Skywind)
+- 用途：英文单词简明中文释义词典数据源。
+- 许可证：MIT，版权归原作者所有。
+
 ## MIT License 文本
 
-以下分别保留三个上游项目仓库中的 MIT 许可核心文字和版权归属：
+以下分别保留上游项目仓库中的 MIT 许可核心文字和版权归属：
 
 ```text
 MIT License
