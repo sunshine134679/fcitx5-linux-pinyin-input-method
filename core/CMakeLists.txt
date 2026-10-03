@@ -11,6 +11,7 @@ add_library(modernime_core STATIC
     src/clipboard_history.cpp
     src/persistent_clipboard_history.cpp
     src/settings.cpp
+    src/english_definition_dictionary.cpp
 )
 find_package(SQLite3 REQUIRED)
 target_include_directories(modernime_core PUBLIC

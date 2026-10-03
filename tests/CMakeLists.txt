@@ -314,6 +314,13 @@ add_executable(modernime_english_dictionary_tests core/english_dictionary_test.c
 target_link_libraries(modernime_english_dictionary_tests PRIVATE modernime_core)
 add_test(NAME modernime_english_dictionary COMMAND modernime_english_dictionary_tests)
 
+add_executable(modernime_english_definition_tests core/english_definition_test.cpp)
+target_link_libraries(modernime_english_definition_tests PRIVATE modernime_core)
+target_compile_definitions(modernime_english_definition_tests PRIVATE
+    MODERNIME_ENGLISH_DICT_FILE="${CMAKE_SOURCE_DIR}/data/pinyin/modernime-english-dict.bin"
+)
+add_test(NAME modernime_english_definition COMMAND modernime_english_definition_tests)
+
 add_executable(modernime_pinyin_match_tests core/pinyin_match_test.cpp)
 target_link_libraries(modernime_pinyin_match_tests PRIVATE modernime_core)
 add_test(NAME modernime_pinyin_match COMMAND modernime_pinyin_match_tests)

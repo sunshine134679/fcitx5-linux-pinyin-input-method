@@ -199,6 +199,8 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 result.settings.clipboardTrigger = value;
                 parsed = true;
             }
+        } else if (key == "candidate.english_definition" || key == "input.english_definition") {
+            parsed = parseBoolean(value, result.settings.englishDefinitionEnabled);
         } else {
             diagnostic(result, lineNumber, "unknown key '" + key + "'");
             continue;
@@ -271,7 +273,9 @@ bool SettingsStore::save(const std::filesystem::path &path,
            << (settings.contextLearningEnabled ? "true" : "false") << '\n'
            << "clipboard.enabled="
            << (settings.clipboardEnabled ? "true" : "false") << '\n'
-           << "clipboard.trigger=" << settings.clipboardTrigger << '\n';
+           << "clipboard.trigger=" << settings.clipboardTrigger << '\n'
+           << "candidate.english_definition="
+           << (settings.englishDefinitionEnabled ? "true" : "false") << '\n';
     output.close();
     if (!output) {
         std::filesystem::remove(temporary, filesystemError);
