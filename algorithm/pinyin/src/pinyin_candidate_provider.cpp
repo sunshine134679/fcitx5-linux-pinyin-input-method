@@ -1092,6 +1092,73 @@ std::string automaticallySegmentedPreedit(
 
 } // namespace
 
+std::string defaultDictionaryPath() {
+    if (const auto *env = std::getenv("MODERNIME_PINYIN_DICT");
+        env != nullptr && *env != '\0') {
+        return env;
+    }
+    if (const auto *env = std::getenv("LIBIME_PINYIN_DICT");
+        env != nullptr && *env != '\0') {
+        return env;
+    }
+
+    static const char *const kCandidates[] = {
+        "/usr/share/libime/sc.dict",
+        "/usr/lib64/libime/sc.dict",
+        "/usr/lib/x86_64-linux-gnu/libime/sc.dict",
+        "/usr/lib/aarch64-linux-gnu/libime/sc.dict",
+        "/usr/lib/riscv64-linux-gnu/libime/sc.dict",
+        "/usr/lib/loongarch64-linux-gnu/libime/sc.dict",
+        "/usr/lib/libime/sc.dict",
+        "/usr/local/share/libime/sc.dict",
+        "/usr/local/lib64/libime/sc.dict",
+        "/usr/local/lib/libime/sc.dict",
+    };
+
+    for (const char *candidate : kCandidates) {
+        if (isRegularFile(candidate)) {
+            return candidate;
+        }
+    }
+    return "/usr/share/libime/sc.dict";
+}
+
+std::string defaultLanguageModelPath() {
+    if (const auto *env = std::getenv("MODERNIME_PINYIN_LM");
+        env != nullptr && *env != '\0') {
+        return env;
+    }
+    if (const auto *env = std::getenv("LIBIME_PINYIN_LM");
+        env != nullptr && *env != '\0') {
+        return env;
+    }
+
+    static const char *const kCandidates[] = {
+        "/usr/lib64/libime/zh_CN.lm",
+        "/usr/lib/x86_64-linux-gnu/libime/zh_CN.lm",
+        "/usr/lib/aarch64-linux-gnu/libime/zh_CN.lm",
+        "/usr/lib/riscv64-linux-gnu/libime/zh_CN.lm",
+        "/usr/lib/loongarch64-linux-gnu/libime/zh_CN.lm",
+        "/usr/share/libime/zh_CN.lm",
+        "/usr/lib/libime/zh_CN.lm",
+        "/usr/local/lib64/libime/zh_CN.lm",
+        "/usr/local/lib/libime/zh_CN.lm",
+        "/usr/local/share/libime/zh_CN.lm",
+    };
+
+    for (const char *candidate : kCandidates) {
+        if (isRegularFile(candidate)) {
+            return candidate;
+        }
+    }
+
+    std::error_code ec;
+    if (std::filesystem::is_directory("/usr/lib64", ec)) {
+        return "/usr/lib64/libime/zh_CN.lm";
+    }
+    return "/usr/lib/x86_64-linux-gnu/libime/zh_CN.lm";
+}
+
 class PinyinCandidateProvider::SharedResources final {
 public:
     std::unique_ptr<libime::PinyinIME> ime;
@@ -1153,9 +1220,16 @@ PinyinCandidateProvider::createSharedResources(
         englishDefinitionDictionaryPath(paths.englishDefinitionDictionary);
 
     auto dictionary = std::make_unique<libime::PinyinDictionary>();
-    if (std::filesystem::is_regular_file(paths.dictionary)) {
-        dictionary->load(0, paths.dictionary.c_str(),
-                         libime::PinyinDictFormat::Binary);
+    if (!paths.dictionary.empty()) {
+        if (isRegularFile(paths.dictionary)) {
+            dictionary->load(0, paths.dictionary.c_str(),
+                             libime::PinyinDictFormat::Binary);
+        } else {
+            std::cerr << "ModernIME 警告: 拼音系统词典文件不存在: '"
+                      << paths.dictionary
+                      << "'，拼音基础候选将无法生成！请检查 libime 安装或 PinyinDataPaths 配置。"
+                      << std::endl;
+        }
     }
     resources->userDictionary.addTo(*dictionary, 1);
     loadExtensionDictionary(
@@ -1167,10 +1241,16 @@ PinyinCandidateProvider::createSharedResources(
         *dictionary, hotwordDictionaryPath(paths.hotwordDictionary));
 
     std::unique_ptr<libime::UserLanguageModel> model;
-    if (std::filesystem::is_regular_file(paths.languageModel)) {
+    if (!paths.languageModel.empty() && isRegularFile(paths.languageModel)) {
         model = std::make_unique<libime::UserLanguageModel>(
             paths.languageModel.c_str());
     } else {
+        if (!paths.languageModel.empty()) {
+            std::cerr << "ModernIME 警告: 拼音语言模型文件不存在: '"
+                      << paths.languageModel
+                      << "'，已降级为空语言模型，整句预测与候选词排序将受严重影响！请检查 libime 安装或 PinyinDataPaths 配置。"
+                      << std::endl;
+        }
         model = std::make_unique<libime::UserLanguageModel>();
     }
 

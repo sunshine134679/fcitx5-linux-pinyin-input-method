@@ -19,9 +19,27 @@ sudo apt-get install -f
 ```
 
 #### 2. openEuler / RHEL / Fedora 系统（`.rpm` 包）
+
+> [!NOTE]
+> **openEuler 版本兼容矩阵与 EPOL 源说明**：
+> - **openEuler ≥ 24.09**：官方 EPOL 扩展源原生提供 `fcitx5`（5.1.10+）与 `libime`（1.1.8+）。
+> - **openEuler 24.03 LTS-SP4**：官方默认仓库未打包 fcitx5。24.03 用户可通过挂载 24.09 EPOL 扩展源并**使用 `includepkgs` 进行安全隔离**（仅拉取输入法组件，避免跨版本基础库冲突）：
+>   ```bash
+>   sudo tee /etc/yum.repos.d/openEuler-24.09-epol.repo << 'EOF'
+>   [openEuler-24.09-epol]
+>   name=openEuler 24.09 EPOL for Fcitx5
+>   baseurl=https://mirrors.huaweicloud.com/openeuler/openEuler-24.09/EPOL/main/$basearch/
+>   enabled=1
+>   gpgcheck=0
+>   priority=99
+>   includepkgs=fcitx5*,libime*,xcb-imdkit*
+>   EOF
+>   sudo dnf makecache
+>   ```
+
 ```bash
-# 确保已启用 openEuler EPOL 扩展源并安装基础环境：
-sudo dnf install -y fcitx5 libime gtk3
+# 确保已启用 EPOL 扩展源并安装基础环境与托盘依赖：
+sudo dnf install -y fcitx5 libime gtk3 libappindicator-gtk3
 # 使用 dnf 本地安装（自动解析依赖）：
 sudo dnf localinstall -y modernime-*.x86_64.rpm
 # 或使用 rpm 直接安装：
@@ -37,8 +55,9 @@ cd modernime-*-linux-x86_64
 # 用户级一键安装至 ~/.local（推荐，无需 root 权限）
 ./install.sh
 
-# 或系统级安装至 /usr：
-# sudo ./install.sh /usr
+# 或系统级安装至 /usr（支持参数传参或环境变量）：
+sudo ./install.sh /usr
+# 等价于：sudo MODERNIME_PREFIX=/usr ./install.sh
 ```
 
 ---
@@ -60,13 +79,16 @@ sudo apt install \
 
 #### openEuler / RHEL / Fedora 构建依赖准备
 ```bash
-# openEuler 系统需确保已启用 EPOL 扩展源（fcitx5-devel 与 libime-devel 位于 EPOL 中）：
+# 1. 确保已启用 EPOL 扩展源（openEuler 24.03 SP4 用户请先配置上方包含 includepkgs 的 24.09 EPOL 隔离源）：
 sudo sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
+
+# 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
 sudo dnf install -y \
     gcc gcc-c++ cmake make pkgconf-pkg-config \
     sqlite-devel boost-devel \
     fcitx5-devel libime-devel \
-    gtk3-devel pango-devel cairo-devel rpm-build
+    gtk3-devel pango-devel cairo-devel rpm-build \
+    libappindicator-gtk3-devel
 ```
 
 #### 执行一键安装
@@ -77,9 +99,11 @@ git clone https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method.git
 # git clone git@github.com:sunshine134679/fcitx5-linux-pinyin-input-method.git
 cd fcitx5-linux-pinyin-input-method
 
-
 # 执行自动安装脚本（默认安装到 ~/.local）
 ./install.sh
+
+# 系统级安装至 /usr：
+# sudo ./install.sh /usr
 ```
 
 ---
@@ -97,17 +121,40 @@ cd fcitx5-linux-pinyin-input-method
 
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
 
-- 安装 Fcitx5 输入法插件和候选栏 UI；
+- 安装 Fcitx5 输入法插件和候选栏 UI（自适应 Debian/Ubuntu `lib` 与 openEuler/Fedora `lib64` 路径）；
 - 安装离线扩展拼音词典（成语、IT、医学、法律、地名等类别）；
 - 安装全新 Bento 仪表盘设计的 `modernime-settings` 设置客户端；
 - 安装桌面菜单入口 `modernime-settings.desktop`；
 - 在当前桌面目录生成 `modernime-settings.desktop` 快捷方式；
+- 自动写入 `~/.config/environment.d/90-modernime.conf` 与 `~/.xprofile`（兼容 LightDM/UKUI/X11 会话）；
 - 在检测到可用的图形和 DBus 会话时尝试重载并激活 ModernIME。
 
-如果当前是在没有图形会话的终端、容器或 CI 中安装，Fcitx5 自动启动会被跳过，但编译和安装仍会正常完成。也可以明确关闭自动重载：
+### 常用安装选项与逃生开关
 
 ```bash
+# 1. 系统级安装至 /usr：
+sudo ./install.sh /usr
+
+# 2. 环境受限或跳过测试直接安装（逃生开关）：
+MODERNIME_SKIP_TESTS=1 ./install.sh
+
+# 3. 跳过 Fcitx5 自动重启：
 MODERNIME_SKIP_FCITX_RESTART=1 ./install.sh
+```
+
+### 桌面会话与环境变量适配（LightDM / UKUI / X11）
+
+`install.sh` 会自动将环境变量写入 `~/.config/environment.d/` 并同步注入 `~/.xprofile`。若您使用的是 LightDM、UKUI、XFCE 或其他非 systemd-user 托管的 X11 会话，请确保以下会话变量生效：
+
+```bash
+export GTK_IM_MODULE=fcitx
+export QT_IM_MODULE=fcitx
+export XMODIFIERS=@im=fcitx
+export SDL_IM_MODULE=fcitx
+# RPM 64位系统:
+export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
+# Debian/Ubuntu 64位系统:
+# export FCITX_ADDON_DIRS="$HOME/.local/lib/fcitx5:/usr/lib/x86_64-linux-gnu/fcitx5"
 ```
 
 ## 启动设置客户端

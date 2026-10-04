@@ -9,9 +9,15 @@
 
 namespace modernime::pinyin {
 
+// 返回当前系统探测到的默认拼音词典路径（支持多发行版探测与环境变量覆盖）
+std::string defaultDictionaryPath();
+
+// 返回当前系统探测到的默认拼音语言模型路径（支持多发行版探测与环境变量覆盖）
+std::string defaultLanguageModelPath();
+
 struct PinyinDataPaths final {
-    std::string dictionary = "/usr/share/libime/sc.dict";
-    std::string languageModel = "/usr/lib/x86_64-linux-gnu/libime/zh_CN.lm";
+    std::string dictionary = defaultDictionaryPath();
+    std::string languageModel = defaultLanguageModelPath();
     std::string extensionDictionary;
     // 网络热词词典（带正 cost 的独立小表）；简拼命中时排在组合候选前。
     std::string hotwordDictionary;

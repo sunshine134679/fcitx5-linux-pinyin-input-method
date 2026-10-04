@@ -3,11 +3,37 @@ set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" && -z "${MODERNIME_ALLOW_ROOT:-}" ]]; then
-    printf 'Error: Running install.sh with sudo is not recommended and will create files owned by root in %s.\n' "$HOME" >&2
-    printf 'Install ModernIME for your current user by running: ./install.sh\n' >&2
-    printf 'If you really want to install as root, set MODERNIME_ALLOW_ROOT=1.\n' >&2
-    exit 1
+prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+    case "$1" in
+        --prefix=*)
+            prefix="${1#*=}"
+            ;;
+        --prefix|-p)
+            prefix="$2"
+            shift
+            ;;
+        -*)
+            ;;
+        *)
+            prefix="$1"
+            ;;
+    esac
+fi
+
+is_system_prefix=false
+if [[ "$prefix" =~ ^/(usr|opt|etc)(/|$) ]]; then
+    is_system_prefix=true
+fi
+
+if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+    if [[ "$is_system_prefix" != true && -z "${MODERNIME_ALLOW_ROOT:-}" ]]; then
+        printf 'Error: Running install.sh with sudo for user prefix %s is not recommended and will create files owned by root in %s.\n' "$prefix" "$HOME" >&2
+        printf 'Install ModernIME for your current user by running: ./install.sh\n' >&2
+        printf 'Or install system-wide to /usr by running: sudo ./install.sh /usr\n' >&2
+        printf 'If you really want to install to a user directory as root, set MODERNIME_ALLOW_ROOT=1.\n' >&2
+        exit 1
+    fi
 fi
 
 required_commands=(cmake ctest pkg-config)
@@ -19,14 +45,12 @@ for required_command in "${required_commands[@]}"; do
     fi
 done
 
-if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" ]]; then
+if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" && $# -eq 0 ]]; then
     printf 'Error: Running install.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
     printf 'This prevents accidental installation or modification of your real user environment (%s).\n' "$HOME" >&2
     printf 'Specify MODERNIME_PREFIX explicitly (e.g. MODERNIME_PREFIX=/tmp/test-prefix) if intended.\n' >&2
     exit 1
 fi
-
-prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
@@ -66,9 +90,20 @@ cleanup_desktop_tmp() {
 }
 trap cleanup_desktop_tmp EXIT
 
+prefix_addon_dir=""
+if [[ -d "$prefix/lib64/fcitx5" ]]; then
+    prefix_addon_dir="$prefix/lib64/fcitx5"
+elif [[ -d "$prefix/lib/fcitx5" ]]; then
+    prefix_addon_dir="$prefix/lib/fcitx5"
+elif [[ -d "/usr/lib64" && ! -d "/usr/lib/x86_64-linux-gnu" ]]; then
+    prefix_addon_dir="$prefix/lib64/fcitx5"
+else
+    prefix_addon_dir="$prefix/lib/fcitx5"
+fi
+
 fcitx_environment=(
     env
-    "FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
+    "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
 )
 for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
     if [[ -n "${!environment_name:-}" ]]; then
@@ -91,26 +126,75 @@ fi
 build_jobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc 2>/dev/null || echo 2)}"
 cmake -S "$project_root" -B "$build_dir" -G "$generator" "${cmake_args[@]}"
 cmake --build "$build_dir" --parallel "$build_jobs"
-(
-    unset MODERNIME_SKIP_FCITX_RESTART
-    unset MODERNIME_PREFIX MODERNIME_BUILD_DIR MODERNIME_CONFIG_HOME MODERNIME_DESKTOP_DIR
-    # The GTK focus integration tests require a controlled compositor. Running
-    # them inside an arbitrary desktop session makes window-manager focus
-    # stealing prevention look like a product failure. Keep the installer test
-    # run headless; those tests return CTest's configured skip code, while the
-    # remaining suite still runs normally. The original desktop environment is
-    # restored automatically when this subshell exits.
-    unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
-    ctest --test-dir "$build_dir" --output-on-failure --parallel "$build_jobs"
-)
+
+skip_tests=false
+case "${MODERNIME_SKIP_TESTS:-}" in
+    1|true|TRUE|yes|YES)
+        skip_tests=true
+        ;;
+esac
+
+if [[ "$skip_tests" == true ]]; then
+    printf 'Tests skipped by MODERNIME_SKIP_TESTS=1\n'
+else
+    (
+        unset MODERNIME_SKIP_FCITX_RESTART
+        unset MODERNIME_PREFIX MODERNIME_BUILD_DIR MODERNIME_CONFIG_HOME MODERNIME_DESKTOP_DIR
+        # The GTK focus integration tests require a controlled compositor. Running
+        # them inside an arbitrary desktop session makes window-manager focus
+        # stealing prevention look like a product failure. Keep the installer test
+        # run headless; those tests return CTest's configured skip code, while the
+        # remaining suite still runs normally. The original desktop environment is
+        # restored automatically when this subshell exits.
+        unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
+        ctest --test-dir "$build_dir" --output-on-failure --parallel "$build_jobs"
+    )
+fi
+
 for check_file in "$prefix/bin/modernime-settings" \
                   "$prefix/lib/fcitx5/modernime_fcitx5.so" \
-                  "$prefix/lib/fcitx5/modernime_ui.so"; do
+                  "$prefix/lib/fcitx5/modernime_ui.so" \
+                  "$prefix/lib64/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib64/fcitx5/modernime_ui.so"; do
     if [[ -e "$check_file" && ! -w "$check_file" ]]; then
         rm -f -- "$check_file" 2>/dev/null || true
     fi
 done
 cmake --install "$build_dir"
+
+cmake_libdir=$(grep -m1 '^CMAKE_INSTALL_LIBDIR:PATH=' "$build_dir/CMakeCache.txt" 2>/dev/null || true)
+cmake_libdir=${cmake_libdir#*=}
+cmake_libdir=${cmake_libdir:-lib}
+
+for candidate_dir in "$prefix/$cmake_libdir/fcitx5" \
+                     "$prefix/lib64/fcitx5" \
+                     "$prefix/lib/fcitx5" \
+                     "$prefix/lib/x86_64-linux-gnu/fcitx5" \
+                     "$prefix/lib/aarch64-linux-gnu/fcitx5"; do
+    if [[ -d "$candidate_dir" && -f "$candidate_dir/modernime_fcitx5.so" ]]; then
+        prefix_addon_dir="$candidate_dir"
+        break
+    fi
+done
+if [[ -z "$prefix_addon_dir" ]]; then
+    if [[ -d "$prefix/$cmake_libdir/fcitx5" ]]; then
+        prefix_addon_dir="$prefix/$cmake_libdir/fcitx5"
+    elif [[ -d "/usr/lib64" && ! -d "/usr/lib/x86_64-linux-gnu" ]]; then
+        prefix_addon_dir="$prefix/lib64/fcitx5"
+    else
+        prefix_addon_dir="$prefix/lib/fcitx5"
+    fi
+fi
+
+fcitx_environment=(
+    env
+    "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
+)
+for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
+    if [[ -n "${!environment_name:-}" ]]; then
+        fcitx_environment+=("$environment_name=${!environment_name}")
+    fi
+done
 
 mkdir -p "$desktop_dir"
 desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
@@ -148,7 +232,7 @@ if [[ -f "$desktop_shortcut" ]] && command -v gio >/dev/null 2>&1; then
     gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
 fi
 
-environment_line="FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
+environment_line="FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
 if [[ -e "$environment_file" ]]; then
     if [[ -f "$environment_file" ]] &&
        grep -Fq 'FCITX_ADDON_DIRS=' "$environment_file"; then
@@ -164,7 +248,7 @@ else
     printf '%s\n' "$environment_line" > "$environment_file"
 fi
 
-autostart_exec="env FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir fcitx5 -d -u modernime-ui"
+autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir fcitx5 -d -u modernime-ui"
 if [[ -e "$autostart_file" ]]; then
     if [[ -f "$autostart_file" ]] &&
        grep -Fqx 'Name=ModernIME Fcitx5' "$autostart_file"; then
@@ -198,12 +282,43 @@ else
     } > "$autostart_file"
 fi
 
+skip_xprofile=false
+case "${MODERNIME_SKIP_XPROFILE:-}" in
+    1|true|TRUE|yes|YES)
+        skip_xprofile=true
+        ;;
+esac
+xprofile_file=${MODERNIME_XPROFILE_FILE:-"$HOME/.xprofile"}
+xprofile_marker_begin="# BEGIN MODERNIME ENV"
+xprofile_marker_end="# END MODERNIME ENV"
+
+if [[ "$skip_xprofile" != true && "$is_system_prefix" != true ]]; then
+    xprofile_block="$xprofile_marker_begin
+export GTK_IM_MODULE=fcitx
+export QT_IM_MODULE=fcitx
+export XMODIFIERS=@im=fcitx
+export SDL_IM_MODULE=fcitx
+export FCITX_ADDON_DIRS=\"$prefix_addon_dir:$system_addon_dir\"
+$xprofile_marker_end"
+
+    if [[ -f "$xprofile_file" ]]; then
+        if grep -Fq "$xprofile_marker_begin" "$xprofile_file"; then
+            sed -i "/$xprofile_marker_begin/,/$xprofile_marker_end/d" "$xprofile_file"
+            printf '%s\n' "$xprofile_block" >> "$xprofile_file"
+        elif ! grep -Fq 'GTK_IM_MODULE=' "$xprofile_file" && ! grep -Fq 'XMODIFIERS=' "$xprofile_file"; then
+            printf '\n%s\n' "$xprofile_block" >> "$xprofile_file"
+        fi
+    else
+        printf '%s\n' "$xprofile_block" > "$xprofile_file"
+    fi
+fi
+
 manifest_dir="$prefix/share/modernime"
 manifest="$manifest_dir/install-manifest.txt"
 mkdir -p "$manifest_dir"
 {
-    printf '%s\n' "$prefix/lib/fcitx5/modernime_fcitx5.so"
-    printf '%s\n' "$prefix/lib/fcitx5/modernime_ui.so"
+    printf '%s\n' "$prefix_addon_dir/modernime_fcitx5.so"
+    printf '%s\n' "$prefix_addon_dir/modernime_ui.so"
     printf '%s\n' "$prefix/share/modernime/pinyin/modernime-knowledge.dict"
     printf '%s\n' "$prefix/share/modernime/pinyin/modernime-hotwords.dict"
     printf '%s\n' "$prefix/share/modernime/pinyin/modernime-english-dict.bin"
@@ -284,3 +399,14 @@ printf 'Offline pinyin knowledge dictionary: %s/share/modernime/pinyin/modernime
 printf 'Launch settings client: %s\n' "$prefix/bin/modernime-settings"
 printf 'Desktop shortcut: %s\n' "$desktop_shortcut"
 printf 'Select the UI addon with: fcitx5 -u modernime-ui\n'
+printf '\n'
+printf '【会话环境变量配置提示】\n'
+printf ' 若您在 LightDM/UKUI/X11 等桌面会话中无法调出输入法，请确保以下变量已生效：\n'
+printf '   export GTK_IM_MODULE=fcitx\n'
+printf '   export QT_IM_MODULE=fcitx\n'
+printf '   export XMODIFIERS=@im=fcitx\n'
+printf '   export SDL_IM_MODULE=fcitx\n'
+printf '   export FCITX_ADDON_DIRS="%s:%s"\n' "$prefix_addon_dir" "$system_addon_dir"
+if [[ "$is_system_prefix" != true && -f "$xprofile_file" ]]; then
+    printf ' (脚本已自动同步写入至 %s 与 %s)\n' "$environment_file" "$xprofile_file"
+fi

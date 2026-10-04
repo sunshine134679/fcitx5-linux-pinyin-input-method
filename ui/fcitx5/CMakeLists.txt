@@ -30,6 +30,11 @@ if(MODERNIME_BUILD_FCITX5)
             set(MODERNIME_APPINDICATOR_TARGET PkgConfig::APPINDICATOR)
             set(MODERNIME_APPINDICATOR_DEF "MODERNIME_USE_APPINDICATOR")
         else()
+            message(WARNING
+                "ModernIME: 未找到 appindicator3-0.1 或 ayatana-appindicator3-0.1 开发库，状态栏托盘图标将无法编译进 modernime_ui！\n"
+                "  如需托盘图标支持，请安装对应开发包：\n"
+                "  RPM 系 (openEuler/Fedora/RHEL): sudo dnf install -y libappindicator-gtk3-devel\n"
+                "  Debian 系 (Ubuntu/Debian):       sudo apt install -y libayatana-appindicator3-dev")
             set(MODERNIME_APPINDICATOR_TARGET "")
             set(MODERNIME_APPINDICATOR_DEF "")
         endif()

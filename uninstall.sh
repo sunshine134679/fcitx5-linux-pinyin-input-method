@@ -11,15 +11,40 @@ if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" ]]; then
 fi
 
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+    case "$1" in
+        --prefix=*)
+            prefix="${1#*=}"
+            ;;
+        --prefix|-p)
+            prefix="$2"
+            shift
+            ;;
+        -*)
+            ;;
+        *)
+            prefix="$1"
+            ;;
+    esac
+fi
+
 manifest="$prefix/share/modernime/install-manifest.txt"
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
 environment_file="$config_home/environment.d/90-modernime.conf"
 autostart_file="$config_home/autostart/modernime-fcitx5-session.desktop"
 system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
-system_libdir=${system_libdir:-/usr/lib/x86_64-linux-gnu}
+if [[ -z "$system_libdir" ]]; then
+    if [[ -d "/usr/lib64/fcitx5" ]]; then
+        system_libdir="/usr/lib64"
+    elif [[ -d "/usr/lib/x86_64-linux-gnu/fcitx5" ]]; then
+        system_libdir="/usr/lib/x86_64-linux-gnu"
+    elif [[ -d "/usr/lib/aarch64-linux-gnu/fcitx5" ]]; then
+        system_libdir="/usr/lib/aarch64-linux-gnu"
+    else
+        system_libdir="/usr/lib"
+    fi
+fi
 system_addon_dir="$system_libdir/fcitx5"
-environment_line="FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir"
-autostart_exec="env FCITX_ADDON_DIRS=$prefix/lib/fcitx5:$system_addon_dir fcitx5 -d -u modernime-ui"
 desktop_dir=${MODERNIME_DESKTOP_DIR:-"$HOME/Desktop"}
 if [[ -z "${MODERNIME_DESKTOP_DIR:-}" ]] && command -v xdg-user-dir >/dev/null 2>&1; then
     configured_desktop_dir=$(xdg-user-dir DESKTOP || true)
@@ -40,8 +65,8 @@ fi
 while IFS= read -r path; do
     [[ -z "$path" ]] && continue
     case "$path" in
-        "$prefix/lib/fcitx5/modernime_fcitx5.so"|\
-        "$prefix/lib/fcitx5/modernime_ui.so"|\
+        "$prefix"/lib*/fcitx5/modernime_fcitx5.so|\
+        "$prefix"/lib*/fcitx5/modernime_ui.so|\
         "$prefix/share/modernime/pinyin/modernime-knowledge.dict"|\
         "$prefix/share/modernime/pinyin/modernime-hotwords.dict"|\
         "$prefix/share/modernime/pinyin/modernime-english-dict.bin"|\
@@ -69,7 +94,7 @@ while IFS= read -r path; do
         "$environment_file")
             if [[ -f "$path" ]] &&
                [[ "$(wc -l < "$path")" -eq 1 ]] &&
-               [[ "$(sed -n '1p' "$path")" == "$environment_line" ]]; then
+               grep -Eq '^FCITX_ADDON_DIRS=.*fcitx5.*' "$path"; then
                 rm -f -- "$path"
             else
                 printf 'Refusing to remove modified environment file: %s\n' "$path" >&2
@@ -78,10 +103,9 @@ while IFS= read -r path; do
             ;;
         "$autostart_file")
             if [[ -f "$path" ]] &&
-               [[ "$(wc -l < "$path")" -eq 8 ]] &&
                grep -Fqx '[Desktop Entry]' "$path" &&
                grep -Fqx 'Name=ModernIME Fcitx5' "$path" &&
-               grep -Fqx "Exec=$autostart_exec" "$path" &&
+               grep -Eq '^Exec=env FCITX_ADDON_DIRS=.*fcitx5.* -d -u modernime-ui' "$path" &&
                grep -Fqx 'NoDisplay=true' "$path"; then
                 rm -f -- "$path"
             else
@@ -97,6 +121,18 @@ while IFS= read -r path; do
 done < "$manifest"
 
 rm -f -- "$manifest"
+
+xprofile_file=${MODERNIME_XPROFILE_FILE:-"$HOME/.xprofile"}
+if [[ -f "$xprofile_file" ]] && grep -Fq '# BEGIN MODERNIME ENV' "$xprofile_file"; then
+    sed -i '/# BEGIN MODERNIME ENV/,/# END MODERNIME ENV/d' "$xprofile_file"
+    if [[ ! -s "$xprofile_file" ]]; then
+        rm -f -- "$xprofile_file"
+    fi
+fi
+
+rmdir --ignore-fail-on-non-empty "$prefix/lib64/fcitx5" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/lib/fcitx5" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/pinyin" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$config_home/environment.d" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$config_home/autostart" 2>/dev/null || true

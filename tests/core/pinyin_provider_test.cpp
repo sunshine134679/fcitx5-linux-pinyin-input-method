@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -665,9 +666,51 @@ void testEnglishDefinitionCandidates() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testPinyinDataPathsDetectionAndDiagnostics() {
+    // 1. 验证默认探测出的路径非空
+    const auto detectedDict = modernime::pinyin::defaultDictionaryPath();
+    const auto detectedLM = modernime::pinyin::defaultLanguageModelPath();
+    assertTrue(!detectedDict.empty(), "defaultDictionaryPath must not be empty");
+    assertTrue(!detectedLM.empty(), "defaultLanguageModelPath must not be empty");
+
+    // 2. 验证环境变量覆盖探测路径
+    ::setenv("MODERNIME_PINYIN_DICT", "/custom/test/sc.dict", 1);
+    assertTrue(modernime::pinyin::defaultDictionaryPath() == "/custom/test/sc.dict",
+               "MODERNIME_PINYIN_DICT overrides defaultDictionaryPath");
+    ::unsetenv("MODERNIME_PINYIN_DICT");
+
+    ::setenv("MODERNIME_PINYIN_LM", "/custom/test/zh_CN.lm", 1);
+    assertTrue(modernime::pinyin::defaultLanguageModelPath() == "/custom/test/zh_CN.lm",
+               "MODERNIME_PINYIN_LM overrides defaultLanguageModelPath");
+    ::unsetenv("MODERNIME_PINYIN_LM");
+
+    // 3. 验证缺失路径下的优雅降级与构造（不应抛异常或崩溃，并输出警告）
+    modernime::pinyin::PinyinDataPaths missingPaths;
+    missingPaths.dictionary = "/tmp/nonexistent-modernime-test.dict";
+    missingPaths.languageModel = "/tmp/nonexistent-modernime-test.lm";
+    missingPaths.learningStore = testPath("diagnostics-test.sqlite3").string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+
+    std::stringstream cerrBuffer;
+    std::streambuf *oldCerr = std::cerr.rdbuf(cerrBuffer.rdbuf());
+    modernime::pinyin::PinyinCandidateProvider provider(missingPaths, options);
+    std::cerr.rdbuf(oldCerr);
+
+    const auto warningLog = cerrBuffer.str();
+    assertTrue(warningLog.find("ModernIME 警告: 拼音系统词典文件不存在") != std::string::npos,
+               "missing dictionary triggers explicit warning log");
+    assertTrue(warningLog.find("ModernIME 警告: 拼音语言模型文件不存在") != std::string::npos,
+               "missing language model triggers explicit warning log");
+
+    std::error_code error;
+    std::filesystem::remove(missingPaths.learningStore, error);
+}
+
 } // namespace
 
 int main() {
+    testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
     testMixerUsesRawFallbackWhenNoHomophoneExists();
     testLongInputMixesUsefulPhrasePrefixes();

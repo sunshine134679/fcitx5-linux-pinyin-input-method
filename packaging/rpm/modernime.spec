@@ -17,6 +17,7 @@ BuildRequires:  libime-devel
 BuildRequires:  gtk3-devel
 BuildRequires:  pango-devel
 BuildRequires:  cairo-devel
+BuildRequires:  libappindicator-gtk3-devel
 
 Requires:       fcitx5
 Requires:       libime

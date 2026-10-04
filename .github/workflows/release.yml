@@ -82,7 +82,7 @@ jobs:
             gcc gcc-c++ cmake make pkgconf-pkg-config \
             sqlite-devel boost-devel \
             fcitx5-devel libime-devel \
-            gtk3-devel pango-devel cairo-devel rpm-build tar
+            gtk3-devel pango-devel cairo-devel libappindicator-gtk3-devel rpm-build tar
 
       - name: Build and package RPM
         run: |
