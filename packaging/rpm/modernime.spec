@@ -1,5 +1,5 @@
 Name:           modernime
-Version:        0.1.5
+Version:        0.1.6
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 License:        LGPL-2.1-or-later
@@ -73,6 +73,10 @@ fi
 %{_datadir}/applications/modernime-settings.desktop
 
 %changelog
+* Sun Oct 04 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.6-1
+- Prioritize common high-frequency Chinese vocabulary (e.g. name->那么, like->立刻)
+- Protect core Chinese lexical candidates against accidental English learning hijacking
+
 * Sun Oct 04 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.5-1
 - Support game-like keyboard shortcut recording in settings
 - Multi-distribution dynamic language model and dictionary path probing
