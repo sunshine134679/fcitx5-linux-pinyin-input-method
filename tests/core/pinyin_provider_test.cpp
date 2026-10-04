@@ -959,6 +959,8 @@ int main() {
     englishLearnPaths.learningStore = englishLearnPath.string();
     {
         modernime::pinyin::PinyinCandidateProvider elProvider(englishLearnPaths);
+        // A. 常用高频词汇（如 like -> 立刻，name -> 那么）：
+        // 坚守中文优先原则，即使偶选过英文，中文高频词仍稳居首位（rank 0），防止输入法被意外篡位
         assertTrue(elProvider.append("like"), "dual-attribute word like is accepted");
         const auto initialLikeIdx = indexOf(elProvider.page(), "like");
         assertTrue(initialLikeIdx == 1, "like starts at index 1");
@@ -966,10 +968,28 @@ int main() {
         elProvider.reset();
         assertTrue(elProvider.append("like"), "like re-entered");
         assertTrue(!elProvider.page().items.empty() &&
-                   elProvider.page().items.front().text == "like",
-                   "after selecting like, it is elevated to rank 0 by user learning");
-        assertTrue(elProvider.page().preedit == "like",
-                   "clean English word is displayed in preedit when elevated");
+                   elProvider.page().items.front().text == "立刻",
+                   "high-frequency Chinese word 立刻 remains at rank 0 after selecting like");
+        assertTrue(indexOf(elProvider.page(), "like") == 1,
+                   "like remains candidate 1");
+        elProvider.reset();
+
+        // B. 验证 name -> 那么：常用高频词汇即使偶选过英文 name，依旧优先表示词语“那么”而不是英语
+        assertTrue(elProvider.append("name"), "dual-attribute word name is accepted");
+        assertTrue(elProvider.page().items.front().text == "那么",
+                   "name rank 0 is 那么");
+        const auto initialNameIdx = indexOf(elProvider.page(), "name");
+        assertTrue(initialNameIdx == 1, "name starts at index 1");
+        assertTrue(elProvider.select(initialNameIdx), "select English name");
+        elProvider.reset();
+        assertTrue(elProvider.append("name"), "name re-entered");
+        assertTrue(!elProvider.page().items.empty() &&
+                   elProvider.page().items.front().text == "那么",
+                   "high-frequency Chinese word 那么 remains at rank 0 after selecting name");
+        assertTrue(indexOf(elProvider.page(), "name") == 1,
+                   "name remains candidate 1");
+        assertTrue(elProvider.page().preedit == "na'me",
+                   "segmented pinyin is preserved in preedit");
     }
     std::filesystem::remove(englishLearnPath, error);
     std::filesystem::remove(englishLearnPath.string() + "-wal", error);

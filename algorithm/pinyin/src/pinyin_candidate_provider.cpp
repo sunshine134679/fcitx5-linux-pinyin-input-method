@@ -1700,17 +1700,14 @@ private:
 
         bool preferEnglishOverChinese = false;
         if (isEnglish && !isEnglishSuppressed) {
-
-            if (englishLearningBoost > 0.0) {
-                // 用户曾经选择过该英文单词，自适应学习具有最高优先级
-                preferEnglishOverChinese = true;
-            } else if (!page_.items.empty()) {
+            if (!page_.items.empty()) {
                 const auto &topChinese = page_.items.front();
                 bool isTopChineseLexical = false;
                 if (topChinese.source == core::CandidateSource::UserDictionary) {
                     isTopChineseLexical = true;
                 } else if (topChinese.sourceIndex < result.scored.size() &&
-                           result.scored[topChinese.sourceIndex].dictionary_bonus > 0.0) {
+                           (result.scored[topChinese.sourceIndex].dictionary_bonus > 0.0 ||
+                            result.scored[topChinese.sourceIndex].is_lexical)) {
                     isTopChineseLexical = true;
                 } else if (utf8CodePointCount(topChinese.text) == 1 &&
                            rawInput.size() <= 3) {
@@ -1745,9 +1742,14 @@ private:
                     isTopChineseLexical = true;
                 }
 
-                if (!isTopChineseLexical) {
-                    // 非词典的散字拼凑（如 date -> “打特”），除非用户极高频选择（boost >= 2.5），
-                    // 否则标准核心英文词默认置顶
+                if (isTopChineseLexical) {
+                    // 常用高频词汇（如 那么/name、立刻/like、我们/women、上海/shanghai 等）：
+                    // 坚守中文词语优先（首位候选永远为中文词语，英文词作为次选候选），
+                    // 严禁因偶发误选或低频学习导致英文篡位挤占高频中文。
+                    preferEnglishOverChinese = false;
+                } else {
+                    // 非词典的散字拼凑（如 date -> “打特”，case -> “擦色”），
+                    // 除非用户极高频选择中文（boost >= 2.5），否则标准核心英文词默认置顶
                     if (chineseLearningBoost < 2.5) {
                         preferEnglishOverChinese = true;
                     }

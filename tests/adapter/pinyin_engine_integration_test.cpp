@@ -247,16 +247,41 @@ int main() {
         dualController.select(1);
         assertTrue(dualHost.commits.back() == "like", "like is committed by select(1)");
 
-        // Re-type like: now like is elevated to top candidate 0
+        // Re-type like: 常用高频词汇（如 立刻、那么）坚守中文优先原则，中文词语仍稳居首位（rank 0）
         for (char c : std::string_view("like")) {
             dualController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
         assertTrue(!dualController.page().items.empty() &&
-                   dualController.page().items.front().text == "like",
-                   "after selection, like is elevated to top candidate (rank 0)");
+                   dualController.page().items.front().text == "立刻",
+                   "high-frequency Chinese word 立刻 remains at rank 0 after selecting like");
+        assertTrue(indexOf(dualController.page(), "like") == 1,
+                   "like remains candidate 1");
         assertTrue(dualController.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
-                   "space commits like");
-        assertTrue(dualHost.commits.back() == "like", "like is committed directly by space");
+                   "space commits 立刻");
+        assertTrue(dualHost.commits.back() == "立刻", "立刻 is committed directly by space");
+
+        // 验证 name -> 那么：无论是否偶选过英文 name，输入 name 空格上屏依旧是“那么”
+        for (char c : std::string_view("name")) {
+            dualController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!dualController.page().items.empty() &&
+                   dualController.page().items.front().text == "那么",
+                   "initially name defaults to 那么");
+        const auto nameIdx = indexOf(dualController.page(), "name");
+        assertTrue(nameIdx == 1, "name is candidate 1");
+        dualController.select(1); // 偶选英文 name
+        assertTrue(dualHost.commits.back() == "name", "name is committed by select(1)");
+
+        // 再次输入 name：常用高频词汇 那么 仍稳居首位，空格直接上屏 那么
+        for (char c : std::string_view("name")) {
+            dualController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!dualController.page().items.empty() &&
+                   dualController.page().items.front().text == "那么",
+                   "high-frequency Chinese word 那么 remains at rank 0 after selecting name");
+        assertTrue(dualController.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+                   "space commits 那么");
+        assertTrue(dualHost.commits.back() == "那么", "那么 is committed directly by space");
     }
     std::filesystem::remove(dualLearningDbPath);
     std::filesystem::remove(std::string(dualLearningDbPath) + "-wal");
