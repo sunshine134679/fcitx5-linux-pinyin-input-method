@@ -33,7 +33,7 @@ jobs:
             build-essential cmake pkg-config \
             libsqlite3-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
-            libimecore-dev libimepinyin-dev libime-data libime-data-language-model fcitx5-chinese-addons \
+            libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
             libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev
 
       - name: Build and package DEB
@@ -112,7 +112,7 @@ jobs:
             build-essential cmake pkg-config \
             libsqlite3-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
-            libimecore-dev libimepinyin-dev libime-data libime-data-language-model fcitx5-chinese-addons \
+            libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
             libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
 
       - name: Package tarball

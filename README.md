@@ -73,7 +73,7 @@ sudo apt install \
     build-essential cmake pkg-config \
     libsqlite3-dev libboost-dev \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
-    libimecore-dev libimepinyin-dev \
+    libimecore-dev libimepinyin-dev libime-bin \
     libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
 ```
 
@@ -385,6 +385,8 @@ ModernIME 在真实 Linux 桌面环境中全面模拟 **IT研发、财务会计�
 ${XDG_CONFIG_HOME:-$HOME/.config}/modernime/
 ${XDG_DATA_HOME:-$HOME/.local/share}/modernime/
 ```
+
+`libime-bin` 提供构建内置离线拼音词典所需的 `libime_pinyindict`，全新 Debian/Ubuntu 环境需与开发库一起安装。
 
 ## 自定义安装位置
 
