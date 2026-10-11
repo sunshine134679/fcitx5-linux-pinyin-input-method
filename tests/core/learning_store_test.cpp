@@ -1110,10 +1110,60 @@ void testCommitEventTrackingAndLearning() {
     std::filesystem::remove(path);
 }
 
+void testIndependentRecallIndex() {
+    std::vector<modernime::core::LearningEntry> entries{
+        {"王绍龙", "wang'shao'long", "", "", 5, 1000, 0, false},
+        {"gnueabihf", "gnueabihf", "", "", 3, 1000, 0, false},
+        {"不良词", "bu'liang'ci", "", "", 5, 1000, 0, true},
+        {"未选词", "wei'xuan'ci", "", "", 0, 1000, 0, false},
+    };
+    modernime::core::LearningSnapshot snapshot(entries);
+
+    // 1. Canonical full pinyin match
+    auto recalledFull = snapshot.recallCandidates("wangshaolong", 1000);
+    assertTrue(recalledFull.size() == 1, "exact canonical recall returns 1 candidate");
+    assertTrue(recalledFull[0].phrase == "王绍龙", "recalled phrase matches");
+    assertTrue(recalledFull[0].pinyin == "wang'shao'long", "recalled pinyin matches");
+    assertTrue(recalledFull[0].learningBoost > 2.0, "recalled candidate has positive boost");
+
+    // 2. Abbreviation match
+    auto recalledAbbr = snapshot.recallCandidates("wsl", 1000);
+    assertTrue(recalledAbbr.size() == 1, "abbreviation recall returns 1 candidate");
+    assertTrue(recalledAbbr[0].phrase == "王绍龙", "recalled phrase matches via abbreviation");
+
+    // 3. Prefix match (e.g. English term)
+    auto recalledPrefix = snapshot.recallCandidates("gnu", 1000);
+    assertTrue(!recalledPrefix.empty(), "prefix gnu recalls gnueabihf");
+    assertTrue(recalledPrefix[0].phrase == "gnueabihf", "prefix recalled phrase matches");
+
+    auto recalledPrefix2 = snapshot.recallCandidates("gnue", 1000);
+    assertTrue(!recalledPrefix2.empty() && recalledPrefix2[0].phrase == "gnueabihf",
+               "prefix gnue recalls gnueabihf");
+
+    // 4. Suppressed candidate must NOT be recalled
+    auto recalledSuppressed = snapshot.recallCandidates("buliangci", 1000);
+    assertTrue(recalledSuppressed.empty(), "suppressed entry is not recalled");
+
+    // 5. Zero frequency candidate must NOT be recalled
+    auto recalledZero = snapshot.recallCandidates("weixuanci", 1000);
+    assertTrue(recalledZero.empty(), "zero frequency entry is not recalled");
+
+    // 6. Dynamic delta recall
+    snapshot.recordSelection("深空测控", "shen'kong'ce'kong", "", "", 2000);
+    auto recalledDelta = snapshot.recallCandidates("shenkongcekong", 2000);
+    assertTrue(!recalledDelta.empty(), "delta entry is recalled by canonical pinyin");
+    assertTrue(recalledDelta[0].phrase == "深空测控", "delta recalled phrase matches");
+
+    auto recalledDeltaAbbr = snapshot.recallCandidates("skck", 2000);
+    assertTrue(!recalledDeltaAbbr.empty(), "delta entry is recalled by abbreviation");
+    assertTrue(recalledDeltaAbbr[0].phrase == "深空测控", "delta abbreviation recalled phrase matches");
+}
+
 } // namespace
 
 int main() {
     testCommitEventTrackingAndLearning();
+    testIndependentRecallIndex();
     testExternalClearDiscardsRetainedDeltas();
     testWriterDetectsWalClearAndSerializesOwnWrites();
     testWalClearResumesNewWritesAfterRetryExhaustion();

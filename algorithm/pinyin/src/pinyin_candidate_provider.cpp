@@ -1435,6 +1435,14 @@ public:
             refresh();
             return true;
         }
+        if (candidate.source == core::CandidateSource::Learned ||
+            candidate.source == core::CandidateSource::UserDictionary ||
+            !candidate.consumedInputBytes ||
+            candidate.consumedInputBytes >= rawInput.size()) {
+            context->clear();
+            refresh();
+            return true;
+        }
         try {
             if (page_.items[index].sourceIndex < context->candidates().size()) {
                 context->select(page_.items[index].sourceIndex);

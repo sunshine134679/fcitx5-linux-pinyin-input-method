@@ -829,6 +829,45 @@ void testVCommandMenuAndDeduplication() {
     assertTrue(provider.page().items.empty(), "selecting command clears candidates");
 }
 
+void testIndependentRecallInCandidateProvider() {
+    std::error_code err;
+    const auto learningPath = testPath("independent-recall-provider.sqlite3");
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+
+    {
+        modernime::core::LearningStore store(learningPath);
+        assertTrue(store.open(), "open store to seed learned entry");
+        for (int i = 0; i < 5; ++i) {
+            assertTrue(store.recordSelection("深空测控", "shen'kong'ce'kong", "", "", 1000 + i),
+                       "record personal learned phrase");
+        }
+        store.close();
+    }
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        assertTrue(provider.append("shenkongcekong"), "append full pinyin");
+        assertTrue(hasText(provider.page(), "深空测控"),
+                   "learned phrase outside native top pool is independently recalled");
+        const auto idx = indexOf(provider.page(), "深空测控");
+        assertTrue(provider.page().items[idx].source == modernime::core::CandidateSource::Learned,
+                   "recalled item has Learned source");
+        assertTrue(provider.select(idx), "select recalled candidate");
+        assertTrue(provider.page().items.empty(), "page cleared after full selection");
+    }
+
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+}
+
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
@@ -1134,5 +1173,6 @@ int main() {
     testPunctuationAndSymbolMacroCandidates();
     testNumeralMacrosAtZeroGroupBoundaries();
     testVCommandMenuAndDeduplication();
+    testIndependentRecallInCandidateProvider();
     return EXIT_SUCCESS;
 }

@@ -26,6 +26,13 @@ struct LearningEntry final {
     bool suppressed = false;
 };
 
+struct RecalledCandidate final {
+    std::string phrase;
+    std::string pinyin;
+    double learningBoost = 0.0;
+    double contextBoost = 0.0;
+};
+
 std::string normalizePinyin(std::string_view pinyin);
 
 class LearningSnapshot final {
@@ -55,6 +62,11 @@ public:
                         std::string_view contextBefore,
                         std::string_view contextAfter) const;
 
+    std::vector<RecalledCandidate> recallCandidates(
+        std::string_view userInput, std::int64_t nowMs = 0,
+        std::string_view contextBefore = {},
+        std::string_view contextAfter = {}) const;
+
     const std::vector<LearningEntry> &entries() const;
 
     void recordSelection(std::string_view phrase, std::string_view pinyin,
@@ -71,9 +83,11 @@ private:
     void consolidate();
     static void pruneContextVariants(std::vector<LearningEntry> &entries);
     static void pruneTotalEntries(std::vector<LearningEntry> &entries, std::size_t limit);
-
+    struct RecallIndex;
+    static std::shared_ptr<const RecallIndex> buildRecallIndex(const std::vector<LearningEntry> &entries);
     std::shared_ptr<const std::vector<LearningEntry>> baseEntries_;
     std::shared_ptr<const std::unordered_map<std::string, std::vector<std::size_t>>> baseIndex_;
+    std::shared_ptr<const RecallIndex> baseRecallIndex_;
     std::unordered_map<std::string, LearningEntry> delta_;
     std::unordered_map<std::string, std::vector<std::string>> deltaIndex_;
     std::size_t totalEntryLimit_ = kMaxLearningEntries;

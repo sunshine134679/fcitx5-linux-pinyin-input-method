@@ -1,10 +1,13 @@
 #include "modernime/core/learning_snapshot.h"
+#include "modernime/core/candidate_model.h"
+#include "modernime/core/pinyin_match.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -116,6 +119,44 @@ std::string variantKey(std::string_view phrase, std::string_view pinyin,
 
 } // namespace
 
+struct LearningSnapshot::RecallIndex final {
+    std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> canonicalIndex;
+    std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> abbrIndex;
+    std::vector<std::tuple<std::string, std::string, std::string>> prefixIndex;
+};
+
+std::shared_ptr<const LearningSnapshot::RecallIndex>
+LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
+    auto index = std::make_shared<LearningSnapshot::RecallIndex>();
+    std::unordered_set<std::string> seen;
+    seen.reserve(entries.size());
+    for (const auto &entry : entries) {
+        if (entry.suppressed || entry.frequency <= 0) {
+            continue;
+        }
+        const auto key = candidateOrderKey(entry.phrase, entry.pinyin);
+        if (!seen.insert(key).second) {
+            continue;
+        }
+        const auto canonical = PinyinMatchPolicy::canonical(entry.pinyin);
+        if (!canonical.empty()) {
+            index->canonicalIndex[canonical].push_back({entry.phrase, entry.pinyin});
+            index->prefixIndex.emplace_back(canonical, entry.phrase, entry.pinyin);
+        }
+        if (entry.pinyin.find('\'') != std::string::npos) {
+            const auto abbr = PinyinMatchPolicy::abbreviationKey(entry.pinyin);
+            if (abbr.size() >= 2) {
+                index->abbrIndex[abbr].push_back({entry.phrase, entry.pinyin});
+            }
+        }
+    }
+    std::sort(index->prefixIndex.begin(), index->prefixIndex.end(),
+              [](const auto &a, const auto &b) {
+                  return std::get<0>(a) < std::get<0>(b);
+              });
+    return index;
+}
+
 std::string normalizePinyin(std::string_view pinyin) {
     std::string normalized;
     normalized.reserve(pinyin.size());
@@ -130,7 +171,8 @@ std::string normalizePinyin(std::string_view pinyin) {
 
 LearningSnapshot::LearningSnapshot()
     : baseEntries_(std::make_shared<const std::vector<LearningEntry>>()),
-      baseIndex_(std::make_shared<const std::unordered_map<std::string, std::vector<std::size_t>>>()) {}
+      baseIndex_(std::make_shared<const std::unordered_map<std::string, std::vector<std::size_t>>>()),
+      baseRecallIndex_(std::make_shared<const RecallIndex>()) {}
 
 LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
                                    std::size_t totalEntryLimit)
@@ -140,8 +182,9 @@ LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
     auto newIndex = std::make_shared<std::unordered_map<std::string, std::vector<std::size_t>>>();
     newIndex->reserve(entries.size() * 2);
     for (std::size_t idx = 0; idx < entries.size(); ++idx) {
-        (*newIndex)[candidateKey(entries[idx].phrase, entries[idx].pinyin)].push_back(idx);
+        (*newIndex)[candidateKey(entries[idx].phrase, normalizePinyin(entries[idx].pinyin))].push_back(idx);
     }
+    baseRecallIndex_ = buildRecallIndex(entries);
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(entries));
     baseIndex_ = std::move(newIndex);
 }
@@ -149,6 +192,7 @@ LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
 LearningSnapshot::LearningSnapshot(const LearningSnapshot &other)
     : baseEntries_(other.baseEntries_),
       baseIndex_(other.baseIndex_),
+      baseRecallIndex_(other.baseRecallIndex_),
       delta_(other.delta_),
       deltaIndex_(other.deltaIndex_),
       totalEntryLimit_(other.totalEntryLimit_),
@@ -159,6 +203,7 @@ LearningSnapshot &LearningSnapshot::operator=(const LearningSnapshot &other) {
     if (this != &other) {
         baseEntries_ = other.baseEntries_;
         baseIndex_ = other.baseIndex_;
+        baseRecallIndex_ = other.baseRecallIndex_;
         delta_ = other.delta_;
         deltaIndex_ = other.deltaIndex_;
         totalEntryLimit_ = other.totalEntryLimit_;
@@ -392,7 +437,7 @@ void LearningSnapshot::recordSelection(
             newEntry = *baseEntry;
         } else {
             newEntry.phrase = phrase;
-            newEntry.pinyin = normalized;
+            newEntry.pinyin = pinyin;
             newEntry.contextBefore = contextBefore;
             newEntry.contextAfter = contextAfter;
         }
@@ -524,9 +569,10 @@ void LearningSnapshot::consolidate() {
     auto newIndex = std::make_shared<std::unordered_map<std::string, std::vector<std::size_t>>>();
     newIndex->reserve(combined.size() * 2);
     for (std::size_t idx = 0; idx < combined.size(); ++idx) {
-        (*newIndex)[candidateKey(combined[idx].phrase, combined[idx].pinyin)].push_back(idx);
+        (*newIndex)[candidateKey(combined[idx].phrase, normalizePinyin(combined[idx].pinyin))].push_back(idx);
     }
 
+    baseRecallIndex_ = buildRecallIndex(combined);
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(combined));
     baseIndex_ = std::move(newIndex);
     delta_.clear();
@@ -653,6 +699,91 @@ void LearningSnapshot::pruneTotalEntries(std::vector<LearningEntry> &entries,
         }
     }
     entries = std::move(retained);
+}
+
+std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(
+    std::string_view userInput, std::int64_t nowMs,
+    std::string_view contextBefore, std::string_view contextAfter) const {
+    if (userInput.empty()) {
+        return {};
+    }
+    const auto canonicalInput = PinyinMatchPolicy::canonical(userInput);
+    const bool isAbbr = PinyinMatchPolicy::isAbbreviationInput(userInput);
+
+    std::vector<RecalledCandidate> results;
+    std::unordered_set<std::string> seen;
+
+    auto addCandidate = [&](std::string_view phrase, std::string_view pinyin) {
+        const auto key = candidateOrderKey(phrase, pinyin);
+        if (!seen.insert(key).second) {
+            return;
+        }
+        if (isSuppressed(phrase, pinyin) || !hasPositiveFrequency(phrase, pinyin)) {
+            return;
+        }
+        const double lBoost = boostAt(phrase, pinyin, nowMs);
+        const double cBoost = contextBoost(phrase, pinyin, contextBefore, contextAfter);
+        results.push_back({std::string(phrase), std::string(pinyin), lBoost, cBoost});
+    };
+
+    if (baseRecallIndex_ && !canonicalInput.empty()) {
+        const auto it = baseRecallIndex_->canonicalIndex.find(canonicalInput);
+        if (it != baseRecallIndex_->canonicalIndex.end()) {
+            for (const auto &[phrase, pinyin] : it->second) {
+                addCandidate(phrase, pinyin);
+            }
+        }
+    }
+
+    if (baseRecallIndex_ && isAbbr) {
+        const auto it = baseRecallIndex_->abbrIndex.find(std::string(userInput));
+        if (it != baseRecallIndex_->abbrIndex.end()) {
+            for (const auto &[phrase, pinyin] : it->second) {
+                addCandidate(phrase, pinyin);
+            }
+        }
+    }
+
+    if (baseRecallIndex_ && canonicalInput.size() >= 3) {
+        auto it = std::lower_bound(
+            baseRecallIndex_->prefixIndex.begin(),
+            baseRecallIndex_->prefixIndex.end(),
+            canonicalInput,
+            [](const auto &tupleItem, const std::string &val) {
+                return std::get<0>(tupleItem) < val;
+            });
+        std::size_t prefixCount = 0;
+        constexpr std::size_t kMaxPrefixRecalled = 16;
+        while (it != baseRecallIndex_->prefixIndex.end() &&
+               std::get<0>(*it).starts_with(canonicalInput) &&
+               prefixCount < kMaxPrefixRecalled) {
+            addCandidate(std::get<1>(*it), std::get<2>(*it));
+            ++it;
+            ++prefixCount;
+        }
+    }
+
+    for (const auto &[vKey, entry] : delta_) {
+        if (entry.suppressed || entry.frequency <= 0) {
+            continue;
+        }
+        const auto canonicalPinyin = PinyinMatchPolicy::canonical(entry.pinyin);
+        bool match = false;
+        if (!canonicalInput.empty() && canonicalPinyin == canonicalInput) {
+            match = true;
+        } else if (isAbbr &&
+                   (PinyinMatchPolicy::abbreviationKey(entry.pinyin) == userInput ||
+                    PinyinMatchPolicy::initialsMatch(userInput, entry.pinyin))) {
+            match = true;
+        } else if (canonicalInput.size() >= 3 && canonicalPinyin.starts_with(canonicalInput)) {
+            match = true;
+        }
+        if (match) {
+            addCandidate(entry.phrase, entry.pinyin);
+        }
+    }
+
+    return results;
 }
 
 } // namespace modernime::core

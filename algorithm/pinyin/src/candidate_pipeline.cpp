@@ -64,7 +64,12 @@ DictBonusResult dictionaryBonus(const libime::PinyinDictionary &dictionary,
     // 用户手动收录的单字仍然可以上位。
     const std::size_t phraseLength = utf8CodePointCount(phrase);
     const bool singleCharacter = phraseLength == 1;
-    const auto encoded = libime::PinyinEncoder::encodeFullPinyin(fullPinyin);
+    std::vector<char> encoded;
+    try {
+        encoded = libime::PinyinEncoder::encodeFullPinyin(fullPinyin);
+    } catch (const std::exception &) {
+        return {0.0, false};
+    }
     double userBonus = 0.0;
     double systemBonus = 0.0;
     bool isLexical = false;
@@ -213,6 +218,46 @@ CandidatePipelineResult buildCandidatePipeline(
             }
             if (index == 0 && charCount == 1) {
                 candidate.unigram_anchor = 3.0;
+            }
+            result.scored.push_back(std::move(candidate));
+        }
+    }
+
+    if (learning != nullptr) {
+        const auto recalled = learning->recallCandidates(
+            context.userInput(), nowMs, contextBefore, contextAfter);
+        std::size_t recalledIdx = 0;
+        for (const auto &item : recalled) {
+            const auto cp = core::CommonCharacters::firstCodepoint(item.phrase);
+            if (!((cp >= 0x4E00 && cp <= 0x9FFF) ||
+                  (cp >= 0x3400 && cp <= 0x4DBF) ||
+                  (cp >= 0x20000 && cp <= 0x2EBEF))) {
+                continue;
+            }
+            const auto key = core::candidateOrderKey(item.phrase, item.pinyin);
+            if (seenKeys.contains(key)) {
+                continue;
+            }
+            seenKeys.insert(key);
+            core::CandidateScore candidate;
+            candidate.source_index = recalledIdx++;
+            candidate.text = item.phrase;
+            candidate.full_pinyin = item.pinyin;
+            candidate.learning_boost = item.learningBoost;
+            candidate.context_bonus = item.contextBoost;
+            const auto dictResult = dictionaryBonus(
+                dictionary, candidate.full_pinyin, candidate.text);
+            candidate.dictionary_bonus = dictResult.bonus;
+            const auto charCount = utf8CodePointCount(candidate.text);
+            if (charCount >= 2 && dictResult.is_lexical) {
+                candidate.is_lexical = true;
+            }
+            if (core::CommonCharacters::containsRare(candidate.text)) {
+                candidate.is_rare = true;
+            } else if (charCount == 1 &&
+                       core::CommonCharacters::isLevel1(
+                           core::CommonCharacters::firstCodepoint(candidate.text))) {
+                candidate.is_level1 = true;
             }
             result.scored.push_back(std::move(candidate));
         }
