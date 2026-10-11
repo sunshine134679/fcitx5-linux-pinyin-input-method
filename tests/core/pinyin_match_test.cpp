@@ -1,6 +1,7 @@
 #include "modernime/core/candidate_ranker.h"
 #include "modernime/core/pinyin_match.h"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <string_view>
@@ -15,12 +16,56 @@ void assertTrue(bool condition, std::string_view message) {
     }
 }
 
+void testTrustedAbbreviationOrderIsIndependentOfInputOrder() {
+    using modernime::core::CandidateRanker;
+    using modernime::core::CandidateScore;
+    // The unlearned native leader must not form a cycle with a trusted
+    // abbreviation and a sufficiently learned alternative.
+    for (const auto boost : {0.0, 2.4, 3.0, 4.0}) {
+        std::array<std::size_t, 3> permutation{0, 1, 2};
+        do {
+            std::vector<CandidateScore> original{
+                {10, "你好", "ni'hao", 0.0F},
+                {66, "拟好", "ni'hao", 0.0F},
+                {0, "尼好", "ni'hao", 0.0F},
+            };
+            original[1].learning_boost = boost;
+            std::vector<CandidateScore> candidates;
+            for (const auto index : permutation) {
+                candidates.push_back(original[index]);
+            }
+            const auto order = CandidateRanker::rank("nh", candidates);
+            const std::array<std::string_view, 3> expected = boost >= 3.0
+                ? std::array<std::string_view, 3>{"拟好", "你好", "尼好"}
+                : std::array<std::string_view, 3>{"你好", "尼好", "拟好"};
+            for (std::size_t index = 0; index < order.size(); ++index) {
+                assertTrue(candidates[order[index]].text == expected[index],
+                           "trusted/learned/native ranking is transitive across all input permutations");
+            }
+        } while (std::next_permutation(permutation.begin(), permutation.end()));
+    }
+
+    std::vector<CandidateScore> candidates{
+        {10, "你好", "ni'hao", 0.0F},
+        {80, "拟好", "ni'hao", 0.0F},
+        {0, "尼好", "ni'hao", 0.0F},
+    };
+    candidates[1].learning_boost = 3.0;
+    const auto order = CandidateRanker::rank("nh", candidates);
+    assertTrue(candidates[order[0]].text == "你好" &&
+                   candidates[order[1]].text == "尼好" &&
+                   candidates[order[2]].text == "拟好",
+               "a strong boost that still loses to the trusted baseline does not promote");
+}
+
 } // namespace
 
 int main() {
     using modernime::core::CandidateRanker;
     using modernime::core::CandidateScore;
     using modernime::core::PinyinMatchPolicy;
+
+    testTrustedAbbreviationOrderIsIndependentOfInputOrder();
 
     assertTrue(PinyinMatchPolicy::canonical("Ni'Hao") == "nihao",
                "canonical pinyin removes separators and lowercases");

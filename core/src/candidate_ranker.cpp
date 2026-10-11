@@ -72,25 +72,39 @@ CandidateRanker::rank(std::string_view userInput,
             }
         }
     }
-    std::stable_sort(order.begin(), order.end(), [&candidates, userInput](std::size_t left,
-                                                                std::size_t right) {
+    // Decide abbreviation promotion once for the entire candidate set. A
+    // pair-dependent learning exemption can create a cycle between a trusted
+    // phrase, a learned alternative, and an unlearned native leader.
+    std::vector<bool> abbreviationPromoted(candidates.size(), false);
+    double bestTrustedScore = std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        const auto &candidate = candidates[index];
+        if (candidate.match_priority == 1 &&
+            PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                userInput, candidate.full_pinyin, candidate.text)) {
+            abbreviationPromoted[index] = true;
+            bestTrustedScore = std::min(bestTrustedScore, candidate.final_score());
+        }
+    }
+    if (std::isfinite(bestTrustedScore)) {
+        for (std::size_t index = 0; index < candidates.size(); ++index) {
+            const auto &candidate = candidates[index];
+            if (candidate.match_priority == 1 && candidate.learning_boost >= 2.5 &&
+                candidate.final_score() < bestTrustedScore) {
+                abbreviationPromoted[index] = true;
+            }
+        }
+    }
+    std::stable_sort(order.begin(), order.end(),
+                     [&candidates, &abbreviationPromoted](std::size_t left,
+                                                        std::size_t right) -> bool {
         const auto &a = candidates[left];
         const auto &b = candidates[right];
         if (a.match_priority != b.match_priority) {
             return a.match_priority > b.match_priority;
         }
-        const bool aTrusted = a.match_priority == 1 &&
-            PinyinMatchPolicy::trustedShortAbbreviationMatch(userInput, a.full_pinyin, a.text);
-        const bool bTrusted = b.match_priority == 1 &&
-            PinyinMatchPolicy::trustedShortAbbreviationMatch(userInput, b.full_pinyin, b.text);
-        if (aTrusted != bTrusted) {
-            const auto &trusted = aTrusted ? a : b;
-            const auto &other = aTrusted ? b : a;
-            if (other.learning_boost >= 2.5 &&
-                other.final_score() < trusted.final_score()) {
-                return a.final_score() < b.final_score();
-            }
-            return aTrusted;
+        if (abbreviationPromoted[left] != abbreviationPromoted[right]) {
+            return abbreviationPromoted[left];
         }
         if (a.final_score() != b.final_score()) {
             return a.final_score() < b.final_score();
