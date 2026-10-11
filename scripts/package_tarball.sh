@@ -20,45 +20,13 @@ cmake -S "${project_root}" -B "${build_dir}" \
     -DMODERNIME_BUILD_SETTINGS=ON \
     -DMODERNIME_BUILD_TESTS=OFF
 
-cmake --build "${build_dir}" --parallel "$(nproc 2>/dev/null || echo 2)"
+cmake --build "${build_dir}" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc 2>/dev/null || echo 2)}"
 
 printf '==> Staging files...\n'
 DESTDIR="${stage_dir}/${tar_name}" cmake --install "${build_dir}"
 
-# Create quick standalone installer script
-cat << 'EOF' > "${stage_dir}/${tar_name}/install.sh"
-#!/usr/bin/env bash
-set -euo pipefail
-
-prefix="${1:-$HOME/.local}"
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-
-printf '==> Installing ModernIME binary package to %s...\n' "$prefix"
-
-mkdir -p "$prefix/bin" "$prefix/lib/fcitx5" "$prefix/share/fcitx5/addon" "$prefix/share/fcitx5/inputmethod" "$prefix/share/modernime/pinyin" "$prefix/share/applications"
-
-# Copy binaries and libraries
-cp -f "$script_dir/usr/bin/modernime-settings" "$prefix/bin/"
-chmod +x "$prefix/bin/modernime-settings"
-
-# Find .so in usr/lib*
-find "$script_dir/usr" -type f -name 'modernime_*.so' -exec cp -f {} "$prefix/lib/fcitx5/" \;
-
-# Copy data and configs
-cp -rf "$script_dir/usr/share/fcitx5/"* "$prefix/share/fcitx5/"
-cp -rf "$script_dir/usr/share/modernime/"* "$prefix/share/modernime/"
-cp -rf "$script_dir/usr/share/applications/"* "$prefix/share/applications/"
-
-# Reload fcitx5 if running
-if command -v fcitx5-remote >/dev/null 2>&1; then
-    fcitx5-remote -r >/dev/null 2>&1 || true
-fi
-
-printf '==> ModernIME successfully installed to %s!\n' "$prefix"
-printf 'You can now configure it with: %s/bin/modernime-settings\n' "$prefix"
-EOF
-
-chmod +x "${stage_dir}/${tar_name}/install.sh"
+# Reuse the source install/uninstall lifecycle around the binary payload.
+"${project_root}/scripts/generate_binary_installer.sh" "${stage_dir}/${tar_name}"
 
 cat << EOF > "${stage_dir}/${tar_name}/README.txt"
 ModernIME - Modern Fcitx5 Pinyin Input Method
@@ -71,6 +39,15 @@ Installation:
 
   2. System-wide installation:
      sudo ./install.sh /usr
+
+  Custom isolated installation:
+     MODERNIME_PREFIX=/custom/prefix MODERNIME_CONFIG_HOME=/custom/config \\
+       MODERNIME_DESKTOP_DIR=/custom/desktop MODERNIME_SKIP_FCITX_RESTART=1 ./install.sh
+
+  Uninstallation (use the same environment/prefix as installation):
+     ./uninstall.sh
+
+The installer works offline and requires no compiler, cmake, or pkg-config.
 
 Dependencies:
   - fcitx5

@@ -60,6 +60,8 @@ sudo ./install.sh /usr
 # 等价于：sudo MODERNIME_PREFIX=/usr ./install.sh
 ```
 
+归档包含 `install.sh` 和 `uninstall.sh`，与源码安装共享环境集成、安装清单及用户修改保护。安装无需 CMake 或编译器，默认离线；支持 `MODERNIME_PREFIX`、`MODERNIME_CONFIG_HOME`、`MODERNIME_DESKTOP_DIR` 和 `MODERNIME_SKIP_FCITX_RESTART`。卸载时使用安装所选的前缀，例如 `MODERNIME_PREFIX="$HOME/.local/modernime" ./uninstall.sh`。如果从 `/tmp` 或 `/var/tmp` 解压目录运行，必须显式指定 `MODERNIME_PREFIX`。三份内置词典会通过 `XDG_DATA_DIRS` 在安装前缀下定位。
+
 ---
 
 ### 方式二：从源码一键构建安装

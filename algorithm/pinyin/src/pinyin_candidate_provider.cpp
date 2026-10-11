@@ -526,6 +526,28 @@ bool isRegularFile(const std::filesystem::path &path) {
     return std::filesystem::is_regular_file(path, error) && !error;
 }
 
+void appendDataDirectoryCandidates(
+    std::vector<std::filesystem::path> &candidates, std::string_view filename) {
+    const auto *environment = std::getenv("XDG_DATA_DIRS");
+    const std::string_view directories =
+        environment != nullptr && *environment != '\0'
+            ? std::string_view(environment)
+            : std::string_view("/usr/local/share:/usr/share");
+    std::size_t start = 0;
+    while (start <= directories.size()) {
+        const auto end = directories.find(':', start);
+        const auto directory = directories.substr(start, end - start);
+        const std::filesystem::path path(directory);
+        if (path.is_absolute()) {
+            candidates.emplace_back(path / "modernime" / "pinyin" / filename);
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+}
+
 std::filesystem::path extensionDictionaryPath(
     std::string_view configuredPath) {
     if (!configuredPath.empty()) {
@@ -549,6 +571,8 @@ std::filesystem::path extensionDictionaryPath(
                                 "share" / "modernime" / "pinyin" /
                                 "modernime-knowledge.dict");
     }
+
+    appendDataDirectoryCandidates(candidates, "modernime-knowledge.dict");
 
 #ifdef MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY
     candidates.emplace_back(MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY);
@@ -590,6 +614,8 @@ std::filesystem::path hotwordDictionaryPath(std::string_view configuredPath) {
                                 "modernime-hotwords.dict");
     }
 
+    appendDataDirectoryCandidates(candidates, "modernime-hotwords.dict");
+
 #ifdef MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY
     candidates.emplace_back(MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY);
 #endif
@@ -630,6 +656,8 @@ std::filesystem::path englishDefinitionDictionaryPath(
                                 "share" / "modernime" / "pinyin" /
                                 "modernime-english-dict.bin");
     }
+
+    appendDataDirectoryCandidates(candidates, "modernime-english-dict.bin");
 
 #ifdef MODERNIME_ENGLISH_DICT_INSTALL_BINARY
     candidates.emplace_back(MODERNIME_ENGLISH_DICT_INSTALL_BINARY);
