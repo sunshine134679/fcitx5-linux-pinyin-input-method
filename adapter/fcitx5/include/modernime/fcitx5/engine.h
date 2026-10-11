@@ -55,6 +55,8 @@ struct ControllerOptions final {
     bool pageNavigation = true;
     bool punctuationEnabled = true;
     std::size_t pageSize = 9;
+    bool clipboardEnabled = true;
+    std::string clipboardTrigger = "V+2";
 };
 
 struct KeyBindings final {

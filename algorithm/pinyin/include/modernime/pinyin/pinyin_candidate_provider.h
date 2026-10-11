@@ -30,6 +30,8 @@ struct PinyinProviderOptions final {
     bool learningEnabled = true;
     bool contextLearningEnabled = true;
     bool englishDefinitionEnabled = false;
+    bool clipboardEnabled = true;
+    std::string clipboardTrigger = "V+2";
 };
 
 class PinyinCandidateProvider final : public core::CandidateProvider {
@@ -83,6 +85,8 @@ public:
     void setLearningEnabled(bool enabled);
     void setContextLearningEnabled(bool enabled);
     void setEnglishDefinitionEnabled(bool enabled);
+    void setClipboardEnabled(bool enabled);
+    void setClipboardTrigger(std::string trigger);
 
 private:
     class Impl;

@@ -1322,7 +1322,9 @@ public:
         : shared_(std::move(shared)),
           contextLearningEnabled_(options.contextLearningEnabled),
           learningEnabled_(options.learningEnabled),
-          englishDefinitionEnabled_(options.englishDefinitionEnabled) {
+          englishDefinitionEnabled_(options.englishDefinitionEnabled),
+          clipboardEnabled_(options.clipboardEnabled),
+          clipboardTrigger_(options.clipboardTrigger) {
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         refresh();
     }
@@ -1372,7 +1374,8 @@ public:
             return false;
         }
         const auto &candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::EnglishDefinition) {
+        if (candidate.source == core::CandidateSource::EnglishDefinition ||
+            candidate.source == core::CandidateSource::Command) {
             context->clear();
             refresh();
             return true;
@@ -1431,7 +1434,8 @@ public:
             return false;
         }
         const auto candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::EnglishDefinition) {
+        if (candidate.source == core::CandidateSource::EnglishDefinition ||
+            candidate.source == core::CandidateSource::Command) {
             return false;
         }
         if (candidate.source == core::CandidateSource::Raw) {
@@ -1513,6 +1517,20 @@ public:
     void setEnglishDefinitionEnabled(bool enabled) {
         if (englishDefinitionEnabled_ != enabled) {
             englishDefinitionEnabled_ = enabled;
+            refresh();
+        }
+    }
+
+    void setClipboardEnabled(bool enabled) {
+        if (clipboardEnabled_ != enabled) {
+            clipboardEnabled_ = enabled;
+            refresh();
+        }
+    }
+
+    void setClipboardTrigger(std::string trigger) {
+        if (clipboardTrigger_ != trigger) {
+            clipboardTrigger_ = std::move(trigger);
             refresh();
         }
     }
@@ -1814,7 +1832,33 @@ private:
                            }),
             page_.items.end());
 
-        if (!macroCandidates.empty() && rawInput.front() == 'v') {
+        char triggerChar = 'v';
+        if (clipboardTrigger_.size() == 3 && clipboardTrigger_[1] == '+') {
+            triggerChar = static_cast<char>(std::tolower(static_cast<unsigned char>(clipboardTrigger_[0])));
+        }
+        const bool isSingleTriggerChar =
+            rawInput.size() == 1 &&
+            std::tolower(static_cast<unsigned char>(rawInput.front())) == triggerChar;
+
+        if (isSingleTriggerChar && rawInput == "v") {
+            page_.items.clear();
+            core::CandidateItem rawItem;
+            rawItem.text = "v";
+            rawItem.fullPinyin = "v";
+            rawItem.source = core::CandidateSource::Raw;
+            rawItem.consumedInputBytes = 1;
+            page_.items.push_back(std::move(rawItem));
+
+            if (clipboardEnabled_) {
+                core::CandidateItem cmdCandidate;
+                cmdCandidate.text = "剪贴板 (" + clipboardTrigger_ + ")";
+                cmdCandidate.fullPinyin = "v";
+                cmdCandidate.source = core::CandidateSource::Command;
+                cmdCandidate.consumedInputBytes = 1;
+                page_.items.push_back(std::move(cmdCandidate));
+            }
+            page_.preedit = "v";
+        } else if (!macroCandidates.empty() && rawInput.front() == 'v') {
             page_.items.push_back(std::move(rawCandidate));
             page_.preedit = std::string(rawInput);
         } else if (!predictedWords.empty()) {
@@ -1884,6 +1928,17 @@ private:
                 }
             }
         }
+
+        std::unordered_set<std::string> seenCandidateTexts;
+        page_.items.erase(
+            std::remove_if(page_.items.begin(), page_.items.end(),
+                           [&seenCandidateTexts](const auto &item) {
+                               if (item.source == core::CandidateSource::Command) {
+                                   return false;
+                               }
+                               return !seenCandidateTexts.insert(item.text).second;
+                           }),
+            page_.items.end());
     }
 
     std::shared_ptr<SharedResources> shared_;
@@ -1891,6 +1946,8 @@ private:
     bool contextLearningEnabled_ = true;
     bool learningEnabled_ = true;
     bool englishDefinitionEnabled_ = false;
+    bool clipboardEnabled_ = true;
+    std::string clipboardTrigger_ = "V+2";
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
@@ -1947,6 +2004,14 @@ void PinyinCandidateProvider::setContextLearningEnabled(bool enabled) {
 
 void PinyinCandidateProvider::setEnglishDefinitionEnabled(bool enabled) {
     impl_->setEnglishDefinitionEnabled(enabled);
+}
+
+void PinyinCandidateProvider::setClipboardEnabled(bool enabled) {
+    impl_->setClipboardEnabled(enabled);
+}
+
+void PinyinCandidateProvider::setClipboardTrigger(std::string trigger) {
+    impl_->setClipboardTrigger(std::move(trigger));
 }
 
 } // namespace modernime::pinyin

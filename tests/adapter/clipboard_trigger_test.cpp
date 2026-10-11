@@ -16,6 +16,109 @@ void assertTrue(bool condition, std::string_view message) {
     }
 }
 
+struct RecordingHost final : modernime::fcitx5::EngineHost {
+    std::vector<modernime::core::CandidatePage> pages;
+    std::vector<std::string> commits;
+
+    void publishPage(const modernime::core::CandidatePage &page) override {
+        pages.push_back(page);
+    }
+
+    void commit(std::string_view text) override {
+        commits.emplace_back(text);
+    }
+};
+
+struct FakeProvider final : modernime::core::CandidateProvider {
+    modernime::core::CandidatePage current;
+
+    bool append(std::string_view) override { return true; }
+    bool eraseLast() override { return true; }
+    bool replaceInput(std::string_view) override { return true; }
+    bool select(std::size_t) override {
+        current.clear();
+        return true;
+    }
+    bool remove(std::size_t) override { return true; }
+    void reset() override { current.clear(); }
+    const modernime::core::CandidatePage &page() const override { return current; }
+};
+
+void testControllerCommandSelectionOpensClipboard() {
+    RecordingHost host;
+    FakeProvider provider;
+    provider.current.items = {
+        {"v", "v", 0, modernime::core::CandidateSource::Raw, 1},
+        {"剪贴板 (V+2)", "v", 1, modernime::core::CandidateSource::Command, 1}
+    };
+    provider.current.rawInput = "v";
+    provider.current.preedit = "v";
+
+    modernime::fcitx5::ControllerOptions options;
+    options.clipboardEnabled = true;
+    options.clipboardTrigger = "V+2";
+    modernime::fcitx5::ModernIMEController controller(host, &provider, options);
+    controller.setClipboardEntries({"entry1", "entry2"});
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Character, 'v', 0}), "type v");
+
+    // 选中命令项打开剪贴板，不提交文本
+    assertTrue(controller.select(1), "select command candidate succeeds");
+    assertTrue(controller.clipboardMode(), "controller enters clipboard mode");
+    assertTrue(host.commits.empty(), "command selection does not commit text");
+    assertTrue(controller.page().items.size() == 2, "clipboard candidates populated");
+    assertTrue(controller.page().items[0].text == "entry1", "first clipboard candidate");
+
+    // 在剪贴板中选词提交
+    assertTrue(controller.select(0), "select first clipboard entry");
+    assertTrue(host.commits.size() == 1 && host.commits.back() == "entry1",
+               "clipboard entry committed");
+    assertTrue(!controller.clipboardMode(), "clipboard mode exited");
+}
+
+void testEmptyClipboardStateAndEscape() {
+    RecordingHost host;
+    FakeProvider provider;
+    provider.current.items = {
+        {"v", "v", 0, modernime::core::CandidateSource::Raw, 1},
+        {"剪贴板 (V+2)", "v", 1, modernime::core::CandidateSource::Command, 1}
+    };
+    provider.current.rawInput = "v";
+    provider.current.preedit = "v";
+
+    modernime::fcitx5::ControllerOptions options;
+    options.clipboardEnabled = true;
+    options.clipboardTrigger = "V+2";
+    modernime::fcitx5::ModernIMEController controller(host, &provider, options);
+    controller.setClipboardEntries({}); // empty clipboard
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Character, 'v', 0}), "type v");
+
+    assertTrue(controller.select(1), "open empty clipboard");
+    assertTrue(controller.clipboardMode(), "clipboard mode active");
+    assertTrue(controller.page().items.size() == 1, "shows single placeholder");
+    assertTrue(controller.page().items[0].text == "(剪贴板为空)", "placeholder text");
+    assertTrue(controller.page().items[0].source == modernime::core::CandidateSource::Command,
+               "placeholder has Command source");
+
+    // Escape 退出
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Escape, 0, 0}),
+               "Escape consumed");
+    assertTrue(!controller.clipboardMode(), "clipboard mode closed on escape");
+    assertTrue(host.commits.empty(), "nothing committed on escape");
+
+    // 再次打开并选中空占位项，不应提交文本
+    provider.current.items = {
+        {"v", "v", 0, modernime::core::CandidateSource::Raw, 1},
+        {"剪贴板 (V+2)", "v", 1, modernime::core::CandidateSource::Command, 1}
+    };
+    provider.current.rawInput = "v";
+    provider.current.preedit = "v";
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Character, 'v', 0}), "type v again");
+    assertTrue(controller.select(1), "open empty clipboard again");
+    assertTrue(controller.select(0), "select empty placeholder");
+    assertTrue(!controller.clipboardMode(), "clipboard closed");
+    assertTrue(host.commits.empty(), "placeholder not committed");
+}
+
 bool fires(std::string_view preedit, const fcitx::Key &key,
            std::string_view trigger) {
     return modernime::fcitx5::clipboardTriggerFire(preedit, key, trigger);
@@ -24,6 +127,9 @@ bool fires(std::string_view preedit, const fcitx::Key &key,
 } // namespace
 
 int main() {
+    testControllerCommandSelectionOpensClipboard();
+    testEmptyClipboardStateAndEscape();
+
     const fcitx::Key digitTwo(FcitxKey_2);
     const fcitx::Key digitOne(FcitxKey_1);
     const fcitx::Key digitSeven(FcitxKey_7);

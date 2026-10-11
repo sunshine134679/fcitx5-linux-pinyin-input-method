@@ -100,7 +100,8 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
     return {settings.inputEnabled, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
             settings.punctuationEnabled,
-            static_cast<std::size_t>(settings.candidatePageSize)};
+            static_cast<std::size_t>(settings.candidatePageSize),
+            settings.clipboardEnabled, settings.clipboardTrigger};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
@@ -156,7 +157,8 @@ pinyin::PinyinDataPaths pinyinPaths() {
 pinyin::PinyinProviderOptions pinyinOptions(
     const core::ModernIMESettings &settings) {
     return {settings.learningEnabled, settings.contextLearningEnabled,
-            settings.englishDefinitionEnabled};
+            settings.englishDefinitionEnabled,
+            settings.clipboardEnabled, settings.clipboardTrigger};
 }
 #endif
 
@@ -293,6 +295,8 @@ void FcitxInputContextState::applySettings(
             settings.contextLearningEnabled);
         provider_->setEnglishDefinitionEnabled(
             settings.englishDefinitionEnabled);
+        provider_->setClipboardEnabled(settings.clipboardEnabled);
+        provider_->setClipboardTrigger(settings.clipboardTrigger);
     }
 #else
     (void)settings;
@@ -699,13 +703,15 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         auto modernEvent = translateKey(event.key(), keyBindings_);
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
                                       contextState->controller().active();
+        if (clipboardActive) {
+            contextState->setClipboardEntries(clipboardHistory_.entries());
+        }
         // 两段式剪贴板触发：拼音组合恰好是触发字母（默认 v）时，下一键为
         // 触发数字（默认 2）则丢弃组合并打开剪贴板。触发字母本身始终按
         // 正常输入处理，不会被消费或改写；数字选择关闭时同样生效。
         if (clipboardActive &&
             clipboardTriggerFire(contextState->controller().page().preedit,
                                  event.key(), keyBindings_.clipboardTrigger)) {
-            contextState->setClipboardEntries(clipboardHistory_.entries());
             if (contextState->controller().handle(
                     {KeyKind::OpenClipboard, 0, 0})) {
                 event.filterAndAccept();

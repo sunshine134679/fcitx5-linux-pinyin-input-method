@@ -275,6 +275,18 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         host_.commit(std::string_view(&event.character, 1));
         return true;
     case KeyKind::Digit: {
+        char triggerChar = 'v';
+        char triggerDigit = '2';
+        if (options_.clipboardTrigger.size() == 3 && options_.clipboardTrigger[1] == '+') {
+            triggerChar = static_cast<char>(std::tolower(static_cast<unsigned char>(options_.clipboardTrigger[0])));
+            triggerDigit = options_.clipboardTrigger[2];
+        }
+        if (options_.clipboardEnabled &&
+            compositionInput_.size() == 1 &&
+            std::tolower(static_cast<unsigned char>(compositionInput_.front())) == triggerChar &&
+            event.digit == triggerDigit) {
+            return openClipboard();
+        }
         if (!compositionInput_.empty() && compositionInput_.front() == 'v') {
             std::string nextInput = compositionInput_;
             nextInput.insert(compositionCursor_, 1, event.digit);
@@ -382,6 +394,10 @@ bool ModernIMEController::select(std::size_t index) {
         return false;
     }
     if (clipboardMode_) {
+        if (page_.items[index].source == core::CandidateSource::Command) {
+            clearComposition();
+            return true;
+        }
         const auto text = page_.items[index].text;
         host_.commit(text);
         clearComposition();
@@ -389,6 +405,10 @@ bool ModernIMEController::select(std::size_t index) {
     }
     if (provider_) {
         const auto candidate = page_.items[index];
+        if (candidate.source == core::CandidateSource::Command) {
+            provider_->select(index);
+            return openClipboard();
+        }
         const auto text = candidate.text;
         const bool partialSelection = candidate.consumedInputBytes > 0 &&
                                       candidate.consumedInputBytes <
@@ -403,6 +423,10 @@ bool ModernIMEController::select(std::size_t index) {
         }
         clearComposition();
         return true;
+    }
+    if (page_.items[index].source == core::CandidateSource::Command) {
+        clearComposition();
+        return openClipboard();
     }
     page_.cursor = index;
     return commitCurrent();
@@ -627,8 +651,15 @@ bool ModernIMEController::openClipboard() {
     compositionCursor_ = 0;
     clipboardMode_ = true;
     page_.items.reserve(clipboardEntries_.size());
-    for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {
-        page_.items.push_back({clipboardEntries_[index], {}, index});
+    if (clipboardEntries_.empty()) {
+        core::CandidateItem emptyItem;
+        emptyItem.text = "(剪贴板为空)";
+        emptyItem.source = core::CandidateSource::Command;
+        page_.items.push_back(std::move(emptyItem));
+    } else {
+        for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {
+            page_.items.push_back({clipboardEntries_[index], {}, index});
+        }
     }
     for (std::size_t begin = 0; begin < page_.items.size();
          begin += kClipboardPageSize) {

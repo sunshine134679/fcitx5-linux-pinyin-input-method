@@ -794,6 +794,41 @@ void testPinyinDataPathsDetectionAndDiagnostics() {
 
 } // namespace
 
+void testVCommandMenuAndDeduplication() {
+    modernime::pinyin::PinyinCandidateProvider provider;
+    assertTrue(provider.append("v"), "v input accepted");
+    auto page = provider.page();
+    assertTrue(page.items.size() == 2, "v produces exactly 2 candidates (raw + clipboard command)");
+    assertTrue(page.items[0].text == "v" &&
+               page.items[0].source == modernime::core::CandidateSource::Raw,
+               "candidate 0 is raw v");
+    assertTrue(page.items[1].text == "剪贴板 (V+2)" &&
+               page.items[1].source == modernime::core::CandidateSource::Command,
+               "candidate 1 is clipboard command with trigger");
+
+    std::size_t vCount = 0;
+    for (const auto &item : page.items) {
+        if (item.text == "v") {
+            ++vCount;
+        }
+    }
+    assertTrue(vCount == 1, "no duplicate raw v candidate");
+
+    provider.setClipboardEnabled(false);
+    page = provider.page();
+    assertTrue(page.items.size() == 1 && page.items[0].text == "v",
+               "disabled clipboard shows only raw v without command");
+
+    provider.setClipboardEnabled(true);
+    provider.setClipboardTrigger("V+3");
+    page = provider.page();
+    assertTrue(page.items.size() == 2 && page.items[1].text == "剪贴板 (V+3)",
+               "custom trigger V+3 updates command text");
+
+    assertTrue(provider.select(1), "selecting command succeeds");
+    assertTrue(provider.page().items.empty(), "selecting command clears candidates");
+}
+
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
@@ -1098,5 +1133,6 @@ int main() {
     testTypoCorrectionTransposition();
     testPunctuationAndSymbolMacroCandidates();
     testNumeralMacrosAtZeroGroupBoundaries();
+    testVCommandMenuAndDeduplication();
     return EXIT_SUCCESS;
 }
