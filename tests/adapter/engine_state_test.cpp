@@ -469,6 +469,14 @@ int main() {
     assertTrue(!disabledController.handle(
                     {modernime::fcitx5::KeyKind::Character, 'a', 0}),
                 "disabled settings ignore characters before activation");
+    assertTrue(!disabledController.handle(
+                    {modernime::fcitx5::KeyKind::Toggle, 0, 0}) &&
+                   !disabledController.active(),
+               "global input disable blocks toggles on a new controller");
+    disabledController.setActive(true);
+    assertTrue(!disabledController.active(),
+               "temporary Chinese mode cannot override global input disable");
+
 
     ManyCandidateProvider navigationProvider;
     RecordingHost navigationHost;

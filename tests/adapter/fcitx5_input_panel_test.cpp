@@ -77,7 +77,49 @@ private:
     std::size_t candidateCount_ = 10;
 };
 
-void testZeroCommitsBeforePassThrough() {
+void testDisabledActivationPreservesChineseMode() {
+    char path[] = "/tmp/modernime-activation-XXXXXX";
+    const auto *root = mkdtemp(path);
+    assertTrue(root != nullptr, "activation configuration directory created");
+    setenv("XDG_CONFIG_HOME", root, 1);
+    setenv("XDG_DATA_HOME", root, 1);
+    auto settings = modernime::core::defaultSettings();
+    settings.inputEnabled = false;
+    const auto settingsPath = modernime::core::SettingsPaths::fromEnvironment(
+        root, root, "").settingsFile;
+    assertTrue(modernime::core::SettingsStore::save(settingsPath, settings),
+               "engine starts globally disabled in Chinese default mode");
+    char program[] = "modernime-test";
+    char disable[] = "--disable=all";
+    char *argv[] = {program, disable};
+    {
+        fcitx::Instance instance(2, argv);
+        instance.initialize();
+        modernime::fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+        TestInputContext context(instance.inputContextManager());
+        context.setCapabilityFlags(fcitx::CapabilityFlag::Preedit);
+        const auto entries = engine.listInputMethods();
+        fcitx::InputContextEvent activation(&context,
+                                            fcitx::EventType::InputContextFocusIn);
+        engine.activate(entries.front(), activation);
+        auto *state = dynamic_cast<modernime::fcitx5::FcitxInputContextState *>(
+            context.property("modernime-fcitx5-state"));
+        assertTrue(state != nullptr && !state->controller().active(),
+                   "real activation respects the global input disable");
+        settings.inputEnabled = true;
+        state->applySettings(settings, 0);
+        assertTrue(state->controller().active(),
+                   "hot reenabling restores Chinese mode after a disabled activation");
+        fcitx::KeyEvent event(&context, fcitx::Key(FcitxKey_n));
+        engine.keyEvent(entries.front(), event);
+        assertTrue(event.accepted() &&
+                       context.inputPanel().clientPreedit().toString() == "n",
+                   "the activated context accepts pinyin after hot reenabling");
+    }
+    std::filesystem::remove_all(root);
+}
+
+void testLiveKeyEvents() {
     char path[] = "/tmp/modernime-key-events-XXXXXX";
     const auto *root = mkdtemp(path);
     assertTrue(root != nullptr, "isolated configuration directory created");
@@ -113,6 +155,39 @@ void testZeroCommitsBeforePassThrough() {
         }
         assertTrue(context.commits == std::vector<std::string>{"ni", "0", "ni", "0"},
                    "main keyboard and keypad preserve ni then zero ordering");
+        auto *state = dynamic_cast<modernime::fcitx5::FcitxInputContextState *>(
+            context.property("modernime-fcitx5-state"));
+        assertTrue(state != nullptr, "real engine owns the live context state");
+        fcitx::KeyEvent letter(&context, fcitx::Key(FcitxKey_n));
+        engine.keyEvent(entry, letter);
+        auto settings = modernime::core::defaultSettings();
+        settings.inputEnabled = false;
+        state->applySettings(settings, 0);
+        assertTrue(!state->controller().active() &&
+                       context.inputPanel().clientPreedit().empty(),
+                   "hot disabling input resets the existing composition immediately");
+        fcitx::KeyEvent toggle(&context, fcitx::Key(FcitxKey_space,
+                             fcitx::KeyStates(fcitx::KeyState::Ctrl)));
+        engine.keyEvent(entry, toggle);
+        fcitx::KeyEvent shiftPress(&context, fcitx::Key(FcitxKey_Shift_L));
+        fcitx::KeyEvent shiftRelease(&context, fcitx::Key(FcitxKey_Shift_L), true);
+        engine.keyEvent(entry, shiftPress);
+        engine.keyEvent(entry, shiftRelease);
+        assertTrue(!toggle.accepted() && !shiftRelease.accepted() &&
+                       !state->controller().active(),
+                   "explicit and Shift toggles cannot enable globally disabled input");
+        settings.inputEnabled = true;
+        state->applySettings(settings, 0);
+        assertTrue(state->controller().active(),
+                   "reenabling input restores the live context's Chinese mode");
+        state->controller().setActive(false);
+        settings.inputEnabled = false;
+        state->applySettings(settings, 0);
+        settings.inputEnabled = true;
+        state->applySettings(settings, 0);
+        assertTrue(!state->controller().active(),
+                   "hot settings preserve the live context's temporary English mode");
+
     }
     std::filesystem::remove_all(root);
 }
@@ -140,7 +215,8 @@ void publishFreshTenCandidates(
 } // namespace
 
 int main() {
-    testZeroCommitsBeforePassThrough();
+    testDisabledActivationPreservesChineseMode();
+    testLiveKeyEvents();
     fcitx::InputContextManager manager;
     TestInputContext inputContext(manager);
     inputContext.setCapabilityFlags(fcitx::CapabilityFlag::Preedit);

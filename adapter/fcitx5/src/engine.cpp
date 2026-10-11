@@ -94,8 +94,7 @@ std::size_t displayedPreeditCursor(std::string_view displayed,
 ModernIMEController::ModernIMEController(EngineHost &host,
                                          core::CandidateProvider *provider,
                                          ControllerOptions options)
-    : host_(host), provider_(provider), options_(options),
-      active_(options.inputEnabled) {}
+    : host_(host), provider_(provider), options_(options) {}
 
 void ModernIMEController::setContext(std::string before, std::string after) {
     contextBefore_ = std::move(before);
@@ -119,10 +118,13 @@ void ModernIMEController::setContext(std::string before, std::string after) {
 
 bool ModernIMEController::handle(const KeyEvent &event) {
     if (event.kind == KeyKind::Toggle) {
+        if (!options_.inputEnabled) {
+            return false;
+        }
         setActive(!active_);
         return true;
     }
-    if (!active_) {
+    if (!active()) {
         return false;
     }
 
@@ -379,7 +381,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
 }
 
 bool ModernIMEController::select(std::size_t index) {
-    if (!active_ || index >= page_.items.size()) {
+    if (!active() || index >= page_.items.size()) {
         return false;
     }
     if (clipboardMode_) {
@@ -410,7 +412,7 @@ bool ModernIMEController::select(std::size_t index) {
 }
 
 bool ModernIMEController::removeCurrent() {
-    if (!active_ || clipboardMode_ || page_.items.empty() ||
+    if (!active() || clipboardMode_ || page_.items.empty() ||
         provider_ == nullptr) {
         return false;
     }
@@ -512,9 +514,16 @@ void ModernIMEController::reset() {
     singleQuoteOpen_ = false;
 }
 
+void ModernIMEController::setOptions(ControllerOptions options) {
+    options_ = options;
+    if (!options_.inputEnabled) {
+        reset();
+    }
+}
+
 void ModernIMEController::setActive(bool active) {
     active_ = active;
-    if (!active_) {
+    if (!this->active()) {
         reset();
     }
 }
@@ -606,7 +615,7 @@ void ModernIMEController::updatePreeditCursor() {
 }
 
 bool ModernIMEController::openClipboard() {
-    if (!active_) {
+    if (!active()) {
         return false;
     }
 

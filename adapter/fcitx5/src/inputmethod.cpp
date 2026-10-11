@@ -280,8 +280,7 @@ FcitxInputContextState::FcitxInputContextState(
         (void)resources;
 #endif
     host_.setController(controller_);
-    controller_.setActive(settings.inputEnabled &&
-                          settings.defaultMode == core::InputMode::Chinese);
+    controller_.setActive(settings.defaultMode == core::InputMode::Chinese);
 }
 
 void FcitxInputContextState::applySettings(
@@ -674,12 +673,16 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                 shiftPressed_ = false;
                 auto *contextState = state(event.inputContext());
                 if (contextState != nullptr) {
+                    if (contextState->settingsGeneration() != settingsGeneration_) {
+                        contextState->applySettings(settings_, settingsGeneration_);
+                    }
                     if (!contextState->controller().page().preedit.empty()) {
                         contextState->controller().handle({KeyKind::Enter, 0, 0});
                     }
-                    contextState->controller().handle({KeyKind::Toggle, 0, 0});
-                    event.filterAndAccept();
-                    return;
+                    if (contextState->controller().handle({KeyKind::Toggle, 0, 0})) {
+                        event.filterAndAccept();
+                        return;
+                    }
                 }
             }
             shiftPressed_ = false;
@@ -746,7 +749,6 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
             contextState->applySettings(settings_, settingsGeneration_);
         }
         contextState->controller().setActive(
-            settings_.inputEnabled &&
             settings_.defaultMode == core::InputMode::Chinese);
     }
 }

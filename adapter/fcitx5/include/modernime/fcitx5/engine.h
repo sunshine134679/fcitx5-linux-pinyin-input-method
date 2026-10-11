@@ -163,10 +163,10 @@ public:
     }
 
     void setClipboardEntries(std::vector<std::string> entries);
-    void setOptions(ControllerOptions options) { options_ = options; }
+    void setOptions(ControllerOptions options);
     bool clipboardMode() const { return clipboardMode_; }
 
-    bool active() const { return active_; }
+    bool active() const { return options_.inputEnabled && active_; }
     const core::CandidatePage &page() const { return page_; }
 
 private:
