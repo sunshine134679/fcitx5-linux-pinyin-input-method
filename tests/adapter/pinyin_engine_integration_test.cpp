@@ -417,5 +417,88 @@ int main() {
         }
     }
 
+    // Test context association in controller without SurroundingText:
+    {
+        modernime::pinyin::PinyinDataPaths ctxPaths;
+        const auto ctxLearningPath = std::filesystem::temp_directory_path() / "modernime-engine-ctx.sqlite3";
+        std::error_code ec;
+        std::filesystem::remove(ctxLearningPath, ec);
+        ctxPaths.learningStore = ctxLearningPath.string();
+        modernime::pinyin::PinyinProviderOptions ctxOptions;
+        ctxOptions.learningEnabled = true;
+        ctxOptions.contextLearningEnabled = true;
+        modernime::pinyin::PinyinCandidateProvider ctxProvider(ctxPaths, ctxOptions);
+        RecordingHost ctxHost;
+        modernime::fcitx5::ModernIMEController ctxController(ctxHost, &ctxProvider);
+
+        // Train: commit 王 (no surrounding text, setContext("", "") called)
+        ctxController.setContext("", "");
+        for (char c : std::string_view("wang")) {
+            ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        ctxController.select(indexOf(ctxController.page(), "王"));
+
+        // Train: commit 绍
+        ctxController.setContext("", "");
+        for (char c : std::string_view("shao")) {
+            ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        ctxController.select(indexOf(ctxController.page(), "绍"));
+
+        // Train: commit 龙
+        ctxController.setContext("", "");
+        for (char c : std::string_view("long")) {
+            ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        ctxController.select(indexOf(ctxController.page(), "龙"));
+
+        ctxProvider.flush();
+
+        // Now test sequence: reset and start fresh
+        ctxController.reset();
+
+        // 1. Commit 王
+        ctxController.setContext("", "");
+        for (char c : std::string_view("wang")) {
+            ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        ctxController.select(indexOf(ctxController.page(), "王"));
+
+        // 2. Type shao without surrounding text:
+        ctxController.setContext("", "");
+        for (char c : std::string_view("shao")) {
+            ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!ctxController.page().items.empty() &&
+                   ctxController.page().items.front().text == "绍",
+                   "controller maintains fallback context '王' and boosts 绍 to rank 0");
+        ctxController.select(0);
+
+        // 3. Type long without surrounding text:
+        ctxController.setContext("", "");
+        for (char c : std::string_view("long")) {
+            ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!ctxController.page().items.empty() &&
+                   ctxController.page().items.front().text == "龙",
+                   "controller maintains fallback context '王绍' and boosts 龙 to rank 0");
+        ctxController.select(0);
+
+        // 4. Punctuation resets fallback context:
+        ctxController.handle({modernime::fcitx5::KeyKind::Punctuation, ',', 0});
+        ctxController.setContext("", "");
+        for (char c : std::string_view("shao")) {
+            ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!ctxController.page().items.empty() &&
+                   ctxController.page().items.front().text != "绍",
+                   "punctuation resets fallback context so 绍 is not rank 0");
+        ctxController.reset();
+
+        std::filesystem::remove(ctxLearningPath, ec);
+        std::filesystem::remove(ctxLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(ctxLearningPath.string() + "-shm", ec);
+    }
+
     return EXIT_SUCCESS;
 }

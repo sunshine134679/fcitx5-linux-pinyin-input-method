@@ -98,23 +98,45 @@ ModernIMEController::ModernIMEController(EngineHost &host,
     : host_(host), provider_(provider), options_(options) {}
 
 void ModernIMEController::setContext(std::string before, std::string after) {
-    contextBefore_ = std::move(before);
-    contextAfter_ = std::move(after);
-    // Empty/empty also means that the client does not expose surrounding
-    // text (common in terminals and password fields). With no evidence about
-    // the cursor location, keep the internal pair state instead of turning
-    // every quote into an opening quote.
-    if (!contextBefore_.empty() || !contextAfter_.empty()) {
+    if (!before.empty() || !after.empty()) {
+        contextBefore_ = std::move(before);
+        contextAfter_ = std::move(after);
+        fallbackContextBefore_ = contextBefore_;
         doubleQuoteOpen_ = quoteIsOpenAtCursor(
             contextBefore_, contextAfter_, core::kLeftDoubleQuote,
             core::kRightDoubleQuote);
         singleQuoteOpen_ = quoteIsOpenAtCursor(
             contextBefore_, contextAfter_, core::kLeftSingleQuote,
             core::kRightSingleQuote);
+    } else {
+        contextBefore_ = fallbackContextBefore_;
+        contextAfter_.clear();
     }
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
     }
+}
+
+void ModernIMEController::appendFallbackContext(std::string_view text) {
+    if (text.empty()) {
+        return;
+    }
+    fallbackContextBefore_.append(text);
+    constexpr std::size_t maxFallbackChars = 32;
+    std::size_t charCount = 0;
+    std::size_t end = fallbackContextBefore_.size();
+    while (end > 0 && charCount < maxFallbackChars) {
+        std::size_t start = end - 1;
+        while (start > 0 && (static_cast<unsigned char>(fallbackContextBefore_[start]) & 0xc0U) == 0x80U) {
+            --start;
+        }
+        end = start;
+        ++charCount;
+    }
+    if (end > 0) {
+        fallbackContextBefore_.erase(0, end);
+    }
+    contextBefore_ = fallbackContextBefore_;
 }
 
 bool ModernIMEController::handle(const KeyEvent &event) {
@@ -421,6 +443,7 @@ bool ModernIMEController::select(std::size_t index) {
             return false;
         }
         host_.commit(text);
+        appendFallbackContext(text);
         if (partialSelection && !provider_->page().rawInput.empty()) {
             publishProviderPage(true);
             return true;
@@ -491,6 +514,7 @@ bool ModernIMEController::commitPunctuation(char ascii) {
         }
     }
     host_.commit(*converted);
+    fallbackContextBefore_.clear();
     if (provider_ != nullptr) {
         provider_->resetCommitHistory();
     }
@@ -522,6 +546,7 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
             std::chrono::system_clock::now().time_since_epoch()).count();
         provider_->onCommitEvent(event);
     }
+    fallbackContextBefore_.clear();
     clearComposition();
     host_.commit(preedit);
     if (!suffix.empty()) {
@@ -531,7 +556,7 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
 }
 
 void ModernIMEController::clearComposition() {
-    contextBefore_.clear();
+    contextBefore_ = fallbackContextBefore_;
     contextAfter_.clear();
     clipboardMode_ = false;
     clipboardEntries_.clear();
@@ -551,6 +576,7 @@ void ModernIMEController::clearComposition() {
 }
 
 void ModernIMEController::reset() {
+    fallbackContextBefore_.clear();
     if (provider_ != nullptr) {
         provider_->resetCommitHistory();
     }

@@ -299,6 +299,16 @@ bool LearningSnapshot::hasPositiveFrequency(std::string_view phrase,
     return false;
 }
 
+std::size_t countUtf8Characters(std::string_view value) {
+    std::size_t count = 0;
+    std::size_t offset = 0;
+    while (offset < value.size()) {
+        offset += utf8CharacterLengthAt(value, offset);
+        ++count;
+    }
+    return count;
+}
+
 double LearningSnapshot::boostAt(std::string_view phrase,
                                  std::string_view pinyin,
                                  std::int64_t nowMs) const {
@@ -308,9 +318,11 @@ double LearningSnapshot::boostAt(std::string_view phrase,
         return 0.0;
     }
     std::int64_t totalFrequency = 0;
+    std::int64_t genericFrequency = 0;
     std::int64_t lastSelectedMs = 0;
     std::int64_t worstFeedback = 0;
     bool suppressed = false;
+    std::unordered_set<std::string> distinctContexts;
     for (const auto *item : variants) {
         worstFeedback = std::max(worstFeedback, item->negativeFeedback);
         if (item->suppressed) {
@@ -319,19 +331,31 @@ double LearningSnapshot::boostAt(std::string_view phrase,
         }
         totalFrequency += std::max<std::int64_t>(0, item->frequency);
         lastSelectedMs = std::max(lastSelectedMs, item->lastSelectedMs);
+        if (item->contextBefore.empty() && item->contextAfter.empty()) {
+            genericFrequency += std::max<std::int64_t>(0, item->frequency);
+        } else {
+            distinctContexts.insert(item->contextBefore + "\x1f" + item->contextAfter);
+        }
     }
     if (suppressed || totalFrequency <= 0) {
         return 0.0;
     }
+    // 平滑与回退：若词条从未在无上下文或通用场景被选中，且仅局限在极少数（<3）特定上下文，
+    // 其无条件频率按折扣衰减，避免单次或少数几次特定上下文训练覆盖全局常用排序。
+    double effectiveFrequency = static_cast<double>(totalFrequency);
+    if (genericFrequency == 0 && distinctContexts.size() < 3) {
+        effectiveFrequency = std::max(0.0, 0.25 * static_cast<double>(totalFrequency));
+    }
+
     const double ageMs = std::max(
         0.0, static_cast<double>(nowMs) -
                  static_cast<double>(lastSelectedMs));
     constexpr double halfLifeMs = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
     const double recency = std::exp(-ageMs / halfLifeMs);
     const double frequency = std::min(
-        3.0, 0.85 * std::log1p(static_cast<double>(totalFrequency)));
+        3.0, 0.85 * std::log1p(effectiveFrequency));
     const double recentScale =
-        totalFrequency >= 3 ? 0.90 : (totalFrequency >= 2 ? 0.60 : 0.35);
+        effectiveFrequency >= 3.0 ? 0.90 : (effectiveFrequency >= 2.0 ? 0.60 : (effectiveFrequency >= 1.0 ? 0.35 : 0.15));
     const double recent = std::min(1.0, recentScale * recency);
     const double penalty = std::min(
         2.0, 0.75 * std::log1p(static_cast<double>(
@@ -358,32 +382,55 @@ double LearningSnapshot::contextBoost(
     constexpr std::size_t contextWindow = 8;
     double bestBoost = 0.0;
     for (const auto *item : variants) {
-        if (item->contextBefore == contextBefore &&
-            item->contextAfter == contextAfter &&
-            !contextBefore.empty() && !contextAfter.empty()) {
-            bestBoost = std::max(bestBoost, 0.9);
+        if (item->frequency <= 0) {
             continue;
         }
-        if ((item->contextBefore == contextBefore &&
-             !contextBefore.empty() && item->contextAfter.empty()) ||
-            (item->contextAfter == contextAfter &&
-             !contextAfter.empty() && item->contextBefore.empty())) {
-            bestBoost = std::max(bestBoost, 0.7);
+        std::size_t beforeMatch = 0;
+        bool isExactBefore = false;
+        if (!contextBefore.empty() && !item->contextBefore.empty()) {
+            if (item->contextBefore == contextBefore) {
+                beforeMatch = countUtf8Characters(contextBefore);
+                isExactBefore = true;
+            } else {
+                beforeMatch = commonSuffixCharacters(
+                    item->contextBefore, contextBefore, contextWindow);
+            }
+        }
+
+        std::size_t afterMatch = 0;
+        bool isExactAfter = false;
+        if (!contextAfter.empty() && !item->contextAfter.empty()) {
+            if (item->contextAfter == contextAfter) {
+                afterMatch = countUtf8Characters(contextAfter);
+                isExactAfter = true;
+            } else {
+                afterMatch = commonPrefixCharacters(
+                    item->contextAfter, contextAfter, contextWindow);
+            }
+        }
+
+        if (beforeMatch == 0 && afterMatch == 0) {
             continue;
         }
-        const auto beforeMatch = commonSuffixCharacters(
-            item->contextBefore, contextBefore, contextWindow);
-        const auto afterMatch = commonPrefixCharacters(
-            item->contextAfter, contextAfter, contextWindow);
-        if (beforeMatch >= 4 && afterMatch >= 4) {
-            bestBoost = std::max(bestBoost, 0.6);
-        } else if (beforeMatch >= 2 && afterMatch >= 2) {
-            bestBoost = std::max(bestBoost, 0.4);
-        } else if (beforeMatch >= 4 || afterMatch >= 4) {
-            bestBoost = std::max(bestBoost, 0.3);
-        } else if (beforeMatch >= 2 || afterMatch >= 2) {
-            bestBoost = std::max(bestBoost, 0.2);
+
+        double matchScore = 0.0;
+        if (beforeMatch >= 2) {
+            matchScore = 0.80 + (isExactBefore ? 0.15 : 0.0) +
+                         std::min(0.15, 0.05 * static_cast<double>(beforeMatch - 2));
+        } else if (beforeMatch == 1) {
+            matchScore = 0.65 + (isExactBefore ? 0.15 : 0.0);
         }
+        if (afterMatch > 0) {
+            matchScore += 0.10 * std::min<double>(3.0, static_cast<double>(afterMatch));
+            if (isExactAfter) {
+                matchScore += 0.05;
+            }
+        }
+
+        const double freqBonus = std::min(
+            0.40, 0.20 * std::log1p(static_cast<double>(item->frequency)));
+        const double itemBoost = std::min(1.5, matchScore + freqBonus);
+        bestBoost = std::max(bestBoost, itemBoost);
     }
     return bestBoost;
 }

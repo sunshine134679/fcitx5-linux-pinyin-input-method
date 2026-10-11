@@ -184,6 +184,7 @@ private:
     void updatePreeditCursor();
     void ensurePageBoundaries();
     core::PageBoundary currentPageBoundary() const;
+    void appendFallbackContext(std::string_view text);
 
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;
@@ -191,6 +192,7 @@ private:
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
+    std::string fallbackContextBefore_;
     ControllerOptions options_;
     bool active_ = true;
     bool clipboardMode_ = false;

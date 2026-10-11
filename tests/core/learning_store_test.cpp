@@ -1249,9 +1249,51 @@ void testPhraseFormationTrackerUnit() {
     }
 }
 
+void testContextAssociationAndSmoothing() {
+    const auto path = testPath("context-association.sqlite3");
+    modernime::core::LearningStore store(path);
+    assertTrue(store.open(), "context association store opens");
+
+    // 1. Single character context: 王 -> 绍
+    assertTrue(store.recordSelection("绍", "shao", "王", "", 1000),
+               "record selection of 绍 with context 王");
+    auto snapshot1 = store.snapshot(1000);
+    const double exact1 = snapshot1->contextBoost("绍", "shao", "王", "");
+    assertTrue(exact1 > 0.6, "exact 1-char context gives strong boost");
+    const double shifted1 = snapshot1->contextBoost("绍", "shao", "这是王", "");
+    assertTrue(shifted1 > 0.5, "suffix 1-char context gives boost");
+    const double diffContext1 = snapshot1->contextBoost("绍", "shao", "李", "");
+    assertTrue(diffContext1 == 0.0, "unrelated context gives 0 boost");
+    const double emptyContext1 = snapshot1->contextBoost("绍", "shao", "", "");
+    assertTrue(emptyContext1 == 0.0, "empty context gives 0 context boost");
+
+    // 2. Multi-character context: 王绍 -> 龙
+    assertTrue(store.recordSelection("龙", "long", "王绍", "", 1000),
+               "record selection of 龙 with context 王绍");
+    auto snapshot2 = store.snapshot(1000);
+    const double exact2 = snapshot2->contextBoost("龙", "long", "王绍", "");
+    assertTrue(exact2 > 0.8, "exact 2-char context gives high boost");
+    const double shifted2 = snapshot2->contextBoost("龙", "long", "公司王绍", "");
+    assertTrue(shifted2 > 0.7, "suffix 2-char context gives high boost");
+    const double diffContext2 = snapshot2->contextBoost("龙", "long", "张三", "");
+    assertTrue(diffContext2 == 0.0, "unrelated context gives 0 boost");
+
+    // 3. Frequency reinforcement
+    assertTrue(store.recordSelection("龙", "long", "王绍", "", 1001),
+               "second selection of 龙 with context 王绍");
+    auto snapshot3 = store.snapshot(1001);
+    const double repeatedBoost = snapshot3->contextBoost("龙", "long", "王绍", "");
+    assertTrue(repeatedBoost > exact2, "repeated selection increases context boost");
+
+    store.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
 } // namespace
 
 int main() {
+    testContextAssociationAndSmoothing();
     testPhraseFormationTrackerUnit();
     testCommitEventTrackingAndLearning();
     testIndependentRecallIndex();

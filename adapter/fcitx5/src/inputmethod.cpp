@@ -697,9 +697,11 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         if (contextState->settingsGeneration() != settingsGeneration_) {
             contextState->applySettings(settings_, settingsGeneration_);
         }
-        const auto context = extractSurroundingContext(
-            event.inputContext()->surroundingText(), 32);
-        contextState->controller().setContext(context.first, context.second);
+        if (event.inputContext()->surroundingText().isValid()) {
+            const auto context = extractSurroundingContext(
+                event.inputContext()->surroundingText(), 32);
+            contextState->controller().setContext(context.first, context.second);
+        }
         auto modernEvent = translateKey(event.key(), keyBindings_);
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
                                       contextState->controller().active();

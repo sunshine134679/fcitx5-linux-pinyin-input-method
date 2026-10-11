@@ -1031,6 +1031,105 @@ void testHouxuanlanPhraseFormation() {
     std::filesystem::remove(learningPath.string() + "-shm", err);
 }
 
+void testConditionalContextAssociation() {
+    const auto learningPath = testPath("context-association-provider.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+    options.contextLearningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+        // Initially in empty context: shao does NOT have 绍 at rank 0 (usually 少/稍)
+        assertTrue(provider.append("shao"), "shao input accepted");
+        assertTrue(!provider.page().items.empty(), "shao has candidates");
+        const std::string defaultShaoTop = provider.page().items.front().text;
+        assertTrue(defaultShaoTop != "绍", "default shao top candidate is not 绍");
+        provider.reset();
+
+        // 1. Context association training:
+        // Type wang, select 王
+        assertTrue(provider.append("wang"), "wang input accepted");
+        const auto wangIdx = indexOf(provider.page(), "王");
+        assertTrue(wangIdx < provider.page().items.size(), "王 exists in wang");
+        assertTrue(provider.select(wangIdx), "select 王");
+        provider.reset();
+
+        // Next input: shao. Because of fallback buffer, contextBefore is "王"!
+        assertTrue(provider.append("shao"), "shao input accepted");
+        const auto shaoIdx = indexOf(provider.page(), "绍");
+        assertTrue(shaoIdx < provider.page().items.size(), "绍 exists in shao");
+        assertTrue(provider.select(shaoIdx), "select 绍 in context 王");
+        provider.reset();
+
+        // Next input: long. Because of fallback buffer, contextBefore is "王绍"!
+        assertTrue(provider.append("long"), "long input accepted");
+        const auto longIdx = indexOf(provider.page(), "龙");
+        assertTrue(longIdx < provider.page().items.size(), "龙 exists in long");
+        assertTrue(provider.select(longIdx), "select 龙 in context 王绍");
+        provider.reset();
+
+        provider.flush();
+
+        // 2. Acceptance verification:
+        // A. Without surrounding text, typing sequence wang -> shao -> long:
+        provider.resetCommitHistory(); // simulate clean start
+
+        // Type wang, select 王
+        assertTrue(provider.append("wang"), "wang input accepted");
+        assertTrue(provider.select(indexOf(provider.page(), "王")), "commit 王");
+        provider.reset();
+
+        // Type shao: fallback buffer supplies context "王"!
+        // 绍 must now be promoted to rank 0!
+        assertTrue(provider.append("shao"), "shao input accepted");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "绍",
+                   "王 + shao boosts 绍 to rank 0 via fallback context buffer");
+        assertTrue(provider.select(0), "commit 绍");
+        provider.reset();
+
+        // Type long: fallback buffer supplies context "王绍"!
+        // 龙 must now be promoted to rank 0!
+        assertTrue(provider.append("long"), "long input accepted");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "龙",
+                   "王绍 + long boosts 龙 to rank 0 via fallback context buffer");
+        provider.reset();
+
+        // B. Contrast context: unrelated or empty context does NOT unconditionally boost 绍/龙
+        provider.resetCommitHistory();
+        assertTrue(provider.append("shao"), "shao input in empty context");
+        assertTrue(provider.page().items.front().text != "绍",
+                   "unrelated/empty context does not unconditionally make 绍 rank 0");
+        provider.reset();
+
+        provider.setContext("李", "");
+        assertTrue(provider.append("shao"), "shao input with context 李");
+        assertTrue(provider.page().items.front().text != "绍",
+                   "context 李 does not make 绍 rank 0");
+        provider.reset();
+
+        // C. With SurroundingText from application:
+        provider.setContext("这是王", ""); // ends with 王
+        assertTrue(provider.append("shao"), "shao with surrounding text ending in 王");
+        assertTrue(provider.page().items.front().text == "绍",
+                   "surrounding text ending in 王 boosts 绍 to rank 0");
+        provider.reset();
+
+        provider.setContext("我们认识王绍", ""); // ends with 王绍
+        assertTrue(provider.append("long"), "long with surrounding text ending in 王绍");
+        assertTrue(provider.page().items.front().text == "龙",
+                   "surrounding text ending in 王绍 boosts 龙 to rank 0");
+        provider.reset();
+    }
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
@@ -1337,6 +1436,7 @@ int main() {
     testNumeralMacrosAtZeroGroupBoundaries();
     testVCommandMenuAndDeduplication();
     testIndependentRecallInCandidateProvider();
+    testConditionalContextAssociation();
     testIntraCompositionPhraseFormation();
     testInterCompositionPhraseFormationAndRestart();
     testHouxuanlanPhraseFormation();

@@ -1491,10 +1491,13 @@ public:
         if (candidate.source == core::CandidateSource::Raw) {
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
+            fallbackContextBefore_.clear();
+            contextBefore_.clear();
             context->clear();
             refresh();
             return true;
         }
+        appendFallbackContext(candidate.text);
         if (partialSelection) {
             auto remainder = rawInput.substr(candidate.consumedInputBytes);
             while (!remainder.empty() && remainder.front() == '\'') {
@@ -1589,8 +1592,32 @@ public:
         return true;
     }
 
+    void appendFallbackContext(std::string_view text) {
+        if (text.empty() || !contextLearningEnabled_) {
+            return;
+        }
+        fallbackContextBefore_.append(text);
+        constexpr std::size_t maxFallbackChars = 32;
+        std::size_t charCount = 0;
+        std::size_t end = fallbackContextBefore_.size();
+        while (end > 0 && charCount < maxFallbackChars) {
+            std::size_t start = end - 1;
+            while (start > 0 && (static_cast<unsigned char>(fallbackContextBefore_[start]) & 0xc0U) == 0x80U) {
+                --start;
+            }
+            end = start;
+            ++charCount;
+        }
+        if (end > 0) {
+            fallbackContextBefore_.erase(0, end);
+        }
+        contextBefore_ = fallbackContextBefore_;
+    }
+
     void reset() {
         phraseTracker_.cancelComposition();
+        contextBefore_ = fallbackContextBefore_;
+        contextAfter_.clear();
         // 删词屏蔽跨输入组合持续生效：用户明确删除的词不应在下一个
         // composition 里复活，屏蔽集合生命周期与 provider 一致。
         context->clear();
@@ -1606,16 +1633,21 @@ public:
 
     void resetCommitHistory() {
         phraseTracker_.resetCommitHistory();
+        fallbackContextBefore_.clear();
+        contextBefore_.clear();
+        contextAfter_.clear();
     }
 
     void setContext(std::string_view before, std::string_view after) {
         if (!contextLearningEnabled_) {
             contextBefore_.clear();
             contextAfter_.clear();
+            fallbackContextBefore_.clear();
             return;
         }
         contextBefore_ = before;
         contextAfter_ = after;
+        fallbackContextBefore_ = before;
     }
 
     void setLearningEnabled(bool enabled) { learningEnabled_ = enabled; }
@@ -1625,6 +1657,7 @@ public:
         if (!enabled) {
             contextBefore_.clear();
             contextAfter_.clear();
+            fallbackContextBefore_.clear();
         }
     }
 
@@ -2066,6 +2099,7 @@ private:
     core::CandidatePage page_;
     std::string contextBefore_;
     std::string contextAfter_;
+    std::string fallbackContextBefore_;
     std::unordered_set<std::string> suppressedLearned_;
     std::uint64_t generation = 0;
 };
