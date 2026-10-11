@@ -161,6 +161,9 @@ bool PinyinMatchPolicy::trustedShortAbbreviationMatch(
     static constexpr std::array commonPhrases{
         // 2-letter
         TrustedEntry{"nh", "你好"},
+        TrustedEntry{"sm", "什么"},
+        TrustedEntry{"gn", "功能"},
+        TrustedEntry{"zw", "中文"},
         TrustedEntry{"xa", "西安"},
         TrustedEntry{"bj", "北京"},
         TrustedEntry{"dl", "登录"},

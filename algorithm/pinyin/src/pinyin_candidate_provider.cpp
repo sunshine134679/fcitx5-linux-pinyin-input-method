@@ -1696,6 +1696,13 @@ private:
                             rawInput, item.fullPinyin));
             });
 
+        const bool isConsonantAbbreviation =
+            rawInput.size() == 2 && !page_.items.empty() &&
+            std::all_of(rawInput.begin(), rawInput.end(), [](char c) {
+                return c >= 'a' && c <= 'z' &&
+                       c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' && c != 'v';
+            });
+
         const bool hasTrustedShortAbbreviation =
             std::any_of(page_.items.begin(), page_.items.end(),
                         [&rawInput](const auto &item) {
@@ -1709,6 +1716,7 @@ private:
         const bool shouldPredictEnglish =
             (rawInput.empty() || rawInput.front() != 'v') &&
             !isEnglish && !hasTrustedShortAbbreviation &&
+            !isConsonantAbbreviation &&
             !hasExactFullPinyinMatch &&
             (!hasPinyinCoverage ||
              hasInvalidInternalPinyinSegment(segmentedInput)) &&
@@ -1788,7 +1796,7 @@ private:
                 preferEnglishOverChinese = true;
             }
 
-            if (hasTrustedShortAbbreviation && englishLearningBoost <= 0.0) {
+            if ((hasTrustedShortAbbreviation || isConsonantAbbreviation) && englishLearningBoost <= 0.0) {
                 preferEnglishOverChinese = false;
             }
         }
@@ -1802,7 +1810,7 @@ private:
         page_.items.erase(
             std::remove_if(page_.items.begin(), page_.items.end(),
                            [](const auto &item) {
-                               return item.source == core::CandidateSource::Raw;
+                                return item.source == core::CandidateSource::Raw;
                            }),
             page_.items.end());
 
@@ -1819,8 +1827,8 @@ private:
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
             page_.items.insert(page_.items.begin(), std::move(predictedCandidate));
             page_.preedit = std::string(rawInput);
-        } else if (!hasTrustedShortAbbreviation && isEnglish &&
-                   !hasExactFullPinyinMatch) {
+        } else if (!hasTrustedShortAbbreviation && !isConsonantAbbreviation &&
+                   isEnglish && !hasExactFullPinyinMatch) {
             page_.items.insert(page_.items.begin(), std::move(rawCandidate));
             page_.preedit = std::string(rawInput);
         } else if (page_.items.empty()) {

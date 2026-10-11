@@ -700,6 +700,50 @@ void testEnglishDefinitionCandidates() {
         assertTrue(provider.page().items.size() >= 2 &&
                        provider.page().items[1].source == modernime::core::CandidateSource::EnglishDefinition,
                    "definition candidate reappears dynamically upon setEnglishDefinitionEnabled(true)");
+
+        // H. 短简拼中文保护与释义抑制 (sm -> 什么, gn -> 中文, zw -> 中文/作为)
+        provider.reset();
+        assertTrue(provider.append("sm"), "append sm");
+        assertTrue(!provider.page().items.empty(), "has candidates for sm");
+        assertTrue(provider.page().items.front().text == "什么", "sm top candidate is 什么");
+        bool hasSmDef = false;
+        for (const auto &item : provider.page().items) {
+            if (item.source == modernime::core::CandidateSource::EnglishDefinition) {
+                hasSmDef = true;
+                break;
+            }
+        }
+        assertTrue(!hasSmDef, "sm does not insert definition when Chinese is at top");
+
+        provider.reset();
+        assertTrue(provider.append("gn"), "append gn");
+        assertTrue(!provider.page().items.empty(), "has candidates for gn");
+        assertTrue(provider.page().items.front().source != modernime::core::CandidateSource::Raw,
+                   "gn top candidate is Chinese, not raw/predicted English");
+        assertTrue(provider.page().items.front().text != "gnp", "gn does not predict gnp as top");
+        bool hasGnDef = false;
+        for (const auto &item : provider.page().items) {
+            if (item.source == modernime::core::CandidateSource::EnglishDefinition) {
+                hasGnDef = true;
+                break;
+            }
+        }
+        assertTrue(!hasGnDef, "gn does not insert definition when Chinese is at top");
+
+        provider.reset();
+        assertTrue(provider.append("zw"), "append zw");
+        assertTrue(!provider.page().items.empty(), "has candidates for zw");
+        assertTrue(provider.page().items.front().source != modernime::core::CandidateSource::Raw,
+                   "zw top candidate is Chinese, not raw/predicted English");
+        assertTrue(provider.page().items.front().text != "zwingli", "zw does not predict zwingli as top");
+        bool hasZwDef = false;
+        for (const auto &item : provider.page().items) {
+            if (item.source == modernime::core::CandidateSource::EnglishDefinition) {
+                hasZwDef = true;
+                break;
+            }
+        }
+        assertTrue(!hasZwDef, "zw does not insert definition when Chinese is at top");
     }
 
     std::filesystem::remove(learningPath, error);
