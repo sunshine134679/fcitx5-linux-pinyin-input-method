@@ -2,6 +2,11 @@
 
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
+#include <fcitx/instance.h>
+#include <fcitx/addonmanager.h>
+#include <fcitx/event.h>
+#include <fcitx-utils/keysymgen.h>
+#include <filesystem>
 
 #include <cstdlib>
 #include <iostream>
@@ -72,6 +77,46 @@ private:
     std::size_t candidateCount_ = 10;
 };
 
+void testZeroCommitsBeforePassThrough() {
+    char path[] = "/tmp/modernime-key-events-XXXXXX";
+    const auto *root = mkdtemp(path);
+    assertTrue(root != nullptr, "isolated configuration directory created");
+    setenv("XDG_CONFIG_HOME", root, 1);
+    setenv("XDG_DATA_HOME", root, 1);
+    char program[] = "modernime-test";
+    char disable[] = "--disable=all";
+    char *argv[] = {program, disable};
+    {
+        fcitx::Instance instance(2, argv);
+        instance.initialize();
+        modernime::fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+        TestInputContext context(instance.inputContextManager());
+        context.setCapabilityFlags(fcitx::CapabilityFlag::Preedit);
+        context.focusIn();
+        const auto entries = engine.listInputMethods();
+        const auto &entry = entries.front();
+        for (const auto zero : {FcitxKey_0, FcitxKey_KP_0}) {
+            for (const auto letter : {FcitxKey_n, FcitxKey_i}) {
+                fcitx::KeyEvent event(&context, fcitx::Key(letter));
+                engine.keyEvent(entry, event);
+                assertTrue(event.accepted(), "pinyin keyEvent accepted");
+            }
+            fcitx::KeyEvent event(&context, fcitx::Key(zero));
+            engine.keyEvent(entry, event);
+            assertTrue(!event.accepted(), "zero passes through to the client");
+            assertTrue(!context.commits.empty() && context.commits.back() == "ni",
+                       "raw composition is committed before zero passes through");
+            assertTrue(context.inputPanel().clientPreedit().empty(),
+                       "zero clears pending composition before client insertion");
+            // Emulate the application's insertion after the engine returns.
+            context.commits.emplace_back("0");
+        }
+        assertTrue(context.commits == std::vector<std::string>{"ni", "0", "ni", "0"},
+                   "main keyboard and keypad preserve ni then zero ordering");
+    }
+    std::filesystem::remove_all(root);
+}
+
 void publishTenCandidates(
     modernime::fcitx5::ModernIMEController &controller,
     modernime::fcitx5::FcitxEngineHost &host) {
@@ -95,6 +140,7 @@ void publishFreshTenCandidates(
 } // namespace
 
 int main() {
+    testZeroCommitsBeforePassThrough();
     fcitx::InputContextManager manager;
     TestInputContext inputContext(manager);
     inputContext.setCapabilityFlags(fcitx::CapabilityFlag::Preedit);

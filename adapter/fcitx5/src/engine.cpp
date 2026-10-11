@@ -297,6 +297,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return false;
         }
         if (event.digit < '1' || event.digit > '9') {
+            commitRawPreedit();
             return false;
         }
         const auto index = static_cast<std::size_t>(event.digit - '1');
