@@ -33,6 +33,13 @@ struct RecalledCandidate final {
     double contextBoost = 0.0;
 };
 
+struct RecalledEnglishWord final {
+    std::string text;
+    std::int64_t frequency = 0;
+    std::int64_t lastSelectedMs = 0;
+    double score = 0.0;
+};
+
 std::string normalizePinyin(std::string_view pinyin);
 
 class LearningSnapshot final {
@@ -66,6 +73,10 @@ public:
         std::string_view userInput, std::int64_t nowMs = 0,
         std::string_view contextBefore = {},
         std::string_view contextAfter = {}) const;
+
+    std::vector<RecalledEnglishWord> recallEnglishWords(
+        std::string_view prefix, std::size_t limit = 5,
+        std::int64_t nowMs = 0) const;
 
     const std::vector<LearningEntry> &entries() const;
 

@@ -1887,10 +1887,30 @@ private:
              hasInvalidInternalPinyinSegment(segmentedInput)) &&
             rawInput.size() >= 2;
 
-        const auto predictedWords =
-            shouldPredictEnglish
-                ? core::EnglishDictionary::predictWords(rawInput, 3)
-                : std::vector<std::string_view>{};
+        std::vector<std::string> predictedWords;
+        const bool canPredictEnglish =
+            (rawInput.empty() || rawInput.front() != 'v') &&
+            !hasTrustedShortAbbreviation &&
+            !isConsonantAbbreviation &&
+            rawInput.size() >= 2;
+
+        if (canPredictEnglish && learning != nullptr) {
+            const auto learned = learning->recallEnglishWords(rawInput, 3, nowMilliseconds());
+            for (const auto &item : learned) {
+                if (!suppressedLearned_.contains(candidateKey(item.text, item.text)) &&
+                    !learning->isSuppressed(item.text, item.text)) {
+                    predictedWords.push_back(item.text);
+                }
+            }
+        }
+        if (shouldPredictEnglish) {
+            const auto staticWords = core::EnglishDictionary::predictWords(rawInput, 3);
+            for (const auto &w : staticWords) {
+                if (std::find(predictedWords.begin(), predictedWords.end(), w) == predictedWords.end()) {
+                    predictedWords.emplace_back(w);
+                }
+            }
+        }
 
         const bool isEnglishSuppressed =
             suppressedLearned_.contains(candidateKey(rawInput, rawInput)) ||

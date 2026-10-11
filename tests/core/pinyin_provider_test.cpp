@@ -1130,6 +1130,87 @@ void testConditionalContextAssociation() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testCustomEnglishTermLearningAndPrefixCompletion() {
+    const auto learningPath = testPath("custom-english-term-provider.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    // 1. Initial state: gnue / gnuea does NOT predict gnueabihf
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        assertTrue(provider.append("gnue"), "append gnue before training");
+        assertTrue(provider.page().items.empty() || provider.page().items.front().text != "gnueabihf",
+                   "gnue does not predict gnueabihf initially");
+        provider.reset();
+
+        // 2. Train: commit gnueabihf 5 times
+        for (int i = 0; i < 5; ++i) {
+            assertTrue(provider.append("gnueabihf"), "append gnueabihf");
+            const auto rawIdx = indexOf(provider.page(), "gnueabihf");
+            assertTrue(rawIdx < provider.page().items.size(), "gnueabihf exists in candidate list");
+            assertTrue(provider.select(rawIdx), "commit gnueabihf");
+            provider.reset();
+        }
+
+        provider.flush();
+
+        // 3. Verification: prefix completion on gnu, gnue, gnuea
+        assertTrue(provider.append("gnu"), "append gnu after training");
+        assertTrue(!provider.page().items.empty(), "candidates exist for gnu");
+        assertTrue(indexOf(provider.page(), "gnueabihf") < provider.page().items.size(),
+                   "gnu candidate list contains gnueabihf");
+        assertTrue(provider.page().items.front().text == "gnueabihf",
+                   "gnueabihf is top predicted completion for gnu");
+        provider.reset();
+
+        assertTrue(provider.append("gnue"), "append gnue after training");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "gnueabihf",
+                   "gnueabihf is top predicted completion for gnue");
+        provider.reset();
+
+        assertTrue(provider.append("gnuea"), "append gnuea after training");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "gnueabihf",
+                   "gnueabihf is top predicted completion for gnuea");
+        provider.reset();
+
+        // 4. Cancellation: typing uncommitted term then reset does not learn
+        assertTrue(provider.append("canceledterm"), "append canceledterm");
+        provider.reset();
+        provider.flush();
+
+        assertTrue(provider.append("cance"), "append cance");
+        assertTrue(indexOf(provider.page(), "canceledterm") == provider.page().items.size(),
+                   "canceled term is not learned");
+        provider.reset();
+    }
+
+    // 5. Restart persistence: recreate provider with same database
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        assertTrue(provider.append("gnu"), "append gnu after restart");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "gnueabihf",
+                   "gnueabihf completion persists across restart for gnu");
+        provider.reset();
+
+        assertTrue(provider.append("gnue"), "append gnue after restart");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "gnueabihf",
+                   "gnueabihf completion persists across restart for gnue");
+        provider.reset();
+
+        assertTrue(provider.append("gnuea"), "append gnuea after restart");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "gnueabihf",
+                   "gnueabihf completion persists across restart for gnuea");
+        provider.reset();
+    }
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
@@ -1437,6 +1518,7 @@ int main() {
     testVCommandMenuAndDeduplication();
     testIndependentRecallInCandidateProvider();
     testConditionalContextAssociation();
+    testCustomEnglishTermLearningAndPrefixCompletion();
     testIntraCompositionPhraseFormation();
     testInterCompositionPhraseFormationAndRestart();
     testHouxuanlanPhraseFormation();

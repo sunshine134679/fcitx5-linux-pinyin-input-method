@@ -1160,6 +1160,53 @@ void testIndependentRecallIndex() {
     assertTrue(recalledDeltaAbbr[0].phrase == "深空测控", "delta abbreviation recalled phrase matches");
 }
 
+void testEnglishWordRecallIndex() {
+    std::vector<modernime::core::LearningEntry> entries{
+        {"gnueabihf", "gnueabihf", "", "", 5, 1000, 0, false},
+        {"Kubernetes", "kubernetes", "", "", 3, 1000, 0, false},
+        {"gnupg", "gnupg", "", "", 1, 1000, 0, false},
+        {"suppressed_term", "suppressed_term", "", "", 5, 1000, 0, true},
+        {"zero_term", "zero_term", "", "", 0, 1000, 0, false},
+        {"王绍龙", "wang'shao'long", "", "", 5, 1000, 0, false},
+    };
+    modernime::core::LearningSnapshot snapshot(entries);
+
+    // 1. Prefix matches for gnu, gnue, gnuea
+    auto gnuMatches = snapshot.recallEnglishWords("gnu", 5, 1000);
+    assertTrue(gnuMatches.size() == 2, "gnu prefix recalls 2 candidates");
+    assertTrue(gnuMatches[0].text == "gnueabihf", "gnueabihf ranks first for gnu due to frequency");
+    assertTrue(gnuMatches[1].text == "gnupg", "gnupg ranks second for gnu");
+
+    auto gnueMatches = snapshot.recallEnglishWords("gnue", 5, 1000);
+    assertTrue(gnueMatches.size() == 1, "gnue prefix recalls 1 candidate");
+    assertTrue(gnueMatches[0].text == "gnueabihf", "gnue prefix recalls gnueabihf");
+
+    auto gnueaMatches = snapshot.recallEnglishWords("gnuea", 5, 1000);
+    assertTrue(gnueaMatches.size() == 1, "gnuea prefix recalls 1 candidate");
+    assertTrue(gnueaMatches[0].text == "gnueabihf", "gnuea prefix recalls gnueabihf");
+
+    // 2. Case-insensitive search with casing preservation
+    auto kubeMatches = snapshot.recallEnglishWords("kube", 5, 1000);
+    assertTrue(kubeMatches.size() == 1, "kube prefix recalls Kubernetes");
+    assertTrue(kubeMatches[0].text == "Kubernetes", "casing is preserved as Kubernetes");
+
+    // 3. Suppressed, zero frequency, and Chinese phrases are excluded
+    auto suppMatches = snapshot.recallEnglishWords("supp", 5, 1000);
+    assertTrue(suppMatches.empty(), "suppressed word is not recalled");
+
+    auto zeroMatches = snapshot.recallEnglishWords("zero", 5, 1000);
+    assertTrue(zeroMatches.empty(), "zero frequency word is not recalled");
+
+    auto wangMatches = snapshot.recallEnglishWords("wang", 5, 1000);
+    assertTrue(wangMatches.empty(), "Chinese phrase is not in English recall index");
+
+    // 4. Dynamic delta English recall
+    snapshot.recordSelection("microservices", "microservices", "", "", 2000);
+    auto microMatches = snapshot.recallEnglishWords("micro", 5, 2000);
+    assertTrue(!microMatches.empty(), "delta English term is recalled by prefix");
+    assertTrue(microMatches[0].text == "microservices", "delta English term matches microservices");
+}
+
 void testPhraseFormationTrackerUnit() {
     // 1. Intra-composition test: wangshaolong -> 王 + 绍 + 龙
     {
@@ -1293,6 +1340,7 @@ void testContextAssociationAndSmoothing() {
 } // namespace
 
 int main() {
+    testEnglishWordRecallIndex();
     testContextAssociationAndSmoothing();
     testPhraseFormationTrackerUnit();
     testCommitEventTrackingAndLearning();

@@ -119,20 +119,52 @@ std::string variantKey(std::string_view phrase, std::string_view pinyin,
 
 } // namespace
 
+bool isAsciiWord(std::string_view text) {
+    if (text.empty() || text.size() > 64) {
+        return false;
+    }
+    bool hasAlpha = false;
+    for (char c : text) {
+        if (std::isalpha(static_cast<unsigned char>(c))) {
+            hasAlpha = true;
+        } else if (c != '-' && c != '_') {
+            return false;
+        }
+    }
+    return hasAlpha;
+}
+
+std::string toLowerAscii(std::string_view text) {
+    std::string result;
+    result.reserve(text.size());
+    for (char c : text) {
+        result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return result;
+}
+
 struct LearningSnapshot::RecallIndex final {
     std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> canonicalIndex;
     std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> abbrIndex;
     std::vector<std::tuple<std::string, std::string, std::string>> prefixIndex;
+    std::vector<std::pair<std::string, std::string>> englishIndex;
 };
 
 std::shared_ptr<const LearningSnapshot::RecallIndex>
 LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
     auto index = std::make_shared<LearningSnapshot::RecallIndex>();
     std::unordered_set<std::string> seen;
+    std::unordered_set<std::string> seenEnglish;
     seen.reserve(entries.size());
     for (const auto &entry : entries) {
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
+        }
+        if (isAsciiWord(entry.phrase)) {
+            const auto lower = toLowerAscii(entry.phrase);
+            if (seenEnglish.insert(lower).second) {
+                index->englishIndex.emplace_back(lower, entry.phrase);
+            }
         }
         const auto key = candidateOrderKey(entry.phrase, entry.pinyin);
         if (!seen.insert(key).second) {
@@ -153,6 +185,10 @@ LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
     std::sort(index->prefixIndex.begin(), index->prefixIndex.end(),
               [](const auto &a, const auto &b) {
                   return std::get<0>(a) < std::get<0>(b);
+              });
+    std::sort(index->englishIndex.begin(), index->englishIndex.end(),
+              [](const auto &a, const auto &b) {
+                  return a.first < b.first;
               });
     return index;
 }
@@ -830,6 +866,100 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(
         }
     }
 
+    return results;
+}
+
+std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(
+    std::string_view prefix, std::size_t limit, std::int64_t nowMs) const {
+    if (prefix.size() < 2) {
+        return {};
+    }
+    const auto lowerPrefix = toLowerAscii(prefix);
+    std::unordered_set<std::string> matchedPhrases;
+    std::vector<std::string> candidates;
+
+    if (baseRecallIndex_) {
+        auto it = std::lower_bound(
+            baseRecallIndex_->englishIndex.begin(),
+            baseRecallIndex_->englishIndex.end(),
+            lowerPrefix,
+            [](const auto &pair, const std::string &val) {
+                return pair.first < val;
+            });
+        while (it != baseRecallIndex_->englishIndex.end() &&
+               it->first.starts_with(lowerPrefix)) {
+            if (matchedPhrases.insert(it->second).second) {
+                candidates.push_back(it->second);
+            }
+            ++it;
+        }
+    }
+
+    for (const auto &[vKey, entry] : delta_) {
+        if (entry.suppressed || entry.frequency <= 0) {
+            continue;
+        }
+        if (isAsciiWord(entry.phrase)) {
+            const auto lower = toLowerAscii(entry.phrase);
+            if (lower.starts_with(lowerPrefix)) {
+                if (matchedPhrases.insert(entry.phrase).second) {
+                    candidates.push_back(entry.phrase);
+                }
+            }
+        }
+    }
+
+    if (candidates.empty()) {
+        return {};
+    }
+
+    std::vector<RecalledEnglishWord> results;
+    results.reserve(candidates.size());
+    for (const auto &phrase : candidates) {
+        if (phrase.size() <= prefix.size()) {
+            continue;
+        }
+        if (isSuppressed(phrase, phrase) || !hasPositiveFrequency(phrase, phrase)) {
+            continue;
+        }
+        const double baseBoost = boostAt(phrase, phrase, nowMs);
+        const auto lower = toLowerAscii(phrase);
+        double completeness = 0.0;
+        if (!lower.empty()) {
+            completeness = static_cast<double>(lowerPrefix.size()) /
+                           static_cast<double>(lower.size());
+        }
+        if (lower == lowerPrefix) {
+            completeness += 1.0;
+        }
+        const double score = baseBoost + completeness;
+
+        std::int64_t totalFreq = 0;
+        std::int64_t lastMs = 0;
+        for (const auto *item : collectVariants(phrase, normalizePinyin(phrase))) {
+            totalFreq += std::max<std::int64_t>(0, item->frequency);
+            lastMs = std::max(lastMs, item->lastSelectedMs);
+        }
+        results.push_back({phrase, totalFreq, lastMs, score});
+    }
+
+    std::sort(results.begin(), results.end(),
+              [](const auto &a, const auto &b) {
+                  if (std::abs(a.score - b.score) > 1e-6) {
+                      return a.score > b.score;
+                  }
+                  if (a.frequency != b.frequency) {
+                      return a.frequency > b.frequency;
+                  }
+                  if (a.lastSelectedMs != b.lastSelectedMs) {
+                      return a.lastSelectedMs > b.lastSelectedMs;
+                  }
+                  return a.text < b.text;
+              });
+
+    if (results.size() > limit) {
+        results.resize(limit);
+    }
     return results;
 }
 

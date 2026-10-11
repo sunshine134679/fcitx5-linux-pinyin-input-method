@@ -500,5 +500,77 @@ int main() {
         std::filesystem::remove(ctxLearningPath.string() + "-shm", ec);
     }
 
+    // Test custom English term learning via Enter and prefix completion:
+    {
+        modernime::pinyin::PinyinDataPaths engPaths;
+        const auto engLearningPath = std::filesystem::temp_directory_path() / "modernime-engine-eng.sqlite3";
+        std::error_code ec;
+        std::filesystem::remove(engLearningPath, ec);
+        engPaths.learningStore = engLearningPath.string();
+        modernime::pinyin::PinyinProviderOptions engOptions;
+        engOptions.learningEnabled = true;
+        modernime::pinyin::PinyinCandidateProvider engProvider(engPaths, engOptions);
+        RecordingHost engHost;
+        modernime::fcitx5::ModernIMEController engController(engHost, &engProvider);
+
+        // Commit gnueabihf 5 times via Enter
+        for (int i = 0; i < 5; ++i) {
+            for (char c : std::string_view("gnueabihf")) {
+                engController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            }
+            assertTrue(engController.handle({modernime::fcitx5::KeyKind::Enter, 0, 0}),
+                       "Enter commits raw gnueabihf");
+            assertTrue(engHost.commits.back() == "gnueabihf", "host committed gnueabihf");
+        }
+        engProvider.flush();
+
+        // 1. gnu -> top candidate is gnueabihf, space commits it
+        for (char c : std::string_view("gnu")) {
+            engController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!engController.page().items.empty() &&
+                   engController.page().items.front().text == "gnueabihf",
+                   "gnu predicts gnueabihf at rank 0");
+        assertTrue(engController.handle({modernime::fcitx5::KeyKind::Space, 0, 0}),
+                   "Space commits gnueabihf");
+        assertTrue(engHost.commits.back() == "gnueabihf", "host committed gnueabihf via Space");
+
+        // 2. gnue -> top candidate is gnueabihf
+        for (char c : std::string_view("gnue")) {
+            engController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!engController.page().items.empty() &&
+                   engController.page().items.front().text == "gnueabihf",
+                   "gnue predicts gnueabihf at rank 0");
+        engController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 3. gnuea -> top candidate is gnueabihf
+        for (char c : std::string_view("gnuea")) {
+            engController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!engController.page().items.empty() &&
+                   engController.page().items.front().text == "gnueabihf",
+                   "gnuea predicts gnueabihf at rank 0");
+        engController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 4. Escape cancels without learning:
+        for (char c : std::string_view("notlearned")) {
+            engController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        engController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+        engProvider.flush();
+
+        for (char c : std::string_view("notle")) {
+            engController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(indexOf(engController.page(), "notlearned") == engController.page().items.size(),
+                   "cancelled term is not learned");
+        engController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        std::filesystem::remove(engLearningPath, ec);
+        std::filesystem::remove(engLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(engLearningPath.string() + "-shm", ec);
+    }
+
     return EXIT_SUCCESS;
 }
