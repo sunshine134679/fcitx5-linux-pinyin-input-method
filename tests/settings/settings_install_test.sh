@@ -149,3 +149,61 @@ env -u MODERNIME_CONFIG_HOME -u MODERNIME_DESKTOP_DIR \
     bash "$project_root/uninstall.sh" >/dev/null
 test ! -e "$manifest"
 test -f "$test_root/home/Desktop/unrelated.desktop"
+
+# A custom config directory must leave HOME/.xprofile untouched.
+printf '%s\n' '# user profile' 'export USER_PROFILE=keep' > "$test_root/home/.xprofile"
+cp "$test_root/home/.xprofile" "$test_root/profile.expected"
+profile_env=(env -u MODERNIME_DESKTOP_DIR -u MODERNIME_SKIP_XPROFILE
+    HOME="$test_root/home" XDG_CONFIG_HOME="$config"
+    MODERNIME_CONFIG_HOME="$config" MODERNIME_PREFIX="$prefix"
+    MODERNIME_BUILD_DIR="$test_root/build" FAKE_PREFIX="$prefix"
+    PROJECT_ROOT="$project_root" MODERNIME_SKIP_FCITX_RESTART=1
+    PATH="$fake_bin:/usr/bin:/bin")
+"${profile_env[@]}" bash "$project_root/install.sh" >/dev/null
+cmp "$test_root/home/.xprofile" "$test_root/profile.expected"
+"${profile_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+cmp "$test_root/home/.xprofile" "$test_root/profile.expected"
+
+# An explicitly selected profile is recorded and only its unchanged block removed.
+profile="$test_root/custom-profile"
+printf '%s\n' '# existing' > "$profile"
+"${profile_env[@]}" MODERNIME_XPROFILE_FILE="$profile" bash "$project_root/install.sh" >/dev/null
+grep -Fqx "$profile" "$manifest"
+printf '%s\n' 'export USER_ADDITION=keep' >> "$profile"
+# Uninstall uses the recorded path even when the override is no longer present.
+"${profile_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+grep -Fqx '# existing' "$profile"
+grep -Fqx 'export USER_ADDITION=keep' "$profile"
+! grep -Fq '# BEGIN MODERNIME ENV' "$profile"
+cmp "$test_root/home/.xprofile" "$test_root/profile.expected"
+
+"${profile_env[@]}" MODERNIME_XPROFILE_FILE="$profile" bash "$project_root/install.sh" >/dev/null
+sed -i 's/export GTK_IM_MODULE=fcitx/export GTK_IM_MODULE=custom/' "$profile"
+cp "$profile" "$test_root/custom-profile.expected"
+"${profile_env[@]}" MODERNIME_XPROFILE_FILE="$profile" bash "$project_root/install.sh" >/dev/null
+cmp "$profile" "$test_root/custom-profile.expected"
+"${profile_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+cmp "$profile" "$test_root/custom-profile.expected"
+test -f "$manifest"
+rm "$profile"
+"${profile_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+test ! -e "$manifest"
+
+# Switching profile paths must clean up the old unmodified block.
+profile_a="$test_root/profile-a"
+profile_b="$test_root/profile-b"
+printf '%s\n' '# first user profile' > "$profile_a"
+printf '%s\n' '# second user profile' > "$profile_b"
+"${profile_env[@]}" MODERNIME_XPROFILE_FILE="$profile_a" bash "$project_root/install.sh" >/dev/null
+"${profile_env[@]}" MODERNIME_XPROFILE_FILE="$profile_b" bash "$project_root/install.sh" >/dev/null
+! grep -Fq '# BEGIN MODERNIME ENV' "$profile_a"
+grep -Fq '# BEGIN MODERNIME ENV' "$profile_b"
+# A partial uninstall followed by retry must not retain an already-cleaned profile.
+printf '%s\n' 'USER_SETTING=keep' >> "$config/environment.d/90-modernime.conf"
+"${profile_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+! grep -Fq '# BEGIN MODERNIME ENV' "$profile_b"
+rm "$config/environment.d/90-modernime.conf"
+"${profile_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+test ! -e "$manifest"
+grep -Fqx '# first user profile' "$profile_a"
+grep -Fqx '# second user profile' "$profile_b"

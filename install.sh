@@ -239,28 +239,20 @@ case "${MODERNIME_SKIP_XPROFILE:-}" in
         ;;
 esac
 xprofile_file=${MODERNIME_XPROFILE_FILE:-"$HOME/.xprofile"}
-xprofile_marker_begin="# BEGIN MODERNIME ENV"
-xprofile_marker_end="# END MODERNIME ENV"
-
+if [[ -z "${MODERNIME_XPROFILE_FILE:-}" && "$config_home" != "$HOME/.config" ]]; then
+    skip_xprofile=true
+fi
 if [[ "$skip_xprofile" != true && "$is_system_prefix" != true ]]; then
-    xprofile_block="$xprofile_marker_begin
+    cat > "$desktop_tmp" <<EOF
+# BEGIN MODERNIME ENV
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
 export SDL_IM_MODULE=fcitx
-export FCITX_ADDON_DIRS=\"$prefix_addon_dir:$system_addon_dir\"
-$xprofile_marker_end"
-
-    if [[ -f "$xprofile_file" ]]; then
-        if grep -Fq "$xprofile_marker_begin" "$xprofile_file"; then
-            sed -i "/$xprofile_marker_begin/,/$xprofile_marker_end/d" "$xprofile_file"
-            printf '%s\n' "$xprofile_block" >> "$xprofile_file"
-        elif ! grep -Fq 'GTK_IM_MODULE=' "$xprofile_file" && ! grep -Fq 'XMODIFIERS=' "$xprofile_file"; then
-            printf '\n%s\n' "$xprofile_block" >> "$xprofile_file"
-        fi
-    else
-        printf '%s\n' "$xprofile_block" > "$xprofile_file"
-    fi
+export FCITX_ADDON_DIRS="$prefix_addon_dir:$system_addon_dir"
+# END MODERNIME ENV
+EOF
+    modernime_write_profile_block "$desktop_tmp" "$xprofile_file"
 fi
 
 manifest_dir="$prefix/share/modernime"
@@ -280,6 +272,9 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$desktop_shortcut"
     printf '%s\n' "$environment_file"
     printf '%s\n' "$autostart_file"
+    if [[ -f "$managed_state_dir/xprofile.path" ]]; then
+        cat "$managed_state_dir/xprofile.path"
+    fi
 } > "$manifest"
 
 run_fcitx5_remote() {
@@ -357,6 +352,6 @@ printf '   export QT_IM_MODULE=fcitx\n'
 printf '   export XMODIFIERS=@im=fcitx\n'
 printf '   export SDL_IM_MODULE=fcitx\n'
 printf '   export FCITX_ADDON_DIRS="%s:%s"\n' "$prefix_addon_dir" "$system_addon_dir"
-if [[ "$is_system_prefix" != true && -f "$xprofile_file" ]]; then
+if [[ "$skip_xprofile" != true && "$is_system_prefix" != true && -f "$managed_state_dir/xprofile.path" ]]; then
     printf ' (脚本已自动同步写入至 %s 与 %s)\n' "$environment_file" "$xprofile_file"
 fi

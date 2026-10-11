@@ -65,6 +65,10 @@ fi
 
 managed_state_dir="$prefix/share/modernime/managed-files"
 managed_files_preserved=false
+recorded_xprofile=""
+if [[ -f "$managed_state_dir/xprofile.path" ]]; then
+    recorded_xprofile=$(cat "$managed_state_dir/xprofile.path")
+fi
 
 while IFS= read -r path; do
     [[ -z "$path" ]] && continue
@@ -90,6 +94,9 @@ while IFS= read -r path; do
         "$autostart_file")
             modernime_remove_managed_file "$path" autostart
             ;;
+        "$recorded_xprofile")
+            modernime_remove_profile_block "$path"
+            ;;
         *)
             printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
             exit 1
@@ -99,18 +106,10 @@ done < "$manifest"
 
 if [[ "$managed_files_preserved" != true ]]; then
     rm -f -- "$manifest"
-    for key in desktop environment autostart; do
+    for key in desktop environment autostart xprofile; do
         rm -f -- "$managed_state_dir/$key.content" "$managed_state_dir/$key.path"
     done
     rmdir "$managed_state_dir" 2>/dev/null || true
-fi
-
-xprofile_file=${MODERNIME_XPROFILE_FILE:-"$HOME/.xprofile"}
-if [[ -f "$xprofile_file" ]] && grep -Fq '# BEGIN MODERNIME ENV' "$xprofile_file"; then
-    sed -i '/# BEGIN MODERNIME ENV/,/# END MODERNIME ENV/d' "$xprofile_file"
-    if [[ ! -s "$xprofile_file" ]]; then
-        rm -f -- "$xprofile_file"
-    fi
 fi
 
 rmdir --ignore-fail-on-non-empty "$prefix/lib64/fcitx5" 2>/dev/null || true
