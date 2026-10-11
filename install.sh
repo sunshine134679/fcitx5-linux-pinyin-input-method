@@ -2,6 +2,7 @@
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source "$project_root/scripts/install_state.sh"
 
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
@@ -208,79 +209,28 @@ desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
     printf '%s\n' 'Terminal=false'
     printf '%s\n' 'Categories=Settings;Utility;'
 } > "$desktop_tmp"
-if [[ -e "$desktop_shortcut" ]]; then
-    if [[ -f "$desktop_shortcut" ]] &&
-       grep -Fqx '[Desktop Entry]' "$desktop_shortcut" &&
-       grep -Fqx 'Name=ModernIME 设置' "$desktop_shortcut"; then
-        mv -f -- "$desktop_tmp" "$desktop_shortcut"
-        desktop_tmp=""
-        chmod +x "$desktop_shortcut"
-    elif [[ -f "$desktop_shortcut" ]] && cmp -s "$desktop_tmp" "$desktop_shortcut"; then
-        rm -f -- "$desktop_tmp"
-        desktop_tmp=""
-    else
-        printf 'Refusing to overwrite existing desktop shortcut: %s\n' \
-            "$desktop_shortcut" >&2
-        exit 1
-    fi
-else
-    mv -- "$desktop_tmp" "$desktop_shortcut"
-    desktop_tmp=""
+manifest_dir="$prefix/share/modernime"
+managed_state_dir="$manifest_dir/managed-files"
+modernime_write_managed_file "$desktop_tmp" "$desktop_shortcut" desktop
+if [[ "$managed_file_written" == true ]]; then
     chmod +x "$desktop_shortcut"
-fi
-if [[ -f "$desktop_shortcut" ]] && command -v gio >/dev/null 2>&1; then
-    gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+    if command -v gio >/dev/null 2>&1; then
+        gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+    fi
 fi
 
 environment_line="FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
-if [[ -e "$environment_file" ]]; then
-    if [[ -f "$environment_file" ]] &&
-       grep -Fq 'FCITX_ADDON_DIRS=' "$environment_file"; then
-        mkdir -p "$environment_dir"
-        printf '%s\n' "$environment_line" > "$environment_file"
-    elif [[ "$(wc -l < "$environment_file")" -ne 1 ]] ||
-         [[ "$(sed -n '1p' "$environment_file")" != "$environment_line" ]]; then
-        printf 'Refusing to overwrite existing file: %s\n' "$environment_file" >&2
-        exit 1
-    fi
-else
-    mkdir -p "$environment_dir"
-    printf '%s\n' "$environment_line" > "$environment_file"
-fi
+printf '%s\n' "$environment_line" > "$desktop_tmp"
+modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
 
 autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir fcitx5 -d -u modernime-ui"
-if [[ -e "$autostart_file" ]]; then
-    if [[ -f "$autostart_file" ]] &&
-       grep -Fqx 'Name=ModernIME Fcitx5' "$autostart_file"; then
-        mkdir -p "$autostart_dir"
-        {
-            printf '%s\n' '[Desktop Entry]'
-            printf '%s\n' 'Type=Application'
-            printf '%s\n' 'Name=ModernIME Fcitx5'
-            printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
-            printf 'Exec=%s\n' "$autostart_exec"
-            printf '%s\n' 'Terminal=false'
-            printf '%s\n' 'X-GNOME-Autostart-enabled=true'
-            printf '%s\n' 'NoDisplay=true'
-        } > "$autostart_file"
-    elif [[ "$(wc -l < "$autostart_file")" -ne 8 ]] ||
-         ! grep -Fqx "Exec=$autostart_exec" "$autostart_file"; then
-        printf 'Refusing to overwrite existing file: %s\n' "$autostart_file" >&2
-        exit 1
-    fi
-else
-    mkdir -p "$autostart_dir"
-    {
-        printf '%s\n' '[Desktop Entry]'
-        printf '%s\n' 'Type=Application'
-        printf '%s\n' 'Name=ModernIME Fcitx5'
-        printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
-        printf 'Exec=%s\n' "$autostart_exec"
-        printf '%s\n' 'Terminal=false'
-        printf '%s\n' 'X-GNOME-Autostart-enabled=true'
-        printf '%s\n' 'NoDisplay=true'
-    } > "$autostart_file"
-fi
+{
+    printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
+    printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
+    printf 'Exec=%s\n' "$autostart_exec"
+    printf '%s\n' 'Terminal=false' 'X-GNOME-Autostart-enabled=true' 'NoDisplay=true'
+} > "$desktop_tmp"
+modernime_write_managed_file "$desktop_tmp" "$autostart_file" autostart
 
 skip_xprofile=false
 case "${MODERNIME_SKIP_XPROFILE:-}" in

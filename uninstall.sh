@@ -2,6 +2,7 @@
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source "$project_root/scripts/install_state.sh"
 
 if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" ]]; then
     printf 'Error: Running uninstall.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
@@ -62,6 +63,9 @@ if [[ ! -f "$manifest" ]]; then
     exit 0
 fi
 
+managed_state_dir="$prefix/share/modernime/managed-files"
+managed_files_preserved=false
+
 while IFS= read -r path; do
     [[ -z "$path" ]] && continue
     case "$path" in
@@ -78,40 +82,13 @@ while IFS= read -r path; do
             rm -f -- "$path"
             ;;
         "$desktop_shortcut")
-            if [[ -f "$path" ]] &&
-               [[ "$(wc -l < "$path")" -eq 8 ]] &&
-               grep -Fqx '[Desktop Entry]' "$path" &&
-               grep -Fqx 'Name=ModernIME 设置' "$path" &&
-               grep -Fqx "Exec=$desktop_exec" "$path" &&
-               grep -Fqx 'Categories=Settings;Utility;' "$path"; then
-                rm -f -- "$path"
-            else
-                printf 'Refusing to remove modified desktop shortcut: %s\n' \
-                    "$path" >&2
-                exit 1
-            fi
+            modernime_remove_managed_file "$path" desktop
             ;;
         "$environment_file")
-            if [[ -f "$path" ]] &&
-               [[ "$(wc -l < "$path")" -eq 1 ]] &&
-               grep -Eq '^FCITX_ADDON_DIRS=.*fcitx5.*' "$path"; then
-                rm -f -- "$path"
-            else
-                printf 'Refusing to remove modified environment file: %s\n' "$path" >&2
-                exit 1
-            fi
+            modernime_remove_managed_file "$path" environment
             ;;
         "$autostart_file")
-            if [[ -f "$path" ]] &&
-               grep -Fqx '[Desktop Entry]' "$path" &&
-               grep -Fqx 'Name=ModernIME Fcitx5' "$path" &&
-               grep -Eq '^Exec=env FCITX_ADDON_DIRS=.*fcitx5.* -d -u modernime-ui' "$path" &&
-               grep -Fqx 'NoDisplay=true' "$path"; then
-                rm -f -- "$path"
-            else
-                printf 'Refusing to remove modified autostart file: %s\n' "$path" >&2
-                exit 1
-            fi
+            modernime_remove_managed_file "$path" autostart
             ;;
         *)
             printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
@@ -120,7 +97,13 @@ while IFS= read -r path; do
     esac
 done < "$manifest"
 
-rm -f -- "$manifest"
+if [[ "$managed_files_preserved" != true ]]; then
+    rm -f -- "$manifest"
+    for key in desktop environment autostart; do
+        rm -f -- "$managed_state_dir/$key.content" "$managed_state_dir/$key.path"
+    done
+    rmdir "$managed_state_dir" 2>/dev/null || true
+fi
 
 xprofile_file=${MODERNIME_XPROFILE_FILE:-"$HOME/.xprofile"}
 if [[ -f "$xprofile_file" ]] && grep -Fq '# BEGIN MODERNIME ENV' "$xprofile_file"; then

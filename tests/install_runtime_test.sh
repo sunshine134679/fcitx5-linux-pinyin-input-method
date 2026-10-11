@@ -88,7 +88,7 @@ test ! -s "$ctest_skip_log"
 
 no_fcitx_bin="$test_root/no-fcitx-bin"
 make_fake_build_tools "$no_fcitx_bin"
-for command_name in bash chmod cmp dirname grep mkdir mktemp mv rm sed wc; do
+for command_name in bash cat chmod cmp cp dirname grep mkdir mktemp mv rm sed wc; do
     ln -s "$(command -v "$command_name")" "$no_fcitx_bin/$command_name"
 done
 ln -s "$(command -v env)" "$no_fcitx_bin/env"
