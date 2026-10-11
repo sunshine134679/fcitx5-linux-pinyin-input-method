@@ -197,5 +197,53 @@ int main() {
                    editor.entries() == std::vector<std::string>{"retry value"},
                "retry preserves the original observation on disk");
 
+    // Runtime saves must not rewrite a clean, stale history over an editor's
+    // clear when no subsequent polling/reload has happened yet.
+    const auto flushPath = directory / "flush.bin";
+    modernime::core::PersistentClipboardHistory runtime(flushPath);
+    assertTrue(runtime.load(&error) && runtime.observe("stale", &error),
+               "runtime flush fixture starts");
+    editor.clear();
+    assertTrue(editor.save(flushPath, &error), "editor clears runtime history");
+    bumpMtime(flushPath);
+    const auto clearedMtime = std::filesystem::last_write_time(flushPath);
+    assertTrue(runtime.flush(&error), "clean runtime flush succeeds");
+    assertTrue(editor.load(flushPath, &error) && editor.entries().empty() &&
+                   std::filesystem::last_write_time(flushPath) == clearedMtime,
+               "clean runtime flush does not rewrite or resurrect external clear");
+
+    // Failed writes retry only pending copy observations over the latest disk
+    // state. Entries deleted externally are not part of that pending change.
+    const auto dirtyPath = directory / "dirty-flush.bin";
+    modernime::core::PersistentClipboardHistory dirty(dirtyPath);
+    assertTrue(dirty.load(&error) && dirty.observe("old base", &error),
+               "dirty flush fixture starts");
+    auto dirtyTemporary = dirtyPath;
+    dirtyTemporary += ".tmp";
+    std::filesystem::create_directory(dirtyTemporary, filesystemError);
+    assertTrue(!filesystemError && dirty.observe("pending copy", &error) &&
+                   !error.empty(), "a new clipboard copy has a pending save");
+    assertTrue(!dirty.flush(&error) && !error.empty(),
+               "flush reports a failed dirty retry");
+    std::filesystem::remove(dirtyTemporary, filesystemError);
+    assertTrue(!filesystemError && dirty.flush(&error),
+               "flush retries and saves dirty history once writable");
+    assertTrue(editor.load(dirtyPath, &error) &&
+                   editor.entries() == std::vector<std::string>{"pending copy", "old base"},
+               "dirty flush without external changes preserves history");
+
+    std::filesystem::create_directory(dirtyTemporary, filesystemError);
+    assertTrue(!filesystemError && dirty.observe("new pending copy", &error) &&
+                   !error.empty(), "a second copy has a pending save");
+    std::filesystem::remove(dirtyTemporary, filesystemError);
+    editor.clear();
+    assertTrue(!filesystemError && editor.save(dirtyPath, &error),
+               "editor clears history while a copy is pending");
+    bumpMtime(dirtyPath);
+    assertTrue(dirty.flush(&error), "dirty retry accepts an external clear");
+    assertTrue(editor.load(dirtyPath, &error) &&
+                   editor.entries() == std::vector<std::string>{"new pending copy"},
+               "dirty retry persists only the pending copy after external clear");
+
     return EXIT_SUCCESS;
 }

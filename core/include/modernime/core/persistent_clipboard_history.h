@@ -36,6 +36,7 @@ private:
 
     std::filesystem::path path_;
     ClipboardHistory history_;
+    ClipboardHistory pendingObservations_;
     bool loaded_ = false;
     bool dirty_ = false;
     // Clipboard observation is independent of history edits by other clients.
