@@ -61,7 +61,8 @@ int main() {
     g_object_weak_ref(G_OBJECT(floating), onFinalized, &finalized);
     {
         FloatingObjectGuard<GInitiallyUnowned> guard(floating);
-        assert(guard.release() == floating);
+        auto *released = guard.release();
+        assert(released == floating);
     }
     assert(!finalized);
     g_object_ref_sink(floating);

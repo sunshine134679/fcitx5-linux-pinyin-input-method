@@ -1,3 +1,11 @@
+# Test assertions must run in optimized builds too; NDEBUG must only affect
+# production targets, not turn regression checks into no-ops.
+if(MSVC)
+    add_compile_options(/UNDEBUG)
+else()
+    add_compile_options(-UNDEBUG)
+endif()
+
 add_executable(modernime_settings_tests core/settings_test.cpp)
 target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
