@@ -348,11 +348,6 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
         if (mtimeError) {
             userDictionaryMtime_ = {};
         }
-        learningStoreMtime_ = std::filesystem::last_write_time(
-            settingsPaths().learningStore, mtimeError);
-        if (mtimeError) {
-            learningStoreMtime_ = {};
-        }
     }
     std::string historyError;
     if (!clipboardHistory_.load(&historyError)) {
@@ -633,20 +628,13 @@ void ModernIMEInputMethod::pollFileChanges() {
         }
 #endif
     }
-    const auto learningFile = settingsPaths().learningStore;
-    const auto learningTime =
-        std::filesystem::last_write_time(learningFile, error);
-    if (!error && learningTime != learningStoreMtime_) {
-        learningStoreMtime_ = learningTime;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
-        ensurePinyinResources();
-        if (pinyin::PinyinCandidateProvider::reloadLearningStore(
-                resources_.pinyin)) {
-            FCITX_INFO() << "ModernIME learning store reloaded from "
-                         << learningFile.string();
-        }
-#endif
+    ensurePinyinResources();
+    if (pinyin::PinyinCandidateProvider::refreshLearningStore(resources_.pinyin)) {
+        FCITX_INFO() << "ModernIME learning store reset from "
+                     << settingsPaths().learningStore.string();
     }
+#endif
 }
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN

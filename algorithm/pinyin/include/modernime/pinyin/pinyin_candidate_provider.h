@@ -55,6 +55,10 @@ public:
     static bool reloadLearningStore(
         std::shared_ptr<SharedResources> &resources);
 
+    // Polls the SQLite reset marker; returns true only for an applied external clear.
+    static bool refreshLearningStore(
+        std::shared_ptr<SharedResources> &resources);
+
     // Constructs a provider that owns all of its resources. Convenience for
     // tests and single-instance tools.
     explicit PinyinCandidateProvider(PinyinDataPaths paths = {},

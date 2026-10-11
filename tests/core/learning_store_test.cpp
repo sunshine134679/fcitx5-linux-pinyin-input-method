@@ -33,6 +33,190 @@ std::filesystem::path testPath(std::string_view name) {
     return path;
 }
 
+void testExternalClearDiscardsRetainedDeltas() {
+    const auto path = testPath("external-clear.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        assertTrue(writer.enqueueSelection("旧词", "jiuci", {}, {}, 1000) && writer.flush(),
+                   "active writer persists a learned entry");
+        modernime::core::LearningStore settings(path);
+        assertTrue(settings.open(), "settings connection stays open in WAL mode");
+        const auto before = std::filesystem::last_write_time(path);
+        sqlite3 *fault = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK,
+                   "fault injection connection opens");
+        assertTrue(sqlite3_exec(fault,
+            "CREATE TRIGGER fail_clear_queue BEFORE INSERT ON learning_entries "
+            "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
+            nullptr, nullptr, nullptr) == SQLITE_OK, "queued write fails deterministically");
+        assertTrue(writer.enqueueSelection("待写旧词", "daixiejiuci", {}, {}, 1001),
+                   "selection is queued before settings clear");
+        assertTrue(!writer.flush(), "old selection remains queued after storage failure");
+        const auto backup = path.string() + ".backup";
+        assertTrue(settings.backupTo(backup) && settings.clear(),
+                   "settings backup and clear completes while engine remains active");
+        assertTrue(std::filesystem::last_write_time(path) == before,
+                   "WAL clear does not change the main database mtime");
+        assertTrue(sqlite3_exec(fault, "DROP TRIGGER fail_clear_queue;",
+                               nullptr, nullptr, nullptr) == SQLITE_OK,
+                   "queued writes can resume after clear");
+        sqlite3_close(fault);
+        assertTrue(writer.reload(), "active writer reload completes after clear");
+        assertTrue(writer.snapshot()->entries().empty() && settings.snapshot()->entries().empty(),
+                   "pre-clear deltas cannot resurrect removed entries in memory or storage");
+        assertTrue(writer.enqueueSelection("新词", "xinci", {}, {}, 1002) && writer.flush(),
+                   "new learning works after clear");
+        assertTrue(settings.snapshot()->entries().size() == 1 &&
+                       settings.snapshot()->entry("新词", "xinci", {}, {}) != nullptr,
+                   "only new learning is persisted after clear");
+        modernime::core::LearningStore saved(backup);
+        assertTrue(saved.open() && saved.snapshot()->entry("旧词", "jiuci", {}, {}) != nullptr,
+                   "the backup preserves the old learned entry");
+        saved.close();
+        std::filesystem::remove(backup);
+    }
+    std::filesystem::remove(path);
+}
+
+void testWalClearResumesNewWritesAfterRetryExhaustion() {
+    using namespace std::chrono_literals;
+    const auto path = testPath("writer-clear-resume.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        modernime::core::LearningStore settings(path);
+        assertTrue(settings.open(), "clear-resume settings store opens");
+        sqlite3 *fault = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK &&
+                       sqlite3_exec(fault,
+                           "CREATE TRIGGER fail_resume BEFORE INSERT ON learning_entries "
+                           "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
+                           nullptr, nullptr, nullptr) == SQLITE_OK,
+                   "clear-resume test injects a temporary write failure");
+        assertTrue(writer.enqueueSelection("旧事件", "jiushijian", {}, {}, 1000),
+                   "a pre-clear event is queued");
+        assertTrue(!writer.flush(), "failed event is retained for retries");
+        // Allow the writer's one automatic 250ms retry cycle to exhaust.
+        std::this_thread::sleep_for(400ms);
+        assertTrue(settings.clear(), "settings clears the failed queue generation");
+        assertTrue(sqlite3_exec(fault, "DROP TRIGGER fail_resume;", nullptr,
+                               nullptr, nullptr) == SQLITE_OK,
+                   "new generation writes can succeed");
+        sqlite3_close(fault);
+        assertTrue(writer.reloadIfChanged(), "timer applies the WAL clear");
+        assertTrue(writer.enqueueSelection("新事件", "xinshijian", {}, {}, 1001),
+                   "new event is accepted after timer refresh");
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        bool persisted = false;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (settings.snapshot()->entry("新事件", "xinshijian", {}, {}) != nullptr) {
+                persisted = true;
+                break;
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        assertTrue(persisted && settings.snapshot()->entries().size() == 1,
+                   "new writes resume automatically without flush and old deltas stay deleted");
+    }
+    std::filesystem::remove(path);
+}
+
+void testFailedWriterPollDoesNotReopenWritableConnection() {
+    using namespace std::chrono_literals;
+    const auto path = testPath("writer-readonly-poll.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        sqlite3 *fault = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK &&
+                       sqlite3_exec(fault,
+                           "CREATE TRIGGER fail_poll BEFORE INSERT ON learning_entries "
+                           "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
+                           nullptr, nullptr, nullptr) == SQLITE_OK,
+                   "poll test injects a persistent write failure");
+        writer.enqueueSelection("旧词", "jiuci", {}, {}, 1000);
+        assertTrue(!writer.flush(), "writer closes its failed writable connection");
+        std::this_thread::sleep_for(600ms);
+        assertTrue(sqlite3_exec(fault, "BEGIN IMMEDIATE;", nullptr, nullptr,
+                               nullptr) == SQLITE_OK,
+                   "external transaction holds a write lock after retry exhaustion");
+        auto polling = std::async(std::launch::async,
+                                   [&writer] { return writer.reloadIfChanged(); });
+        const auto status = polling.wait_for(200ms);
+        assertTrue(sqlite3_exec(fault, "ROLLBACK; DROP TRIGGER fail_poll;",
+                               nullptr, nullptr, nullptr) == SQLITE_OK,
+                   "poll test releases the competing writer");
+        polling.get();
+        sqlite3_close(fault);
+        assertTrue(status == std::future_status::ready,
+                   "input-loop polling never reopens the failed writable SQLite connection");
+    }
+    std::filesystem::remove(path);
+}
+
+void testFirstSelectionAfterUnobservedClearPersists() {
+    const auto path = testPath("writer-first-post-clear.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        modernime::core::LearningStore settings(path);
+        assertTrue(settings.open() &&
+                       writer.enqueueSelection("旧词", "jiuci", {}, {}, 1000) && writer.flush(),
+                   "old selection is durable before external clear");
+        assertTrue(settings.clear(), "settings clear returns before engine polling");
+        assertTrue(writer.enqueueSelection("新词", "xinci", {}, {}, 1001) && writer.flush(),
+                   "the first post-clear selection is accepted before the timer tick");
+        const auto disk = settings.snapshot();
+        const auto *entry = disk->entry("新词", "xinci", {}, {});
+        assertTrue(entry != nullptr && entry->frequency == 1 &&
+                       disk->entries().size() == 1 && writer.snapshot()->entries().size() == 1,
+                   "post-clear learning persists without reviving old cache entries");
+    }
+    std::filesystem::remove(path);
+}
+
+void testWriterDetectsWalClearAndSerializesOwnWrites() {
+    const auto path = testPath("writer-wal-reset.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        modernime::core::LearningStore settings(path);
+        assertTrue(settings.open(), "second WAL connection opens");
+        assertTrue(writer.enqueueSelection("旧词", "jiuci", {}, {}, 1000) && writer.flush(),
+                   "old learning persists before clear");
+        const auto oldSnapshot = writer.snapshot();
+        const auto before = std::filesystem::last_write_time(path);
+        assertTrue(settings.clear(), "settings clears learning through its production API");
+        assertTrue(std::filesystem::last_write_time(path) == before,
+                   "WAL clear leaves main database mtime unchanged");
+        assertTrue(writer.reloadIfChanged() && writer.snapshot()->entries().empty(),
+                   "production change detector observes WAL-only clear and resets ranking cache");
+        assertTrue(!writer.reloadIfChanged(), "unchanged reset marker does not reload twice");
+        assertTrue(oldSnapshot->entry("旧词", "jiuci", {}, {}) != nullptr,
+                   "published snapshots remain immutable across external clear");
+        auto selections = std::async(std::launch::async, [&writer] {
+            for (int index = 0; index < 300; ++index) {
+                assertTrue(writer.enqueueSelection("新词", "xinci", {}, {}, 2000 + index),
+                           "async writer accepts selections during change polling");
+            }
+        });
+        for (int index = 0; index < 100; ++index) {
+            assertTrue(!writer.reloadIfChanged(),
+                       "writer's own updates do not masquerade as external resets");
+        }
+        selections.get();
+        assertTrue(writer.flush(), "concurrent poll and writes finish");
+        const auto memory = writer.snapshot();
+        const auto disk = settings.snapshot();
+        const auto *cached = memory->entry("新词", "xinci", {}, {});
+        const auto *stored = disk->entry("新词", "xinci", {}, {});
+        assertTrue(cached != nullptr && stored != nullptr &&
+                       cached->frequency == 300 && stored->frequency == 300 &&
+                       memory->entries().size() == 1 && disk->entries().size() == 1,
+                   "concurrent own writes preserve all deltas without restoring cleared rows");
+        assertTrue(settings.clear() && writer.reloadIfChanged() &&
+                       writer.snapshot()->entries().empty(),
+                   "a second WAL reset is detected within the same engine lifetime");
+    }
+    std::filesystem::remove(path);
+}
+
 void testSelectionPersistsAcrossReopen() {
     const auto path = testPath("learning.sqlite3");
     modernime::core::LearningStore first(path);
@@ -460,6 +644,11 @@ void testWriterAutomaticallyRecoversFromTemporaryWriteLock() {
                                       [&writer] { return writer.flush(); });
 
         std::this_thread::sleep_for(1500ms);
+        auto polling = std::async(std::launch::async,
+                                   [&writer] { return writer.reloadIfChanged(); });
+        assertTrue(polling.wait_for(200ms) == std::future_status::ready,
+                   "settings polling does not block the input loop on a busy learning writer");
+        assertTrue(!polling.get(), "busy polling retries at the next timer tick");
         error = nullptr;
         assertTrue(sqlite3_exec(locker, "ROLLBACK;", nullptr, nullptr,
                                 &error) == SQLITE_OK,
@@ -875,6 +1064,11 @@ void testDeltaOverlayCopyAndQueryPerformance() {
 } // namespace
 
 int main() {
+    testExternalClearDiscardsRetainedDeltas();
+    testWriterDetectsWalClearAndSerializesOwnWrites();
+    testWalClearResumesNewWritesAfterRetryExhaustion();
+    testFailedWriterPollDoesNotReopenWritableConnection();
+    testFirstSelectionAfterUnobservedClearPersists();
     testSelectionPersistsAcrossReopen();
     testFrequencyBonusIsBoundedAndMovesCandidate();
     testPreviousOrderAddsStabilityForNearTies();

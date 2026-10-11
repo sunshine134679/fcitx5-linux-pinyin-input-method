@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,6 +23,13 @@ struct LearningEvent final {
     std::string contextBefore;
     std::string contextAfter;
     std::int64_t nowMs = 0;
+    // Queued events from before a settings clear must not recreate deleted rows.
+    std::optional<std::int64_t> resetRevision = std::nullopt;
+};
+
+struct LearningStoreState final {
+    std::shared_ptr<const LearningSnapshot> snapshot;
+    std::int64_t resetRevision = 0;
 };
 
 class LearningStore final {
@@ -33,6 +41,8 @@ public:
     LearningStore &operator=(const LearningStore &) = delete;
 
     bool open();
+    // Opens an existing store without schema writes or SQLite busy waits.
+    bool openReadOnly();
     void close();
     // Overrides the retained-entry cap; zero restores the default.
     void setTotalEntryLimit(std::size_t limit) {
@@ -48,6 +58,9 @@ public:
     bool recordBatch(const std::vector<LearningEvent> &events);
     bool backupTo(const std::filesystem::path &path) const;
     bool clear();
+    std::optional<std::int64_t> resetRevision() const;
+    // Reads the reset marker and entries from the same SQLite read transaction.
+    std::optional<LearningStoreState> readState() const;
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;
 
 private:

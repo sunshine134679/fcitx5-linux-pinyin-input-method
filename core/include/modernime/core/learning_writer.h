@@ -17,6 +17,7 @@
 namespace modernime::core {
 
 class LearningStore;
+struct LearningStoreState;
 
 class LearningWriter final {
 public:
@@ -39,6 +40,9 @@ public:
     bool flush();
     // Re-reads the snapshot from the underlying persistent store.
     bool reload();
+    // Polls the transactional reset marker, including changes still in WAL.
+    // Returns true only when a settings clear was observed and applied.
+    bool reloadIfChanged();
     std::shared_ptr<const LearningSnapshot> snapshot() const;
 
 private:
@@ -51,11 +55,15 @@ private:
         std::string contextBefore;
         std::string contextAfter;
         std::int64_t nowMs = 0;
+        std::int64_t resetRevision = 0;
     };
 
     bool enqueueForPersistence(Event event);
     bool persistBatch(const std::vector<Event> &events);
     void run();
+    void rebaseSnapshot(const LearningStoreState &state, bool includeProcessing);
+    static void applyEvent(LearningSnapshot &snapshot, const Event &event);
+    void refreshBeforeEnqueue();
 
     // 单个批次写失败后的退避重试间隔；初始 2 秒，翻倍至 30 秒上限。
     static constexpr std::chrono::seconds kInitialBackoff{2};
@@ -64,10 +72,19 @@ private:
     static constexpr std::size_t kMaxQueuedEvents = 100;
 
     std::unique_ptr<LearningStore> store_;
+    // A separate read-only WAL connection lets the input loop observe clears
+    // even after the asynchronous writer closed its failed connection.
+    std::unique_ptr<LearningStore> observerStore_;
+    std::mutex observerMutex_;
+    // Serializes the SQLite connection with synchronous settings refreshes.
+    // Enqueue samples the separate nonblocking observer; persistence stays asynchronous.
+    std::mutex storeMutex_;
     mutable std::mutex mutex_;
     std::condition_variable wakeup_;
     std::condition_variable drained_;
     std::deque<Event> events_;
+    std::vector<Event> processingEvents_;
+    std::int64_t resetRevision_ = 0;
     // Copy-on-write: enqueue replaces this pointer with a mutated clone, so
     // snapshots handed out by snapshot() stay immutable even if a future
     // caller reads them from another thread.

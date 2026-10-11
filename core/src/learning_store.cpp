@@ -57,10 +57,27 @@ bool LearningStore::open() {
     // SQLITE_BUSY.
     sqlite3_busy_timeout(db_, 1000);
     if (!execute("PRAGMA journal_mode=WAL;") || !execute(schema) ||
-        !ensureSuppressionColumn()) {
+        !ensureSuppressionColumn() ||
+        !execute("CREATE TABLE IF NOT EXISTS learning_state ("
+                 "id INTEGER PRIMARY KEY CHECK (id = 1), "
+                 "reset_revision INTEGER NOT NULL DEFAULT 0);"
+                 "INSERT OR IGNORE INTO learning_state (id) VALUES (1);")) {
         close();
         return false;
     }
+    return true;
+}
+
+bool LearningStore::openReadOnly() {
+    if (db_ != nullptr) {
+        return true;
+    }
+    if (path_.empty() ||
+        sqlite3_open_v2(path_.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        close();
+        return false;
+    }
+    sqlite3_busy_timeout(db_, 0);
     return true;
 }
 
@@ -152,7 +169,9 @@ bool LearningStore::clear() {
     if (db_ == nullptr || !execute("BEGIN IMMEDIATE;")) {
         return false;
     }
-    if (!execute("DELETE FROM learning_entries;")) {
+    if (!execute("DELETE FROM learning_entries;"
+                 "UPDATE learning_state SET reset_revision = reset_revision + 1 "
+                 "WHERE id = 1;")) {
         execute("ROLLBACK;");
         return false;
     }
@@ -336,7 +355,16 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
     if (!execute("BEGIN IMMEDIATE;")) {
         return false;
     }
+    const auto currentRevision = resetRevision();
+    if (!currentRevision.has_value()) {
+        execute("ROLLBACK;");
+        return false;
+    }
     for (const auto &event : events) {
+        if (event.resetRevision.has_value() &&
+            *event.resetRevision != *currentRevision) {
+            continue;
+        }
         bool success = false;
         switch (event.kind) {
         case LearningEvent::Kind::Selection:
@@ -368,6 +396,36 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
         return false;
     }
     return true;
+}
+
+std::optional<std::int64_t> LearningStore::resetRevision() const {
+    if (db_ == nullptr) {
+        return std::nullopt;
+    }
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT reset_revision FROM learning_state WHERE id = 1;",
+                         -1, &statement, nullptr) != SQLITE_OK) {
+        return std::nullopt;
+    }
+    std::optional<std::int64_t> revision;
+    if (sqlite3_step(statement) == SQLITE_ROW) {
+        revision = sqlite3_column_int64(statement, 0);
+    }
+    sqlite3_finalize(statement);
+    return revision;
+}
+
+std::optional<LearningStoreState> LearningStore::readState() const {
+    if (!execute("BEGIN;")) {
+        return std::nullopt;
+    }
+    const auto revision = resetRevision();
+    auto loaded = revision.has_value() ? snapshot() : nullptr;
+    if (loaded == nullptr || !execute("COMMIT;")) {
+        execute("ROLLBACK;");
+        return std::nullopt;
+    }
+    return LearningStoreState{std::move(loaded), *revision};
 }
 
 std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(

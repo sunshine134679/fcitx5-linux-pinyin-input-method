@@ -1,4 +1,5 @@
 #include "modernime/fcitx5/engine.h"
+#include "modernime/core/learning_store.h"
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include <cstdlib>
@@ -346,6 +347,55 @@ int main() {
     }
 
     
+    // Settings clears in WAL must reset ranking in shared, already-active providers.
+    {
+        const auto path = std::filesystem::temp_directory_path() /
+                          "modernime-ranking-wal-clear.sqlite3";
+        std::filesystem::remove(path);
+        modernime::pinyin::PinyinDataPaths paths;
+        paths.learningStore = path;
+        auto shared = modernime::pinyin::PinyinCandidateProvider::createSharedResources(paths, {});
+        modernime::pinyin::PinyinCandidateProvider active(shared);
+        for (int cycle = 0; cycle < 10; ++cycle) {
+            active.append("zd");
+            const auto index = indexOf(active.page(), "中断");
+            assertTrue(index < active.page().items.size() && active.select(index),
+                       "active provider records repeated deep-candidate selections");
+        }
+        assertTrue(modernime::pinyin::PinyinCandidateProvider::reloadLearningStore(shared),
+                   "learning is durable before the settings clear");
+        active.append("zd");
+        assertTrue(active.page().items.front().text == "中断",
+                   "learned ranking is visible before external clear");
+        active.reset();
+        modernime::core::LearningStore settings(path);
+        assertTrue(settings.open(), "settings opens the active engine database");
+        const auto before = std::filesystem::last_write_time(path);
+        assertTrue(settings.clear() && std::filesystem::last_write_time(path) == before,
+                   "real settings clear stays in WAL while engine connection is open");
+        assertTrue(modernime::pinyin::PinyinCandidateProvider::refreshLearningStore(shared),
+                   "engine polling API observes the external WAL reset");
+        active.append("zd");
+        assertTrue(indexOf(active.page(), "中断") > 10,
+                   "an existing provider no longer ranks the cleared learned candidate first");
+        assertTrue(!modernime::pinyin::PinyinCandidateProvider::refreshLearningStore(shared),
+                   "unchanged learning does not trigger another reload");
+        assertTrue(settings.clear(), "settings clears again before the next timer tick");
+        const auto selected = indexOf(active.page(), "中断");
+        assertTrue(selected < active.page().items.size() && active.select(selected),
+                   "active provider accepts its first new selection before polling");
+        assertTrue(modernime::pinyin::PinyinCandidateProvider::reloadLearningStore(shared),
+                   "first post-clear selection is flushed through the real provider");
+        const auto postClear = settings.snapshot();
+        assertTrue(postClear->entries().size() == 1 &&
+                       postClear->entries().front().phrase == "中断" &&
+                       postClear->entries().front().frequency == 1,
+                   "first post-clear provider selection persists without old learned frequency");
+        settings.close();
+        active.reset();
+        std::filesystem::remove(path);
+    }
+
     // Stress test: rapid typing and short/incomplete syllables
     {
         modernime::pinyin::PinyinDataPaths stressPaths;

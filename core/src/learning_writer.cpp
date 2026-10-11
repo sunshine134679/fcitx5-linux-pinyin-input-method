@@ -9,18 +9,21 @@
 namespace modernime::core {
 
 LearningWriter::LearningWriter(std::filesystem::path path)
-    : store_(std::make_unique<LearningStore>(std::move(path))),
+    : store_(std::make_unique<LearningStore>(path)),
+      observerStore_(std::make_unique<LearningStore>(std::move(path))),
       snapshot_(std::make_shared<const LearningSnapshot>()) {
     storageAvailable_ = store_->open();
     if (storageAvailable_) {
-        const auto loaded = store_->snapshot();
-        if (loaded != nullptr) {
-            snapshot_ = std::move(loaded);
+        const auto loaded = store_->readState();
+        if (loaded.has_value()) {
+            snapshot_ = loaded->snapshot;
+            resetRevision_ = loaded->resetRevision;
         } else {
             storageAvailable_ = false;
             store_->close();
         }
     }
+    observerStore_->openReadOnly();
     worker_ = std::thread(&LearningWriter::run, this);
 }
 
@@ -44,6 +47,7 @@ bool LearningWriter::enqueueSelection(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) {
+    refreshBeforeEnqueue();
     std::lock_guard lock(mutex_);
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSelection(phrase, pinyin, contextBefore, contextAfter, nowMs);
@@ -55,6 +59,7 @@ bool LearningWriter::enqueueSelection(
 
 bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
                                               std::string_view pinyin) {
+    refreshBeforeEnqueue();
     std::lock_guard lock(mutex_);
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordNegativeFeedback(phrase, pinyin);
@@ -66,6 +71,7 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
 
 bool LearningWriter::enqueueSuppression(std::string_view phrase,
                                         std::string_view pinyin) {
+    refreshBeforeEnqueue();
     std::lock_guard lock(mutex_);
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSuppression(phrase, pinyin);
@@ -80,6 +86,7 @@ bool LearningWriter::enqueueForPersistence(Event event) {
         (!durablyAvailable && !processing_ && events_.empty())) {
         return false;
     }
+    event.resetRevision = resetRevision_;
     events_.push_back(std::move(event));
     if (!durablyAvailable && retryExhausted_ && !processing_) {
         retryExhausted_ = false;
@@ -109,18 +116,121 @@ std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
 
 bool LearningWriter::reload() {
     flush();
-    std::lock_guard lock(mutex_);
+    std::lock_guard storeLock(storeMutex_);
     if (!store_->open()) {
         store_->close();
         return false;
     }
-    auto loaded = store_->snapshot();
-    if (loaded != nullptr) {
-        snapshot_ = std::move(loaded);
-        storageAvailable_ = true;
-        return true;
+    const auto loaded = store_->readState();
+    if (!loaded.has_value()) {
+        return false;
     }
-    return false;
+    std::lock_guard lock(mutex_);
+    rebaseSnapshot(*loaded, true);
+    storageAvailable_ = true;
+    // A refreshed store starts a new bounded retry cycle. Otherwise a queue
+    // exhausted before the clear would also leave new selections sleeping.
+    retryExhausted_ = false;
+    automaticRetryCyclesRemaining_ = 1;
+    wakeup_.notify_one();
+    return true;
+}
+
+bool LearningWriter::reloadIfChanged() {
+    // Do not wait for the asynchronous writer, or reopen its failed writable
+    // connection, on the Fcitx input event loop.
+    std::unique_lock storeLock(storeMutex_, std::try_to_lock);
+    if (!storeLock.owns_lock()) {
+        return false;
+    }
+    std::lock_guard observerLock(observerMutex_);
+    if (!observerStore_->openReadOnly()) {
+        return false;
+    }
+    const auto revision = observerStore_->resetRevision();
+    {
+        std::lock_guard lock(mutex_);
+        if (!revision.has_value() || *revision <= resetRevision_) {
+            return false;
+        }
+    }
+    const auto loaded = observerStore_->readState();
+    if (!loaded.has_value()) {
+        return false;
+    }
+    std::lock_guard lock(mutex_);
+    rebaseSnapshot(*loaded, true);
+    storageAvailable_ = true;
+    retryExhausted_ = false;
+    automaticRetryCyclesRemaining_ = 1;
+    wakeup_.notify_one();
+    return true;
+}
+
+void LearningWriter::refreshBeforeEnqueue() {
+    // Read the clear generation before tagging new input. Otherwise the first
+    // selection after clear, but before the next timer tick, looks pre-clear.
+    std::lock_guard observerLock(observerMutex_);
+    if (!observerStore_->openReadOnly()) {
+        return;
+    }
+    const auto revision = observerStore_->resetRevision();
+    {
+        std::lock_guard lock(mutex_);
+        if (!revision.has_value() || *revision <= resetRevision_) {
+            return;
+        }
+    }
+    const auto loaded = observerStore_->readState();
+    if (!loaded.has_value()) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    if (loaded->resetRevision > resetRevision_) {
+        rebaseSnapshot(*loaded, true);
+        storageAvailable_ = true;
+        retryExhausted_ = false;
+        automaticRetryCyclesRemaining_ = 1;
+        wakeup_.notify_one();
+    }
+}
+
+void LearningWriter::applyEvent(LearningSnapshot &snapshot, const Event &event) {
+    switch (event.kind) {
+    case EventKind::Selection:
+        snapshot.recordSelection(event.phrase, event.pinyin, event.contextBefore,
+                                 event.contextAfter, event.nowMs);
+        break;
+    case EventKind::NegativeFeedback:
+        snapshot.recordNegativeFeedback(event.phrase, event.pinyin);
+        break;
+    case EventKind::Suppression:
+        snapshot.recordSuppression(event.phrase, event.pinyin);
+        break;
+    }
+}
+
+void LearningWriter::rebaseSnapshot(const LearningStoreState &state,
+                                   bool includeProcessing) {
+    // A clear may be observed on the input thread after the worker read its
+    // snapshot. Never publish that older generation over the refreshed cache.
+    if (state.resetRevision < resetRevision_) {
+        return;
+    }
+    auto next = std::make_shared<LearningSnapshot>(*state.snapshot);
+    const auto apply = [&](const auto &events) {
+        for (const auto &event : events) {
+            if (event.resetRevision == state.resetRevision) {
+                applyEvent(*next, event);
+            }
+        }
+    };
+    if (includeProcessing) {
+        apply(processingEvents_);
+    }
+    apply(events_);
+    resetRevision_ = state.resetRevision;
+    snapshot_ = std::move(next);
 }
 
 bool LearningWriter::persistBatch(const std::vector<Event> &events) {
@@ -135,7 +245,7 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events) {
                                     : LearningEvent::Kind::Suppression;
         storeEvents.push_back({kind, event.phrase, event.pinyin,
                                event.contextBefore, event.contextAfter,
-                               event.nowMs});
+                               event.nowMs, event.resetRevision});
     }
 
     for (int attempt = 0; attempt < kMaxAttemptsPerCycle; ++attempt) {
@@ -179,13 +289,12 @@ void LearningWriter::run() {
                 events_.pop_front();
             }
             processing_ = true;
+            processingEvents_ = events;
         }
 
+        std::lock_guard storeLock(storeMutex_);
         const bool success = persistBatch(events);
-        std::shared_ptr<const LearningSnapshot> freshSnapshot;
-        if (success) {
-            freshSnapshot = store_->snapshot();
-        }
+        const auto freshState = success ? store_->readState() : std::nullopt;
 
         {
             std::lock_guard lock(mutex_);
@@ -199,10 +308,11 @@ void LearningWriter::run() {
                 storageAvailable_ = true;
                 retryExhausted_ = false;
                 automaticRetryCyclesRemaining_ = 1;
-                if (events_.empty() && freshSnapshot != nullptr) {
-                    snapshot_ = std::move(freshSnapshot);
+                if (freshState.has_value()) {
+                    rebaseSnapshot(*freshState, false);
                 }
             }
+            processingEvents_.clear();
             processing_ = false;
             drained_.notify_all();
         }

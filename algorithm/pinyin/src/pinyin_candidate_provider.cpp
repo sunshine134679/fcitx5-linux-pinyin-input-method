@@ -1306,6 +1306,12 @@ bool PinyinCandidateProvider::reloadLearningStore(
     return resources->reloadLearningStore();
 }
 
+bool PinyinCandidateProvider::refreshLearningStore(
+    std::shared_ptr<SharedResources> &resources) {
+    return resources != nullptr && resources->learning != nullptr &&
+           resources->learning->reloadIfChanged();
+}
+
 class PinyinCandidateProvider::Impl final {
 public:
     Impl(const PinyinDataPaths &paths, const PinyinProviderOptions &options)
