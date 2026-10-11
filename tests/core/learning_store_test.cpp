@@ -1061,9 +1061,59 @@ void testDeltaOverlayCopyAndQueryPerformance() {
     assertTrue(entry->frequency > 5, "updated entry frequency reflects selections");
 }
 
+void testCommitEventTrackingAndLearning() {
+    const auto path = testPath("commit-event-tracking.sqlite3");
+    {
+        modernime::core::LearningStore store(path);
+        assertTrue(store.open(), "store opens for commit event tracking");
+
+        modernime::core::CommitEvent chineseEvent;
+        chineseEvent.text = "王绍龙";
+        chineseEvent.fullPinyin = "wang'shao'long";
+        chineseEvent.rawKeystrokes = "wangshaolong";
+        chineseEvent.role = modernime::core::CommitCandidateRole::Chinese;
+        chineseEvent.contextBefore = "测试";
+        chineseEvent.contextAfter = "结尾";
+        chineseEvent.timestampMs = 12345;
+        assertTrue(store.recordCommit(chineseEvent), "recordCommit succeeds for Chinese candidate");
+
+        modernime::core::CommitEvent commandEvent;
+        commandEvent.text = "剪贴板";
+        commandEvent.rawKeystrokes = "v2";
+        commandEvent.role = modernime::core::CommitCandidateRole::Command;
+        commandEvent.timestampMs = 12346;
+        assertTrue(store.recordCommit(commandEvent), "recordCommit succeeds (ignored) for Command");
+
+        auto snapshot = store.snapshot();
+        assertTrue(snapshot->entry("王绍龙", "wang'shao'long", "测试", "结尾") != nullptr,
+                   "Chinese commit event is persisted in learning snapshot");
+        assertTrue(snapshot->entry("剪贴板", "剪贴板", "", "") == nullptr,
+                   "Command candidate is not recorded into learning store");
+
+        modernime::core::LearningWriter writer(path);
+        modernime::core::CommitEvent rawEvent;
+        rawEvent.text = "gnueabihf";
+        rawEvent.fullPinyin = "gnueabihf";
+        rawEvent.rawKeystrokes = "gnueabihf";
+        rawEvent.role = modernime::core::CommitCandidateRole::Raw;
+        rawEvent.timestampMs = 12347;
+        assertTrue(writer.enqueueCommit(rawEvent), "enqueueCommit succeeds for Raw candidate");
+        assertTrue(writer.enqueueCommit(commandEvent), "enqueueCommit succeeds for Command candidate");
+        assertTrue(writer.flush(), "writer flush succeeds");
+
+        assertTrue(writer.snapshot()->entry("gnueabihf", "gnueabihf", "", "") != nullptr,
+                   "Raw candidate commit is recorded and flushed to snapshot");
+        assertTrue(writer.snapshot()->entry("剪贴板", "v2", "", "") == nullptr,
+                   "Command candidate is ignored by writer enqueueCommit");
+        store.close();
+    }
+    std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main() {
+    testCommitEventTrackingAndLearning();
     testExternalClearDiscardsRetainedDeltas();
     testWriterDetectsWalClearAndSerializesOwnWrites();
     testWalClearResumesNewWritesAfterRetryExhaustion();

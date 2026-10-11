@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modernime/core/commit_event.h"
 #include "modernime/core/learning_snapshot.h"
 
 #include <chrono>
@@ -31,6 +32,7 @@ public:
                           std::string_view contextBefore,
                           std::string_view contextAfter,
                           std::int64_t nowMs);
+    bool enqueueCommit(const CommitEvent &event);
     bool enqueueNegativeFeedback(std::string_view phrase,
                                  std::string_view pinyin);
     bool enqueueSuppression(std::string_view phrase,

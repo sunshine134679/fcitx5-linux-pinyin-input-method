@@ -239,6 +239,15 @@ bool LearningStore::recordSelection(
     return pruneContextVariants() && pruneTotalEntries();
 }
 
+bool LearningStore::recordCommit(const CommitEvent &event) {
+    if (event.role == CommitCandidateRole::Command) {
+        return true;
+    }
+    const auto pinyinKey = event.fullPinyin.empty() ? event.text : event.fullPinyin;
+    return recordSelection(event.text, pinyinKey, event.contextBefore,
+                           event.contextAfter, event.timestampMs);
+}
+
 bool LearningStore::applyNegativeFeedback(std::string_view phrase,
                                           std::string_view pinyin) const {
     if (db_ == nullptr) {

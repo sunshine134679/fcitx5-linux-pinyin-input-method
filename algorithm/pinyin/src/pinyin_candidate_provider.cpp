@@ -1369,6 +1369,15 @@ public:
         return true;
     }
 
+    void onCommitEvent(const core::CommitEvent &event) {
+        if (event.role == core::CommitCandidateRole::Command) {
+            return;
+        }
+        if (auto *learning = learningWriter(); learning != nullptr) {
+            learning->enqueueCommit(event);
+        }
+    }
+
     bool select(std::size_t index) {
         if (index >= page_.items.size()) {
             return false;
@@ -1380,28 +1389,38 @@ public:
             refresh();
             return true;
         }
+
+        const auto rawInput = context->userInput();
+        const bool partialSelection = candidate.consumedInputBytes > 0 &&
+                                      candidate.consumedInputBytes < rawInput.size();
+
+        core::CommitEvent event;
+        event.text = candidate.text;
+        event.fullPinyin = candidate.fullPinyin.empty() ? std::string(rawInput) : candidate.fullPinyin;
+        event.rawKeystrokes = std::string(rawInput);
+        event.isPartial = partialSelection;
+        event.consumedInputBytes = candidate.consumedInputBytes > 0 ? candidate.consumedInputBytes : rawInput.size();
+        event.contextBefore = contextBefore_;
+        event.contextAfter = contextAfter_;
+        event.timestampMs = nowMilliseconds();
+        if (candidate.source == core::CandidateSource::UserDictionary) {
+            event.role = core::CommitCandidateRole::UserDictionary;
+        } else if (candidate.source == core::CandidateSource::Raw) {
+            event.role = core::CommitCandidateRole::Raw;
+        } else if (core::EnglishDictionary::isEnglishWord(candidate.text)) {
+            event.role = core::CommitCandidateRole::English;
+        } else {
+            event.role = core::CommitCandidateRole::Chinese;
+        }
+
+        onCommitEvent(event);
+
         if (candidate.source == core::CandidateSource::Raw) {
-            if (auto *learning = learningWriter(); learning != nullptr) {
-                const auto rawInput = context->userInput();
-                const auto pinyinKey = candidate.fullPinyin.empty()
-                                           ? std::string(rawInput)
-                                           : candidate.fullPinyin;
-                learning->enqueueSelection(candidate.text, pinyinKey,
-                                           contextBefore_, contextAfter_,
-                                           nowMilliseconds());
-            }
             context->clear();
             refresh();
             return true;
         }
-        if (auto *learning = learningWriter(); learning != nullptr) {
-            learning->enqueueSelection(candidate.text, candidate.fullPinyin,
-                                       contextBefore_, contextAfter_,
-                                       nowMilliseconds());
-        }
-        const auto rawInput = context->userInput();
-        if (candidate.consumedInputBytes > 0 &&
-            candidate.consumedInputBytes < rawInput.size()) {
+        if (partialSelection) {
             auto remainder = rawInput.substr(candidate.consumedInputBytes);
             while (!remainder.empty() && remainder.front() == '\'') {
                 remainder.erase(remainder.begin());
@@ -1981,6 +2000,10 @@ bool PinyinCandidateProvider::select(std::size_t index) {
 
 bool PinyinCandidateProvider::remove(std::size_t index) {
     return impl_->remove(index);
+}
+
+void PinyinCandidateProvider::onCommitEvent(const core::CommitEvent &event) {
+    impl_->onCommitEvent(event);
 }
 
 void PinyinCandidateProvider::reset() { impl_->reset(); }

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -501,6 +502,20 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
     }
     const auto preedit = compositionInput_.empty() ? page_.preedit
                                                    : compositionInput_;
+    if (provider_ != nullptr) {
+        core::CommitEvent event;
+        event.text = preedit;
+        event.rawKeystrokes = compositionInput_.empty() ? page_.rawInput : compositionInput_;
+        event.fullPinyin = event.rawKeystrokes;
+        event.role = core::CommitCandidateRole::Raw;
+        event.isPartial = false;
+        event.consumedInputBytes = event.rawKeystrokes.size();
+        event.contextBefore = contextBefore_;
+        event.contextAfter = contextAfter_;
+        event.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        provider_->onCommitEvent(event);
+    }
     clearComposition();
     host_.commit(preedit);
     if (!suffix.empty()) {

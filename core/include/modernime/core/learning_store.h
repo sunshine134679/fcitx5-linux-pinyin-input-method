@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modernime/core/commit_event.h"
 #include "modernime/core/learning_snapshot.h"
 
 #include <cstdint>
@@ -51,6 +52,7 @@ public:
     bool recordSelection(std::string_view phrase, std::string_view pinyin,
                          std::string_view contextBefore,
                          std::string_view contextAfter, std::int64_t nowMs);
+    bool recordCommit(const CommitEvent &event);
     bool recordNegativeFeedback(std::string_view phrase,
                                 std::string_view pinyin);
     bool recordSuppression(std::string_view phrase,

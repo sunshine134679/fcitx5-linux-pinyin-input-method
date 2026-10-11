@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/commit_event.h"
 
 #include <cstddef>
 #include <string_view>
@@ -20,6 +21,7 @@ public:
     virtual bool select(std::size_t index) = 0;
     virtual bool remove(std::size_t) { return false; }
     virtual void setContext(std::string_view, std::string_view) {}
+    virtual void onCommitEvent(const CommitEvent &) {}
     virtual void reset() = 0;
     virtual const CandidatePage &page() const = 0;
 };

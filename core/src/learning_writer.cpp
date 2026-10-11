@@ -57,6 +57,15 @@ bool LearningWriter::enqueueSelection(
          std::string(contextBefore), std::string(contextAfter), nowMs});
 }
 
+bool LearningWriter::enqueueCommit(const CommitEvent &event) {
+    if (event.role == CommitCandidateRole::Command) {
+        return true;
+    }
+    const auto pinyinKey = event.fullPinyin.empty() ? event.text : event.fullPinyin;
+    return enqueueSelection(event.text, pinyinKey, event.contextBefore,
+                            event.contextAfter, event.timestampMs);
+}
+
 bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
                                               std::string_view pinyin) {
     refreshBeforeEnqueue();

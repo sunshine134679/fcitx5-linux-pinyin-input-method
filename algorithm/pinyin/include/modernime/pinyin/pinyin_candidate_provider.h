@@ -76,6 +76,7 @@ public:
     bool replaceInput(std::string_view input) override;
     bool select(std::size_t index) override;
     bool remove(std::size_t index) override;
+    void onCommitEvent(const core::CommitEvent &event) override;
     void reset() override;
     const core::CandidatePage &page() const override;
 
