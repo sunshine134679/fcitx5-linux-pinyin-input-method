@@ -104,8 +104,6 @@ std::string toChineseFinancial(std::string_view numStr) {
                     gText += kBigUnits[gIdx];
                 }
                 groupResults.push_back(gText);
-            } else if (gIdx == 2) {
-                groupResults.push_back(kBigUnits[gIdx]);
             }
         }
         std::string intStr;
@@ -208,8 +206,6 @@ std::string toChineseStandardNumber(std::string_view numStr) {
                     gText += kBigUnits[gIdx];
                 }
                 groupResults.push_back(gText);
-            } else if (gIdx == 2) {
-                groupResults.push_back(kBigUnits[gIdx]);
             }
         }
         for (auto it = groupResults.rbegin(); it != groupResults.rend(); ++it) {

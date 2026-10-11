@@ -441,6 +441,47 @@ void testTypoCorrectionTransposition() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testNumeralMacrosAtZeroGroupBoundaries() {
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(
+        modernime::pinyin::PinyinDataPaths{}, options);
+    struct NumeralCase {
+        std::string_view input;
+        std::string_view financial;
+        std::string_view standard;
+    };
+    const NumeralCase cases[] = {
+        {"v0", "零元整", "零"},
+        {"v10000", "壹万元整", "一万"},
+        {"v100000000", "壹亿元整", "一亿"},
+        {"v1000000000000", "壹兆元整", "一兆"},
+        {"v1000000000000.05", "壹兆元零伍分", "一兆点零五"},
+        {"v1000000000001", "壹兆零壹元整", "一兆零一"},
+        {"v1000000010000", "壹兆零壹万元整", "一兆零一万"},
+        {"v1000100000000", "壹兆零壹亿元整", "一兆零一亿"},
+        {"v1000100010001", "壹兆零壹亿零壹万零壹元整", "一兆零一亿零一万零一"},
+        {"v100000000000000", "壹佰兆元整", "一百兆"},
+    };
+    for (const auto &test : cases) {
+        provider.reset();
+        assertTrue(provider.append(test.input), "numeral boundary input is accepted");
+        const auto &items = provider.page().items;
+        assertTrue(items.size() >= 3, "numeral conversion offers both forms and raw input");
+        if (items[0].text != test.financial || items[1].text != test.standard) {
+            std::cerr << "input " << test.input << ": got " << items[0].text
+                      << " / " << items[1].text << '\n';
+        }
+        assertTrue(items[0].text == test.financial,
+                   "financial numeral omits units for all-zero groups");
+        assertTrue(items[1].text == test.standard,
+                   "standard numeral omits units for all-zero groups");
+        assertTrue(items[2].text == test.input.substr(1),
+                   "numeral conversion preserves the raw number");
+    }
+}
+
 void testPunctuationAndSymbolMacroCandidates() {
     const auto learningPath = testPath("macro-symbols-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
@@ -1012,5 +1053,6 @@ int main() {
     testRepeatedSelectionAcrossContextsStillPromotes();
     testTypoCorrectionTransposition();
     testPunctuationAndSymbolMacroCandidates();
+    testNumeralMacrosAtZeroGroupBoundaries();
     return EXIT_SUCCESS;
 }
