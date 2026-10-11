@@ -50,6 +50,46 @@ int main() {
     assertTrue(persisted.load(path, &error) && persisted.entries().empty(),
                "history removal and clear are persisted atomically");
 
+    // The displayed index identifies the original text, even when another
+    // writer inserts or reorders entries before the settings action runs.
+    history.clear();
+    history.observe("first");
+    history.observe("second");
+    assertTrue(history.save(path, &error) && model.reload(&error),
+               "external insert fixture loads");
+    history.observe("third");
+    assertTrue(history.save(path, &error), "external insert saves");
+    assertTrue(model.remove(1, &error), "remove follows the displayed text");
+    assertTrue(persisted.load(path, &error) &&
+                   persisted.entries() == std::vector<std::string>{"third", "second"},
+               "external insert does not cause deletion of a different entry");
+
+    history.clear();
+    history.observe("first");
+    history.observe("second");
+    assertTrue(history.save(path, &error) && model.reload(&error),
+               "external reorder fixture loads");
+    history.observe("first");
+    assertTrue(history.save(path, &error), "external reorder saves");
+    assertTrue(model.remove(1, &error), "remove follows reordered target");
+    assertTrue(persisted.load(path, &error) &&
+                   persisted.entries() == std::vector<std::string>{"second"},
+               "external reorder does not cause deletion of a different entry");
+
+    history.clear();
+    history.observe("first");
+    history.observe("second");
+    assertTrue(history.save(path, &error) && model.reload(&error),
+               "vanished target fixture loads");
+    assertTrue(history.remove(0) && history.save(path, &error),
+               "another writer removes the displayed target");
+    assertTrue(!model.remove(0, &error) && !error.empty(),
+               "vanished target removal is refused");
+    assertTrue(persisted.load(path, &error) &&
+                   persisted.entries() == std::vector<std::string>{"first"},
+               "a vanished target cannot delete the replacement entry");
+    assertTrue(!model.remove(99, &error), "invalid displayed index is refused");
+
     const auto missingPath = directory / "missing.bin";
     modernime::settings::ClipboardHistoryModel missing(missingPath);
     assertTrue(missing.reload(&error) && missing.entries().empty(),
