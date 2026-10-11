@@ -12,7 +12,7 @@ ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）�
 
 #### 1. Ubuntu / Debian 系统（`.deb` 包）
 ```bash
-# 下载对应的 .deb 包（如 modernime_0.1.6_amd64_ubuntu24.04.deb）后执行：
+# 下载对应的 .deb 包（如 modernime_0.1.7_amd64_ubuntu24.04.deb）后执行：
 sudo dpkg -i modernime_*_amd64*.deb
 # 若系统提示缺失运行库依赖，一键自动修复补全：
 sudo apt-get install -f
@@ -118,7 +118,7 @@ cd fcitx5-linux-pinyin-input-method
 - **打包 openEuler/Fedora `.rpm`**：运行 `./scripts/package_rpm.sh`
 - **打包通用便携归档 `.tar.gz`**：运行 `./scripts/package_tarball.sh`
 
-同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.6`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
+同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.7`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
 
 
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
@@ -418,6 +418,13 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
 ## 版本更新记录
+
+### v0.1.7 (2026-10-11)
+
+- **安装与发行**：保护用户修改的环境、自启和桌面文件；隔离并记录会话配置块；补齐自定义前缀的数据发现环境；便携包复用源码安装与受控卸载闭环；声明离线词典编译工具及 DEB 的 Fcitx5 启动器依赖。
+- **输入与候选**：修复学习简拼排序的传递性、普通组合后数字 `0` 的上屏顺序、输入总开关与激活上下文的一致性、关闭数字选词后的数字宏输入，以及兆级数字的多余零分组单位。
+- **剪贴板与学习**：删除定位界面所选文本；外部清空不会被未变化的剪贴板轮询或干净保存恢复；写入重试尊重磁盘变更；SQLite WAL 清空通过只读观察连接刷新，旧失败队列不复活且保留新的学习事件。
+- **验证**：Release 构建也执行测试断言，修复对象释放测试中的断言副作用；增加真实 Fcitx 元数据定位和便携词典加载回归。
 
 ### v0.1.6 (2026-10-04)
 - **常用高频词汇坚守中文优先与防篡位保护**：彻底解决如 `name`（那么）、`like`（立刻）、`women`（我们）等常用高频中文词汇因低频偶发选择英文而导致英文抢占首位、挤掉中文候选的问题；建立词典正规成词防护防线，常用高频中文稳居第 1 候选，空格直接上屏中文，英文词稳定作为第 2 备选；
