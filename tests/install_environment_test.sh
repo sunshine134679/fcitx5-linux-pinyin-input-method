@@ -27,16 +27,16 @@ printf '%s\n' /fake/lib
 EOF
 cat >"$fake_bin/fcitx5" <<'EOF'
 #!/usr/bin/env bash
-printf 'fcitx5|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s\n' \
+printf 'fcitx5|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s|DATA=%s\n' \
     "${DISPLAY-}" "${DBUS_SESSION_BUS_ADDRESS-}" \
-    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" >>"$FAKE_LOG"
+    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" "${XDG_DATA_DIRS-}" >>"$FAKE_LOG"
 exit 0
 EOF
 cat >"$fake_bin/fcitx5-remote" <<'EOF'
 #!/usr/bin/env bash
-printf 'remote:%s|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s\n' \
+printf 'remote:%s|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s|DATA=%s\n' \
     "${1-}" "${DISPLAY-}" "${DBUS_SESSION_BUS_ADDRESS-}" \
-    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" >>"$FAKE_LOG"
+    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" "${XDG_DATA_DIRS-}" >>"$FAKE_LOG"
 case "${1-}" in
     -n) printf '%s\n' modernime ;;
     '') printf '%s\n' 2 ;;
@@ -59,6 +59,7 @@ state_file="$test_root/pgrep.state"
 env \
     -u MODERNIME_CONFIG_HOME \
     -u MODERNIME_DESKTOP_DIR \
+    XDG_DATA_DIRS=/usr/local/share:/usr/share \
     HOME="$test_root/home" \
     XDG_CONFIG_HOME="$test_root/config" \
     MODERNIME_PREFIX="$test_root/prefix" \
@@ -83,3 +84,7 @@ grep -F "remote:-n|DISPLAY=:0|DBUS=unix:path=/run/user/1000/bus|RUNTIME=/run/use
     "$log_file" >/dev/null
 grep -F "remote:|DISPLAY=:0|DBUS=unix:path=/run/user/1000/bus|RUNTIME=/run/user/1000|ADDONS=$expected_addons" \
     "$log_file" >/dev/null
+
+grep -F "|DATA=$test_root/prefix/share:/usr/local/share:/usr/share" "$log_file" >/dev/null
+grep -F 'XDG_DATA_DIRS=' "$test_root/config/environment.d/90-modernime.conf" >/dev/null
+grep -F 'XDG_DATA_DIRS=' "$test_root/config/autostart/modernime-fcitx5-session.desktop" >/dev/null

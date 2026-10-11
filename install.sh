@@ -102,9 +102,16 @@ else
     prefix_addon_dir="$prefix/lib/fcitx5"
 fi
 
+data_directories=${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
+case ":$data_directories:" in
+    *":$prefix/share:"*) ;;
+    *) data_directories="$prefix/share:$data_directories" ;;
+esac
+
 fcitx_environment=(
     env
     "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
+    "XDG_DATA_DIRS=$data_directories"
 )
 for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
     if [[ -n "${!environment_name:-}" ]]; then
@@ -190,6 +197,7 @@ fi
 fcitx_environment=(
     env
     "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
+    "XDG_DATA_DIRS=$data_directories"
 )
 for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
     if [[ -n "${!environment_name:-}" ]]; then
@@ -220,10 +228,13 @@ if [[ "$managed_file_written" == true ]]; then
 fi
 
 environment_line="FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
-printf '%s\n' "$environment_line" > "$desktop_tmp"
+{
+    printf '%s\n' "$environment_line"
+    printf 'XDG_DATA_DIRS="%s:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix/share"
+} > "$desktop_tmp"
 modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
 
-autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir fcitx5 -d -u modernime-ui"
+autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir XDG_DATA_DIRS=$data_directories fcitx5 -d -u modernime-ui"
 {
     printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
     printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
@@ -250,6 +261,7 @@ export QT_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
 export SDL_IM_MODULE=fcitx
 export FCITX_ADDON_DIRS="$prefix_addon_dir:$system_addon_dir"
+export XDG_DATA_DIRS="$prefix/share:\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 # END MODERNIME ENV
 EOF
     modernime_write_profile_block "$desktop_tmp" "$xprofile_file"

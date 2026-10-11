@@ -10,6 +10,7 @@
 #include "modernime/settings/pages/learning_page.h"
 #include "modernime/settings/pages/overview_page.h"
 #include "modernime/settings/runtime_controller.h"
+#include "modernime/settings/runtime_environment.h"
 #include "modernime/settings/settings_model.h"
 #include "modernime/settings/settings_shell_state.h"
 #include "modernime/settings/settings_ui_contract.h"
@@ -39,47 +40,20 @@ void removeStyleClass(GtkWidget *widget, std::string_view className) {
                                    std::string(className).c_str());
 }
 
-std::string modernimeAddonDirectories() {
-    std::vector<std::string> directories;
-#ifdef MODERNIME_INSTALL_PREFIX
-    directories.emplace_back(
-        (std::filesystem::path(MODERNIME_INSTALL_PREFIX) / "lib/fcitx5")
-            .string());
-#endif
-#ifdef MODERNIME_SYSTEM_FCITX5_ADDON_DIR
-    if (std::string_view(MODERNIME_SYSTEM_FCITX5_ADDON_DIR).size() != 0) {
-        directories.emplace_back(MODERNIME_SYSTEM_FCITX5_ADDON_DIR);
-    }
-#endif
-    if (const auto *existing = std::getenv("FCITX_ADDON_DIRS");
-        existing != nullptr && *existing != '\0') {
-        directories.emplace_back(existing);
-    }
-
-    std::ostringstream result;
-    for (std::size_t index = 0; index < directories.size(); ++index) {
-        if (index != 0) {
-            result << ':';
-        }
-        result << directories[index];
-    }
-    return result.str();
-}
-
 Environment currentEnvironment() {
-    Environment environment;
-    for (const char *name : {"DISPLAY", "WAYLAND_DISPLAY",
-                             "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}) {
-        const auto *value = std::getenv(name);
-        if (value != nullptr && *value != '\0') {
-            environment.emplace_back(name, value);
-        }
-    }
-    const auto addonDirectories = modernimeAddonDirectories();
-    if (!addonDirectories.empty()) {
-        environment.emplace_back("FCITX_ADDON_DIRS", addonDirectories);
-    }
-    return environment;
+    std::filesystem::path fallback;
+#ifdef MODERNIME_INSTALL_PREFIX
+    fallback = MODERNIME_INSTALL_PREFIX;
+#endif
+    std::error_code error;
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+    const auto prefix = installationPrefix(error ? std::filesystem::path{} : executable,
+                                           fallback);
+    std::string systemAddonDirectory;
+#ifdef MODERNIME_SYSTEM_FCITX5_ADDON_DIR
+    systemAddonDirectory = MODERNIME_SYSTEM_FCITX5_ADDON_DIR;
+#endif
+    return runtimeEnvironment(prefix, systemAddonDirectory);
 }
 
 std::filesystem::path executablePath(std::string_view name) {

@@ -419,6 +419,13 @@ if(MODERNIME_BUILD_FCITX5)
         COMMAND modernime_fcitx5_candidate_list_tests
     )
 
+    add_executable(modernime_install_discovery_tests adapter/install_discovery_test.cpp)
+    target_include_directories(modernime_install_discovery_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include)
+    target_link_libraries(modernime_install_discovery_tests PRIVATE Fcitx5::Utils)
+    target_compile_features(modernime_install_discovery_tests PRIVATE cxx_std_20)
+    add_test(NAME modernime_install_discovery COMMAND modernime_install_discovery_tests)
+
     add_executable(modernime_addon_load_tests adapter/addon_load_test.cpp)
     target_link_libraries(modernime_addon_load_tests PRIVATE ${CMAKE_DL_LIBS})
     add_test(NAME modernime_fcitx5_addon_load

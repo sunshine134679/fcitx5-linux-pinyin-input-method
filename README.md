@@ -398,7 +398,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 ./install.sh
 ```
 
-自定义安装后，设置客户端路径、桌面入口和卸载清单都会使用该前缀。`MODERNIME_CONFIG_HOME` 和 `MODERNIME_DESKTOP_DIR` 可分别隔离会话配置与桌面目录，`MODERNIME_SKIP_FCITX_RESTART=1` 可禁止重启当前输入法。
+自定义安装后，设置客户端路径、桌面入口和卸载清单都会使用该前缀。安装器在启动环境、会话环境文件和自启入口中配置 `FCITX_ADDON_DIRS` 与 `XDG_DATA_DIRS`，让 Fcitx 同时发现插件和输入法元数据；设置客户端重载也会根据实际可执行文件位置补齐这些路径。`MODERNIME_CONFIG_HOME` 和 `MODERNIME_DESKTOP_DIR` 可分别隔离会话配置与桌面目录，`MODERNIME_SKIP_FCITX_RESTART=1` 可禁止重启当前输入法。
 
 配置目录不同于 `$HOME/.config` 时，默认不修改 `$HOME/.xprofile`。需要同步指定的会话文件时可设置 `MODERNIME_XPROFILE_FILE=/path/to/profile`；`MODERNIME_SKIP_XPROFILE=1` 可完全跳过。安装清单记录实际路径与生成块，重装和卸载保留被修改的块及文件中的其它用户内容。卸载会使用记录的路径，无需再次设置会话文件参数。
 

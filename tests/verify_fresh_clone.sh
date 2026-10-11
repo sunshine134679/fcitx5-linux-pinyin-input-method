@@ -10,6 +10,9 @@ git clone "$project_root" "$test_root/repo"
 
 mkdir -p "$test_root/home"
 export HOME="$test_root/home"
+export XDG_DATA_HOME="$test_root/data"
+export XDG_CONFIG_HOME="$test_root/config"
+export XDG_CACHE_HOME="$test_root/cache"
 export MODERNIME_PREFIX="$test_root/prefix"
 export MODERNIME_CONFIG_HOME="$test_root/config"
 export MODERNIME_DESKTOP_DIR="$test_root/Desktop"
@@ -26,6 +29,13 @@ test -f "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
 test -f "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test -f "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 test -x "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
+
+# Validate actual Fcitx metadata discovery using the installed session environment.
+set -a
+source "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
+set +a
+"$test_root/repo/build/install-debug/tests/modernime_install_discovery_tests" "$MODERNIME_PREFIX"
+test ! -e "$HOME/.xprofile"
 
 printf '=== 4. 在沙箱环境中执行 uninstall.sh ===\n'
 (cd "$test_root/repo" && ./uninstall.sh)
