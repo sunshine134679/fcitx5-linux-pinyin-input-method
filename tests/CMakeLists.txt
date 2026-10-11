@@ -186,6 +186,8 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_focus_gtk_tests
     )
     set_tests_properties(modernime_settings_focus_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
         SKIP_RETURN_CODE 77
     )
 
@@ -223,6 +225,8 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_shell_gtk_tests
     )
     set_tests_properties(modernime_settings_shell_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
         SKIP_RETURN_CODE 77
         TIMEOUT 20
     )

@@ -246,7 +246,8 @@ gboolean observeControllerKey(GtkEventControllerKey *, guint keyval, guint,
 
 struct DictionaryDialogProbe final {
     bool ran = false;
-    std::size_t attempts = 0;
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
 };
 
 gboolean inspectDictionaryDialog(gpointer data) {
@@ -267,8 +268,7 @@ gboolean inspectDictionaryDialog(gpointer data) {
     }
     g_list_free(windows);
     if (dialog == nullptr) {
-        ++probe->attempts;
-        assert(probe->attempts < 200);
+        assert(std::chrono::steady_clock::now() < probe->deadline);
         return G_SOURCE_CONTINUE;
     }
 
@@ -294,7 +294,16 @@ gboolean inspectDictionaryDialog(gpointer data) {
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), 1.0);
     assert(gtk_widget_get_sensitive(save));
 
+    // Mapping precedes window activation, especially without a window manager.
+    // Dispatch keyboard events only after the modal dialog owns keyboard focus;
+    // GtkButton's focus traversal requires an active toplevel.
+    gtk_window_present(GTK_WINDOW(dialog));
     gtk_window_set_focus(GTK_WINDOW(dialog), pinyin);
+    assert(waitUntil([dialog, pinyin] {
+        return gtk_widget_get_mapped(dialog) &&
+               gtk_window_is_active(GTK_WINDOW(dialog)) &&
+               gtk_widget_has_focus(pinyin);
+    }));
     assert(hasFocusWithin(dialog, pinyin));
     dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
     assert(hasFocusWithin(dialog, phrase));
@@ -336,7 +345,8 @@ gboolean inspectDictionaryDialog(gpointer data) {
 
 struct ConfirmationProbe final {
     bool ran = false;
-    std::size_t attempts = 0;
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
 };
 
 gboolean confirmVisibleMessageDialog(gpointer data) {
@@ -354,8 +364,7 @@ gboolean confirmVisibleMessageDialog(gpointer data) {
     }
     g_list_free(windows);
     if (dialog == nullptr) {
-        ++probe->attempts;
-        assert(probe->attempts < 200);
+        assert(std::chrono::steady_clock::now() < probe->deadline);
         return G_SOURCE_CONTINUE;
     }
     probe->ran = true;
