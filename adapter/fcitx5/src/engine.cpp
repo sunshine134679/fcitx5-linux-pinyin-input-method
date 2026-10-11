@@ -222,6 +222,9 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (page_.preedit.empty() && !clipboardMode_) {
             return false;
         }
+        if (provider_ != nullptr) {
+            provider_->resetCommitHistory();
+        }
         clearComposition();
         return true;
     case KeyKind::Enter:
@@ -488,6 +491,9 @@ bool ModernIMEController::commitPunctuation(char ascii) {
         }
     }
     host_.commit(*converted);
+    if (provider_ != nullptr) {
+        provider_->resetCommitHistory();
+    }
     if (ascii == '"') {
         doubleQuoteOpen_ = !doubleQuoteOpen_;
     } else if (ascii == '\'') {
@@ -545,6 +551,9 @@ void ModernIMEController::clearComposition() {
 }
 
 void ModernIMEController::reset() {
+    if (provider_ != nullptr) {
+        provider_->resetCommitHistory();
+    }
     clearComposition();
     doubleQuoteOpen_ = false;
     singleQuoteOpen_ = false;

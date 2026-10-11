@@ -2,6 +2,7 @@
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/learning_writer.h"
+#include "modernime/core/phrase_formation.h"
 
 #include <sqlite3.h>
 
@@ -1159,9 +1160,99 @@ void testIndependentRecallIndex() {
     assertTrue(recalledDeltaAbbr[0].phrase == "深空测控", "delta abbreviation recalled phrase matches");
 }
 
+void testPhraseFormationTrackerUnit() {
+    // 1. Intra-composition test: wangshaolong -> 王 + 绍 + 龙
+    {
+        modernime::core::PhraseFormationTracker tracker(5);
+        tracker.recordPartialSelection("王", "wang", "wangshaolong", 4);
+        tracker.recordPartialSelection("绍", "shao", "shaolong", 4);
+        auto formed = tracker.recordFinalSelection("龙", "long", "long", 4);
+        assertTrue(formed.has_value(), "intra-composition phrase formation succeeds");
+        assertTrue(formed->text == "王绍龙", "formed text matches 王绍龙");
+        assertTrue(formed->fullPinyin == "wang'shao'long", "formed pinyin matches wang'shao'long");
+        assertTrue(formed->rawKeystrokes == "wangshaolong", "raw keystrokes match wangshaolong");
+
+        // After completion, buffer is empty
+        auto emptyFinal = tracker.recordFinalSelection("龙", "long", "long", 4);
+        assertTrue(!emptyFinal.has_value(), "final selection on empty buffer returns nullopt");
+    }
+
+    // 2. Intra-composition cancel / backspace
+    {
+        modernime::core::PhraseFormationTracker tracker(5);
+        tracker.recordPartialSelection("王", "wang", "wangshaolong", 4);
+        tracker.cancelComposition();
+        auto cancelled = tracker.recordFinalSelection("绍", "shao", "shaolong", 4);
+        assertTrue(!cancelled.has_value(), "cancelled composition yields nullopt");
+    }
+
+    // 3. Inter-composition repeated sequences (threshold = 5)
+    {
+        modernime::core::PhraseFormationTracker tracker(5);
+        for (int round = 1; round <= 5; ++round) {
+            modernime::core::CommitEvent e1{"王", "wang", "wang", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 1000 + round * 10};
+            modernime::core::CommitEvent e2{"绍", "shao", "shao", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 1000 + round * 10 + 1};
+            modernime::core::CommitEvent e3{"龙", "long", "long", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 1000 + round * 10 + 2};
+
+            auto f1 = tracker.recordCommit(e1);
+            auto f2 = tracker.recordCommit(e2);
+            auto f3 = tracker.recordCommit(e3);
+
+            if (round < 5) {
+                bool foundWangShaoLong = false;
+                for (const auto &f : f3) {
+                    if (f.text == "王绍龙") foundWangShaoLong = true;
+                }
+                assertTrue(!foundWangShaoLong, "王绍龙 not formed before threshold 5");
+            } else {
+                bool foundWangShaoLong = false;
+                for (const auto &f : f3) {
+                    if (f.text == "王绍龙") {
+                        foundWangShaoLong = true;
+                        assertTrue(f.fullPinyin == "wang'shao'long", "pinyin matches");
+                        assertTrue(f.isInitialFormation, "isInitialFormation is true at threshold");
+                        assertTrue(f.repetitionCount == 5, "repetitionCount is 5");
+                    }
+                }
+                assertTrue(foundWangShaoLong, "王绍龙 formed at threshold 5");
+            }
+        }
+
+        // Round 6: repetition continues to emit with isInitialFormation = false
+        modernime::core::CommitEvent e1{"王", "wang", "wang", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 2000};
+        modernime::core::CommitEvent e2{"绍", "shao", "shao", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 2001};
+        modernime::core::CommitEvent e3{"龙", "long", "long", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 2002};
+        tracker.recordCommit(e1);
+        tracker.recordCommit(e2);
+        auto f6 = tracker.recordCommit(e3);
+        bool foundRound6 = false;
+        for (const auto &f : f6) {
+            if (f.text == "王绍龙") {
+                foundRound6 = true;
+                assertTrue(!f.isInitialFormation, "round 6 has isInitialFormation = false");
+                assertTrue(f.repetitionCount == 6, "round 6 has repetitionCount = 6");
+            }
+        }
+        assertTrue(foundRound6, "round 6 emits repetition promotion");
+    }
+
+    // 4. Interrupted by English or Raw
+    {
+        modernime::core::PhraseFormationTracker tracker(3);
+        modernime::core::CommitEvent e1{"王", "wang", "wang", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 1000};
+        tracker.recordCommit(e1);
+        modernime::core::CommitEvent eRaw{"raw", "raw", "raw", modernime::core::CommitCandidateRole::Raw, false, 3, "", "", 1001};
+        tracker.recordCommit(eRaw);
+        modernime::core::CommitEvent e2{"绍", "shao", "shao", modernime::core::CommitCandidateRole::Chinese, false, 4, "", "", 1002};
+        auto f2 = tracker.recordCommit(e2);
+        assertTrue(f2.empty(), "interruption by raw resets sequence");
+    }
+}
+
 } // namespace
 
 int main() {
+    testPhraseFormationTrackerUnit();
     testCommitEventTrackingAndLearning();
     testIndependentRecallIndex();
     testExternalClearDiscardsRetainedDeltas();

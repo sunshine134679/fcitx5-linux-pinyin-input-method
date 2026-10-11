@@ -868,6 +868,169 @@ void testIndependentRecallInCandidateProvider() {
     std::filesystem::remove(learningPath.string() + "-shm", err);
 }
 
+void testIntraCompositionPhraseFormation() {
+    std::error_code err;
+    const auto learningPath = testPath("intra-composition.sqlite3");
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        // Type full pinyin "wangshaolong"
+        assertTrue(provider.append("wangshaolong"), "append wangshaolong");
+        // Segment 1: select 王 (partial)
+        const auto idxWang = indexOf(provider.page(), "王");
+        assertTrue(idxWang < provider.page().items.size(), "found 王");
+        assertTrue(provider.page().items[idxWang].consumedInputBytes == 4, "王 consumes 4 bytes");
+        assertTrue(provider.select(idxWang), "select 王");
+        assertTrue(provider.page().preedit == "shao'long", "preedit has remaining shao'long");
+
+        // Segment 2: select 绍 (partial)
+        const auto idxShao = indexOf(provider.page(), "绍");
+        assertTrue(idxShao < provider.page().items.size(), "found 绍");
+        assertTrue(provider.page().items[idxShao].consumedInputBytes == 4, "绍 consumes 4 bytes");
+        assertTrue(provider.select(idxShao), "select 绍");
+        assertTrue(provider.page().preedit == "long", "preedit has remaining long");
+
+        // Segment 3: select 龙 (final)
+        const auto idxLong = indexOf(provider.page(), "龙");
+        assertTrue(idxLong < provider.page().items.size(), "found 龙");
+        assertTrue(provider.select(idxLong), "select 龙 completes composition");
+        assertTrue(provider.page().items.empty(), "page empty after full consumption");
+
+        // Flush learning writer to guarantee persistence
+        assertTrue(provider.flush(), "flush learning writer");
+
+        // Now verify: typing wangshaolong recalls 王绍龙!
+        provider.reset();
+        assertTrue(provider.append("wangshaolong"), "re-enter wangshaolong");
+        const auto idxFormed = indexOf(provider.page(), "王绍龙");
+        assertTrue(idxFormed < provider.page().items.size(),
+                   "intra-composition formed phrase 王绍龙 is recalled in candidate list");
+        assertTrue(modernime::core::PinyinMatchPolicy::canonical(provider.page().items[idxFormed].fullPinyin) == "wangshaolong",
+                   "formed phrase full pinyin matches wangshaolong");
+        assertTrue(provider.page().items[idxFormed].consumedInputBytes == 12,
+                   "formed phrase consumes all 12 input bytes");
+        assertTrue(provider.select(idxFormed), "select formed phrase 王绍龙 succeeds");
+    }
+
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+}
+
+void testInterCompositionPhraseFormationAndRestart() {
+    std::error_code err;
+    const auto learningPath = testPath("inter-composition.sqlite3");
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        // Repeat 5 times: wang -> 王, shao -> 绍, long -> 龙
+        for (int i = 0; i < 5; ++i) {
+            assertTrue(provider.append("wang"), "append wang");
+            const auto idxWang = indexOf(provider.page(), "王");
+            assertTrue(idxWang < provider.page().items.size(), "found 王");
+            assertTrue(provider.select(idxWang), "select 王");
+
+            assertTrue(provider.append("shao"), "append shao");
+            const auto idxShao = indexOf(provider.page(), "绍");
+            assertTrue(idxShao < provider.page().items.size(), "found 绍");
+            assertTrue(provider.select(idxShao), "select 绍");
+
+            assertTrue(provider.append("long"), "append long");
+            const auto idxLong = indexOf(provider.page(), "龙");
+            assertTrue(idxLong < provider.page().items.size(), "found 龙");
+            assertTrue(provider.select(idxLong), "select 龙");
+        }
+
+        assertTrue(provider.flush(), "flush after 5 repetitions");
+
+        // Verify that wangshaolong top candidate is 王绍龙!
+        provider.reset();
+        assertTrue(provider.append("wangshaolong"), "append wangshaolong");
+        assertTrue(!provider.page().items.empty(), "page not empty for wangshaolong");
+        assertTrue(provider.page().items.front().text == "王绍龙",
+                   "wangshaolong top candidate is 王绍龙 after 5 rounds");
+        assertTrue(provider.page().items.front().source == modernime::core::CandidateSource::Learned,
+                   "王绍龙 source is Learned");
+        assertTrue(provider.select(0), "select 王绍龙");
+        assertTrue(provider.flush(), "flush before restart");
+    }
+
+    // Simulate restart: open brand new provider with the same DB
+    {
+        modernime::pinyin::PinyinCandidateProvider restarted(paths, options);
+        assertTrue(restarted.append("wangshaolong"), "append wangshaolong in restarted provider");
+        assertTrue(!restarted.page().items.empty(), "restarted page not empty");
+        assertTrue(restarted.page().items.front().text == "王绍龙",
+                   "wangshaolong top candidate is STILL 王绍龙 after restart");
+        assertTrue(restarted.select(0), "select 王绍龙 succeeds after restart");
+    }
+
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+}
+
+void testHouxuanlanPhraseFormation() {
+    std::error_code err;
+    const auto learningPath = testPath("houxuanlan.sqlite3");
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        // Repeat 5 times: houxuan -> 候选, lan -> 栏
+        for (int i = 0; i < 5; ++i) {
+            assertTrue(provider.append("houxuan"), "append houxuan");
+            const auto idxHx = indexOf(provider.page(), "候选");
+            assertTrue(idxHx < provider.page().items.size(), "found 候选");
+            assertTrue(provider.select(idxHx), "select 候选");
+
+            assertTrue(provider.append("lan"), "append lan");
+            const auto idxLan = indexOf(provider.page(), "栏");
+            assertTrue(idxLan < provider.page().items.size(), "found 栏");
+            assertTrue(provider.select(idxLan), "select 栏");
+        }
+
+        assertTrue(provider.flush(), "flush after 5 rounds");
+
+        // Verify that houxuanlan recalls 候选栏!
+        provider.reset();
+        assertTrue(provider.append("houxuanlan"), "append houxuanlan");
+        assertTrue(!provider.page().items.empty(), "page not empty for houxuanlan");
+        const auto idxHxl = indexOf(provider.page(), "候选栏");
+        assertTrue(idxHxl < provider.page().items.size(), "候选栏 is recalled in candidate list");
+        assertTrue(provider.page().items.front().text == "候选栏",
+                   "houxuanlan top candidate is 候选栏 after training");
+        assertTrue(provider.select(idxHxl), "select 候选栏 succeeds");
+    }
+
+    std::filesystem::remove(learningPath, err);
+    std::filesystem::remove(learningPath.string() + "-wal", err);
+    std::filesystem::remove(learningPath.string() + "-shm", err);
+}
+
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
@@ -1174,5 +1337,8 @@ int main() {
     testNumeralMacrosAtZeroGroupBoundaries();
     testVCommandMenuAndDeduplication();
     testIndependentRecallInCandidateProvider();
+    testIntraCompositionPhraseFormation();
+    testInterCompositionPhraseFormationAndRestart();
+    testHouxuanlanPhraseFormation();
     return EXIT_SUCCESS;
 }

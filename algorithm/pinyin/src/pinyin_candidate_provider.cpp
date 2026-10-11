@@ -8,6 +8,7 @@
 #include "modernime/core/english_dictionary.h"
 #include "modernime/core/english_definition_dictionary.h"
 #include "modernime/core/learning_writer.h"
+#include "modernime/core/phrase_formation.h"
 #include "modernime/core/settings.h"
 
 #include <libime/core/userlanguagemodel.h>
@@ -1192,6 +1193,8 @@ public:
     std::filesystem::path learningStorePath;
     core::EnglishDefinitionDictionary englishDefinitionDict;
     std::filesystem::path englishDefinitionDictPath;
+    std::shared_ptr<core::PhraseFormationStats> phraseStats =
+        std::make_shared<core::PhraseFormationStats>();
 
     core::LearningWriter *ensureLearningWriter() {
         if (learning == nullptr && !learningStorePath.empty()) {
@@ -1219,6 +1222,9 @@ public:
     }
 
     bool reloadLearningStore() {
+        if (phraseStats != nullptr) {
+            phraseStats->clear();
+        }
         if (learning != nullptr) {
             return learning->reload();
         }
@@ -1308,8 +1314,15 @@ bool PinyinCandidateProvider::reloadLearningStore(
 
 bool PinyinCandidateProvider::refreshLearningStore(
     std::shared_ptr<SharedResources> &resources) {
-    return resources != nullptr && resources->learning != nullptr &&
-           resources->learning->reloadIfChanged();
+    if (resources != nullptr && resources->learning != nullptr) {
+        if (resources->learning->reloadIfChanged()) {
+            if (resources->phraseStats != nullptr) {
+                resources->phraseStats->clear();
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 class PinyinCandidateProvider::Impl final {
@@ -1320,6 +1333,7 @@ public:
     Impl(std::shared_ptr<SharedResources> shared,
          const PinyinProviderOptions &options)
         : shared_(std::move(shared)),
+          phraseTracker_(5, shared_ ? shared_->phraseStats : nullptr),
           contextLearningEnabled_(options.contextLearningEnabled),
           learningEnabled_(options.learningEnabled),
           englishDefinitionEnabled_(options.englishDefinitionEnabled),
@@ -1346,6 +1360,9 @@ public:
         if (!context->backspace()) {
             return false;
         }
+        if (context->userInput().empty()) {
+            phraseTracker_.cancelComposition();
+        }
         refresh();
         return true;
     }
@@ -1354,6 +1371,9 @@ public:
         if (!input.empty() &&
             !core::PinyinMatchPolicy::validComposition(input)) {
             return false;
+        }
+        if (input.empty()) {
+            phraseTracker_.cancelComposition();
         }
         const auto previous = context->userInput();
         context->clear();
@@ -1371,7 +1391,14 @@ public:
 
     void onCommitEvent(const core::CommitEvent &event) {
         if (event.role == core::CommitCandidateRole::Command) {
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
             return;
+        }
+        if (event.role == core::CommitCandidateRole::Raw ||
+            event.role == core::CommitCandidateRole::English) {
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
         }
         if (auto *learning = learningWriter(); learning != nullptr) {
             learning->enqueueCommit(event);
@@ -1385,6 +1412,8 @@ public:
         const auto &candidate = page_.items[index];
         if (candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Command) {
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
             context->clear();
             refresh();
             return true;
@@ -1413,9 +1442,55 @@ public:
             event.role = core::CommitCandidateRole::Chinese;
         }
 
-        onCommitEvent(event);
+        if (partialSelection) {
+            phraseTracker_.recordPartialSelection(
+                candidate.text, event.fullPinyin, rawInput, event.consumedInputBytes);
+            onCommitEvent(event);
+        } else {
+            auto formedIntra = phraseTracker_.recordFinalSelection(
+                candidate.text, event.fullPinyin, rawInput, event.consumedInputBytes);
+            onCommitEvent(event);
+            if (formedIntra.has_value()) {
+                core::CommitEvent phraseEvent;
+                phraseEvent.text = formedIntra->text;
+                phraseEvent.fullPinyin = formedIntra->fullPinyin;
+                phraseEvent.rawKeystrokes = formedIntra->rawKeystrokes;
+                phraseEvent.role = core::CommitCandidateRole::Chinese;
+                phraseEvent.isPartial = false;
+                phraseEvent.consumedInputBytes = formedIntra->rawKeystrokes.size();
+                phraseEvent.contextBefore = contextBefore_;
+                phraseEvent.contextAfter = contextAfter_;
+                phraseEvent.timestampMs = event.timestampMs;
+                onCommitEvent(phraseEvent);
+                onCommitEvent(phraseEvent);
+                phraseTracker_.resetCommitHistory();
+            } else {
+                auto formedInter = phraseTracker_.recordCommit(event);
+                for (const auto &fp : formedInter) {
+                    core::CommitEvent phraseEvent;
+                    phraseEvent.text = fp.text;
+                    phraseEvent.fullPinyin = fp.fullPinyin;
+                    phraseEvent.rawKeystrokes = fp.rawKeystrokes;
+                    phraseEvent.role = core::CommitCandidateRole::Chinese;
+                    phraseEvent.isPartial = false;
+                    phraseEvent.consumedInputBytes = fp.rawKeystrokes.size();
+                    phraseEvent.contextBefore = contextBefore_;
+                    phraseEvent.contextAfter = contextAfter_;
+                    phraseEvent.timestampMs = event.timestampMs;
+                    if (fp.isInitialFormation) {
+                        for (int i = 0; i < fp.repetitionCount; ++i) {
+                            onCommitEvent(phraseEvent);
+                        }
+                    } else {
+                        onCommitEvent(phraseEvent);
+                    }
+                }
+            }
+        }
 
         if (candidate.source == core::CandidateSource::Raw) {
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
             context->clear();
             refresh();
             return true;
@@ -1515,10 +1590,22 @@ public:
     }
 
     void reset() {
+        phraseTracker_.cancelComposition();
         // 删词屏蔽跨输入组合持续生效：用户明确删除的词不应在下一个
         // composition 里复活，屏蔽集合生命周期与 provider 一致。
         context->clear();
         refresh();
+    }
+
+    bool flush() {
+        if (auto *learning = learningWriter(); learning != nullptr) {
+            return learning->flush();
+        }
+        return true;
+    }
+
+    void resetCommitHistory() {
+        phraseTracker_.resetCommitHistory();
     }
 
     void setContext(std::string_view before, std::string_view after) {
@@ -1969,6 +2056,7 @@ private:
     }
 
     std::shared_ptr<SharedResources> shared_;
+    core::PhraseFormationTracker phraseTracker_;
     std::unique_ptr<libime::PinyinContext> context;
     bool contextLearningEnabled_ = true;
     bool learningEnabled_ = true;
@@ -2015,6 +2103,14 @@ void PinyinCandidateProvider::onCommitEvent(const core::CommitEvent &event) {
 }
 
 void PinyinCandidateProvider::reset() { impl_->reset(); }
+
+void PinyinCandidateProvider::resetCommitHistory() {
+    impl_->resetCommitHistory();
+}
+
+bool PinyinCandidateProvider::flush() {
+    return impl_->flush();
+}
 
 const core::CandidatePage &PinyinCandidateProvider::page() const {
     return impl_->page();

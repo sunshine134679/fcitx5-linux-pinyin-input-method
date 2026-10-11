@@ -78,7 +78,10 @@ public:
     bool remove(std::size_t index) override;
     void onCommitEvent(const core::CommitEvent &event) override;
     void reset() override;
+    void resetCommitHistory() override;
     const core::CandidatePage &page() const override;
+
+    bool flush();
 
     void setContext(std::string_view before, std::string_view after);
     // Runtime toggles for settings hot-reload; learning writer is created
