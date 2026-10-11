@@ -19,6 +19,14 @@ void assertTrue(bool condition, std::string_view message) {
     }
 }
 
+void bumpMtime(const std::filesystem::path &path) {
+    std::error_code error;
+    const auto time = std::filesystem::last_write_time(path, error);
+    assertTrue(!error, "external fixture timestamp is readable");
+    std::filesystem::last_write_time(path, time + std::chrono::seconds(2), error);
+    assertTrue(!error, "external fixture timestamp changes");
+}
+
 } // namespace
 
 int main() {
@@ -135,5 +143,59 @@ int main() {
                "a corrupt external rewrite triggers recovery");
     assertTrue(externallyCorrupt.entries().empty(),
                "recovery discards the corrupt rewrite");
+    // Polling the same system clipboard after an external clear or removal
+    // must not reinterpret that deletion as another copy event.
+    const auto pollingPath = directory / "polling.bin";
+    modernime::core::PersistentClipboardHistory polling(pollingPath);
+    assertTrue(polling.load(&error) && polling.observe("older", &error) &&
+                   polling.observe("current", &error), "polling fixture starts");
+    modernime::core::ClipboardHistory editor;
+    assertTrue(editor.load(pollingPath, &error) && editor.remove(0) &&
+                   editor.save(pollingPath, &error), "editor removes current entry");
+    bumpMtime(pollingPath);
+    assertTrue(polling.reloadIfExternallyChanged(&error), "removal is reloaded");
+    assertTrue(!polling.observe("current", &error) &&
+                   polling.entries() == std::vector<std::string>{"older"},
+               "unchanged clipboard does not restore a removed entry");
+    editor.clear();
+    assertTrue(editor.save(pollingPath, &error), "editor clears history");
+    bumpMtime(pollingPath);
+    assertTrue(polling.reloadIfExternallyChanged(&error), "clear is reloaded");
+    assertTrue(!polling.observe("current", &error) && polling.entries().empty(),
+               "unchanged clipboard does not restore cleared history");
+    assertTrue(polling.observe("changed", &error) &&
+                   polling.observe("current", &error),
+               "a changed clipboard followed by a re-copy is collected");
+    editor.clear();
+    assertTrue(editor.save(pollingPath, &error), "editor clears recopied history");
+    bumpMtime(pollingPath);
+    assertTrue(polling.reloadIfExternallyChanged(&error), "second clear reloads");
+    assertTrue(!polling.observe("", &error) && polling.entries().empty(),
+               "empty clipboard is observed without adding history");
+    assertTrue(polling.observe("current", &error) &&
+                   polling.entries() == std::vector<std::string>{"current"},
+               "copying the previous value after an empty clipboard is new");
+
+    // A failed save remains retryable even when the next poll has the same
+    // clipboard value. A real directory at the temporary file blocks saving.
+    const auto retryPath = directory / "retry.bin";
+    modernime::core::PersistentClipboardHistory retry(retryPath);
+    assertTrue(retry.load(&error), "retry fixture loads");
+    auto blockedTemporary = retryPath;
+    blockedTemporary += ".tmp";
+    std::filesystem::create_directory(blockedTemporary, filesystemError);
+    assertTrue(!filesystemError, "temporary history write is blocked");
+    assertTrue(retry.observe("retry value", &error) && !error.empty(),
+               "failed persistence retains a new observation");
+    assertTrue(!retry.observe("retry value", &error) && !error.empty(),
+               "same clipboard retries persistence without a new observation");
+    std::filesystem::remove(blockedTemporary, filesystemError);
+    assertTrue(!filesystemError, "temporary history write is unblocked");
+    assertTrue(!retry.observe("retry value", &error) && error.empty(),
+               "same clipboard successfully retries a pending save");
+    assertTrue(editor.load(retryPath, &error) &&
+                   editor.entries() == std::vector<std::string>{"retry value"},
+               "retry preserves the original observation on disk");
+
     return EXIT_SUCCESS;
 }

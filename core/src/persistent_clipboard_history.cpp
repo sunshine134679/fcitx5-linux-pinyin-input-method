@@ -75,7 +75,12 @@ bool PersistentClipboardHistory::observe(std::string_view text,
         return false;
     }
 
-    const auto changed = history_.observe(text);
+    const bool newObservation = !hasObservedText_ || text != lastObservedText_;
+    if (newObservation) {
+        lastObservedText_ = text;
+        hasObservedText_ = true;
+    }
+    const bool changed = newObservation && history_.observe(text);
     if (changed) {
         dirty_ = true;
     }

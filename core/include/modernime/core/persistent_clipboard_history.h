@@ -38,6 +38,9 @@ private:
     ClipboardHistory history_;
     bool loaded_ = false;
     bool dirty_ = false;
+    // Clipboard observation is independent of history edits by other clients.
+    std::string lastObservedText_;
+    bool hasObservedText_ = false;
     std::filesystem::file_time_type knownMtime_{};
     bool knownMtimeValid_ = false;
 };
