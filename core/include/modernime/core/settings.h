@@ -24,6 +24,7 @@ struct ModernIMESettings final {
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
     bool englishDefinitionEnabled = false;
+    bool characterExtractionEnabled = true;
 
     bool operator==(const ModernIMESettings &) const = default;
 };

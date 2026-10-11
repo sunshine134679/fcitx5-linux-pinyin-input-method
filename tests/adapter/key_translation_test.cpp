@@ -168,6 +168,41 @@ int main() {
                    apostrophe->kind == modernime::fcitx5::KeyKind::Character &&
                    apostrophe->character == '\'',
                "apostrophe maps to a character event");
+    assertKind(FcitxKey_bracketleft,
+               modernime::fcitx5::KeyKind::CommitFirstCharacter,
+               "bracket left maps to commit first character");
+    assertKind(FcitxKey_bracketright,
+               modernime::fcitx5::KeyKind::CommitLastCharacter,
+               "bracket right maps to commit last character");
+    const auto ctrlBracketLeft = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_bracketleft, ctrl));
+    assertTrue(ctrlBracketLeft.has_value() &&
+                   ctrlBracketLeft->kind ==
+                       modernime::fcitx5::KeyKind::CommitFirstCharacter,
+               "ctrl bracket left maps to commit first character");
+    const auto ctrlBracketRight = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_bracketright, ctrl));
+    assertTrue(ctrlBracketRight.has_value() &&
+                   ctrlBracketRight->kind ==
+                       modernime::fcitx5::KeyKind::CommitLastCharacter,
+               "ctrl bracket right maps to commit last character");
+
+    auto extractionDisabled = defaultBindings;
+    extractionDisabled.characterExtractionEnabled = false;
+    const auto bracketLeftDisabled = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_bracketleft), extractionDisabled);
+    assertTrue(bracketLeftDisabled.has_value() &&
+                   bracketLeftDisabled->kind ==
+                       modernime::fcitx5::KeyKind::Punctuation &&
+                   bracketLeftDisabled->character == '[',
+               "disabled extraction translates bracket left to punctuation");
+    const auto bracketRightDisabled = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_bracketright), extractionDisabled);
+    assertTrue(bracketRightDisabled.has_value() &&
+                   bracketRightDisabled->kind ==
+                       modernime::fcitx5::KeyKind::Punctuation &&
+                   bracketRightDisabled->character == ']',
+               "disabled extraction translates bracket right to punctuation");
     const fcitx::Key uppercaseN(FcitxKey_N, shift);
     assertTrue(!modernime::fcitx5::translateKey(uppercaseN).has_value(),
                "uppercase letters pass through instead of entering pinyin");

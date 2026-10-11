@@ -40,6 +40,8 @@ enum class KeyKind {
     NextPage,
     OpenClipboard,
     Punctuation,
+    CommitFirstCharacter,
+    CommitLastCharacter,
 };
 
 struct KeyEvent final {
@@ -57,6 +59,7 @@ struct ControllerOptions final {
     std::size_t pageSize = 9;
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
+    bool characterExtractionEnabled = true;
 };
 
 struct KeyBindings final {
@@ -66,6 +69,7 @@ struct KeyBindings final {
     bool pageNavigation = true;
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
+    bool characterExtractionEnabled = true;
 };
 
 class EngineHost {
@@ -84,6 +88,7 @@ public:
 
     bool handle(const KeyEvent &event);
     bool select(std::size_t index);
+    bool extractCharacter(bool firstChar);
     bool removeCurrent();
     void setContext(std::string before, std::string after);
     void reset();

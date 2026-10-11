@@ -73,6 +73,7 @@ void testDefaultsAndRoundTrip() {
     expected.contextLearningEnabled = false;
     expected.clipboardEnabled = false;
     expected.clipboardTrigger = "B+7";
+    expected.characterExtractionEnabled = false;
     std::string error;
     assertTrue(modernime::core::SettingsStore::save(path, expected, &error),
                "settings save succeeds: " + error);
@@ -100,6 +101,9 @@ void testDefaultsAndRoundTrip() {
                    loaded.settings.clipboardTrigger ==
                        expected.clipboardTrigger,
                "clipboard settings round-trip");
+    assertTrue(loaded.settings.characterExtractionEnabled ==
+                   expected.characterExtractionEnabled,
+               "character extraction round-trips");
 }
 
 void testDiagnosticsAndPerKeyFallback() {

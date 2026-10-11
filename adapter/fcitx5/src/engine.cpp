@@ -409,6 +409,28 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return movePage(1);
     case KeyKind::OpenClipboard:
         return openClipboard();
+    case KeyKind::CommitFirstCharacter:
+        if (options_.characterExtractionEnabled && extractCharacter(true)) {
+            return true;
+        }
+        if (page_.preedit.empty()) {
+            if (options_.punctuationEnabled && commitPunctuation('[')) {
+                return true;
+            }
+            return false;
+        }
+        return false;
+    case KeyKind::CommitLastCharacter:
+        if (options_.characterExtractionEnabled && extractCharacter(false)) {
+            return true;
+        }
+        if (page_.preedit.empty()) {
+            if (options_.punctuationEnabled && commitPunctuation(']')) {
+                return true;
+            }
+            return false;
+        }
+        return false;
     case KeyKind::Toggle:
         break;
     }
@@ -457,6 +479,21 @@ bool ModernIMEController::select(std::size_t index) {
     }
     page_.cursor = index;
     return commitCurrent();
+}
+
+bool ModernIMEController::extractCharacter(bool firstChar) {
+    if (!active() || clipboardMode_ || page_.items.empty() || provider_ == nullptr) {
+        return false;
+    }
+    const auto candidateIndex = page_.cursor;
+    std::string committedText;
+    if (!provider_->extractCharacter(candidateIndex, firstChar, &committedText)) {
+        return false;
+    }
+    host_.commit(committedText);
+    appendFallbackContext(committedText);
+    clearComposition();
+    return true;
 }
 
 bool ModernIMEController::removeCurrent() {

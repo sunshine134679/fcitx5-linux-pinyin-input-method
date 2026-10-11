@@ -19,6 +19,9 @@ public:
         return input.empty() || append(input);
     }
     virtual bool select(std::size_t index) = 0;
+    virtual bool extractCharacter(std::size_t, bool, std::string * = nullptr) {
+        return false;
+    }
     virtual bool remove(std::size_t) { return false; }
     virtual void setContext(std::string_view, std::string_view) {}
     virtual void onCommitEvent(const CommitEvent &) {}

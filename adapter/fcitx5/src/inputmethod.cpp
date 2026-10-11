@@ -101,13 +101,15 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             settings.arrowNavigation, settings.pageNavigation,
             settings.punctuationEnabled,
             static_cast<std::size_t>(settings.candidatePageSize),
-            settings.clipboardEnabled, settings.clipboardTrigger};
+            settings.clipboardEnabled, settings.clipboardTrigger,
+            settings.characterExtractionEnabled};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
     return {settings.toggleKey, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
-            settings.clipboardEnabled, settings.clipboardTrigger};
+            settings.clipboardEnabled, settings.clipboardTrigger,
+            settings.characterExtractionEnabled};
 }
 
 } // namespace
@@ -503,6 +505,20 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::Digit;
         event.digit = '0';
         return event;
+    }
+    if (bindings.characterExtractionEnabled) {
+        if (key.check(FcitxKey_bracketleft, fcitx::KeyStates(fcitx::KeyState::Ctrl)) ||
+            (!hasNonShiftModifier(key) && key.check(FcitxKey_bracketleft))) {
+            event.kind = KeyKind::CommitFirstCharacter;
+            event.character = '[';
+            return event;
+        }
+        if (key.check(FcitxKey_bracketright, fcitx::KeyStates(fcitx::KeyState::Ctrl)) ||
+            (!hasNonShiftModifier(key) && key.check(FcitxKey_bracketright))) {
+            event.kind = KeyKind::CommitLastCharacter;
+            event.character = ']';
+            return event;
+        }
     }
     if (!hasNonShiftModifier(key)) {
         const auto unicode = fcitx::Key::keySymToUnicode(key.sym());

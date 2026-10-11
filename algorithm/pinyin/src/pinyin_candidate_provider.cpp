@@ -1534,6 +1534,105 @@ public:
         return true;
     }
 
+    bool extractCharacter(std::size_t index, bool firstChar,
+                          std::string *committedText) {
+        if (index >= page_.items.size()) {
+            return false;
+        }
+        const auto &candidate = page_.items[index];
+        if (candidate.source == core::CandidateSource::Command ||
+            candidate.source == core::CandidateSource::EnglishDefinition ||
+            candidate.source == core::CandidateSource::Raw) {
+            return false;
+        }
+        if (candidate.text.empty() || candidate.fullPinyin.empty()) {
+            return false;
+        }
+
+        std::vector<std::string> utf8Chars;
+        for (std::size_t i = 0; i < candidate.text.size(); ) {
+            unsigned char c = static_cast<unsigned char>(candidate.text[i]);
+            std::size_t len = 1;
+            if ((c & 0x80) == 0) {
+                return false;
+            } else if ((c & 0xE0) == 0xC0) {
+                return false;
+            } else if ((c & 0xF0) == 0xE0) {
+                len = 3;
+            } else if ((c & 0xF8) == 0xF0) {
+                len = 4;
+            } else {
+                return false;
+            }
+            if (i + len > candidate.text.size()) {
+                return false;
+            }
+            utf8Chars.push_back(candidate.text.substr(i, len));
+            i += len;
+        }
+
+        std::string_view pinyinView = candidate.fullPinyin;
+        while (!pinyinView.empty() && pinyinView.front() == '\'') {
+            pinyinView.remove_prefix(1);
+        }
+        while (!pinyinView.empty() && pinyinView.back() == '\'') {
+            pinyinView.remove_suffix(1);
+        }
+        if (pinyinView.empty()) {
+            return false;
+        }
+
+        std::vector<std::string> syllables;
+        std::size_t start = 0;
+        while (start < pinyinView.size()) {
+            auto pos = pinyinView.find('\'', start);
+            if (pos == std::string_view::npos) {
+                syllables.push_back(std::string(pinyinView.substr(start)));
+                break;
+            }
+            if (pos > start) {
+                syllables.push_back(std::string(pinyinView.substr(start, pos - start)));
+            }
+            start = pos + 1;
+        }
+        for (const auto &s : syllables) {
+            if (s.empty()) {
+                return false;
+            }
+        }
+
+        if (utf8Chars.empty() || utf8Chars.size() != syllables.size()) {
+            return false;
+        }
+
+        const auto chosenChar = firstChar ? utf8Chars.front() : utf8Chars.back();
+        const auto chosenSyllable = firstChar ? syllables.front() : syllables.back();
+
+        if (committedText != nullptr) {
+            *committedText = chosenChar;
+        }
+
+        const auto rawInput = context->userInput();
+        core::CommitEvent event;
+        event.text = chosenChar;
+        event.fullPinyin = chosenSyllable;
+        event.rawKeystrokes = chosenSyllable;
+        event.role = core::CommitCandidateRole::Chinese;
+        event.isPartial = false;
+        event.consumedInputBytes = rawInput.size();
+        event.contextBefore = contextBefore_;
+        event.contextAfter = contextAfter_;
+        event.timestampMs = nowMilliseconds();
+
+        phraseTracker_.cancelComposition();
+        onCommitEvent(event);
+        appendFallbackContext(chosenChar);
+
+        context->clear();
+        refresh();
+        return true;
+    }
+
     bool remove(std::size_t index) {
         if (index >= page_.items.size()) {
             return false;
@@ -2146,6 +2245,11 @@ bool PinyinCandidateProvider::replaceInput(std::string_view input) {
 
 bool PinyinCandidateProvider::select(std::size_t index) {
     return impl_->select(index);
+}
+
+bool PinyinCandidateProvider::extractCharacter(std::size_t index, bool firstChar,
+                                               std::string *outText) {
+    return impl_->extractCharacter(index, firstChar, outText);
 }
 
 bool PinyinCandidateProvider::remove(std::size_t index) {

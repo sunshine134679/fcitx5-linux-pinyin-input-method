@@ -75,6 +75,8 @@ public:
     bool eraseLast() override;
     bool replaceInput(std::string_view input) override;
     bool select(std::size_t index) override;
+    bool extractCharacter(std::size_t index, bool firstChar,
+                          std::string *outText = nullptr) override;
     bool remove(std::size_t index) override;
     void onCommitEvent(const core::CommitEvent &event) override;
     void reset() override;

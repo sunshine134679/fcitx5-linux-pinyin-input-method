@@ -1211,6 +1211,93 @@ void testCustomEnglishTermLearningAndPrefixCompletion() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testExplicitCharacterExtractionAndLearning() {
+    std::error_code error;
+    const auto learningPath = testPath("extract-character.sqlite3");
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths);
+
+        // 1. 输入 jianpan，首选为 键盘
+        assertTrue(provider.append("jianpan"), "append jianpan");
+        assertTrue(!provider.page().items.empty(), "has candidates for jianpan");
+        const auto jianpanIdx = indexOf(provider.page(), "键盘");
+        assertTrue(jianpanIdx < provider.page().items.size(), "found 键盘 in candidates");
+
+        // 2. 取首字（键）测试
+        std::string firstChar;
+        assertTrue(provider.extractCharacter(jianpanIdx, true, &firstChar),
+                   "extract first character from 键盘 succeeds");
+        assertTrue(firstChar == "键", "first character of 键盘 is 键");
+        assertTrue(provider.page().preedit.empty(), "preedit cleared after extraction");
+        provider.flush();
+
+        // 3. 验证学习效果：输入 jian，键 的排序优先级提升
+        assertTrue(provider.append("jian"), "append jian after extracting 键");
+        assertTrue(!provider.page().items.empty(), "has candidates for jian");
+        const auto jianIdx = indexOf(provider.page(), "键");
+        assertTrue(jianIdx < provider.page().items.size(), "found 键 in candidates for jian");
+        assertTrue(provider.page().items[jianIdx].source == modernime::core::CandidateSource::Learned,
+                   "键 is learned from extraction");
+        provider.reset();
+
+        // 4. 输入 jianpan，取末字（盘）测试
+        assertTrue(provider.append("jianpan"), "append jianpan again");
+        const auto jianpanIdx2 = indexOf(provider.page(), "键盘");
+        assertTrue(jianpanIdx2 < provider.page().items.size(), "found 键盘 in candidates");
+        std::string lastChar;
+        assertTrue(provider.extractCharacter(jianpanIdx2, false, &lastChar),
+                   "extract last character from 键盘 succeeds");
+        assertTrue(lastChar == "盘", "last character of 键盘 is 盘");
+        provider.flush();
+
+        // 5. 验证学习效果：输入 pan，盘 的排序优先级提升
+        assertTrue(provider.append("pan"), "append pan after extracting 盘");
+        assertTrue(!provider.page().items.empty(), "has candidates for pan");
+        const auto panIdx = indexOf(provider.page(), "盘");
+        assertTrue(panIdx < provider.page().items.size(), "found 盘 in candidates for pan");
+        assertTrue(provider.page().items[panIdx].source == modernime::core::CandidateSource::Learned,
+                   "盘 is learned from extraction");
+        provider.reset();
+
+        // 6. 异常边界与反例拒绝验证：
+        // 6.1 英文候选拒绝取字（无汉字音节对齐）
+        assertTrue(provider.append("apple"), "append apple");
+        const auto appleIdx = indexOf(provider.page(), "apple");
+        assertTrue(appleIdx < provider.page().items.size(), "found apple");
+        std::string dummy = "initial";
+        assertTrue(!provider.extractCharacter(appleIdx, true, &dummy),
+                   "English candidate apple is rejected for character extraction");
+        assertTrue(dummy == "initial", "output string untouched on rejection");
+        provider.reset();
+
+        // 6.2 越界索引拒绝
+        assertTrue(provider.append("jianpan"), "append jianpan");
+        assertTrue(!provider.extractCharacter(9999, true, &dummy),
+                   "out-of-bounds candidate index rejected");
+        provider.reset();
+
+        // 6.3 Command 候选拒绝取字
+        assertTrue(provider.append("v"), "append v for menu");
+        const auto clipIdx = indexOf(provider.page(), "剪贴板");
+        if (clipIdx < provider.page().items.size()) {
+            assertTrue(!provider.extractCharacter(clipIdx, true, &dummy),
+                       "Command candidate rejected for character extraction");
+        }
+        provider.reset();
+    }
+
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+}
+
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
@@ -1522,5 +1609,6 @@ int main() {
     testIntraCompositionPhraseFormation();
     testInterCompositionPhraseFormationAndRestart();
     testHouxuanlanPhraseFormation();
+    testExplicitCharacterExtractionAndLearning();
     return EXIT_SUCCESS;
 }

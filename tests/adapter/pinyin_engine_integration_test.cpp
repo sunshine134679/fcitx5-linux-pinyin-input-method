@@ -572,5 +572,105 @@ int main() {
         std::filesystem::remove(engLearningPath.string() + "-shm", ec);
     }
 
+    // 显式取首/末字及标点回退集成测试
+    {
+        std::error_code ec;
+        const auto extractLearningPath =
+            std::filesystem::temp_directory_path() / "modernime-engine-extract.sqlite3";
+        std::filesystem::remove(extractLearningPath, ec);
+        std::filesystem::remove(extractLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(extractLearningPath.string() + "-shm", ec);
+
+        modernime::pinyin::PinyinDataPaths extractPaths;
+        extractPaths.learningStore = extractLearningPath.string();
+        modernime::pinyin::PinyinCandidateProvider extractProvider(extractPaths);
+        RecordingHost extractHost;
+        modernime::fcitx5::ModernIMEController extractController(
+            extractHost, &extractProvider);
+
+        // 1. 输入 jianpan -> 首选 键盘
+        for (char c : std::string_view("jianpan")) {
+            extractController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!extractController.page().items.empty() &&
+                   extractController.page().items.front().text == "键盘",
+                   "jianpan produces 键盘 as top candidate");
+
+        // 2. 按 [ (CommitFirstCharacter) 取首字
+        assertTrue(extractController.handle(
+                       {modernime::fcitx5::KeyKind::CommitFirstCharacter, '[', 0}),
+                   "[ key extracts first character");
+        assertTrue(extractHost.commits.back() == "键", "committed first character 键");
+        assertTrue(extractController.page().preedit.empty(), "preedit cleared");
+        extractProvider.flush();
+
+        // 3. 验证温和提升：单次取字即被标记为 Learned 并获得学习加分
+        for (char c : std::string_view("jian")) {
+            extractController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto singleExtractIdx = indexOf(extractController.page(), "键");
+        assertTrue(singleExtractIdx < extractController.page().items.size(),
+                   "found 键 in candidates after single extraction");
+        assertTrue(extractController.page().items[singleExtractIdx].source ==
+                       modernime::core::CandidateSource::Learned,
+                   "键 is classified as Learned after single extraction");
+        extractController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 多次明确取字（累计 5 次）：逐步晋升至首位
+        for (int rep = 0; rep < 4; ++rep) {
+            for (char c : std::string_view("jianpan")) {
+                extractController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            }
+            extractController.handle(
+                {modernime::fcitx5::KeyKind::CommitFirstCharacter, '[', 0});
+        }
+        extractProvider.flush();
+
+        for (char c : std::string_view("jian")) {
+            extractController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!extractController.page().items.empty() &&
+                   extractController.page().items.front().text == "键",
+                   "键 is promoted to top candidate after repeated extractions");
+        extractController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 4. 输入 jianpan，按 ] (CommitLastCharacter) 取末字
+        for (int rep = 0; rep < 5; ++rep) {
+            for (char c : std::string_view("jianpan")) {
+                extractController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            }
+            assertTrue(extractController.handle(
+                           {modernime::fcitx5::KeyKind::CommitLastCharacter, ']', 0}),
+                       "] key extracts last character");
+            assertTrue(extractHost.commits.back() == "盘", "committed last character 盘");
+            assertTrue(extractController.page().preedit.empty(), "preedit cleared");
+        }
+        extractProvider.flush();
+
+        // 5. 验证学习：输入 pan，多次取字后 盘 晋升至首位
+        for (char c : std::string_view("pan")) {
+            extractController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!extractController.page().items.empty() &&
+                   extractController.page().items.front().text == "盘",
+                   "盘 is promoted to top candidate for pan after extraction learning");
+        extractController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 6. 空闲状态下按 [ 和 ]：回退至中文标点 【 和 】
+        assertTrue(extractController.handle(
+                       {modernime::fcitx5::KeyKind::CommitFirstCharacter, '[', 0}),
+                   "[ commits Chinese punctuation when idle");
+        assertTrue(extractHost.commits.back() == "【", "committed Chinese punctuation 【");
+
+        assertTrue(extractController.handle(
+                       {modernime::fcitx5::KeyKind::CommitLastCharacter, ']', 0}),
+                   "] commits Chinese punctuation when idle");
+        assertTrue(extractHost.commits.back() == "】", "committed Chinese punctuation 】");
+
+        std::filesystem::remove(extractLearningPath, ec);
+        std::filesystem::remove(extractLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(extractLearningPath.string() + "-shm", ec);
+    }
+
     return EXIT_SUCCESS;
 }
