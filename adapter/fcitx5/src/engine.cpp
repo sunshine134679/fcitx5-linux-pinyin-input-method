@@ -295,10 +295,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
                 }
             }
         }
-        if (!options_.numberSelection) {
-            return false;
-        }
-        if (event.digit < '1' || event.digit > '9') {
+        if (!options_.numberSelection || event.digit < '1' || event.digit > '9') {
             commitRawPreedit();
             return false;
         }

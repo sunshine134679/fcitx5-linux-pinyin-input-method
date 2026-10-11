@@ -125,6 +125,12 @@ void testLiveKeyEvents() {
     assertTrue(root != nullptr, "isolated configuration directory created");
     setenv("XDG_CONFIG_HOME", root, 1);
     setenv("XDG_DATA_HOME", root, 1);
+    auto configured = modernime::core::defaultSettings();
+    configured.numberSelection = false;
+    const auto settingsPath = modernime::core::SettingsPaths::fromEnvironment(
+        root, root, "").settingsFile;
+    assertTrue(modernime::core::SettingsStore::save(settingsPath, configured),
+               "number selection is disabled in isolated engine settings");
     char program[] = "modernime-test";
     char disable[] = "--disable=all";
     char *argv[] = {program, disable};
@@ -155,6 +161,36 @@ void testLiveKeyEvents() {
         }
         assertTrue(context.commits == std::vector<std::string>{"ni", "0", "ni", "0"},
                    "main keyboard and keypad preserve ni then zero ordering");
+        for (const auto letter : {FcitxKey_n, FcitxKey_i}) {
+            fcitx::KeyEvent event(&context, fcitx::Key(letter));
+            engine.keyEvent(entry, event);
+        }
+        fcitx::KeyEvent literal(&context, fcitx::Key(FcitxKey_KP_3));
+        engine.keyEvent(entry, literal);
+        assertTrue(!literal.accepted() && context.commits.back() == "ni" &&
+                       context.inputPanel().clientPreedit().empty(),
+                   "disabled number selection commits pinyin before a literal digit");
+        for (const auto symbol : {FcitxKey_v, FcitxKey_1, FcitxKey_KP_3,
+                                  FcitxKey_period, FcitxKey_0, FcitxKey_KP_5}) {
+            fcitx::KeyEvent event(&context, fcitx::Key(symbol));
+            engine.keyEvent(entry, event);
+            assertTrue(event.accepted(),
+                       "numeric composition accepts real keys with number selection off");
+        }
+        assertTrue(context.inputPanel().clientPreedit().toString() == "v13.05",
+                   "number selection off preserves complete v decimal composition");
+        fcitx::KeyEvent cancel(&context, fcitx::Key(FcitxKey_Escape));
+        engine.keyEvent(entry, cancel);
+        for (const auto symbol : {FcitxKey_v, FcitxKey_2}) {
+            fcitx::KeyEvent event(&context, fcitx::Key(symbol));
+            engine.keyEvent(entry, event);
+            assertTrue(event.accepted(),
+                       "clipboard trigger still works with number selection off");
+        }
+        assertTrue(context.inputPanel().clientPreedit().toString() != "v2",
+                   "clipboard trigger takes priority over numeric composition");
+        fcitx::KeyEvent closeClipboard(&context, fcitx::Key(FcitxKey_Escape));
+        engine.keyEvent(entry, closeClipboard);
         auto *state = dynamic_cast<modernime::fcitx5::FcitxInputContextState *>(
             context.property("modernime-fcitx5-state"));
         assertTrue(state != nullptr, "real engine owns the live context state");
@@ -187,6 +223,25 @@ void testLiveKeyEvents() {
         state->applySettings(settings, 0);
         assertTrue(!state->controller().active(),
                    "hot settings preserve the live context's temporary English mode");
+        state->controller().setActive(true);
+        for (const auto symbol : {FcitxKey_v, FcitxKey_1, FcitxKey_KP_3,
+                                  FcitxKey_period, FcitxKey_0, FcitxKey_KP_5}) {
+            fcitx::KeyEvent event(&context, fcitx::Key(symbol));
+            engine.keyEvent(entry, event);
+            assertTrue(event.accepted(),
+                       "numeric composition accepts real keys with number selection on");
+        }
+        assertTrue(context.inputPanel().clientPreedit().toString() == "v13.05",
+                   "number selection on preserves complete v decimal composition");
+        fcitx::KeyEvent cancelNumber(&context, fcitx::Key(FcitxKey_Escape));
+        engine.keyEvent(entry, cancelNumber);
+        state->setClipboardEntries({"first", "second"});
+        state->controller().handle({modernime::fcitx5::KeyKind::OpenClipboard, 0, 0});
+        fcitx::KeyEvent selectSecond(&context, fcitx::Key(FcitxKey_2));
+        engine.keyEvent(entry, selectSecond);
+        assertTrue(selectSecond.accepted() && context.commits.back() == "second",
+                   "enabled number selection selects the real candidate list");
+
 
     }
     std::filesystem::remove_all(root);

@@ -495,7 +495,7 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         return event;
     }
     const int selection = keyDigitSelection(key);
-    if (bindings.numberSelection && selection >= 0 && selection < 9) {
+    if (selection >= 0 && selection < 9) {
         event.kind = KeyKind::Digit;
         event.digit = static_cast<char>('1' + selection);
         return event;

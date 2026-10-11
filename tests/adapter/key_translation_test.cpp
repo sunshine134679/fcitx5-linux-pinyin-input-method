@@ -97,10 +97,12 @@ int main() {
     disabledBindings.numberSelection = false;
     disabledBindings.arrowNavigation = false;
     disabledBindings.pageNavigation = false;
-    assertTrue(!modernime::fcitx5::translateKey(
-                    fcitx::Key(FcitxKey_1), disabledBindings)
-                    .has_value(),
-               "disabled number selection does not translate digits");
+    const auto literalDigit = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_1), disabledBindings);
+    assertTrue(literalDigit.has_value() &&
+                   literalDigit->kind == modernime::fcitx5::KeyKind::Digit &&
+                   literalDigit->digit == '1',
+               "digits still reach numeric composition when selection is disabled");
     assertTrue(!modernime::fcitx5::translateKey(
                     fcitx::Key(FcitxKey_Up), disabledBindings)
                     .has_value(),
