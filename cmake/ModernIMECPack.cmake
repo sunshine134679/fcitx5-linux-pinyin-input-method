@@ -17,6 +17,8 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ModernIME Maintainers <sunshine134679@users
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method")
+# The launcher is used by session integration but is not a linked library.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "fcitx5")
 find_program(MODERNIME_DPKG_SHLIBDEPS dpkg-shlibdeps)
 if(MODERNIME_DPKG_SHLIBDEPS)
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
