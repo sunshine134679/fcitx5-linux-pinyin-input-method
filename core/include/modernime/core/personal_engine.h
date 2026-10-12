@@ -176,9 +176,10 @@ public:
     bool ApplyLearningBatch(const std::vector<LearningEntry> &entries,
                             bool replace_all = false);
 
-    // 兼容平面二进制文件序列化（用于基准对比与旧格式导入）
+    // 兼容平面二进制文件序列化（支持 PersonalEngine.hpp 原生 14B WordMeta 与扩展格式无损导入）
     bool SaveToFile(const std::string &file_path) const;
     bool LoadFromFile(const std::string &file_path);
+    bool ImportFromFile(const std::string &file_path, bool merge = true);
 
     void Prune();
     size_t GetTotalEntries() const noexcept { return total_entries_; }
@@ -217,6 +218,7 @@ private:
     size_t total_entries_ = 0;
     int64_t reset_revision_ = 0;
     bool migrated_from_sqlite_ = false;
+    int64_t migrated_bin_size_ = 0;
 
     // LMDB 句柄
     std::filesystem::path lmdb_path_;

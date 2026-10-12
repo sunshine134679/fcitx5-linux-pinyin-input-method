@@ -1307,6 +1307,25 @@ bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
             MigrateFromSqlite(sibling_sqlite);
         }
     }
+
+    // 若同目录（或同目录 data/）下存在 PersonalEngine.hpp 原生二进制词库 user_personal_dict.bin，自动无损合并导入
+    if (!read_only) {
+        std::filesystem::path bin_path =
+            lmdb_path.parent_path() / "user_personal_dict.bin";
+        if (!std::filesystem::exists(bin_path, ec) ||
+            !std::filesystem::is_regular_file(bin_path, ec)) {
+            bin_path = lmdb_path.parent_path() / "data" / "user_personal_dict.bin";
+        }
+        if (std::filesystem::exists(bin_path, ec) &&
+            std::filesystem::is_regular_file(bin_path, ec)) {
+            const auto fsize =
+                static_cast<int64_t>(std::filesystem::file_size(bin_path, ec));
+            if (!ec && fsize > 0 && fsize != migrated_bin_size_) {
+                migrated_bin_size_ = fsize;
+                ImportFromFile(bin_path.string(), /*merge=*/true);
+            }
+        }
+    }
     return true;
 }
 
@@ -1449,6 +1468,8 @@ bool PersonalEngine::FlushToLmdb() {
             putMetaInt64(txn, active_meta_dbi, "reset_revision", reset_revision_);
             putMetaInt64(txn, active_meta_dbi, "migrated_from_sqlite",
                          migrated_from_sqlite_ ? 1 : 0);
+            putMetaInt64(txn, active_meta_dbi, "migrated_bin_size",
+                         migrated_bin_size_);
             rc = mdb_txn_commit(txn);
             txn = nullptr;
         } else {
@@ -1496,6 +1517,10 @@ bool PersonalEngine::ReloadFromLmdb() {
     if (const auto mig = getMetaInt64(txn, active_meta_dbi, "migrated_from_sqlite");
         mig.has_value()) {
         migrated_from_sqlite_ = (*mig != 0);
+    }
+    if (const auto bsz = getMetaInt64(txn, active_meta_dbi, "migrated_bin_size");
+        bsz.has_value()) {
+        migrated_bin_size_ = *bsz;
     }
 
     MDB_cursor *cursor = nullptr;
@@ -1909,64 +1934,195 @@ bool PersonalEngine::SaveToFile(const std::string &file_path) const {
 }
 
 bool PersonalEngine::LoadFromFile(const std::string &file_path) {
-    std::ifstream ifs(file_path, std::ios::binary);
+    return ImportFromFile(file_path, /*merge=*/false);
+}
+
+bool PersonalEngine::ImportFromFile(const std::string &file_path, bool merge) {
+    if (simulate_write_failure_) {
+        return false;
+    }
+    std::ifstream ifs(file_path, std::ios::binary | std::ios::ate);
     if (!ifs.is_open()) {
         return false;
     }
+    const std::streamsize file_size = ifs.tellg();
+    if (file_size < static_cast<std::streamsize>(sizeof(uint32_t) * 2)) {
+        return false;
+    }
+    ifs.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buf(static_cast<size_t>(file_size));
+    if (!ifs.read(reinterpret_cast<char *>(buf.data()), file_size)) {
+        return false;
+    }
+
     uint32_t magic = 0;
-    ifs.read(reinterpret_cast<char *>(&magic), sizeof(magic));
-    if (!ifs.good() || magic != config_.magic_header) {
+    std::memcpy(&magic, buf.data(), sizeof(magic));
+    if (magic != config_.magic_header) {
         return false;
     }
     uint32_t num_keys = 0;
-    ifs.read(reinterpret_cast<char *>(&num_keys), sizeof(num_keys));
-    if (!ifs.good()) {
+    std::memcpy(&num_keys, buf.data() + sizeof(uint32_t), sizeof(num_keys));
+
+#pragma pack(push, 1)
+    struct LegacyWordMeta14 {
+        uint32_t last_used_timestamp = 0;
+        uint32_t hit_count = 0;
+        float base_weight = 1.0f;
+        uint16_t text_bytes_len = 0;
+    };
+#pragma pack(pop)
+    static_assert(sizeof(LegacyWordMeta14) == 14,
+                  "PersonalEngine.hpp native WordMeta must be 14 bytes");
+
+    struct ParsedEntry {
+        std::string norm_key;
+        StoredVariant variant;
+    };
+    std::vector<ParsedEntry> parsed;
+
+    auto try_parse = [&](bool legacy_14b) -> bool {
+        parsed.clear();
+        size_t pos = sizeof(uint32_t) * 2;
+        for (uint32_t i = 0; i < num_keys; ++i) {
+            if (pos + sizeof(uint16_t) > buf.size()) {
+                return false;
+            }
+            uint16_t key_len = 0;
+            std::memcpy(&key_len, buf.data() + pos, sizeof(key_len));
+            pos += sizeof(key_len);
+            if (pos + key_len + sizeof(uint32_t) > buf.size()) {
+                return false;
+            }
+            std::string raw_key(reinterpret_cast<const char *>(buf.data() + pos),
+                                key_len);
+            pos += key_len;
+
+            uint32_t num_words = 0;
+            std::memcpy(&num_words, buf.data() + pos, sizeof(num_words));
+            pos += sizeof(num_words);
+
+            const std::string norm_key = NormalizePinyinKey(raw_key);
+            const std::string raw_py = ToApostrophePinyin(norm_key);
+
+            for (uint32_t j = 0; j < num_words; ++j) {
+                WordMeta meta{};
+                std::string text;
+                std::string ctx_before;
+                std::string ctx_after;
+                if (legacy_14b) {
+                    if (pos + sizeof(LegacyWordMeta14) > buf.size()) {
+                        return false;
+                    }
+                    LegacyWordMeta14 leg{};
+                    std::memcpy(&leg, buf.data() + pos, sizeof(leg));
+                    pos += sizeof(leg);
+                    if (pos + leg.text_bytes_len > buf.size()) {
+                        return false;
+                    }
+                    text.assign(reinterpret_cast<const char *>(buf.data() + pos),
+                                leg.text_bytes_len);
+                    pos += leg.text_bytes_len;
+                    meta.last_used_timestamp = leg.last_used_timestamp;
+                    meta.hit_count = leg.hit_count;
+                    meta.base_weight = leg.base_weight;
+                    meta.text_bytes_len = leg.text_bytes_len;
+                    meta.last_selected_ms =
+                        static_cast<int64_t>(leg.last_used_timestamp) * 1000LL;
+                } else {
+                    if (pos + sizeof(WordMeta) > buf.size()) {
+                        return false;
+                    }
+                    std::memcpy(&meta, buf.data() + pos, sizeof(meta));
+                    pos += sizeof(meta);
+                    const size_t payload_len =
+                        static_cast<size_t>(meta.text_bytes_len) +
+                        static_cast<size_t>(meta.context_before_len) +
+                        static_cast<size_t>(meta.context_after_len);
+                    if (pos + payload_len > buf.size()) {
+                        return false;
+                    }
+                    text.assign(reinterpret_cast<const char *>(buf.data() + pos),
+                                meta.text_bytes_len);
+                    pos += meta.text_bytes_len;
+                    if (meta.context_before_len > 0) {
+                        ctx_before.assign(
+                            reinterpret_cast<const char *>(buf.data() + pos),
+                            meta.context_before_len);
+                        pos += meta.context_before_len;
+                    }
+                    if (meta.context_after_len > 0) {
+                        ctx_after.assign(
+                            reinterpret_cast<const char *>(buf.data() + pos),
+                            meta.context_after_len);
+                        pos += meta.context_after_len;
+                    }
+                    if (meta.last_selected_ms == 0 &&
+                        meta.last_used_timestamp > 0) {
+                        meta.last_selected_ms =
+                            static_cast<int64_t>(meta.last_used_timestamp) * 1000LL;
+                    }
+                }
+                StoredVariant v;
+                v.text = std::move(text);
+                v.raw_pinyin = raw_py;
+                v.context_before = std::move(ctx_before);
+                v.context_after = std::move(ctx_after);
+                v.meta = meta;
+                parsed.push_back(ParsedEntry{norm_key, std::move(v)});
+            }
+        }
+        return pos == buf.size();
+    };
+
+    // 优先检测扩展 WordMeta 格式，若字节长度不匹配则自动无损解析 PersonalEngine.hpp 原生 14B 格式
+    if (!try_parse(/*legacy_14b=*/false) && !try_parse(/*legacy_14b=*/true)) {
         return false;
     }
 
-    db_.clear();
-    compact_index_.clear();
-    total_entries_ = 0;
+    if (!merge) {
+        db_.clear();
+        compact_index_.clear();
+        total_entries_ = 0;
+    }
 
-    for (uint32_t i = 0; i < num_keys; ++i) {
-        uint16_t key_len = 0;
-        ifs.read(reinterpret_cast<char *>(&key_len), sizeof(key_len));
-        std::string key(key_len, '\0');
-        ifs.read(key.data(), key_len);
-
-        uint32_t num_words = 0;
-        ifs.read(reinterpret_cast<char *>(&num_words), sizeof(num_words));
-        if (!ifs.good()) {
-            return false;
+    for (auto &item : parsed) {
+        if (item.variant.text.empty()) {
+            continue;
         }
-
-        auto &variants = db_[key];
-        RebuildCompactIndex(key);
-        for (uint32_t j = 0; j < num_words; ++j) {
-            WordMeta meta{};
-            ifs.read(reinterpret_cast<char *>(&meta), sizeof(WordMeta));
-            std::string text(meta.text_bytes_len, '\0');
-            ifs.read(text.data(), meta.text_bytes_len);
-            std::string ctx_before(meta.context_before_len, '\0');
-            if (meta.context_before_len > 0) {
-                ifs.read(ctx_before.data(), meta.context_before_len);
+        auto &variants = db_[item.norm_key];
+        RebuildCompactIndex(item.norm_key);
+        if (merge) {
+            StoredVariant *existing = nullptr;
+            for (auto &v : variants) {
+                if (v.text == item.variant.text &&
+                    v.context_before == item.variant.context_before &&
+                    v.context_after == item.variant.context_after) {
+                    existing = &v;
+                    break;
+                }
             }
-            std::string ctx_after(meta.context_after_len, '\0');
-            if (meta.context_after_len > 0) {
-                ifs.read(ctx_after.data(), meta.context_after_len);
+            if (existing != nullptr) {
+                existing->meta.hit_count = static_cast<uint32_t>(std::min<uint64_t>(
+                    std::numeric_limits<uint32_t>::max(),
+                    static_cast<uint64_t>(existing->meta.hit_count) +
+                        item.variant.meta.hit_count));
+                existing->meta.last_used_timestamp = std::max(
+                    existing->meta.last_used_timestamp,
+                    item.variant.meta.last_used_timestamp);
+                existing->meta.last_selected_ms = std::max(
+                    existing->meta.last_selected_ms,
+                    item.variant.meta.last_selected_ms);
+                existing->meta.base_weight = std::max(
+                    existing->meta.base_weight, item.variant.meta.base_weight);
+                continue;
             }
-            if (!ifs.good()) {
-                return false;
-            }
-            StoredVariant v;
-            v.text = std::move(text);
-            v.raw_pinyin = ToApostrophePinyin(key);
-            v.context_before = std::move(ctx_before);
-            v.context_after = std::move(ctx_after);
-            v.meta = meta;
-            variants.push_back(std::move(v));
-            ++total_entries_;
         }
+        variants.push_back(std::move(item.variant));
+        ++total_entries_;
+    }
+
+    if (env_ != nullptr && !lmdb_read_only_) {
+        return FlushToLmdb();
     }
     return true;
 }

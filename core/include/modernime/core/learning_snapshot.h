@@ -13,7 +13,7 @@ namespace modernime::core {
 // Upper bound on stored learning entries. Both the SQLite store and the
 // in-memory snapshot evict beyond this limit: suppressed entries first, then
 // the oldest and least frequently selected.
-inline constexpr std::size_t kMaxLearningEntries = 20000;
+inline constexpr std::size_t kMaxLearningEntries = 50000;
 
 struct LearningEntry final {
     std::string phrase;
