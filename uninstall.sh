@@ -74,6 +74,18 @@ recorded_xprofile=""
 if [[ -f "$managed_state_dir/xprofile.path" ]]; then
     recorded_xprofile=$(cat "$managed_state_dir/xprofile.path")
 fi
+recorded_desktop=""
+if [[ -f "$managed_state_dir/desktop.path" ]]; then
+    recorded_desktop=$(cat "$managed_state_dir/desktop.path")
+fi
+recorded_environment=""
+if [[ -f "$managed_state_dir/environment.path" ]]; then
+    recorded_environment=$(cat "$managed_state_dir/environment.path")
+fi
+recorded_autostart=""
+if [[ -f "$managed_state_dir/autostart.path" ]]; then
+    recorded_autostart=$(cat "$managed_state_dir/autostart.path")
+fi
 
 while IFS= read -r path; do
     [[ -z "$path" ]] && continue
@@ -107,13 +119,13 @@ while IFS= read -r path; do
             fi
             rm -f -- "$path"
             ;;
-        "$desktop_shortcut")
+        "$recorded_desktop"|"$desktop_shortcut"|*/modernime-settings.desktop)
             modernime_remove_managed_file "$path" desktop
             ;;
-        "$environment_file")
+        "$recorded_environment"|"$environment_file"|*/environment.d/90-modernime.conf)
             modernime_remove_managed_file "$path" environment
             ;;
-        "$autostart_file")
+        "$recorded_autostart"|"$autostart_file"|*/autostart/modernime-fcitx5-session.desktop)
             modernime_remove_managed_file "$path" autostart
             ;;
         "$recorded_xprofile")
@@ -164,4 +176,13 @@ rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/pinyin" 2>/dev/null ||
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$config_home/environment.d" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$config_home/autostart" 2>/dev/null || true
+if [[ -n "$recorded_environment" ]]; then
+    rmdir --ignore-fail-on-non-empty "$(dirname -- "$recorded_environment")" 2>/dev/null || true
+fi
+if [[ -n "$recorded_autostart" ]]; then
+    rmdir --ignore-fail-on-non-empty "$(dirname -- "$recorded_autostart")" 2>/dev/null || true
+fi
+if [[ -n "$recorded_desktop" ]]; then
+    rmdir --ignore-fail-on-non-empty "$(dirname -- "$recorded_desktop")" 2>/dev/null || true
+fi
 printf 'ModernIME files removed from %s\n' "$prefix"

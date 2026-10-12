@@ -6,6 +6,17 @@ modernime_write_managed_file() {
     local baseline="$managed_state_dir/$key.content"
     local recorded_path="$managed_state_dir/$key.path"
     managed_file_written=false
+    if [[ -f "$recorded_path" ]] && [[ "$(cat "$recorded_path")" != "$target" ]]; then
+        local old_target
+        old_target=$(cat "$recorded_path")
+        managed_files_preserved=false
+        modernime_remove_managed_file "$old_target" "$key"
+        if [[ "$managed_files_preserved" == true ]]; then
+            printf 'Cannot move modified managed file from %s to %s\n' "$old_target" "$target" >&2
+            return 0
+        fi
+        rm -f "$baseline" "$recorded_path"
+    fi
     if [[ -e "$target" || -L "$target" ]]; then
         if [[ -L "$target" || ! -f "$target" || ! -f "$baseline" || ! -f "$recorded_path" ]] ||
            [[ "$(cat "$recorded_path")" != "$target" ]] ||
@@ -36,6 +47,7 @@ modernime_remove_managed_file() {
        [[ "$(cat "$recorded_path")" == "$target" ]] &&
        cmp -s "$baseline" "$target"; then
         rm -f -- "$target"
+        rmdir --ignore-fail-on-non-empty "$(dirname -- "$target")" 2>/dev/null || true
     else
         printf 'Preserving modified or unowned file: %s\n' "$target" >&2
         managed_files_preserved=true

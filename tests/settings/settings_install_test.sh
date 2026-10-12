@@ -207,3 +207,45 @@ rm "$config/environment.d/90-modernime.conf"
 test ! -e "$manifest"
 grep -Fqx '# first user profile' "$profile_a"
 grep -Fqx '# second user profile' "$profile_b"
+
+# Switching config and desktop paths must clean up the old unmodified integration files.
+cfg_first="$test_root/cfg-first"
+cfg_second="$test_root/cfg-second"
+dt_first="$test_root/dt-first"
+dt_second="$test_root/dt-second"
+
+mkdir -p "$cfg_first" "$cfg_second" "$dt_first" "$dt_second"
+
+switch_env=(env HOME="$test_root/home" MODERNIME_PREFIX="$prefix"
+    MODERNIME_BUILD_DIR="$test_root/build" FAKE_PREFIX="$prefix"
+    PROJECT_ROOT="$project_root" MODERNIME_SKIP_FCITX_RESTART=1
+    PATH="$fake_bin:/usr/bin:/bin")
+
+"${switch_env[@]}" MODERNIME_CONFIG_HOME="$cfg_first" MODERNIME_DESKTOP_DIR="$dt_first" \
+    bash "$project_root/install.sh" >/dev/null
+
+test -f "$cfg_first/environment.d/90-modernime.conf"
+test -f "$cfg_first/autostart/modernime-fcitx5-session.desktop"
+test -f "$dt_first/modernime-settings.desktop"
+
+# Reinstall to second location
+"${switch_env[@]}" MODERNIME_CONFIG_HOME="$cfg_second" MODERNIME_DESKTOP_DIR="$dt_second" \
+    bash "$project_root/install.sh" >/dev/null
+
+# Old locations should be cleanly migrated/removed!
+test ! -f "$cfg_first/environment.d/90-modernime.conf"
+test ! -f "$cfg_first/autostart/modernime-fcitx5-session.desktop"
+test ! -f "$dt_first/modernime-settings.desktop"
+
+# New locations should exist!
+test -f "$cfg_second/environment.d/90-modernime.conf"
+test -f "$cfg_second/autostart/modernime-fcitx5-session.desktop"
+test -f "$dt_second/modernime-settings.desktop"
+
+# Uninstall without specifying custom paths should still clean up recorded paths!
+"${switch_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+
+test ! -f "$cfg_second/environment.d/90-modernime.conf"
+test ! -f "$cfg_second/autostart/modernime-fcitx5-session.desktop"
+test ! -f "$dt_second/modernime-settings.desktop"
+test ! -e "$manifest"
