@@ -571,6 +571,8 @@ private:
         gtk_widget_set_sensitive(checkUpdateButton, FALSE);
         gtk_widget_set_sensitive(refreshCacheButton, FALSE);
         gtk_widget_set_sensitive(runUpgradeButton, FALSE);
+        setLabel(updateStatusMessage,
+                 "正在通过系统包管理器执行升级（等待授权与包事务完成，超时不会强杀包管理器进程）…");
         notifyMessage("正在请求系统包管理器执行升级…");
 
         auto *task = g_task_new(lifetime.get(), nullptr, updateTaskFinished,

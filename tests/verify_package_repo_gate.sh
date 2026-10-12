@@ -6,6 +6,9 @@ repo_root=$(CDPATH= cd -- "${script_dir}/.." && pwd)
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/modernime-pkg-repo-gate.XXXXXX")
 cleanup() {
+    if [ -d "${work_dir}/gpg-setup" ]; then
+        gpgconf --homedir "${work_dir}/gpg-setup" --kill gpg-agent >/dev/null 2>&1 || true
+    fi
     rm -rf -- "${work_dir}"
 }
 trap cleanup EXIT
@@ -294,6 +297,29 @@ if env -u MODERNIME_GPG_PASSPHRASE \
     fail "ci_build_release_repos.sh must fail when passphrase-protected key is missing MODERNIME_GPG_PASSPHRASE"
 fi
 
+# 3a. Inaugural release deployment check (empty gh-pages baseline: v0.1.9 only, no --previous-pages-dir)
+inaugural_pages_dir="${work_dir}/pages-inaugural"
+MODERNIME_GPG_KEY_ID="${primary_fpr}" \
+MODERNIME_GPG_PASSPHRASE="${passphrase}" \
+MODERNIME_GPG_ROTATION_PRIVATE_KEY="${rotation_sec_value}" \
+MODERNIME_GPG_ROTATION_KEY_ID="${rotation_fpr}" \
+"${repo_root}/scripts/ci_build_release_repos.sh" \
+    --assets-dir "${ci_assets_dir}" \
+    --pages-dir "${inaugural_pages_dir}" \
+    --gpg-private-key-file "${primary_sec_file}" \
+    --require-persistent-gpg \
+    --repo-base-url "file://${inaugural_pages_dir}"
+
+grep -Fxq "Version: ${expected_version}" "${inaugural_pages_dir}/apt/dists/noble/main/binary-amd64/Packages" ||
+    fail "Inaugural APT repository missing Version: ${expected_version}"
+if grep -Fxq "Version: 0.1.8" "${inaugural_pages_dir}/apt/dists/noble/main/binary-amd64/Packages"; then
+    fail "Inaugural APT repository without --previous-pages-dir should only contain ${expected_version}"
+fi
+[ -f "${inaugural_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" ] ||
+    fail "Inaugural RPM repository missing modernime-${expected_version}-1.oe2409.x86_64.rpm"
+printf '==> [Gate 3a] Inaugural release repository baseline (v%s only, empty gh-pages): VERIFIED\n' "${expected_version}"
+
+# 3b. Subsequent release multi-version retention check (simulated prior release pool in gh-pages + current release)
 MODERNIME_GPG_KEY_ID="${primary_fpr}" \
 MODERNIME_GPG_PASSPHRASE="${passphrase}" \
 MODERNIME_GPG_ROTATION_PRIVATE_KEY="${rotation_sec_value}" \
@@ -305,6 +331,7 @@ MODERNIME_GPG_ROTATION_KEY_ID="${rotation_fpr}" \
     --gpg-private-key-file "${primary_sec_file}" \
     --require-persistent-gpg \
     --repo-base-url "file://${pages_site_dir}"
+printf '==> [Gate 3b] Subsequent release multi-version retention (--previous-pages-dir): VERIFIED\n'
 
 [ -f "${pages_site_dir}/.nojekyll" ] || fail "pages-site/.nojekyll missing"
 [ -f "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" ] || fail "apt/KEY-FINGERPRINTS.txt missing"
@@ -471,26 +498,60 @@ for ver, meta in pkgs_in_xml.items():
         sig_end = raw.find(b"\x8e\xad\xe8\x01", store_end)
 
     main_nindex, main_hsize = struct.unpack(">II", raw[sig_end+8:sig_end+16])
-    main_end = sig_end + 16 + main_nindex * 16 + main_hsize
+    main_idx_start = sig_end + 16
+    main_store_start = main_idx_start + main_nindex * 16
+    main_end = main_store_start + main_hsize
     main_hdr = raw[sig_end:main_end]
+    payload_bytes = raw[main_end:]
     hdr_and_payload = raw[sig_end:]
 
-    sig_tags = {}
+    sig_bin_tags = {}
+    sig_str_tags = {}
+    sig_int_tags = {}
     for i in range(nindex):
         eo = idx_start + i * 16
         tag, dtype, voff, count = struct.unpack(">IIII", raw[eo:eo+16])
         if dtype == 7:
-            sig_tags[tag] = raw[store_start+voff:store_start+voff+count]
+            sig_bin_tags[tag] = raw[store_start+voff:store_start+voff+count]
+        elif dtype in (6, 8):
+            end_str = raw.find(b"\x00", store_start + voff)
+            sig_str_tags[tag] = raw[store_start+voff:end_str].decode("ascii")
+        elif dtype == 4 and count == 1:
+            sig_int_tags[tag] = struct.unpack(">I", raw[store_start+voff:store_start+voff+4])[0]
 
-    assert 268 in sig_tags, f"RPM {rpm_path.name} missing RPMSIGTAG_RSA (tag 268)"
-    assert 259 in sig_tags, f"RPM {rpm_path.name} missing RPMSIGTAG_PGP (tag 259)"
+    assert 268 in sig_bin_tags, f"RPM {rpm_path.name} missing RPMSIGTAG_RSA (tag 268)"
+    assert 259 in sig_bin_tags, f"RPM {rpm_path.name} missing RPMSIGTAG_PGP (tag 259)"
+    assert sig_str_tags.get(269) == hashlib.sha1(main_hdr).hexdigest(), \
+        f"RPM {rpm_path.name} RPMSIGTAG_SHA1 (tag 269) mismatch: {sig_str_tags.get(269)}"
+    assert sig_str_tags.get(273) == hashlib.sha256(main_hdr).hexdigest(), \
+        f"RPM {rpm_path.name} RPMSIGTAG_SHA256 (tag 273) mismatch: {sig_str_tags.get(273)}"
+    assert sig_int_tags.get(1000) == len(hdr_and_payload), \
+        f"RPM {rpm_path.name} RPMSIGTAG_SIZE (tag 1000) mismatch: {sig_int_tags.get(1000)} != {len(hdr_and_payload)}"
+    assert sig_bin_tags.get(1004) == hashlib.md5(hdr_and_payload).digest(), \
+        f"RPM {rpm_path.name} RPMSIGTAG_MD5 (tag 1004) mismatch"
+
+    main_str_tags = {}
+    main_int_tags = {}
+    for i in range(main_nindex):
+        eo = main_idx_start + i * 16
+        tag, dtype, voff, count = struct.unpack(">IIII", raw[eo:eo+16])
+        if dtype in (6, 8):
+            end_str = raw.find(b"\x00", main_store_start + voff)
+            main_str_tags[tag] = raw[main_store_start+voff:end_str].decode("ascii", errors="replace")
+        elif dtype == 4 and count == 1:
+            main_int_tags[tag] = struct.unpack(">I", raw[main_store_start+voff:main_store_start+voff+4])[0]
+
+    assert main_str_tags.get(5092) == hashlib.sha256(payload_bytes).hexdigest(), \
+        f"RPM {rpm_path.name} RPMTAG_PAYLOADDIGEST (tag 5092) mismatch: {main_str_tags.get(5092)}"
+    assert main_int_tags.get(5093) == 8, \
+        f"RPM {rpm_path.name} RPMTAG_PAYLOADDIGESTALGO (tag 5093) must be 8 (SHA256), got {main_int_tags.get(5093)}"
 
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
         (td_path / "hdr.bin").write_bytes(main_hdr)
-        (td_path / "hdr.sig").write_bytes(sig_tags[268])
+        (td_path / "hdr.sig").write_bytes(sig_bin_tags[268])
         (td_path / "all.bin").write_bytes(hdr_and_payload)
-        (td_path / "all.sig").write_bytes(sig_tags[259])
+        (td_path / "all.sig").write_bytes(sig_bin_tags[259])
         subprocess.run(
             ["gpgv", "--keyring", str(keyring), str(td_path / "hdr.sig"), str(td_path / "hdr.bin")],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -502,12 +563,13 @@ for ver, meta in pkgs_in_xml.items():
 PYEOF
 
 rpmkeys_cmd=()
-if command -v rpmkeys >/dev/null 2>&1; then
+if [ -n "${MODERNIME_RPMKEYS_BIN:-}" ]; then
+    rpmkeys_cmd=("${MODERNIME_RPMKEYS_BIN}")
+elif command -v rpmkeys >/dev/null 2>&1; then
     rpmkeys_cmd=(rpmkeys)
-elif [ -x "/home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/bin/rpmkeys" ]; then
-    rpmkeys_cmd=(env RPM_CONFIGDIR="/home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/lib/rpm" LD_LIBRARY_PATH="/home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/lib/x86_64-linux-gnu" /home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/bin/rpmkeys)
 fi
 
+rpmkeys_status_summary=""
 if [ "${#rpmkeys_cmd[@]}" -gt 0 ]; then
     rpm_client_root="${work_dir}/rpm-client-root"
     mkdir -p "${rpm_client_root}/var/lib/rpm"
@@ -521,6 +583,14 @@ if [ "${#rpmkeys_cmd[@]}" -gt 0 ]; then
         printf '%s\n' "${rpmkeys_out}" | grep -Fq "Payload SHA256 digest: OK" || \
             fail "rpmkeys Payload SHA256 digest failed for ${r}: ${rpmkeys_out}"
     done
+    printf '==> [Gate 5] Native rpmkeys -v -K client check: EXECUTED and PASSED\n'
+    rpmkeys_status_summary="native rpmkeys: EXECUTED & PASSED"
+else
+    if [ "${MODERNIME_REQUIRE_RPMKEYS:-0}" = "1" ]; then
+        fail "MODERNIME_REQUIRE_RPMKEYS=1 is set, but rpmkeys is not installed in PATH"
+    fi
+    printf '==> [Gate 5] Native rpmkeys -v -K client check: NOT EXECUTED (rpmkeys binary not installed on this host; OpenPGP signatures [tags 268/259] and SHA1/SHA256/MD5/Payload digests [tags 269/273/1000/1004/5092/5093] verified via gpgv + binary header inspector; native rpmkeys/dnf runs in openEuler 24.09 CI container)\n'
+    rpmkeys_status_summary="native rpmkeys: NOT EXECUTED on this host (verified via gpgv + digest inspector; native rpmkeys/dnf runs in openEuler CI)"
 fi
 
 printf '=== [6/7] Simulating full v0.1.8 -> v%s upgrade -> v0.1.8 rollback -> uninstall lifecycle (DEB & RPM) ===\n' "${expected_version}"
@@ -756,4 +826,4 @@ if PATH="${empty_bin}" MODERNIME_SKIP_FCITX_RESTART=1 \
     fail "install.sh should reject installation when fcitx5 runtime dependency is missing"
 fi
 
-printf 'PASS: All 7 package, signed repository, real APT client, and rollback gate checks succeeded.\n'
+printf 'PASS: All 7 package, signed repository, real APT client, and rollback gate checks succeeded (%s).\n' "${rpmkeys_status_summary}"

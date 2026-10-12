@@ -263,6 +263,33 @@ int main() {
     std::getline(logIn, loggedArgs);
     assert(loggedArgs.find("apt-get install --only-upgrade -y modernime") != std::string::npos);
 
+    // 7. Package operation timeout must check child process state, NOT force-kill active dpkg/apt transaction,
+    // and return explicit recovery guidance (dpkg --configure -a)
+    const auto completedMarker = tempRoot / "pkg-op-completed-gracefully.txt";
+    writeExecutable(
+        aptBinDir / "pkexec",
+        "#!/bin/sh\n"
+        "sleep 0.25\n"
+        "printf 'completed\\n' > \"" +
+            completedMarker.string() +
+            "\"\n"
+            "exit 0\n");
+
+    const Environment timeoutEnv{
+        {"PATH", aptBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.8"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
+        {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "60"},
+    };
+    const auto timeoutRes = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
+    assert(!timeoutRes.success);
+    assert(timeoutRes.message.find("未强制终止进程") != std::string::npos);
+    assert(timeoutRes.message.find("dpkg --configure -a") != std::string::npos);
+
+    // Wait briefly and verify the child process was NOT killed by SIGKILL and finished its transaction cleanly
+    ::usleep(300000);
+    assert(std::filesystem::exists(completedMarker));
+
     std::filesystem::remove_all(tempRoot);
     return 0;
 }

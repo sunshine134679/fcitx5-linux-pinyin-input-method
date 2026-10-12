@@ -5,10 +5,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <sys/types.h>
 #include <vector>
 
 namespace modernime::settings {
@@ -29,6 +31,7 @@ struct CommandOutput final {
     bool started = false;
     bool exitedZero = false;
     bool timedOut = false;
+    bool stillRunningOnTimeout = false;
     std::string stdoutText;
     std::string stderrText;
 };
@@ -36,7 +39,9 @@ struct CommandOutput final {
 struct SubprocessState final {
     GMainLoop *loop = nullptr;
     GCancellable *cancellable = nullptr;
+    GSubprocess *proc = nullptr;
     bool timedOut = false;
+    bool stillRunningOnTimeout = false;
     bool finished = false;
     std::string out;
     std::string err;
@@ -61,6 +66,34 @@ std::string lookupEnv(const Environment &environment, std::string_view key) {
         return val;
     }
     return {};
+}
+
+guint resolvePackageOperationTimeoutMs(const Environment &environment) {
+    const auto raw = trim(lookupEnv(environment, "MODERNIME_PACKAGE_OP_TIMEOUT_MS"));
+    if (!raw.empty()) {
+        char *endPtr = nullptr;
+        const unsigned long parsed = std::strtoul(raw.c_str(), &endPtr, 10);
+        if (endPtr != raw.c_str() && *endPtr == '\0' && parsed > 0) {
+            return static_cast<guint>(parsed);
+        }
+    }
+    return kPackageOperationTimeoutMs;
+}
+
+bool isSubprocessAlive(GSubprocess *proc) {
+    if (proc == nullptr) {
+        return false;
+    }
+    const gchar *ident = g_subprocess_get_identifier(proc);
+    if (ident == nullptr || *ident == '\0') {
+        return false;
+    }
+    char *endPtr = nullptr;
+    const long pidVal = std::strtol(ident, &endPtr, 10);
+    if (endPtr == ident || pidVal <= 0) {
+        return false;
+    }
+    return ::kill(static_cast<pid_t>(pidVal), 0) == 0;
 }
 
 std::filesystem::path findExecutableInPath(std::string_view name,
@@ -120,13 +153,15 @@ void onCommunicateDone(GObject *source, GAsyncResult *res, gpointer userData) {
 gboolean onCommandTimeout(gpointer userData) {
     auto *state = static_cast<SubprocessState *>(userData);
     state->timedOut = true;
+    state->stillRunningOnTimeout = isSubprocessAlive(state->proc);
     g_cancellable_cancel(state->cancellable);
     return G_SOURCE_REMOVE;
 }
 
 CommandOutput runSubprocess(const std::vector<std::string> &argv,
                             const Environment &environment,
-                            guint timeoutMs = kQueryTimeoutMs) {
+                            guint timeoutMs = kQueryTimeoutMs,
+                            bool forceKillOnTimeout = true) {
     CommandOutput result;
     if (argv.empty()) {
         return result;
@@ -168,7 +203,7 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     GMainLoop *loop = g_main_loop_new(context, FALSE);
     GCancellable *cancellable = g_cancellable_new();
 
-    SubprocessState state{loop, cancellable, false, false, {}, {}};
+    SubprocessState state{loop, cancellable, proc, false, false, false, {}, {}};
     GSource *timer = g_timeout_source_new(timeoutMs);
     g_source_set_callback(timer, onCommandTimeout, &state, nullptr);
     g_source_attach(timer, context);
@@ -179,10 +214,13 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
 
     if (state.timedOut) {
         result.timedOut = true;
-        g_subprocess_force_exit(proc);
+        result.stillRunningOnTimeout =
+            state.stillRunningOnTimeout || isSubprocessAlive(proc);
+        if (forceKillOnTimeout && result.stillRunningOnTimeout) {
+            g_subprocess_force_exit(proc);
+        }
     }
 
-    result.timedOut = state.timedOut;
     result.stdoutText = std::move(state.out);
     result.stderrText = std::move(state.err);
     if (state.finished && !state.timedOut && g_subprocess_get_if_exited(proc)) {
@@ -613,11 +651,20 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
         argv = {pkexecBin.string(), aptGetBin.string(), "update"};
     }
 
-    const auto out = runSubprocess(argv, environment, kPackageOperationTimeoutMs);
+    const guint opTimeoutMs = resolvePackageOperationTimeoutMs(environment);
+    const auto out = runSubprocess(argv, environment, opTimeoutMs, false);
     if (!out.started || !out.exitedZero) {
         if (out.timedOut) {
+            const std::string procHint =
+                (manager == PackageManagerKind::Dnf) ? "ps aux | grep -E 'dnf|rpm'"
+                                                     : "ps aux | grep -E 'apt|dpkg'";
+            if (out.stillRunningOnTimeout) {
+                return {false,
+                        "刷新软件源缓存等待超时（检测到包管理器子进程仍在运行或等待锁，为保护系统状态未强制终止进程）。请稍候待后台任务结束，或在终端通过 " +
+                            procHint + " 检查进程状态后执行：" + fallbackCmd};
+            }
             return {false,
-                    "刷新软件源缓存操作超时（超过 300 秒），请在终端手动执行：" +
+                    "刷新软件源缓存操作超时，请在终端手动执行：" +
                         fallbackCmd};
         }
         return {false,
@@ -662,11 +709,17 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
                 "--only-upgrade", "-y", "modernime"};
     }
 
-    const auto out = runSubprocess(argv, environment, kPackageOperationTimeoutMs);
+    const guint opTimeoutMs = resolvePackageOperationTimeoutMs(environment);
+    const auto out = runSubprocess(argv, environment, opTimeoutMs, false);
     if (!out.started || !out.exitedZero) {
         if (out.timedOut) {
+            if (status.manager == PackageManagerKind::Dnf) {
+                return {false,
+                        "系统包管理器升级等待超时（检测到 dnf/rpm 子进程仍在运行或等待锁，为避免中断升级事务未强制终止进程）。请在终端通过 ps aux | grep -E 'dnf|rpm' 检查进度；待后台事务完成后再重新检查，或手动执行：" +
+                            status.upgradeCommand};
+            }
             return {false,
-                    "系统包管理器升级操作超时（超过 300 秒），请在终端手动执行：" +
+                    "系统包管理器升级等待超时（检测到 apt/dpkg 子进程仍在运行或等待锁，为避免中断升级事务未强制终止进程）。请勿强行终止，可在终端通过 ps aux | grep -E 'apt|dpkg' 查看进度；若事务异常中断，请执行 sudo dpkg --configure -a && sudo apt-get install -f 恢复后再运行：" +
                         status.upgradeCommand};
         }
         return {false,

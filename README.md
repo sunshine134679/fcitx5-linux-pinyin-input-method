@@ -65,9 +65,10 @@ sudo apt install -y modernime
 # 后续检查并仅升级 ModernIME（注意：检查更新前请先执行 sudo apt update 刷新软件源缓存）：
 sudo apt update && sudo apt install --only-upgrade -y modernime
 
-# 5. 版本回退（查看仓库可用历史版本并回退到指定版本）
+# 5. 版本回退（v0.1.9 为在线 APT 仓库首发基线版本，首次发布时仓库仅含 0.1.9，不支持通过在线源回退到仓库建立前的 0.1.8；
+#    从下一版本 v0.1.10+ 起，gh-pages 分支自动保留 0.1.9+ 历史包以支持在线降级。若需回退至 0.1.8，请从 GitHub Releases 下载离线包安装）
 apt-cache madison modernime
-sudo apt install -y --allow-downgrades modernime=0.1.7
+sudo apt install -y --allow-downgrades modernime=0.1.9
 
 # 6. 密钥轮换更新（若项目发布密钥轮换公告，重新拉取合并公钥环即可无缝过渡）
 curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/modernime-archive-keyring.gpg \
@@ -132,7 +133,7 @@ sudo dnf install -y modernime
 # 后续升级：
 sudo dnf upgrade -y modernime
 
-# 3. 版本回退与移除 DNF 仓库
+# 3. 版本回退与移除 DNF 仓库（v0.1.9 为在线 DNF 仓库首发基线版本，首次发布仅含 0.1.9；从 v0.1.10+ 起支持在线 dnf downgrade 回退至 0.1.9+）
 sudo dnf downgrade -y modernime
 # 移除仓库配置与已导入的 GPG 公钥：
 sudo rm -f /etc/yum.repos.d/modernime-openeuler-24.09.repo
@@ -580,10 +581,10 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 ### v0.1.9 (2026-10-12)
 
 - **系统包在线升级体系正式确立**：上线标准静态 APT 与 DNF 软件源流水线，Ubuntu/Debian 采用 Deb822 `.sources` 标准配置与独立 `Signed-By` 密钥环，openEuler 采用官方 RPM/DNF 软件源配置；设置客户端支持真实包管理器检查更新与缓存有效性诊断，实际安装与升级严格交给 `apt` / `dnf` 执行，彻底杜绝输入法自杀式进程内文件热覆盖。
-- **Release 发布流水线与 GitHub Pages 持久化闭环**：`release.yml` 在生成静态仓库树并部署 GitHub Pages 后，自动同步回写至 `origin/gh-pages` 分支，彻底保证未来 Release 运行时历史发行包（如 `0.1.8`、`0.1.9` 等）完整保留，支持客户端跨版本回退与锁定安装。
+- **Release 发布流水线与 GitHub Pages 持久化闭环**：`v0.1.9` 作为在线 APT/DNF 仓库的首发基线版本（首次发布时仓库仅含 `0.1.9`，不支持通过在线仓库直接回退到仓库建立前的 `0.1.8`）；`release.yml` 在生成静态仓库树并部署 GitHub Pages 后，自动同步回写至 `origin/gh-pages` 分支，保证从后续版本（`v0.1.10+`）起完整保留 `0.1.9+` 历史发行包，支持客户端跨版本在线回退与锁定安装。
 - **GPG 口令保护与平滑轮换支持**：全链路接入 `MODERNIME_GPG_PASSPHRASE`，私钥导入与签名自动化支持 `--pinentry-mode loopback` 与安全口令传递；支持双密钥签名 `InRelease` 与 `repomd.xml.asc`，多公钥导出至密钥环，确保客户端平滑跨越密钥轮换窗口。
 - **RPM 标头完整性修复与标准 `rpmkeys -v -K` 校验**：修复 RPM 包体标头摘要结构，注入标准 `RPMTAG_PAYLOADDIGEST` (5092)、`RPMTAG_PAYLOADDIGESTALGO` (5093)，修正 SHA1/SHA256/MD5 标头标签，使 `rpmkeys -v -K` 校验（Header RSA、Header SHA256、Header SHA1、Payload SHA256、MD5）达成 100% OK，并在 openEuler 24.09 真实容器 CI 中通过真实 DNF 软件源集成测试。
-- **设置客户端超时解耦**：将包管理器刷新索引与版本升级的长任务超时放宽至 300 秒（5 分钟），避免因慢速网络、系统更新事务或 Polkit 提权等待导致的误超时杀进程。
+- **设置客户端超时解耦与事务保护**：将包管理器刷新索引与版本升级的等待超时放宽至 300 秒（5 分钟）；超时触发前检查子进程存活状态，对仍在运行的包管理器进程不执行强制杀进程（防止中断 `dpkg`/`rpm` 事务或残留锁文件），并输出显式进程检查与恢复指引（如 `sudo dpkg --configure -a`）。
 - **受控渠道迁移与事务回滚**：提供 `modernime-migrate-channel` 工具，支持从历史源码脚本安装（`channel=script`）安全迁移至系统包（`channel=deb` / `channel=rpm`），在包安装验证失败时具备自动卸载与旧版环境零损恢复能力。
 
 ### v0.1.8 (2026-10-12)
