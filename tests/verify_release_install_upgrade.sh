@@ -49,6 +49,7 @@ settings_hash=$(sha256sum "$config_home/modernime/settings.conf" | awk '{print $
 printf '=== 2. 执行 v0.1.7 升级安装 ===\n'
 export HOME="$home_dir"
 export MODERNIME_PREFIX="$prefix"
+export MODERNIME_BUILD_DIR="$test_root/build"
 export MODERNIME_CONFIG_HOME="$config_home"
 export MODERNIME_DATA_HOME="$data_home"
 export MODERNIME_DESKTOP_DIR="$desktop_dir"
@@ -63,18 +64,30 @@ export XDG_DATA_HOME="$data_home"
 )
 
 printf '=== 3. 验证升级完整性与旧版插件隔离 ===\n'
-# 3.1 旧版扁平插件必须已被迁移清理，避免多架构符号碰撞
-test ! -f "$prefix/lib/fcitx5/modernime_fcitx5.so"
-test ! -f "$prefix/lib/fcitx5/modernime_ui.so"
-test ! -d "$prefix/lib/fcitx5"
+# 3.1 识别当前安装的目标插件目录
+current_addon_dir=""
+for cdir in "$prefix/lib/x86_64-linux-gnu/fcitx5" "$prefix/lib64/fcitx5" "$prefix/lib/fcitx5"; do
+    if [[ -f "$cdir/modernime_fcitx5.so" ]]; then
+        current_addon_dir="$cdir"
+        break
+    fi
+done
+test -n "$current_addon_dir"
 
-# 3.2 新版组件必须完整安装
+# 若当前安装已使用多架构目录，旧版扁平插件必须已被迁移清理
+if [[ "$current_addon_dir" != "$prefix/lib/fcitx5" ]]; then
+    test ! -f "$prefix/lib/fcitx5/modernime_fcitx5.so"
+    test ! -f "$prefix/lib/fcitx5/modernime_ui.so"
+    test ! -d "$prefix/lib/fcitx5"
+fi
+
+# 3.2 新版组件必须完整安装且已替换旧版内容
 test -f "$prefix/bin/modernime-settings"
 test -f "$prefix/bin/modernime-session-init"
 test -x "$prefix/bin/modernime-session-init"
-multiarch_addon=$(find "$prefix" -type f -name 'modernime_fcitx5.so' -print -quit)
-test -n "$multiarch_addon"
-test -f "$multiarch_addon"
+test -f "$current_addon_dir/modernime_fcitx5.so"
+test -f "$current_addon_dir/modernime_ui.so"
+test "$(head -n 1 "$current_addon_dir/modernime_fcitx5.so")" != "v0.1.6-fcitx5-plugin"
 
 # 3.3 验证用户数据完整保留且哈希不变
 test -f "$data_home/modernime/user-dictionary.txt"

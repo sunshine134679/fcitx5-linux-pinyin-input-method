@@ -267,7 +267,7 @@ done
 
 cmake_args=(
     -DCMAKE_BUILD_TYPE=Debug
-    -DCMAKE_INSTALL_PREFIX="$prefix"
+    -DCMAKE_INSTALL_PREFIX:PATH="$prefix"
     -DMODERNIME_BUILD_FCITX5=ON
     -DMODERNIME_BUILD_LIBIME_PINYIN=ON
     -DMODERNIME_BUILD_SETTINGS=ON
@@ -314,7 +314,7 @@ for check_file in "$prefix/bin/modernime-settings" \
         rm -f -- "$check_file" 2>/dev/null || true
     fi
 done
-cmake --install "$build_dir"
+cmake --install "$build_dir" --prefix "$prefix"
 
 cmake_libdir=$(grep -m1 '^CMAKE_INSTALL_LIBDIR:PATH=' "$build_dir/CMakeCache.txt" 2>/dev/null || true)
 cmake_libdir=${cmake_libdir#*=}
