@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -367,6 +368,52 @@ TEST(PersonalEngineTest, LmdbPersistenceMapResizeMigrationAndRecovery) {
         EXPECT_EQ(snap->entry("不应写入的词", "fail'key", "", ""), nullptr);
         EXPECT_TRUE(snap->isSuppressed("废弃词", "feiqici"));
         lmdb_store.close();
+    }
+
+    // 6.6 验证 PersonalEngine.hpp 原生 14B WordMeta 二进制文件 (user_personal_dict.bin) 无损加载与自动合并导入
+    {
+        const auto bin_path = dir / "user_personal_dict.bin";
+        {
+            std::ofstream ofs(bin_path, std::ios::binary);
+            ASSERT_TRUE(ofs.is_open());
+            const uint32_t magic = 0xA55AA55AU;
+            const uint32_t num_keys = 1U;
+            ofs.write(reinterpret_cast<const char *>(&magic), sizeof(magic));
+            ofs.write(reinterpret_cast<const char *>(&num_keys), sizeof(num_keys));
+            const std::string key = "!u!hou,xuan,lan";
+            const uint16_t key_len = static_cast<uint16_t>(key.size());
+            ofs.write(reinterpret_cast<const char *>(&key_len), sizeof(key_len));
+            ofs.write(key.data(), key_len);
+            const uint32_t num_words = 1U;
+            ofs.write(reinterpret_cast<const char *>(&num_words), sizeof(num_words));
+            const std::string word = "候选栏";
+            const uint32_t ts = 1700000100U;
+            const uint32_t hits = 7U;
+            const float weight = 1.5f;
+            const uint16_t tlen = static_cast<uint16_t>(word.size());
+            ofs.write(reinterpret_cast<const char *>(&ts), sizeof(ts));
+            ofs.write(reinterpret_cast<const char *>(&hits), sizeof(hits));
+            ofs.write(reinterpret_cast<const char *>(&weight), sizeof(weight));
+            ofs.write(reinterpret_cast<const char *>(&tlen), sizeof(tlen));
+            ofs.write(word.data(), tlen);
+        }
+
+        PersonalEngine bin_engine;
+        ASSERT_TRUE(bin_engine.LoadFromFile(bin_path.string()));
+        const auto loaded = bin_engine.QueryCandidates("hou'xuan'lan");
+        ASSERT_EQ(loaded.size(), 1u);
+        EXPECT_EQ(loaded[0].text, "候选栏");
+        EXPECT_EQ(loaded[0].meta.hit_count, 7u);
+
+        // 重新打开同目录 LMDB 时，自动合并同目录 user_personal_dict.bin 且保留既有词条
+        PersonalEngine merged_lmdb(cfg);
+        ASSERT_TRUE(merged_lmdb.OpenLmdb(lmdb_path));
+        const auto merged_cand = merged_lmdb.QueryLmdbCandidates("hou'xuan'lan");
+        ASSERT_EQ(merged_cand.size(), 1u);
+        EXPECT_EQ(merged_cand[0].text, "候选栏");
+        EXPECT_EQ(merged_cand[0].meta.hit_count, 7u);
+        EXPECT_EQ(merged_lmdb.QueryLmdbCandidates("wang'shao'long", "联系人：").size(), 1u);
+        merged_lmdb.CloseLmdb();
     }
 
     std::error_code ec;
