@@ -29,5 +29,11 @@ if [[ -n "$binary_dir" && -f "$binary_dir/CPackConfig.cmake" ]]; then
     grep -F 'set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE' "$binary_dir/CPackConfig.cmake" >/dev/null
 fi
 
+session_init="$project_root/scripts/modernime-session-init"
+test -f "$session_init" && test -x "$session_init"
+bash -n "$session_init"
+grep -F 'modernime-session-init' "$project_root/tools/settings/CMakeLists.txt" >/dev/null
+grep -F '%{_bindir}/modernime-session-init' "$project_root/packaging/rpm/modernime.spec" >/dev/null
+
 
 

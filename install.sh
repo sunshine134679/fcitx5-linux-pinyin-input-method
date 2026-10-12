@@ -283,43 +283,45 @@ for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUN
     fi
 done
 
-mkdir -p "$desktop_dir"
-desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
-{
-    printf '%s\n' '[Desktop Entry]'
-    printf '%s\n' 'Type=Application'
-    printf '%s\n' 'Name=ModernIME 设置'
-    printf '%s\n' 'Comment=Configure ModernIME input method'
-    printf 'Exec=%s\n' "$prefix/bin/modernime-settings"
-    printf '%s\n' 'Icon=input-keyboard'
-    printf '%s\n' 'Terminal=false'
-    printf '%s\n' 'Categories=Settings;Utility;'
-} > "$desktop_tmp"
-manifest_dir="$prefix/share/modernime"
-managed_state_dir="$manifest_dir/managed-files"
-modernime_write_managed_file "$desktop_tmp" "$desktop_shortcut" desktop
-if [[ "$managed_file_written" == true ]]; then
-    chmod +x "$desktop_shortcut"
-    if command -v gio >/dev/null 2>&1; then
-        gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+if [[ "$is_system_prefix" != true ]]; then
+    mkdir -p "$desktop_dir"
+    desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
+    {
+        printf '%s\n' '[Desktop Entry]'
+        printf '%s\n' 'Type=Application'
+        printf '%s\n' 'Name=ModernIME 设置'
+        printf '%s\n' 'Comment=Configure ModernIME input method'
+        printf 'Exec=%s\n' "$prefix/bin/modernime-settings"
+        printf '%s\n' 'Icon=input-keyboard'
+        printf '%s\n' 'Terminal=false'
+        printf '%s\n' 'Categories=Settings;Utility;'
+    } > "$desktop_tmp"
+    manifest_dir="$prefix/share/modernime"
+    managed_state_dir="$manifest_dir/managed-files"
+    modernime_write_managed_file "$desktop_tmp" "$desktop_shortcut" desktop
+    if [[ "$managed_file_written" == true ]]; then
+        chmod +x "$desktop_shortcut"
+        if command -v gio >/dev/null 2>&1; then
+            gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+        fi
     fi
+
+    environment_line="FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
+    {
+        printf '%s\n' "$environment_line"
+        printf 'XDG_DATA_DIRS="%s:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix/share"
+    } > "$desktop_tmp"
+    modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
+
+    autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir XDG_DATA_DIRS=$data_directories fcitx5 -d -u modernime-ui"
+    {
+        printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
+        printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
+        printf 'Exec=%s\n' "$autostart_exec"
+        printf '%s\n' 'Terminal=false' 'X-GNOME-Autostart-enabled=true' 'NoDisplay=true'
+    } > "$desktop_tmp"
+    modernime_write_managed_file "$desktop_tmp" "$autostart_file" autostart
 fi
-
-environment_line="FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
-{
-    printf '%s\n' "$environment_line"
-    printf 'XDG_DATA_DIRS="%s:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix/share"
-} > "$desktop_tmp"
-modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
-
-autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir XDG_DATA_DIRS=$data_directories fcitx5 -d -u modernime-ui"
-{
-    printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
-    printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
-    printf 'Exec=%s\n' "$autostart_exec"
-    printf '%s\n' 'Terminal=false' 'X-GNOME-Autostart-enabled=true' 'NoDisplay=true'
-} > "$desktop_tmp"
-modernime_write_managed_file "$desktop_tmp" "$autostart_file" autostart
 
 skip_xprofile=false
 case "${MODERNIME_SKIP_XPROFILE:-}" in
@@ -358,12 +360,15 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime-ui.conf"
     printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
     printf '%s\n' "$prefix/bin/modernime-settings"
+    printf '%s\n' "$prefix/bin/modernime-session-init"
     printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
-    printf '%s\n' "$desktop_shortcut"
-    printf '%s\n' "$environment_file"
-    printf '%s\n' "$autostart_file"
-    if [[ -f "$managed_state_dir/xprofile.path" ]]; then
-        cat "$managed_state_dir/xprofile.path"
+    if [[ "$is_system_prefix" != true ]]; then
+        printf '%s\n' "$desktop_shortcut"
+        printf '%s\n' "$environment_file"
+        printf '%s\n' "$autostart_file"
+        if [[ -f "$managed_state_dir/xprofile.path" ]]; then
+            cat "$managed_state_dir/xprofile.path"
+        fi
     fi
 } > "$manifest"
 
@@ -432,7 +437,11 @@ printf 'ModernIME installed to %s\n' "$prefix"
 printf 'Install manifest: %s\n' "$manifest"
 printf 'Offline pinyin knowledge dictionary: %s/share/modernime/pinyin/modernime-knowledge.dict\n' "$prefix"
 printf 'Launch settings client: %s\n' "$prefix/bin/modernime-settings"
-printf 'Desktop shortcut: %s\n' "$desktop_shortcut"
+if [[ "$is_system_prefix" == true ]]; then
+    printf 'Desktop user session configuration: Run "%s/bin/modernime-session-init" as regular user to initialize session.\n' "$prefix"
+else
+    printf 'Desktop shortcut: %s\n' "$desktop_shortcut"
+fi
 printf 'Select the UI addon with: fcitx5 -u modernime-ui\n'
 printf '\n'
 printf '【会话环境变量配置提示】\n'

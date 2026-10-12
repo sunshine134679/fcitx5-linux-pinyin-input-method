@@ -44,5 +44,6 @@ target_compile_definitions(modernime-settings PRIVATE
 modernime_enable_warnings(modernime-settings)
 
 install(TARGETS modernime-settings RUNTIME DESTINATION bin)
+install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-session-init DESTINATION bin)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/desktop/modernime-settings.desktop
         DESTINATION share/applications)

@@ -88,3 +88,17 @@ grep -F "remote:|DISPLAY=:0|DBUS=unix:path=/run/user/1000/bus|RUNTIME=/run/user/
 grep -F "|DATA=$test_root/prefix/share:/usr/local/share:/usr/share" "$log_file" >/dev/null
 grep -F 'XDG_DATA_DIRS=' "$test_root/config/environment.d/90-modernime.conf" >/dev/null
 grep -F 'XDG_DATA_DIRS=' "$test_root/config/autostart/modernime-fcitx5-session.desktop" >/dev/null
+
+# Verify modernime-session-init works for independent user session initialization
+session_config="$test_root/session-config"
+env \
+    MODERNIME_PREFIX="$test_root/prefix" \
+    MODERNIME_CONFIG_HOME="$session_config" \
+    MODERNIME_SKIP_FCITX_RESTART=1 \
+    bash "$project_root/scripts/modernime-session-init" >/dev/null
+
+test -f "$session_config/environment.d/90-modernime.conf"
+test -f "$session_config/autostart/modernime-fcitx5-session.desktop"
+test -f "$session_config/fcitx5/profile"
+grep -F 'Name=modernime' "$session_config/fcitx5/profile" >/dev/null
+

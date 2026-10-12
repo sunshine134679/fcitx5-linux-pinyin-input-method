@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# ModernIME User Session Initializer
+# Configures user environment, autostart, Fcitx5 profile, and activates ModernIME for desktop sessions.
+set -euo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+prefix=${MODERNIME_PREFIX:-}
+if [[ -z "$prefix" ]]; then
+    if [[ "$script_dir" =~ /bin$ ]]; then
+        prefix="${script_dir%/bin}"
+    else
+        prefix="/usr"
+    fi
+fi
+
+config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
+environment_dir="$config_home/environment.d"
+environment_file="$environment_dir/90-modernime.conf"
+autostart_dir="$config_home/autostart"
+autostart_file="$autostart_dir/modernime-fcitx5-session.desktop"
+fcitx5_config_dir="$config_home/fcitx5"
+fcitx5_profile="$fcitx5_config_dir/profile"
+
+if [[ "${EUID:-$(id -u)}" -eq 0 && -z "${MODERNIME_ALLOW_ROOT:-}" ]]; then
+    printf 'Warning: Running modernime-session-init as root will only configure the root account.\n' >&2
+    printf 'To configure your normal desktop user session, run this command without sudo as that user.\n' >&2
+fi
+
+printf '==> ModernIME User Session Initialization\n'
+printf 'Prefix:      %s\n' "$prefix"
+printf 'Config home: %s\n' "$config_home"
+
+# 1. Determine Addon & Data directories
+candidate_libdirs=("lib" "lib64" "lib/x86_64-linux-gnu" "lib/aarch64-linux-gnu")
+prefix_addon_dir=""
+for libdir in "${candidate_libdirs[@]}"; do
+    if [[ -d "$prefix/$libdir/fcitx5" && -f "$prefix/$libdir/fcitx5/modernime_fcitx5.so" ]]; then
+        prefix_addon_dir="$prefix/$libdir/fcitx5"
+        break
+    fi
+done
+if [[ -z "$prefix_addon_dir" ]]; then
+    for libdir in "${candidate_libdirs[@]}"; do
+        if [[ -d "$prefix/$libdir/fcitx5" ]]; then
+            prefix_addon_dir="$prefix/$libdir/fcitx5"
+            break
+        fi
+    done
+fi
+prefix_addon_dir=${prefix_addon_dir:-"$prefix/lib/fcitx5"}
+
+system_addon_dir=""
+for sys_dir in /usr/lib64/fcitx5 /usr/lib/x86_64-linux-gnu/fcitx5 /usr/lib/aarch64-linux-gnu/fcitx5 /usr/lib/fcitx5; do
+    if [[ -d "$sys_dir" ]]; then
+        system_addon_dir="$sys_dir"
+        break
+    fi
+done
+system_addon_dir=${system_addon_dir:-"/usr/lib/fcitx5"}
+
+# 2. Write environment.d configuration
+mkdir -p "$environment_dir"
+{
+    printf 'FCITX_ADDON_DIRS=%s:%s\n' "$prefix_addon_dir" "$system_addon_dir"
+    printf 'XDG_DATA_DIRS=%s/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}\n' "$prefix"
+    printf 'GTK_IM_MODULE=fcitx\n'
+    printf 'QT_IM_MODULE=fcitx\n'
+    printf 'XMODIFIERS=@im=fcitx\n'
+    printf 'SDL_IM_MODULE=fcitx\n'
+} > "$environment_file"
+printf 'Updated session environment: %s\n' "$environment_file"
+
+# 3. Write autostart entry
+mkdir -p "$autostart_dir"
+{
+    printf '[Desktop Entry]\n'
+    printf 'Type=Application\n'
+    printf 'Name=Fcitx 5 (ModernIME)\n'
+    printf 'GenericName=Input Method\n'
+    printf 'Comment=Start Fcitx 5 with ModernIME UI\n'
+    printf 'Exec=env FCITX_ADDON_DIRS=%s:%s fcitx5 -d -u modernime-ui\n' "$prefix_addon_dir" "$system_addon_dir"
+    printf 'Icon=fcitx\n'
+    printf 'Terminal=false\n'
+    printf 'Categories=System;Utility;\n'
+    printf 'StartupNotify=false\n'
+    printf 'X-GNOME-Autostart-Phase=Applications\n'
+} > "$autostart_file"
+printf 'Updated user autostart:     %s\n' "$autostart_file"
+
+# 4. Configure Fcitx5 profile to ensure modernime is in input method list
+mkdir -p "$fcitx5_config_dir"
+if [[ -f "$fcitx5_profile" ]]; then
+    if ! grep -q 'Name=modernime' "$fcitx5_profile"; then
+        # Add modernime to existing profile group 0
+        if grep -q '\[Groups/0/Items/0\]' "$fcitx5_profile"; then
+            # Find next item index
+            next_idx=$(grep -oP '\[Groups/0/Items/\K[0-9]+' "$fcitx5_profile" | sort -n | tail -n 1 || echo 0)
+            next_idx=$((next_idx + 1))
+            {
+                printf '\n[Groups/0/Items/%d]\n' "$next_idx"
+                printf 'Name=modernime\n'
+                printf 'Layout=\n'
+            } >> "$fcitx5_profile"
+            printf 'Added ModernIME to Fcitx5 profile: %s (Item %d)\n' "$fcitx5_profile" "$next_idx"
+        fi
+    else
+        printf 'ModernIME already configured in: %s\n' "$fcitx5_profile"
+    fi
+else
+    # Create clean initial profile with keyboard-us and modernime
+    {
+        printf '[Groups/0]\n'
+        printf 'Name=Default\n'
+        printf 'Default Layout=us\n'
+        printf 'DefaultIM=modernime\n'
+        printf '\n[Groups/0/Items/0]\n'
+        printf 'Name=keyboard-us\n'
+        printf 'Layout=\n'
+        printf '\n[Groups/0/Items/1]\n'
+        printf 'Name=modernime\n'
+        printf 'Layout=\n'
+        printf '\n[GroupOrder]\n'
+        printf '0=Default\n'
+    } > "$fcitx5_profile"
+    printf 'Created initial Fcitx5 profile:  %s\n' "$fcitx5_profile"
+fi
+
+# 5. Reload or restart Fcitx5 in graphical session
+skip_restart=false
+case "${MODERNIME_SKIP_FCITX_RESTART:-}" in
+    1|true|TRUE|yes|YES)
+        skip_restart=true
+        ;;
+esac
+
+if [[ "$skip_restart" == true ]]; then
+    printf 'Fcitx5 reload skipped by MODERNIME_SKIP_FCITX_RESTART=1\n'
+elif ! command -v fcitx5 >/dev/null 2>&1; then
+    printf 'Notice: fcitx5 executable not found in PATH; reload skipped.\n'
+elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    printf 'Notice: No active graphical display detected; restart skipped.\n'
+elif [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    printf 'Notice: No D-Bus session detected; reload skipped.\n'
+else
+    if command -v fcitx5-remote >/dev/null 2>&1; then
+        fcitx5-remote -r >/dev/null 2>&1 || true
+        fcitx5-remote -s modernime >/dev/null 2>&1 || true
+        current_im=$(fcitx5-remote -n 2>/dev/null || true)
+        if [[ "$current_im" == "modernime" ]]; then
+            printf 'Fcitx5 reloaded successfully. Active input method: modernime\n'
+        else
+            printf 'Fcitx5 configuration reloaded. Current input method: %s (switch using shortcut or: fcitx5-remote -s modernime)\n' "${current_im:-none}"
+        fi
+    fi
+fi
+
+printf '==> Session initialization complete.\n'
