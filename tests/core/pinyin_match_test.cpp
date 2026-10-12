@@ -267,5 +267,15 @@ int main() {
     assertTrue(PinyinMatchPolicy::matchTypoSyllable("sna", "san") == 3,
                "sna matches san as typo syllable");
 
+    // Unseparated pinyin syllable segmentation & abbreviation extraction
+    assertTrue(PinyinMatchPolicy::segmentPinyin("wangshaolong") == "wang'shao'long",
+               "wangshaolong segments to wang'shao'long");
+    assertTrue(PinyinMatchPolicy::segmentPinyin("shenkongcekong") == "shen'kong'ce'kong",
+               "shenkongcekong segments to shen'kong'ce'kong");
+    assertTrue(PinyinMatchPolicy::abbreviationKey("wangshaolong") == "wsl",
+               "unseparated wangshaolong produces abbreviation key wsl");
+    assertTrue(PinyinMatchPolicy::initialsMatch("wsl", "wangshaolong"),
+               "wsl matches initials of unseparated wangshaolong");
+
     return EXIT_SUCCESS;
 }

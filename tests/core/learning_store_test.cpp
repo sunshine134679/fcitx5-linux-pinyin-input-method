@@ -1113,24 +1113,25 @@ void testCommitEventTrackingAndLearning() {
 
 void testIndependentRecallIndex() {
     std::vector<modernime::core::LearningEntry> entries{
-        {"王绍龙", "wang'shao'long", "", "", 5, 1000, 0, false},
+        {"王绍龙", "wangshaolong", "", "", 5, 1000, 0, false},
         {"gnueabihf", "gnueabihf", "", "", 3, 1000, 0, false},
         {"不良词", "bu'liang'ci", "", "", 5, 1000, 0, true},
         {"未选词", "wei'xuan'ci", "", "", 0, 1000, 0, false},
     };
     modernime::core::LearningSnapshot snapshot(entries);
 
-    // 1. Canonical full pinyin match
+    // 1. Canonical full pinyin match (even when stored without apostrophes)
     auto recalledFull = snapshot.recallCandidates("wangshaolong", 1000);
     assertTrue(recalledFull.size() == 1, "exact canonical recall returns 1 candidate");
     assertTrue(recalledFull[0].phrase == "王绍龙", "recalled phrase matches");
-    assertTrue(recalledFull[0].pinyin == "wang'shao'long", "recalled pinyin matches");
+    assertTrue(recalledFull[0].pinyin == "wang'shao'long", "recalled pinyin is segmented with apostrophes");
     assertTrue(recalledFull[0].learningBoost > 2.0, "recalled candidate has positive boost");
 
-    // 2. Abbreviation match
+    // 2. Abbreviation match for unseparated SQLite entry
     auto recalledAbbr = snapshot.recallCandidates("wsl", 1000);
     assertTrue(recalledAbbr.size() == 1, "abbreviation recall returns 1 candidate");
     assertTrue(recalledAbbr[0].phrase == "王绍龙", "recalled phrase matches via abbreviation");
+    assertTrue(recalledAbbr[0].pinyin == "wang'shao'long", "recalled abbreviation pinyin is segmented");
 
     // 3. Prefix match (e.g. English term)
     auto recalledPrefix = snapshot.recallCandidates("gnu", 1000);

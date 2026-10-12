@@ -73973,10 +73973,119 @@ static constexpr std::string_view kCommonEnglishWords[] = {
     "zoo",
 };
 
+static constexpr std::string_view kCommonShortEnglishWords[] = {
+    "able", "acid", "act",  "add",  "age",  "aged", "ago",  "aid",  "aim",  "air",
+    "all",  "also", "and",  "any",  "api",  "app",  "are",  "area", "arm",  "army",
+    "art",  "ask",  "atom", "auto", "away", "baby", "back", "bad",  "bag",  "ball",
+    "band", "bank", "bar",  "base", "bash", "bath", "bay",  "bear", "beat", "bed",
+    "bee",  "been", "beer", "bell", "belt", "bend", "best", "big",  "bill", "bind",
+    "bird", "bit",  "bite", "blow", "blue", "boat", "body", "bomb", "bond", "bone",
+    "book", "boom", "boot", "born", "boss", "both", "bowl", "box",  "boy",  "bug",
+    "bulk", "burn", "bus",  "bush", "busy", "but",  "buy",  "byte", "cafe", "cage",
+    "cake", "call", "calm", "came", "camp", "can",  "cap",  "car",  "card", "care",
+    "case", "cash", "cast", "cat",  "cell", "char", "chat", "chip", "city", "club",
+    "coal", "coat", "code", "coin", "cold", "come", "cook", "cool", "copy", "core",
+    "corn", "cost", "cpu",  "crew", "crop", "cry",  "cuda", "cup",  "curl", "cut",
+    "cute", "dad",  "dark", "data", "date", "dawn", "day",  "days", "dead", "deal",
+    "dean", "dear", "debt", "deck", "deep", "deer", "demo", "deny", "desk", "dev",
+    "dial", "dict", "did",  "die",  "diet", "diff", "dirt", "disc", "disk", "docs",
+    "does", "dog",  "done", "door", "dose", "down", "draw", "drew", "drop", "drug",
+    "dry",  "dual", "duck", "due",  "duke", "dumb", "dump", "dust", "duty", "each",
+    "ear",  "earn", "ease", "east", "easy", "eat",  "edge", "edit", "egg",  "else",
+    "end",  "enum", "env",  "era",  "err",  "even", "ever", "evil", "exam", "exec",
+    "exit", "eye",  "face", "fact", "fade", "fail", "fair", "fake", "fall", "fame",
+    "far",  "farm", "fast", "fat",  "fate", "fear", "feat", "fee",  "feed", "feel",
+    "feet", "fell", "felt", "few",  "file", "fill", "film", "find", "fine", "fire",
+    "firm", "fish", "fit",  "five", "fix",  "flag", "flat", "flee", "flew", "flow",
+    "fly",  "folk", "food", "fool", "foot", "for",  "ford", "fork", "form", "fort",
+    "four", "free", "from", "fuel", "full", "fun",  "fund", "gain", "game", "gap",
+    "gas",  "gate", "gave", "gear", "gene", "get",  "gift", "girl", "git",  "give",
+    "glad", "gnu",  "goal", "goat", "god",  "goes", "gold", "golf", "gone", "good",
+    "got",  "gpu",  "gray", "grew", "grey", "grid", "grip", "grow", "gulf", "gun",
+    "guy",  "gym",  "had",  "hair", "half", "hall", "hand", "hang", "hard", "harm",
+    "has",  "hat",  "hate", "have", "head", "hear", "heat", "heel", "held", "hell",
+    "help", "her",  "here", "hero", "hide", "high", "hill", "him",  "hint", "hire",
+    "his",  "hit",  "hold", "hole", "holy", "home", "hook", "hope", "horn", "host",
+    "hot",  "hour", "how",  "html", "http", "huge", "hung", "hunt", "hurt", "ice",
+    "icon", "ide",  "idea", "idle", "ill",  "inch", "info", "init", "ink",  "inn",
+    "into", "ios",  "iron", "item", "its",  "jack", "jail", "java", "jazz", "jean",
+    "jeep", "job",  "jobs", "join", "joke", "joy",  "json", "jump", "june", "jury",
+    "just", "keen", "keep", "kept", "key",  "keys", "kick", "kid",  "kids", "kill",
+    "kind", "king", "kiss", "kit",  "knee", "knew", "knot", "know", "lab",  "lack",
+    "lady", "laid", "lake", "lamp", "land", "lane", "last", "late", "law",  "lay",
+    "lazy", "lead", "leaf", "lean", "led",  "left", "leg",  "less", "let",  "lie",
+    "life", "lift", "like", "limb", "line", "link", "lion", "lip",  "list", "live",
+    "load", "loan", "lock", "log",  "logo", "long", "look", "loop", "lord", "lose",
+    "loss", "lost", "lot",  "loud", "love", "low",  "luck", "mac",  "mad",  "made",
+    "mail", "main", "make", "male", "mall", "man",  "many", "map",  "mark", "mask",
+    "mass", "mate", "math", "max",  "may",  "meal", "mean", "meat", "meet", "melt",
+    "memo", "men",  "menu", "mere", "mesh", "mess", "met",  "mid",  "mild", "mile",
+    "milk", "mill", "min",  "mind", "mine", "mini", "miss", "mix",  "mode", "mom",
+    "mood", "moon", "more", "most", "move", "much", "mud",  "must", "myth", "nail",
+    "name", "navy", "near", "neat", "neck", "need", "net",  "new",  "news", "next",
+    "nice", "nick", "nil",  "nine", "node", "none", "noon", "nor",  "norm", "nose",
+    "not",  "note", "noun", "now",  "null", "nut",  "nvim", "odd",  "off",  "oil",
+    "okay", "old",  "once", "one",  "only", "onto", "open", "opt",  "oral", "our",
+    "out",  "over", "own",  "pace", "pack", "page", "paid", "pain", "pair", "pale",
+    "palm", "pan",  "park", "part", "pass", "past", "path", "pay",  "peak", "peer",
+    "pen",  "per",  "pet",  "pick", "pie",  "pig",  "pile", "pill", "pin",  "pine",
+    "pink", "pipe", "plan", "play", "plot", "plug", "plus", "poem", "poet", "pole",
+    "poll", "pond", "pool", "poor", "pop",  "pope", "pork", "port", "pose", "post",
+    "pot",  "pour", "pray", "prep", "prey", "pro",  "pull", "pump", "pure", "push",
+    "put",  "quit", "quiz", "race", "rack", "rage", "rail", "rain", "ram",  "rank",
+    "rare", "rate", "raw",  "read", "real", "rear", "red",  "rely", "rent", "repo",
+    "rest", "rice", "rich", "rid",  "ride", "ring", "rise", "risk", "road", "rock",
+    "role", "roll", "roof", "room", "root", "rope", "rose", "row",  "rule", "run",
+    "rush", "rust", "ruth", "sad",  "safe", "said", "sail", "sake", "sale", "salt",
+    "same", "sand", "sang", "save", "saw",  "say",  "scan", "sea",  "seat", "see",
+    "seed", "seek", "seem", "seen", "self", "sell", "send", "sent", "sept", "set",
+    "sex",  "she",  "ship", "shoe", "shop", "shot", "show", "shut", "shy",  "sick",
+    "side", "sigh", "sign", "silk", "sin",  "sing", "sink", "sir",  "sit",  "site",
+    "six",  "size", "ski",  "skin", "skip", "sky",  "slip", "slow", "snap", "snow",
+    "soap", "soft", "soil", "sold", "sole", "some", "son",  "song", "soon", "sort",
+    "soul", "soup", "sour", "span", "spec", "spin", "spot", "sql",  "ssh",  "star",
+    "stay", "stem", "step", "stir", "stop", "sub",  "such", "sudo", "suit", "sum",
+    "sun",  "sure", "swim", "sync", "sys",  "tab",  "tag",  "tail", "take", "tale",
+    "talk", "tall", "tank", "tape", "task", "tax",  "tea",  "team", "tear", "tech",
+    "tee",  "tell", "temp", "ten",  "tend", "tent", "term", "test", "text", "than",
+    "that", "the",  "them", "then", "they", "thin", "this", "thus", "tide", "tie",
+    "tied", "tier", "tile", "till", "time", "tiny", "tip",  "tips", "tire", "todo",
+    "toe",  "told", "toll", "toml", "tone", "too",  "took", "tool", "top",  "tops",
+    "tore", "torn", "tour", "town", "toy",  "tree", "trip", "true", "try",  "tube",
+    "tune", "turn", "twin", "two",  "type", "ugly", "unit", "unix", "unto", "upon",
+    "urge", "url",  "use",  "used", "user", "uses", "uuid", "vain", "van",  "var",
+    "vary", "vast", "very", "via",  "view", "vim",  "visa", "void", "vote", "wage",
+    "wait", "wake", "walk", "wall", "want", "war",  "ward", "warm", "warn", "was",
+    "wash", "wave", "way",  "ways", "weak", "wear", "web",  "week", "weep", "well",
+    "went", "were", "west", "wet",  "what", "when", "who",  "whom", "why",  "wide",
+    "wife", "wild", "will", "win",  "wind", "wine", "wing", "wire", "wise", "wish",
+    "with", "wolf", "won",  "wood", "wool", "word", "wore", "work", "worm", "worn",
+    "wrap", "yaml", "yard", "yeah", "year", "yes",  "yet",  "you",  "your", "zero",
+    "zip",  "zone", "zoo",  "zoom",
+};
+static_assert(std::is_sorted(std::begin(kCommonShortEnglishWords),
+                             std::end(kCommonShortEnglishWords)));
+
+constexpr bool hasEnglishVowel(std::string_view word) noexcept {
+    for (const char c : word) {
+        if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' || c == 'y') {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isAllowedShortEnglishWord(std::string_view lowerWord) noexcept {
+    return std::binary_search(std::begin(kCommonEnglishWords),
+                              std::end(kCommonEnglishWords), lowerWord) ||
+           std::binary_search(std::begin(kCommonShortEnglishWords),
+                              std::end(kCommonShortEnglishWords), lowerWord);
+}
+
 } // namespace
 
 bool EnglishDictionary::isEnglishWord(std::string_view word) noexcept {
-    if (word.size() < 2 || word.size() > 20) {
+    if (word.size() < 3 || word.size() > 20) {
         return false;
     }
     char buffer[24];
@@ -73990,6 +74099,15 @@ bool EnglishDictionary::isEnglishWord(std::string_view word) noexcept {
         buffer[i] = c;
     }
     std::string_view lowerWord(buffer, word.size());
+    if (lowerWord == "ssh") {
+        return true;
+    }
+    if (!hasEnglishVowel(lowerWord)) {
+        return false;
+    }
+    if (lowerWord.size() <= 4) {
+        return isAllowedShortEnglishWord(lowerWord);
+    }
     return std::binary_search(std::begin(kEnglishWords), std::end(kEnglishWords), lowerWord);
 }
 
@@ -74028,6 +74146,9 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
         buffer[i] = c;
     }
     std::string_view lowerPrefix(buffer, prefix.size());
+    if (!hasEnglishVowel(lowerPrefix)) {
+        return {};
+    }
 
     auto it = std::lower_bound(std::begin(kEnglishWords), std::end(kEnglishWords), lowerPrefix);
     if (it == std::end(kEnglishWords)) {
@@ -74037,11 +74158,14 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
     std::vector<std::string_view> matches;
     matches.reserve(16);
     while (it != std::end(kEnglishWords) && it->starts_with(lowerPrefix)) {
-        matches.push_back(*it);
-        ++it;
-        if (matches.size() >= 128) {
-            break;
+        if (it->size() >= 4 && hasEnglishVowel(*it) &&
+            (it->size() >= 5 || isAllowedShortEnglishWord(*it))) {
+            matches.push_back(*it);
+            if (matches.size() >= 128) {
+                break;
+            }
         }
+        ++it;
     }
 
     if (matches.empty()) {

@@ -1,11 +1,98 @@
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/english_dictionary.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <vector>
 
 namespace modernime::core {
+namespace {
+
+static constexpr std::string_view kValidPinyinSyllables[] = {
+    "a", "ai", "an", "ang", "ao",
+    "ba", "bai", "ban", "bang", "bao", "bei", "ben", "beng", "bi", "bian",
+    "biao", "bie", "bin", "bing", "bo", "bu",
+    "ca", "cai", "can", "cang", "cao", "ce", "cen", "ceng", "cha", "chai",
+    "chan", "chang", "chao", "che", "chen", "cheng", "chi", "chong", "chou",
+    "chu", "chua", "chuai", "chuan", "chuang", "chui", "chun", "chuo", "ci",
+    "cong", "cou", "cu", "cuan", "cui", "cun", "cuo",
+    "da", "dai", "dan", "dang", "dao", "de", "dei", "den", "deng", "di",
+    "dia", "dian", "diao", "die", "ding", "diu", "dong", "dou", "du",
+    "duan", "dui", "dun", "duo",
+    "e", "ei", "en", "eng", "er",
+    "fa", "fan", "fang", "fei", "fen", "feng", "fo", "fou", "fu",
+    "ga", "gai", "gan", "gang", "gao", "ge", "gei", "gen", "geng", "gong",
+    "gou", "gu", "gua", "guai", "guan", "guang", "gui", "gun", "guo",
+    "ha", "hai", "han", "hang", "hao", "he", "hei", "hen", "heng", "hong",
+    "hou", "hu", "hua", "huai", "huan", "huang", "hui", "hun", "huo",
+    "ji", "jia", "jian", "jiang", "jiao", "jie", "jin", "jing", "jiong",
+    "jiu", "ju", "juan", "jue", "jun",
+    "ka", "kai", "kan", "kang", "kao", "ke", "kei", "ken", "keng", "kong",
+    "kou", "ku", "kua", "kuai", "kuan", "kuang", "kui", "kun", "kuo",
+    "la", "lai", "lan", "lang", "lao", "le", "lei", "leng", "li", "lia",
+    "lian", "liang", "liao", "lie", "lin", "ling", "liu", "lo", "long",
+    "lou", "lu", "luan", "lun", "luo", "lv", "lve",
+    "ma", "mai", "man", "mang", "mao", "me", "mei", "men", "meng", "mi",
+    "mian", "miao", "mie", "min", "ming", "miu", "mo", "mou", "mu",
+    "na", "nai", "nan", "nang", "nao", "ne", "nei", "nen", "neng", "ni",
+    "nian", "niang", "niao", "nie", "nin", "ning", "niu", "nong", "nou",
+    "nu", "nuan", "nun", "nuo", "nv", "nve",
+    "o", "ou",
+    "pa", "pai", "pan", "pang", "pao", "pei", "pen", "peng", "pi", "pian",
+    "piao", "pie", "pin", "ping", "po", "pou", "pu",
+    "qi", "qia", "qian", "qiang", "qiao", "qie", "qin", "qing", "qiong",
+    "qiu", "qu", "quan", "que", "qun",
+    "ran", "rang", "rao", "re", "ren", "reng", "ri", "rong", "rou", "ru",
+    "rua", "ruan", "rui", "run", "ruo",
+    "sa", "sai", "san", "sang", "sao", "se", "sen", "seng", "sha", "shai",
+    "shan", "shang", "shao", "she", "shei", "shen", "sheng", "shi", "shou",
+    "shu", "shua", "shuai", "shuan", "shuang", "shui", "shun", "shuo", "si",
+    "song", "sou", "su", "suan", "sui", "sun", "suo",
+    "ta", "tai", "tan", "tang", "tao", "te", "teng", "ti", "tian", "tiao",
+    "tie", "ting", "tong", "tou", "tu", "tuan", "tui", "tun", "tuo",
+    "wa", "wai", "wan", "wang", "wei", "wen", "weng", "wo", "wu",
+    "xi", "xia", "xian", "xiang", "xiao", "xie", "xin", "xing", "xiong",
+    "xiu", "xu", "xuan", "xue", "xun",
+    "ya", "yan", "yang", "yao", "ye", "yi", "yin", "ying", "yo", "yong",
+    "you", "yu", "yuan", "yue", "yun",
+    "za", "zai", "zan", "zang", "zao", "ze", "zei", "zen", "zeng", "zha",
+    "zhai", "zhan", "zhang", "zhao", "zhe", "zhei", "zhen", "zheng", "zhi",
+    "zhong", "zhou", "zhu", "zhua", "zhuai", "zhuan", "zhuang", "zhui",
+    "zhun", "zhuo", "zi", "zong", "zou", "zu", "zuan", "zui", "zun", "zuo",
+};
+
+bool isValidMandarinSyllable(std::string_view s) noexcept {
+    return std::binary_search(std::begin(kValidPinyinSyllables),
+                              std::end(kValidPinyinSyllables), s);
+}
+
+bool segmentConcatenatedPinyin(std::string_view text,
+                               std::size_t offset,
+                               std::vector<std::string_view> &out,
+                               std::vector<unsigned char> &failed) {
+    if (offset == text.size()) {
+        return true;
+    }
+    if (failed[offset]) {
+        return false;
+    }
+    const std::size_t maxLen = std::min<std::size_t>(6, text.size() - offset);
+    for (std::size_t len = maxLen; len >= 1; --len) {
+        const auto candidate = text.substr(offset, len);
+        if (isValidMandarinSyllable(candidate)) {
+            out.push_back(candidate);
+            if (segmentConcatenatedPinyin(text, offset + len, out, failed)) {
+                return true;
+            }
+            out.pop_back();
+        }
+    }
+    failed[offset] = 1;
+    return false;
+}
+
+} // namespace
 
 std::string PinyinMatchPolicy::canonical(std::string_view fullPinyin) {
     if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
@@ -22,9 +109,74 @@ std::string PinyinMatchPolicy::canonical(std::string_view fullPinyin) {
     return result;
 }
 
+std::string PinyinMatchPolicy::segmentPinyin(std::string_view fullPinyin) {
+    if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
+        fullPinyin.remove_prefix(3);
+    }
+    if (fullPinyin.empty()) {
+        return {};
+    }
+    if (fullPinyin.find_first_of("',") != std::string_view::npos) {
+        std::string normalized;
+        normalized.reserve(fullPinyin.size());
+        bool pendingSep = false;
+        for (const unsigned char ch : fullPinyin) {
+            if (ch == '\'' || ch == ',') {
+                if (!normalized.empty()) {
+                    pendingSep = true;
+                }
+                continue;
+            }
+            if (std::isalpha(ch)) {
+                if (pendingSep) {
+                    normalized.push_back('\'');
+                    pendingSep = false;
+                }
+                normalized.push_back(static_cast<char>(std::tolower(ch)));
+            } else {
+                normalized.push_back(static_cast<char>(ch));
+            }
+        }
+        return normalized;
+    }
+
+    std::string lower;
+    lower.reserve(fullPinyin.size());
+    for (const unsigned char ch : fullPinyin) {
+        if (!std::isalpha(ch)) {
+            return std::string(fullPinyin);
+        }
+        lower.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    if (lower.size() > 48) {
+        return lower;
+    }
+
+    std::vector<std::string_view> syllables;
+    syllables.reserve(8);
+    std::vector<unsigned char> failed(lower.size() + 1, 0);
+    if (segmentConcatenatedPinyin(lower, 0, syllables, failed) && !syllables.empty()) {
+        std::string joined;
+        joined.reserve(lower.size() + syllables.size());
+        for (std::size_t i = 0; i < syllables.size(); ++i) {
+            if (i > 0) {
+                joined.push_back('\'');
+            }
+            joined.append(syllables[i]);
+        }
+        return joined;
+    }
+    return lower;
+}
+
 std::string PinyinMatchPolicy::abbreviationKey(std::string_view fullPinyin) {
     if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
         fullPinyin.remove_prefix(3);
+    }
+    std::string segmentedStorage;
+    if (fullPinyin.find_first_of("',") == std::string_view::npos) {
+        segmentedStorage = segmentPinyin(fullPinyin);
+        fullPinyin = segmentedStorage;
     }
     std::string result;
     bool syllableStart = true;
@@ -103,6 +255,11 @@ bool PinyinMatchPolicy::initialsMatch(std::string_view userInput,
     }
     if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
         fullPinyin.remove_prefix(3);
+    }
+    std::string segmentedStorage;
+    if (fullPinyin.find_first_of("',") == std::string_view::npos) {
+        segmentedStorage = segmentPinyin(fullPinyin);
+        fullPinyin = segmentedStorage;
     }
     std::vector<std::string_view> syllables;
     std::size_t start = 0;

@@ -42,10 +42,17 @@ int main() {
     assertTrue(EnglishDictionary::isEnglishWord("cmake"), "cmake is recognized");
     assertTrue(EnglishDictionary::isEnglishWord("linux"), "linux is recognized");
 
-    // Negative tests: Chinese abbreviations excluded
+    // Negative tests: Chinese abbreviations and vowel-less acronyms excluded
     assertTrue(!EnglishDictionary::isEnglishWord("bj"), "bj is excluded");
     assertTrue(!EnglishDictionary::isEnglishWord("dl"), "dl is excluded");
     assertTrue(!EnglishDictionary::isEnglishWord("wsm"), "wsm is excluded");
+    assertTrue(!EnglishDictionary::isEnglishWord("wsl"), "wsl is excluded");
+    assertTrue(!EnglishDictionary::isEnglishWord("sjw"), "sjw is excluded");
+    assertTrue(!EnglishDictionary::isEnglishWord("ssd"), "ssd is excluded");
+    assertTrue(!EnglishDictionary::isEnglishWord("vcr"), "vcr is excluded");
+    assertTrue(!EnglishDictionary::isEnglishWord("tls"), "tls is excluded");
+    assertTrue(!EnglishDictionary::isEnglishWord("aba"), "obscure 3-letter aba is excluded");
+    assertTrue(!EnglishDictionary::isEnglishWord("abb"), "obscure 3-letter abb is excluded");
     assertTrue(!EnglishDictionary::isEnglishWord("yyds"), "yyds is excluded");
 
     // Boundary conditions for isEnglishWord
@@ -90,6 +97,9 @@ int main() {
     // Boundary conditions for predictWords
     assertTrue(EnglishDictionary::predictWords("", 3).empty(), "empty prefix yields empty");
     assertTrue(EnglishDictionary::predictWords("a", 3).empty(), "single char prefix yields empty");
+    assertTrue(EnglishDictionary::predictWords("bj", 3).empty(), "bj prefix yields empty");
+    assertTrue(EnglishDictionary::predictWords("wsm", 3).empty(), "wsm prefix yields empty");
+    assertTrue(EnglishDictionary::predictWords("wsl", 3).empty(), "wsl prefix yields empty");
     assertTrue(EnglishDictionary::predictWords("123", 3).empty(), "numbers prefix yields empty");
     assertTrue(EnglishDictionary::predictWords("gara", 0).empty(), "maxCount 0 yields empty");
     assertTrue(EnglishDictionary::predictWords("nonexistentwordxyz", 3).empty(), "nonsense prefix yields empty");

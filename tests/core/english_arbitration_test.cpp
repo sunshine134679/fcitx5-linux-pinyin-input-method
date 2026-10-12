@@ -148,6 +148,7 @@ void testChineseAbbreviationProtection() {
     modernime::pinyin::PinyinDataPaths paths;
     modernime::pinyin::PinyinProviderOptions options;
     options.learningEnabled = false;
+    options.englishDefinitionEnabled = true;
 
     modernime::pinyin::PinyinCandidateProvider provider(paths, options);
 
@@ -169,6 +170,54 @@ void testChineseAbbreviationProtection() {
     assertTrue(!provider.page().items.empty(), "has candidates for zw");
     assertTrue(provider.page().items.front().source != modernime::core::CandidateSource::Raw,
                "zw top candidate is Chinese, not raw English");
+
+    // wsl 稳固保护中文，不被生僻缩写词义（威塞尔斯布隆病毒）抢占候选位
+    provider.reset();
+    assertTrue(provider.append("wsl"), "append wsl");
+    assertTrue(!provider.page().items.empty(), "has candidates for wsl");
+    assertTrue(provider.page().items.front().source != modernime::core::CandidateSource::Raw,
+               "wsl top candidate is Chinese, not raw wsl");
+    assertTrue(provider.page().items.front().annotation.empty(),
+               "wsl top candidate has no obscure English definition annotation");
+
+    // 学习“王绍龙”（SQLite 落盘归一化为无撇号 wangshaolong）后，输入 wsl 与 wangshaolong 均在首位召回“王绍龙”
+    std::error_code error;
+    const auto learningPath = testPath("english-arbitration-wsl.sqlite3");
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+    {
+        modernime::core::LearningStore store(learningPath);
+        assertTrue(store.open(), "open wsl learning store");
+        for (int i = 0; i < 5; ++i) {
+            assertTrue(store.recordSelection("王绍龙", "wang'shao'long", {}, {}, 1000 + i),
+                       "record 王绍龙 selection in SQLite store");
+        }
+        store.close();
+
+        modernime::pinyin::PinyinDataPaths learnedPaths;
+        learnedPaths.learningStore = learningPath.string();
+        modernime::pinyin::PinyinProviderOptions learnedOptions;
+        learnedOptions.learningEnabled = true;
+        learnedOptions.englishDefinitionEnabled = true;
+        modernime::pinyin::PinyinCandidateProvider learnedProvider(learnedPaths, learnedOptions);
+
+        assertTrue(learnedProvider.append("wsl"), "append wsl with learned 王绍龙");
+        assertTrue(!learnedProvider.page().items.empty(), "wsl produces candidates with learning");
+        assertTrue(learnedProvider.page().items.front().text == "王绍龙",
+                   "learned 王绍龙 is recalled at rank 0 for abbreviation wsl");
+        assertTrue(learnedProvider.page().items.front().annotation.empty(),
+                   "learned 王绍龙 has no English definition annotation");
+
+        learnedProvider.reset();
+        assertTrue(learnedProvider.append("wangshaolong"), "append wangshaolong with learned 王绍龙");
+        assertTrue(!learnedProvider.page().items.empty(), "wangshaolong produces candidates");
+        assertTrue(learnedProvider.page().items.front().text == "王绍龙",
+                   "learned 王绍龙 is at rank 0 for full pinyin wangshaolong");
+    }
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
 void testDoubleLetterFaultTolerance() {

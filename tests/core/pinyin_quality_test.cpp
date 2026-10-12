@@ -420,7 +420,22 @@ void testEnglishDefinitionQualityScenarios(
     assertTrue(provider.page().items.front().annotation.empty(),
                "no definition annotation when single-syllable Chinese is top candidate for de");
 
-    // 5. 选词行为：选中第 1 位英文候选或第 2 位 gara，立即上屏并清空
+    // 5. 3字母简拼/缩写 (wsl / git) -> 严禁展示生僻缩写释义（如“威塞尔斯布隆病毒”或“饭桶”）抢占候选
+    provider.reset();
+    assertTrue(provider.append("wsl"), "wsl is accepted");
+    assertTrue(!provider.page().items.empty(), "wsl has candidates");
+    assertTrue(provider.page().items.front().source != modernime::core::CandidateSource::Raw,
+               "wsl top candidate is Chinese rather than raw wsl");
+    assertTrue(provider.page().items.front().annotation.empty(),
+               "no obscure virus translation annotation on wsl");
+
+    provider.reset();
+    assertTrue(provider.append("git"), "git is accepted");
+    assertTrue(!provider.page().items.empty(), "git has candidates");
+    assertTrue(provider.page().items.front().annotation.empty(),
+               "3-letter developer term git does not show slang translation annotation");
+
+    // 6. 选词行为：选中第 1 位英文候选或第 2 位 gara，立即上屏并清空
     provider.reset();
     assertTrue(provider.append("apple"), "apple re-entered");
     assertTrue(provider.select(0), "selecting apple candidate succeeds");

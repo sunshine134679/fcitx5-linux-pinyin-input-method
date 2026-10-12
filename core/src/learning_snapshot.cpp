@@ -160,26 +160,30 @@ LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
         }
-        if (isAsciiWord(entry.phrase)) {
+        const bool asciiWord = isAsciiWord(entry.phrase);
+        if (asciiWord) {
             const auto lower = toLowerAscii(entry.phrase);
             if (seenEnglish.insert(lower).second) {
                 index->englishIndex.emplace_back(lower, entry.phrase);
             }
         }
-        const auto key = candidateOrderKey(entry.phrase, entry.pinyin);
+        const std::string recallPinyin =
+            asciiWord ? entry.pinyin : PinyinMatchPolicy::segmentPinyin(entry.pinyin);
+        const auto key = candidateOrderKey(entry.phrase, recallPinyin);
         if (!seen.insert(key).second) {
             continue;
         }
-        const auto canonical = PinyinMatchPolicy::canonical(entry.pinyin);
+        const auto canonical = PinyinMatchPolicy::canonical(recallPinyin);
         if (!canonical.empty()) {
-            index->canonicalIndex[canonical].push_back({entry.phrase, entry.pinyin});
-            index->prefixIndex.emplace_back(canonical, entry.phrase, entry.pinyin);
+            index->canonicalIndex[canonical].push_back({entry.phrase, recallPinyin});
+            index->prefixIndex.emplace_back(canonical, entry.phrase, recallPinyin);
         }
-        if (entry.pinyin.find('\'') != std::string::npos ||
-            entry.pinyin.find(',') != std::string::npos) {
-            const auto abbr = PinyinMatchPolicy::abbreviationKey(entry.pinyin);
+        if (!asciiWord ||
+            recallPinyin.find('\'') != std::string::npos ||
+            recallPinyin.find(',') != std::string::npos) {
+            const auto abbr = PinyinMatchPolicy::abbreviationKey(recallPinyin);
             if (abbr.size() >= 2) {
-                index->abbrIndex[abbr].push_back({entry.phrase, entry.pinyin});
+                index->abbrIndex[abbr].push_back({entry.phrase, recallPinyin});
             }
         }
     }
@@ -870,19 +874,22 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
         }
-        const auto canonicalPinyin = PinyinMatchPolicy::canonical(entry.pinyin);
+        const bool asciiWord = isAsciiWord(entry.phrase);
+        const std::string recallPinyin =
+            asciiWord ? entry.pinyin : PinyinMatchPolicy::segmentPinyin(entry.pinyin);
+        const auto canonicalPinyin = PinyinMatchPolicy::canonical(recallPinyin);
         bool match = false;
         if (!canonicalInput.empty() && canonicalPinyin == canonicalInput) {
             match = true;
         } else if (isAbbr &&
-                   (PinyinMatchPolicy::abbreviationKey(entry.pinyin) == userInput ||
-                    PinyinMatchPolicy::initialsMatch(userInput, entry.pinyin))) {
+                   (PinyinMatchPolicy::abbreviationKey(recallPinyin) == userInput ||
+                    PinyinMatchPolicy::initialsMatch(userInput, recallPinyin))) {
             match = true;
         } else if (canonicalInput.size() >= 3 && canonicalPinyin.starts_with(canonicalInput)) {
             match = true;
         }
         if (match) {
-            addCandidate(entry.phrase, entry.pinyin);
+            addCandidate(entry.phrase, recallPinyin);
         }
     }
 

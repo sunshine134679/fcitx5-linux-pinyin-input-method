@@ -3,6 +3,7 @@
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/common_characters.h"
 #include "modernime/core/dictionary_prior.h"
+#include "modernime/core/pinyin_match.h"
 
 #include <unordered_set>
 
@@ -230,6 +231,8 @@ CandidatePipelineResult buildCandidatePipeline(
         const auto recalled = learning->recallCandidates(
             context.userInput(), nowMs, contextBefore, contextAfter);
         std::size_t recalledIdx = 0;
+        const bool isAbbrInput =
+            core::PinyinMatchPolicy::isAbbreviationInput(context.userInput());
         for (const auto &item : recalled) {
             const auto cp = core::CommonCharacters::firstCodepoint(item.phrase);
             if (!((cp >= 0x4E00 && cp <= 0x9FFF) ||
@@ -237,14 +240,17 @@ CandidatePipelineResult buildCandidatePipeline(
                   (cp >= 0x20000 && cp <= 0x2EBEF))) {
                 continue;
             }
-            const auto key = core::candidateOrderKey(item.phrase, item.pinyin);
+            const std::string segmentedPinyin =
+                core::PinyinMatchPolicy::segmentPinyin(item.pinyin);
+            const auto key = core::candidateOrderKey(item.phrase, segmentedPinyin);
             if (seenKeys.contains(key)) {
-                if (item.learningBoost >= 1.8) {
+                if (item.learningBoost >= 1.8 ||
+                    (isAbbrInput && item.learningBoost >= 0.8)) {
                     for (auto &existing : result.scored) {
                         if (!existing.is_lexical &&
                             utf8CodePointCount(existing.text) >= 2 &&
                             existing.text == item.phrase &&
-                            existing.full_pinyin == item.pinyin) {
+                            existing.full_pinyin == segmentedPinyin) {
                             existing.source_index =
                                 std::min(existing.source_index, recalledIdx++);
                             break;
@@ -257,7 +263,7 @@ CandidatePipelineResult buildCandidatePipeline(
             core::CandidateScore candidate;
             candidate.source_index = recalledIdx++;
             candidate.text = item.phrase;
-            candidate.full_pinyin = item.pinyin;
+            candidate.full_pinyin = segmentedPinyin;
             candidate.learning_boost = item.learningBoost;
             candidate.context_bonus = item.contextBoost;
             const auto dictResult = dictionaryBonus(

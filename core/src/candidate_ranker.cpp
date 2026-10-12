@@ -94,6 +94,13 @@ CandidateRanker::rank(std::string_view userInput,
                 abbreviationPromoted[index] = true;
             }
         }
+    } else {
+        for (std::size_t index = 0; index < candidates.size(); ++index) {
+            const auto &candidate = candidates[index];
+            if (candidate.match_priority == 1 && candidate.learning_boost >= 0.8) {
+                abbreviationPromoted[index] = true;
+            }
+        }
     }
     std::stable_sort(order.begin(), order.end(),
                      [&candidates, &abbreviationPromoted](std::size_t left,

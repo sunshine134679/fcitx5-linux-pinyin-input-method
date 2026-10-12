@@ -1948,8 +1948,20 @@ private:
         }
 
         const bool isInitialConsonant = (rawInput == "sh" || rawInput == "ch" || rawInput == "zh");
+        const bool isConsonantAbbreviation =
+            rawInput.size() >= 2 && !page_.items.empty() &&
+            std::all_of(rawInput.begin(), rawInput.end(), [](char c) {
+                return c >= 'a' && c <= 'z' &&
+                       c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' && c != 'v' && c != 'y';
+            }) &&
+            (rawInput.size() == 2 ||
+             core::PinyinMatchPolicy::abbreviationKey(
+                 page_.items.front().fullPinyin) == rawInput ||
+             core::PinyinMatchPolicy::initialsMatch(
+                 rawInput, page_.items.front().fullPinyin));
         const bool isEnglish =
-            !isInitialConsonant && core::EnglishDictionary::isEnglishWord(rawInput);
+            !isInitialConsonant && !isConsonantAbbreviation &&
+            core::EnglishDictionary::isEnglishWord(rawInput);
 
         const bool hasExactFullPinyinMatch = std::any_of(
             page_.items.begin(), page_.items.end(),
@@ -1961,13 +1973,6 @@ private:
                             rawInput, item.fullPinyin));
             });
 
-        const bool isConsonantAbbreviation =
-            rawInput.size() == 2 && !page_.items.empty() &&
-            std::all_of(rawInput.begin(), rawInput.end(), [](char c) {
-                return c >= 'a' && c <= 'z' &&
-                       c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' && c != 'v';
-            });
-
         const bool hasTrustedShortAbbreviation =
             std::any_of(page_.items.begin(), page_.items.end(),
                         [&rawInput](const auto &item) {
@@ -1977,44 +1982,6 @@ private:
                                            rawInput, item.fullPinyin,
                                            item.text);
                         });
-
-        const bool shouldPredictEnglish =
-            (rawInput.empty() || rawInput.front() != 'v') &&
-            !isEnglish && !hasTrustedShortAbbreviation &&
-            !isConsonantAbbreviation &&
-            !hasExactFullPinyinMatch &&
-            (!hasPinyinCoverage ||
-             hasInvalidInternalPinyinSegment(segmentedInput)) &&
-            rawInput.size() >= 2;
-
-        std::vector<std::string> predictedWords;
-        const bool canPredictEnglish =
-            (rawInput.empty() || rawInput.front() != 'v') &&
-            !hasTrustedShortAbbreviation &&
-            !isConsonantAbbreviation &&
-            rawInput.size() >= 2;
-
-        if (canPredictEnglish && learning != nullptr) {
-            const auto learned = learning->recallEnglishWords(rawInput, 3, nowMilliseconds());
-            for (const auto &item : learned) {
-                if (!suppressedLearned_.contains(candidateKey(item.text, item.text)) &&
-                    !learning->isSuppressed(item.text, item.text)) {
-                    predictedWords.push_back(item.text);
-                }
-            }
-        }
-        if (shouldPredictEnglish) {
-            const auto staticWords = core::EnglishDictionary::predictWords(rawInput, 3);
-            for (const auto &w : staticWords) {
-                if (std::find(predictedWords.begin(), predictedWords.end(), w) == predictedWords.end()) {
-                    predictedWords.emplace_back(w);
-                }
-            }
-        }
-
-        const bool isEnglishSuppressed =
-            suppressedLearned_.contains(candidateKey(rawInput, rawInput)) ||
-            (learning != nullptr && learning->isSuppressed(rawInput, rawInput));
 
         bool isTopChineseLexical = false;
         if (!page_.items.empty()) {
@@ -2054,6 +2021,43 @@ private:
             !page_.items.empty() &&
             (hasTrustedShortAbbreviation || isConsonantAbbreviation ||
              (hasExactFullPinyinMatch && isTopChineseLexical));
+
+        const bool shouldPredictEnglish =
+            (rawInput.empty() || rawInput.front() != 'v') &&
+            !isEnglish && !hasHighConfidenceChinese &&
+            !hasExactFullPinyinMatch &&
+            (!hasPinyinCoverage ||
+             hasInvalidInternalPinyinSegment(segmentedInput)) &&
+            rawInput.size() >= 4;
+
+        std::vector<std::string> predictedWords;
+        const bool canPredictEnglish =
+            (rawInput.empty() || rawInput.front() != 'v') &&
+            !hasTrustedShortAbbreviation &&
+            !isConsonantAbbreviation &&
+            rawInput.size() >= 2;
+
+        if (canPredictEnglish && learning != nullptr) {
+            const auto learned = learning->recallEnglishWords(rawInput, 3, nowMilliseconds());
+            for (const auto &item : learned) {
+                if (!suppressedLearned_.contains(candidateKey(item.text, item.text)) &&
+                    !learning->isSuppressed(item.text, item.text)) {
+                    predictedWords.push_back(item.text);
+                }
+            }
+        }
+        if (shouldPredictEnglish) {
+            const auto staticWords = core::EnglishDictionary::predictWords(rawInput, 3);
+            for (const auto &w : staticWords) {
+                if (std::find(predictedWords.begin(), predictedWords.end(), w) == predictedWords.end()) {
+                    predictedWords.emplace_back(w);
+                }
+            }
+        }
+
+        const bool isEnglishSuppressed =
+            suppressedLearned_.contains(candidateKey(rawInput, rawInput)) ||
+            (learning != nullptr && learning->isSuppressed(rawInput, rawInput));
 
         bool preferEnglishOverChinese = false;
         if (page_.items.empty()) {
@@ -2167,6 +2171,7 @@ private:
         if (englishDefinitionEnabled_ && !page_.items.empty() && shared_) {
             auto &top = page_.items.front();
             if (top.source == core::CandidateSource::Raw &&
+                top.text.size() >= 4 &&
                 core::EnglishDictionary::isEnglishWord(top.text)) {
                 auto *dict = shared_->ensureEnglishDefinitionDictionary();
                 if (dict != nullptr) {
