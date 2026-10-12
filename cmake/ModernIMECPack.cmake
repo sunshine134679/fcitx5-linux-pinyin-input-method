@@ -42,6 +42,8 @@ set(CPACK_RPM_PACKAGE_URL "https://github.com/sunshine134679/fcitx5-linux-pinyin
 set(CPACK_RPM_PACKAGE_AUTOREQPROV "yes")
 set(CPACK_RPM_PACKAGE_REQUIRES "fcitx5, libime, gtk3")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
+    set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
+    set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postun.sh")
     set(CPACK_RPM_PACKAGE_POST_INSTALL "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
     set(CPACK_RPM_PACKAGE_POST_UNINSTALL "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postun.sh")
 endif()

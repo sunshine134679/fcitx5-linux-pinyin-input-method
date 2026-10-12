@@ -526,6 +526,7 @@ if(BASH_EXECUTABLE)
     add_test(NAME modernime_repository_contract
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/repository_contract_test.sh
+            ${CMAKE_BINARY_DIR}
     )
     add_test(NAME modernime_pinyin_knowledge_data
         COMMAND ${BASH_EXECUTABLE}
