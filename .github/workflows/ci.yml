@@ -91,6 +91,7 @@ jobs:
       - name: Build and verify RPM package
         run: |
           set -euo pipefail
+          export MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1
           ./scripts/package_rpm.sh
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
           RPM_FILE=$(ls dist/*.rpm | head -n 1)
@@ -100,7 +101,34 @@ jobs:
           fi
           ls -lh "dist/${TARGET_NAME}"
           rpm -qpi "dist/${TARGET_NAME}"
+          rpm_files=$(rpm -qpl "dist/${TARGET_NAME}")
+          echo "$rpm_files"
+          if echo "$rpm_files" | grep -Fq "(contains no files)"; then
+            echo "FATAL: rpm -qpl reported (contains no files)" >&2
+            exit 1
+          fi
           rpm -qpl "dist/${TARGET_NAME}" | grep -Fx "/usr/share/modernime/install-channel.txt"
+          for expected_file in \
+            "/usr/bin/modernime-settings" \
+            "/usr/bin/modernime-session-init" \
+            "/usr/bin/modernime-data-guard" \
+            "/usr/bin/modernime-migrate-channel" \
+            "/usr/share/modernime/install-channel.txt" \
+            "/usr/share/modernime/pinyin/modernime-knowledge.dict" \
+            "/usr/share/modernime/pinyin/modernime-hotwords.dict" \
+            "/usr/share/modernime/pinyin/modernime-english-dict.bin" \
+            "/usr/share/doc/modernime/LICENSE" \
+            "/usr/share/doc/modernime/copyright" \
+            "/usr/share/doc/modernime/THIRD_PARTY_NOTICES.md" \
+            "/usr/share/doc/modernime/SOURCES.json" \
+            "/usr/share/applications/modernime-settings.desktop" \
+            "/usr/share/fcitx5/addon/modernime.conf" \
+            "/usr/share/fcitx5/addon/modernime-ui.conf" \
+            "/usr/share/fcitx5/inputmethod/modernime.conf"; do
+            echo "$rpm_files" | grep -Fx "$expected_file" >/dev/null
+          done
+          echo "$rpm_files" | grep -E "^/usr/lib(64)?/fcitx5/modernime_fcitx5\.so$" >/dev/null
+          echo "$rpm_files" | grep -E "^/usr/lib(64)?/fcitx5/modernime_ui\.so$" >/dev/null
 
       - name: Verify native rpmsign passphrase matrix, rpmkeys signature check, and full DNF lifecycle
         run: |
@@ -290,7 +318,24 @@ jobs:
           # Upgrade 0.1.8 -> 0.1.9
           dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
-          test -x /usr/bin/modernime-settings
+          rpm -V modernime
+          for exec_bin in \
+            /usr/bin/modernime-settings \
+            /usr/bin/modernime-session-init \
+            /usr/bin/modernime-data-guard \
+            /usr/bin/modernime-migrate-channel; do
+            test -x "$exec_bin"
+            test "$(stat -c '%a' "$exec_bin")" = "755"
+          done
+          for data_file in \
+            /usr/share/modernime/install-channel.txt \
+            /usr/share/modernime/pinyin/modernime-knowledge.dict \
+            /usr/share/modernime/pinyin/modernime-hotwords.dict \
+            /usr/share/modernime/pinyin/modernime-english-dict.bin \
+            /usr/share/applications/modernime-settings.desktop; do
+            test -f "$data_file"
+            test "$(stat -c '%a' "$data_file")" = "644"
+          done
           grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
           grep -Fx "version=${VERSION}" /usr/share/modernime/install-channel.txt
           /usr/bin/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime
@@ -298,6 +343,7 @@ jobs:
           # Downgrade / Rollback 0.1.9 -> 0.1.8
           dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
+          rpm -V modernime
           grep -Fx "version=0.1.8" /usr/share/modernime/install-channel.txt
           /usr/bin/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime
 
@@ -309,8 +355,18 @@ jobs:
             echo "FATAL: modernime still installed after dnf remove" >&2
             exit 1
           fi
-          test ! -e /usr/bin/modernime-settings
-          test ! -e /usr/share/modernime/install-channel.txt
+          for removed_path in \
+            /usr/bin/modernime-settings \
+            /usr/bin/modernime-session-init \
+            /usr/bin/modernime-data-guard \
+            /usr/bin/modernime-migrate-channel \
+            /usr/share/modernime/install-channel.txt \
+            /usr/share/modernime/pinyin/modernime-knowledge.dict \
+            /usr/share/modernime/pinyin/modernime-hotwords.dict \
+            /usr/share/modernime/pinyin/modernime-english-dict.bin \
+            /usr/share/applications/modernime-settings.desktop; do
+            test ! -e "$removed_path"
+          done
           grep -Fx "custom_theme=ocean" /root/.config/modernime/settings.conf
           grep -Fq "开源欧拉" /root/.local/share/modernime/user-dictionary.txt
           ./scripts/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime

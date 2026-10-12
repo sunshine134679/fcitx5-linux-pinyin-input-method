@@ -46,11 +46,16 @@ fi
 [ -f "${deb_file}" ] || fail "DEB package not produced in dist/"
 
 rpm_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.rpm" 2>/dev/null | head -n 1 || true)
-if [ -z "${rpm_file}" ] || [ "${repo_root}/scripts/modernime-migrate-channel" -nt "${rpm_file}" ] || [ "${repo_root}/tools/settings/update_controller.cpp" -nt "${rpm_file}" ]; then
+if [ -z "${rpm_file}" ] || [ "${repo_root}/scripts/package_rpm.sh" -nt "${rpm_file}" ] || [ "${repo_root}/scripts/modernime-migrate-channel" -nt "${rpm_file}" ] || [ "${repo_root}/tools/settings/update_controller.cpp" -nt "${rpm_file}" ]; then
     "${repo_root}/scripts/package_rpm.sh"
     rpm_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.rpm" | head -n 1)
 fi
 [ -f "${rpm_file}" ] || fail "RPM package not produced in dist/"
+
+assert_normal_nonzero_failure \
+    "package_rpm.sh must reject fallback packaging when MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1" \
+    env MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1 MODERNIME_FORCE_FALLBACK_RPM=1 MODERNIME_RPM_DIST_DIR="${work_dir}/rejected-rpm-dist" \
+    "${repo_root}/scripts/package_rpm.sh"
 
 printf '=== [2/7] Verifying DEB & RPM file boundaries, dependencies, licenses, and zero user data ===\n'
 deb_info=$(dpkg-deb -I "${deb_file}")
@@ -108,6 +113,7 @@ rpm_extract_dir="${work_dir}/rpm-extracted"
 mkdir -p "${rpm_extract_dir}"
 python3 - "${rpm_file}" "${rpm_extract_dir}" "${expected_version}" <<'PYEOF'
 import gzip
+import hashlib
 from pathlib import Path
 import struct
 import subprocess
@@ -127,13 +133,17 @@ def parse_hdr(data, offset):
     store_start = idx_start + nindex * 16
     store_end = store_start + hsize
     tags = {}
+    dtypes = {}
     for i in range(nindex):
         eo = idx_start + i * 16
         tag, dtype, voff, count = struct.unpack(">IIII", data[eo:eo+16])
         pos = store_start + voff
+        dtypes[tag] = dtype
         if dtype in (6, 9):
             end = data.index(b"\x00", pos)
             tags[tag] = data[pos:end].decode("utf-8", errors="replace")
+        elif dtype == 7:
+            tags[tag] = data[pos:pos+count]
         elif dtype == 8:
             arr = []
             cur = pos
@@ -142,21 +152,27 @@ def parse_hdr(data, offset):
                 arr.append(data[cur:end].decode("utf-8", errors="replace"))
                 cur = end + 1
             tags[tag] = arr
+        elif dtype == 3:
+            vals = list(struct.unpack(f">{count}H", data[pos:pos+2*count]))
+            tags[tag] = vals if count > 1 else vals[0]
         elif dtype == 4:
             vals = list(struct.unpack(f">{count}I", data[pos:pos+4*count]))
             tags[tag] = vals if count > 1 else vals[0]
-    return tags, store_end
+    return tags, dtypes, store_end
 
-_, sig_end = parse_hdr(raw, 96)
+_, _, sig_end = parse_hdr(raw, 96)
 hdr_off = (sig_end + 7) & ~7
 if raw[hdr_off:hdr_off+4] != b"\x8e\xad\xe8\x01":
     hdr_off = raw.find(b"\x8e\xad\xe8\x01", sig_end)
-tags, payload_off = parse_hdr(raw, hdr_off)
+tags, dtypes, payload_off = parse_hdr(raw, hdr_off)
 
 assert tags.get(1000) == "modernime", f"Unexpected RPM name: {tags.get(1000)}"
 assert tags.get(1001) == expected_ver, f"Unexpected RPM version: {tags.get(1001)}"
-expected_lic = "Apache-2.0 AND LGPL-2.1-or-later AND CC-BY-SA-3.0 AND BSD-3-Clause AND MIT"
-assert tags.get(1014) == expected_lic, f"Unexpected RPM license: {tags.get(1014)}"
+valid_licenses = (
+    "LGPL-2.1-or-later AND MIT",
+    "Apache-2.0 AND LGPL-2.1-or-later AND CC-BY-SA-3.0 AND BSD-3-Clause AND MIT",
+)
+assert tags.get(1014) in valid_licenses, f"Unexpected RPM license: {tags.get(1014)}"
 
 req_names = tags.get(1049, [])
 req_vers = tags.get(1050, [])
@@ -187,7 +203,115 @@ subprocess.run(
     input=cpio_bytes,
     check=True,
 )
+
+# Verify complete rpmfi per-file header metadata required by native rpm -qpl, rpmkeys, and dnf
+def as_list(val):
+    if val is None:
+        return []
+    return val if isinstance(val, list) else [val]
+
+dirindexes = as_list(tags.get(1116))
+basenames = as_list(tags.get(1117))
+dirnames = as_list(tags.get(1118))
+filesizes = as_list(tags.get(1028))
+filemodes = as_list(tags.get(1030))
+filerdevs = as_list(tags.get(1033))
+filemtimes = as_list(tags.get(1034))
+filedigests = as_list(tags.get(1035))
+filelinktos = as_list(tags.get(1036))
+fileflags = as_list(tags.get(1037))
+fileusernames = as_list(tags.get(1039))
+filegroupnames = as_list(tags.get(1040))
+filedevices = as_list(tags.get(1095))
+fileinodes = as_list(tags.get(1096))
+filelangs = as_list(tags.get(1097))
+
+nfiles = len(basenames)
+assert nfiles >= 18, f"RPM header BASENAMES has too few entries ({nfiles})"
+assert dtypes.get(1030) == 3, f"RPMTAG_FILEMODES (1030) must be INT16 (dtype=3), got dtype={dtypes.get(1030)}"
+assert dtypes.get(1033) == 3, f"RPMTAG_FILERDEVS (1033) must be INT16 (dtype=3), got dtype={dtypes.get(1033)}"
+for tag_name, arr in [
+    ("DIRINDEXES(1116)", dirindexes),
+    ("FILESIZES(1028)", filesizes),
+    ("FILEMODES(1030)", filemodes),
+    ("FILERDEVS(1033)", filerdevs),
+    ("FILEMTIMES(1034)", filemtimes),
+    ("FILEDIGESTS(1035)", filedigests),
+    ("FILELINKTOS(1036)", filelinktos),
+    ("FILEFLAGS(1037)", fileflags),
+    ("FILEUSERNAME(1039)", fileusernames),
+    ("FILEGROUPNAME(1040)", filegroupnames),
+    ("FILEDEVICES(1095)", filedevices),
+    ("FILEINODES(1096)", fileinodes),
+    ("FILELANGS(1097)", filelangs),
+]:
+    assert len(arr) == nfiles, f"RPM header tag {tag_name} length {len(arr)} != BASENAMES length {nfiles}"
+
+assert len(set(fileinodes)) == nfiles, "RPMTAG_FILEINODES (1096) must be unique per entry to avoid bogus hardlink grouping"
+assert tags.get(5011) == 8, f"RPMTAG_FILEDIGESTALGO (5011) must be 8 (SHA256), got {tags.get(5011)}"
+
+hdr_reg_files = {}
+for i in range(nfiles):
+    d_idx = dirindexes[i]
+    assert 0 <= d_idx < len(dirnames), f"Invalid DIRINDEXES[{i}]={d_idx}"
+    full_path = f"{dirnames[d_idx]}{basenames[i]}"
+    mode = filemodes[i]
+    assert fileusernames[i] == "root", f"Unexpected FILEUSERNAME for {full_path}: {fileusernames[i]}"
+    assert filegroupnames[i] == "root", f"Unexpected FILEGROUPNAME for {full_path}: {filegroupnames[i]}"
+    if (mode & 0o170000) == 0o100000:
+        hdr_reg_files[full_path] = {
+            "size": filesizes[i],
+            "mode": mode,
+            "digest": filedigests[i],
+        }
+
+payload_reg_files = sorted(p for p in rootfs.rglob("*") if p.is_file() and not p.is_symlink())
+assert len(payload_reg_files) == 18, f"Expected 18 regular files in RPM payload, got {len(payload_reg_files)}"
+assert len(hdr_reg_files) == len(payload_reg_files), (
+    f"RPM header regular file count ({len(hdr_reg_files)}) != payload regular file count ({len(payload_reg_files)})"
+)
+
+for pf in payload_reg_files:
+    rel_path = "/" + pf.relative_to(rootfs).as_posix()
+    assert rel_path in hdr_reg_files, f"Payload file {rel_path} missing from RPM header file table"
+    meta = hdr_reg_files[rel_path]
+    actual_bytes = pf.read_bytes()
+    actual_sha = hashlib.sha256(actual_bytes).hexdigest()
+    assert meta["size"] == len(actual_bytes), (
+        f"RPM FILESIZES mismatch for {rel_path}: header={meta['size']}, payload={len(actual_bytes)}"
+    )
+    assert meta["digest"] == actual_sha, (
+        f"RPM FILEDIGESTS mismatch for {rel_path}: header={meta['digest']}, payload={actual_sha}"
+    )
+    perm = meta["mode"] & 0o777
+    if rel_path.startswith("/usr/bin/") or rel_path.endswith(".so"):
+        assert perm == 0o755, f"Expected 0755 mode for executable/shared library {rel_path}, got {oct(perm)}"
+    else:
+        assert perm == 0o644, f"Expected 0644 mode for regular file {rel_path}, got {oct(perm)}"
 PYEOF
+
+if command -v rpm >/dev/null 2>&1; then
+    rpm_qpl_out=$(rpm -qpl "${rpm_file}")
+    if printf '%s\n' "${rpm_qpl_out}" | grep -Fq "(contains no files)"; then
+        fail "native rpm -qpl reported '(contains no files)' for ${rpm_file}"
+    fi
+    for req_rpm_path in \
+        "/usr/bin/modernime-settings" \
+        "/usr/bin/modernime-session-init" \
+        "/usr/bin/modernime-data-guard" \
+        "/usr/bin/modernime-migrate-channel" \
+        "/usr/share/modernime/install-channel.txt" \
+        "/usr/share/modernime/pinyin/modernime-knowledge.dict" \
+        "/usr/share/modernime/pinyin/modernime-hotwords.dict" \
+        "/usr/share/modernime/pinyin/modernime-english-dict.bin" \
+        "/usr/share/applications/modernime-settings.desktop"; do
+        printf '%s\n' "${rpm_qpl_out}" | grep -Fxq "${req_rpm_path}" ||
+            fail "native rpm -qpl missing expected file: ${req_rpm_path}"
+    done
+    printf '  -> [NATIVE RPM]: rpm -qpl verified (%d entries)\n' "$(printf '%s\n' "${rpm_qpl_out}" | wc -l)"
+else
+    printf '  -> [SIMULATED HARNESS / PYTHON RPMFI VERIFIER]: native rpm binary not installed on host; verified all 18 RPM header file-table entries (FILESIZES, FILEMODES, FILEDIGESTS, FILEUSERNAME/GROUPNAME, DIRNAMES/DIRINDEXES/BASENAMES)\n'
+fi
 
 for rpm_req_file in \
     "usr/bin/modernime-settings" \

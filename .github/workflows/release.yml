@@ -100,11 +100,22 @@ jobs:
 
       - name: Build and package RPM
         run: |
+          set -euo pipefail
+          export MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1
           ./scripts/package_rpm.sh
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
           RPM_FILE=$(ls dist/*.rpm | head -n 1)
           TARGET_NAME="modernime-${VERSION}-1.oe24.x86_64.rpm"
           mv -f "$RPM_FILE" "dist/${TARGET_NAME}"
+          rpm_files=$(rpm -qpl "dist/${TARGET_NAME}")
+          echo "$rpm_files"
+          if echo "$rpm_files" | grep -Fq "(contains no files)"; then
+            echo "FATAL: rpm -qpl reported (contains no files)" >&2
+            exit 1
+          fi
+          echo "$rpm_files" | grep -Fx "/usr/share/modernime/install-channel.txt" >/dev/null
+          echo "$rpm_files" | grep -Fx "/usr/bin/modernime-settings" >/dev/null
+          echo "$rpm_files" | grep -E "^/usr/lib(64)?/fcitx5/modernime_fcitx5\.so$" >/dev/null
 
       - name: Verify Signed RPM & DNF Repository in openEuler Container
         run: |
@@ -218,12 +229,18 @@ jobs:
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
           dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
+          rpm -V modernime
           test -x /usr/bin/modernime-settings
+          test "$(stat -c '%a' /usr/bin/modernime-settings)" = "755"
           test -f /usr/share/modernime/install-channel.txt
+          test "$(stat -c '%a' /usr/share/modernime/install-channel.txt)" = "644"
           grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
           dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
+          rpm -V modernime
           dnf remove -y modernime
+          test ! -e /usr/bin/modernime-settings
+          test ! -e /usr/share/modernime/install-channel.txt
           gpgconf --homedir "$GPG_HOME" --kill gpg-agent >/dev/null 2>&1 || true
           rm -f /etc/yum.repos.d/local-modernime.repo "$SANDBOX_RPM" "$RPM_018"
           rm -rf /tmp/oe-repo /tmp/oe-repo-miss /tmp/oe-repo-wrong "$GPG_HOME"

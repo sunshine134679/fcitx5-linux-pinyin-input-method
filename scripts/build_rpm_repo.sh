@@ -334,6 +334,9 @@ def parse_rpm_header_block(data: bytes, offset: int):
                 arr.append(data[cur:end].decode("utf-8", errors="replace"))
                 cur = end + 1
             tags[tag] = arr
+        elif dtype == 3:  # INT16
+            vals = list(struct.unpack(f">{count}H", data[pos : pos + 2 * count]))
+            tags[tag] = vals if count > 1 else vals[0]
         elif dtype == 4:  # INT32
             vals = list(struct.unpack(f">{count}I", data[pos : pos + 4 * count]))
             tags[tag] = vals if count > 1 else vals[0]
@@ -342,12 +345,20 @@ def parse_rpm_header_block(data: bytes, offset: int):
 
 def build_header_block(entries, region_tag=None):
     # entries: list of (tag, dtype, value)
-    # dtype: 4=INT32, 6=STRING, 7=BIN (bytes), 8=STRING_ARRAY
+    # dtype: 3=INT16, 4=INT32, 6/9=STRING, 7=BIN (bytes), 8=STRING_ARRAY
     entries = sorted([e for e in entries if e[0] not in (62, 63)], key=lambda x: x[0])
     idx_buf = bytearray()
     store_buf = bytearray()
     for tag, dtype, val in entries:
-        if dtype == 4:
+        if dtype == 3:
+            if len(store_buf) % 2 != 0:
+                store_buf.extend(b"\x00")
+            vals = val if isinstance(val, list) else [val]
+            off = len(store_buf)
+            for v in vals:
+                store_buf.extend(struct.pack(">H", int(v) & 0xFFFF))
+            idx_buf.extend(struct.pack(">IIII", tag, 3, off, len(vals)))
+        elif dtype == 4:
             if len(store_buf) % 4 != 0:
                 store_buf.extend(b"\x00" * (4 - (len(store_buf) % 4)))
             vals = val if isinstance(val, list) else [val]
@@ -488,7 +499,9 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
         for t, v in main_tags.items():
             if t in (62, 63, 5092, 5093):
                 continue
-            if isinstance(v, list) and v and isinstance(v[0], str):
+            if t in (1030, 1033):
+                main_entries.append((t, 3, v if isinstance(v, list) else [v]))
+            elif isinstance(v, list) and v and isinstance(v[0], str):
                 main_entries.append((t, 8, v))
             elif isinstance(v, str):
                 main_entries.append((t, 6, v))
