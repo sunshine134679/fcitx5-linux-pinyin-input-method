@@ -543,6 +543,20 @@ def resolve_user_dirs(args) -> list[tuple[Path, Path]]:
         )
         return [(data_base / "modernime", config_base / "modernime")]
 
+    # When MODERNIME_PKG_ROOT is set (simulated package root in tests), strictly scope to pkg_root/home/*
+    pkg_root = os.environ.get("MODERNIME_PKG_ROOT")
+    if pkg_root:
+        pairs = []
+        sim_home_root = Path(pkg_root) / "home"
+        if sim_home_root.is_dir():
+            for child in sorted(sim_home_root.iterdir()):
+                if child.is_dir():
+                    d = child / ".local" / "share" / "modernime"
+                    c = child / ".config" / "modernime"
+                    if d.exists() or c.exists():
+                        pairs.append((d, c))
+        return pairs
+
     # When invoked by root during DEB/RPM preinst, check SUDO_USER and normal user homes
     pairs = []
     seen = set()

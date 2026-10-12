@@ -656,4 +656,8 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/upgrade_data_protection_test.sh
     )
+    add_test(NAME modernime_verify_package_repo_gate
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/verify_package_repo_gate.sh
+    )
 endif()

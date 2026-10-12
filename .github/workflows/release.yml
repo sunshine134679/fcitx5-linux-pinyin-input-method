@@ -219,6 +219,33 @@ jobs:
           test -f "$data_home/modernime/learning.sqlite3"
           test -f "$data_home/modernime/learning.lmdb"
 
+          echo "=== 3. 验证 APT 与 RPM/DNF 签名软件源索引及包升级门禁 ==="
+          apt_repo_out="$gate_dir/apt-repo"
+          rpm_repo_out="$gate_dir/rpm-repo"
+          "$repo_root/scripts/build_apt_repo.sh" \
+            --output-dir "$apt_repo_out" \
+            --jammy-deb "$(ls -1 *ubuntu22.04.deb | head -n 1)" \
+            --noble-deb "$(ls -1 *ubuntu24.04.deb | head -n 1)" \
+            --arch amd64 \
+            --ephemeral-gpg
+          gpgv --keyring "$apt_repo_out/modernime-archive-keyring.gpg" \
+            "$apt_repo_out/dists/noble/InRelease"
+          gpgv --keyring "$apt_repo_out/modernime-archive-keyring.gpg" \
+            "$apt_repo_out/dists/jammy/InRelease"
+
+          "$repo_root/scripts/build_rpm_repo.sh" \
+            --output-dir "$rpm_repo_out" \
+            --rpm "$(ls -1 *.rpm | head -n 1)" \
+            --distro oe2409 \
+            --arch x86_64 \
+            --ephemeral-gpg
+          cp -f "$apt_repo_out/modernime-archive-keyring.gpg" "$repo_root/release-assets/"
+          cp -f "$apt_repo_out/client/modernime-jammy.sources" "$repo_root/release-assets/"
+          cp -f "$apt_repo_out/client/modernime-noble.sources" "$repo_root/release-assets/"
+          cp -f "$apt_repo_out/client/99-modernime.pref" "$repo_root/release-assets/"
+          cp -f "$rpm_repo_out/RPM-GPG-KEY-modernime" "$repo_root/release-assets/"
+          cp -f "$rpm_repo_out/client/modernime-openeuler-24.09.repo" "$repo_root/release-assets/"
+
       - name: Compute Checksums
         run: |
           cd release-assets
