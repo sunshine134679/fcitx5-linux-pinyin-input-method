@@ -331,7 +331,7 @@ if [[ "$skip_tests" == true ]]; then
 else
     (
         unset MODERNIME_SKIP_FCITX_RESTART
-        unset MODERNIME_PREFIX MODERNIME_BUILD_DIR MODERNIME_CONFIG_HOME MODERNIME_DESKTOP_DIR
+        unset MODERNIME_PREFIX MODERNIME_BUILD_DIR MODERNIME_CONFIG_HOME MODERNIME_DATA_HOME MODERNIME_DESKTOP_DIR XDG_DATA_HOME
         # The GTK focus integration tests require a controlled compositor. Running
         # them inside an arbitrary desktop session makes window-manager focus
         # stealing prevention look like a product failure. Keep the installer test

@@ -4,6 +4,7 @@ set -euo pipefail
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-install-runtime-test.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT
+unset XDG_DATA_HOME MODERNIME_DATA_HOME MODERNIME_SKIP_FCITX_RESTART
 
 make_fake_build_tools() {
     local fake_bin=$1

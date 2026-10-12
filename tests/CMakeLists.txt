@@ -399,6 +399,81 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     )
     target_link_libraries(modernime_pinyin_engine_tests PRIVATE modernime_pinyin)
     add_test(NAME modernime_pinyin_engine COMMAND modernime_pinyin_engine_tests)
+
+    find_package(Threads REQUIRED)
+    find_path(GTEST_INCLUDE_DIR
+        NAMES gtest/gtest.h
+        HINTS
+            "$ENV{HOME}/.local/include"
+            "/home/$ENV{USER}/.local/include"
+    )
+    find_library(GTEST_LIBRARY
+        NAMES libgtest.a gtest
+        HINTS
+            "$ENV{HOME}/.local/lib"
+            "/home/$ENV{USER}/.local/lib"
+    )
+    find_library(GTEST_MAIN_LIBRARY
+        NAMES libgtest_main.a gtest_main
+        HINTS
+            "$ENV{HOME}/.local/lib"
+            "/home/$ENV{USER}/.local/lib"
+    )
+    if(GTEST_INCLUDE_DIR AND GTEST_LIBRARY AND GTEST_MAIN_LIBRARY)
+        add_executable(modernime_personal_engine_gtest
+            core/personal_engine_gtest.cpp
+            ../adapter/fcitx5/src/engine.cpp
+        )
+        target_include_directories(modernime_personal_engine_gtest PRIVATE
+            ${GTEST_INCLUDE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+        )
+        target_link_libraries(modernime_personal_engine_gtest PRIVATE
+            modernime_pinyin
+            modernime_core
+            ${GTEST_MAIN_LIBRARY}
+            ${GTEST_LIBRARY}
+            Threads::Threads
+        )
+        add_test(NAME modernime_personal_engine_gtest
+            COMMAND modernime_personal_engine_gtest
+        )
+    endif()
+endif()
+
+find_package(Threads REQUIRED)
+find_path(BENCHMARK_INCLUDE_DIR
+    NAMES benchmark/benchmark.h
+    HINTS
+        "$ENV{HOME}/.local/include"
+        "/home/$ENV{USER}/.local/include"
+)
+find_library(BENCHMARK_LIBRARY
+    NAMES benchmark
+    HINTS
+        "$ENV{HOME}/.local/lib"
+        "/home/$ENV{USER}/.local/lib"
+)
+if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
+    get_filename_component(BENCHMARK_LIB_DIR "${BENCHMARK_LIBRARY}" DIRECTORY)
+    add_executable(modernime_personal_engine_benchmark
+        core/personal_engine_benchmark.cpp
+    )
+    target_include_directories(modernime_personal_engine_benchmark PRIVATE
+        ${BENCHMARK_INCLUDE_DIR}
+    )
+    target_link_libraries(modernime_personal_engine_benchmark PRIVATE
+        modernime_core
+        ${BENCHMARK_LIBRARY}
+        Threads::Threads
+    )
+    set_target_properties(modernime_personal_engine_benchmark PROPERTIES
+        BUILD_RPATH "${BENCHMARK_LIB_DIR}"
+        INSTALL_RPATH "${BENCHMARK_LIB_DIR}"
+    )
+    add_test(NAME modernime_personal_engine_benchmark
+        COMMAND modernime_personal_engine_benchmark --benchmark_min_time=0.02s
+    )
 endif()
 
 add_executable(modernime_adapter_tests adapter/engine_state_test.cpp)
