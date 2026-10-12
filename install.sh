@@ -27,6 +27,10 @@ while [[ $# -gt 0 ]]; do
             allow_missing_deps=true
             shift
             ;;
+        --overwrite-package|--force)
+            overwrite_package=true
+            shift
+            ;;
         -*)
             shift
             ;;
@@ -37,8 +41,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+overwrite_package=${overwrite_package:-false}
+case "${MODERNIME_OVERWRITE_PACKAGE:-}" in
+    1|true|TRUE|yes|YES)
+        overwrite_package=true
+        ;;
+esac
+
 is_system_prefix=false
-if [[ "$prefix" =~ ^/(usr|opt|etc)(/|$) ]]; then
+if [[ "$prefix" =~ ^/(usr|opt|etc)(/|$) || -n "${MODERNIME_FORCE_SYSTEM_PREFIX:-}" ]]; then
     is_system_prefix=true
 fi
 
@@ -123,6 +134,43 @@ check_runtime_dictionaries() {
     fi
 }
 check_runtime_dictionaries
+
+check_native_package_collision() {
+    if [[ "$is_system_prefix" != true || "$overwrite_package" == true ]]; then
+        return 0
+    fi
+    local candidate_files=(
+        "$prefix/bin/modernime-settings"
+        "$prefix/bin/modernime-session-init"
+        "$prefix/share/fcitx5/addon/modernime.conf"
+        "$prefix/share/fcitx5/addon/modernime-ui.conf"
+        "$prefix/share/fcitx5/inputmethod/modernime.conf"
+        "$prefix/share/applications/modernime-settings.desktop"
+    )
+    for cdir in "$prefix/lib/fcitx5" "$prefix/lib64/fcitx5" "$prefix/lib/x86_64-linux-gnu/fcitx5" "$prefix/lib/aarch64-linux-gnu/fcitx5"; do
+        candidate_files+=("$cdir/modernime_fcitx5.so" "$cdir/modernime_ui.so")
+    done
+
+    for f in "${candidate_files[@]}"; do
+        if [[ -e "$f" || -L "$f" ]]; then
+            local owner=""
+            if command -v dpkg >/dev/null 2>&1; then
+                owner=$(dpkg -S "$f" 2>/dev/null || true)
+            elif command -v rpm >/dev/null 2>&1; then
+                owner=$(rpm -qf "$f" 2>/dev/null || true)
+            fi
+            if [[ -n "$owner" ]]; then
+                printf 'Error: Existing file %s is managed by native system package: %s\n' "$f" "$owner" >&2
+                printf 'Installing via script directly into system prefix %s conflicts with your package manager.\n' "$prefix" >&2
+                printf 'To avoid broken dependencies and package manager state corruption:\n' >&2
+                printf '  1. Upgrade or remove the native package using apt or dnf first, or\n' >&2
+                printf '  2. Rerun with --overwrite-package (or MODERNIME_OVERWRITE_PACKAGE=1) to override.\n' >&2
+                exit 1
+            fi
+        fi
+    done
+}
+check_native_package_collision
 
 if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" && "$had_explicit_args" -eq 0 ]]; then
     printf 'Error: Running install.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
@@ -253,10 +301,10 @@ cmake_libdir=${cmake_libdir#*=}
 cmake_libdir=${cmake_libdir:-lib}
 
 for candidate_dir in "$prefix/$cmake_libdir/fcitx5" \
-                     "$prefix/lib64/fcitx5" \
-                     "$prefix/lib/fcitx5" \
                      "$prefix/lib/x86_64-linux-gnu/fcitx5" \
-                     "$prefix/lib/aarch64-linux-gnu/fcitx5"; do
+                     "$prefix/lib/aarch64-linux-gnu/fcitx5" \
+                     "$prefix/lib64/fcitx5" \
+                     "$prefix/lib/fcitx5"; do
     if [[ -d "$candidate_dir" && -f "$candidate_dir/modernime_fcitx5.so" ]]; then
         prefix_addon_dir="$candidate_dir"
         break
@@ -265,12 +313,58 @@ done
 if [[ -z "$prefix_addon_dir" ]]; then
     if [[ -d "$prefix/$cmake_libdir/fcitx5" ]]; then
         prefix_addon_dir="$prefix/$cmake_libdir/fcitx5"
+    elif [[ -d "/usr/lib/x86_64-linux-gnu" && -d "$prefix/lib/x86_64-linux-gnu/fcitx5" ]]; then
+        prefix_addon_dir="$prefix/lib/x86_64-linux-gnu/fcitx5"
     elif [[ -d "/usr/lib64" && ! -d "/usr/lib/x86_64-linux-gnu" ]]; then
         prefix_addon_dir="$prefix/lib64/fcitx5"
     else
         prefix_addon_dir="$prefix/lib/fcitx5"
     fi
 fi
+
+migrate_legacy_plugins() {
+    local target_prefix=$1
+    local current_addon_dir=$2
+    local candidate_dirs=(
+        "$target_prefix/lib/fcitx5"
+        "$target_prefix/lib64/fcitx5"
+        "$target_prefix/lib/x86_64-linux-gnu/fcitx5"
+        "$target_prefix/lib/aarch64-linux-gnu/fcitx5"
+    )
+    for cdir in "${candidate_dirs[@]}"; do
+        if [[ "$cdir" != "$current_addon_dir" && -d "$cdir" ]]; then
+            for old_plugin in "$cdir/modernime_fcitx5.so" "$cdir/modernime_ui.so"; do
+                if [[ -f "$old_plugin" || -L "$old_plugin" ]]; then
+                    printf 'Migrating legacy plugin layout: removing obsolete %s\n' "$old_plugin"
+                    rm -f -- "$old_plugin"
+                fi
+            done
+            rmdir --ignore-fail-on-non-empty "$cdir" 2>/dev/null || true
+            rmdir --ignore-fail-on-non-empty "$(dirname -- "$cdir")" 2>/dev/null || true
+        fi
+    done
+    if [[ -f "$target_prefix/share/modernime/install-manifest.txt" ]]; then
+        while IFS= read -r old_path; do
+            [[ -z "$old_path" ]] && continue
+            case "$old_path" in
+                "$target_prefix"/lib*/fcitx5/modernime_fcitx5.so|\
+                "$target_prefix"/lib*/fcitx5/modernime_ui.so|\
+                "$target_prefix"/lib/*-linux-gnu/fcitx5/modernime_fcitx5.so|\
+                "$target_prefix"/lib/*-linux-gnu/fcitx5/modernime_ui.so)
+                    if [[ "$old_path" != "$current_addon_dir/modernime_fcitx5.so" && \
+                          "$old_path" != "$current_addon_dir/modernime_ui.so" && \
+                          -f "$old_path" ]]; then
+                        printf 'Migrating legacy manifest plugin: removing obsolete %s\n' "$old_path"
+                        rm -f -- "$old_path"
+                        rmdir --ignore-fail-on-non-empty "$(dirname -- "$old_path")" 2>/dev/null || true
+                        rmdir --ignore-fail-on-non-empty "$(dirname -- "$(dirname -- "$old_path")")" 2>/dev/null || true
+                    fi
+                    ;;
+            esac
+        done < "$target_prefix/share/modernime/install-manifest.txt"
+    fi
+}
+migrate_legacy_plugins "$prefix" "$prefix_addon_dir"
 
 fcitx_environment=(
     env
@@ -349,13 +443,20 @@ fi
 
 manifest_dir="$prefix/share/modernime"
 manifest="$manifest_dir/install-manifest.txt"
+channel_file="$manifest_dir/install-channel.txt"
 mkdir -p "$manifest_dir"
+{
+    printf 'channel=script\n'
+    printf 'version=0.1.7\n'
+    printf 'prefix=%s\n' "$prefix"
+} > "$channel_file"
 {
     printf '%s\n' "$prefix_addon_dir/modernime_fcitx5.so"
     printf '%s\n' "$prefix_addon_dir/modernime_ui.so"
     printf '%s\n' "$prefix/share/modernime/pinyin/modernime-knowledge.dict"
     printf '%s\n' "$prefix/share/modernime/pinyin/modernime-hotwords.dict"
     printf '%s\n' "$prefix/share/modernime/pinyin/modernime-english-dict.bin"
+    printf '%s\n' "$channel_file"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime.conf"
     printf '%s\n' "$prefix/share/fcitx5/addon/modernime-ui.conf"
     printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"

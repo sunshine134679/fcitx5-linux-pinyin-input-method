@@ -31,7 +31,7 @@ printf 'Prefix:      %s\n' "$prefix"
 printf 'Config home: %s\n' "$config_home"
 
 # 1. Determine Addon & Data directories
-candidate_libdirs=("lib" "lib64" "lib/x86_64-linux-gnu" "lib/aarch64-linux-gnu")
+candidate_libdirs=("lib/x86_64-linux-gnu" "lib/aarch64-linux-gnu" "lib64" "lib")
 prefix_addon_dir=""
 for libdir in "${candidate_libdirs[@]}"; do
     if [[ -d "$prefix/$libdir/fcitx5" && -f "$prefix/$libdir/fcitx5/modernime_fcitx5.so" ]]; then

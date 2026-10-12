@@ -29,6 +29,11 @@ if [[ $# -ge 1 && -n "${1:-}" ]]; then
     esac
 fi
 
+is_system_prefix=false
+if [[ "$prefix" =~ ^/(usr|opt|etc)(/|$) || -n "${MODERNIME_FORCE_SYSTEM_PREFIX:-}" ]]; then
+    is_system_prefix=true
+fi
+
 manifest="$prefix/share/modernime/install-manifest.txt"
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
 environment_file="$config_home/environment.d/90-modernime.conf"
@@ -75,14 +80,31 @@ while IFS= read -r path; do
     case "$path" in
         "$prefix"/lib*/fcitx5/modernime_fcitx5.so|\
         "$prefix"/lib*/fcitx5/modernime_ui.so|\
+        "$prefix"/lib/*-linux-gnu/fcitx5/modernime_fcitx5.so|\
+        "$prefix"/lib/*-linux-gnu/fcitx5/modernime_ui.so|\
         "$prefix/share/modernime/pinyin/modernime-knowledge.dict"|\
         "$prefix/share/modernime/pinyin/modernime-hotwords.dict"|\
         "$prefix/share/modernime/pinyin/modernime-english-dict.bin"|\
+        "$prefix/share/modernime/install-channel.txt"|\
         "$prefix/share/fcitx5/addon/modernime.conf"|\
         "$prefix/share/fcitx5/addon/modernime-ui.conf"|\
         "$prefix/share/fcitx5/inputmethod/modernime.conf"|\
         "$prefix/bin/modernime-settings"|\
+        "$prefix/bin/modernime-session-init"|\
         "$prefix/share/applications/modernime-settings.desktop")
+            if [[ "$is_system_prefix" == true ]]; then
+                owner=""
+                if command -v dpkg >/dev/null 2>&1; then
+                    owner=$(dpkg -S "$path" 2>/dev/null || true)
+                elif command -v rpm >/dev/null 2>&1; then
+                    owner=$(rpm -qf "$path" 2>/dev/null || true)
+                fi
+                if [[ -n "$owner" ]]; then
+                    printf 'Preserving file managed by native system package (%s): %s\n' "$owner" "$path" >&2
+                    managed_files_preserved=true
+                    continue
+                fi
+            fi
             rm -f -- "$path"
             ;;
         "$desktop_shortcut")
@@ -104,6 +126,26 @@ while IFS= read -r path; do
     esac
 done < "$manifest"
 
+for legacy_plugin in "$prefix/lib/fcitx5/modernime_fcitx5.so" \
+                     "$prefix/lib/fcitx5/modernime_ui.so" \
+                     "$prefix/lib64/fcitx5/modernime_fcitx5.so" \
+                     "$prefix/lib64/fcitx5/modernime_ui.so"; do
+    if [[ -f "$legacy_plugin" || -L "$legacy_plugin" ]]; then
+        if [[ "$is_system_prefix" == true ]]; then
+            owner=""
+            if command -v dpkg >/dev/null 2>&1; then
+                owner=$(dpkg -S "$legacy_plugin" 2>/dev/null || true)
+            elif command -v rpm >/dev/null 2>&1; then
+                owner=$(rpm -qf "$legacy_plugin" 2>/dev/null || true)
+            fi
+            if [[ -n "$owner" ]]; then
+                continue
+            fi
+        fi
+        rm -f -- "$legacy_plugin"
+    fi
+done
+
 if [[ "$managed_files_preserved" != true ]]; then
     rm -f -- "$manifest"
     for key in desktop environment autostart xprofile; do
@@ -112,6 +154,10 @@ if [[ "$managed_files_preserved" != true ]]; then
     rmdir "$managed_state_dir" 2>/dev/null || true
 fi
 
+rmdir --ignore-fail-on-non-empty "$prefix/lib/x86_64-linux-gnu/fcitx5" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/lib/x86_64-linux-gnu" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/lib/aarch64-linux-gnu/fcitx5" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/lib/aarch64-linux-gnu" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/lib64/fcitx5" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/lib/fcitx5" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/pinyin" 2>/dev/null || true
