@@ -193,6 +193,17 @@ LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
     return index;
 }
 
+const LearningSnapshot::RecallIndex &LearningSnapshot::ensureRecallIndex() const {
+    if (!baseRecallIndex_) {
+        if (baseEntries_ && !baseEntries_->empty()) {
+            baseRecallIndex_ = buildRecallIndex(*baseEntries_);
+        } else {
+            baseRecallIndex_ = std::make_shared<const RecallIndex>();
+        }
+    }
+    return *baseRecallIndex_;
+}
+
 std::string normalizePinyin(std::string_view pinyin) {
     std::string normalized;
     normalized.reserve(pinyin.size());
@@ -208,7 +219,7 @@ std::string normalizePinyin(std::string_view pinyin) {
 LearningSnapshot::LearningSnapshot()
     : baseEntries_(std::make_shared<const std::vector<LearningEntry>>()),
       baseIndex_(std::make_shared<const std::unordered_map<std::string, std::vector<std::size_t>>>()),
-      baseRecallIndex_(std::make_shared<const RecallIndex>()) {}
+      baseRecallIndex_(nullptr) {}
 
 LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
                                    std::size_t totalEntryLimit)
@@ -220,7 +231,6 @@ LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
     for (std::size_t idx = 0; idx < entries.size(); ++idx) {
         (*newIndex)[candidateKey(entries[idx].phrase, normalizePinyin(entries[idx].pinyin))].push_back(idx);
     }
-    baseRecallIndex_ = buildRecallIndex(entries);
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(entries));
     baseIndex_ = std::move(newIndex);
 }
@@ -655,7 +665,7 @@ void LearningSnapshot::consolidate() {
         (*newIndex)[candidateKey(combined[idx].phrase, normalizePinyin(combined[idx].pinyin))].push_back(idx);
     }
 
-    baseRecallIndex_ = buildRecallIndex(combined);
+    baseRecallIndex_.reset();
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(combined));
     baseIndex_ = std::move(newIndex);
     delta_.clear();
@@ -809,35 +819,36 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(
         results.push_back({std::string(phrase), std::string(pinyin), lBoost, cBoost});
     };
 
-    if (baseRecallIndex_ && !canonicalInput.empty()) {
-        const auto it = baseRecallIndex_->canonicalIndex.find(canonicalInput);
-        if (it != baseRecallIndex_->canonicalIndex.end()) {
+    const auto &baseRecall = ensureRecallIndex();
+    if (!canonicalInput.empty()) {
+        const auto it = baseRecall.canonicalIndex.find(canonicalInput);
+        if (it != baseRecall.canonicalIndex.end()) {
             for (const auto &[phrase, pinyin] : it->second) {
                 addCandidate(phrase, pinyin);
             }
         }
     }
 
-    if (baseRecallIndex_ && isAbbr) {
-        const auto it = baseRecallIndex_->abbrIndex.find(std::string(userInput));
-        if (it != baseRecallIndex_->abbrIndex.end()) {
+    if (isAbbr) {
+        const auto it = baseRecall.abbrIndex.find(std::string(userInput));
+        if (it != baseRecall.abbrIndex.end()) {
             for (const auto &[phrase, pinyin] : it->second) {
                 addCandidate(phrase, pinyin);
             }
         }
     }
 
-    if (baseRecallIndex_ && canonicalInput.size() >= 3) {
+    if (canonicalInput.size() >= 3) {
         auto it = std::lower_bound(
-            baseRecallIndex_->prefixIndex.begin(),
-            baseRecallIndex_->prefixIndex.end(),
+            baseRecall.prefixIndex.begin(),
+            baseRecall.prefixIndex.end(),
             canonicalInput,
             [](const auto &tupleItem, const std::string &val) {
                 return std::get<0>(tupleItem) < val;
             });
         std::size_t prefixCount = 0;
         constexpr std::size_t kMaxPrefixRecalled = 16;
-        while (it != baseRecallIndex_->prefixIndex.end() &&
+        while (it != baseRecall.prefixIndex.end() &&
                std::get<0>(*it).starts_with(canonicalInput) &&
                prefixCount < kMaxPrefixRecalled) {
             addCandidate(std::get<1>(*it), std::get<2>(*it));
@@ -878,21 +889,20 @@ std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(
     std::unordered_set<std::string> matchedPhrases;
     std::vector<std::string> candidates;
 
-    if (baseRecallIndex_) {
-        auto it = std::lower_bound(
-            baseRecallIndex_->englishIndex.begin(),
-            baseRecallIndex_->englishIndex.end(),
-            lowerPrefix,
-            [](const auto &pair, const std::string &val) {
-                return pair.first < val;
-            });
-        while (it != baseRecallIndex_->englishIndex.end() &&
-               it->first.starts_with(lowerPrefix)) {
-            if (matchedPhrases.insert(it->second).second) {
-                candidates.push_back(it->second);
-            }
-            ++it;
+    const auto &baseRecall = ensureRecallIndex();
+    auto it = std::lower_bound(
+        baseRecall.englishIndex.begin(),
+        baseRecall.englishIndex.end(),
+        lowerPrefix,
+        [](const auto &pair, const std::string &val) {
+            return pair.first < val;
+        });
+    while (it != baseRecall.englishIndex.end() &&
+           it->first.starts_with(lowerPrefix)) {
+        if (matchedPhrases.insert(it->second).second) {
+            candidates.push_back(it->second);
         }
+        ++it;
     }
 
     for (const auto &[vKey, entry] : delta_) {

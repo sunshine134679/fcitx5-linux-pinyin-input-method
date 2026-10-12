@@ -672,5 +672,145 @@ int main() {
         std::filesystem::remove(extractLearningPath.string() + "-shm", ec);
     }
 
+    // -------------------------------------------------------------------------
+    // Task 9 (P2): 经真实周边文本确认的后续删除反馈（键盘删除盘后学键）
+    // -------------------------------------------------------------------------
+    {
+        std::error_code ec;
+        const auto delLearningPath =
+            std::filesystem::temp_directory_path() / "modernime-engine-del-feedback.sqlite3";
+        std::filesystem::remove(delLearningPath, ec);
+        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+
+        modernime::pinyin::PinyinDataPaths delPaths;
+        delPaths.learningStore = delLearningPath.string();
+        modernime::pinyin::PinyinCandidateProvider delProvider(delPaths);
+        RecordingHost delHost;
+        modernime::fcitx5::ModernIMEController delController(
+            delHost, &delProvider);
+
+        // 1. 设置周边上下文 "使用"，输入 jianpan，选择候选 "键盘"
+        delController.setContext("使用", "");
+        for (char c : std::string_view("jianpan")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto jianpanIdx = indexOf(delController.page(), "键盘");
+        assertTrue(jianpanIdx < delController.page().items.size(),
+                   "found 键盘 in candidates");
+        assertTrue(delController.select(jianpanIdx), "selected 键盘");
+        assertTrue(delHost.commits.back() == "键盘", "committed 键盘");
+        assertTrue(delController.page().preedit.empty(), "composition empty after commit");
+
+        // 2. 空闲状态按 Backspace：控制器放行给宿主应用
+        assertTrue(!delController.handle(
+                       {modernime::fcitx5::KeyKind::Backspace, 0, 0}),
+                   "Backspace when idle passes through to client application");
+
+        // 3. 宿主应用删除末字 "盘"，周边文本从 "使用键盘" 更新为 "使用键"
+        delController.setContext("使用键", "");
+        delProvider.flush();
+
+        // 4. 验证单次删除反馈学习：输入 jian，"键" 已被标记为 Learned
+        for (char c : std::string_view("jian")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto learnedJianIdx = indexOf(delController.page(), "键");
+        assertTrue(learnedJianIdx < delController.page().items.size(),
+                   "found 键 in candidates after deletion feedback");
+        assertTrue(delController.page().items[learnedJianIdx].source ==
+                       modernime::core::CandidateSource::Learned,
+                   "键 is Learned after deletion feedback");
+        delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 5. 多次重复组词删除反馈（累计 5 次）：逐步将 "键" 晋升至首位
+        for (int rep = 0; rep < 4; ++rep) {
+            delController.setContext("使用", "");
+            for (char c : std::string_view("jianpan")) {
+                delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            }
+            const auto idx = indexOf(delController.page(), "键盘");
+            delController.select(idx);
+            delController.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+            delController.setContext("使用键", "");
+        }
+        delProvider.flush();
+
+        delController.setContext("使用", "");
+        for (char c : std::string_view("jian")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!delController.page().items.empty() &&
+                   delController.page().items.front().text == "键",
+                   "键 is promoted to top candidate after repeated deletion feedback");
+        delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 6. 反例验证 1：删除整词（"使用键盘" -> "使用"）不误学字
+        delController.setContext("使用", "");
+        for (char c : std::string_view("ceshi")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        delController.select(0); // 提交 "测试"
+        delController.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+        // 模拟全选删除整词：前后文本恢复为 "使用"
+        delController.setContext("使用", "");
+        delProvider.flush();
+        // 验证没有误学单字 "测"
+        for (char c : std::string_view("ce")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto ceIdx = indexOf(delController.page(), "测");
+        if (ceIdx < delController.page().items.size()) {
+            assertTrue(delController.page().items[ceIdx].source !=
+                           modernime::core::CandidateSource::Learned,
+                       "ce does not falsely learn 测 when entire word was deleted");
+        }
+        delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 7. 反例验证 2：光标跳转 / 编辑别处文字不误学字
+        delController.setContext("前文", "");
+        for (char c : std::string_view("ceshi")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        delController.select(0); // 提交 "测试"
+        // 光标跳转至完全不同的位置
+        delController.setContext("完全不同位置", "");
+        delProvider.flush();
+        for (char c : std::string_view("ce")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto ceIdx2 = indexOf(delController.page(), "测");
+        if (ceIdx2 < delController.page().items.size()) {
+            assertTrue(delController.page().items[ceIdx2].source !=
+                           modernime::core::CandidateSource::Learned,
+                       "ce does not falsely learn 测 on cursor jump");
+        }
+        delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 8. 反例验证 3：重置 / 取消组合清除最近提交记录
+        delController.setContext("文档", "");
+        for (char c : std::string_view("ceshi")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        delController.select(0);
+        delController.reset();
+        delController.setContext("文档测", ""); // 即使传入有效前缀，由于 reset 也不会触发
+        delProvider.flush();
+        for (char c : std::string_view("ce")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto ceIdx3 = indexOf(delController.page(), "测");
+        if (ceIdx3 < delController.page().items.size()) {
+            assertTrue(delController.page().items[ceIdx3].source !=
+                           modernime::core::CandidateSource::Learned,
+                       "ce does not learn 测 after explicit reset");
+        }
+        delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        std::filesystem::remove(delLearningPath, ec);
+        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+    }
+
     return EXIT_SUCCESS;
 }

@@ -10,6 +10,7 @@
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx-utils/event.h>
+#include <fcitx-utils/handlertable.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/surroundingtext.h>
@@ -331,6 +332,7 @@ private:
     bool clipboardAddonLookupAttempted_ = false;
     core::PersistentClipboardHistory clipboardHistory_;
     std::string lastHistoryError_;
+    std::unique_ptr<fcitx::HandlerTableEntryBase> surroundingWatcher_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     std::unique_ptr<fcitx::EventSourceTime> fileTimer_;
     std::filesystem::file_time_type settingsMtime_{};

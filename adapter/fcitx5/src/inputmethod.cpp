@@ -167,8 +167,7 @@ pinyin::PinyinProviderOptions pinyinOptions(
 std::pair<std::string, std::string>
 extractSurroundingContext(const fcitx::SurroundingText &text,
                           std::size_t maxChars) {
-    if (!text.isValid() || maxChars == 0 ||
-        !fcitx::utf8::validate(text.text())) {
+    if (!text.isValid() || maxChars == 0) {
         return {};
     }
 
@@ -179,7 +178,11 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
 
     const auto targetCursor = static_cast<std::size_t>(text.cursor());
 
-    std::vector<std::string::const_iterator> ring(maxChars + 1);
+    std::array<std::string::const_iterator, 64> stackRing;
+    std::vector<std::string::const_iterator> heapRing;
+    auto *ring = (maxChars < 64) ? stackRing.data()
+                                 : (heapRing.resize(maxChars + 1), heapRing.data());
+
     auto it = value.cbegin();
     std::size_t charIndex = 0;
     ring[0] = it;
@@ -201,8 +204,12 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
         ++afterCount;
     }
 
-    return {std::string(begin, cursorIterator),
-            std::string(cursorIterator, end)};
+    std::string before(begin, cursorIterator);
+    std::string after(cursorIterator, end);
+    if (!fcitx::utf8::validate(before) || !fcitx::utf8::validate(after)) {
+        return {};
+    }
+    return {std::move(before), std::move(after)};
 }
 
 FcitxEngineHost::FcitxEngineHost(fcitx::InputContext &inputContext)
@@ -363,6 +370,23 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
     if (instance_ != nullptr) {
         instance_->inputContextManager().registerProperty(
             std::string(statePropertyName), &stateFactory_);
+        surroundingWatcher_ = instance_->watchEvent(
+            fcitx::EventType::InputContextSurroundingTextUpdated,
+            fcitx::EventWatcherPhase::Default,
+            [this](fcitx::Event &event) {
+                auto *ic =
+                    static_cast<fcitx::InputContextEvent &>(event).inputContext();
+                if (ic == nullptr || instance_->inputMethod(ic) != "modernime") {
+                    return;
+                }
+                auto *contextState = state(ic);
+                if (contextState != nullptr && ic->surroundingText().isValid()) {
+                    const auto context = extractSurroundingContext(
+                        ic->surroundingText(), 32);
+                    contextState->controller().setContext(context.first,
+                                                          context.second);
+                }
+            });
         clipboardTimer_ = instance_->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 500000, 500000,
             [this](fcitx::EventSourceTime *source, std::uint64_t) {

@@ -6,6 +6,7 @@
 #include "modernime/core/settings.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cctype>
 #include <cstdint>
@@ -191,6 +192,17 @@ private:
     core::PageBoundary currentPageBoundary() const;
     void appendFallbackContext(std::string_view text);
 
+    struct RecentCommit final {
+        std::string text;
+        std::string fullPinyin;
+        std::string basePrefix;
+        std::string contextAfter;
+        std::chrono::steady_clock::time_point timestamp;
+        bool valid = false;
+    };
+    bool checkRecentCommitDeletionFeedback(const std::string &before,
+                                           const std::string &after);
+
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;
     core::InputState input_;
@@ -206,6 +218,7 @@ private:
     std::string compositionInput_;
     std::size_t compositionCursor_ = 0;
     std::vector<std::string> clipboardEntries_;
+    RecentCommit recentCommit_;
 };
 
 } // namespace modernime::fcitx5
