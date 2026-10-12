@@ -422,6 +422,80 @@ int main(int argc, char **argv) {
     }
     assert(bgCompletedAfterClientExit);
 
+    // 7d. File descriptor stability and FD_CLOEXEC verification across repeated successful
+    // and failed subprocess launches ([P2] Round 6):
+    // 1) Verify inside the spawned child that no extra modernime-subproc-* FDs above fd 2
+    //    are inherited across execve (FD_CLOEXEC set on both parent and childStdoutFd/childStderrFd).
+    // 2) Verify that /proc/self/fd count stays strictly constant across repeated successful
+    //    queries, successful upgrades, non-zero exits, and spawnv() failures (invalid interpreter).
+    auto countOpenFds = []() -> std::size_t {
+        std::size_t count = 0;
+        for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+            (void)entry;
+            ++count;
+        }
+        return count;
+    };
+
+    const auto childFdAuditFile = tempRoot / "child-fd-audit.txt";
+    writeExecutable(
+        aptBinDir / "pkexec",
+        "#!/bin/sh\n"
+        "leaked=0\n"
+        "for fdpath in /proc/$$/fd/*; do\n"
+        "  fdnum=$(basename \"$fdpath\")\n"
+        "  if [ \"$fdnum\" -gt 2 ]; then\n"
+        "    target=$(readlink \"$fdpath\" 2>/dev/null || true)\n"
+        "    case \"$target\" in\n"
+        "      *modernime-subproc-*) leaked=$((leaked + 1)) ;;\n"
+        "    esac\n"
+        "  fi\n"
+        "done\n"
+        "printf '%s\\n' \"$leaked\" > \"" +
+            childFdAuditFile.string() +
+            "\"\n"
+            "exit 0\n");
+
+    // Warm up once so any one-time GLib thread/context initialization FDs are settled
+    const auto warmupRes = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+    assert(warmupRes.success);
+    {
+        std::ifstream auditIn(childFdAuditFile);
+        int leakedChildFds = -1;
+        auditIn >> leakedChildFds;
+        assert(leakedChildFds == 0);
+    }
+
+    const std::size_t baselineFdCount = countOpenFds();
+    for (int i = 0; i < 15; ++i) {
+        // Successful query + upgrade
+        const auto st = UpdateController::checkForUpdates(aptEnv);
+        assert(st.checked);
+        const auto okUp = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+        assert(okUp.success);
+    }
+    assert(countOpenFds() == baselineFdCount);
+
+    // Non-zero child exit path
+    writeExecutable(aptBinDir / "pkexec", "#!/bin/sh\nexit 1\n");
+    for (int i = 0; i < 15; ++i) {
+        const auto failUp = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+        assert(!failUp.success);
+    }
+    assert(countOpenFds() == baselineFdCount);
+
+    // g_subprocess_launcher_spawnv() failure path (executable exists with 0755, but invalid shebang interpreter)
+    writeExecutable(
+        aptBinDir / "pkexec",
+        "#!/nonexistent/modernime_invalid_interpreter_for_spawnv_test\n");
+    for (int i = 0; i < 15; ++i) {
+        const auto spawnFailRes = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+        assert(!spawnFailRes.success);
+        const auto spawnFailRefresh = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+        assert(!spawnFailRefresh.success);
+    }
+    assert(countOpenFds() == baselineFdCount);
+
     std::filesystem::remove_all(tempRoot);
     return 0;
 }

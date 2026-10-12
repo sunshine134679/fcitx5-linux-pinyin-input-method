@@ -160,9 +160,6 @@ bool isSubprocessAlive(GSubprocess *proc) {
     if (proc == nullptr) {
         return false;
     }
-    if (g_subprocess_get_if_exited(proc) || g_subprocess_get_if_signaled(proc)) {
-        return false;
-    }
     const gchar *ident = g_subprocess_get_identifier(proc);
     if (ident == nullptr || *ident == '\0') {
         return false;
@@ -326,8 +323,10 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
 
     const int stdoutFd = createUnlinkedTempFd();
     const int stderrFd = createUnlinkedTempFd();
-    const int childStdoutFd = (stdoutFd >= 0) ? ::dup(stdoutFd) : -1;
-    const int childStderrFd = (stderrFd >= 0) ? ::dup(stderrFd) : -1;
+    const int childStdoutFd =
+        (stdoutFd >= 0) ? ::fcntl(stdoutFd, F_DUPFD_CLOEXEC, 0) : -1;
+    const int childStderrFd =
+        (stderrFd >= 0) ? ::fcntl(stderrFd, F_DUPFD_CLOEXEC, 0) : -1;
     if (stdoutFd < 0 || stderrFd < 0 || childStdoutFd < 0 || childStderrFd < 0) {
         if (stdoutFd >= 0) {
             ::close(stdoutFd);
@@ -373,6 +372,16 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
 
     GError *error = nullptr;
     GSubprocess *proc = g_subprocess_launcher_spawnv(launcher, rawArgv.data(), &error);
+    // Explicitly close childStdoutFd / childStderrFd in the parent immediately after spawnv()
+    // on both success and failure paths so no duplicated FD can ever remain open in the client.
+    g_subprocess_launcher_take_stdout_fd(launcher, -1);
+    g_subprocess_launcher_take_stderr_fd(launcher, -1);
+    if (::fcntl(childStdoutFd, F_GETFD) != -1) {
+        ::close(childStdoutFd);
+    }
+    if (::fcntl(childStderrFd, F_GETFD) != -1) {
+        ::close(childStderrFd);
+    }
     g_object_unref(launcher);
     if (proc == nullptr) {
         ::close(stdoutFd);
@@ -419,9 +428,7 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
         }
     }
 
-    if (state->finished || (forceKillOnTimeout && state->timedOut)) {
-        g_subprocess_wait(proc, nullptr, nullptr);
-    }
+    g_subprocess_wait(proc, nullptr, nullptr);
     if (state->out.empty()) {
         state->out = readAllFromFd(state->stdoutFd);
     }
