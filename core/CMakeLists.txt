@@ -28,7 +28,7 @@ find_path(LMDB_INCLUDE_DIR
         "/home/$ENV{USER}/.local/include"
 )
 find_library(LMDB_LIBRARY
-    NAMES liblmdb.a lmdb
+    NAMES lmdb liblmdb.so liblmdb.a
     HINTS
         ${LMDB_LIBRARY_DIRS}
         "$ENV{HOME}/.local/lib"
@@ -37,11 +37,13 @@ find_library(LMDB_LIBRARY
 if(NOT LMDB_INCLUDE_DIR OR NOT LMDB_LIBRARY)
     message(FATAL_ERROR "LMDB (liblmdb-dev / lmdb-devel) is required to build modernime_core")
 endif()
+get_filename_component(LMDB_LIBRARY_DIR "${LMDB_LIBRARY}" DIRECTORY)
 if(NOT TARGET LMDB::LMDB)
     add_library(LMDB::LMDB UNKNOWN IMPORTED)
     set_target_properties(LMDB::LMDB PROPERTIES
         IMPORTED_LOCATION "${LMDB_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${LMDB_INCLUDE_DIR}"
+        INTERFACE_LINK_OPTIONS "-Wl,-rpath,${LMDB_LIBRARY_DIR}"
     )
 endif()
 

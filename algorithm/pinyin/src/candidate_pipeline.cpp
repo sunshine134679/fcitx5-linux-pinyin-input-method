@@ -239,6 +239,18 @@ CandidatePipelineResult buildCandidatePipeline(
             }
             const auto key = core::candidateOrderKey(item.phrase, item.pinyin);
             if (seenKeys.contains(key)) {
+                if (item.learningBoost >= 1.8) {
+                    for (auto &existing : result.scored) {
+                        if (!existing.is_lexical &&
+                            utf8CodePointCount(existing.text) >= 2 &&
+                            existing.text == item.phrase &&
+                            existing.full_pinyin == item.pinyin) {
+                            existing.source_index =
+                                std::min(existing.source_index, recalledIdx++);
+                            break;
+                        }
+                    }
+                }
                 continue;
             }
             seenKeys.insert(key);

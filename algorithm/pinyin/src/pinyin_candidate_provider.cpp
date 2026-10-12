@@ -1333,7 +1333,7 @@ public:
     Impl(std::shared_ptr<SharedResources> shared,
          const PinyinProviderOptions &options)
         : shared_(std::move(shared)),
-          phraseTracker_(5, shared_ ? shared_->phraseStats : nullptr),
+          phraseTracker_(3, shared_ ? shared_->phraseStats : nullptr),
           contextLearningEnabled_(options.contextLearningEnabled),
           learningEnabled_(options.learningEnabled),
           englishDefinitionEnabled_(options.englishDefinitionEnabled),
@@ -1464,8 +1464,6 @@ public:
                 phraseEvent.role = core::CommitCandidateRole::Chinese;
                 phraseEvent.isPartial = false;
                 phraseEvent.consumedInputBytes = formedIntra->rawKeystrokes.size();
-                phraseEvent.contextBefore = contextBefore_;
-                phraseEvent.contextAfter = contextAfter_;
                 phraseEvent.timestampMs = event.timestampMs;
                 onCommitEvent(phraseEvent);
                 phraseTracker_.resetCommitHistory();
@@ -1479,10 +1477,14 @@ public:
                     phraseEvent.role = core::CommitCandidateRole::Chinese;
                     phraseEvent.isPartial = false;
                     phraseEvent.consumedInputBytes = fp.rawKeystrokes.size();
-                    phraseEvent.contextBefore = contextBefore_;
-                    phraseEvent.contextAfter = contextAfter_;
                     phraseEvent.timestampMs = event.timestampMs;
-                    onCommitEvent(phraseEvent);
+                    if (fp.isInitialFormation) {
+                        for (int i = 0; i < fp.repetitionCount; ++i) {
+                            onCommitEvent(phraseEvent);
+                        }
+                    } else {
+                        onCommitEvent(phraseEvent);
+                    }
                 }
             }
         }
