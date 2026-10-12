@@ -56,6 +56,7 @@ CATEGORY_ORDER = {
     "law": 8,
     "car": 9,
     "animal": 10,
+    "daily": 11,
 }
 
 
