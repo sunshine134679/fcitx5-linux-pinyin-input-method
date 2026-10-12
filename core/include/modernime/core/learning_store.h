@@ -61,6 +61,7 @@ public:
     bool backupTo(const std::filesystem::path &path) const;
     bool clear();
     std::optional<std::int64_t> resetRevision() const;
+    int schemaVersion() const;
     // Reads the reset marker and entries from the same SQLite read transaction.
     std::optional<LearningStoreState> readState() const;
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;

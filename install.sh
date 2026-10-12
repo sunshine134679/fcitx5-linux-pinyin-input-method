@@ -172,6 +172,26 @@ check_native_package_collision() {
 }
 check_native_package_collision
 
+backup_user_database() {
+    if [[ "$is_system_prefix" == true ]]; then
+        return 0
+    fi
+    local data_dir="${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}/modernime"
+    local db_file="$data_dir/learning.sqlite3"
+    if [[ -f "$db_file" ]]; then
+        local ts
+        ts=$(date +%Y%m%d%H%M%S 2>/dev/null || echo "$$")
+        local backup_target="$data_dir/learning.sqlite3.backup-$ts"
+        if command -v sqlite3 >/dev/null 2>&1; then
+            sqlite3 "$db_file" ".backup '$backup_target'" 2>/dev/null || cp -a "$db_file" "$backup_target"
+        else
+            cp -a "$db_file" "$backup_target"
+        fi
+        printf 'Backed up user learning database to %s\n' "$backup_target"
+    fi
+}
+backup_user_database
+
 if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" && "$had_explicit_args" -eq 0 ]]; then
     printf 'Error: Running install.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
     printf 'This prevents accidental installation or modification of your real user environment (%s).\n' "$HOME" >&2

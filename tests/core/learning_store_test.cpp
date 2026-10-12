@@ -1337,9 +1337,29 @@ void testContextAssociationAndSmoothing() {
     std::filesystem::remove(path, error);
 }
 
+void testSchemaVersionAndBackup() {
+    const auto path = testPath("schema-version.sqlite3");
+    const auto backupPath = testPath("schema-version-backup.sqlite3");
+    {
+        modernime::core::LearningStore store(path);
+        assertTrue(store.open(), "store opens successfully");
+        assertTrue(store.schemaVersion() == 1, "store initializes user_version to 1");
+        assertTrue(store.recordSelection("测试", "ceshi", {}, {}, 1000), "records selection");
+        assertTrue(store.backupTo(backupPath), "creates backup via sqlite backup API");
+    }
+    {
+        modernime::core::LearningStore backupStore(backupPath);
+        assertTrue(backupStore.openReadOnly(), "backup opens read-only");
+        assertTrue(backupStore.schemaVersion() == 1, "backup retains schema version 1");
+        const auto snap = backupStore.snapshot();
+        assertTrue(snap != nullptr && snap->hasPositiveFrequency("测试", "ceshi"), "backup contains learned entry");
+    }
+}
+
 } // namespace
 
 int main() {
+    testSchemaVersionAndBackup();
     testEnglishWordRecallIndex();
     testContextAssociationAndSmoothing();
     testPhraseFormationTrackerUnit();

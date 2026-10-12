@@ -194,3 +194,54 @@ env \
     bash "$project_root/install.sh" >"$crash_output" 2>&1
 grep -F 'remote:-s' "$crash_log" >/dev/null
 ! grep -F 'Aborted' "$crash_output" >/dev/null
+
+# Verify automatic backup of user learning database during upgrade
+backup_data="$test_root/user-data"
+mkdir -p "$backup_data/modernime"
+printf 'sqlite3-test-content\n' > "$backup_data/modernime/learning.sqlite3"
+backup_log="$test_root/backup.log"
+run_install backup \
+    MODERNIME_SKIP_FCITX_RESTART=1 \
+    MODERNIME_DATA_HOME="$backup_data" >"$backup_log" 2>&1
+grep -F 'Backed up user learning database to' "$backup_log" >/dev/null
+backup_file=$(find "$backup_data/modernime" -name 'learning.sqlite3.backup-*' -print -quit)
+test -n "$backup_file"
+test -f "$backup_file"
+cmp -s "$backup_data/modernime/learning.sqlite3" "$backup_file"
+
+# Verify staged payload rollback on failure
+stage_test_root="$test_root/stage-test"
+mkdir -p "$stage_test_root/payload/usr/bin" \
+         "$stage_test_root/payload/usr/share/modernime/pinyin" \
+         "$stage_test_root/payload/usr/lib/x86_64-linux-gnu/fcitx5" \
+         "$stage_test_root/dest/bin" \
+         "$stage_test_root/dest/share/modernime/pinyin"
+
+echo "original-v1" > "$stage_test_root/dest/bin/modernime-settings"
+echo "original-dict" > "$stage_test_root/dest/share/modernime/pinyin/modernime-knowledge.dict"
+echo "new-v2" > "$stage_test_root/payload/usr/bin/modernime-settings"
+echo "new-dict" > "$stage_test_root/payload/usr/share/modernime/pinyin/modernime-knowledge.dict"
+: > "$stage_test_root/payload/usr/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so"
+chmod +x "$stage_test_root/payload/usr/bin/modernime-settings"
+
+# Test successful staged install
+project_root_main="$project_root"
+(
+    prefix="$stage_test_root/dest"
+    project_root="$stage_test_root/payload"
+    source "$project_root_main/scripts/install_binary_payload.sh"
+)
+grep -Fqx 'new-v2' "$stage_test_root/dest/bin/modernime-settings"
+
+# Test rollback on staged payload failure (missing required binary)
+rm -f "$stage_test_root/payload/usr/bin/modernime-settings"
+if (
+    prefix="$stage_test_root/dest"
+    project_root="$stage_test_root/payload"
+    source "$project_root_main/scripts/install_binary_payload.sh"
+) 2>/dev/null; then
+    echo "Expected staged install to fail when payload is broken" >&2
+    exit 1
+fi
+# Previous version in dest must still be intact
+grep -Fqx 'new-v2' "$stage_test_root/dest/bin/modernime-settings"

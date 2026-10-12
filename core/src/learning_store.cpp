@@ -65,6 +65,13 @@ bool LearningStore::open() {
         close();
         return false;
     }
+    const int currentVersion = schemaVersion();
+    if (currentVersion == 0) {
+        if (!execute("PRAGMA user_version = 1;")) {
+            close();
+            return false;
+        }
+    }
     return true;
 }
 
@@ -422,6 +429,23 @@ std::optional<std::int64_t> LearningStore::resetRevision() const {
     }
     sqlite3_finalize(statement);
     return revision;
+}
+
+int LearningStore::schemaVersion() const {
+    if (db_ == nullptr) {
+        return 0;
+    }
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, "PRAGMA user_version;", -1, &statement,
+                           nullptr) != SQLITE_OK) {
+        return 0;
+    }
+    int version = 0;
+    if (sqlite3_step(statement) == SQLITE_ROW) {
+        version = sqlite3_column_int(statement, 0);
+    }
+    sqlite3_finalize(statement);
+    return version;
 }
 
 std::optional<LearningStoreState> LearningStore::readState() const {
