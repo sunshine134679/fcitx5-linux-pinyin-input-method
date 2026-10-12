@@ -426,15 +426,40 @@ int main(int argc, char **argv) {
     // and failed subprocess launches ([P2] Round 6):
     // 1) Verify inside the spawned child that no extra modernime-subproc-* FDs above fd 2
     //    are inherited across execve (FD_CLOEXEC set on both parent and childStdoutFd/childStderrFd).
-    // 2) Verify that /proc/self/fd count stays strictly constant across repeated successful
-    //    queries, successful upgrades, non-zero exits, and spawnv() failures (invalid interpreter).
+    // 2) Verify synchronously that zero modernime-subproc-* FDs remain in /proc/self/fd after
+    //    each phase, and that total /proc/self/fd count stays strictly equal to baselineFdCount
+    //    (accounting for GLib's glib_worker thread asynchronously closing its internal pidfd).
     auto countOpenFds = []() -> std::size_t {
         std::size_t count = 0;
-        for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+        std::error_code ec;
+        for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd", ec)) {
             (void)entry;
             ++count;
         }
         return count;
+    };
+
+    auto countSubprocTempFds = []() -> std::size_t {
+        std::size_t count = 0;
+        std::error_code ec;
+        for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd", ec)) {
+            std::error_code linkEc;
+            const auto target = std::filesystem::read_symlink(entry.path(), linkEc);
+            if (!linkEc && target.string().find("modernime-subproc-") != std::string::npos) {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    auto waitForFdCount = [&](std::size_t expected) -> bool {
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            if (countOpenFds() == expected) {
+                return true;
+            }
+            ::usleep(2000);
+        }
+        return countOpenFds() == expected;
     };
 
     const auto childFdAuditFile = tempRoot / "child-fd-audit.txt";
@@ -459,6 +484,7 @@ int main(int argc, char **argv) {
     // Warm up once so any one-time GLib thread/context initialization FDs are settled
     const auto warmupRes = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
     assert(warmupRes.success);
+    assert(countSubprocTempFds() == 0);
     {
         std::ifstream auditIn(childFdAuditFile);
         int leakedChildFds = -1;
@@ -466,6 +492,8 @@ int main(int argc, char **argv) {
         assert(leakedChildFds == 0);
     }
 
+    // Let GLib's glib_worker thread finish closing the warmup child's pidfd before recording baseline
+    ::usleep(10000);
     const std::size_t baselineFdCount = countOpenFds();
     for (int i = 0; i < 15; ++i) {
         // Successful query + upgrade
@@ -474,7 +502,8 @@ int main(int argc, char **argv) {
         const auto okUp = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
         assert(okUp.success);
     }
-    assert(countOpenFds() == baselineFdCount);
+    assert(countSubprocTempFds() == 0);
+    assert(waitForFdCount(baselineFdCount));
 
     // Non-zero child exit path
     writeExecutable(aptBinDir / "pkexec", "#!/bin/sh\nexit 1\n");
@@ -482,7 +511,8 @@ int main(int argc, char **argv) {
         const auto failUp = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
         assert(!failUp.success);
     }
-    assert(countOpenFds() == baselineFdCount);
+    assert(countSubprocTempFds() == 0);
+    assert(waitForFdCount(baselineFdCount));
 
     // g_subprocess_launcher_spawnv() failure path (executable exists with 0755, but invalid shebang interpreter)
     writeExecutable(
@@ -494,7 +524,8 @@ int main(int argc, char **argv) {
         const auto spawnFailRefresh = UpdateController::refreshPackageCache(aptStatus, aptEnv);
         assert(!spawnFailRefresh.success);
     }
-    assert(countOpenFds() == baselineFdCount);
+    assert(countSubprocTempFds() == 0);
+    assert(waitForFdCount(baselineFdCount));
 
     std::filesystem::remove_all(tempRoot);
     return 0;
