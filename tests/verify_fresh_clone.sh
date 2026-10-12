@@ -23,8 +23,14 @@ printf '=== 2. 在沙箱环境中执行 install.sh ===\n'
 
 printf '=== 3. 验证沙箱安装产物完整性 ===\n'
 test -f "$MODERNIME_PREFIX/bin/modernime-settings"
-{ test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so" || test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so"; }
-{ test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_ui.so" || test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_ui.so"; }
+test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
+test -x "$MODERNIME_PREFIX/bin/modernime-session-init"
+{ test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so" || \
+  test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so" || \
+  test -f "$MODERNIME_PREFIX/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so"; }
+{ test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_ui.so" || \
+  test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_ui.so" || \
+  test -f "$MODERNIME_PREFIX/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so"; }
 test -f "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
 test -f "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test -f "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
@@ -42,10 +48,13 @@ printf '=== 4. 在沙箱环境中执行 uninstall.sh ===\n'
 
 printf '=== 5. 验证沙箱卸载清理完全性 ===\n'
 test ! -e "$MODERNIME_PREFIX/bin/modernime-settings"
+test ! -e "$MODERNIME_PREFIX/bin/modernime-session-init"
 test ! -e "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so"
 test ! -e "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so"
+test ! -e "$MODERNIME_PREFIX/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so"
 test ! -e "$MODERNIME_PREFIX/lib/fcitx5/modernime_ui.so"
 test ! -e "$MODERNIME_PREFIX/lib64/fcitx5/modernime_ui.so"
+test ! -e "$MODERNIME_PREFIX/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so"
 test ! -e "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
 test ! -e "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test ! -e "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"

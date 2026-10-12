@@ -138,6 +138,21 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Verify Release Assets
+        run: |
+          cd release-assets
+          echo "=== 检查发布产物完整性与命名规范 ==="
+          ls -la
+          test $(ls -1 *.deb 2>/dev/null | wc -l) -eq 2
+          test $(ls -1 *.rpm 2>/dev/null | wc -l) -eq 1
+          test $(ls -1 *.tar.gz 2>/dev/null | wc -l) -eq 1
+          for deb in *.deb; do
+            dpkg-deb -I "$deb" >/dev/null
+          done
+          for tarball in *.tar.gz; do
+            tar -tzf "$tarball" >/dev/null
+          done
+
       - name: Compute Checksums
         run: |
           cd release-assets

@@ -419,6 +419,45 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 配置目录不同于 `$HOME/.config` 时，默认不修改 `$HOME/.xprofile`。需要同步指定的会话文件时可设置 `MODERNIME_XPROFILE_FILE=/path/to/profile`；`MODERNIME_SKIP_XPROFILE=1` 可完全跳过。安装清单记录实际路径与生成块，重装和卸载保留被修改的块及文件中的其它用户内容。卸载会使用记录的路径，无需再次设置会话文件参数。
 
+## 版本升级与版本回退指南
+
+### 1. Ubuntu / Debian (DEB 原生包)
+
+- **升级**：下载与当前操作系统版本严格匹配的 DEB 包（如 `ubuntu22.04` 或 `ubuntu24.04`），使用 APT 执行事务升级以自动校验并补齐可能的新依赖：
+  ```bash
+  sudo apt-get install --reinstall ./modernime_<new_version>_amd64_<distro>.deb
+  ```
+  升级完成后，在当前用户桌面会话中执行 `modernime-session-init` 或重载输入法：
+  ```bash
+  fcitx5-remote -r
+  ```
+- **回退**：下载历史版本的 DEB 包，通过 `--allow-downgrades` 参数安全回退：
+  ```bash
+  sudo apt-get install --allow-downgrades ./modernime_<old_version>_amd64_<distro>.deb
+  ```
+
+### 2. openEuler (RPM 原生包)
+
+- **升级**：使用 DNF 或 `rpm -Uvh` 执行同名包原子升级（**切勿使用 `rpm -ivh`**，避免同名多版本冲突）：
+  ```bash
+  sudo dnf upgrade ./modernime-<new_version>-1.oe24.x86_64.rpm
+  # 或使用 rpm:
+  # sudo rpm -Uvh ./modernime-<new_version>-1.oe24.x86_64.rpm
+  ```
+  安装后以普通桌面用户身份运行 `modernime-session-init` 刷新环境与会话。
+- **回退**：使用 DNF 或 `rpm --oldpackage` 回退到指定旧版本：
+  ```bash
+  sudo dnf downgrade ./modernime-<old_version>-1.oe24.x86_64.rpm
+  # 或使用 rpm:
+  # sudo rpm -Uvh --oldpackage ./modernime-<old_version>-1.oe24.x86_64.rpm
+  ```
+
+### 3. 便携绿色包 (Portable Tarball) 与源码安装
+
+- **升级**：解压新版本压缩包后直接运行 `./install.sh`。安装器具备暂存完整性校验、旧版 v0.1.6 扁平插件目录自动迁移，并在每次升级前使用 SQLite Backup API 自动将用户自适应学习数据库完整备份至 `~/.local/share/modernime/learning.sqlite3.backup-<timestamp>`。用户自定义词典（`user-dictionary.txt`）和个性化配置会被严格保护，哈希保持不变。
+- **回退**：解压旧版本便携包或切换到旧版本源码标签，直接运行 `./install.sh` 即可重新部署旧版二进制。如需回退词频学习记录，直接将自动备份文件复制覆盖 `learning.sqlite3` 即可。
+- **安装渠道切换注意**：系统已通过 DEB 或 RPM 原生包安装时，请勿使用 `sudo ./install.sh /usr` 强制覆盖系统前缀；如需切换至便携包或源码构建版，请先通过系统包管理器（`apt remove` / `dnf remove`）卸载原生包，或使用非 root 默认用户前缀（`~/.local`）部署。
+
 ## 卸载
 
 在仓库目录执行：

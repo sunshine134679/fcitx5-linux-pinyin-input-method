@@ -551,4 +551,8 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/install_channel_collision_test.sh
     )
+    add_test(NAME modernime_verify_release_install_upgrade
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/verify_release_install_upgrade.sh
+    )
 endif()

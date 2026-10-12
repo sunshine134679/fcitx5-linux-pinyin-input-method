@@ -424,6 +424,10 @@ if [[ "$is_system_prefix" != true ]]; then
     {
         printf '%s\n' "$environment_line"
         printf 'XDG_DATA_DIRS="%s:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix/share"
+        printf 'GTK_IM_MODULE=fcitx\n'
+        printf 'QT_IM_MODULE=fcitx\n'
+        printf 'XMODIFIERS=@im=fcitx\n'
+        printf 'SDL_IM_MODULE=fcitx\n'
     } > "$desktop_tmp"
     modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
 

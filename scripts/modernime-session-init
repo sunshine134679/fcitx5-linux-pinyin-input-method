@@ -58,34 +58,60 @@ for sys_dir in /usr/lib64/fcitx5 /usr/lib/x86_64-linux-gnu/fcitx5 /usr/lib/aarch
 done
 system_addon_dir=${system_addon_dir:-"/usr/lib/fcitx5"}
 
-# 2. Write environment.d configuration
+# 2. Determine data directories
+data_directories=${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
+case ":$data_directories:" in
+    *":$prefix/share:"*) ;;
+    *) data_directories="$prefix/share:$data_directories" ;;
+esac
+
+# 3. Write environment.d configuration
 mkdir -p "$environment_dir"
+env_tmp=$(mktemp "$environment_dir/.modernime-env.XXXXXX")
 {
     printf 'FCITX_ADDON_DIRS=%s:%s\n' "$prefix_addon_dir" "$system_addon_dir"
-    printf 'XDG_DATA_DIRS=%s/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}\n' "$prefix"
+    printf 'XDG_DATA_DIRS="%s/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix"
     printf 'GTK_IM_MODULE=fcitx\n'
     printf 'QT_IM_MODULE=fcitx\n'
     printf 'XMODIFIERS=@im=fcitx\n'
     printf 'SDL_IM_MODULE=fcitx\n'
-} > "$environment_file"
-printf 'Updated session environment: %s\n' "$environment_file"
+} > "$env_tmp"
 
-# 3. Write autostart entry
+# 4. Write autostart entry
 mkdir -p "$autostart_dir"
+auto_tmp=$(mktemp "$autostart_dir/.modernime-auto.XXXXXX")
+autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir XDG_DATA_DIRS=$data_directories fcitx5 -d -u modernime-ui"
 {
-    printf '[Desktop Entry]\n'
-    printf 'Type=Application\n'
-    printf 'Name=Fcitx 5 (ModernIME)\n'
-    printf 'GenericName=Input Method\n'
-    printf 'Comment=Start Fcitx 5 with ModernIME UI\n'
-    printf 'Exec=env FCITX_ADDON_DIRS=%s:%s fcitx5 -d -u modernime-ui\n' "$prefix_addon_dir" "$system_addon_dir"
-    printf 'Icon=fcitx\n'
-    printf 'Terminal=false\n'
-    printf 'Categories=System;Utility;\n'
-    printf 'StartupNotify=false\n'
-    printf 'X-GNOME-Autostart-Phase=Applications\n'
-} > "$autostart_file"
-printf 'Updated user autostart:     %s\n' "$autostart_file"
+    printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
+    printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
+    printf 'Exec=%s\n' "$autostart_exec"
+    printf '%s\n' 'Terminal=false' 'X-GNOME-Autostart-enabled=true' 'NoDisplay=true'
+} > "$auto_tmp"
+
+managed_state_dir="$prefix/share/modernime/managed-files"
+if [[ -f "$managed_state_dir/environment.content" ]] && [[ -f "$environment_file" ]] && ! cmp -s "$managed_state_dir/environment.content" "$environment_file"; then
+    rm -f "$env_tmp"
+    printf 'Preserving user-modified session environment: %s\n' "$environment_file"
+else
+    mv -f "$env_tmp" "$environment_file"
+    if [[ -d "$managed_state_dir" && -w "$managed_state_dir" ]]; then
+        cp "$environment_file" "$managed_state_dir/environment.content"
+        printf '%s\n' "$environment_file" > "$managed_state_dir/environment.path"
+    fi
+    printf 'Updated session environment: %s\n' "$environment_file"
+fi
+
+if [[ -f "$managed_state_dir/autostart.content" ]] && [[ -f "$autostart_file" ]] && ! cmp -s "$managed_state_dir/autostart.content" "$autostart_file"; then
+    rm -f "$auto_tmp"
+    printf 'Preserving user-modified autostart entry: %s\n' "$autostart_file"
+else
+    mv -f "$auto_tmp" "$autostart_file"
+    if [[ -d "$managed_state_dir" && -w "$managed_state_dir" ]]; then
+        cp "$autostart_file" "$managed_state_dir/autostart.content"
+        printf '%s\n' "$autostart_file" > "$managed_state_dir/autostart.path"
+    fi
+    printf 'Updated user autostart:     %s\n' "$autostart_file"
+fi
 
 # 4. Configure Fcitx5 profile to ensure modernime is in input method list
 mkdir -p "$fcitx5_config_dir"
