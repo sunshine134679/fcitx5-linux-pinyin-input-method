@@ -18,13 +18,12 @@ from pathlib import Path
 
 try:
     from pypinyin import Style, lazy_pinyin
-except ImportError as exc:  # pragma: no cover - maintenance tool diagnostic
-    raise SystemExit(
-        "缺少 pypinyin。仅生成数据时请先把 python-pinyin 源码加入 PYTHONPATH。"
-    ) from exc
+except ImportError:  # pragma: no cover - imported lazily when annotating raw texts
+    Style = None  # type: ignore[assignment]
+    lazy_pinyin = None  # type: ignore[assignment]
 
 
-CHINESE_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+$")
+CHINESE_RE = re.compile(r"^[\u3007\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+$")
 PINYIN_RE = re.compile(r"^[a-z]+(?:'[a-z]+)*$")
 ABBREVIATION_RE = re.compile(r"^[a-z]+$")
 MIN_DOMAIN_FREQUENCY = 5
@@ -45,18 +44,20 @@ THUOCL_SOURCES = (
 )
 
 CATEGORY_ORDER = {
-    "idiom": 0,
-    "it": 1,
-    "finance": 2,
-    "place": 3,
-    "person": 4,
-    "poem": 5,
-    "medical": 6,
-    "food": 7,
-    "law": 8,
-    "car": 9,
-    "animal": 10,
-    "daily": 11,
+    "daily": 0,
+    "idiom": 1,
+    "it": 2,
+    "finance": 3,
+    "place": 4,
+    "person": 5,
+    "poem": 6,
+    "medical": 7,
+    "chemistry": 8,
+    "biology": 9,
+    "food": 10,
+    "law": 11,
+    "car": 12,
+    "animal": 13,
 }
 
 
@@ -80,15 +81,21 @@ def normalize_phrase(value: str) -> str | None:
 
 
 def normalize_syllable(value: str) -> str:
-    value = unicodedata.normalize("NFKD", value.lower().strip())
-    value = "".join(char for char in value if not unicodedata.combining(char))
-    # LibIME's ASCII spelling uses v for ü, just like its standard pinyin
-    # input profiles do.
-    return value.replace("ü", "v")
+    value = value.lower().strip().replace("u:", "ü")
+    # Convert precomposed or NFD-decomposed ü (including ǖ, ǘ, ǚ, ǜ) to 'v'
+    # BEFORE stripping combining diacritical marks so lǜ/nǚ/lüè become lv/nv/lve.
+    value = unicodedata.normalize("NFD", value)
+    value = value.replace("u\u0308", "v").replace("ü", "v")
+    value = "".join(
+        char for char in value if not unicodedata.combining(char) and not char.isdigit()
+    )
+    if value.startswith(("j", "q", "x", "y")) and "v" in value:
+        value = value.replace("v", "u")
+    return value
 
 
 def pinyin_from_source(value: str) -> str | None:
-    syllables = [normalize_syllable(item) for item in value.split()]
+    syllables = [normalize_syllable(item) for item in re.split(r"[\s']+", value.strip())]
     syllables = [item for item in syllables if item]
     if not syllables or any(re.fullmatch(r"[a-z]+", item) is None for item in syllables):
         return None
@@ -97,6 +104,10 @@ def pinyin_from_source(value: str) -> str | None:
 
 
 def pinyin_for_phrase(phrase: str) -> str | None:
+    if lazy_pinyin is None or Style is None:
+        raise SystemExit(
+            "缺少 pypinyin。仅生成数据时请先把 python-pinyin 源码加入 PYTHONPATH。"
+        )
     syllables = [
         normalize_syllable(item)
         for item in lazy_pinyin(phrase, style=Style.NORMAL, errors="default")
@@ -110,7 +121,7 @@ def pinyin_for_phrase(phrase: str) -> str | None:
 
 
 def abbreviation_for(pinyin: str) -> str:
-    return "".join(syllable[0] for syllable in pinyin.split("'"))
+    return "".join(syllable[0] for syllable in pinyin.split("'") if syllable)
 
 
 def choose_entry(entries: dict[tuple[str, str], Entry], entry: Entry) -> None:
@@ -234,17 +245,63 @@ def write_outputs(entries: list[Entry], output: Path, raw_output: Path) -> None:
             raw.write(f"{entry.phrase}\t{entry.pinyin}\t0\n")
 
 
+def run_self_tests() -> int:
+    cases = [
+        ("lü", "lv"),
+        ("lǜ", "lv"),
+        ("nǚ", "nv"),
+        ("lüè", "lve"),
+        ("nüè", "nve"),
+        ("lu:4", "lv"),
+        ("nu:3", "nv"),
+        ("jü", "ju"),
+        ("qü", "qu"),
+        ("xü", "xu"),
+        ("yü", "yu"),
+    ]
+    for raw, expected in cases:
+        actual = normalize_syllable(raw)
+        if actual != expected:
+            raise AssertionError(f"normalize_syllable({raw!r}) = {actual!r}, expected {expected!r}")
+
+    phrase_cases = [
+        ("绿色", "lǜ sè", "lv'se", "ls"),
+        ("女儿", "nǚ ér", "nv'er", "ne"),
+        ("略微", "lüè wēi", "lve'wei", "lw"),
+        ("重庆", "chóng qìng", "chong'qing", "cq"),
+        ("重阳", "chóng yáng", "chong'yang", "cy"),
+        ("银行", "yín háng", "yin'hang", "yh"),
+        ("音乐", "yīn yuè", "yin'yue", "yy"),
+        ("快乐", "kuài lè", "kuai'le", "kl"),
+    ]
+    for phrase, toned_py, expected_py, expected_abbr in phrase_cases:
+        norm_phrase = normalize_phrase(phrase)
+        norm_py = pinyin_from_source(toned_py)
+        assert norm_phrase == phrase, f"normalize_phrase({phrase!r}) failed"
+        assert norm_py == expected_py, f"pinyin_from_source({toned_py!r}) = {norm_py!r}, expected {expected_py!r}"
+        assert abbreviation_for(norm_py) == expected_abbr
+    print("generate_pinyin_knowledge self-test passed", file=sys.stderr)
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--idiom-csv", type=Path, required=True)
-    parser.add_argument("--thuocl-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--raw-output", type=Path, required=True)
+    parser.add_argument("--self-test", action="store_true", help="Run normalization self-tests")
+    parser.add_argument("--idiom-csv", type=Path)
+    parser.add_argument("--thuocl-dir", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--raw-output", type=Path)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.self_test:
+        return run_self_tests()
+    if not (args.idiom_csv and args.thuocl_dir and args.output and args.raw_output):
+        raise SystemExit(
+            "生成词库需同时提供 --idiom-csv、--thuocl-dir、--output 和 --raw-output（或使用 --self-test）。"
+        )
     entries: dict[tuple[str, str], Entry] = {}
     idiom_count = read_idioms(args.idiom_csv, entries)
     thuocl_count = read_thuocl(args.thuocl_dir, entries)
