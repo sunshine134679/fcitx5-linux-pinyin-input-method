@@ -41,7 +41,7 @@ EOF
 # 1.3 模拟用户积累的个人词典、设置和学习数据库
 printf '我的自定义短语\twodezidingyiduanju\t100\n' > "$data_home/modernime/user-dictionary.txt"
 printf '[General]\nCandidateSize=9\n' > "$config_home/modernime/settings.conf"
-printf 'lmdb-learning-payload\n' > "$data_home/modernime/learning.lmdb"
+"$project_root/scripts/modernime-data-guard" --init-lmdb "$data_home/modernime/learning.lmdb"
 python3 - "$data_home/modernime/learning.sqlite3" <<'PYEOF'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])

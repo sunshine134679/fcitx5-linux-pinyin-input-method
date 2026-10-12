@@ -177,67 +177,23 @@ backup_user_database() {
         return 0
     fi
     local data_dir="${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}/modernime"
-    local db_file="$data_dir/learning.sqlite3"
-    if [[ -f "$db_file" ]]; then
-        local ts
-        ts=$(date +%Y%m%d%H%M%S 2>/dev/null || echo "$$")
-        local backup_target="$data_dir/learning.sqlite3.backup-$ts"
-        if command -v sqlite3 >/dev/null 2>&1; then
-            sqlite3 "$db_file" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
-            if ! sqlite3 "$db_file" ".backup '$backup_target'" 2>/dev/null; then
-                printf 'Error: Failed to create consistent SQLite backup from %s to %s\n' "$db_file" "$backup_target" >&2
-                rm -f -- "$backup_target"
-                return 1
-            fi
-            local integrity
-            integrity=$(sqlite3 "$backup_target" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
-            if [[ "$integrity" != "ok" ]]; then
-                printf 'Error: Backup integrity check failed for %s (result: %s)\n' "$backup_target" "$integrity" >&2
-                rm -f -- "$backup_target"
-                return 1
-            fi
-        elif command -v python3 >/dev/null 2>&1; then
-            if ! python3 - "$db_file" "$backup_target" <<'PYEOF'
-import sqlite3, sys
-src_path, dst_path = sys.argv[1], sys.argv[2]
-try:
-    src = sqlite3.connect(src_path)
-    dst = sqlite3.connect(dst_path)
-    with dst:
-        src.backup(dst)
-    dst.close()
-    src.close()
-    chk = sqlite3.connect(dst_path)
-    row = chk.execute("PRAGMA integrity_check;").fetchone()
-    chk.close()
-    if not row or row[0] != "ok":
-        sys.exit(1)
-except Exception as exc:
-    sys.stderr.write(f"SQLite backup error: {exc}\n")
-    sys.exit(1)
-PYEOF
-            then
-                printf 'Error: Failed to create or verify consistent SQLite WAL backup from %s to %s\n' "$db_file" "$backup_target" >&2
-                rm -f -- "$backup_target"
-                return 1
-            fi
-        else
-            printf 'Error: sqlite3 or python3 is required for consistent online WAL backup of %s\n' "$db_file" >&2
-            return 1
-        fi
-        printf 'Backed up user learning database to %s\n' "$backup_target"
+    local cfg_dir="${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}/modernime"
+    if [[ ! -d "$data_dir" && ! -d "$cfg_dir" ]]; then
+        return 0
     fi
-    local lmdb_file="$data_dir/learning.lmdb"
-    if [[ -f "$lmdb_file" ]]; then
-        local ts_lmdb
-        ts_lmdb=$(date +%Y%m%d%H%M%S 2>/dev/null || echo "$$")
-        local lmdb_backup="$data_dir/learning.lmdb.backup-$ts_lmdb"
-        if ! cp -f -- "$lmdb_file" "$lmdb_backup"; then
-            printf 'Error: Failed to create LMDB backup from %s to %s\n' "$lmdb_file" "$lmdb_backup" >&2
-            rm -f -- "$lmdb_backup"
-            return 1
-        fi
-        printf 'Backed up user LMDB learning database to %s\n' "$lmdb_backup"
+    if [[ ! -f "$project_root/scripts/modernime-data-guard" ]]; then
+        printf 'Error: Required data protection tool not found: %s/scripts/modernime-data-guard\n' "$project_root" >&2
+        return 1
+    fi
+    local py_cmd="python3"
+    if ! command -v python3 >/dev/null 2>&1 && [[ -x /usr/bin/python3 ]]; then
+        py_cmd="/usr/bin/python3"
+    fi
+    if ! "$py_cmd" "$project_root/scripts/modernime-data-guard" --pre-upgrade \
+        --data-dir "$data_dir" \
+        --config-dir "$cfg_dir"; then
+        printf 'Error: Transactional pre-upgrade backup or integrity check failed; aborting installation to preserve existing version.\n' >&2
+        return 1
     fi
 }
 backup_user_database
@@ -355,16 +311,61 @@ else
     )
 fi
 
+src_rollback_dir=""
+if [[ -d "$prefix" ]]; then
+    src_rollback_dir=$(mktemp -d "${TMPDIR:-/tmp}/modernime-src-rollback.XXXXXX")
+    cp -a -- "$prefix/." "$src_rollback_dir/" 2>/dev/null || true
+fi
+restore_src_on_failure() {
+    printf 'Error encountered during source installation; restoring previous version...\n' >&2
+    if [[ -n "$src_rollback_dir" && -d "$src_rollback_dir" ]]; then
+        rm -rf -- "$prefix/bin/modernime-settings" \
+                  "$prefix/bin/modernime-session-init" \
+                  "$prefix/bin/modernime-data-guard" \
+                  "$prefix/lib/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib/fcitx5/modernime_ui.so" \
+                  "$prefix/lib64/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib64/fcitx5/modernime_ui.so" \
+                  "$prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so" \
+                  "$prefix/lib/aarch64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib/aarch64-linux-gnu/fcitx5/modernime_ui.so" 2>/dev/null || true
+        cp -a --remove-destination -- "$src_rollback_dir/." "$prefix/" 2>/dev/null || true
+        rm -rf -- "$src_rollback_dir"
+    fi
+    if [[ "$is_system_prefix" != true && -x "$project_root/scripts/modernime-data-guard" ]]; then
+        "$project_root/scripts/modernime-data-guard" --restore \
+            --data-dir "${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}/modernime" \
+            --config-dir "${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}/modernime" 2>/dev/null || true
+    fi
+    printf 'Rollback to previous version completed.\n' >&2
+    exit 1
+}
+
+# Always unlink existing plugin .so files before installing so running Fcitx5 processes never suffer in-place mmap overwrites.
 for check_file in "$prefix/bin/modernime-settings" \
                   "$prefix/lib/fcitx5/modernime_fcitx5.so" \
                   "$prefix/lib/fcitx5/modernime_ui.so" \
                   "$prefix/lib64/fcitx5/modernime_fcitx5.so" \
-                  "$prefix/lib64/fcitx5/modernime_ui.so"; do
-    if [[ -e "$check_file" && ! -w "$check_file" ]]; then
+                  "$prefix/lib64/fcitx5/modernime_ui.so" \
+                  "$prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so" \
+                  "$prefix/lib/aarch64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+                  "$prefix/lib/aarch64-linux-gnu/fcitx5/modernime_ui.so"; do
+    if [[ -e "$check_file" || -L "$check_file" ]]; then
         rm -f -- "$check_file" 2>/dev/null || true
     fi
 done
-cmake --install "$build_dir" --prefix "$prefix"
+if ! cmake --install "$build_dir" --prefix "$prefix"; then
+    restore_src_on_failure
+fi
+if [[ "${MODERNIME_SIMULATE_INSTALL_FAILURE:-0}" == "1" ]]; then
+    printf 'Error: Simulated mid-upgrade installation failure via MODERNIME_SIMULATE_INSTALL_FAILURE=1\n' >&2
+    restore_src_on_failure
+fi
+if [[ -n "$src_rollback_dir" && -d "$src_rollback_dir" ]]; then
+    rm -rf -- "$src_rollback_dir"
+fi
 
 cmake_libdir=$(grep -m1 '^CMAKE_INSTALL_LIBDIR:PATH=' "$build_dir/CMakeCache.txt" 2>/dev/null || true)
 cmake_libdir=${cmake_libdir#*=}
@@ -536,6 +537,7 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
     printf '%s\n' "$prefix/bin/modernime-settings"
     printf '%s\n' "$prefix/bin/modernime-session-init"
+    printf '%s\n' "$prefix/bin/modernime-data-guard"
     printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
     if [[ "$is_system_prefix" != true ]]; then
         printf '%s\n' "$desktop_shortcut"

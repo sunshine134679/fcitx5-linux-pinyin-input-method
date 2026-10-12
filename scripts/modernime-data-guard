@@ -1,0 +1,923 @@
+#!/usr/bin/env python3
+"""
+modernime-data-guard — Transactional backup, integrity verification, schema migration,
+and atomic rollback tool for ModernIME user configuration, SQLite WAL, LMDB, and custom dictionaries.
+
+Strictly forbids falling back to raw file copy (`cp`) when backing up SQLite or LMDB databases.
+Any backup, integrity check, or schema migration failure exits non-zero to abort the upgrade.
+"""
+
+import argparse
+import ctypes
+import datetime
+import hashlib
+import json
+import os
+import pwd
+import shutil
+import sqlite3
+import struct
+import sys
+from pathlib import Path
+
+# LMDB constants from <lmdb.h>
+MDB_FIXEDMAP = 0x01
+MDB_NOSUBDIR = 0x4000
+MDB_RDONLY = 0x20000
+MDB_NOTLS = 0x200000
+MDB_NOLOCK = 0x400000
+MDB_DUPSORT = 0x04
+MDB_CREATE = 0x40000
+MDB_CP_COMPACT = 0x01
+
+MDB_FIRST = 0
+MDB_NEXT = 8
+MDB_SUCCESS = 0
+MDB_NOTFOUND = -30798
+
+LMDB_MAGIC = 0xBEEFC0DE
+MAX_SUPPORTED_SQLITE_SCHEMA = 2
+MAX_SUPPORTED_LMDB_SCHEMA = 2
+
+
+class MDBVal(ctypes.Structure):
+    _fields_ = [
+        ("mv_size", ctypes.c_size_t),
+        ("mv_data", ctypes.c_void_p),
+    ]
+
+
+def _load_liblmdb():
+    candidates = [
+        "liblmdb.so.0",
+        "liblmdb.so",
+        "/usr/lib/x86_64-linux-gnu/liblmdb.so.0",
+        "/usr/lib64/liblmdb.so.0.0.0",
+        "/usr/lib64/liblmdb.so.0",
+        "/usr/lib/aarch64-linux-gnu/liblmdb.so.0",
+        "/usr/lib/liblmdb.so.0",
+    ]
+    for name in candidates:
+        try:
+            lib = ctypes.CDLL(name)
+            lib.mdb_env_create.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+            lib.mdb_env_create.restype = ctypes.c_int
+            lib.mdb_env_set_maxdbs.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            lib.mdb_env_set_maxdbs.restype = ctypes.c_int
+            lib.mdb_env_set_mapsize.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            lib.mdb_env_set_mapsize.restype = ctypes.c_int
+            lib.mdb_env_open.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+                ctypes.c_uint,
+            ]
+            lib.mdb_env_open.restype = ctypes.c_int
+            lib.mdb_env_close.argtypes = [ctypes.c_void_p]
+            lib.mdb_env_close.restype = None
+            lib.mdb_env_copy2.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+            ]
+            lib.mdb_env_copy2.restype = ctypes.c_int
+            lib.mdb_txn_begin.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            lib.mdb_txn_begin.restype = ctypes.c_int
+            lib.mdb_txn_commit.argtypes = [ctypes.c_void_p]
+            lib.mdb_txn_commit.restype = ctypes.c_int
+            lib.mdb_txn_abort.argtypes = [ctypes.c_void_p]
+            lib.mdb_txn_abort.restype = None
+            lib.mdb_dbi_open.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+                ctypes.POINTER(ctypes.c_uint),
+            ]
+            lib.mdb_dbi_open.restype = ctypes.c_int
+            lib.mdb_get.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.POINTER(MDBVal),
+                ctypes.POINTER(MDBVal),
+            ]
+            lib.mdb_get.restype = ctypes.c_int
+            lib.mdb_put.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.POINTER(MDBVal),
+                ctypes.POINTER(MDBVal),
+                ctypes.c_uint,
+            ]
+            lib.mdb_put.restype = ctypes.c_int
+            lib.mdb_cursor_open.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            lib.mdb_cursor_open.restype = ctypes.c_int
+            lib.mdb_cursor_close.argtypes = [ctypes.c_void_p]
+            lib.mdb_cursor_close.restype = None
+            lib.mdb_cursor_get.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(MDBVal),
+                ctypes.POINTER(MDBVal),
+                ctypes.c_int,
+            ]
+            lib.mdb_cursor_get.restype = ctypes.c_int
+            lib.mdb_strerror.argtypes = [ctypes.c_int]
+            lib.mdb_strerror.restype = ctypes.c_char_p
+            return lib
+        except OSError:
+            continue
+    return None
+
+
+def _mdb_err(lib, rc: int) -> str:
+    if lib is not None:
+        msg = lib.mdb_strerror(rc)
+        if msg:
+            return f"{msg.decode('utf-8', errors='replace')} (rc={rc})"
+    return f"rc={rc}"
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _check_lmdb_magic(data_file: Path) -> None:
+    if not data_file.is_file():
+        raise RuntimeError(f"LMDB data file does not exist: {data_file}")
+    size = data_file.stat().st_size
+    if size < 4096:
+        raise RuntimeError(f"LMDB file too small ({size} bytes): {data_file}")
+    with data_file.open("rb") as f:
+        buf = f.read(min(size, 16384))
+    magic_bytes = struct.pack("<I", LMDB_MAGIC)
+    if magic_bytes not in buf:
+        raise RuntimeError(f"Invalid LMDB header magic in {data_file}")
+
+
+def verify_lmdb(lmdb_path: Path) -> dict:
+    """
+    Opens the LMDB environment read-only inside a read transaction, verifies page headers,
+    meta schema_version, and scans all records in root/words subdatabases via a cursor.
+    """
+    lib = _load_liblmdb()
+    if lib is None:
+        raise RuntimeError(
+            "liblmdb shared library is required for transactional LMDB verification; refusing raw file fallback"
+        )
+
+    is_dir = lmdb_path.is_dir()
+    data_file = (lmdb_path / "data.mdb") if is_dir else lmdb_path
+    _check_lmdb_magic(data_file)
+
+    env = ctypes.c_void_p()
+    rc = lib.mdb_env_create(ctypes.byref(env))
+    if rc != MDB_SUCCESS:
+        raise RuntimeError(f"mdb_env_create failed: {_mdb_err(lib, rc)}")
+
+    try:
+        lib.mdb_env_set_maxdbs(env, 8)
+        flags = MDB_RDONLY | MDB_NOTLS
+        if not is_dir:
+            flags |= MDB_NOSUBDIR
+        # If the lockfile cannot be created on a read-only directory, fall back to MDB_NOLOCK only after trying normal lock
+        rc = lib.mdb_env_open(env, str(lmdb_path).encode("utf-8"), flags, 0o644)
+        if rc != MDB_SUCCESS:
+            raise RuntimeError(f"mdb_env_open({lmdb_path}) failed: {_mdb_err(lib, rc)}")
+
+        txn = ctypes.c_void_p()
+        rc = lib.mdb_txn_begin(env, None, MDB_RDONLY, ctypes.byref(txn))
+        if rc != MDB_SUCCESS:
+            raise RuntimeError(f"mdb_txn_begin({lmdb_path}) failed: {_mdb_err(lib, rc)}")
+
+        try:
+            root_dbi = ctypes.c_uint()
+            rc = lib.mdb_dbi_open(txn, None, 0, ctypes.byref(root_dbi))
+            if rc != MDB_SUCCESS:
+                raise RuntimeError(f"mdb_dbi_open(root) failed: {_mdb_err(lib, rc)}")
+
+            cursor = ctypes.c_void_p()
+            rc = lib.mdb_cursor_open(txn, root_dbi.value, ctypes.byref(cursor))
+            if rc != MDB_SUCCESS:
+                raise RuntimeError(f"mdb_cursor_open(root) failed: {_mdb_err(lib, rc)}")
+
+            root_keys = []
+            try:
+                k = MDBVal()
+                v = MDBVal()
+                rc = lib.mdb_cursor_get(cursor, ctypes.byref(k), ctypes.byref(v), MDB_FIRST)
+                while rc == MDB_SUCCESS:
+                    key_bytes = ctypes.string_at(k.mv_data, k.mv_size)
+                    root_keys.append(key_bytes)
+                    rc = lib.mdb_cursor_get(cursor, ctypes.byref(k), ctypes.byref(v), MDB_NEXT)
+                if rc != MDB_NOTFOUND:
+                    raise RuntimeError(f"mdb_cursor_get(root) failed: {_mdb_err(lib, rc)}")
+            finally:
+                lib.mdb_cursor_close(cursor)
+
+            schema_version = 1
+            meta_dbi = ctypes.c_uint()
+            if lib.mdb_dbi_open(txn, b"meta", 0, ctypes.byref(meta_dbi)) == MDB_SUCCESS:
+                key_str = b"schema_version"
+                k_buf = ctypes.create_string_buffer(key_str, len(key_str))
+                k = MDBVal(len(key_str), ctypes.cast(k_buf, ctypes.c_void_p))
+                v = MDBVal()
+                rc = lib.mdb_get(txn, meta_dbi.value, ctypes.byref(k), ctypes.byref(v))
+                if rc == MDB_SUCCESS:
+                    if v.mv_size != 8:
+                        raise RuntimeError(
+                            f"Corrupt LMDB meta.schema_version size ({v.mv_size} != 8)"
+                        )
+                    schema_version = struct.unpack("<q", ctypes.string_at(v.mv_data, 8))[0]
+                    if schema_version < 1 or schema_version > MAX_SUPPORTED_LMDB_SCHEMA:
+                        raise RuntimeError(
+                            f"Unsupported LMDB schema_version={schema_version} (supported: 1..{MAX_SUPPORTED_LMDB_SCHEMA})"
+                        )
+
+            words_count = 0
+            words_dbi = ctypes.c_uint()
+            if lib.mdb_dbi_open(txn, b"words", MDB_DUPSORT, ctypes.byref(words_dbi)) == MDB_SUCCESS:
+                wcursor = ctypes.c_void_p()
+                rc = lib.mdb_cursor_open(txn, words_dbi.value, ctypes.byref(wcursor))
+                if rc != MDB_SUCCESS:
+                    raise RuntimeError(f"mdb_cursor_open(words) failed: {_mdb_err(lib, rc)}")
+                try:
+                    k = MDBVal()
+                    v = MDBVal()
+                    rc = lib.mdb_cursor_get(
+                        wcursor, ctypes.byref(k), ctypes.byref(v), MDB_FIRST
+                    )
+                    while rc == MDB_SUCCESS:
+                        # WordMeta header is 24 bytes (or at least 16 bytes)
+                        if v.mv_size < 16:
+                            raise RuntimeError(
+                                f"Corrupt LMDB words entry size ({v.mv_size} < 16)"
+                            )
+                        words_count += 1
+                        rc = lib.mdb_cursor_get(
+                            wcursor, ctypes.byref(k), ctypes.byref(v), MDB_NEXT
+                        )
+                    if rc != MDB_NOTFOUND:
+                        raise RuntimeError(
+                            f"mdb_cursor_get(words) failed: {_mdb_err(lib, rc)}"
+                        )
+                finally:
+                    lib.mdb_cursor_close(wcursor)
+
+            return {
+                "path": str(lmdb_path),
+                "is_dir": is_dir,
+                "schema_version": schema_version,
+                "words_count": words_count,
+                "root_entries": len(root_keys),
+            }
+        finally:
+            lib.mdb_txn_abort(txn)
+    finally:
+        lib.mdb_env_close(env)
+
+
+def backup_lmdb(src_path: Path, dst_path: Path) -> dict:
+    """
+    Performs a transactional online backup of an LMDB environment via mdb_env_copy2
+    (never raw cp), and verifies both source and destination integrity.
+    """
+    if os.environ.get("MODERNIME_SIMULATE_BACKUP_FAILURE") == "1":
+        raise RuntimeError("Simulated backup failure via MODERNIME_SIMULATE_BACKUP_FAILURE=1")
+
+    src_info = verify_lmdb(src_path)
+    lib = _load_liblmdb()
+    if lib is None:
+        raise RuntimeError("liblmdb shared library unavailable for transactional backup")
+
+    is_dir = src_path.is_dir()
+    if dst_path.exists():
+        if dst_path.is_dir():
+            shutil.rmtree(dst_path)
+        else:
+            dst_path.unlink()
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    if is_dir:
+        dst_path.mkdir(parents=True, exist_ok=True)
+
+    env = ctypes.c_void_p()
+    rc = lib.mdb_env_create(ctypes.byref(env))
+    if rc != MDB_SUCCESS:
+        raise RuntimeError(f"mdb_env_create failed: {_mdb_err(lib, rc)}")
+
+    try:
+        lib.mdb_env_set_maxdbs(env, 8)
+        flags = MDB_RDONLY | MDB_NOTLS
+        if not is_dir:
+            flags |= MDB_NOSUBDIR
+        rc = lib.mdb_env_open(env, str(src_path).encode("utf-8"), flags, 0o644)
+        if rc != MDB_SUCCESS:
+            raise RuntimeError(f"mdb_env_open({src_path}) failed: {_mdb_err(lib, rc)}")
+
+        rc = lib.mdb_env_copy2(env, str(dst_path).encode("utf-8"), MDB_CP_COMPACT)
+        if rc != MDB_SUCCESS:
+            raise RuntimeError(f"mdb_env_copy2({src_path} -> {dst_path}) failed: {_mdb_err(lib, rc)}")
+    finally:
+        lib.mdb_env_close(env)
+
+    dst_info = verify_lmdb(dst_path)
+    if dst_info["words_count"] != src_info["words_count"]:
+        raise RuntimeError(
+            f"LMDB backup entry count mismatch: src={src_info['words_count']} vs dst={dst_info['words_count']}"
+        )
+    if dst_info["schema_version"] != src_info["schema_version"]:
+        raise RuntimeError(
+            f"LMDB backup schema_version mismatch: src={src_info['schema_version']} vs dst={dst_info['schema_version']}"
+        )
+    return dst_info
+
+
+def verify_sqlite(sqlite_path: Path) -> dict:
+    """
+    Verifies SQLite database integrity (including active WAL frames) and checks schema version.
+    """
+    if not sqlite_path.is_file():
+        raise RuntimeError(f"SQLite file does not exist: {sqlite_path}")
+    size = sqlite_path.stat().st_size
+    if size > 0 and size < 100:
+        raise RuntimeError(f"SQLite file too small ({size} bytes): {sqlite_path}")
+    if size >= 16:
+        with sqlite_path.open("rb") as f:
+            hdr = f.read(16)
+        if hdr != b"SQLite format 3\x00":
+            raise RuntimeError(f"Invalid SQLite header magic in {sqlite_path}")
+
+    conn = sqlite3.connect(str(sqlite_path), timeout=5.0)
+    try:
+        row = conn.execute("PRAGMA integrity_check;").fetchone()
+        if not row or row[0] != "ok":
+            raise RuntimeError(f"SQLite PRAGMA integrity_check failed on {sqlite_path}: {row}")
+
+        user_version = conn.execute("PRAGMA user_version;").fetchone()[0]
+        if user_version < 0 or user_version > MAX_SUPPORTED_SQLITE_SCHEMA:
+            raise RuntimeError(
+                f"Unsupported SQLite user_version={user_version} in {sqlite_path} (supported: 0..{MAX_SUPPORTED_SQLITE_SCHEMA})"
+            )
+
+        # Check optional schema_meta table if present
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table';"
+            ).fetchall()
+        }
+        if "schema_meta" in tables:
+            meta_row = conn.execute(
+                "SELECT value FROM schema_meta WHERE key='schema_version';"
+            ).fetchone()
+            if meta_row is not None:
+                try:
+                    sv = int(meta_row[0])
+                except ValueError as exc:
+                    raise RuntimeError(
+                        f"Invalid schema_meta.schema_version={meta_row[0]!r}"
+                    ) from exc
+                if sv < 1 or sv > MAX_SUPPORTED_SQLITE_SCHEMA:
+                    raise RuntimeError(
+                        f"Unsupported SQLite schema_meta.schema_version={sv} (supported: 1..{MAX_SUPPORTED_SQLITE_SCHEMA})"
+                    )
+
+        entries_count = 0
+        if "learning_entries" in tables:
+            entries_count = conn.execute(
+                "SELECT COUNT(*) FROM learning_entries;"
+            ).fetchone()[0]
+
+        return {
+            "path": str(sqlite_path),
+            "user_version": user_version,
+            "entries_count": entries_count,
+            "has_wal": Path(f"{sqlite_path}-wal").is_file(),
+        }
+    finally:
+        conn.close()
+
+
+def backup_sqlite(src_path: Path, dst_path: Path) -> dict:
+    """
+    Performs an online consistent SQLite backup using sqlite3.Connection.backup()
+    which captures all committed frames in active WAL files without truncating/corrupting
+    concurrent writers, then runs PRAGMA integrity_check on the backup.
+    Never falls back to raw cp.
+    """
+    if os.environ.get("MODERNIME_SIMULATE_BACKUP_FAILURE") == "1":
+        raise RuntimeError("Simulated backup failure via MODERNIME_SIMULATE_BACKUP_FAILURE=1")
+
+    src_info = verify_sqlite(src_path)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    for stale in (dst_path, Path(f"{dst_path}-wal"), Path(f"{dst_path}-shm")):
+        if stale.exists():
+            stale.unlink()
+
+    src_conn = sqlite3.connect(str(src_path), timeout=5.0)
+    dst_conn = sqlite3.connect(str(dst_path), timeout=5.0)
+    try:
+        with dst_conn:
+            src_conn.backup(dst_conn)
+    except Exception as exc:
+        dst_conn.close()
+        src_conn.close()
+        if dst_path.exists():
+            dst_path.unlink()
+        raise RuntimeError(f"SQLite online backup failed for {src_path}: {exc}") from exc
+    finally:
+        dst_conn.close()
+        src_conn.close()
+
+    dst_info = verify_sqlite(dst_path)
+    if dst_info["entries_count"] != src_info["entries_count"]:
+        if dst_path.exists():
+            dst_path.unlink()
+        raise RuntimeError(
+            f"SQLite backup row count mismatch: src={src_info['entries_count']} vs dst={dst_info['entries_count']}"
+        )
+    return dst_info
+
+
+def migrate_databases(data_dir: Path) -> dict:
+    """
+    Verifies and upgrades SQLite / LMDB schema versions within supported bounds,
+    and ensures SQLite learning_entries are preserved or migrated cleanly.
+    """
+    if os.environ.get("MODERNIME_SIMULATE_MIGRATION_FAILURE") == "1":
+        raise RuntimeError("Simulated schema migration failure via MODERNIME_SIMULATE_MIGRATION_FAILURE=1")
+
+    result = {"sqlite_migrated": False, "lmdb_verified": False}
+    sqlite_path = data_dir / "learning.sqlite3"
+    lmdb_path = data_dir / "learning.lmdb"
+
+    if sqlite_path.exists():
+        info = verify_sqlite(sqlite_path)
+        conn = sqlite3.connect(str(sqlite_path), timeout=5.0)
+        try:
+            tables = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table';"
+                ).fetchall()
+            }
+            if "learning_entries" in tables:
+                cols = {
+                    r[1]
+                    for r in conn.execute("PRAGMA table_info(learning_entries);").fetchall()
+                }
+                if "suppressed" not in cols:
+                    conn.execute(
+                        "ALTER TABLE learning_entries ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0;"
+                    )
+                    result["sqlite_migrated"] = True
+                if "negative_feedback" not in cols:
+                    conn.execute(
+                        "ALTER TABLE learning_entries ADD COLUMN negative_feedback INTEGER NOT NULL DEFAULT 0;"
+                    )
+                    result["sqlite_migrated"] = True
+            if info["user_version"] == 0:
+                conn.execute("PRAGMA user_version = 1;")
+                result["sqlite_migrated"] = True
+            conn.commit()
+        finally:
+            conn.close()
+        verify_sqlite(sqlite_path)
+
+    if lmdb_path.exists():
+        verify_lmdb(lmdb_path)
+        result["lmdb_verified"] = True
+
+    return result
+
+
+def resolve_user_dirs(args) -> list[tuple[Path, Path]]:
+    """
+    Returns a list of (data_dir, config_dir) pairs to protect.
+    """
+    if args.data_dir or args.config_dir:
+        home = Path(os.environ.get("HOME", "/root"))
+        data_base = Path(
+            os.environ.get(
+                "MODERNIME_DATA_HOME",
+                os.environ.get("XDG_DATA_HOME", str(home / ".local" / "share")),
+            )
+        )
+        config_base = Path(
+            os.environ.get(
+                "MODERNIME_CONFIG_HOME",
+                os.environ.get("XDG_CONFIG_HOME", str(home / ".config")),
+            )
+        )
+        data_dir = Path(args.data_dir) if args.data_dir else (data_base / "modernime")
+        config_dir = (
+            Path(args.config_dir) if args.config_dir else (config_base / "modernime")
+        )
+        return [(data_dir, config_dir)]
+
+    # Check if explicit env vars are set
+    if os.environ.get("MODERNIME_DATA_HOME") or os.environ.get("MODERNIME_CONFIG_HOME"):
+        home = Path(os.environ.get("HOME", "/root"))
+        data_base = Path(
+            os.environ.get(
+                "MODERNIME_DATA_HOME",
+                os.environ.get("XDG_DATA_HOME", str(home / ".local" / "share")),
+            )
+        )
+        config_base = Path(
+            os.environ.get(
+                "MODERNIME_CONFIG_HOME",
+                os.environ.get("XDG_CONFIG_HOME", str(home / ".config")),
+            )
+        )
+        return [(data_base / "modernime", config_base / "modernime")]
+
+    # When invoked by root during DEB/RPM preinst, check SUDO_USER and normal user homes
+    pairs = []
+    seen = set()
+    candidates = []
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            candidates.append(Path(pwd.getpwnam(sudo_user).pw_dir))
+        except KeyError:
+            pass
+    home_env = os.environ.get("HOME")
+    if home_env:
+        candidates.append(Path(home_env))
+    if os.geteuid() == 0:
+        for entry in pwd.getpwall():
+            if entry.pw_uid >= 1000 and entry.pw_dir.startswith("/home/"):
+                candidates.append(Path(entry.pw_dir))
+
+    for home in candidates:
+        d = home / ".local" / "share" / "modernime"
+        c = home / ".config" / "modernime"
+        key = (str(d), str(c))
+        if key not in seen and (d.exists() or c.exists()):
+            seen.add(key)
+            pairs.append((d, c))
+
+    if not pairs:
+        home = Path(os.environ.get("HOME", "/root"))
+        pairs.append(
+            (
+                home / ".local" / "share" / "modernime",
+                home / ".config" / "modernime",
+            )
+        )
+    return pairs
+
+
+def init_test_lmdb(lmdb_path: Path, sample_key: str = "!u!ce,shi", sample_phrase: str = "测试") -> None:
+    """
+    Creates a valid populated LMDB database with 'words' and 'meta' subdatabases.
+    """
+    lib = _load_liblmdb()
+    if lib is None:
+        raise RuntimeError("liblmdb shared library unavailable")
+    lmdb_path.parent.mkdir(parents=True, exist_ok=True)
+    for f in (lmdb_path, Path(f"{lmdb_path}-lock")):
+        if f.exists():
+            if f.is_dir():
+                shutil.rmtree(f)
+            else:
+                f.unlink()
+
+    env = ctypes.c_void_p()
+    rc = lib.mdb_env_create(ctypes.byref(env))
+    if rc != MDB_SUCCESS:
+        raise RuntimeError(f"mdb_env_create failed: {_mdb_err(lib, rc)}")
+    try:
+        lib.mdb_env_set_maxdbs(env, 4)
+        lib.mdb_env_set_mapsize(env, 1048576)
+        rc = lib.mdb_env_open(
+            env, str(lmdb_path).encode("utf-8"), MDB_NOSUBDIR | MDB_NOTLS, 0o644
+        )
+        if rc != MDB_SUCCESS:
+            raise RuntimeError(f"mdb_env_open failed: {_mdb_err(lib, rc)}")
+        txn = ctypes.c_void_p()
+        rc = lib.mdb_txn_begin(env, None, 0, ctypes.byref(txn))
+        if rc != MDB_SUCCESS:
+            raise RuntimeError(f"mdb_txn_begin failed: {_mdb_err(lib, rc)}")
+        wdbi = ctypes.c_uint()
+        mdbi = ctypes.c_uint()
+        lib.mdb_dbi_open(txn, b"words", MDB_CREATE | MDB_DUPSORT, ctypes.byref(wdbi))
+        lib.mdb_dbi_open(txn, b"meta", MDB_CREATE, ctypes.byref(mdbi))
+
+        for meta_key, meta_val in [("schema_version", 2), ("reset_revision", 0), ("migrated_from_sqlite", 0)]:
+            kb = meta_key.encode("utf-8")
+            vb = struct.pack("<q", meta_val)
+            k_buf = ctypes.create_string_buffer(kb, len(kb))
+            v_buf = ctypes.create_string_buffer(vb, len(vb))
+            lib.mdb_put(
+                txn,
+                mdbi.value,
+                ctypes.byref(MDBVal(len(kb), ctypes.cast(k_buf, ctypes.c_void_p))),
+                ctypes.byref(MDBVal(len(vb), ctypes.cast(v_buf, ctypes.c_void_p))),
+                0,
+            )
+
+        phrase_bytes = sample_phrase.encode("utf-8")
+        # WordMeta struct (24 bytes): double dynamic_weight (8), int64 last_active_ts (8),
+        # uint16 text_bytes_len (2), uint16 context_before_len (2), uint16 context_after_len (2),
+        # uint8 negative_count (1), uint8 flags (1)
+        word_header = struct.pack("<dqHHHBB", 5.0, 1700000000000, len(phrase_bytes), 0, 0, 0, 0)
+        word_payload = word_header + phrase_bytes
+        kb = sample_key.encode("utf-8")
+        k_buf = ctypes.create_string_buffer(kb, len(kb))
+        v_buf = ctypes.create_string_buffer(word_payload, len(word_payload))
+        lib.mdb_put(
+            txn,
+            wdbi.value,
+            ctypes.byref(MDBVal(len(kb), ctypes.cast(k_buf, ctypes.c_void_p))),
+            ctypes.byref(MDBVal(len(word_payload), ctypes.cast(v_buf, ctypes.c_void_p))),
+            0,
+        )
+        rc = lib.mdb_txn_commit(txn)
+        if rc != MDB_SUCCESS:
+            raise RuntimeError(f"mdb_txn_commit failed: {_mdb_err(lib, rc)}")
+    finally:
+        lib.mdb_env_close(env)
+
+
+def perform_backup_for_dirs(
+    data_dir: Path, config_dir: Path, backup_root: Path | None, tag: str
+) -> Path | None:
+    sqlite_src = data_dir / "learning.sqlite3"
+    lmdb_src = data_dir / "learning.lmdb"
+    dict_files = [
+        "user-dictionary.txt",
+        "user_words.txt",
+        "custom_words.txt",
+        "user.dict",
+        "pinned_candidates.txt",
+        "clipboard-history.bin",
+        "clipboard_history.json",
+    ]
+    config_files = []
+    if config_dir.is_dir():
+        for item in sorted(config_dir.rglob("*")):
+            if item.is_file():
+                config_files.append(item)
+
+    has_any = (
+        sqlite_src.exists()
+        or lmdb_src.exists()
+        or any((data_dir / f).is_file() for f in dict_files)
+        or bool(config_files)
+    )
+    if not has_any:
+        return None
+
+    target_root = backup_root if backup_root else (data_dir / "backups" / tag)
+    target_root.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "tag": tag,
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "data_dir": str(data_dir),
+        "config_dir": str(config_dir),
+        "sqlite": None,
+        "lmdb": None,
+        "data_files": {},
+        "config_files": {},
+    }
+
+    if sqlite_src.exists():
+        sqlite_dst = target_root / "learning.sqlite3"
+        info = backup_sqlite(sqlite_src, sqlite_dst)
+        # Also write legacy timestamped backup sibling in data_dir for compatibility
+        legacy_sqlite_dst = data_dir / f"learning.sqlite3.backup-{tag}"
+        shutil.copy2(sqlite_dst, legacy_sqlite_dst)
+        verify_sqlite(legacy_sqlite_dst)
+        manifest["sqlite"] = {
+            "backup_file": str(sqlite_dst),
+            "legacy_backup_file": str(legacy_sqlite_dst),
+            "sha256": _sha256_file(sqlite_dst),
+            "entries_count": info["entries_count"],
+            "user_version": info["user_version"],
+        }
+        print(f"Backed up user learning database to {legacy_sqlite_dst}")
+
+    if lmdb_src.exists():
+        lmdb_dst = target_root / "learning.lmdb"
+        info = backup_lmdb(lmdb_src, lmdb_dst)
+        legacy_lmdb_dst = data_dir / f"learning.lmdb.backup-{tag}"
+        if legacy_lmdb_dst.exists():
+            if legacy_lmdb_dst.is_dir():
+                shutil.rmtree(legacy_lmdb_dst)
+            else:
+                legacy_lmdb_dst.unlink()
+        if lmdb_dst.is_dir():
+            shutil.copytree(lmdb_dst, legacy_lmdb_dst)
+        else:
+            shutil.copy2(lmdb_dst, legacy_lmdb_dst)
+        verify_lmdb(legacy_lmdb_dst)
+        lmdb_data_file = (lmdb_dst / "data.mdb") if lmdb_dst.is_dir() else lmdb_dst
+        manifest["lmdb"] = {
+            "backup_file": str(lmdb_dst),
+            "legacy_backup_file": str(legacy_lmdb_dst),
+            "is_dir": lmdb_dst.is_dir(),
+            "sha256": _sha256_file(lmdb_data_file),
+            "words_count": info["words_count"],
+            "schema_version": info["schema_version"],
+        }
+        print(f"Backed up user LMDB learning database to {legacy_lmdb_dst}")
+
+    data_backup_dir = target_root / "data_files"
+    for fname in dict_files:
+        src_f = data_dir / fname
+        if src_f.is_file():
+            data_backup_dir.mkdir(parents=True, exist_ok=True)
+            dst_f = data_backup_dir / fname
+            shutil.copy2(src_f, dst_f)
+            src_hash = _sha256_file(src_f)
+            dst_hash = _sha256_file(dst_f)
+            if src_hash != dst_hash:
+                raise RuntimeError(f"Checksum mismatch backing up {src_f}")
+            manifest["data_files"][fname] = {"sha256": dst_hash}
+
+    cfg_backup_dir = target_root / "config_files"
+    for src_f in config_files:
+        rel = src_f.relative_to(config_dir).as_posix()
+        dst_f = cfg_backup_dir / rel
+        dst_f.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_f, dst_f)
+        src_hash = _sha256_file(src_f)
+        dst_hash = _sha256_file(dst_f)
+        if src_hash != dst_hash:
+            raise RuntimeError(f"Checksum mismatch backing up config {src_f}")
+        manifest["config_files"][rel] = {"sha256": dst_hash}
+
+    manifest_path = target_root / "backup-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    latest_link = data_dir / "backups" / "latest"
+    latest_link.parent.mkdir(parents=True, exist_ok=True)
+    if latest_link.exists() or latest_link.is_symlink():
+        latest_link.unlink()
+    latest_link.write_text(str(target_root) + "\n", encoding="utf-8")
+    return target_root
+
+
+def perform_restore_for_dirs(
+    data_dir: Path, config_dir: Path, backup_dir: Path | None
+) -> None:
+    if backup_dir is None:
+        latest_ptr = data_dir / "backups" / "latest"
+        if not latest_ptr.is_file():
+            raise RuntimeError(f"No latest backup pointer found at {latest_ptr}")
+        backup_dir = Path(latest_ptr.read_text(encoding="utf-8").strip())
+
+    manifest_path = backup_dir / "backup-manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"Backup manifest missing: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    # Verify backups before touching live files
+    if manifest.get("sqlite"):
+        sqlite_bak = Path(manifest["sqlite"]["backup_file"])
+        verify_sqlite(sqlite_bak)
+        if _sha256_file(sqlite_bak) != manifest["sqlite"]["sha256"]:
+            raise RuntimeError(f"SQLite backup checksum mismatch: {sqlite_bak}")
+
+    if manifest.get("lmdb"):
+        lmdb_bak = Path(manifest["lmdb"]["backup_file"])
+        verify_lmdb(lmdb_bak)
+        lmdb_data_file = (lmdb_bak / "data.mdb") if lmdb_bak.is_dir() else lmdb_bak
+        if _sha256_file(lmdb_data_file) != manifest["lmdb"]["sha256"]:
+            raise RuntimeError(f"LMDB backup checksum mismatch: {lmdb_bak}")
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    if manifest.get("sqlite"):
+        sqlite_bak = Path(manifest["sqlite"]["backup_file"])
+        sqlite_live = data_dir / "learning.sqlite3"
+        for stale in (Path(f"{sqlite_live}-wal"), Path(f"{sqlite_live}-shm")):
+            if stale.exists():
+                stale.unlink()
+        tmp_dst = data_dir / "learning.sqlite3.restore-tmp"
+        shutil.copy2(sqlite_bak, tmp_dst)
+        os.replace(tmp_dst, sqlite_live)
+        verify_sqlite(sqlite_live)
+
+    if manifest.get("lmdb"):
+        lmdb_bak = Path(manifest["lmdb"]["backup_file"])
+        lmdb_live = data_dir / "learning.lmdb"
+        lock_live = data_dir / "learning.lmdb-lock"
+        if lock_live.exists():
+            lock_live.unlink()
+        if lmdb_live.exists():
+            if lmdb_live.is_dir():
+                shutil.rmtree(lmdb_live)
+            else:
+                lmdb_live.unlink()
+        if lmdb_bak.is_dir():
+            shutil.copytree(lmdb_bak, lmdb_live)
+        else:
+            tmp_dst = data_dir / "learning.lmdb.restore-tmp"
+            shutil.copy2(lmdb_bak, tmp_dst)
+            os.replace(tmp_dst, lmdb_live)
+        verify_lmdb(lmdb_live)
+
+    for fname, meta in manifest.get("data_files", {}).items():
+        bak_f = backup_dir / "data_files" / fname
+        if not bak_f.is_file() or _sha256_file(bak_f) != meta["sha256"]:
+            raise RuntimeError(f"Data file backup corrupted: {bak_f}")
+        dst_f = data_dir / fname
+        tmp_f = data_dir / f".{fname}.restore-tmp"
+        shutil.copy2(bak_f, tmp_f)
+        os.replace(tmp_f, dst_f)
+
+    for rel, meta in manifest.get("config_files", {}).items():
+        bak_f = backup_dir / "config_files" / rel
+        if not bak_f.is_file() or _sha256_file(bak_f) != meta["sha256"]:
+            raise RuntimeError(f"Config file backup corrupted: {bak_f}")
+        dst_f = config_dir / rel
+        dst_f.parent.mkdir(parents=True, exist_ok=True)
+        tmp_f = dst_f.parent / f".{dst_f.name}.restore-tmp"
+        shutil.copy2(bak_f, tmp_f)
+        os.replace(tmp_f, dst_f)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="ModernIME transactional upgrade data protection & recovery tool"
+    )
+    parser.add_argument(
+        "--pre-upgrade",
+        action="store_true",
+        help="Verify, back up, and validate schema before package/script upgrade",
+    )
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="Create verified transactional backup of SQLite WAL, LMDB, config, and user dicts",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Verify integrity of existing SQLite WAL and LMDB databases",
+    )
+    parser.add_argument(
+        "--migrate",
+        action="store_true",
+        help="Run and verify database schema migration",
+    )
+    parser.add_argument(
+        "--restore",
+        action="store_true",
+        help="Restore databases, user dicts, and config from verified backup",
+    )
+    parser.add_argument(
+        "--init-lmdb",
+        metavar="PATH",
+        help="Initialize a valid populated LMDB database at PATH",
+    )
+    parser.add_argument("--data-dir", help="Explicit ModernIME user data directory")
+    parser.add_argument("--config-dir", help="Explicit ModernIME user config directory")
+    parser.add_argument("--backup-dir", help="Explicit backup snapshot directory")
+    parser.add_argument("--tag", help="Timestamp or tag for the backup snapshot")
+    args = parser.parse_args()
+
+    try:
+        if args.init_lmdb:
+            init_test_lmdb(Path(args.init_lmdb))
+            return 0
+
+        if not any([args.pre_upgrade, args.backup, args.verify, args.migrate, args.restore]):
+            args.pre_upgrade = True
+
+        tag = args.tag or datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        backup_dir = Path(args.backup_dir) if args.backup_dir else None
+
+        for data_dir, config_dir in resolve_user_dirs(args):
+            if args.verify:
+                if (data_dir / "learning.sqlite3").exists():
+                    verify_sqlite(data_dir / "learning.sqlite3")
+                if (data_dir / "learning.lmdb").exists():
+                    verify_lmdb(data_dir / "learning.lmdb")
+            if args.backup or args.pre_upgrade:
+                perform_backup_for_dirs(data_dir, config_dir, backup_dir, tag)
+            if args.migrate or args.pre_upgrade:
+                migrate_databases(data_dir)
+            if args.restore:
+                perform_restore_for_dirs(data_dir, config_dir, backup_dir)
+    except Exception as exc:
+        sys.stderr.write(f"Error: modernime-data-guard failed: {exc}\n")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -36,5 +36,6 @@ awk '
 cp "$project_root/uninstall.sh" "$package_root/uninstall.sh"
 cp "$project_root/scripts/install_state.sh" "$package_root/scripts/install_state.sh"
 cp "$project_root/scripts/install_binary_payload.sh" "$package_root/scripts/install_binary_payload.sh"
-chmod +x "$package_root/install.sh" "$package_root/uninstall.sh"
+cp "$project_root/scripts/modernime-data-guard" "$package_root/scripts/modernime-data-guard"
+chmod +x "$package_root/install.sh" "$package_root/uninstall.sh" "$package_root/scripts/modernime-data-guard"
 bash -n "$package_root/install.sh" "$package_root/uninstall.sh"

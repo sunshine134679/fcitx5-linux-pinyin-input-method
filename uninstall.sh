@@ -103,6 +103,8 @@ while IFS= read -r path; do
         "$prefix/share/fcitx5/inputmethod/modernime.conf"|\
         "$prefix/bin/modernime-settings"|\
         "$prefix/bin/modernime-session-init"|\
+        "$prefix/bin/modernime-data-guard"|\
+        "$prefix/bin/modernime-migrate-channel"|\
         "$prefix/share/applications/modernime-settings.desktop")
             if [[ "$is_system_prefix" == true ]]; then
                 owner=""

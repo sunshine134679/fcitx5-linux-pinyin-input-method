@@ -53,8 +53,13 @@ rollback_on_failure() {
             rm -f -- "$created_manifest"
         fi
         if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
-            cp -a -- "$backup_dir/." "$prefix/" 2>/dev/null || true
+            cp -a --remove-destination -- "$backup_dir/." "$prefix/" 2>/dev/null || true
             rm -rf -- "$backup_dir"
+        fi
+        if [[ "${is_system_prefix:-false}" != true && -x "$project_root/scripts/modernime-data-guard" ]]; then
+            "$project_root/scripts/modernime-data-guard" --restore \
+                --data-dir "${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}/modernime" \
+                --config-dir "${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}/modernime" 2>/dev/null || true
         fi
         printf 'Rollback to previous version completed.\n' >&2
     fi
@@ -79,7 +84,13 @@ if [[ -d "$prefix" ]]; then
     done < <(find "$stage_dir" \( -type f -o -type l \) -print0)
 fi
 
-cp -a -- "$stage_dir/." "$prefix/"
+# Always unlink destination files before copying so running .so plugins mapped in memory are never overwritten in-place.
+cp -a --remove-destination -- "$stage_dir/." "$prefix/"
+
+if [[ "${MODERNIME_SIMULATE_INSTALL_FAILURE:-0}" == "1" ]]; then
+    printf 'Error: Simulated mid-upgrade installation failure via MODERNIME_SIMULATE_INSTALL_FAILURE=1\n' >&2
+    exit 1
+fi
 
 if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
     rm -rf -- "$backup_dir"

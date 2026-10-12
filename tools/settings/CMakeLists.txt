@@ -44,6 +44,9 @@ target_compile_definitions(modernime-settings PRIVATE
 modernime_enable_warnings(modernime-settings)
 
 install(TARGETS modernime-settings RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-session-init DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-session-init
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-data-guard
+    DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/desktop/modernime-settings.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)

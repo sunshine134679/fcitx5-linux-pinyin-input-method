@@ -634,4 +634,8 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/verify_release_install_upgrade.sh
     )
+    add_test(NAME modernime_upgrade_data_protection
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/upgrade_data_protection_test.sh
+    )
 endif()

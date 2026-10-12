@@ -83,6 +83,7 @@ fi
 %license LICENSE
 %{_bindir}/modernime-settings
 %{_bindir}/modernime-session-init
+%{_bindir}/modernime-data-guard
 %{_libdir}/fcitx5/modernime_fcitx5.so
 %{_libdir}/fcitx5/modernime_ui.so
 %{_datadir}/fcitx5/addon/modernime.conf

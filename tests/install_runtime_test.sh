@@ -199,7 +199,7 @@ grep -F 'remote:-s' "$crash_log" >/dev/null
 # Verify automatic consistent online WAL backup of user learning database during upgrade
 backup_data="$test_root/user-data"
 mkdir -p "$backup_data/modernime"
-printf 'lmdb-learning-state\n' > "$backup_data/modernime/learning.lmdb"
+"$project_root/scripts/modernime-data-guard" --init-lmdb "$backup_data/modernime/learning.lmdb"
 python3 - "$backup_data/modernime/learning.sqlite3" <<'PYEOF'
 import sqlite3, sys
 db_path = sys.argv[1]
@@ -222,6 +222,7 @@ test -f "$backup_file"
 lmdb_backup_file=$(find "$backup_data/modernime" -name 'learning.lmdb.backup-*' -print -quit)
 test -n "$lmdb_backup_file"
 test -f "$lmdb_backup_file"
+"$project_root/scripts/modernime-data-guard" --verify --data-dir "$backup_data/modernime"
 python3 - "$backup_file" <<'PYEOF'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
@@ -230,7 +231,7 @@ assert conn.execute("SELECT phrase FROM learning_entries WHERE pinyin='ceshi';")
 conn.close()
 PYEOF
 
-# Verify corrupt database rejects silent cp fallback
+# Verify corrupt SQLite and corrupt LMDB databases reject silent cp fallback
 corrupt_data="$test_root/corrupt-user-data"
 mkdir -p "$corrupt_data/modernime"
 printf 'corrupt-non-sqlite-payload\n' > "$corrupt_data/modernime/learning.sqlite3"
@@ -241,6 +242,17 @@ if run_install corrupt_backup \
     exit 1
 fi
 test -z "$(find "$corrupt_data/modernime" -name 'learning.sqlite3.backup-*' -print -quit)"
+
+corrupt_lmdb_data="$test_root/corrupt-lmdb-data"
+mkdir -p "$corrupt_lmdb_data/modernime"
+printf 'corrupt-non-lmdb-payload\n' > "$corrupt_lmdb_data/modernime/learning.lmdb"
+if run_install corrupt_lmdb_backup \
+    MODERNIME_SKIP_FCITX_RESTART=1 \
+    MODERNIME_DATA_HOME="$corrupt_lmdb_data" >/dev/null 2>&1; then
+    echo "Expected install.sh to fail when learning.lmdb is corrupt (must not fall back to cp)" >&2
+    exit 1
+fi
+test -z "$(find "$corrupt_lmdb_data/modernime" -name 'learning.lmdb.backup-*' -print -quit)"
 
 # Verify staged payload rollback on failure
 stage_test_root="$test_root/stage-test"
