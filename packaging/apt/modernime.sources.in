@@ -1,0 +1,6 @@
+Types: deb
+URIs: @MODERNIME_APT_REPO_URL@
+Suites: @MODERNIME_APT_SUITE@
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg

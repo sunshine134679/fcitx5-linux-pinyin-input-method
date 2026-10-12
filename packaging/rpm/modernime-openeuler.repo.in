@@ -1,0 +1,8 @@
+[modernime-openeuler-24.09]
+name=ModernIME Repository for openEuler 24.09 ($basearch)
+baseurl=@MODERNIME_RPM_REPO_URL@/oe2409/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=@MODERNIME_RPM_REPO_URL@/RPM-GPG-KEY-modernime
+metadata_expire=6h

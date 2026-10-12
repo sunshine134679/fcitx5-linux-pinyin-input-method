@@ -20,7 +20,55 @@ ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）�
 | `modernime-0.1.8-linux-x86_64.tar.gz` | Linux 便携免编译包 | x86_64 | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 aarch64 / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
-#### 1. Ubuntu / Debian 系统（`.deb` 包）
+#### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
+
+**方式 A：配置签名 APT 仓库（推荐，支持 `apt upgrade` 持续升级与版本回退）**
+
+ModernIME 采用符合现代 Debian 安全规范的 **Deb822 `.sources` 格式**与独立 `Signed-By` 密钥环（不使用已废弃的 `apt-key` 或全局信任锚），并按发行版代号（Ubuntu 22.04 `jammy`、Ubuntu 24.04 `noble`）与架构（`amd64`）严格隔离：
+
+```bash
+# 1. 安装独立 GPG 签名密钥环（二进制 OpenPGP 格式，仅授权给 ModernIME 源）
+sudo install -d -m 0755 /usr/share/keyrings
+curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/modernime-archive-keyring.gpg \
+    | sudo tee /usr/share/keyrings/modernime-archive-keyring.gpg >/dev/null
+sudo chmod 0644 /usr/share/keyrings/modernime-archive-keyring.gpg
+
+# 2. 写入 Deb822 仓库配置（自动匹配 jammy 或 noble）
+SUITE="$(. /etc/os-release && echo "${VERSION_CODENAME:-noble}")"
+sudo tee /etc/apt/sources.list.d/modernime.sources >/dev/null <<EOF
+Types: deb
+URIs: https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt
+Suites: ${SUITE}
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg
+EOF
+
+# 3. （可选）配置 APT Pinning 优先级
+sudo tee /etc/apt/preferences.d/99-modernime.pref >/dev/null <<'EOF'
+Package: modernime
+Pin: release o=ModernIME,l=ModernIME APT Repository
+Pin-Priority: 700
+EOF
+
+# 4. 安装与日常升级（升级前自动触发事务级 SQLite WAL 与 LMDB 备份校验）
+sudo apt update
+sudo apt install -y modernime
+# 后续检查并仅升级 ModernIME：
+sudo apt update && sudo apt install --only-upgrade -y modernime
+
+# 5. 版本回退（查看仓库可用历史版本并回退到指定版本）
+apt-cache madison modernime
+sudo apt install -y --allow-downgrades modernime=0.1.7
+
+# 6. 移除 APT 仓库与签名密钥环
+sudo rm -f /etc/apt/sources.list.d/modernime.sources \
+           /etc/apt/preferences.d/99-modernime.pref \
+           /usr/share/keyrings/modernime-archive-keyring.gpg
+sudo apt update
+```
+
+**方式 B：离线安装单文件 `.deb` 包**
 ```bash
 # 下载对应的 .deb 包（如 modernime_0.1.8_amd64_ubuntu24.04.deb）后执行：
 sudo dpkg -i modernime_*_amd64*.deb
@@ -28,7 +76,7 @@ sudo dpkg -i modernime_*_amd64*.deb
 sudo apt-get install -f
 ```
 
-#### 2. openEuler / RHEL / Fedora 系统（`.rpm` 包）
+#### 2. openEuler / RHEL / Fedora 系统（DNF/RPM 仓库升级与 `.rpm` 包）
 
 > [!NOTE]
 > **openEuler 版本兼容矩阵与 EPOL 源说明**：
@@ -51,11 +99,54 @@ sudo apt-get install -f
 >   sudo dnf makecache
 >   ```
 
+**方式 A：配置 openEuler 24.09 `x86_64` DNF 签名仓库（推荐，支持 `dnf upgrade` 持续升级）**
+```bash
+# 1. 写入开启包签名与仓库索引双签名校验 (gpgcheck=1, repo_gpgcheck=1) 的 .repo 配置
+sudo tee /etc/yum.repos.d/modernime-openeuler-24.09.repo >/dev/null <<'EOF'
+[modernime-openeuler-24.09]
+name=ModernIME Repository for openEuler 24.09 ($basearch)
+baseurl=https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/oe2409/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/RPM-GPG-KEY-modernime
+metadata_expire=6h
+EOF
+
+# 2. 刷新元数据缓存并安装 / 升级 ModernIME
+sudo dnf makecache
+sudo dnf install -y modernime
+# 后续升级：
+sudo dnf upgrade -y modernime
+
+# 3. 版本回退與移除 DNF 仓库
+sudo dnf downgrade -y modernime
+# 移除仓库配置：
+sudo rm -f /etc/yum.repos.d/modernime-openeuler-24.09.repo
+sudo dnf clean all
+```
+
+**方式 B：离线安装本地 `.rpm` 包**
 ```bash
 # 确保已启用 EPOL 扩展源并安装基础环境与托盘依赖：
 sudo dnf install -y fcitx5 libime gtk3 sqlite lmdb-libs libappindicator-gtk3
 # 使用 dnf 安装本地 RPM（自动从已配置仓库解析并补齐依赖）：
 sudo dnf install -y ./modernime-*.x86_64.rpm
+```
+
+#### 2.5 安装渠道隔离与可控迁移（`script` ↔ `deb`/`rpm`）
+
+ModernIME 严格区分脚本/源码安装（`channel=script`）与系统发行包安装（`channel=deb` / `channel=rpm`），默认禁止跨渠道直接覆盖，并提供 `modernime-migrate-channel` 与 `modernime-data-guard` 工具完成安全迁移：
+
+```bash
+# 1. 检查当前安装来源、manifest、文件归属与版本
+modernime-migrate-channel --check
+
+# 2. 从 ~/.local 脚本安装平滑迁移至 Ubuntu/Debian APT 系统包（自动做 SQLite WAL / LMDB 事务备份、清理旧渠道文件并校验新包路径；若失败自动回滚恢复原状）
+modernime-migrate-channel --from-prefix "$HOME/.local" --to-channel deb --package-cmd "sudo apt install -y modernime"
+
+# 3. 从脚本安装平滑迁移至 openEuler DNF 系统包
+modernime-migrate-channel --from-prefix "$HOME/.local" --to-channel rpm --package-cmd "sudo dnf install -y modernime"
 ```
 
 #### 3. Linux x86_64 便携归档（`.tar.gz` 免编译包，要求 glibc ≥ 2.34）

@@ -71,3 +71,23 @@ test -f "$session_init" && test -x "$session_init"
 bash -n "$session_init"
 grep -F 'modernime-session-init' "$project_root/tools/settings/CMakeLists.txt" >/dev/null
 grep -F '%{_bindir}/modernime-session-init' "$project_root/packaging/rpm/modernime.spec" >/dev/null
+
+for helper_script in "$project_root/scripts/modernime-migrate-channel" \
+                     "$project_root/scripts/build_apt_repo.sh" \
+                     "$project_root/scripts/build_rpm_repo.sh"; do
+    test -f "$helper_script" && test -x "$helper_script"
+    bash -n "$helper_script"
+done
+test -f "$project_root/scripts/modernime-data-guard" && test -x "$project_root/scripts/modernime-data-guard"
+
+test -f "$project_root/packaging/apt/modernime.sources.in"
+grep -F 'Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg' "$project_root/packaging/apt/modernime.sources.in" >/dev/null
+test -f "$project_root/packaging/apt/99-modernime.pref"
+test -f "$project_root/packaging/rpm/modernime-openeuler.repo.in"
+grep -F 'gpgcheck=1' "$project_root/packaging/rpm/modernime-openeuler.repo.in" >/dev/null
+grep -F 'repo_gpgcheck=1' "$project_root/packaging/rpm/modernime-openeuler.repo.in" >/dev/null
+
+grep -F '/etc/apt/sources.list.d/modernime.sources' "$readme" >/dev/null
+grep -F '/usr/share/keyrings/modernime-archive-keyring.gpg' "$readme" >/dev/null
+grep -F '/etc/yum.repos.d/modernime-openeuler-24.09.repo' "$readme" >/dev/null
+grep -F 'modernime-migrate-channel' "$readme" >/dev/null

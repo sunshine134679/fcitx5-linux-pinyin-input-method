@@ -1,0 +1,3 @@
+Package: modernime
+Pin: release o=ModernIME,l=ModernIME APT Repository
+Pin-Priority: 700
