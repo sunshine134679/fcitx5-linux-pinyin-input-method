@@ -183,9 +183,47 @@ backup_user_database() {
         ts=$(date +%Y%m%d%H%M%S 2>/dev/null || echo "$$")
         local backup_target="$data_dir/learning.sqlite3.backup-$ts"
         if command -v sqlite3 >/dev/null 2>&1; then
-            sqlite3 "$db_file" ".backup '$backup_target'" 2>/dev/null || cp -a "$db_file" "$backup_target"
+            sqlite3 "$db_file" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
+            if ! sqlite3 "$db_file" ".backup '$backup_target'" 2>/dev/null; then
+                printf 'Error: Failed to create consistent SQLite backup from %s to %s\n' "$db_file" "$backup_target" >&2
+                rm -f -- "$backup_target"
+                return 1
+            fi
+            local integrity
+            integrity=$(sqlite3 "$backup_target" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
+            if [[ "$integrity" != "ok" ]]; then
+                printf 'Error: Backup integrity check failed for %s (result: %s)\n' "$backup_target" "$integrity" >&2
+                rm -f -- "$backup_target"
+                return 1
+            fi
+        elif command -v python3 >/dev/null 2>&1; then
+            if ! python3 - "$db_file" "$backup_target" <<'PYEOF'
+import sqlite3, sys
+src_path, dst_path = sys.argv[1], sys.argv[2]
+try:
+    src = sqlite3.connect(src_path)
+    dst = sqlite3.connect(dst_path)
+    with dst:
+        src.backup(dst)
+    dst.close()
+    src.close()
+    chk = sqlite3.connect(dst_path)
+    row = chk.execute("PRAGMA integrity_check;").fetchone()
+    chk.close()
+    if not row or row[0] != "ok":
+        sys.exit(1)
+except Exception as exc:
+    sys.stderr.write(f"SQLite backup error: {exc}\n")
+    sys.exit(1)
+PYEOF
+            then
+                printf 'Error: Failed to create or verify consistent SQLite WAL backup from %s to %s\n' "$db_file" "$backup_target" >&2
+                rm -f -- "$backup_target"
+                return 1
+            fi
         else
-            cp -a "$db_file" "$backup_target"
+            printf 'Error: sqlite3 or python3 is required for consistent online WAL backup of %s\n' "$db_file" >&2
+            return 1
         fi
         printf 'Backed up user learning database to %s\n' "$backup_target"
     fi

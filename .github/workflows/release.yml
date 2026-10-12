@@ -138,20 +138,81 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Verify Release Assets
+      - name: Verify Release Assets & Upgrade Lifecycle Gate
         run: |
+          set -euo pipefail
+          repo_root="$(pwd)"
           cd release-assets
-          echo "=== 检查发布产物完整性与命名规范 ==="
+          echo "=== 1. 检查发布产物完整性与命名规范 ==="
           ls -la
           test $(ls -1 *.deb 2>/dev/null | wc -l) -eq 2
           test $(ls -1 *.rpm 2>/dev/null | wc -l) -eq 1
           test $(ls -1 *.tar.gz 2>/dev/null | wc -l) -eq 1
           for deb in *.deb; do
             dpkg-deb -I "$deb" >/dev/null
+            dpkg-deb -c "$deb" | grep -F "modernime_fcitx5.so" >/dev/null
           done
           for tarball in *.tar.gz; do
             tar -tzf "$tarball" >/dev/null
           done
+
+          echo "=== 2. 验证便携式发行包真实资产升级与回退事务 ==="
+          gate_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$gate_dir"' EXIT
+          tar -xzf *.tar.gz -C "$gate_dir"
+          extracted_dir="$(find "$gate_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          test -n "$extracted_dir"
+          test -f "$extracted_dir/install.sh"
+          test -f "$extracted_dir/uninstall.sh"
+
+          prefix="$gate_dir/prefix"
+          data_home="$gate_dir/data"
+          config_home="$gate_dir/config"
+          mkdir -p "$prefix/lib/fcitx5" "$prefix/share/modernime/pinyin" "$prefix/bin" \
+                   "$data_home/modernime" "$config_home/modernime" "$gate_dir/home" "$gate_dir/Desktop"
+          printf 'v0.1.6-legacy\n' > "$prefix/lib/fcitx5/modernime_fcitx5.so"
+          printf 'v0.1.6-legacy\n' > "$prefix/lib/fcitx5/modernime_ui.so"
+          python3 - "$data_home/modernime/learning.sqlite3" <<'PYEOF'
+          import sqlite3, sys
+          conn = sqlite3.connect(sys.argv[1])
+          conn.execute("PRAGMA journal_mode=WAL;")
+          conn.execute("CREATE TABLE learning_entries (id INTEGER PRIMARY KEY, pinyin TEXT, phrase TEXT);")
+          conn.execute("INSERT INTO learning_entries VALUES (1, 'ceshi', '测试');")
+          conn.commit()
+          conn.close()
+          PYEOF
+
+          HOME="$gate_dir/home" \
+          MODERNIME_PREFIX="$prefix" \
+          MODERNIME_DATA_HOME="$data_home" \
+          MODERNIME_CONFIG_HOME="$config_home" \
+          MODERNIME_DESKTOP_DIR="$gate_dir/Desktop" \
+          MODERNIME_SKIP_FCITX_RESTART=1 \
+          XDG_DATA_HOME="$data_home" \
+          XDG_CONFIG_HOME="$config_home" \
+          bash "$extracted_dir/install.sh" "$prefix"
+
+          test -x "$prefix/bin/modernime-settings"
+          test -x "$prefix/bin/modernime-session-init"
+          backup_db="$(find "$data_home/modernime" -name 'learning.sqlite3.backup-*' -print -quit)"
+          test -n "$backup_db"
+          python3 - "$backup_db" <<'PYEOF'
+          import sqlite3, sys
+          conn = sqlite3.connect(sys.argv[1])
+          assert conn.execute("PRAGMA integrity_check;").fetchone()[0] == "ok"
+          assert conn.execute("SELECT phrase FROM learning_entries WHERE pinyin='ceshi';").fetchone()[0] == "测试"
+          conn.close()
+          PYEOF
+
+          HOME="$gate_dir/home" \
+          MODERNIME_PREFIX="$prefix" \
+          MODERNIME_DATA_HOME="$data_home" \
+          MODERNIME_CONFIG_HOME="$config_home" \
+          MODERNIME_DESKTOP_DIR="$gate_dir/Desktop" \
+          MODERNIME_SKIP_FCITX_RESTART=1 \
+          bash "$extracted_dir/uninstall.sh" --prefix="$prefix"
+          test ! -e "$prefix/bin/modernime-settings"
+          test -f "$data_home/modernime/learning.sqlite3"
 
       - name: Compute Checksums
         run: |

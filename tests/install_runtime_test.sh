@@ -195,10 +195,19 @@ env \
 grep -F 'remote:-s' "$crash_log" >/dev/null
 ! grep -F 'Aborted' "$crash_output" >/dev/null
 
-# Verify automatic backup of user learning database during upgrade
+# Verify automatic consistent online WAL backup of user learning database during upgrade
 backup_data="$test_root/user-data"
 mkdir -p "$backup_data/modernime"
-printf 'sqlite3-test-content\n' > "$backup_data/modernime/learning.sqlite3"
+python3 - "$backup_data/modernime/learning.sqlite3" <<'PYEOF'
+import sqlite3, sys
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+conn.execute("PRAGMA journal_mode=WAL;")
+conn.execute("CREATE TABLE learning_entries (id INTEGER PRIMARY KEY, pinyin TEXT, phrase TEXT);")
+conn.execute("INSERT INTO learning_entries VALUES (1, 'ceshi', '测试');")
+conn.commit()
+conn.close()
+PYEOF
 backup_log="$test_root/backup.log"
 run_install backup \
     MODERNIME_SKIP_FCITX_RESTART=1 \
@@ -207,7 +216,25 @@ grep -F 'Backed up user learning database to' "$backup_log" >/dev/null
 backup_file=$(find "$backup_data/modernime" -name 'learning.sqlite3.backup-*' -print -quit)
 test -n "$backup_file"
 test -f "$backup_file"
-cmp -s "$backup_data/modernime/learning.sqlite3" "$backup_file"
+python3 - "$backup_file" <<'PYEOF'
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+assert conn.execute("PRAGMA integrity_check;").fetchone()[0] == "ok"
+assert conn.execute("SELECT phrase FROM learning_entries WHERE pinyin='ceshi';").fetchone()[0] == "测试"
+conn.close()
+PYEOF
+
+# Verify corrupt database rejects silent cp fallback
+corrupt_data="$test_root/corrupt-user-data"
+mkdir -p "$corrupt_data/modernime"
+printf 'corrupt-non-sqlite-payload\n' > "$corrupt_data/modernime/learning.sqlite3"
+if run_install corrupt_backup \
+    MODERNIME_SKIP_FCITX_RESTART=1 \
+    MODERNIME_DATA_HOME="$corrupt_data" >/dev/null 2>&1; then
+    echo "Expected install.sh to fail when learning.sqlite3 is corrupt" >&2
+    exit 1
+fi
+test -z "$(find "$corrupt_data/modernime" -name 'learning.sqlite3.backup-*' -print -quit)"
 
 # Verify staged payload rollback on failure
 stage_test_root="$test_root/stage-test"

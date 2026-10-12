@@ -39,12 +39,23 @@ if [[ ! -f "$stage_dir/bin/modernime-settings" || -z "$binary_addon" ]]; then
 fi
 
 backup_dir=""
+created_manifest=""
 rollback_on_failure() {
     local exit_code=$?
-    if [[ $exit_code -ne 0 && -n "$backup_dir" && -d "$backup_dir" ]]; then
+    if [[ $exit_code -ne 0 ]]; then
         printf 'Error encountered during payload installation; restoring previous version...\n' >&2
-        cp -a -- "$backup_dir/." "$prefix/" 2>/dev/null || true
-        rm -rf -- "$backup_dir"
+        if [[ -n "$created_manifest" && -f "$created_manifest" ]]; then
+            while IFS= read -r new_file; do
+                if [[ -e "$new_file" || -L "$new_file" ]]; then
+                    rm -f -- "$new_file"
+                fi
+            done < "$created_manifest"
+            rm -f -- "$created_manifest"
+        fi
+        if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
+            cp -a -- "$backup_dir/." "$prefix/" 2>/dev/null || true
+            rm -rf -- "$backup_dir"
+        fi
         printf 'Rollback to previous version completed.\n' >&2
     fi
     cleanup_stage
@@ -53,22 +64,28 @@ trap rollback_on_failure EXIT
 
 mkdir -p -- "$prefix"
 
-if [[ -f "$prefix/bin/modernime-settings" ]]; then
+if [[ -d "$prefix" ]]; then
     backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/modernime-rollback.XXXXXX")
-    for check_f in "$prefix/bin/modernime-settings" "$prefix/bin/modernime-session-init" \
-                   "$prefix/share/modernime/pinyin/modernime-knowledge.dict"; do
-        if [[ -f "$check_f" ]]; then
-            rel_path="${check_f#"$prefix/"}"
+    created_manifest=$(mktemp "${TMPDIR:-/tmp}/modernime-created.XXXXXX")
+    while IFS= read -r -d '' src_file; do
+        rel_path="${src_file#"$stage_dir/"}"
+        dest_file="$prefix/$rel_path"
+        if [[ -e "$dest_file" || -L "$dest_file" ]]; then
             mkdir -p -- "$backup_dir/$(dirname "$rel_path")"
-            cp -a -- "$check_f" "$backup_dir/$rel_path"
+            cp -a -- "$dest_file" "$backup_dir/$rel_path"
+        else
+            printf '%s\n' "$dest_file" >> "$created_manifest"
         fi
-    done
+    done < <(find "$stage_dir" \( -type f -o -type l \) -print0)
 fi
 
 cp -a -- "$stage_dir/." "$prefix/"
 
 if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
     rm -rf -- "$backup_dir"
+fi
+if [[ -n "$created_manifest" && -f "$created_manifest" ]]; then
+    rm -f -- "$created_manifest"
 fi
 cleanup_stage
 trap - EXIT

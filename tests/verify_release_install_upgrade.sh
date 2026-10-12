@@ -41,7 +41,15 @@ EOF
 # 1.3 模拟用户积累的个人词典、设置和学习数据库
 printf '我的自定义短语\twodezidingyiduanju\t100\n' > "$data_home/modernime/user-dictionary.txt"
 printf '[General]\nCandidateSize=9\n' > "$config_home/modernime/settings.conf"
-printf 'SQLite format 3\x00user_learning_data_simulation' > "$data_home/modernime/learning.sqlite3"
+python3 - "$data_home/modernime/learning.sqlite3" <<'PYEOF'
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+conn.execute("PRAGMA journal_mode=WAL;")
+conn.execute("CREATE TABLE learning_entries (id INTEGER PRIMARY KEY, pinyin TEXT, phrase TEXT);")
+conn.execute("INSERT INTO learning_entries VALUES (1, 'ceshi', '测试');")
+conn.commit()
+conn.close()
+PYEOF
 
 user_dict_hash=$(sha256sum "$data_home/modernime/user-dictionary.txt" | awk '{print $1}')
 settings_hash=$(sha256sum "$config_home/modernime/settings.conf" | awk '{print $1}')
@@ -101,6 +109,13 @@ test "$settings_hash" = "$current_settings_hash"
 backup_db=$(find "$data_home/modernime" -name 'learning.sqlite3.backup-*' -print -quit)
 test -n "$backup_db"
 test -f "$backup_db"
+python3 - "$backup_db" <<'PYEOF'
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+assert conn.execute("PRAGMA integrity_check;").fetchone()[0] == "ok"
+assert conn.execute("SELECT phrase FROM learning_entries WHERE pinyin='ceshi';").fetchone()[0] == "测试"
+conn.close()
+PYEOF
 
 printf '=== 4. 验证普通用户会话初始化脚本 (modernime-session-init) ===\n'
 env \
