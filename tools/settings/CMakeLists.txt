@@ -13,6 +13,7 @@ add_executable(modernime-settings
     data_controller.cpp
     settings_model.cpp
     runtime_controller.cpp
+    update_controller.cpp
     clipboard_history_model.cpp
     overview_model.cpp
     page_registry.cpp

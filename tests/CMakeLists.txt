@@ -196,6 +196,7 @@ if(MODERNIME_BUILD_SETTINGS)
         ../tools/settings/data_controller.cpp
         ../tools/settings/settings_model.cpp
         ../tools/settings/runtime_controller.cpp
+        ../tools/settings/update_controller.cpp
         ../tools/settings/clipboard_history_model.cpp
         ../tools/settings/overview_model.cpp
         ../tools/settings/page_registry.cpp
@@ -218,6 +219,7 @@ if(MODERNIME_BUILD_SETTINGS)
         PkgConfig::GTK3
     )
     target_compile_definitions(modernime_settings_shell_gtk_tests PRIVATE
+        MODERNIME_VERSION="${PROJECT_VERSION}"
         MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
         MODERNIME_SYSTEM_FCITX5_ADDON_DIR=""
     )
@@ -230,6 +232,22 @@ if(MODERNIME_BUILD_SETTINGS)
         SKIP_RETURN_CODE 77
         TIMEOUT 20
     )
+
+    add_executable(modernime_update_controller_tests
+        settings/update_controller_test.cpp
+        ../tools/settings/update_controller.cpp
+    )
+    target_include_directories(modernime_update_controller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_update_controller_tests PRIVATE
+        PkgConfig::GTK3
+    )
+    target_compile_definitions(modernime_update_controller_tests PRIVATE
+        MODERNIME_VERSION="${PROJECT_VERSION}"
+        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+    )
+    add_test(NAME modernime_update_controller COMMAND modernime_update_controller_tests)
 
     add_executable(modernime_settings_widgets_contract_tests
         settings/settings_widgets_contract_test.cpp

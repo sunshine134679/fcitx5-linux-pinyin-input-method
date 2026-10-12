@@ -46,4 +46,18 @@ int main() {
         }
         assert(found);
     }
+
+    for (const auto *query : {"检查更新", "apt", "dnf"}) {
+        const auto matches = searchSettings(query);
+        assert(!matches.empty());
+        bool found = false;
+        for (const auto &item : matches) {
+            if (item.page == SettingsPageId::Diagnostics &&
+                item.target == "diagnostics-check-update") {
+                found = true;
+                break;
+            }
+        }
+        assert(found);
+    }
 }

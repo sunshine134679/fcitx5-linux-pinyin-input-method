@@ -86,6 +86,8 @@ constexpr std::array kSearchEntries{
                         "重新查询 Fcitx5 和 ModernIME 状态", "fcitx fcitx5 diagnostics refresh"},
     SettingsSearchEntry{SettingsPageId::Diagnostics, "diagnostics-reload", "重新加载 ModernIME",
                         "保存配置后重新加载 ModernIME", "fcitx fcitx5 reload restart"},
+    SettingsSearchEntry{SettingsPageId::Diagnostics, "diagnostics-check-update", "检查更新",
+                        "查询 APT 或 DNF 软件源中的 ModernIME 候选版本", "update upgrade apt dnf 检查更新 升级 版本"},
 };
 
 bool isAsciiWhitespace(char character) {
