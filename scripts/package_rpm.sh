@@ -20,7 +20,7 @@ cmake -S "${project_root}" -B "${build_dir}" \
 printf '==> Building ModernIME...\n'
 cmake --build "${build_dir}" --parallel "$(nproc 2>/dev/null || echo 2)"
 
-if command -v rpmbuild >/dev/null 2>&1; then
+if [ "${MODERNIME_USE_CPACK_RPM:-0}" = "1" ] && command -v rpmbuild >/dev/null 2>&1; then
     printf '==> Generating RPM package with CPack...\n'
     (
         cd "${build_dir}"
@@ -28,7 +28,7 @@ if command -v rpmbuild >/dev/null 2>&1; then
     )
     cp -f "${build_dir}"/*.rpm "${dist_dir}/"
 else
-    printf '==> rpmbuild not found on host; staging install tree and building RPM v3 binary package...\n'
+    printf '==> Staging install tree and building deterministic RPM v4 binary package...\n'
     stage_dir="${build_dir}/_rpm_stage"
     rm -rf "${stage_dir}"
     DESTDIR="${stage_dir}" cmake --install "${build_dir}"
@@ -95,10 +95,10 @@ cpio_proc = subprocess.run(
 )
 payload_gz = gzip.compress(cpio_proc.stdout, compresslevel=6)
 
-def build_header_block(entries):
+def build_header_block(entries, region_tag=None):
     # entries: list of (tag, dtype, value)
     # dtype: 4=INT32, 6/9=STRING, 7=BIN, 8=STRING_ARRAY
-    entries = sorted(entries, key=lambda x: x[0])
+    entries = sorted([e for e in entries if e[0] not in (62, 63)], key=lambda x: x[0])
     idx_buf = bytearray()
     store_buf = bytearray()
     for tag, dtype, val in entries:
@@ -125,8 +125,16 @@ def build_header_block(entries):
             for s in val:
                 store_buf.extend(s.encode("utf-8") + b"\x00")
             idx_buf.extend(struct.pack(">IIII", tag, 8, off, len(val)))
+    total_entries = len(entries)
+    if region_tag is not None:
+        total_entries += 1
+        region_off = len(store_buf)
+        trailer = struct.pack(">IIiI", region_tag, 7, -(total_entries * 16), 16)
+        region_idx = struct.pack(">IIII", region_tag, 7, region_off, 16)
+        idx_buf = bytearray(region_idx) + idx_buf
+        store_buf.extend(trailer)
     magic = b"\x8e\xad\xe8\x01\x00\x00\x00\x00"
-    counts = struct.pack(">II", len(entries), len(store_buf))
+    counts = struct.pack(">II", total_entries, len(store_buf))
     return magic + counts + bytes(idx_buf) + bytes(store_buf)
 
 prein_script = (project_root / "packaging/rpm/preinst.sh").read_text(encoding="utf-8")
@@ -180,13 +188,13 @@ hdr_entries = [
     (5093, 4, 8),                                         # RPMTAG_PAYLOADDIGESTALGO (8 = SHA256)
 ]
 
-main_hdr = build_header_block(hdr_entries)
+main_hdr = build_header_block(hdr_entries, region_tag=63)
 sig_hdr = build_header_block([
     (269, 6, hashlib.sha1(main_hdr).hexdigest()),                 # RPMSIGTAG_SHA1 (40 hex chars)
     (273, 6, hashlib.sha256(main_hdr).hexdigest()),               # RPMSIGTAG_SHA256 (64 hex chars)
     (1000, 4, len(main_hdr) + len(payload_gz)),                   # RPMSIGTAG_SIZE
     (1004, 7, hashlib.md5(main_hdr + payload_gz).digest()),        # RPMSIGTAG_MD5 (16 bytes)
-])
+], region_tag=62)
 if len(sig_hdr) % 8 != 0:
     sig_hdr += b"\x00" * (8 - (len(sig_hdr) % 8))
 

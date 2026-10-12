@@ -45,7 +45,7 @@ jobs:
           dpkg-deb -c dist/modernime-*.deb
 
   test-openeuler:
-    name: openEuler Build Verification
+    name: openEuler Build & Native RPM/DNF Verification
     runs-on: ubuntu-latest
     container:
       image: openeuler/openeuler:24.09
@@ -53,8 +53,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install openEuler dependencies
+      - name: Install and verify native openEuler RPM/DNF tools & dependencies
         run: |
+          set -euo pipefail
           echo "timeout=60" >> /etc/dnf/dnf.conf
           echo "retries=5" >> /etc/dnf/dnf.conf
           sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
@@ -73,43 +74,248 @@ jobs:
           dnf makecache || true
           dnf install -y --nogpgcheck \
             gcc gcc-c++ cmake make pkgconf-pkg-config \
-            sqlite-devel lmdb-devel boost-devel \
-            fcitx5-devel libime-devel \
-            gtk3-devel pango-devel cairo-devel rpm-build tar gnupg2
+            sqlite sqlite-libs sqlite-devel lmdb-libs lmdb-devel boost-devel \
+            fcitx5 fcitx5-devel libime libime-devel \
+            gtk3 gtk3-devel pango pango-devel cairo cairo-devel \
+            desktop-file-utils hicolor-icon-theme python3 cpio gzip tar \
+            rpm rpm-build rpm-sign dnf gnupg2
 
-      - name: Configure and build on openEuler
-        run: |
-          cmake -S . -B build/oe -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DMODERNIME_BUILD_FCITX5=ON \
-            -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
-            -DMODERNIME_BUILD_SETTINGS=ON \
-            -DMODERNIME_BUILD_TESTS=OFF
-          cmake --build build/oe --parallel $(nproc)
+          for native_tool in rpm rpmkeys rpmsign dnf rpmbuild; do
+            if ! command -v "$native_tool" >/dev/null 2>&1; then
+              echo "FATAL: Required native openEuler tool missing: $native_tool (simulated harness is NOT allowed)" >&2
+              exit 1
+            fi
+            echo "Verified native tool: $native_tool -> $(command -v "$native_tool")"
+          done
 
-      - name: Generate and verify RPM package
-        run: |
-          cd build/oe
-          cpack -G RPM
-          ls -lh *.rpm
-          rpm -qpi *.rpm
-          rpm -qpl *.rpm
-
-      - name: Verify Signed DNF Repository in openEuler Container
+      - name: Build and verify RPM package
         run: |
           set -euo pipefail
-          RPM_FILE=$(ls build/oe/*.rpm | head -n 1)
-          ./scripts/build_rpm_repo.sh \
-            --output-dir /tmp/ci-oe-repo \
-            --rpm "$RPM_FILE" \
-            --ephemeral-gpg \
-            --repo-url "file:///tmp/ci-oe-repo"
-          rpm --import /tmp/ci-oe-repo/RPM-GPG-KEY-modernime
-          rpm -v -K /tmp/ci-oe-repo/oe2409/x86_64/Packages/*.rpm
-          cp -f /tmp/ci-oe-repo/client/modernime-openeuler-24.09.repo /etc/yum.repos.d/local-modernime.repo
-          sed -i 's|^baseurl=.*|baseurl=file:///tmp/ci-oe-repo/oe2409/x86_64|' /etc/yum.repos.d/local-modernime.repo
-          sed -i 's|^gpgkey=.*|gpgkey=file:///tmp/ci-oe-repo/RPM-GPG-KEY-modernime|' /etc/yum.repos.d/local-modernime.repo
+          ./scripts/package_rpm.sh
+          VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
+          RPM_FILE=$(ls dist/*.rpm | head -n 1)
+          TARGET_NAME="modernime-${VERSION}-1.oe2409.x86_64.rpm"
+          if [ "$RPM_FILE" != "dist/${TARGET_NAME}" ]; then
+            mv -f "$RPM_FILE" "dist/${TARGET_NAME}"
+          fi
+          ls -lh "dist/${TARGET_NAME}"
+          rpm -qpi "dist/${TARGET_NAME}"
+          rpm -qpl "dist/${TARGET_NAME}" | grep -Fx "/usr/share/modernime/install-channel.txt"
+
+      - name: Verify native rpmsign passphrase matrix, rpmkeys signature check, and full DNF lifecycle
+        run: |
+          set -euo pipefail
+          for native_tool in rpm rpmkeys rpmsign dnf; do
+            if ! command -v "$native_tool" >/dev/null 2>&1; then
+              echo "FATAL: Native tool $native_tool missing; refusing to fall back to simulated harness" >&2
+              exit 1
+            fi
+          done
+
+          assert_normal_nonzero_failure() {
+            local desc="$1"
+            shift
+            local rc=0
+            "$@" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "FATAL: $desc (expected normal non-zero failure, got exit code 0)" >&2
+              exit 1
+            fi
+            if [ "$rc" -ge 124 ]; then
+              echo "FATAL: $desc (expected normal non-zero failure 1..123, got abnormal/timeout/signal exit code $rc)" >&2
+              exit 1
+            fi
+            echo "Verified expected normal failure (rc=$rc): $desc"
+          }
+
+          VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
+          RPM_019="dist/modernime-${VERSION}-1.oe2409.x86_64.rpm"
+          WORK_DIR="/tmp/ci-oe-native-accept"
+          rm -rf "$WORK_DIR"
+          mkdir -p "$WORK_DIR"
+
+          # Generate v0.1.8 baseline RPM with valid payload and header digests for upgrade/downgrade testing
+          RPM_018="${WORK_DIR}/modernime-0.1.8-1.oe2409.x86_64.rpm"
+          python3 - "$RPM_019" "$RPM_018" "$VERSION" <<'PYEOF'
+          import gzip, hashlib, struct, sys
+          from pathlib import Path
+          raw = Path(sys.argv[1]).read_bytes()
+          dst_path = Path(sys.argv[2])
+          cur_ver = sys.argv[3]
+          lead = raw[:96].replace(cur_ver.encode("ascii"), b"0.1.8")
+          nindex, hsize = struct.unpack(">II", raw[104:112])
+          sig_end = (112 + nindex * 16 + hsize + 7) & ~7
+          if raw[sig_end : sig_end + 4] != b"\x8e\xad\xe8\x01":
+              sig_end = raw.find(b"\x8e\xad\xe8\x01", 112 + nindex * 16 + hsize)
+          m_nindex, m_hsize = struct.unpack(">II", raw[sig_end + 8 : sig_end + 16])
+          payload_off = sig_end + 16 + m_nindex * 16 + m_hsize
+          main_hdr = raw[sig_end:payload_off]
+          old_payload_gz = raw[payload_off:]
+          old_cpio = gzip.decompress(old_payload_gz)
+          old_chan = f"channel=rpm\nversion={cur_ver}\nprefix=/usr\n".encode("ascii")
+          new_chan = b"channel=rpm\nversion=0.1.8\nprefix=/usr\n"
+          new_cpio = old_cpio.replace(old_chan, new_chan)
+          new_payload_gz = gzip.compress(new_cpio, compresslevel=6)
+          new_main_hdr = (
+              main_hdr.replace(hashlib.sha256(old_chan).hexdigest().encode("ascii"), hashlib.sha256(new_chan).hexdigest().encode("ascii"))
+              .replace(hashlib.sha256(old_payload_gz).hexdigest().encode("ascii"), hashlib.sha256(new_payload_gz).hexdigest().encode("ascii"))
+              .replace(hashlib.sha256(old_cpio).hexdigest().encode("ascii"), hashlib.sha256(new_cpio).hexdigest().encode("ascii"))
+              .replace(cur_ver.encode("ascii"), b"0.1.8")
+          )
+          dst_path.write_bytes(lead + raw[96:sig_end] + new_main_hdr + new_payload_gz)
+          PYEOF
+
+          # 1. Isolated zero-cache passphrase-protected GPG test key
+          GPG_HOME="${WORK_DIR}/gpg-home"
+          mkdir -p "$GPG_HOME"
+          chmod 700 "$GPG_HOME"
+          cat > "$GPG_HOME/gpg-agent.conf" <<'EOF'
+          default-cache-ttl 0
+          max-cache-ttl 0
+          allow-loopback-pinentry
+          pinentry-program /bin/false
+          EOF
+          chmod 600 "$GPG_HOME/gpg-agent.conf"
+          unset DISPLAY WAYLAND_DISPLAY
+          export GPG_TTY=""
+          PASSPHRASE="OpenEulerNativeKeyPass2026!"
+          gpg --homedir "$GPG_HOME" --batch --no-tty --pinentry-mode loopback --passphrase "$PASSPHRASE" --generate-key <<GPGEOF
+          Key-Type: RSA
+          Key-Length: 2048
+          Passphrase: ${PASSPHRASE}
+          Name-Real: ModernIME openEuler Native Test Key
+          Name-Email: oe-ci@modernime.org
+          Expire-Date: 0
+          %commit
+          GPGEOF
+          gpg-connect-agent --homedir "$GPG_HOME" reloadagent /bye >/dev/null 2>&1 || true
+          KEY_FPR=$(gpg --homedir "$GPG_HOME" --list-secret-keys --with-colons "oe-ci@modernime.org" | awk -F: '$1 == "fpr" { print $10; exit }')
+          test -n "$KEY_FPR"
+
+          export MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1
+          export MODERNIME_REQUIRE_RPMKEYS=1
+
+          # 2. Verify missing passphrase fails with normal non-zero exit code (no GUI, no hang, no fallback)
+          assert_normal_nonzero_failure \
+            "native rpmsign must fail normally when passphrase is missing" \
+            timeout 15s env -u MODERNIME_GPG_PASSPHRASE MODERNIME_DISABLE_RPMSIGN=0 \
+            ./scripts/build_rpm_repo.sh \
+            --output-dir "${WORK_DIR}/repo-missing-pass" \
+            --rpm "$RPM_019" \
+            --gpg-home "$GPG_HOME" \
+            --gpg-key-id "$KEY_FPR"
+
+          # 3. Verify wrong passphrase fails with normal non-zero exit code (no GUI, no hang, no fallback)
+          assert_normal_nonzero_failure \
+            "native rpmsign must fail normally when passphrase is wrong" \
+            timeout 15s env MODERNIME_DISABLE_RPMSIGN=0 \
+            ./scripts/build_rpm_repo.sh \
+            --output-dir "${WORK_DIR}/repo-wrong-pass" \
+            --rpm "$RPM_019" \
+            --gpg-home "$GPG_HOME" \
+            --gpg-key-id "$KEY_FPR" \
+            --gpg-passphrase "WrongPassphrase2026!"
+
+          # 4. Verify disabling native rpmsign is rejected when MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1
+          assert_normal_nonzero_failure \
+            "MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1 must reject MODERNIME_DISABLE_RPMSIGN=1" \
+            timeout 15s env MODERNIME_DISABLE_RPMSIGN=1 \
+            ./scripts/build_rpm_repo.sh \
+            --output-dir "${WORK_DIR}/repo-disabled-rpmsign" \
+            --rpm "$RPM_019" \
+            --gpg-home "$GPG_HOME" \
+            --gpg-key-id "$KEY_FPR" \
+            --gpg-passphrase "$PASSPHRASE"
+
+          # 5. Verify correct passphrase succeeds with native rpmsign (signing both 0.1.8 and 0.1.9)
+          REPO_DIR="${WORK_DIR}/repo-signed"
+          timeout 30s env MODERNIME_DISABLE_RPMSIGN=0 \
+            ./scripts/build_rpm_repo.sh \
+            --output-dir "$REPO_DIR" \
+            --rpm "$RPM_018" \
+            --rpm "$RPM_019" \
+            --gpg-home "$GPG_HOME" \
+            --gpg-key-id "$KEY_FPR" \
+            --gpg-passphrase "$PASSPHRASE" \
+            --repo-url "file://${REPO_DIR}"
+
+          # 6. Native rpmkeys / rpm signature verification
+          rpmkeys --import "${REPO_DIR}/RPM-GPG-KEY-modernime"
+          rpm --import "${REPO_DIR}/RPM-GPG-KEY-modernime"
+          for pkg in "${REPO_DIR}/oe2409/x86_64/Packages"/*.rpm; do
+            sig_out=$(rpmkeys -v -K "$pkg")
+            echo "$sig_out"
+            echo "$sig_out" | grep -qE "Header V4 RSA/SHA256 Signature.*: OK"
+            echo "$sig_out" | grep -Fq "Header SHA256 digest: OK"
+            echo "$sig_out" | grep -Fq "Payload SHA256 digest: OK"
+            rpm -v -K "$pkg"
+          done
+
+          # 7. Native DNF refresh, install (0.1.8), upgrade (0.1.9), downgrade/rollback (0.1.8), and uninstall
+          cp -f "${REPO_DIR}/client/modernime-openeuler-24.09.repo" /etc/yum.repos.d/local-modernime.repo
+          sed -i "s|^baseurl=.*|baseurl=file://${REPO_DIR}/oe2409/x86_64|" /etc/yum.repos.d/local-modernime.repo
+          sed -i "s|^gpgkey=.*|gpgkey=file://${REPO_DIR}/RPM-GPG-KEY-modernime|" /etc/yum.repos.d/local-modernime.repo
+
+          dnf clean all --disablerepo="*" --enablerepo="modernime-openeuler"
           dnf makecache --disablerepo="*" --enablerepo="modernime-openeuler"
-          dnf info --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          dnf --showduplicates list --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+
+          # Install v0.1.8 baseline
+          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
+          grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
+          grep -Fx "version=0.1.8" /usr/share/modernime/install-channel.txt
+
+          # Seed user personalization data to verify preservation across DNF upgrade/downgrade/uninstall
+          mkdir -p /root/.config/modernime /root/.local/share/modernime
+          printf 'page_size=9\ncustom_theme=ocean\n' > /root/.config/modernime/settings.conf
+          printf '开源欧拉\tkai yuan ou la\t980\n' > /root/.local/share/modernime/user-dictionary.txt
+          python3 - /root/.local/share/modernime/learning.sqlite3 /root/.local/share/modernime/learning.lmdb <<'PYEOF'
+          import ctypes, sqlite3, sys
+          from pathlib import Path
+          conn = sqlite3.connect(sys.argv[1])
+          conn.execute("PRAGMA journal_mode=WAL;")
+          conn.execute("CREATE TABLE user_ngram (key TEXT PRIMARY KEY, phrase TEXT, freq INTEGER);")
+          conn.execute("INSERT INTO user_ngram VALUES ('nihao', '你好世界', 42);")
+          conn.commit()
+          conn.close()
+          lib = ctypes.CDLL("liblmdb.so.0" if Path("/usr/lib64/liblmdb.so.0").exists() else "liblmdb.so")
+          env = ctypes.c_void_p()
+          assert lib.mdb_env_create(ctypes.byref(env)) == 0
+          assert lib.mdb_env_set_mapsize(env, 1048576) == 0
+          assert lib.mdb_env_open(env, sys.argv[2].encode(), 0x4000, 0o644) == 0
+          lib.mdb_env_close(env)
+          PYEOF
+
+          # Upgrade 0.1.8 -> 0.1.9
+          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
+          test -x /usr/bin/modernime-settings
+          grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
+          grep -Fx "version=${VERSION}" /usr/share/modernime/install-channel.txt
+          /usr/bin/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime
+
+          # Downgrade / Rollback 0.1.9 -> 0.1.8
+          dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
+          grep -Fx "version=0.1.8" /usr/share/modernime/install-channel.txt
+          /usr/bin/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime
+
+          # Re-upgrade 0.1.8 -> 0.1.9 and Uninstall
+          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
+          dnf remove -y modernime
+          if rpm -q modernime >/dev/null 2>&1; then
+            echo "FATAL: modernime still installed after dnf remove" >&2
+            exit 1
+          fi
+          test ! -e /usr/bin/modernime-settings
+          test ! -e /usr/share/modernime/install-channel.txt
+          grep -Fx "custom_theme=ocean" /root/.config/modernime/settings.conf
+          grep -Fq "开源欧拉" /root/.local/share/modernime/user-dictionary.txt
+          ./scripts/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime
+
+          gpgconf --homedir "$GPG_HOME" --kill gpg-agent >/dev/null 2>&1 || true
           rm -f /etc/yum.repos.d/local-modernime.repo
-          rm -rf /tmp/ci-oe-repo
+          rm -rf "$WORK_DIR"
+

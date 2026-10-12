@@ -67,6 +67,7 @@ jobs:
 
       - name: Install openEuler dependencies
         run: |
+          set -euo pipefail
           echo "timeout=60" >> /etc/dnf/dnf.conf
           echo "retries=5" >> /etc/dnf/dnf.conf
           dnf config-manager --set-enabled EPOL || true
@@ -84,9 +85,18 @@ jobs:
           dnf makecache || true
           dnf install -y \
             gcc gcc-c++ cmake make pkgconf-pkg-config \
-            sqlite-devel lmdb-devel boost-devel \
-            fcitx5-devel libime-devel \
-            gtk3-devel pango-devel cairo-devel libappindicator-gtk3-devel rpm-build rpm-sign tar
+            sqlite sqlite-libs sqlite-devel lmdb-libs lmdb-devel boost-devel \
+            fcitx5 fcitx5-devel libime libime-devel \
+            gtk3 gtk3-devel pango pango-devel cairo cairo-devel libappindicator-gtk3-devel \
+            desktop-file-utils hicolor-icon-theme python3 cpio gzip tar \
+            rpm rpm-build rpm-sign dnf gnupg2
+
+          for native_tool in rpm rpmkeys rpmsign dnf rpmbuild; do
+            if ! command -v "$native_tool" >/dev/null 2>&1; then
+              echo "FATAL: Required native openEuler tool missing: $native_tool" >&2
+              exit 1
+            fi
+          done
 
       - name: Build and package RPM
         run: |
@@ -99,32 +109,125 @@ jobs:
       - name: Verify Signed RPM & DNF Repository in openEuler Container
         run: |
           set -euo pipefail
+          for native_tool in rpm rpmkeys rpmsign dnf; do
+            command -v "$native_tool" >/dev/null 2>&1 || { echo "FATAL: missing $native_tool" >&2; exit 1; }
+          done
+
+          assert_normal_nonzero_failure() {
+            local desc="$1"
+            shift
+            local rc=0
+            "$@" || rc=$?
+            if [ "$rc" -eq 0 ] || [ "$rc" -ge 124 ]; then
+              echo "FATAL: $desc (expected normal non-zero exit 1..123, got $rc)" >&2
+              exit 1
+            fi
+          }
+
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
           TARGET_RPM="dist/modernime-${VERSION}-1.oe24.x86_64.rpm"
           SANDBOX_RPM="/tmp/modernime-${VERSION}-1.oe24.x86_64.rpm"
           cp -f "$TARGET_RPM" "$SANDBOX_RPM"
 
+          RPM_018="/tmp/modernime-0.1.8-1.oe24.x86_64.rpm"
+          python3 - "$SANDBOX_RPM" "$RPM_018" "$VERSION" <<'PYEOF'
+          import gzip, hashlib, struct, sys
+          from pathlib import Path
+          raw = Path(sys.argv[1]).read_bytes()
+          dst_path = Path(sys.argv[2])
+          cur_ver = sys.argv[3]
+          lead = raw[:96].replace(cur_ver.encode("ascii"), b"0.1.8")
+          nindex, hsize = struct.unpack(">II", raw[104:112])
+          sig_end = (112 + nindex * 16 + hsize + 7) & ~7
+          if raw[sig_end : sig_end + 4] != b"\x8e\xad\xe8\x01":
+              sig_end = raw.find(b"\x8e\xad\xe8\x01", 112 + nindex * 16 + hsize)
+          m_nindex, m_hsize = struct.unpack(">II", raw[sig_end + 8 : sig_end + 16])
+          payload_off = sig_end + 16 + m_nindex * 16 + m_hsize
+          main_hdr = raw[sig_end:payload_off]
+          old_payload_gz = raw[payload_off:]
+          old_cpio = gzip.decompress(old_payload_gz)
+          old_chan = f"channel=rpm\nversion={cur_ver}\nprefix=/usr\n".encode("ascii")
+          new_chan = b"channel=rpm\nversion=0.1.8\nprefix=/usr\n"
+          new_cpio = old_cpio.replace(old_chan, new_chan)
+          new_payload_gz = gzip.compress(new_cpio, compresslevel=6)
+          new_main_hdr = (
+              main_hdr.replace(hashlib.sha256(old_chan).hexdigest().encode("ascii"), hashlib.sha256(new_chan).hexdigest().encode("ascii"))
+              .replace(hashlib.sha256(old_payload_gz).hexdigest().encode("ascii"), hashlib.sha256(new_payload_gz).hexdigest().encode("ascii"))
+              .replace(hashlib.sha256(old_cpio).hexdigest().encode("ascii"), hashlib.sha256(new_cpio).hexdigest().encode("ascii"))
+              .replace(cur_ver.encode("ascii"), b"0.1.8")
+          )
+          dst_path.write_bytes(lead + raw[96:sig_end] + new_main_hdr + new_payload_gz)
+          PYEOF
+
+          GPG_HOME="/tmp/oe-gpg-home"
+          rm -rf "$GPG_HOME"
+          mkdir -p "$GPG_HOME"
+          chmod 700 "$GPG_HOME"
+          cat > "$GPG_HOME/gpg-agent.conf" <<'EOF'
+          default-cache-ttl 0
+          max-cache-ttl 0
+          allow-loopback-pinentry
+          pinentry-program /bin/false
+          EOF
+          chmod 600 "$GPG_HOME/gpg-agent.conf"
+          unset DISPLAY WAYLAND_DISPLAY
+          export GPG_TTY=""
+          PASSPHRASE="ReleaseGateTestKey2026!"
+          gpg --homedir "$GPG_HOME" --batch --no-tty --pinentry-mode loopback --passphrase "$PASSPHRASE" --generate-key <<GPGEOF
+          Key-Type: RSA
+          Key-Length: 2048
+          Passphrase: ${PASSPHRASE}
+          Name-Real: ModernIME Release Gate Key
+          Name-Email: release-gate@modernime.org
+          Expire-Date: 0
+          %commit
+          GPGEOF
+          gpg-connect-agent --homedir "$GPG_HOME" reloadagent /bye >/dev/null 2>&1 || true
+          KEY_FPR=$(gpg --homedir "$GPG_HOME" --list-secret-keys --with-colons "release-gate@modernime.org" | awk -F: '$1 == "fpr" { print $10; exit }')
+
+          export MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1
+          export MODERNIME_REQUIRE_RPMKEYS=1
+
+          assert_normal_nonzero_failure "missing passphrase" \
+            timeout 15s env -u MODERNIME_GPG_PASSPHRASE MODERNIME_DISABLE_RPMSIGN=0 \
+            ./scripts/build_rpm_repo.sh --output-dir /tmp/oe-repo-miss --rpm "$SANDBOX_RPM" --gpg-home "$GPG_HOME" --gpg-key-id "$KEY_FPR"
+
+          assert_normal_nonzero_failure "wrong passphrase" \
+            timeout 15s env MODERNIME_DISABLE_RPMSIGN=0 \
+            ./scripts/build_rpm_repo.sh --output-dir /tmp/oe-repo-wrong --rpm "$SANDBOX_RPM" --gpg-home "$GPG_HOME" --gpg-key-id "$KEY_FPR" --gpg-passphrase "WrongPassphrase!"
+
           ./scripts/build_rpm_repo.sh \
             --output-dir /tmp/oe-repo \
+            --rpm "$RPM_018" \
             --rpm "$SANDBOX_RPM" \
-            --ephemeral-gpg \
+            --gpg-home "$GPG_HOME" \
+            --gpg-key-id "$KEY_FPR" \
+            --gpg-passphrase "$PASSPHRASE" \
             --repo-url "file:///tmp/oe-repo"
 
+          rpmkeys --import /tmp/oe-repo/RPM-GPG-KEY-modernime
           rpm --import /tmp/oe-repo/RPM-GPG-KEY-modernime
+          rpmkeys -v -K /tmp/oe-repo/oe2409/x86_64/Packages/*.rpm
           rpm -v -K /tmp/oe-repo/oe2409/x86_64/Packages/*.rpm
 
           cp -f /tmp/oe-repo/client/modernime-openeuler-24.09.repo /etc/yum.repos.d/local-modernime.repo
           sed -i 's|^baseurl=.*|baseurl=file:///tmp/oe-repo/oe2409/x86_64|' /etc/yum.repos.d/local-modernime.repo
           sed -i 's|^gpgkey=.*|gpgkey=file:///tmp/oe-repo/RPM-GPG-KEY-modernime|' /etc/yum.repos.d/local-modernime.repo
           dnf makecache --disablerepo="*" --enablerepo="modernime-openeuler"
-          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
-          rpm -q modernime
+          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
+          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
           test -x /usr/bin/modernime-settings
           test -f /usr/share/modernime/install-channel.txt
           grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
+          dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
           dnf remove -y modernime
-          rm -f /etc/yum.repos.d/local-modernime.repo "$SANDBOX_RPM"
-          rm -rf /tmp/oe-repo
+          gpgconf --homedir "$GPG_HOME" --kill gpg-agent >/dev/null 2>&1 || true
+          rm -f /etc/yum.repos.d/local-modernime.repo "$SANDBOX_RPM" "$RPM_018"
+          rm -rf /tmp/oe-repo /tmp/oe-repo-miss /tmp/oe-repo-wrong "$GPG_HOME"
+
 
       - name: Upload RPM Artifact
         uses: actions/upload-artifact@v4

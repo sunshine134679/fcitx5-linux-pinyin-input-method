@@ -246,14 +246,48 @@ cp -f "${deb_018_file}" "${prev_pages_dir}/apt/pool/bookworm/main/m/modernime/mo
 
 rpm_018_file="${prev_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-0.1.8-1.oe24.x86_64.rpm"
 python3 - "${rpm_file}" "${rpm_018_file}" "${expected_version}" <<'PYEOF'
+import gzip
+import hashlib
 from pathlib import Path
+import struct
 import sys
 
-src_bytes = Path(sys.argv[1]).read_bytes()
+raw = Path(sys.argv[1]).read_bytes()
 dst_path = Path(sys.argv[2])
-cur_ver = sys.argv[3].encode("ascii")
-assert len(cur_ver) == len(b"0.1.8"), "Version length mismatch for binary patch"
-dst_path.write_bytes(src_bytes.replace(cur_ver, b"0.1.8"))
+cur_ver = sys.argv[3]
+assert len(cur_ver) == len("0.1.8"), "Version length mismatch for binary patch"
+
+lead = raw[:96].replace(cur_ver.encode("ascii"), b"0.1.8")
+nindex, hsize = struct.unpack(">II", raw[104:112])
+sig_end = (112 + nindex * 16 + hsize + 7) & ~7
+if raw[sig_end : sig_end + 4] != b"\x8e\xad\xe8\x01":
+    sig_end = raw.find(b"\x8e\xad\xe8\x01", 112 + nindex * 16 + hsize)
+m_nindex, m_hsize = struct.unpack(">II", raw[sig_end + 8 : sig_end + 16])
+payload_off = sig_end + 16 + m_nindex * 16 + m_hsize
+
+main_hdr = raw[sig_end:payload_off]
+old_payload_gz = raw[payload_off:]
+old_cpio = gzip.decompress(old_payload_gz)
+
+old_chan = f"channel=rpm\nversion={cur_ver}\nprefix=/usr\n".encode("ascii")
+new_chan = b"channel=rpm\nversion=0.1.8\nprefix=/usr\n"
+new_cpio = old_cpio.replace(old_chan, new_chan)
+new_payload_gz = gzip.compress(new_cpio, compresslevel=6)
+
+old_chan_sha = hashlib.sha256(old_chan).hexdigest().encode("ascii")
+new_chan_sha = hashlib.sha256(new_chan).hexdigest().encode("ascii")
+old_gz_sha = hashlib.sha256(old_payload_gz).hexdigest().encode("ascii")
+new_gz_sha = hashlib.sha256(new_payload_gz).hexdigest().encode("ascii")
+old_cpio_sha = hashlib.sha256(old_cpio).hexdigest().encode("ascii")
+new_cpio_sha = hashlib.sha256(new_cpio).hexdigest().encode("ascii")
+
+new_main_hdr = (
+    main_hdr.replace(old_chan_sha, new_chan_sha)
+    .replace(old_gz_sha, new_gz_sha)
+    .replace(old_cpio_sha, new_cpio_sha)
+    .replace(cur_ver.encode("ascii"), b"0.1.8")
+)
+dst_path.write_bytes(lead + raw[96:sig_end] + new_main_hdr + new_payload_gz)
 PYEOF
 
 # Gate check: --require-persistent-gpg MUST fail when no persistent key is provided
@@ -995,7 +1029,14 @@ for tag, dtype, val in entries:
         store_buf.extend(val)
         idx_buf.extend(struct.pack(">IIII", tag, 7, off, len(val)))
 
-new_sig = b"\x8e\xad\xe8\x01\x00\x00\x00\x00" + struct.pack(">II", len(entries), len(store_buf)) + bytes(idx_buf) + bytes(store_buf)
+total_entries = len(entries) + 1
+region_off = len(store_buf)
+trailer = struct.pack(">IIiI", 62, 7, -(total_entries * 16), 16)
+region_idx = struct.pack(">IIII", 62, 7, region_off, 16)
+idx_buf = bytearray(region_idx) + idx_buf
+store_buf.extend(trailer)
+
+new_sig = b"\x8e\xad\xe8\x01\x00\x00\x00\x00" + struct.pack(">II", total_entries, len(store_buf)) + bytes(idx_buf) + bytes(store_buf)
 if len(new_sig) % 8 != 0:
     new_sig += b"\x00" * (8 - (len(new_sig) % 8))
 rpm_target.write_bytes(raw[:96] + new_sig + main_hdr + payload)

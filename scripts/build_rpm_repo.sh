@@ -340,10 +340,10 @@ def parse_rpm_header_block(data: bytes, offset: int):
     return tags, store_end
 
 
-def build_header_block(entries):
+def build_header_block(entries, region_tag=None):
     # entries: list of (tag, dtype, value)
     # dtype: 4=INT32, 6=STRING, 7=BIN (bytes), 8=STRING_ARRAY
-    entries = sorted(entries, key=lambda x: x[0])
+    entries = sorted([e for e in entries if e[0] not in (62, 63)], key=lambda x: x[0])
     idx_buf = bytearray()
     store_buf = bytearray()
     for tag, dtype, val in entries:
@@ -370,8 +370,16 @@ def build_header_block(entries):
             for s in val:
                 store_buf.extend(s.encode("utf-8") + b"\x00")
             idx_buf.extend(struct.pack(">IIII", tag, 8, off, len(val)))
+    total_entries = len(entries)
+    if region_tag is not None:
+        total_entries += 1
+        region_off = len(store_buf)
+        trailer = struct.pack(">IIiI", region_tag, 7, -(total_entries * 16), 16)
+        region_idx = struct.pack(">IIII", region_tag, 7, region_off, 16)
+        idx_buf = bytearray(region_idx) + idx_buf
+        store_buf.extend(trailer)
     magic = b"\x8e\xad\xe8\x01\x00\x00\x00\x00"
-    counts = struct.pack(">II", len(entries), len(store_buf))
+    counts = struct.pack(">II", total_entries, len(store_buf))
     return magic + counts + bytes(idx_buf) + bytes(store_buf)
 
 
@@ -475,9 +483,11 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
     main_hdr = raw[hdr_offset:payload_offset]
     payload = raw[payload_offset:]
 
-    if 5092 not in main_tags:
+    if 5092 not in main_tags or 63 not in main_tags:
         main_entries = []
         for t, v in main_tags.items():
+            if t in (62, 63, 5092, 5093):
+                continue
             if isinstance(v, list) and v and isinstance(v[0], str):
                 main_entries.append((t, 8, v))
             elif isinstance(v, str):
@@ -490,16 +500,17 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
                 main_entries.append((t, 4, v))
         main_entries.append((5092, 8, [hashlib.sha256(payload).hexdigest()]))
         main_entries.append((5093, 4, 8))
-        main_hdr = build_header_block(main_entries)
-        unsigned_sig_hdr = build_header_block([
-            (RPMSIGTAG_SHA1, 6, hashlib.sha1(main_hdr).hexdigest()),
-            (RPMSIGTAG_SHA256, 6, hashlib.sha256(main_hdr).hexdigest()),
-            (RPMSIGTAG_SIZE, 4, len(main_hdr) + len(payload)),
-            (RPMSIGTAG_MD5, 7, hashlib.md5(main_hdr + payload).digest()),
-        ])
-        if len(unsigned_sig_hdr) % 8 != 0:
-            unsigned_sig_hdr += b"\x00" * (8 - (len(unsigned_sig_hdr) % 8))
-        rpm_path.write_bytes(lead + unsigned_sig_hdr + main_hdr + payload)
+        main_hdr = build_header_block(main_entries, region_tag=63)
+
+    unsigned_sig_hdr = build_header_block([
+        (RPMSIGTAG_SHA1, 6, hashlib.sha1(main_hdr).hexdigest()),
+        (RPMSIGTAG_SHA256, 6, hashlib.sha256(main_hdr).hexdigest()),
+        (RPMSIGTAG_SIZE, 4, len(main_hdr) + len(payload)),
+        (RPMSIGTAG_MD5, 7, hashlib.md5(main_hdr + payload).digest()),
+    ], region_tag=62)
+    if len(unsigned_sig_hdr) % 8 != 0:
+        unsigned_sig_hdr += b"\x00" * (8 - (len(unsigned_sig_hdr) % 8))
+    rpm_path.write_bytes(lead + unsigned_sig_hdr + main_hdr + payload)
 
     rpmsign_bin = None
     if os.environ.get("MODERNIME_DISABLE_RPMSIGN") != "1":
@@ -585,7 +596,7 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
         (RPMSIGTAG_SHA256, 6, sha256_hex),
         (RPMSIGTAG_SIZE, 4, total_hp_size),
         (RPMSIGTAG_MD5, 7, md5_digest),
-    ])
+    ], region_tag=62)
     if len(new_sig_hdr) % 8 != 0:
         new_sig_hdr += b"\x00" * (8 - (len(new_sig_hdr) % 8))
 
