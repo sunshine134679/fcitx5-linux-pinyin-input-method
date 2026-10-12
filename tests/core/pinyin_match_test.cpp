@@ -174,6 +174,36 @@ int main() {
                "sheeng debounces to sheng");
     assertTrue(PinyinMatchPolicy::normalizeTypoInput("good") == "good",
                "English word good retains double vowels");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("see") == "see",
+               "common English word see retains double vowels");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("fee") == "fee",
+               "common English word fee retains double vowels");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("bee") == "bee",
+               "common English word bee retains double vowels");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("app") == "app",
+               "common English word app retains double consonants");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("dee") == "de",
+               "rare word dee debounces to pinyin de");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("nii") == "ni",
+               "nii debounces to pinyin ni");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("shii") == "shi",
+               "shii debounces to pinyin shi");
+    assertTrue(PinyinMatchPolicy::normalizeTypoInput("de'e") == "de'e",
+               "explicit separator de'e is preserved without debounce");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("dee", "de") == 3,
+               "dee single-bounce matches de consuming 3 bytes");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("nii", "ni") == 3,
+               "nii single-bounce matches ni consuming 3 bytes");
+    assertTrue(PinyinMatchPolicy::matchTypoSyllable("shii", "shi") == 4,
+               "shii single-bounce matches shi consuming 4 bytes");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("dee", "de"),
+               "dee is full typo match for de");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("nii", "ni"),
+               "nii is full typo match for ni");
+    assertTrue(PinyinMatchPolicy::isFullTypoMatch("shii", "shi"),
+               "shii is full typo match for shi");
+    assertTrue(!PinyinMatchPolicy::isFullTypoMatch("see", "se"),
+               "common English word see is not treated as typo for se");
     assertTrue(PinyinMatchPolicy::normalizeTypoInput("garag") == "garag",
                "English prefix garag is protected from typo corruption");
     assertTrue(PinyinMatchPolicy::normalizeTypoInput("zhogguo") == "zhongguo",

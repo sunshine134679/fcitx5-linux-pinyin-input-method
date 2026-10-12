@@ -171,11 +171,73 @@ void testChineseAbbreviationProtection() {
                "zw top candidate is Chinese, not raw English");
 }
 
+void testDoubleLetterFaultTolerance() {
+    modernime::pinyin::PinyinDataPaths paths;
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    // 1. dee 容错为中文首选“的”，全量消费 3 字节，上屏后无残余 'e'
+    assertTrue(provider.append("dee"), "append dee");
+    assertTrue(!provider.page().items.empty(), "dee produces candidates");
+    assertTrue(provider.page().items.front().text == "的", "dee rank 0 is 的");
+    assertTrue(provider.page().items.front().consumedInputBytes == 3, "dee consumes all 3 bytes");
+    assertTrue(provider.select(0), "select 的 for dee");
+    assertTrue(provider.page().items.empty(), "preedit and candidate list cleared after select 的 for dee");
+
+    // 2. shii 容错为中文首选“是”，全量消费 4 字节，不带多余 i
+    provider.reset();
+    assertTrue(provider.append("shii"), "append shii");
+    assertTrue(!provider.page().items.empty(), "shii produces candidates");
+    assertTrue(provider.page().items.front().text == "是", "shii rank 0 is 是");
+    assertTrue(provider.page().items.front().consumedInputBytes == 4, "shii consumes all 4 bytes");
+    assertTrue(provider.select(0), "select 是 for shii");
+    assertTrue(provider.page().items.empty(), "preedit and candidate list cleared after select 是 for shii");
+
+    // 3. nii 容错为中文首选“你”，全量消费 3 字节，不带多余 i
+    provider.reset();
+    assertTrue(provider.append("nii"), "append nii");
+    assertTrue(!provider.page().items.empty(), "nii produces candidates");
+    assertTrue(provider.page().items.front().text == "你", "nii rank 0 is 你");
+    assertTrue(provider.page().items.front().consumedInputBytes == 3, "nii consumes all 3 bytes");
+    assertTrue(provider.select(0), "select 你 for nii");
+    assertTrue(provider.page().items.empty(), "preedit and candidate list cleared after select 你 for nii");
+
+    // 4. see/fee/bee/app 等高频合法英文不被无条件折叠，首选英文
+    provider.reset();
+    assertTrue(provider.append("see"), "append see");
+    assertTrue(!provider.page().items.empty(), "see produces candidates");
+    assertTrue(provider.page().items.front().text == "see", "see rank 0 is English word see");
+
+    provider.reset();
+    assertTrue(provider.append("fee"), "append fee");
+    assertTrue(!provider.page().items.empty(), "fee produces candidates");
+    assertTrue(provider.page().items.front().text == "fee", "fee rank 0 is English word fee");
+
+    provider.reset();
+    assertTrue(provider.append("bee"), "append bee");
+    assertTrue(!provider.page().items.empty(), "bee produces candidates");
+    assertTrue(provider.page().items.front().text == "bee", "bee rank 0 is English word bee");
+
+    provider.reset();
+    assertTrue(provider.append("app"), "append app");
+    assertTrue(!provider.page().items.empty(), "app produces candidates");
+    assertTrue(provider.page().items.front().text == "app", "app rank 0 is English word app");
+
+    // 5. 用户明确输入分隔符 de'e 保留多音节意图，不折叠为单音节“的”
+    provider.reset();
+    assertTrue(provider.append("de'e"), "append de'e");
+    assertTrue(!provider.page().items.empty(), "de'e produces candidates");
+    assertTrue(provider.page().items.front().text != "的", "de'e does not collapse across explicit separator");
+}
+
 } // namespace
 
 int main() {
     testDeveloperLearningDoesNotHijackDe();
     testGnueabihfRecall();
     testChineseAbbreviationProtection();
+    testDoubleLetterFaultTolerance();
     return EXIT_SUCCESS;
 }

@@ -183,6 +183,9 @@ CandidatePipelineResult buildCandidatePipeline(
                             existing.source_index = index;
                             existing.decoder_score = typoCandidates[index].score();
                         }
+                        if (index == 0 && utf8CodePointCount(existing.text) == 1) {
+                            existing.unigram_anchor = 3.0;
+                        }
                         break;
                     }
                 }

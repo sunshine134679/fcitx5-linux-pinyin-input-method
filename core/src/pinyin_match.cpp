@@ -292,8 +292,8 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
         }
     }
 
-    // 保护合法英文单词（尤其是含连续重元音的英文如 good, book, deep 等），避免被抗抖误去重
-    const bool isKnownEnglish = EnglishDictionary::isEnglishWord(input);
+    // 保护合法常见英文单词（尤其是含连续重元音的英文如 good, book, deep, see, fee, bee, app 等），避免被抗抖误去重
+    const bool isProtectedEnglish = EnglishDictionary::isCommonWord(input);
 
     const auto isVowel = [](char c) {
         return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' || c == 'v';
@@ -305,16 +305,21 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
     std::string s(input);
 
     // 1. 抗抖去重：消除单音节内的非法连续双元音 (oo->o, ee->e, aa->a, ii->i, uu->u)
-    if (!isKnownEnglish) {
+    // 约束：仅折叠单次重复弹跳字符，避免跨分隔符和无界折叠
+    if (!isProtectedEnglish) {
         std::string debounced;
         debounced.reserve(s.size());
+        bool lastSkipped = false;
         for (std::size_t i = 0; i < s.size(); ++i) {
-            if (i > 0 && isVowel(s[i]) && s[i] == s[i - 1]) {
+            if (i > 0 && isVowel(s[i]) && s[i] == s[i - 1] && !lastSkipped) {
+                lastSkipped = true;
                 continue;
             }
-            if (i > 0 && isConsonant(s[i]) && s[i] == s[i - 1] && (i == 1 || s[i - 2] == '\'')) {
+            if (i > 0 && isConsonant(s[i]) && s[i] == s[i - 1] && (i == 1 || s[i - 2] == '\'') && !lastSkipped) {
+                lastSkipped = true;
                 continue;
             }
+            lastSkipped = false;
             debounced.push_back(s[i]);
         }
         s = std::move(debounced);
@@ -650,6 +655,39 @@ std::size_t PinyinMatchPolicy::matchTypoSyllable(std::string_view input,
     if (input.empty() || syllable.empty()) {
         return 0;
     }
+
+    // 0. 单字符弹跳容错（受限单次重复字母）：dee -> de, nii -> ni, shii -> shi, dde -> de
+    // 0.1 尾部元音单次重复: e.g. input "dee" vs syllable "de" (consumes 3 bytes)
+    if (syllable.size() >= 2 && input.size() >= syllable.size() + 1 &&
+        input.substr(0, syllable.size()) == syllable &&
+        input[syllable.size()] == syllable.back()) {
+        if (input.size() == syllable.size() + 1 || input[syllable.size() + 1] != syllable.back()) {
+            return syllable.size() + 1;
+        }
+    }
+    // 0.2 首部声母单次重复: e.g. input "dde" vs syllable "de" (consumes 3 bytes)
+    if (syllable.size() >= 2 && input.size() >= syllable.size() + 1 &&
+        input.front() == syllable.front() &&
+        input.substr(1, syllable.size()) == syllable) {
+        if (input.size() == syllable.size() + 1 || input[1] != syllable.front()) {
+            return syllable.size() + 1;
+        }
+    }
+    // 0.3 内部双元音抗抖容错 (如 zhoong -> zhong, sheeng -> sheng)
+    if (syllable.size() >= 3 && input.size() >= syllable.size() + 1) {
+        for (std::size_t i = 1; i < syllable.size(); ++i) {
+            char c = syllable[i];
+            if ((c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') &&
+                input.substr(0, i + 1) == syllable.substr(0, i + 1) &&
+                input[i + 1] == c &&
+                input.substr(i + 2, syllable.size() - (i + 1)) == syllable.substr(i + 1)) {
+                if (input.size() == syllable.size() + 1 || input[i + 2] != c) {
+                    return syllable.size() + 1;
+                }
+            }
+        }
+    }
+
     // 1. gn <-> ng (e.g. input "dign" vs syllable "ding")
     //    mg -> ng (adjacent key slip: input "dimg" vs syllable "ding")
     if (syllable.ends_with("ng")) {
@@ -973,6 +1011,10 @@ bool PinyinMatchPolicy::isFullTypoMatch(std::string_view userInput,
     if (userInput.empty() || fullPinyin.empty()) {
         return false;
     }
+    // 保护合法常见英文单词（尤其是含连续重元音的英文如 good, book, deep, see, fee, bee, app 等），不作为拼音容错
+    if (EnglishDictionary::isCommonWord(userInput)) {
+        return false;
+    }
     const bool isPotentialTypo =
         (userInput == "jai" || userInput == "xai" || userInput == "qai" ||
          userInput.starts_with("sna") || userInput.starts_with("zna") ||
@@ -1011,14 +1053,14 @@ bool PinyinMatchPolicy::isFullTypoMatch(std::string_view userInput,
             return false;
         }
         const auto rem = userInput.substr(offset);
-        if (rem.starts_with(syl)) {
-            offset += syl.size();
-            continue;
-        }
         const auto typoLen = matchTypoSyllable(rem, syl);
         if (typoLen > 0) {
             offset += typoLen;
             hadTypo = true;
+            continue;
+        }
+        if (rem.starts_with(syl)) {
+            offset += syl.size();
             continue;
         }
         return false;
