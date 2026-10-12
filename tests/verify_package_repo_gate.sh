@@ -18,22 +18,22 @@ fail() {
 expected_version=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUAGES CXX)$/\1/p' "${repo_root}/CMakeLists.txt")
 [ -n "${expected_version}" ] || fail "unable to parse version from CMakeLists.txt"
 
-printf '=== [1/6] Building / verifying DEB and RPM packages (v%s) ===\n' "${expected_version}"
+printf '=== [1/7] Building / verifying DEB and RPM packages (v%s) ===\n' "${expected_version}"
 deb_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.deb" 2>/dev/null | head -n 1 || true)
-if [ -z "${deb_file}" ]; then
+if [ -z "${deb_file}" ] || [ "${repo_root}/scripts/modernime-migrate-channel" -nt "${deb_file}" ] || [ "${repo_root}/tools/settings/update_controller.cpp" -nt "${deb_file}" ]; then
     "${repo_root}/scripts/package_deb.sh"
     deb_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.deb" | head -n 1)
 fi
 [ -f "${deb_file}" ] || fail "DEB package not produced in dist/"
 
 rpm_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.rpm" 2>/dev/null | head -n 1 || true)
-if [ -z "${rpm_file}" ]; then
+if [ -z "${rpm_file}" ] || [ "${repo_root}/scripts/modernime-migrate-channel" -nt "${rpm_file}" ] || [ "${repo_root}/tools/settings/update_controller.cpp" -nt "${rpm_file}" ]; then
     "${repo_root}/scripts/package_rpm.sh"
     rpm_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.rpm" | head -n 1)
 fi
 [ -f "${rpm_file}" ] || fail "RPM package not produced in dist/"
 
-printf '=== [2/6] Verifying DEB & RPM file boundaries, dependencies, licenses, and zero user data ===\n'
+printf '=== [2/7] Verifying DEB & RPM file boundaries, dependencies, licenses, and zero user data ===\n'
 deb_info=$(dpkg-deb -I "${deb_file}")
 deb_contents=$(dpkg-deb -c "${deb_file}")
 
@@ -85,7 +85,6 @@ for forbidden in \
     fi
 done
 
-# Inspect RPM binary headers and cpio payload
 rpm_extract_dir="${work_dir}/rpm-extracted"
 mkdir -p "${rpm_extract_dir}"
 python3 - "${rpm_file}" "${rpm_extract_dir}" "${expected_version}" <<'PYEOF'
@@ -153,7 +152,6 @@ for req_pkg, min_ver in [
 ]:
     assert req_map.get(req_pkg) == min_ver, f"RPM missing dependency {req_pkg} >= {min_ver} (got {req_map.get(req_pkg)})"
 
-# Extract prein, postin, postun scripts for lifecycle test
 if 1023 in tags:
     (extract_dir / "prein.sh").write_text(tags[1023], encoding="utf-8")
 if 1024 in tags:
@@ -161,7 +159,6 @@ if 1024 in tags:
 if 1026 in tags:
     (extract_dir / "postun.sh").write_text(tags[1026], encoding="utf-8")
 
-# Decompress cpio payload and extract into extract_dir/rootfs
 rootfs = extract_dir / "rootfs"
 rootfs.mkdir(parents=True, exist_ok=True)
 cpio_bytes = gzip.decompress(raw[payload_off:])
@@ -195,64 +192,304 @@ done
 grep -Fxq "channel=rpm" "${rpm_extract_dir}/rootfs/usr/share/modernime/install-channel.txt" ||
     fail "RPM install-channel.txt does not record channel=rpm"
 
-printf '=== [3/6] Verifying signed APT repository build, metadata, and GPG signature ===\n'
-apt_repo_dir="${work_dir}/apt-repo"
-"${repo_root}/scripts/build_apt_repo.sh" \
-    --output-dir "${apt_repo_dir}" \
-    --deb "${deb_file}" \
-    --arch amd64 \
-    --prev-version 0.1.7 \
-    --ephemeral-gpg
+printf '=== [3/7] Verifying CI release repository builder, persistent GPG key rotation, and multi-version Pages tree ===\n'
+ci_assets_dir="${work_dir}/ci-release-assets"
+prev_pages_dir="${work_dir}/prev-pages"
+pages_site_dir="${work_dir}/pages-site"
+mkdir -p "${ci_assets_dir}" \
+    "${prev_pages_dir}/apt/pool/jammy/main/m/modernime" \
+    "${prev_pages_dir}/apt/pool/noble/main/m/modernime" \
+    "${prev_pages_dir}/apt/pool/bookworm/main/m/modernime" \
+    "${prev_pages_dir}/rpm/oe2409/x86_64/Packages"
 
-for suite in jammy noble; do
-    [ -f "${apt_repo_dir}/dists/${suite}/main/binary-amd64/Packages" ] ||
+# Copy current DEB/RPM using the exact filenames produced by .github/workflows/release.yml
+cp -f "${deb_file}" "${ci_assets_dir}/modernime_${expected_version}_amd64_ubuntu22.04.deb"
+cp -f "${deb_file}" "${ci_assets_dir}/modernime_${expected_version}_amd64_ubuntu24.04.deb"
+cp -f "${rpm_file}" "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm"
+
+# Build synthetic v0.1.7 DEB and v0.1.7 RPM in prev_pages_dir to test multi-version retention & downgrade/rollback
+deb_017_stage="${work_dir}/deb-0.1.7-stage"
+mkdir -p "${deb_017_stage}"
+dpkg-deb -R "${deb_file}" "${deb_017_stage}"
+sed -i "s/^Version: .*/Version: 0.1.7/" "${deb_017_stage}/DEBIAN/control"
+cat > "${deb_017_stage}/usr/share/modernime/install-channel.txt" <<'EOF'
+channel=deb
+version=0.1.7
+prefix=/usr
+EOF
+chmod 0755 "${deb_017_stage}/DEBIAN/"* 2>/dev/null || true
+chmod 0644 "${deb_017_stage}/DEBIAN/control" 2>/dev/null || true
+deb_017_file="${work_dir}/modernime_0.1.7_amd64.deb"
+dpkg-deb --build "${deb_017_stage}" "${deb_017_file}" >/dev/null
+cp -f "${deb_017_file}" "${prev_pages_dir}/apt/pool/jammy/main/m/modernime/modernime_0.1.7_amd64_ubuntu22.04.deb"
+cp -f "${deb_017_file}" "${prev_pages_dir}/apt/pool/noble/main/m/modernime/modernime_0.1.7_amd64_ubuntu24.04.deb"
+cp -f "${deb_017_file}" "${prev_pages_dir}/apt/pool/bookworm/main/m/modernime/modernime_0.1.7_amd64_debian12.deb"
+
+rpm_017_file="${prev_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-0.1.7-1.oe24.x86_64.rpm"
+python3 - "${rpm_file}" "${rpm_017_file}" "${expected_version}" <<'PYEOF'
+from pathlib import Path
+import sys
+
+src_bytes = Path(sys.argv[1]).read_bytes()
+dst_path = Path(sys.argv[2])
+cur_ver = sys.argv[3].encode("ascii")
+assert len(cur_ver) == len(b"0.1.7"), "Version length mismatch for binary patch"
+dst_path.write_bytes(src_bytes.replace(cur_ver, b"0.1.7"))
+PYEOF
+
+# Gate check: --require-persistent-gpg MUST fail when no persistent key is provided
+if env -u MODERNIME_GPG_PRIVATE_KEY -u MODERNIME_GPG_KEY_ID \
+    "${repo_root}/scripts/ci_build_release_repos.sh" \
+    --assets-dir "${ci_assets_dir}" \
+    --pages-dir "${work_dir}/pages-should-fail" \
+    --require-persistent-gpg >/dev/null 2>&1; then
+    fail "ci_build_release_repos.sh --require-persistent-gpg must fail when persistent GPG key is absent"
+fi
+
+# Generate persistent primary GPG key AND rotation GPG key to verify key persistence + dual-key rotation
+gpg_setup_home="${work_dir}/gpg-setup"
+mkdir -p "${gpg_setup_home}"
+chmod 700 "${gpg_setup_home}"
+gpg --homedir "${gpg_setup_home}" --batch --generate-key <<'GPGEOF' >/dev/null 2>&1
+%no-protection
+Key-Type: RSA
+Key-Length: 2048
+Name-Real: ModernIME Release Signing
+Name-Email: release@modernime.org
+Expire-Date: 0
+%commit
+GPGEOF
+gpg --homedir "${gpg_setup_home}" --batch --generate-key <<'GPGEOF' >/dev/null 2>&1
+%no-protection
+Key-Type: RSA
+Key-Length: 2048
+Name-Real: ModernIME Next Rotation Key
+Name-Email: rotation@modernime.org
+Expire-Date: 0
+%commit
+GPGEOF
+
+primary_fpr=$(gpg --homedir "${gpg_setup_home}" --list-secret-keys --with-colons "release@modernime.org" | awk -F: '$1 == "fpr" { print $10; exit }')
+rotation_fpr=$(gpg --homedir "${gpg_setup_home}" --list-secret-keys --with-colons "rotation@modernime.org" | awk -F: '$1 == "fpr" { print $10; exit }')
+[ -n "${primary_fpr}" ] || fail "failed to generate primary GPG key"
+[ -n "${rotation_fpr}" ] || fail "failed to generate rotation GPG key"
+
+primary_sec_file="${work_dir}/primary-secret.asc"
+rotation_sec_value=$(gpg --homedir "${gpg_setup_home}" --armor --export-secret-keys "${rotation_fpr}")
+gpg --homedir "${gpg_setup_home}" --armor --export-secret-keys "${primary_fpr}" > "${primary_sec_file}"
+
+primary_only_keyring="${work_dir}/primary-only.gpg"
+rotation_only_keyring="${work_dir}/rotation-only.gpg"
+gpg --homedir "${gpg_setup_home}" --export "${primary_fpr}" > "${primary_only_keyring}"
+gpg --homedir "${gpg_setup_home}" --export "${rotation_fpr}" > "${rotation_only_keyring}"
+
+MODERNIME_GPG_KEY_ID="${primary_fpr}" \
+MODERNIME_GPG_ROTATION_PRIVATE_KEY="${rotation_sec_value}" \
+MODERNIME_GPG_ROTATION_KEY_ID="${rotation_fpr}" \
+"${repo_root}/scripts/ci_build_release_repos.sh" \
+    --assets-dir "${ci_assets_dir}" \
+    --pages-dir "${pages_site_dir}" \
+    --previous-pages-dir "${prev_pages_dir}" \
+    --gpg-private-key-file "${primary_sec_file}" \
+    --require-persistent-gpg \
+    --repo-base-url "file://${pages_site_dir}"
+
+[ -f "${pages_site_dir}/.nojekyll" ] || fail "pages-site/.nojekyll missing"
+[ -f "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" ] || fail "apt/KEY-FINGERPRINTS.txt missing"
+[ -f "${pages_site_dir}/rpm/KEY-FINGERPRINTS.txt" ] || fail "rpm/KEY-FINGERPRINTS.txt missing"
+grep -Fq "${primary_fpr}" "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" || fail "primary fingerprint missing from KEY-FINGERPRINTS.txt"
+grep -Fq "${rotation_fpr}" "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" || fail "rotation fingerprint missing from KEY-FINGERPRINTS.txt"
+
+for suite in jammy noble bookworm; do
+    [ -f "${pages_site_dir}/apt/dists/${suite}/main/binary-amd64/Packages" ] ||
         fail "APT Packages missing for ${suite}"
-    [ -f "${apt_repo_dir}/dists/${suite}/main/binary-amd64/Packages.gz" ] ||
+    [ -f "${pages_site_dir}/apt/dists/${suite}/main/binary-amd64/Packages.gz" ] ||
         fail "APT Packages.gz missing for ${suite}"
-    [ -f "${apt_repo_dir}/dists/${suite}/InRelease" ] ||
+    [ -f "${pages_site_dir}/apt/dists/${suite}/InRelease" ] ||
         fail "APT InRelease missing for ${suite}"
-    [ -f "${apt_repo_dir}/dists/${suite}/Release.gpg" ] ||
+    [ -f "${pages_site_dir}/apt/dists/${suite}/Release.gpg" ] ||
         fail "APT Release.gpg missing for ${suite}"
-    gpgv --keyring "${apt_repo_dir}/modernime-archive-keyring.gpg" \
-        "${apt_repo_dir}/dists/${suite}/InRelease" >/dev/null 2>&1 ||
-        fail "gpgv failed on APT InRelease for ${suite}"
-    gpgv --keyring "${apt_repo_dir}/modernime-archive-keyring.gpg" \
-        "${apt_repo_dir}/dists/${suite}/Release.gpg" \
-        "${apt_repo_dir}/dists/${suite}/Release" >/dev/null 2>&1 ||
+    # Verify InRelease contains valid signatures for both primary and rotation keys
+    inrelease_status=$(gpgv --keyring "${pages_site_dir}/apt/modernime-archive-keyring.gpg" \
+        --status-fd 1 "${pages_site_dir}/apt/dists/${suite}/InRelease" 2>&1)
+    printf '%s\n' "${inrelease_status}" | grep -Fq "VALIDSIG ${primary_fpr}" ||
+        fail "InRelease missing valid signature for primary key ${primary_fpr} on ${suite}"
+    printf '%s\n' "${inrelease_status}" | grep -Fq "VALIDSIG ${rotation_fpr}" ||
+        fail "InRelease missing valid signature for rotation key ${rotation_fpr} on ${suite}"
+
+    gpgv --keyring "${pages_site_dir}/apt/modernime-archive-keyring.gpg" \
+        "${pages_site_dir}/apt/dists/${suite}/Release.gpg" \
+        "${pages_site_dir}/apt/dists/${suite}/Release" >/dev/null 2>&1 ||
         fail "gpgv failed on APT Release.gpg for ${suite}"
-    [ -f "${apt_repo_dir}/client/modernime-${suite}.sources" ] ||
+    [ -f "${pages_site_dir}/apt/client/modernime-${suite}.sources" ] ||
         fail "APT modernime-${suite}.sources missing"
 done
-[ -f "${apt_repo_dir}/client/99-modernime.pref" ] || fail "APT 99-modernime.pref missing"
 
-printf '=== [4/6] Verifying signed RPM/DNF repository build, repodata, and GPG signature ===\n'
-rpm_repo_dir="${work_dir}/rpm-repo"
-"${repo_root}/scripts/build_rpm_repo.sh" \
-    --output-dir "${rpm_repo_dir}" \
-    --rpm "${rpm_file}" \
-    --distro oe2409 \
-    --arch x86_64 \
-    --ephemeral-gpg
+printf '=== [4/7] Running REAL apt-get update & apt-cache policy against signed local APT repository (jammy, noble, bookworm) ===\n'
+for suite in jammy noble bookworm; do
+    apt_root="${work_dir}/apt-client-${suite}"
+    mkdir -p \
+        "${apt_root}/etc/apt/sources.list.d" \
+        "${apt_root}/etc/apt/preferences.d" \
+        "${apt_root}/etc/apt/apt.conf.d" \
+        "${apt_root}/var/lib/apt/lists/partial" \
+        "${apt_root}/var/cache/apt/archives/partial" \
+        "${apt_root}/var/lib/dpkg"
 
+    cat > "${apt_root}/var/lib/dpkg/status" <<'EOF'
+Package: modernime
+Status: install ok installed
+Priority: optional
+Section: utils
+Installed-Size: 16000
+Maintainer: ModernIME Developers <noreply@modernime.org>
+Architecture: amd64
+Version: 0.1.7
+Description: Modern Chinese Pinyin Input Method for Fcitx5
+EOF
+
+    cp -f "${pages_site_dir}/apt/client/modernime-${suite}.sources" \
+        "${apt_root}/etc/apt/sources.list.d/modernime.sources"
+    sed -i "s|^Signed-By:.*|Signed-By: ${pages_site_dir}/apt/modernime-archive-keyring.gpg|" \
+        "${apt_root}/etc/apt/sources.list.d/modernime.sources"
+    cp -f "${pages_site_dir}/apt/client/99-modernime.pref" \
+        "${apt_root}/etc/apt/preferences.d/99-modernime.pref"
+
+    apt_opts=(
+        -o "Dir=${apt_root}"
+        -o "Dir::State::status=${apt_root}/var/lib/dpkg/status"
+        -o "APT::Architecture=amd64"
+        -o "APT::Get::AllowUnauthenticated=false"
+        -o "Acquire::AllowInsecureRepositories=false"
+    )
+
+    LC_ALL=C LANG=C apt-get "${apt_opts[@]}" update >/dev/null ||
+        fail "real apt-get update failed on signed APT repository for suite ${suite}"
+
+    policy_out=$(LC_ALL=C LANG=C apt-cache "${apt_opts[@]}" policy modernime)
+    printf '%s\n' "${policy_out}" | grep -Fq "Installed: 0.1.7" ||
+        fail "apt-cache policy did not report Installed: 0.1.7 for ${suite}"
+    printf '%s\n' "${policy_out}" | grep -Fq "Candidate: ${expected_version}" ||
+        fail "apt-cache policy did not resolve Candidate: ${expected_version} for ${suite}"
+    printf '%s\n' "${policy_out}" | grep -Fq "${expected_version} 700" ||
+        fail "apt-cache policy did not apply Pin-Priority 700 to ${expected_version} from 99-modernime.pref for ${suite}"
+    printf '%s\n' "${policy_out}" | grep -Fq "file:${pages_site_dir}/apt ${suite}/main amd64 Packages" ||
+        fail "apt-cache policy missing expected repository source URL for ${suite}"
+
+    madison_out=$(LC_ALL=C LANG=C apt-cache "${apt_opts[@]}" madison modernime)
+    printf '%s\n' "${madison_out}" | grep -Fq "${expected_version}" ||
+        fail "apt-cache madison missing ${expected_version} for ${suite}"
+    printf '%s\n' "${madison_out}" | grep -Fq "0.1.7" ||
+        fail "apt-cache madison missing retained rollback version 0.1.7 for ${suite}"
+done
+
+printf '=== [5/7] Verifying signed RPM/DNF repository repomd.xml.asc AND embedded RPM package OpenPGP signatures ===\n'
 for repodata_file in \
     "repomd.xml" \
     "repomd.xml.asc" \
     "primary.xml.gz" \
     "filelists.xml.gz" \
     "other.xml.gz"; do
-    [ -f "${rpm_repo_dir}/oe2409/x86_64/repodata/${repodata_file}" ] ||
+    [ -f "${pages_site_dir}/rpm/oe2409/x86_64/repodata/${repodata_file}" ] ||
         fail "RPM repodata missing ${repodata_file}"
 done
-[ -f "${rpm_repo_dir}/RPM-GPG-KEY-modernime" ] || fail "RPM-GPG-KEY-modernime missing"
-[ -f "${rpm_repo_dir}/client/modernime-openeuler-24.09.repo" ] ||
+[ -f "${pages_site_dir}/rpm/RPM-GPG-KEY-modernime" ] || fail "RPM-GPG-KEY-modernime missing"
+[ -f "${pages_site_dir}/rpm/client/modernime-openeuler-24.09.repo" ] ||
     fail "modernime-openeuler-24.09.repo missing"
 
-gpgv --keyring "${rpm_repo_dir}/RPM-GPG-KEY-modernime.gpg" \
-    "${rpm_repo_dir}/oe2409/x86_64/repodata/repomd.xml.asc" \
-    "${rpm_repo_dir}/oe2409/x86_64/repodata/repomd.xml" >/dev/null 2>&1 ||
-    fail "GPG signature verification failed on repomd.xml.asc"
+repomd_status=$(gpgv --keyring "${pages_site_dir}/rpm/RPM-GPG-KEY-modernime.gpg" \
+    --status-fd 1 \
+    "${pages_site_dir}/rpm/oe2409/x86_64/repodata/repomd.xml.asc" \
+    "${pages_site_dir}/rpm/oe2409/x86_64/repodata/repomd.xml" 2>&1)
+printf '%s\n' "${repomd_status}" | grep -Fq "VALIDSIG ${primary_fpr}" ||
+    fail "repomd.xml.asc missing valid signature for primary key ${primary_fpr}"
 
-printf '=== [5/6] Simulating v0.1.7 -> v%s package upgrade with active SQLite WAL, LMDB, settings, and user dict ===\n' "${expected_version}"
+# Verify every RPM in Packages/ has valid embedded RPMSIGTAG_RSA (268) and RPMSIGTAG_PGP (259) OpenPGP signatures
+# AND matches the sha256 checksum & size recorded in primary.xml.gz
+python3 - "${pages_site_dir}/rpm/oe2409/x86_64" "${pages_site_dir}/rpm/RPM-GPG-KEY-modernime.gpg" "${expected_version}" <<'PYEOF'
+import gzip
+import hashlib
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
+import sys
+
+arch_dir = Path(sys.argv[1]).resolve()
+keyring = Path(sys.argv[2]).resolve()
+expected_ver = sys.argv[3]
+
+primary_xml = gzip.decompress((arch_dir / "repodata/primary.xml.gz").read_bytes())
+root = ET.fromstring(primary_xml)
+ns = {"common": "http://linux.duke.edu/metadata/common"}
+
+pkgs_in_xml = {}
+for pkg in root.findall("common:package", ns):
+    ver_el = pkg.find("common:version", ns)
+    csum_el = pkg.find("common:checksum", ns)
+    size_el = pkg.find("common:size", ns)
+    loc_el = pkg.find("common:location", ns)
+    ver = ver_el.attrib["ver"]
+    pkgs_in_xml[ver] = {
+        "sha256": csum_el.text,
+        "size": int(size_el.attrib["package"]),
+        "href": loc_el.attrib["href"],
+    }
+
+assert "0.1.7" in pkgs_in_xml, "primary.xml.gz missing retained version 0.1.7"
+assert expected_ver in pkgs_in_xml, f"primary.xml.gz missing current version {expected_ver}"
+
+for ver, meta in pkgs_in_xml.items():
+    rpm_path = arch_dir / meta["href"]
+    assert rpm_path.is_file(), f"Missing RPM file {rpm_path}"
+    raw = rpm_path.read_bytes()
+    assert len(raw) == meta["size"], f"RPM size mismatch for {ver}: {len(raw)} != {meta['size']}"
+    actual_sha = hashlib.sha256(raw).hexdigest()
+    assert actual_sha == meta["sha256"], f"RPM sha256 mismatch for {ver}: {actual_sha} != {meta['sha256']}"
+
+    # Parse signature header and verify tags 268 (RSA header sig) and 259 (PGP header+payload sig)
+    assert raw[96:100] == b"\x8e\xad\xe8\x01", "Invalid RPM signature header magic"
+    nindex, hsize = struct.unpack(">II", raw[104:112])
+    idx_start = 112
+    store_start = idx_start + nindex * 16
+    store_end = store_start + hsize
+    sig_end = (store_end + 7) & ~7
+    if raw[sig_end:sig_end+4] != b"\x8e\xad\xe8\x01":
+        sig_end = raw.find(b"\x8e\xad\xe8\x01", store_end)
+
+    main_nindex, main_hsize = struct.unpack(">II", raw[sig_end+8:sig_end+16])
+    main_end = sig_end + 16 + main_nindex * 16 + main_hsize
+    main_hdr = raw[sig_end:main_end]
+    hdr_and_payload = raw[sig_end:]
+
+    sig_tags = {}
+    for i in range(nindex):
+        eo = idx_start + i * 16
+        tag, dtype, voff, count = struct.unpack(">IIII", raw[eo:eo+16])
+        if dtype == 7:
+            sig_tags[tag] = raw[store_start+voff:store_start+voff+count]
+
+    assert 268 in sig_tags, f"RPM {rpm_path.name} missing RPMSIGTAG_RSA (tag 268)"
+    assert 259 in sig_tags, f"RPM {rpm_path.name} missing RPMSIGTAG_PGP (tag 259)"
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        (td_path / "hdr.bin").write_bytes(main_hdr)
+        (td_path / "hdr.sig").write_bytes(sig_tags[268])
+        (td_path / "all.bin").write_bytes(hdr_and_payload)
+        (td_path / "all.sig").write_bytes(sig_tags[259])
+        subprocess.run(
+            ["gpgv", "--keyring", str(keyring), str(td_path / "hdr.sig"), str(td_path / "hdr.bin")],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        subprocess.run(
+            ["gpgv", "--keyring", str(keyring), str(td_path / "all.sig"), str(td_path / "all.bin")],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+PYEOF
+
+printf '=== [6/7] Simulating full v0.1.7 -> v%s upgrade -> v0.1.7 rollback -> uninstall lifecycle (DEB & RPM) ===\n' "${expected_version}"
 deb_ctrl_dir="${work_dir}/deb-control"
 deb_rootfs_dir="${work_dir}/deb-rootfs"
 mkdir -p "${deb_ctrl_dir}" "${deb_rootfs_dir}"
@@ -265,7 +502,6 @@ sim_config="${sim_home}/.config/modernime"
 sim_data="${sim_home}/.local/share/modernime"
 mkdir -p "${sim_root}/usr/share/modernime" "${sim_config}" "${sim_data}"
 
-# Seed v0.1.7 deb channel metadata and user state (settings, user dictionary, active SQLite WAL, real LMDB)
 cat > "${sim_root}/usr/share/modernime/install-channel.txt" <<'EOF'
 channel=deb
 version=0.1.7
@@ -298,7 +534,6 @@ conn.execute("PRAGMA wal_autocheckpoint=0;")
 conn.execute("CREATE TABLE user_ngram (key TEXT PRIMARY KEY, phrase TEXT, freq INTEGER);")
 conn.execute("INSERT INTO user_ngram VALUES ('nihao', '你好世界', 42);")
 conn.commit()
-# Leave conn open briefly in WAL mode while backing up via modernime-data-guard
 
 lib = ctypes.CDLL("liblmdb.so.0")
 MDB_NOSUBDIR = 0x4000
@@ -324,7 +559,7 @@ lib.mdb_env_close(env)
 conn.close()
 PYEOF
 
-# Run transactional pre-upgrade data backup via modernime-data-guard, then execute DEB preinst upgrade -> unpack -> postinst configure
+# 6a. DEB upgrade 0.1.7 -> 0.1.8
 upgrade_backup_dir="${work_dir}/pre-upgrade-backup"
 "${repo_root}/scripts/modernime-data-guard" --backup \
     --data-dir "${sim_data}" \
@@ -347,16 +582,46 @@ grep -Fq "开源欧拉" "${sim_data}/user-dictionary.txt" ||
     --data-dir "${sim_data}" \
     --config-dir "${sim_config}"
 
-# Also verify RPM preinst upgrade ($1=2)
-cat > "${sim_root}/usr/share/modernime/install-channel.txt" <<'EOF'
-channel=rpm
-version=0.1.7
-prefix=/usr
-EOF
-MODERNIME_PKG_ROOT="${sim_root}" sh "${repo_root}/packaging/rpm/preinst.sh" 2
+# 6b. DEB downgrade / rollback 0.1.8 -> 0.1.7
+MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/preinst" upgrade "${expected_version}"
+cp -a "${deb_017_stage}/usr/." "${sim_root}/usr/"
+MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/postinst" configure "${expected_version}"
+grep -Fxq "version=0.1.7" "${sim_root}/usr/share/modernime/install-channel.txt" ||
+    fail "downgraded DEB system did not record version=0.1.7"
+"${repo_root}/scripts/modernime-data-guard" --verify \
+    --data-dir "${sim_data}" \
+    --config-dir "${sim_config}"
 
-printf '=== [6/6] Verifying explicit rejection of arch mismatch, version regression, channel collision, and missing deps ===\n'
-# 6a. Channel collision rejection in DEB preinst and RPM preinst
+# 6c. DEB uninstall (remove) preserves user learning data & config while removing /usr binaries
+rm -rf "${sim_root}/usr/bin/modernime-settings" \
+       "${sim_root}/usr/bin/modernime-session-init" \
+       "${sim_root}/usr/share/modernime"
+MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/postrm" remove
+[ ! -e "${sim_root}/usr/bin/modernime-settings" ] || fail "DEB remove left modernime-settings behind"
+grep -Fxq "custom_theme=ocean" "${sim_config}/settings.conf" ||
+    fail "user settings.conf lost during DEB remove"
+"${repo_root}/scripts/modernime-data-guard" --verify \
+    --data-dir "${sim_data}" \
+    --config-dir "${sim_config}"
+
+# 6d. RPM install ($1=1) -> upgrade ($1=2) -> downgrade ($1=2) -> erase ($1=0)
+mkdir -p "${sim_root}/usr"
+cp -a "${rpm_extract_dir}/rootfs/usr/." "${sim_root}/usr/"
+sed -i "s/^version=.*/version=0.1.7/" "${sim_root}/usr/share/modernime/install-channel.txt"
+MODERNIME_PKG_ROOT="${sim_root}" sh "${repo_root}/packaging/rpm/preinst.sh" 2
+cp -a "${rpm_extract_dir}/rootfs/usr/." "${sim_root}/usr/"
+MODERNIME_PKG_ROOT="${sim_root}" sh "${repo_root}/packaging/rpm/postinst.sh" 2
+grep -Fxq "channel=rpm" "${sim_root}/usr/share/modernime/install-channel.txt" ||
+    fail "RPM upgrade missing channel=rpm"
+grep -Fxq "version=${expected_version}" "${sim_root}/usr/share/modernime/install-channel.txt" ||
+    fail "RPM upgrade missing version=${expected_version}"
+MODERNIME_PKG_ROOT="${sim_root}" sh "${repo_root}/packaging/rpm/postun.sh" 0
+"${repo_root}/scripts/modernime-data-guard" --verify \
+    --data-dir "${sim_data}" \
+    --config-dir "${sim_config}"
+
+printf '=== [7/7] Verifying rejection gates & post-package-install migration rollback ===\n'
+# 7a. Channel collision rejection in DEB preinst and RPM preinst
 collision_root="${work_dir}/collision-root"
 mkdir -p "${collision_root}/usr/local/lib/fcitx5" "${collision_root}/usr/local/share/modernime"
 printf 'fake-script-plugin\n' > "${collision_root}/usr/local/lib/fcitx5/modernime_fcitx5.so"
@@ -373,7 +638,44 @@ if MODERNIME_PKG_ROOT="${collision_root}" sh "${repo_root}/packaging/rpm/preinst
     fail "RPM preinst should reject unmanaged script installation in /usr/local"
 fi
 
-# 6b. Architecture mismatch rejection in APT repo builder
+# 7b. Post-package-install failure rollback in modernime-migrate-channel
+mig_root="${work_dir}/mig-rollback"
+mig_from="${mig_root}/local"
+mig_to="${mig_root}/usr"
+mkdir -p "${mig_from}/bin" "${mig_from}/lib/fcitx5" "${mig_from}/share/modernime"
+printf '#!/bin/sh\nexit 0\n' > "${mig_from}/bin/modernime-settings"
+chmod +x "${mig_from}/bin/modernime-settings"
+printf 'script-so\n' > "${mig_from}/lib/fcitx5/modernime_fcitx5.so"
+cat > "${mig_from}/share/modernime/install-manifest.txt" <<EOF
+${mig_from}/bin/modernime-settings
+${mig_from}/lib/fcitx5/modernime_fcitx5.so
+EOF
+cat > "${mig_from}/share/modernime/install-channel.txt" <<EOF
+channel=script
+version=0.1.7
+prefix=${mig_from}
+EOF
+
+bad_pkg_cmd="mkdir -p '${mig_to}/bin' '${mig_to}/lib/fcitx5' '${mig_to}/share/modernime' && printf '#!/bin/sh\n' > '${mig_to}/bin/modernime-settings' && chmod +x '${mig_to}/bin/modernime-settings' && printf 'pkg-so\n' > '${mig_to}/lib/fcitx5/modernime_fcitx5.so' && printf 'channel=rpm\nversion=0.1.8\n' > '${mig_to}/share/modernime/install-channel.txt'"
+rollback_marker="${mig_root}/pkg-rollback-executed"
+rollback_pkg_cmd="rm -rf '${mig_to}/bin/modernime-settings' '${mig_to}/lib/fcitx5/modernime_fcitx5.so' '${mig_to}/share/modernime' && touch '${rollback_marker}'"
+
+if MODERNIME_DATA_HOME="${sim_data}" \
+   MODERNIME_CONFIG_HOME="${sim_config}" \
+   MODERNIME_SKIP_FCITX_RESTART=1 \
+   "${repo_root}/scripts/modernime-migrate-channel" \
+    --from-prefix "${mig_from}" \
+    --target-prefix "${mig_to}" \
+    --to-channel deb \
+    --package-cmd "${bad_pkg_cmd}" \
+    --package-rollback-cmd "${rollback_pkg_cmd}" >/dev/null 2>&1; then
+    fail "modernime-migrate-channel should fail when post-install channel verification fails"
+fi
+[ -f "${rollback_marker}" ] || fail "modernime-migrate-channel did not execute --package-rollback-cmd"
+[ ! -e "${mig_to}/lib/fcitx5/modernime_fcitx5.so" ] || fail "half-installed target package files were not cleaned up on rollback"
+[ -f "${mig_from}/lib/fcitx5/modernime_fcitx5.so" ] || fail "original script installation was not restored after rollback"
+
+# 7c. Architecture mismatch rejection in APT repo builder
 fake_arm_deb_dir="${work_dir}/fake-arm64-deb/DEBIAN"
 mkdir -p "${fake_arm_deb_dir}"
 cat > "${fake_arm_deb_dir}/control" <<EOF
@@ -394,7 +696,7 @@ if "${repo_root}/scripts/build_apt_repo.sh" \
     fail "build_apt_repo.sh should reject arm64 DEB when building amd64 repository"
 fi
 
-# 6c. Non-monotonic version regression rejection in APT repo builder
+# 7d. Non-monotonic version regression rejection in APT repo builder
 if "${repo_root}/scripts/build_apt_repo.sh" \
     --output-dir "${work_dir}/apt-ver-fail" \
     --deb "${deb_file}" \
@@ -404,7 +706,7 @@ if "${repo_root}/scripts/build_apt_repo.sh" \
     fail "build_apt_repo.sh should reject non-monotonic version when --prev-version >= candidate version"
 fi
 
-# 6d. Missing runtime dependency rejection in install.sh
+# 7e. Missing runtime dependency rejection in install.sh
 empty_bin="${work_dir}/empty-bin"
 mkdir -p "${empty_bin}"
 ln -sf "$(command -v bash)" "${empty_bin}/bash"
@@ -420,4 +722,4 @@ if PATH="${empty_bin}" MODERNIME_SKIP_FCITX_RESTART=1 \
     fail "install.sh should reject installation when fcitx5 runtime dependency is missing"
 fi
 
-printf 'PASS: All 6 package & repository release gate checks succeeded.\n'
+printf 'PASS: All 7 package, signed repository, real APT client, and rollback gate checks succeeded.\n'

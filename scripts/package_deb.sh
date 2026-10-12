@@ -6,6 +6,9 @@ build_dir="${project_root}/build/package-deb"
 dist_dir="${project_root}/dist"
 
 mkdir -p "${dist_dir}"
+chmod 0755 "${project_root}/packaging/debian/preinst" \
+           "${project_root}/packaging/debian/postinst" \
+           "${project_root}/packaging/debian/postrm" 2>/dev/null || true
 
 printf '==> Configuring ModernIME for DEB packaging...\n'
 cmake -S "${project_root}" -B "${build_dir}" \

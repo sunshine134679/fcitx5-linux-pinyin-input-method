@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build-ubuntu:
@@ -21,7 +23,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-22.04]
+        include:
+          - os: ubuntu-24.04
+            distro_tag: ubuntu24.04
+          - os: ubuntu-22.04
+            distro_tag: ubuntu22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,16 +45,15 @@ jobs:
       - name: Build and package DEB
         run: |
           ./scripts/package_deb.sh
-          OS_TAG=$(echo "${{ matrix.os }}" | tr -d '-')
           DEB_FILE=$(ls dist/modernime-*.deb | head -n 1)
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
-          TARGET_NAME="modernime_${VERSION}_amd64_${OS_TAG}.deb"
+          TARGET_NAME="modernime_${VERSION}_amd64_${{ matrix.distro_tag }}.deb"
           mv -f "$DEB_FILE" "dist/${TARGET_NAME}"
 
       - name: Upload DEB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: deb-${{ matrix.os }}
+          name: deb-${{ matrix.distro_tag }}
           path: dist/*.deb
 
   build-openeuler:
@@ -125,12 +130,17 @@ jobs:
           path: dist/*.tar.gz
 
   publish-release:
-    name: Publish GitHub Release
+    name: Publish GitHub Release & Signed Package Repositories
     needs: [build-ubuntu, build-openeuler, build-tarball]
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy_pages.outputs.page_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -145,8 +155,9 @@ jobs:
           cd release-assets
           echo "=== 1. 检查发布产物完整性与命名规范 ==="
           ls -la
-          test $(ls -1 *.deb 2>/dev/null | wc -l) -eq 2
-          test $(ls -1 *.rpm 2>/dev/null | wc -l) -eq 1
+          test $(ls -1 modernime_*_amd64_ubuntu22.04.deb 2>/dev/null | wc -l) -eq 1
+          test $(ls -1 modernime_*_amd64_ubuntu24.04.deb 2>/dev/null | wc -l) -eq 1
+          test $(ls -1 modernime-*.oe24.x86_64.rpm 2>/dev/null | wc -l) -eq 1
           test $(ls -1 *.tar.gz 2>/dev/null | wc -l) -eq 1
           for deb in *.deb; do
             dpkg-deb -I "$deb" >/dev/null
@@ -219,38 +230,55 @@ jobs:
           test -f "$data_home/modernime/learning.sqlite3"
           test -f "$data_home/modernime/learning.lmdb"
 
-          echo "=== 3. 验证 APT 与 RPM/DNF 签名软件源索引及包升级门禁 ==="
-          apt_repo_out="$gate_dir/apt-repo"
-          rpm_repo_out="$gate_dir/rpm-repo"
-          "$repo_root/scripts/build_apt_repo.sh" \
-            --output-dir "$apt_repo_out" \
-            --jammy-deb "$(ls -1 *ubuntu22.04.deb | head -n 1)" \
-            --noble-deb "$(ls -1 *ubuntu24.04.deb | head -n 1)" \
-            --arch amd64 \
+          echo "=== 3. 验证沙箱 APT/RPM 仓库构建、RPM 包体签名与 GPG 验签门禁 ==="
+          gate_assets="$gate_dir/assets-copy"
+          mkdir -p "$gate_assets"
+          cp -a "$repo_root/release-assets/." "$gate_assets/"
+          "$repo_root/scripts/ci_build_release_repos.sh" \
+            --assets-dir "$gate_assets" \
+            --pages-dir "$gate_dir/pages-sandbox" \
             --ephemeral-gpg
-          gpgv --keyring "$apt_repo_out/modernime-archive-keyring.gpg" \
-            "$apt_repo_out/dists/noble/InRelease"
-          gpgv --keyring "$apt_repo_out/modernime-archive-keyring.gpg" \
-            "$apt_repo_out/dists/jammy/InRelease"
 
-          "$repo_root/scripts/build_rpm_repo.sh" \
-            --output-dir "$rpm_repo_out" \
-            --rpm "$(ls -1 *.rpm | head -n 1)" \
-            --distro oe2409 \
-            --arch x86_64 \
-            --ephemeral-gpg
-          cp -f "$apt_repo_out/modernime-archive-keyring.gpg" "$repo_root/release-assets/"
-          cp -f "$apt_repo_out/client/modernime-jammy.sources" "$repo_root/release-assets/"
-          cp -f "$apt_repo_out/client/modernime-noble.sources" "$repo_root/release-assets/"
-          cp -f "$apt_repo_out/client/99-modernime.pref" "$repo_root/release-assets/"
-          cp -f "$rpm_repo_out/RPM-GPG-KEY-modernime" "$repo_root/release-assets/"
-          cp -f "$rpm_repo_out/client/modernime-openeuler-24.09.repo" "$repo_root/release-assets/"
+      - name: Build Production Signed APT & RPM Repositories
+        env:
+          MODERNIME_GPG_PRIVATE_KEY: ${{ secrets.MODERNIME_GPG_PRIVATE_KEY }}
+          MODERNIME_GPG_KEY_ID: ${{ secrets.MODERNIME_GPG_KEY_ID }}
+          MODERNIME_GPG_PASSPHRASE: ${{ secrets.MODERNIME_GPG_PASSPHRASE }}
+          MODERNIME_GPG_ROTATION_PRIVATE_KEY: ${{ secrets.MODERNIME_GPG_ROTATION_PRIVATE_KEY }}
+          MODERNIME_GPG_ROTATION_KEY_ID: ${{ secrets.MODERNIME_GPG_ROTATION_KEY_ID }}
+        run: |
+          set -euo pipefail
+          prev_pages=""
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git worktree add prev-pages origin/gh-pages
+            prev_pages="prev-pages"
+          fi
+          ./scripts/ci_build_release_repos.sh \
+            --assets-dir release-assets \
+            --pages-dir pages-site \
+            ${prev_pages:+--previous-pages-dir "$prev_pages"} \
+            --require-persistent-gpg
+          if [ -n "$prev_pages" ]; then
+            git worktree remove --force "$prev_pages" || true
+          fi
 
       - name: Compute Checksums
         run: |
           cd release-assets
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload APT & RPM Repository Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-site
+
+      - name: Deploy APT & RPM Repositories to GitHub Pages
+        id: deploy_pages
+        uses: actions/deploy-pages@v4
 
       - name: Determine Release Tag
         id: get_tag

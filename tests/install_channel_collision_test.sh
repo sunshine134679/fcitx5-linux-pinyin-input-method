@@ -326,6 +326,36 @@ chmod +x '$mig_target_prefix/bin/modernime-settings' && \
 : > '$mig_target_prefix/share/modernime/pinyin/modernime-knowledge.dict' && \
 printf 'channel=deb\nversion=0.1.8\nprefix=%s\n' '$mig_target_prefix' > '$mig_target_prefix/share/modernime/install-channel.txt'"
 
+# Test 6b: Post-install verification failure uninstalls newly installed target package and cleans target_prefix
+broken_deb_cmd="mkdir -p '$mig_target_prefix/bin' '$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5' '$mig_target_prefix/share/modernime/pinyin' && \
+printf '#!/bin/sh\necho 0.1.8\n' > '$mig_target_prefix/bin/modernime-settings' && \
+chmod +x '$mig_target_prefix/bin/modernime-settings' && \
+: > '$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so' && \
+: > '$mig_target_prefix/share/modernime/pinyin/modernime-knowledge.dict' && \
+printf 'channel=rpm\nversion=0.1.8\nprefix=%s\n' '$mig_target_prefix' > '$mig_target_prefix/share/modernime/install-channel.txt'"
+
+pkg_rollback_marker="$test_root/pkg-rollback-ran.txt"
+post_fail_out="$test_root/migrate-post-fail.log"
+if env \
+    MODERNIME_CONFIG_HOME="$mig_cfg_home" \
+    MODERNIME_DATA_HOME="$mig_data_home" \
+    "$project_root/scripts/modernime-migrate-channel" \
+        --from-prefix "$mig_src_prefix" \
+        --target-prefix "$mig_target_prefix" \
+        --to-channel deb \
+        --package-cmd "$broken_deb_cmd" \
+        --package-rollback-cmd "printf 'uninstalled-deb\n' > '$pkg_rollback_marker'" \
+        --no-session-init >"$post_fail_out" 2>&1; then
+    echo "Expected modernime-migrate-channel to fail when post-install verification fails" >&2
+    exit 1
+fi
+test -f "$pkg_rollback_marker"
+grep -Fxq "uninstalled-deb" "$pkg_rollback_marker"
+test ! -e "$mig_target_prefix/bin/modernime-settings"
+test ! -e "$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so"
+test -f "$mig_src_prefix/bin/modernime-settings"
+grep -F 'channel=script' "$mig_src_prefix/share/modernime/install-channel.txt" >/dev/null
+
 ok_out="$test_root/migrate-ok.log"
 env \
     MODERNIME_CONFIG_HOME="$mig_cfg_home" \

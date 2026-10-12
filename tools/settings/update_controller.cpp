@@ -318,15 +318,17 @@ bool parseTrustedMetadataFile(const std::filesystem::path &path,
     return !status.candidateVersion.empty();
 }
 
-void finalizeStatus(UpdateStatus &status) {
+void finalizeStatus(UpdateStatus &status, bool hasRemoteRepoIndex) {
     status.checked = true;
     if (status.manager == PackageManagerKind::Dnf) {
-        status.upgradeCommand = "sudo dnf upgrade modernime";
+        status.refreshCacheCommand = "sudo dnf makecache";
+        status.upgradeCommand = "sudo dnf makecache && sudo dnf upgrade modernime";
         status.privilegedCommand = "pkexec dnf upgrade -y modernime";
     } else {
         if (status.manager == PackageManagerKind::Unknown) {
             status.manager = PackageManagerKind::Apt;
         }
+        status.refreshCacheCommand = "sudo apt update";
         status.upgradeCommand = "sudo apt update && sudo apt install --only-upgrade modernime";
         status.privilegedCommand = "pkexec apt-get install --only-upgrade -y modernime";
     }
@@ -334,25 +336,30 @@ void finalizeStatus(UpdateStatus &status) {
     if (status.installChannel == "script") {
         const char *targetCh = (status.manager == PackageManagerKind::Dnf) ? "rpm" : "deb";
         const char *pkgCmd = (status.manager == PackageManagerKind::Dnf)
-                                 ? "sudo dnf install -y modernime"
-                                 : "sudo apt install -y modernime";
+                                 ? "sudo dnf makecache && sudo dnf install -y modernime"
+                                 : "sudo apt update && sudo apt install -y modernime";
         status.upgradeCommand =
             std::string("modernime-migrate-channel --to-channel ") + targetCh +
             " --package-cmd \"" + pkgCmd + "\"";
     }
 
-    if (status.candidateVersion.empty() || status.candidateVersion == "(none)") {
+    if (status.candidateVersion.empty() || status.candidateVersion == "(none)" ||
+        !hasRemoteRepoIndex) {
         status.offlineOrUnreachable = true;
+        status.cacheMayBeStale = false;
         status.updateAvailable = false;
         status.candidateVersion = "暂不可用（离线或未配置软件源）";
         if (status.packageSource.empty()) {
-            status.packageSource = "未检测到已配置的 APT / DNF 软件源";
+            status.packageSource = "未检测到已配置的 APT / DNF 软件源索引";
         }
         if (status.changelogSummary.empty()) {
-            status.changelogSummary = "离线或软件源未就绪，本地功能与词库完好无损";
+            status.changelogSummary =
+                "离线、未配置软件源或尚未刷新本地缓存，本地功能与词库完好无损";
         }
         status.statusMessage =
-            "当前处于离线状态或尚未配置 ModernIME 系统软件源；本地输入法与数据运行正常（未发现软件损坏）。";
+            "当前处于离线状态、尚未配置 ModernIME 系统软件源或未刷新缓存（可先执行 " +
+            status.refreshCacheCommand +
+            " 或点击“刷新软件源缓存”）；本地输入法与数据运行正常（未发现软件损坏）。";
         return;
     }
 
@@ -361,6 +368,7 @@ void finalizeStatus(UpdateStatus &status) {
                                                       status.currentVersion);
     if (cmp > 0) {
         status.updateAvailable = true;
+        status.cacheMayBeStale = false;
         if (status.changelogSummary.empty()) {
             status.changelogSummary =
                 "包含候选排序优化、词库更新与 SQLite/LMDB 事务安全升级保护";
@@ -371,11 +379,15 @@ void finalizeStatus(UpdateStatus &status) {
             "）。实际安装与升级必须通过系统包管理器（apt / dnf）执行。";
     } else {
         status.updateAvailable = false;
+        status.cacheMayBeStale = true;
         if (status.changelogSummary.empty()) {
-            status.changelogSummary = "当前安装的 ModernIME 已是软件源中的最新版本";
+            status.changelogSummary =
+                "本地软件源缓存中当前安装的 ModernIME 已是最新版本";
         }
         status.statusMessage =
-            "当前已是最新版本（" + status.currentVersion + "）。";
+            "本地软件源缓存中当前已是最新版本（" + status.currentVersion +
+            "）。提示：包管理器默认读取本地缓存索引，请先点击“刷新软件源缓存”或在终端执行 " +
+            status.refreshCacheCommand + " 同步远端最新元数据后再检查。";
     }
 }
 
@@ -434,7 +446,7 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
             if (!status.installChannel.empty() && status.installChannel != "unknown") {
                 status.packageSource += " (channel=" + status.installChannel + ")";
             }
-            finalizeStatus(status);
+            finalizeStatus(status, true);
             return status;
         }
     }
@@ -443,6 +455,7 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
     const auto aptCache = findExecutableInPath("apt-cache", environment);
     if (!aptCache.empty()) {
         status.manager = PackageManagerKind::Apt;
+        bool hasRemoteRepoIndex = false;
         const auto policyOut =
             runSubprocess({aptCache.string(), "policy", "modernime"}, environment);
         if (policyOut.started && policyOut.exitedZero && !policyOut.stdoutText.empty()) {
@@ -453,20 +466,27 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
                 if (trimmed.starts_with("Candidate:")) {
                     status.candidateVersion =
                         trim(std::string_view(trimmed).substr(10));
-                } else if (trimmed.starts_with("500 ") || trimmed.starts_with("700 ") ||
-                           trimmed.starts_with("990 ") || trimmed.starts_with("100 ")) {
+                } else if (!trimmed.empty() &&
+                           std::isdigit(static_cast<unsigned char>(trimmed[0]))) {
                     const auto spacePos = trimmed.find(' ');
                     if (spacePos != std::string::npos) {
-                        const auto src = trim(std::string_view(trimmed).substr(spacePos + 1));
-                        if (src.find("/dpkg/status") == std::string::npos &&
-                            status.packageSource.empty()) {
-                            status.packageSource = src;
+                        const auto rest = trim(std::string_view(trimmed).substr(spacePos + 1));
+                        // Version lines look like "0.1.8 700"; origin lines look like "700 https://... noble/main amd64 Packages"
+                        if (rest.find("://") != std::string::npos ||
+                            rest.find("Packages") != std::string::npos) {
+                            if (rest.find("/dpkg/status") == std::string::npos) {
+                                hasRemoteRepoIndex = true;
+                                if (status.packageSource.empty()) {
+                                    status.packageSource = rest;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        if (!status.candidateVersion.empty() && status.candidateVersion != "(none)") {
+        if (hasRemoteRepoIndex && !status.candidateVersion.empty() &&
+            status.candidateVersion != "(none)") {
             const auto showOut =
                 runSubprocess({aptCache.string(), "show", "modernime"}, environment);
             if (showOut.started && showOut.exitedZero && !showOut.stdoutText.empty()) {
@@ -484,12 +504,14 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
                 }
             }
         }
-        if (status.packageSource.empty()) {
-            status.packageSource = "APT 软件源 (channel=" + status.installChannel + ")";
-        } else {
-            status.packageSource += " (channel=" + status.installChannel + ")";
+        if (hasRemoteRepoIndex) {
+            if (status.packageSource.empty()) {
+                status.packageSource = "APT 软件源 (channel=" + status.installChannel + ")";
+            } else {
+                status.packageSource += " (channel=" + status.installChannel + ")";
+            }
         }
-        finalizeStatus(status);
+        finalizeStatus(status, hasRemoteRepoIndex);
         return status;
     }
 
@@ -497,6 +519,7 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
     const auto dnfBin = findExecutableInPath("dnf", environment);
     if (!dnfBin.empty()) {
         status.manager = PackageManagerKind::Dnf;
+        bool hasRemoteRepoIndex = false;
         const auto infoOut = runSubprocess(
             {dnfBin.string(), "--cacheonly", "-q", "info", "modernime"}, environment);
         const auto &text = !infoOut.stdoutText.empty()
@@ -509,6 +532,7 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
             std::string line;
             std::string ver;
             std::string rel;
+            std::string repoName;
             while (std::getline(iss, line)) {
                 const auto colon = line.find(':');
                 if (colon == std::string::npos) {
@@ -521,26 +545,78 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
                 } else if (key == "Release") {
                     rel = val;
                 } else if (key == "Repository" || key == "From repo") {
-                    status.packageSource = "DNF 仓库 " + val;
+                    repoName = val;
+                    if (val != "@System" && val != "installed") {
+                        hasRemoteRepoIndex = true;
+                        status.packageSource = "DNF 仓库 " + val;
+                    }
                 } else if (key == "Summary" && status.changelogSummary.empty()) {
                     status.changelogSummary = val;
                 }
             }
-            if (!ver.empty()) {
+            if (!ver.empty() && hasRemoteRepoIndex) {
                 status.candidateVersion = rel.empty() ? ver : (ver + "-" + rel);
             }
         }
-        if (status.packageSource.empty()) {
-            status.packageSource = "DNF 软件源 (channel=" + status.installChannel + ")";
-        } else {
-            status.packageSource += " (channel=" + status.installChannel + ")";
+        if (hasRemoteRepoIndex) {
+            if (status.packageSource.empty()) {
+                status.packageSource = "DNF 软件源 (channel=" + status.installChannel + ")";
+            } else {
+                status.packageSource += " (channel=" + status.installChannel + ")";
+            }
         }
-        finalizeStatus(status);
+        finalizeStatus(status, hasRemoteRepoIndex);
         return status;
     }
 
-    finalizeStatus(status);
+    finalizeStatus(status, false);
     return status;
+}
+
+RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
+                                                    const Environment &environment) {
+    PackageManagerKind manager = status.manager;
+    if (manager == PackageManagerKind::Unknown) {
+        if (!findExecutableInPath("apt-get", environment).empty() ||
+            !findExecutableInPath("apt-cache", environment).empty()) {
+            manager = PackageManagerKind::Apt;
+        } else if (!findExecutableInPath("dnf", environment).empty()) {
+            manager = PackageManagerKind::Dnf;
+        }
+    }
+
+    const std::string fallbackCmd =
+        (manager == PackageManagerKind::Dnf) ? "sudo dnf makecache" : "sudo apt update";
+
+    const auto pkexecBin = findExecutableInPath("pkexec", environment);
+    if (pkexecBin.empty()) {
+        return {false,
+                "未检测到系统认证组件 pkexec，请在终端执行 " + fallbackCmd +
+                    " 刷新软件源缓存后再点击“检查更新”。"};
+    }
+
+    std::vector<std::string> argv;
+    if (manager == PackageManagerKind::Dnf) {
+        const auto dnfBin = findExecutableInPath("dnf", environment);
+        if (dnfBin.empty()) {
+            return {false, "未找到 dnf 包管理器，请手动执行：" + fallbackCmd};
+        }
+        argv = {pkexecBin.string(), dnfBin.string(), "makecache"};
+    } else {
+        const auto aptGetBin = findExecutableInPath("apt-get", environment);
+        if (aptGetBin.empty()) {
+            return {false, "未找到 apt-get 包管理器，请手动执行：" + fallbackCmd};
+        }
+        argv = {pkexecBin.string(), aptGetBin.string(), "update"};
+    }
+
+    const auto out = runSubprocess(argv, environment);
+    if (!out.started || !out.exitedZero) {
+        return {false,
+                "刷新软件源缓存未完成（可能已取消授权或网络不可达），您也可以在终端执行：" +
+                    fallbackCmd};
+    }
+    return {true, "已刷新系统软件源缓存，正在重新检查可用版本…"};
 }
 
 RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,

@@ -131,12 +131,14 @@ int main() {
     const auto dnfStatus = UpdateController::checkForUpdates(dnfEnv);
     assert(dnfStatus.checked);
     assert(!dnfStatus.offlineOrUnreachable);
+    assert(!dnfStatus.cacheMayBeStale);
     assert(dnfStatus.updateAvailable);
     assert(dnfStatus.manager == PackageManagerKind::Dnf);
     assert(dnfStatus.candidateVersion == "0.1.9-1.oe2409");
     assert(dnfStatus.packageSource.find("modernime-openeuler") != std::string::npos);
     assert(dnfStatus.packageSource.find("channel=rpm") != std::string::npos);
-    assert(dnfStatus.upgradeCommand == "sudo dnf upgrade modernime");
+    assert(dnfStatus.refreshCacheCommand == "sudo dnf makecache");
+    assert(dnfStatus.upgradeCommand == "sudo dnf makecache && sudo dnf upgrade modernime");
 
     // 4. Script channel directs user to modernime-migrate-channel and refuses direct pkexec
     const Environment scriptEnv{
@@ -152,7 +154,7 @@ int main() {
     assert(!scriptUpgradeRes.success);
     assert(scriptUpgradeRes.message.find("modernime-migrate-channel") != std::string::npos);
 
-    // 5. Offline / unreachable repository distinguishes from software corruption
+    // 5a. Offline / unreachable repository (Candidate: (none)) distinguishes from software corruption
     writeExecutable(
         offlineBinDir / "apt-cache",
         "#!/bin/sh\n"
@@ -172,10 +174,69 @@ int main() {
     const auto offlineStatus = UpdateController::checkForUpdates(offlineEnv);
     assert(offlineStatus.checked);
     assert(offlineStatus.offlineOrUnreachable);
+    assert(!offlineStatus.cacheMayBeStale);
     assert(!offlineStatus.updateAvailable);
     assert(offlineStatus.statusMessage.find("未发现软件损坏") != std::string::npos);
 
-    // 6. System upgrade delegation via pkexec (never downloads or overwrites in-process)
+    // 5b. Locally installed via dpkg -i ONLY (100 /var/lib/dpkg/status, no remote APT repo index)
+    // Must report offlineOrUnreachable=true instead of falsely claiming "已是最新版本"
+    const auto dpkgOnlyBinDir = tempRoot / "dpkg-only-bin";
+    std::filesystem::create_directories(dpkgOnlyBinDir);
+    writeExecutable(
+        dpkgOnlyBinDir / "apt-cache",
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        "modernime:\n"
+        "  Installed: 0.1.8\n"
+        "  Candidate: 0.1.8\n"
+        "  Version table:\n"
+        " *** 0.1.8 100\n"
+        "        100 /var/lib/dpkg/status\n"
+        "EOF\n"
+        "exit 0\n");
+    const Environment dpkgOnlyEnv{
+        {"PATH", dpkgOnlyBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.8"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
+    };
+    const auto dpkgOnlyStatus = UpdateController::checkForUpdates(dpkgOnlyEnv);
+    assert(dpkgOnlyStatus.checked);
+    assert(dpkgOnlyStatus.offlineOrUnreachable);
+    assert(!dpkgOnlyStatus.cacheMayBeStale);
+    assert(!dpkgOnlyStatus.updateAvailable);
+    assert(dpkgOnlyStatus.statusMessage.find("sudo apt update") != std::string::npos);
+
+    // 5c. Up-to-date in local APT repository cache (Candidate == Installed with remote repo entry)
+    // Must set cacheMayBeStale=true and prompt user to refresh cache (sudo apt update)
+    const auto cachedUpToDateBinDir = tempRoot / "cached-uptodate-bin";
+    std::filesystem::create_directories(cachedUpToDateBinDir);
+    writeExecutable(
+        cachedUpToDateBinDir / "apt-cache",
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        "modernime:\n"
+        "  Installed: 0.1.8\n"
+        "  Candidate: 0.1.8\n"
+        "  Version table:\n"
+        " *** 0.1.8 700\n"
+        "        700 https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt noble/main amd64 Packages\n"
+        "        100 /var/lib/dpkg/status\n"
+        "EOF\n"
+        "exit 0\n");
+    const Environment cachedUpToDateEnv{
+        {"PATH", cachedUpToDateBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.8"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
+    };
+    const auto cachedUpToDateStatus = UpdateController::checkForUpdates(cachedUpToDateEnv);
+    assert(cachedUpToDateStatus.checked);
+    assert(!cachedUpToDateStatus.offlineOrUnreachable);
+    assert(!cachedUpToDateStatus.updateAvailable);
+    assert(cachedUpToDateStatus.cacheMayBeStale);
+    assert(cachedUpToDateStatus.statusMessage.find("本地软件源缓存") != std::string::npos);
+    assert(cachedUpToDateStatus.statusMessage.find("sudo apt update") != std::string::npos);
+
+    // 6. System cache refresh & upgrade delegation via pkexec (never downloads or overwrites in-process)
     const auto pkexecLog = tempRoot / "pkexec-invoked.log";
     writeExecutable(aptBinDir / "apt-get", "#!/bin/sh\nexit 0\n");
     writeExecutable(
@@ -185,6 +246,15 @@ int main() {
             pkexecLog.string() +
             "\"\n"
             "exit 0\n");
+
+    const auto refreshRes = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+    assert(refreshRes.success);
+    {
+        std::ifstream refreshLogIn(pkexecLog);
+        std::string refreshLoggedArgs;
+        std::getline(refreshLogIn, refreshLoggedArgs);
+        assert(refreshLoggedArgs.find("apt-get update") != std::string::npos);
+    }
 
     const auto upgradeRes = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
     assert(upgradeRes.success);

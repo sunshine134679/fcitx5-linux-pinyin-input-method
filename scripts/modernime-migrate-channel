@@ -15,22 +15,24 @@ from_prefix=""
 target_prefix="/usr"
 to_channel=""
 package_cmd=""
+package_rollback_cmd=""
 reinit_session=true
 
 usage() {
     cat <<'EOF'
 Usage:
   modernime-migrate-channel --check [--from-prefix PREFIX] [--target-prefix /usr]
-  modernime-migrate-channel --to-channel <deb|rpm> [--from-prefix PREFIX] [--target-prefix /usr] [--package-cmd CMD]
+  modernime-migrate-channel --to-channel <deb|rpm> [--from-prefix PREFIX] [--target-prefix /usr] [--package-cmd CMD] [--package-rollback-cmd CMD]
 
 Options:
-  --check                  Inspect existing installation channel, manifest, ownership, and version
-  --from-prefix PREFIX     Source script installation prefix (default: auto-detect ~/.local or /usr)
-  --target-prefix PREFIX   Target native package prefix (default: /usr)
-  --to-channel CHANNEL     Target native package channel (deb or rpm)
-  --package-cmd CMD        Command to install the native package (e.g. "sudo apt install -y modernime")
-  --no-session-init        Skip re-initializing user desktop session after migration
-  -h, --help               Show this help message
+  --check                      Inspect existing installation channel, manifest, ownership, and version
+  --from-prefix PREFIX         Source script installation prefix (default: auto-detect ~/.local or /usr)
+  --target-prefix PREFIX       Target native package prefix (default: /usr)
+  --to-channel CHANNEL         Target native package channel (deb or rpm)
+  --package-cmd CMD            Command to install the native package (e.g. "sudo apt install -y modernime")
+  --package-rollback-cmd CMD   Command to uninstall the native package on rollback
+  --no-session-init            Skip re-initializing user desktop session after migration
+  -h, --help                   Show this help message
 EOF
 }
 
@@ -70,6 +72,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --package-cmd)
             package_cmd="$2"
+            shift 2
+            ;;
+        --package-rollback-cmd=*)
+            package_rollback_cmd="${1#*=}"
+            shift
+            ;;
+        --package-rollback-cmd)
+            package_rollback_cmd="$2"
             shift 2
             ;;
         --no-session-init)
@@ -230,7 +240,7 @@ if [[ -z "$data_guard_bin" ]]; then
     exit 1
 fi
 
-ts=$(date +%Y%m%d%H%M%S 2>/dev/null || echo "$$")
+ts="$(date +%Y%m%d%H%M%S 2>/dev/null || echo 0)-$$"
 printf '[1/5] Inspecting source installation (channel=%s, version=%s, prefix=%s)...\n' \
     "$detected_channel" "${detected_version:-unknown}" "$from_prefix"
 
@@ -274,9 +284,52 @@ if [[ -d "$from_prefix/share/modernime" ]]; then
     cp -a -- "$from_prefix/share/modernime" "$rollback_prefix_dir/share/"
 fi
 
+package_attempted=false
+
+cleanup_target_prefix_files() {
+    local pfx=$1
+    rm -f -- \
+        "$pfx/bin/modernime-settings" \
+        "$pfx/bin/modernime-session-init" \
+        "$pfx/bin/modernime-data-guard" \
+        "$pfx/bin/modernime-migrate-channel" \
+        "$pfx/share/applications/modernime-settings.desktop" \
+        "$pfx/share/fcitx5/addon/modernime.conf" \
+        "$pfx/share/fcitx5/addon/modernime-ui.conf" \
+        "$pfx/share/fcitx5/inputmethod/modernime.conf" 2>/dev/null || true
+    for d in \
+        "$pfx/lib/fcitx5" \
+        "$pfx/lib64/fcitx5" \
+        "$pfx/lib/x86_64-linux-gnu/fcitx5" \
+        "$pfx/lib/aarch64-linux-gnu/fcitx5"; do
+        rm -f -- "$d/modernime_fcitx5.so" "$d/modernime_ui.so" 2>/dev/null || true
+    done
+    rm -rf -- "$pfx/share/modernime" "$pfx/share/doc/modernime" 2>/dev/null || true
+}
+
 restore_original_channel() {
-    printf '\n[ROLLBACK] Migration failed! Restoring original script installation at %s...\n' "$from_prefix" >&2
-    # Clean up partial target prefix files if target_prefix != from_prefix and not owned by dpkg/rpm
+    printf '\n[ROLLBACK] Migration failed! Rolling back target package and restoring original script installation at %s...\n' "$from_prefix" >&2
+    if [[ "$package_attempted" == true ]]; then
+        if [[ -n "$package_rollback_cmd" ]]; then
+            printf '[ROLLBACK] Uninstalling target %s package via: %s\n' "$to_channel" "$package_rollback_cmd" >&2
+            bash -c "$package_rollback_cmd" >/dev/null 2>&1 || true
+        elif [[ "$target_prefix" == "/usr" ]]; then
+            if [[ "$to_channel" == "deb" ]]; then
+                if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+                    apt-get remove -y modernime >/dev/null 2>&1 || dpkg -r modernime >/dev/null 2>&1 || true
+                elif command -v sudo >/dev/null 2>&1; then
+                    sudo -n apt-get remove -y modernime >/dev/null 2>&1 || sudo -n dpkg -r modernime >/dev/null 2>&1 || true
+                fi
+            elif [[ "$to_channel" == "rpm" ]]; then
+                if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+                    dnf remove -y modernime >/dev/null 2>&1 || rpm -e modernime >/dev/null 2>&1 || true
+                elif command -v sudo >/dev/null 2>&1; then
+                    sudo -n dnf remove -y modernime >/dev/null 2>&1 || sudo -n rpm -e modernime >/dev/null 2>&1 || true
+                fi
+            fi
+        fi
+        cleanup_target_prefix_files "$target_prefix"
+    fi
     if [[ -d "$rollback_prefix_dir" ]]; then
         mkdir -p "$from_prefix"
         cp -a --remove-destination -- "$rollback_prefix_dir/." "$from_prefix/" 2>/dev/null || true
@@ -317,6 +370,7 @@ rm -f -- "$from_prefix/share/modernime/install-manifest.txt" \
          "$from_prefix/share/modernime/install-channel.txt" 2>/dev/null || true
 
 if [[ -n "$package_cmd" ]]; then
+    package_attempted=true
     printf '[5/5] Installing target %s package via: %s\n' "$to_channel" "$package_cmd"
     if ! MODERNIME_MIGRATE_FROM_SCRIPT=1 bash -c "$package_cmd"; then
         printf 'Error: Target package installation command failed.\n' >&2

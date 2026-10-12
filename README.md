@@ -12,29 +12,37 @@ ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）�
 
 #### 平台与资产兼容矩阵
 
-| 资产文件名 | 适配发行版 | 架构 | 最低系统要求与基线 |
+| 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.8_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS | x86_64 / amd64 | glibc ≥ 2.35, Fcitx5 5.0+ |
-| `modernime_0.1.8_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS / Debian 12+ | x86_64 / amd64 | glibc ≥ 2.38, Fcitx5 5.1+ |
-| `modernime-0.1.8-1.oe24.x86_64.rpm` | openEuler 24.03 SP4 / 24.09, Fedora | x86_64 | glibc ≥ 2.38, Fcitx5 5.1+ (EPOL) |
-| `modernime-0.1.8-linux-x86_64.tar.gz` | Linux 便携免编译包 | x86_64 | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
-| 源码构建 (`./install.sh`) | 任意 Linux (含 aarch64 / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
+| `modernime_0.1.8_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.8_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.8-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.8-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
 
 **方式 A：配置签名 APT 仓库（推荐，支持 `apt upgrade` 持续升级与版本回退）**
 
-ModernIME 采用符合现代 Debian 安全规范的 **Deb822 `.sources` 格式**与独立 `Signed-By` 密钥环（不使用已废弃的 `apt-key` 或全局信任锚），并按发行版代号（Ubuntu 22.04 `jammy`、Ubuntu 24.04 `noble`）与架构（`amd64`）严格隔离：
+ModernIME 采用符合现代 Debian 安全规范的 **Deb822 `.sources` 格式**与独立 `Signed-By` 密钥环（不使用已废弃的 `apt-key` 或全局信任锚），按发行版代号（Ubuntu 22.04 `jammy`、Ubuntu 24.04 `noble`、Debian 12 `bookworm`）与架构（`amd64`）严格隔离，并提供持久化签名密钥指纹核验与双密钥平滑轮换机制（详见 [`packaging/keys/README.md`](packaging/keys/README.md)）：
 
 ```bash
-# 1. 安装独立 GPG 签名密钥环（二进制 OpenPGP 格式，仅授权给 ModernIME 源）
+# 1. 下载并核验独立 GPG 签名密钥环（二进制 OpenPGP 格式，仅授权给 ModernIME 源）
 sudo install -d -m 0755 /usr/share/keyrings
 curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/modernime-archive-keyring.gpg \
     | sudo tee /usr/share/keyrings/modernime-archive-keyring.gpg >/dev/null
 sudo chmod 0644 /usr/share/keyrings/modernime-archive-keyring.gpg
 
-# 2. 写入 Deb822 仓库配置（自动匹配 jammy 或 noble）
+# 首次安装建议核对公钥指纹（与仓库及 GitHub Release 中的 KEY-FINGERPRINTS.txt 比对）：
+gpg --show-keys --with-fingerprint /usr/share/keyrings/modernime-archive-keyring.gpg
+curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/KEY-FINGERPRINTS.txt
+
+# 2. 写入 Deb822 仓库配置（自动匹配 jammy、noble 或 bookworm）
 SUITE="$(. /etc/os-release && echo "${VERSION_CODENAME:-noble}")"
+case "${SUITE}" in
+  jammy|noble|bookworm) ;;
+  *) echo "当前发行版代号 (${SUITE}) 未在预编译 APT 仓库列表中，请改用源码构建 ./install.sh" >&2 ;;
+esac
 sudo tee /etc/apt/sources.list.d/modernime.sources >/dev/null <<EOF
 Types: deb
 URIs: https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt
@@ -54,14 +62,18 @@ EOF
 # 4. 安装与日常升级（升级前自动触发事务级 SQLite WAL 与 LMDB 备份校验）
 sudo apt update
 sudo apt install -y modernime
-# 后续检查并仅升级 ModernIME：
+# 后续检查并仅升级 ModernIME（注意：检查更新前请先执行 sudo apt update 刷新软件源缓存）：
 sudo apt update && sudo apt install --only-upgrade -y modernime
 
 # 5. 版本回退（查看仓库可用历史版本并回退到指定版本）
 apt-cache madison modernime
 sudo apt install -y --allow-downgrades modernime=0.1.7
 
-# 6. 移除 APT 仓库与签名密钥环
+# 6. 密钥轮换更新（若项目发布密钥轮换公告，重新拉取合并公钥环即可无缝过渡）
+curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/modernime-archive-keyring.gpg \
+    | sudo tee /usr/share/keyrings/modernime-archive-keyring.gpg >/dev/null
+
+# 7. 移除 APT 仓库与签名密钥环
 sudo rm -f /etc/apt/sources.list.d/modernime.sources \
            /etc/apt/preferences.d/99-modernime.pref \
            /usr/share/keyrings/modernime-archive-keyring.gpg
@@ -70,21 +82,21 @@ sudo apt update
 
 **方式 B：离线安装单文件 `.deb` 包**
 ```bash
-# 下载对应的 .deb 包（如 modernime_0.1.8_amd64_ubuntu24.04.deb）后执行：
+# Ubuntu 24.04 选择 *_ubuntu24.04.deb；Ubuntu 22.04 或 Debian 12 选择 *_ubuntu22.04.deb：
 sudo dpkg -i modernime_*_amd64*.deb
 # 若系统提示缺失运行库依赖，一键自动修复补全：
 sudo apt-get install -f
 ```
 
-#### 2. openEuler / RHEL / Fedora 系统（DNF/RPM 仓库升级与 `.rpm` 包）
+#### 2. openEuler 系统（DNF/RPM 仓库升级与 `.rpm` 包，当前支持 `x86_64`）
 
 > [!NOTE]
-> **openEuler 版本兼容矩阵与 EPOL 源说明**：
-> - **openEuler ≥ 24.09**：官方 EPOL 扩展源原生提供 `fcitx5`（5.1.10+）与 `libime`（1.1.8+）。启用系统自带 EPOL 源即可：
+> **openEuler 版本兼容边界与 EPOL 源说明**：
+> - **openEuler 24.09 (`x86_64`)**：官方验证目标版本。系统自带 EPOL 扩展源原生提供 `fcitx5`（5.1.10+）与 `libime`（1.1.8+），直接启用 EPOL 源即可使用 DNF 仓库在线安装与升级：
 >   ```bash
 >   sudo dnf config-manager --set-enabled EPOL || true
 >   ```
-> - **openEuler 24.03 LTS-SP4**：官方默认仓库未包含 fcitx5。24.03 用户可通过配置 24.09 EPOL 扩展源并**使用 `includepkgs` 进行精确限定**（仅拉取输入法组件，保留 GPG 校验）：
+> - **openEuler 24.03 LTS-SP4 (`x86_64`)**：官方默认 OS/EPOL 仓库未内置 `fcitx5` 与 `libime`。若在 24.03 上安装，需额外引入 24.09 EPOL 扩展源并**使用 `includepkgs` 进行精确限定**（仅拉取输入法依赖组件，保留 GPG 校验）：
 >   ```bash
 >   sudo tee /etc/yum.repos.d/openEuler-24.09-epol.repo << 'EOF'
 >   [openEuler-24.09-epol]
@@ -98,10 +110,11 @@ sudo apt-get install -f
 >   EOF
 >   sudo dnf makecache
 >   ```
+> - **其他架构（如 `aarch64`）或 Fedora**：当前预编译 DNF 仓库仅发布 `oe2409/x86_64`；`aarch64` 或其他 RPM 发行版请使用 `./scripts/package_rpm.sh` 本地构建 RPM 或运行 `./install.sh` 从源码构建。
 
 **方式 A：配置 openEuler 24.09 `x86_64` DNF 签名仓库（推荐，支持 `dnf upgrade` 持续升级）**
 ```bash
-# 1. 写入开启包签名与仓库索引双签名校验 (gpgcheck=1, repo_gpgcheck=1) 的 .repo 配置
+# 1. 写入开启 RPM 包体签名与 repomd.xml 仓库索引双签名校验 (gpgcheck=1, repo_gpgcheck=1) 的 .repo 配置
 sudo tee /etc/yum.repos.d/modernime-openeuler-24.09.repo >/dev/null <<'EOF'
 [modernime-openeuler-24.09]
 name=ModernIME Repository for openEuler 24.09 ($basearch)
@@ -113,24 +126,23 @@ gpgkey=https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/RPM
 metadata_expire=6h
 EOF
 
-# 2. 刷新元数据缓存并安装 / 升级 ModernIME
+# 2. 刷新元数据缓存并安装 / 升级 ModernIME（首次将提示确认导入 GPG 公钥，指纹可通过 KEY-FINGERPRINTS.txt 核验）
 sudo dnf makecache
 sudo dnf install -y modernime
 # 后续升级：
 sudo dnf upgrade -y modernime
 
-# 3. 版本回退與移除 DNF 仓库
+# 3. 版本回退与移除 DNF 仓库
 sudo dnf downgrade -y modernime
-# 移除仓库配置：
+# 移除仓库配置与已导入的 GPG 公钥：
 sudo rm -f /etc/yum.repos.d/modernime-openeuler-24.09.repo
 sudo dnf clean all
 ```
 
-**方式 B：离线安装本地 `.rpm` 包**
+**方式 B：离线安装本地 `.rpm` 包（已内置 OpenPGP 包签名）**
 ```bash
-# 确保已启用 EPOL 扩展源并安装基础环境与托盘依赖：
-sudo dnf install -y fcitx5 libime gtk3 sqlite lmdb-libs libappindicator-gtk3
-# 使用 dnf 安装本地 RPM（自动从已配置仓库解析并补齐依赖）：
+# 导入签名公钥后通过 dnf 安装本地已签名 RPM（自动从已配置仓库解析并补齐依赖）：
+sudo rpm --import https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/RPM-GPG-KEY-modernime
 sudo dnf install -y ./modernime-*.x86_64.rpm
 ```
 

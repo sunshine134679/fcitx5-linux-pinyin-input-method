@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# build_apt_repo.sh — Generates a signed multi-suite (jammy, noble) APT repository for ModernIME
+# build_apt_repo.sh — Generates a signed multi-suite (jammy, noble, bookworm) APT repository for ModernIME
 # Enforces architecture isolation, dpkg version monotonicity, SHA256 checksums,
-# InRelease + Release.gpg signing, and Deb822 .sources with isolated Signed-By keyring.
+# InRelease + Release.gpg signing (supporting persistent keys and dual-key rotation),
+# and Deb822 .sources with isolated Signed-By keyring.
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -11,18 +12,24 @@ repo_url="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt"
 target_arch="amd64"
 gpg_home="${GNUPGHOME:-}"
 gpg_key_id="${MODERNIME_GPG_KEY_ID:-}"
+gpg_private_key_file=""
+rotation_key_id="${MODERNIME_GPG_ROTATION_KEY_ID:-}"
+trusted_pubkeys_dir="${project_root}/packaging/keys/trusted-pubkeys.d"
 ephemeral_gpg=false
 prev_version=""
 
 declare -a jammy_debs=()
 declare -a noble_debs=()
+declare -a bookworm_debs=()
 declare -a common_debs=()
 
 usage() {
     cat <<'EOF'
 Usage:
-  build_apt_repo.sh --output-dir DIR [--deb FILE]... [--jammy-deb FILE]... [--noble-deb FILE]...
-                    [--arch amd64] [--prev-version VER] [--gpg-home DIR] [--gpg-key-id ID] [--ephemeral-gpg]
+  build_apt_repo.sh --output-dir DIR [--deb FILE]... [--jammy-deb FILE]... [--noble-deb FILE]... [--bookworm-deb FILE]...
+                    [--arch amd64] [--prev-version VER]
+                    [--gpg-home DIR] [--gpg-key-id ID] [--gpg-private-key-file FILE]
+                    [--rotation-key-id ID] [--trusted-pubkeys-dir DIR] [--ephemeral-gpg]
                     [--repo-url URL]
 EOF
 }
@@ -61,6 +68,14 @@ while [[ $# -gt 0 ]]; do
             noble_debs+=("$2")
             shift 2
             ;;
+        --bookworm-deb=*)
+            bookworm_debs+=("${1#*=}")
+            shift
+            ;;
+        --bookworm-deb)
+            bookworm_debs+=("$2")
+            shift 2
+            ;;
         --arch=*)
             target_arch="${1#*=}"
             shift
@@ -91,6 +106,30 @@ while [[ $# -gt 0 ]]; do
             ;;
         --gpg-key-id)
             gpg_key_id="$2"
+            shift 2
+            ;;
+        --gpg-private-key-file=*)
+            gpg_private_key_file="${1#*=}"
+            shift
+            ;;
+        --gpg-private-key-file)
+            gpg_private_key_file="$2"
+            shift 2
+            ;;
+        --rotation-key-id=*)
+            rotation_key_id="${1#*=}"
+            shift
+            ;;
+        --rotation-key-id)
+            rotation_key_id="$2"
+            shift 2
+            ;;
+        --trusted-pubkeys-dir=*)
+            trusted_pubkeys_dir="${1#*=}"
+            shift
+            ;;
+        --trusted-pubkeys-dir)
+            trusted_pubkeys_dir="$2"
             shift 2
             ;;
         --ephemeral-gpg)
@@ -136,10 +175,16 @@ if [[ ${#common_debs[@]} -gt 0 ]]; then
     if [[ ${#noble_debs[@]} -eq 0 ]]; then
         noble_debs+=("${common_debs[@]}")
     fi
+    if [[ ${#bookworm_debs[@]} -eq 0 ]]; then
+        bookworm_debs+=("${common_debs[@]}")
+    fi
+elif [[ ${#jammy_debs[@]} -gt 0 && ${#bookworm_debs[@]} -eq 0 ]]; then
+    # Debian 12 Bookworm (glibc 2.36) is ABI-compatible with the Ubuntu 22.04 (glibc 2.35) baseline package
+    bookworm_debs+=("${jammy_debs[@]}")
 fi
 
-if [[ ${#jammy_debs[@]} -eq 0 && ${#noble_debs[@]} -eq 0 ]]; then
-    printf 'Error: At least one .deb file must be supplied via --deb, --jammy-deb, or --noble-deb\n' >&2
+if [[ ${#jammy_debs[@]} -eq 0 && ${#noble_debs[@]} -eq 0 && ${#bookworm_debs[@]} -eq 0 ]]; then
+    printf 'Error: At least one .deb file must be supplied via --deb, --jammy-deb, --noble-deb, or --bookworm-deb\n' >&2
     exit 1
 fi
 
@@ -151,7 +196,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "$ephemeral_gpg" == true || "${MODERNIME_GENERATE_EPHEMERAL_GPG:-0}" == "1" ]]; then
+if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
+    cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-apt-gpg.XXXXXX")
+    chmod 700 "$cleanup_gpg"
+    gpg_home="$cleanup_gpg"
+    export GNUPGHOME="$gpg_home"
+    if [[ -n "$gpg_private_key_file" ]]; then
+        gpg --batch --quiet --import "$gpg_private_key_file"
+    else
+        printf '%s\n' "$MODERNIME_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+    fi
+    if [[ -n "${MODERNIME_GPG_ROTATION_PRIVATE_KEY:-}" ]]; then
+        printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg --batch --quiet --import
+        if [[ -z "$rotation_key_id" ]]; then
+            rotation_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
+        fi
+    fi
+    if [[ -z "$gpg_key_id" ]]; then
+        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    fi
+elif [[ "$ephemeral_gpg" == true || "${MODERNIME_GENERATE_EPHEMERAL_GPG:-0}" == "1" ]]; then
     cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-apt-gpg.XXXXXX")
     chmod 700 "$cleanup_gpg"
     gpg_home="$cleanup_gpg"
@@ -170,6 +234,17 @@ GPGEOF
     gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
 elif [[ -n "$gpg_home" ]]; then
     export GNUPGHOME="$gpg_home"
+    if [[ -z "$gpg_key_id" ]]; then
+        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    fi
+fi
+
+# Import any additional rotation/trusted public keys so the exported keyring supports key rotation windows
+if [[ -n "$gpg_key_id" && -d "$trusted_pubkeys_dir" ]]; then
+    for pub_asc in "$trusted_pubkeys_dir"/*.asc; do
+        [[ -f "$pub_asc" ]] || continue
+        gpg --batch --quiet --import "$pub_asc" || true
+    done
 fi
 
 validate_deb_for_suite() {
@@ -193,18 +268,14 @@ validate_deb_for_suite() {
             "$deb_file" "$pkg_arch" "$target_arch" >&2
         return 1
     fi
-    # Reject cross-suite contamination if version explicitly tags another Ubuntu release
-    if [[ "$suite" == "jammy" && "$pkg_ver" == *"ubuntu24.04"* ]] || \
-       [[ "$suite" == "jammy" && "$pkg_ver" == *"~noble"* ]]; then
+    if [[ "$suite" == "jammy" && ( "$pkg_ver" == *"ubuntu24.04"* || "$pkg_ver" == *"ubuntu2404"* || "$pkg_ver" == *"~noble"* ) ]]; then
         printf 'Error: Suite mismatch: refusing to place noble-specific package (%s) into jammy suite\n' "$pkg_ver" >&2
         return 1
     fi
-    if [[ "$suite" == "noble" && "$pkg_ver" == *"ubuntu22.04"* ]] || \
-       [[ "$suite" == "noble" && "$pkg_ver" == *"~jammy"* ]]; then
+    if [[ "$suite" == "noble" && ( "$pkg_ver" == *"ubuntu22.04"* || "$pkg_ver" == *"ubuntu2204"* || "$pkg_ver" == *"~jammy"* ) ]]; then
         printf 'Error: Suite mismatch: refusing to place jammy-specific package (%s) into noble suite\n' "$pkg_ver" >&2
         return 1
     fi
-    # Validate Debian version syntax and monotonicity
     if ! dpkg --compare-versions "$pkg_ver" gt "0.0.0"; then
         printf 'Error: Invalid Debian version "%s" in %s\n' "$pkg_ver" "$deb_file" >&2
         return 1
@@ -283,9 +354,12 @@ EOF
     )
 
     if [[ -n "$gpg_key_id" ]]; then
-        gpg --batch --yes --default-key "$gpg_key_id" -- digest-algo SHA256 --clearsign -o "$suite_dir/InRelease" "$suite_dir/Release" 2>/dev/null || \
-            gpg --batch --yes --default-key "$gpg_key_id" --digest-algo SHA256 --clearsign -o "$suite_dir/InRelease" "$suite_dir/Release"
-        gpg --batch --yes --default-key "$gpg_key_id" --digest-algo SHA256 -abs -o "$suite_dir/Release.gpg" "$suite_dir/Release"
+        local -a sign_args=(--batch --yes --digest-algo SHA256 -u "$gpg_key_id")
+        if [[ -n "$rotation_key_id" && "$rotation_key_id" != "$gpg_key_id" ]]; then
+            sign_args+=(-u "$rotation_key_id")
+        fi
+        gpg "${sign_args[@]}" --clearsign -o "$suite_dir/InRelease" "$suite_dir/Release"
+        gpg "${sign_args[@]}" -abs -o "$suite_dir/Release.gpg" "$suite_dir/Release"
     fi
 
     sed \
@@ -296,14 +370,24 @@ EOF
 
 build_suite "jammy" "22.04" "ModernIME APT Repository for Ubuntu 22.04 LTS (Jammy Jellyfish)" "${jammy_debs[@]}"
 build_suite "noble" "24.04" "ModernIME APT Repository for Ubuntu 24.04 LTS (Noble Numbat)" "${noble_debs[@]}"
+build_suite "bookworm" "12" "ModernIME APT Repository for Debian 12 (Bookworm)" "${bookworm_debs[@]}"
 
 cp -f -- "$project_root/packaging/apt/99-modernime.pref" "$output_dir/client/99-modernime.pref"
 
 if [[ -n "$gpg_key_id" ]]; then
-    gpg --batch --yes --export "$gpg_key_id" > "$output_dir/modernime-archive-keyring.gpg"
-    gpg --batch --yes --armor --export "$gpg_key_id" > "$output_dir/modernime-archive-keyring.asc"
-    # Verify signatures using gpgv against the isolated binary keyring
-    for suite in jammy noble; do
+    # Export all public keys in the isolated keyring (active signing key + any rotation keys)
+    gpg --batch --yes --export > "$output_dir/modernime-archive-keyring.gpg"
+    gpg --batch --yes --armor --export > "$output_dir/modernime-archive-keyring.asc"
+    {
+        printf '# ModernIME APT Archive Keyring Fingerprints\n'
+        gpg --batch --with-colons --fingerprint | awk -F: '
+            /^pub:/ { keyid=$5 }
+            /^fpr:/ && keyid != "" { printf "KeyID: %s\nFingerprint: %s\n", keyid, $10; keyid="" }
+        '
+        printf 'Keyring-SHA256: %s\n' "$(sha256sum "$output_dir/modernime-archive-keyring.gpg" | awk '{print $1}')"
+    } > "$output_dir/KEY-FINGERPRINTS.txt"
+
+    for suite in jammy noble bookworm; do
         if [[ -f "$output_dir/dists/$suite/Release" ]]; then
             gpgv --keyring "$output_dir/modernime-archive-keyring.gpg" \
                 "$output_dir/dists/$suite/InRelease" >/dev/null 2>&1

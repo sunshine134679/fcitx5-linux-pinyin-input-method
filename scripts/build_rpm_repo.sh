@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build_rpm_repo.sh — Generates a signed openEuler 24.09 x86_64 RPM/DNF repository for ModernIME
-# Enforces distro/architecture isolation, generates standard repodata (repomd.xml, primary.xml.gz,
-# filelists.xml.gz, other.xml.gz), signs repomd.xml.asc, and generates modernime-openeuler-24.09.repo.
+# Enforces distro/architecture isolation, signs all RPM packages (gpgcheck=1) as well as
+# repomd.xml.asc (repo_gpgcheck=1), supports persistent GPG keys and key rotation,
+# and generates modernime-openeuler-24.09.repo.
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -12,6 +13,9 @@ target_arch="x86_64"
 repo_url="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm"
 gpg_home="${GNUPGHOME:-}"
 gpg_key_id="${MODERNIME_GPG_KEY_ID:-}"
+gpg_private_key_file=""
+rotation_key_id="${MODERNIME_GPG_ROTATION_KEY_ID:-}"
+trusted_pubkeys_dir="${project_root}/packaging/keys/trusted-pubkeys.d"
 ephemeral_gpg=false
 declare -a rpm_files=()
 
@@ -20,7 +24,9 @@ usage() {
 Usage:
   build_rpm_repo.sh --output-dir DIR --rpm FILE [--rpm FILE]...
                     [--distro oe2409] [--arch x86_64]
-                    [--gpg-home DIR] [--gpg-key-id ID] [--ephemeral-gpg] [--repo-url URL]
+                    [--gpg-home DIR] [--gpg-key-id ID] [--gpg-private-key-file FILE]
+                    [--rotation-key-id ID] [--trusted-pubkeys-dir DIR] [--ephemeral-gpg]
+                    [--repo-url URL]
 EOF
 }
 
@@ -74,6 +80,30 @@ while [[ $# -gt 0 ]]; do
             gpg_key_id="$2"
             shift 2
             ;;
+        --gpg-private-key-file=*)
+            gpg_private_key_file="${1#*=}"
+            shift
+            ;;
+        --gpg-private-key-file)
+            gpg_private_key_file="$2"
+            shift 2
+            ;;
+        --rotation-key-id=*)
+            rotation_key_id="${1#*=}"
+            shift
+            ;;
+        --rotation-key-id)
+            rotation_key_id="$2"
+            shift 2
+            ;;
+        --trusted-pubkeys-dir=*)
+            trusted_pubkeys_dir="${1#*=}"
+            shift
+            ;;
+        --trusted-pubkeys-dir)
+            trusted_pubkeys_dir="$2"
+            shift 2
+            ;;
         --ephemeral-gpg)
             ephemeral_gpg=true
             shift
@@ -98,14 +128,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$output_dir" || ${#rpm_files[@]} -eq 0 ]]; then
-    printf 'Error: --output-dir and at least one --rpm are required\n' >&2
+if [[ -z "$output_dir" ]]; then
+    printf 'Error: --output-dir is required\n' >&2
+    exit 1
+fi
+if [[ ${#rpm_files[@]} -eq 0 ]]; then
+    printf 'Error: At least one --rpm FILE is required\n' >&2
     exit 1
 fi
 
-for cmd in python3 gpg gpgv sha256sum; do
+for cmd in python3 gpg gpgv sha256sum gzip; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-        printf 'Error: Required RPM repository tool not found: %s\n' "$cmd" >&2
+        printf 'Error: Required tool not found: %s\n' "$cmd" >&2
         exit 1
     fi
 done
@@ -118,7 +152,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "$ephemeral_gpg" == true || "${MODERNIME_GENERATE_EPHEMERAL_GPG:-0}" == "1" ]]; then
+if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
+    cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-rpm-gpg.XXXXXX")
+    chmod 700 "$cleanup_gpg"
+    gpg_home="$cleanup_gpg"
+    export GNUPGHOME="$gpg_home"
+    if [[ -n "$gpg_private_key_file" ]]; then
+        gpg --batch --quiet --import "$gpg_private_key_file"
+    else
+        printf '%s\n' "$MODERNIME_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+    fi
+    if [[ -n "${MODERNIME_GPG_ROTATION_PRIVATE_KEY:-}" ]]; then
+        printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg --batch --quiet --import
+        if [[ -z "$rotation_key_id" ]]; then
+            rotation_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
+        fi
+    fi
+    if [[ -z "$gpg_key_id" ]]; then
+        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    fi
+elif [[ "$ephemeral_gpg" == true || "${MODERNIME_GENERATE_EPHEMERAL_GPG:-0}" == "1" ]]; then
     cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-rpm-gpg.XXXXXX")
     chmod 700 "$cleanup_gpg"
     gpg_home="$cleanup_gpg"
@@ -137,29 +190,53 @@ GPGEOF
     gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
 elif [[ -n "$gpg_home" ]]; then
     export GNUPGHOME="$gpg_home"
+    if [[ -z "$gpg_key_id" ]]; then
+        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    fi
+fi
+
+if [[ -n "$gpg_key_id" && -d "$trusted_pubkeys_dir" ]]; then
+    for pub_asc in "$trusted_pubkeys_dir"/*.asc; do
+        [[ -f "$pub_asc" ]] || continue
+        gpg --batch --quiet --import "$pub_asc" || true
+    done
 fi
 
 rm -rf -- "$output_dir"
 repo_subdir="$output_dir/$distro_id/$target_arch"
 mkdir -p "$repo_subdir/Packages" "$repo_subdir/repodata" "$output_dir/client"
 
-# Validate RPM headers (magic, architecture, distro compatibility) and generate standard repodata XML
-python3 - "$repo_subdir" "$distro_id" "$target_arch" "${rpm_files[@]}" <<'PYEOF'
+# Inspect, validate, sign (gpgcheck=1), and generate repodata for all RPM files
+python3 - "$repo_subdir" "$target_arch" "$distro_id" "$gpg_key_id" "${rpm_files[@]}" <<'PYEOF'
 import gzip
 import hashlib
 import os
+from pathlib import Path
 import shutil
 import struct
 import subprocess
 import sys
 import time
 import xml.sax.saxutils as saxutils
-from pathlib import Path
+
+repo_subdir = Path(sys.argv[1]).resolve()
+target_arch = sys.argv[2]
+distro_id = sys.argv[3]
+gpg_key_id = sys.argv[4]
+rpm_inputs = [Path(p) for p in sys.argv[5:]]
 
 RPM_LEAD_MAGIC = b"\xed\xab\xee\xdb"
 RPM_HDR_MAGIC = b"\x8e\xad\xe8\x01"
 
-# RPM Header Tag IDs
+# RPM Signature Header Tag IDs
+RPMSIGTAG_PGP = 259     # BIN: OpenPGP detached signature over Header + Payload
+RPMSIGTAG_RSA = 268     # BIN: OpenPGP detached signature over Header only
+RPMSIGTAG_SHA1 = 269    # STRING: SHA1 hex of Header
+RPMSIGTAG_SHA256 = 273  # STRING: SHA256 hex of Header
+RPMSIGTAG_SIZE = 1000   # INT32: Header + Payload size
+RPMSIGTAG_MD5 = 1004    # BIN (16 bytes): MD5 of Header + Payload
+
+# RPM Main Header Tag IDs
 RPMTAG_NAME = 1000
 RPMTAG_VERSION = 1001
 RPMTAG_RELEASE = 1002
@@ -197,12 +274,11 @@ def parse_rpm_header_block(data: bytes, offset: int):
         entry_off = idx_start + i * 16
         tag, dtype, val_off, count = struct.unpack(">IIII", data[entry_off : entry_off + 16])
         pos = store_start + val_off
-        if dtype == 6:  # STRING
+        if dtype in (6, 9):  # STRING / I18NSTRING
             end = data.index(b"\x00", pos)
             tags[tag] = data[pos:end].decode("utf-8", errors="replace")
-        elif dtype == 9:  # I18NSTRING
-            end = data.index(b"\x00", pos)
-            tags[tag] = data[pos:end].decode("utf-8", errors="replace")
+        elif dtype == 7:  # BIN
+            tags[tag] = data[pos : pos + count]
         elif dtype == 8:  # STRING_ARRAY
             arr = []
             cur = pos
@@ -217,16 +293,116 @@ def parse_rpm_header_block(data: bytes, offset: int):
     return tags, store_end
 
 
+def build_header_block(entries):
+    # entries: list of (tag, dtype, value)
+    # dtype: 4=INT32, 6=STRING, 7=BIN (bytes), 8=STRING_ARRAY
+    entries = sorted(entries, key=lambda x: x[0])
+    idx_buf = bytearray()
+    store_buf = bytearray()
+    for tag, dtype, val in entries:
+        if dtype == 4:
+            if len(store_buf) % 4 != 0:
+                store_buf.extend(b"\x00" * (4 - (len(store_buf) % 4)))
+            vals = val if isinstance(val, list) else [val]
+            off = len(store_buf)
+            for v in vals:
+                store_buf.extend(struct.pack(">I", int(v)))
+            idx_buf.extend(struct.pack(">IIII", tag, 4, off, len(vals)))
+        elif dtype in (6, 9):
+            off = len(store_buf)
+            b = val.encode("utf-8") + b"\x00"
+            store_buf.extend(b)
+            idx_buf.extend(struct.pack(">IIII", tag, dtype, off, 1))
+        elif dtype == 7:
+            off = len(store_buf)
+            b = bytes(val)
+            store_buf.extend(b)
+            idx_buf.extend(struct.pack(">IIII", tag, 7, off, len(b)))
+        elif dtype == 8:
+            off = len(store_buf)
+            for s in val:
+                store_buf.extend(s.encode("utf-8") + b"\x00")
+            idx_buf.extend(struct.pack(">IIII", tag, 8, off, len(val)))
+    magic = b"\x8e\xad\xe8\x01\x00\x00\x00\x00"
+    counts = struct.pack(">II", len(entries), len(store_buf))
+    return magic + counts + bytes(idx_buf) + bytes(store_buf)
+
+
+def gpg_detached_binary_sign(payload_bytes: bytes, key_id: str) -> bytes:
+    proc = subprocess.run(
+        ["gpg", "--batch", "--yes", "-u", key_id, "--digest-algo", "SHA256", "-bs"],
+        input=payload_bytes,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return proc.stdout
+
+
+def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
+    if not key_id:
+        return
+    if shutil.which("rpmsign"):
+        gpg_path = os.environ.get("GNUPGHOME", os.path.expanduser("~/.gnupg"))
+        res = subprocess.run(
+            [
+                "rpmsign",
+                "--define",
+                f"_gpg_name {key_id}",
+                "--define",
+                f"_gpg_path {gpg_path}",
+                "--addsign",
+                str(rpm_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if res.returncode == 0:
+            return
+
+    raw = rpm_path.read_bytes()
+    if len(raw) < 96 or raw[:4] != RPM_LEAD_MAGIC:
+        raise ValueError(f"Not a valid RPM file: {rpm_path}")
+    lead = raw[:96]
+    _, sig_end = parse_rpm_header_block(raw, 96)
+    hdr_offset = (sig_end + 7) & ~7
+    if raw[hdr_offset : hdr_offset + 4] != RPM_HDR_MAGIC:
+        idx = raw.find(RPM_HDR_MAGIC, sig_end)
+        if idx < 0:
+            raise ValueError(f"Main RPM header not found in {rpm_path}")
+        hdr_offset = idx
+    _, payload_offset = parse_rpm_header_block(raw, hdr_offset)
+    main_hdr = raw[hdr_offset:payload_offset]
+    payload = raw[payload_offset:]
+
+    rsa_sig = gpg_detached_binary_sign(main_hdr, key_id)
+    pgp_sig = gpg_detached_binary_sign(main_hdr + payload, key_id)
+    sha1_hex = hashlib.sha1(main_hdr).hexdigest()
+    sha256_hex = hashlib.sha256(main_hdr).hexdigest()
+    md5_digest = hashlib.md5(main_hdr + payload).digest()
+    total_hp_size = len(main_hdr) + len(payload)
+
+    new_sig_hdr = build_header_block([
+        (RPMSIGTAG_PGP, 7, pgp_sig),
+        (RPMSIGTAG_RSA, 7, rsa_sig),
+        (RPMSIGTAG_SHA1, 6, sha1_hex),
+        (RPMSIGTAG_SHA256, 6, sha256_hex),
+        (RPMSIGTAG_SIZE, 4, total_hp_size),
+        (RPMSIGTAG_MD5, 7, md5_digest),
+    ])
+    if len(new_sig_hdr) % 8 != 0:
+        new_sig_hdr += b"\x00" * (8 - (len(new_sig_hdr) % 8))
+
+    rpm_path.write_bytes(lead + new_sig_hdr + main_hdr + payload)
+
+
 def inspect_rpm(rpm_path: Path):
     raw = rpm_path.read_bytes()
     if len(raw) < 96 or raw[:4] != RPM_LEAD_MAGIC:
         raise ValueError(f"Not a valid RPM file (bad lead magic): {rpm_path}")
-    # Signature header starts at offset 96
-    _, sig_end = parse_rpm_header_block(raw, 96)
-    # Align sig_end to 8-byte boundary
+    sig_tags, sig_end = parse_rpm_header_block(raw, 96)
     hdr_offset = (sig_end + 7) & ~7
     if raw[hdr_offset : hdr_offset + 4] != RPM_HDR_MAGIC:
-        # Fallback search for second header magic if unpadded
         idx = raw.find(RPM_HDR_MAGIC, sig_end)
         if idx < 0:
             raise ValueError(f"Main RPM header not found in {rpm_path}")
@@ -250,108 +426,97 @@ def inspect_rpm(rpm_path: Path):
     if isinstance(req_flags, int):
         req_flags = [req_flags]
 
-    requires = []
-    for rname, rver, rflag in zip(req_names, req_vers, req_flags):
-        if rname.startswith("rpmlib("):
-            continue
-        rel = ""
-        if (rflag & 0x02) and (rflag & 0x08):
-            rel = "LE"
-        elif (rflag & 0x04) and (rflag & 0x08):
-            rel = "GE"
-        elif rflag & 0x08:
-            rel = "EQ"
-        elif rflag & 0x04:
-            rel = "GT"
-        elif rflag & 0x02:
-            rel = "LT"
-        requires.append((rname, rel, rver))
-
-    provides = tags.get(RPMTAG_PROVIDENAME, [tags.get(RPMTAG_NAME, "modernime")])
-
     return {
-        "filename": rpm_path.name,
-        "sha256": sha256,
-        "file_size": len(raw),
-        "header_start": hdr_offset,
-        "header_end": payload_offset,
         "name": tags.get(RPMTAG_NAME, "modernime"),
-        "version": tags.get(RPMTAG_VERSION, "0.1.8"),
+        "version": tags.get(RPMTAG_VERSION, ""),
         "release": tags.get(RPMTAG_RELEASE, "1"),
-        "summary": tags.get(RPMTAG_SUMMARY, ""),
-        "description": tags.get(RPMTAG_DESCRIPTION, ""),
+        "summary": tags.get(RPMTAG_SUMMARY, "ModernIME Fcitx5 Pinyin Input Method"),
+        "description": tags.get(RPMTAG_DESCRIPTION, "ModernIME Fcitx5 Pinyin Input Method"),
         "buildtime": int(tags.get(RPMTAG_BUILDTIME, int(time.time()))),
-        "installed_size": int(tags.get(RPMTAG_SIZE, len(raw))),
+        "installed_size": int(tags.get(RPMTAG_SIZE, 0)),
         "license": tags.get(RPMTAG_LICENSE, "LGPL-2.1-or-later AND MIT"),
         "group": tags.get(RPMTAG_GROUP, "Applications/System"),
         "url": tags.get(RPMTAG_URL, ""),
         "os": tags.get(RPMTAG_OS, "linux"),
         "arch": tags.get(RPMTAG_ARCH, ""),
         "sourcerpm": tags.get(RPMTAG_SOURCERPM, ""),
+        "provides": tags.get(RPMTAG_PROVIDENAME, ["modernime"]),
+        "requires": list(zip(req_names, req_flags, req_vers)),
         "files": files,
-        "requires": requires,
-        "provides": provides,
+        "sha256": sha256,
+        "package_size": len(raw),
+        "header_start": hdr_offset,
+        "header_end": payload_offset,
+        "has_gpg_sig": (RPMSIGTAG_PGP in sig_tags and RPMSIGTAG_RSA in sig_tags),
     }
 
 
-repo_subdir = Path(sys.argv[1])
-distro_id = sys.argv[2]
-target_arch = sys.argv[3]
-rpm_Args = [Path(p) for p in sys.argv[4:]]
-
 pkgs = []
-for rpm_p in rpm_Args:
-    info = inspect_rpm(rpm_p)
-    if info["arch"] not in (target_arch, "noarch"):
+seen_versions = set()
+for rpm_in in rpm_inputs:
+    if not rpm_in.is_file():
+        sys.stderr.write(f"Error: RPM file not found: {rpm_in}\n")
+        sys.exit(1)
+    pre_meta = inspect_rpm(rpm_in)
+    if not pre_meta["name"] or not pre_meta["version"] or not pre_meta["arch"]:
+        sys.stderr.write(f"Error: Incomplete RPM header metadata in {rpm_in}\n")
+        sys.exit(1)
+    if pre_meta["arch"] not in (target_arch, "noarch"):
         sys.stderr.write(
-            f"Error: RPM architecture mismatch for {rpm_p}: header arch='{info['arch']}', repository requires '{target_arch}'\n"
+            f'Error: RPM architecture mismatch for {rpm_in}: package is "{pre_meta["arch"]}", repository requires "{target_arch}"\n'
         )
         sys.exit(1)
-    # Prevent copying incompatible distro packages (e.g. .fc40 or .el8 into oe2409)
-    rel = info["release"]
-    if distro_id.startswith("oe") and any(bad in rel for bad in (".fc", ".el7", ".el8", ".ubuntu")):
+    if "fc" in pre_meta["release"] and distro_id.startswith("oe"):
         sys.stderr.write(
-            f"Error: Distro release mismatch for {rpm_p}: release='{rel}' is incompatible with '{distro_id}'\n"
+            f'Error: Distro mismatch: refusing Fedora package ({pre_meta["release"]}) in openEuler ({distro_id}) repository\n'
         )
         sys.exit(1)
-    dst_rpm = repo_subdir / "Packages" / rpm_p.name
-    shutil.copy2(rpm_p, dst_rpm)
-    info["location"] = f"Packages/{rpm_p.name}"
-    pkgs.append(info)
+    ver_key = f'{pre_meta["version"]}-{pre_meta["release"]}'
+    if ver_key in seen_versions:
+        sys.stderr.write(f'Error: Duplicate RPM version-release "{ver_key}"\n')
+        sys.exit(1)
+    seen_versions.add(ver_key)
 
-createrepo_bin = shutil.which("createrepo_c") or shutil.which("createrepo")
-if createrepo_bin:
-    subprocess.run([createrepo_bin, str(repo_subdir)], check=True)
-    sys.exit(0)
+    base_name = f'{pre_meta["name"]}-{pre_meta["version"]}-{pre_meta["release"]}.{pre_meta["arch"]}.rpm'
+    dest_rpm = repo_subdir / "Packages" / base_name
+    shutil.copy2(rpm_in, dest_rpm)
+    # Sign the RPM package itself so DNF gpgcheck=1 succeeds
+    if gpg_key_id:
+        sign_rpm_file(dest_rpm, gpg_key_id)
+    meta = inspect_rpm(dest_rpm)
+    if gpg_key_id and not meta["has_gpg_sig"]:
+        sys.stderr.write(f"Error: Failed to embed OpenPGP package signature in {dest_rpm}\n")
+        sys.exit(1)
+    meta["filename"] = base_name
+    meta["href"] = f"Packages/{base_name}"
+    pkgs.append(meta)
 
-# Native standard RPM repodata XML generator (primary.xml.gz, filelists.xml.gz, other.xml.gz, repomd.xml)
+# Always build deterministic XML repodata matching the signed RPMs
 now_ts = int(time.time())
-count = len(pkgs)
-
 primary_lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    f'<metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="{count}">',
+    f'<metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="{len(pkgs)}">',
 ]
 filelists_lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    f'<filelists xmlns="http://linux.duke.edu/metadata/filelists" packages="{count}">',
+    f'<filelists xmlns="http://linux.duke.edu/metadata/filelists" packages="{len(pkgs)}">',
 ]
 other_lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    f'<otherdata xmlns="http://linux.duke.edu/metadata/other" packages="{count}">',
+    f'<otherdata xmlns="http://linux.duke.edu/metadata/other" packages="{len(pkgs)}">',
 ]
 
 for p in pkgs:
-    esc_name = saxutils.escape(str(p["name"]))
-    esc_arch = saxutils.escape(str(p["arch"]))
-    esc_ver = saxutils.escape(str(p["version"]))
-    esc_rel = saxutils.escape(str(p["release"]))
-    esc_sum = saxutils.escape(str(p["summary"]))
-    esc_desc = saxutils.escape(str(p["description"]))
-    esc_lic = saxutils.escape(str(p["license"]))
-    esc_grp = saxutils.escape(str(p["group"]))
-    esc_url = saxutils.escape(str(p["url"]))
-    esc_loc = saxutils.escape(str(p["location"]))
+    esc_name = saxutils.escape(p["name"])
+    esc_arch = saxutils.escape(p["arch"])
+    esc_ver = saxutils.escape(p["version"])
+    esc_rel = saxutils.escape(p["release"])
+    esc_sum = saxutils.escape(p["summary"])
+    esc_desc = saxutils.escape(p["description"])
+    esc_lic = saxutils.escape(p["license"])
+    esc_grp = saxutils.escape(p["group"])
+    esc_url = saxutils.escape(p["url"])
+    esc_href = saxutils.escape(p["href"])
 
     primary_lines.extend([
         '  <package type="rpm">',
@@ -361,38 +526,39 @@ for p in pkgs:
         f'    <checksum type="sha256" pkgid="YES">{p["sha256"]}</checksum>',
         f"    <summary>{esc_sum}</summary>",
         f"    <description>{esc_desc}</description>",
-        f"    <packager>ModernIME Maintainers</packager>",
+        "    <packager>ModernIME Maintainers</packager>",
         f"    <url>{esc_url}</url>",
         f'    <time file="{now_ts}" build="{p["buildtime"]}"/>',
-        f'    <size package="{p["file_size"]}" installed="{p["installed_size"]}" archive="{p["installed_size"]}"/>',
-        f'    <location href="{esc_loc}"/>',
+        f'    <size package="{p["package_size"]}" installed="{p["installed_size"]}" archive="{p["installed_size"]}"/>',
+        f'    <location href="{esc_href}"/>',
         "    <format>",
         f"      <rpm:license>{esc_lic}</rpm:license>",
+        "      <rpm:vendor>ModernIME Community</rpm:vendor>",
         f"      <rpm:group>{esc_grp}</rpm:group>",
         f'      <rpm:header-range start="{p["header_start"]}" end="{p["header_end"]}"/>',
         "      <rpm:provides>",
     ])
     for prov in p["provides"]:
         primary_lines.append(
-            f'        <rpm:entry name="{saxutils.escape(str(prov))}" flags="EQ" epoch="0" ver="{esc_ver}" rel="{esc_rel}"/>'
+            f'        <rpm:entry name="{saxutils.escape(prov)}" flags="EQ" epoch="0" ver="{esc_ver}" rel="{esc_rel}"/>'
         )
     primary_lines.append("      </rpm:provides>")
     if p["requires"]:
         primary_lines.append("      <rpm:requires>")
         for rname, rflag, rver in p["requires"]:
-            if rflag and rver:
+            if rname.startswith("rpmlib("):
+                continue
+            if rver:
                 primary_lines.append(
-                    f'        <rpm:entry name="{saxutils.escape(str(rname))}" flags="{rflag}" epoch="0" ver="{saxutils.escape(str(rver))}"/>'
+                    f'        <rpm:entry name="{saxutils.escape(rname)}" flags="GE" epoch="0" ver="{saxutils.escape(rver)}"/>'
                 )
             else:
-                primary_lines.append(
-                    f'        <rpm:entry name="{saxutils.escape(str(rname))}"/>'
-                )
+                primary_lines.append(f'        <rpm:entry name="{saxutils.escape(rname)}"/>')
         primary_lines.append("      </rpm:requires>")
-    for fpath in p["files"]:
-        if fpath.startswith("/usr/bin/") or fpath.startswith("/bin/"):
-            primary_lines.append(f"      <file>{saxutils.escape(fpath)}</file>")
-    primary_lines.extend(["    </format>", "  </package>"])
+    primary_lines.extend([
+        "    </format>",
+        "  </package>",
+    ])
 
     filelists_lines.extend([
         f'  <package pkgid="{p["sha256"]}" name="{esc_name}" arch="{esc_arch}">',
@@ -429,7 +595,6 @@ for dtype, lines in [
     gz_size = len(gz_bytes)
     fname = f"{gz_sha}-{dtype}.xml.gz"
     (repodata_dir / fname).write_bytes(gz_bytes)
-    # Also create convenience symlink/copy primary.xml.gz etc.
     (repodata_dir / f"{dtype}.xml.gz").write_bytes(gz_bytes)
     repomd_entries.append((dtype, fname, gz_sha, gz_size, open_sha, open_size))
 
@@ -454,13 +619,91 @@ repomd_lines.append("</repomd>")
 PYEOF
 
 if [[ -n "$gpg_key_id" ]]; then
-    gpg --batch --yes --default-key "$gpg_key_id" --digest-algo SHA256 -abs \
+    local_sign_args=(--batch --yes --digest-algo SHA256 -u "$gpg_key_id")
+    if [[ -n "$rotation_key_id" && "$rotation_key_id" != "$gpg_key_id" ]]; then
+        local_sign_args+=(-u "$rotation_key_id")
+    fi
+    gpg "${local_sign_args[@]}" -abs \
         -o "$repo_subdir/repodata/repomd.xml.asc" "$repo_subdir/repodata/repomd.xml"
-    gpg --batch --yes --armor --export "$gpg_key_id" > "$output_dir/RPM-GPG-KEY-modernime"
-    gpg --batch --yes --export "$gpg_key_id" > "$output_dir/RPM-GPG-KEY-modernime.gpg"
+    gpg --batch --yes --armor --export > "$output_dir/RPM-GPG-KEY-modernime"
+    gpg --batch --yes --export > "$output_dir/RPM-GPG-KEY-modernime.gpg"
+    {
+        printf '# ModernIME RPM Repository Keyring Fingerprints\n'
+        gpg --batch --with-colons --fingerprint | awk -F: '
+            /^pub:/ { keyid=$5 }
+            /^fpr:/ && keyid != "" { printf "KeyID: %s\nFingerprint: %s\n", keyid, $10; keyid="" }
+        '
+        printf 'Keyring-SHA256: %s\n' "$(sha256sum "$output_dir/RPM-GPG-KEY-modernime" | awk '{print $1}')"
+    } > "$output_dir/KEY-FINGERPRINTS.txt"
+
+    # Verify repomd.xml.asc signature (repo_gpgcheck=1)
     gpgv --keyring "$output_dir/RPM-GPG-KEY-modernime.gpg" \
         "$repo_subdir/repodata/repomd.xml.asc" \
         "$repo_subdir/repodata/repomd.xml" >/dev/null 2>&1
+
+    # Verify every RPM package's embedded OpenPGP signatures (gpgcheck=1)
+    python3 - "$repo_subdir/Packages" "$output_dir/RPM-GPG-KEY-modernime.gpg" <<'PYVERIFY'
+from pathlib import Path
+import struct
+import subprocess
+import sys
+import tempfile
+
+pkgs_dir = Path(sys.argv[1])
+keyring_path = Path(sys.argv[2])
+RPM_HDR_MAGIC = b"\x8e\xad\xe8\x01"
+
+def parse_hdr(data: bytes, offset: int):
+    nindex, hsize = struct.unpack(">II", data[offset + 8 : offset + 16])
+    idx_start = offset + 16
+    store_start = idx_start + nindex * 16
+    store_end = store_start + hsize
+    tags = {}
+    for i in range(nindex):
+        eo = idx_start + i * 16
+        tag, dtype, voff, count = struct.unpack(">IIII", data[eo : eo + 16])
+        if dtype == 7:
+            tags[tag] = data[store_start + voff : store_start + voff + count]
+    return tags, store_end
+
+for rpm_file in sorted(pkgs_dir.glob("*.rpm")):
+    raw = rpm_file.read_bytes()
+    sig_tags, sig_end = parse_hdr(raw, 96)
+    hdr_off = (sig_end + 7) & ~7
+    if raw[hdr_off : hdr_off + 4] != RPM_HDR_MAGIC:
+        hdr_off = raw.find(RPM_HDR_MAGIC, sig_end)
+    _, payload_off = parse_hdr(raw, hdr_off)
+    main_hdr = raw[hdr_off:payload_off]
+    payload = raw[payload_off:]
+
+    if 268 not in sig_tags or 259 not in sig_tags:
+        raise SystemExit(f"Error: {rpm_file} is missing RPMSIGTAG_RSA (268) or RPMSIGTAG_PGP (259)")
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        hdr_f = td_path / "header.bin"
+        hdr_sig = td_path / "header.sig"
+        hp_f = td_path / "header_payload.bin"
+        hp_sig = td_path / "header_payload.sig"
+
+        hdr_f.write_bytes(main_hdr)
+        hdr_sig.write_bytes(sig_tags[268])
+        hp_f.write_bytes(main_hdr + payload)
+        hp_sig.write_bytes(sig_tags[259])
+
+        subprocess.run(
+            ["gpgv", "--keyring", str(keyring_path), str(hdr_sig), str(hdr_f)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        subprocess.run(
+            ["gpgv", "--keyring", str(keyring_path), str(hp_sig), str(hp_f)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+PYVERIFY
 fi
 
 sed \
