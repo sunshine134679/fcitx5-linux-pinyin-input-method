@@ -372,6 +372,10 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     target_link_libraries(modernime_pinyin_provider_tests PRIVATE modernime_pinyin)
     add_test(NAME modernime_pinyin_provider COMMAND modernime_pinyin_provider_tests)
 
+    add_executable(modernime_english_arbitration_tests core/english_arbitration_test.cpp)
+    target_link_libraries(modernime_english_arbitration_tests PRIVATE modernime_pinyin)
+    add_test(NAME modernime_english_arbitration COMMAND modernime_english_arbitration_tests)
+
     add_executable(modernime_pinyin_data_dirs_tests core/pinyin_data_dirs_test.cpp)
     target_link_libraries(modernime_pinyin_data_dirs_tests PRIVATE modernime_pinyin)
     add_test(NAME modernime_pinyin_data_dirs COMMAND modernime_pinyin_data_dirs_tests)

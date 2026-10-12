@@ -2015,33 +2015,19 @@ private:
             suppressedLearned_.contains(candidateKey(rawInput, rawInput)) ||
             (learning != nullptr && learning->isSuppressed(rawInput, rawInput));
 
-        const double englishLearningBoost =
-            (!isEnglishSuppressed && learning != nullptr)
-                ? learning->boostAt(rawInput, rawInput, nowMilliseconds())
-                : 0.0;
-
-        bool preferEnglishOverChinese = false;
-        if (isEnglish && !isEnglishSuppressed) {
-            if (!page_.items.empty()) {
-                const auto &topChinese = page_.items.front();
-                bool isTopChineseLexical = false;
-                if (topChinese.source == core::CandidateSource::UserDictionary) {
-                    isTopChineseLexical = true;
-                } else if (topChinese.sourceIndex < result.scored.size() &&
-                           (result.scored[topChinese.sourceIndex].dictionary_bonus > 0.0 ||
-                            result.scored[topChinese.sourceIndex].is_lexical)) {
-                    isTopChineseLexical = true;
-                } else if (utf8CodePointCount(topChinese.text) == 1 &&
-                           rawInput.size() <= 3) {
-                    isTopChineseLexical = true;
-                }
-
-                const double chineseLearningBoost =
-                    (topChinese.sourceIndex < result.scored.size())
-                        ? result.scored[topChinese.sourceIndex].learning_boost
-                        : 0.0;
-
-                bool matchedInDictionary = false;
+        bool isTopChineseLexical = false;
+        if (!page_.items.empty()) {
+            const auto &topChinese = page_.items.front();
+            if (topChinese.source == core::CandidateSource::UserDictionary) {
+                isTopChineseLexical = true;
+            } else if (topChinese.sourceIndex < result.scored.size() &&
+                       (result.scored[topChinese.sourceIndex].dictionary_bonus > 0.0 ||
+                        result.scored[topChinese.sourceIndex].is_lexical)) {
+                isTopChineseLexical = true;
+            } else if (utf8CodePointCount(topChinese.text) == 1 &&
+                       rawInput.size() <= 3) {
+                isTopChineseLexical = true;
+            } else {
                 try {
                     std::string cleanPinyin = topChinese.fullPinyin;
                     while (!cleanPinyin.empty() && cleanPinyin.back() == '\'') {
@@ -2051,37 +2037,41 @@ private:
                         const auto encoded = libime::PinyinEncoder::encodeFullPinyin(cleanPinyin);
                         ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
                             if (hanzi == topChinese.text) {
-                                matchedInDictionary = true;
+                                isTopChineseLexical = true;
                                 return false;
                             }
                             return true;
                         });
                     }
                 } catch (const std::exception &) {
-                    matchedInDictionary = false;
+                    isTopChineseLexical = false;
                 }
-                if (matchedInDictionary) {
-                    isTopChineseLexical = true;
-                }
-
-                if (isTopChineseLexical) {
-                    // 常用高频词汇（如 那么/name、立刻/like、我们/women、上海/shanghai 等）：
-                    // 坚守中文词语优先（首位候选永远为中文词语，英文词作为次选候选），
-                    // 严禁因偶发误选或低频学习导致英文篡位挤占高频中文。
-                    preferEnglishOverChinese = false;
-                } else {
-                    // 非词典的散字拼凑（如 date -> “打特”，case -> “擦色”），
-                    // 除非用户极高频选择中文（boost >= 2.5），否则标准核心英文词默认置顶
-                    if (chineseLearningBoost < 2.5) {
-                        preferEnglishOverChinese = true;
-                    }
-                }
-            } else {
-                preferEnglishOverChinese = true;
             }
+        }
 
-            if ((hasTrustedShortAbbreviation || isConsonantAbbreviation) && englishLearningBoost <= 0.0) {
-                preferEnglishOverChinese = false;
+        const bool hasHighConfidenceChinese =
+            !page_.items.empty() &&
+            (hasTrustedShortAbbreviation || isConsonantAbbreviation ||
+             (hasExactFullPinyinMatch && isTopChineseLexical));
+
+        bool preferEnglishOverChinese = false;
+        if (page_.items.empty()) {
+            preferEnglishOverChinese = true;
+        } else if (hasHighConfidenceChinese) {
+            preferEnglishOverChinese = false;
+        } else if (!predictedWords.empty() && !hasExactFullPinyinMatch) {
+            preferEnglishOverChinese = true;
+        } else if (isEnglish && !isEnglishSuppressed) {
+            if (!hasExactFullPinyinMatch) {
+                preferEnglishOverChinese = true;
+            } else if (!isTopChineseLexical) {
+                const double chineseLearningBoost =
+                    (page_.items.front().sourceIndex < result.scored.size())
+                        ? result.scored[page_.items.front().sourceIndex].learning_boost
+                        : 0.0;
+                if (chineseLearningBoost < 2.5) {
+                    preferEnglishOverChinese = true;
+                }
             }
         }
 
@@ -2127,28 +2117,34 @@ private:
         } else if (!macroCandidates.empty() && rawInput.front() == 'v') {
             page_.items.push_back(std::move(rawCandidate));
             page_.preedit = std::string(rawInput);
-        } else if (!predictedWords.empty()) {
-            core::CandidateItem predictedCandidate;
-            predictedCandidate.text = std::string(predictedWords.front());
-            predictedCandidate.fullPinyin = std::string(rawInput);
-            predictedCandidate.source = core::CandidateSource::Raw;
-            predictedCandidate.consumedInputBytes = rawInput.size();
+        } else if (preferEnglishOverChinese) {
+            if (!predictedWords.empty()) {
+                core::CandidateItem predictedCandidate;
+                predictedCandidate.text = std::string(predictedWords.front());
+                predictedCandidate.fullPinyin = std::string(rawInput);
+                predictedCandidate.source = core::CandidateSource::Raw;
+                predictedCandidate.consumedInputBytes = rawInput.size();
 
-            page_.items.insert(page_.items.begin(), std::move(rawCandidate));
-            page_.items.insert(page_.items.begin(), std::move(predictedCandidate));
-            page_.preedit = std::string(rawInput);
-        } else if (!hasTrustedShortAbbreviation && !isConsonantAbbreviation &&
-                   isEnglish && !hasExactFullPinyinMatch) {
-            page_.items.insert(page_.items.begin(), std::move(rawCandidate));
-            page_.preedit = std::string(rawInput);
-        } else if (page_.items.empty()) {
-            page_.items.push_back(std::move(rawCandidate));
-            page_.preedit = std::string(rawInput);
-        } else if (isEnglish && hasExactFullPinyinMatch) {
-            if (preferEnglishOverChinese) {
                 page_.items.insert(page_.items.begin(), std::move(rawCandidate));
-                page_.preedit = std::string(rawInput);
+                page_.items.insert(page_.items.begin(), std::move(predictedCandidate));
             } else {
+                page_.items.insert(page_.items.begin(), std::move(rawCandidate));
+            }
+            page_.preedit = std::string(rawInput);
+        } else {
+            if (!predictedWords.empty()) {
+                core::CandidateItem predictedCandidate;
+                predictedCandidate.text = std::string(predictedWords.front());
+                predictedCandidate.fullPinyin = std::string(rawInput);
+                predictedCandidate.source = core::CandidateSource::Raw;
+                predictedCandidate.consumedInputBytes = rawInput.size();
+
+                const auto insertPos =
+                    page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
+                page_.items.insert(insertPos, std::move(predictedCandidate));
+            }
+
+            if (isEnglish || !predictedWords.empty()) {
                 bool isSingleSyllable = false;
                 if (!page_.items.empty()) {
                     isSingleSyllable = pinyinSyllableCount(page_.items.front().fullPinyin) <= 1;
@@ -2161,15 +2157,10 @@ private:
                         page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
                     page_.items.insert(insertPos, std::move(rawCandidate));
                 }
-                page_.preedit = segmentedInput;
-            }
-        } else {
-            page_.items.push_back(std::move(rawCandidate));
-            if (!macroCandidates.empty() && rawInput.front() == 'v') {
-                page_.preedit = std::string(rawInput);
             } else {
-                page_.preedit = segmentedInput;
+                page_.items.push_back(std::move(rawCandidate));
             }
+            page_.preedit = segmentedInput;
         }
 
         if (englishDefinitionEnabled_ && !page_.items.empty() && shared_) {
