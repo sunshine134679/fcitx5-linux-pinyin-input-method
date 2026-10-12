@@ -197,6 +197,9 @@ if [[ ${#jammy_debs[@]} -eq 0 && ${#noble_debs[@]} -eq 0 && ${#bookworm_debs[@]}
     exit 1
 fi
 
+unset DISPLAY WAYLAND_DISPLAY
+export GPG_TTY=""
+
 cleanup_gpg=""
 cleanup() {
     if [[ -n "$cleanup_gpg" && -d "$cleanup_gpg" ]]; then
@@ -206,12 +209,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
+init_isolated_gpg_home() {
     cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-apt-gpg.XXXXXX")
     chmod 700 "$cleanup_gpg"
+    cat > "$cleanup_gpg/gpg-agent.conf" <<'EOF'
+default-cache-ttl 0
+max-cache-ttl 0
+allow-loopback-pinentry
+pinentry-program /bin/false
+EOF
+    chmod 600 "$cleanup_gpg/gpg-agent.conf"
     gpg_home="$cleanup_gpg"
     export GNUPGHOME="$gpg_home"
-    import_flags=(--batch --quiet --pinentry-mode loopback --passphrase "${gpg_passphrase:-}")
+}
+
+if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
+    init_isolated_gpg_home
+    import_flags=(--batch --no-tty --quiet --pinentry-mode loopback --passphrase "${gpg_passphrase:-}")
     if [[ -n "$gpg_private_key_file" ]]; then
         gpg "${import_flags[@]}" --import "$gpg_private_key_file"
     else
@@ -220,18 +234,16 @@ if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
     if [[ -n "${MODERNIME_GPG_ROTATION_PRIVATE_KEY:-}" ]]; then
         printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg "${import_flags[@]}" --import
         if [[ -z "$rotation_key_id" ]]; then
-            rotation_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
+            rotation_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
         fi
     fi
     if [[ -z "$gpg_key_id" ]]; then
-        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+        gpg_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
     fi
+    gpg-connect-agent --homedir "$gpg_home" reloadagent /bye >/dev/null 2>&1 || true
 elif [[ "$ephemeral_gpg" == true || "${MODERNIME_GENERATE_EPHEMERAL_GPG:-0}" == "1" ]]; then
-    cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-apt-gpg.XXXXXX")
-    chmod 700 "$cleanup_gpg"
-    gpg_home="$cleanup_gpg"
-    export GNUPGHOME="$gpg_home"
-    gpg --batch --generate-key <<'GPGEOF' 2>/dev/null
+    init_isolated_gpg_home
+    gpg --batch --no-tty --generate-key <<'GPGEOF' 2>/dev/null
 %no-protection
 Key-Type: RSA
 Key-Length: 3072
@@ -242,19 +254,33 @@ Name-Email: release@modernime.invalid
 Expire-Date: 2y
 %commit
 GPGEOF
-    gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    gpg_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    gpg-connect-agent --homedir "$gpg_home" reloadagent /bye >/dev/null 2>&1 || true
 elif [[ -n "$gpg_home" ]]; then
-    export GNUPGHOME="$gpg_home"
+    src_gpg_home="$gpg_home"
+    init_isolated_gpg_home
+    for item in "$src_gpg_home"/*; do
+        [[ -e "$item" ]] || continue
+        base_item=$(basename "$item")
+        case "$base_item" in
+            S.gpg-agent*|*.lock|gpg-agent.conf|.gpg-v21-migrated)
+                continue
+                ;;
+        esac
+        cp -a "$item" "$cleanup_gpg/"
+    done
+    chmod -R go-rwx "$cleanup_gpg"
     if [[ -z "$gpg_key_id" ]]; then
-        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+        gpg_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
     fi
+    gpg-connect-agent --homedir "$gpg_home" reloadagent /bye >/dev/null 2>&1 || true
 fi
 
 # Import any additional rotation/trusted public keys so the exported keyring supports key rotation windows
 if [[ -n "$gpg_key_id" && -d "$trusted_pubkeys_dir" ]]; then
     for pub_asc in "$trusted_pubkeys_dir"/*.asc; do
         [[ -f "$pub_asc" ]] || continue
-        gpg --batch --quiet --import "$pub_asc" || true
+        gpg --batch --no-tty --quiet --import "$pub_asc" || true
     done
 fi
 

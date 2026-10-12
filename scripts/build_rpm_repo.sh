@@ -153,6 +153,9 @@ for cmd in python3 gpg gpgv sha256sum gzip; do
     fi
 done
 
+unset DISPLAY WAYLAND_DISPLAY
+export GPG_TTY=""
+
 cleanup_gpg=""
 cleanup() {
     if [[ -n "$cleanup_gpg" && -d "$cleanup_gpg" ]]; then
@@ -162,12 +165,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
+init_isolated_gpg_home() {
     cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-rpm-gpg.XXXXXX")
     chmod 700 "$cleanup_gpg"
+    cat > "$cleanup_gpg/gpg-agent.conf" <<'EOF'
+default-cache-ttl 0
+max-cache-ttl 0
+allow-loopback-pinentry
+pinentry-program /bin/false
+EOF
+    chmod 600 "$cleanup_gpg/gpg-agent.conf"
     gpg_home="$cleanup_gpg"
     export GNUPGHOME="$gpg_home"
-    import_flags=(--batch --quiet --pinentry-mode loopback --passphrase "${gpg_passphrase:-}")
+}
+
+if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
+    init_isolated_gpg_home
+    import_flags=(--batch --no-tty --quiet --pinentry-mode loopback --passphrase "${gpg_passphrase:-}")
     if [[ -n "$gpg_private_key_file" ]]; then
         gpg "${import_flags[@]}" --import "$gpg_private_key_file"
     else
@@ -176,18 +190,16 @@ if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
     if [[ -n "${MODERNIME_GPG_ROTATION_PRIVATE_KEY:-}" ]]; then
         printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg "${import_flags[@]}" --import
         if [[ -z "$rotation_key_id" ]]; then
-            rotation_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
+            rotation_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
         fi
     fi
     if [[ -z "$gpg_key_id" ]]; then
-        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+        gpg_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
     fi
+    gpg-connect-agent --homedir "$gpg_home" reloadagent /bye >/dev/null 2>&1 || true
 elif [[ "$ephemeral_gpg" == true || "${MODERNIME_GENERATE_EPHEMERAL_GPG:-0}" == "1" ]]; then
-    cleanup_gpg=$(mktemp -d "${TMPDIR:-/tmp}/modernime-rpm-gpg.XXXXXX")
-    chmod 700 "$cleanup_gpg"
-    gpg_home="$cleanup_gpg"
-    export GNUPGHOME="$gpg_home"
-    gpg --batch --generate-key <<'GPGEOF' 2>/dev/null
+    init_isolated_gpg_home
+    gpg --batch --no-tty --generate-key <<'GPGEOF' 2>/dev/null
 %no-protection
 Key-Type: RSA
 Key-Length: 3072
@@ -198,18 +210,32 @@ Name-Email: rpm-release@modernime.invalid
 Expire-Date: 2y
 %commit
 GPGEOF
-    gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    gpg_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+    gpg-connect-agent --homedir "$gpg_home" reloadagent /bye >/dev/null 2>&1 || true
 elif [[ -n "$gpg_home" ]]; then
-    export GNUPGHOME="$gpg_home"
+    src_gpg_home="$gpg_home"
+    init_isolated_gpg_home
+    for item in "$src_gpg_home"/*; do
+        [[ -e "$item" ]] || continue
+        base_item=$(basename "$item")
+        case "$base_item" in
+            S.gpg-agent*|*.lock|gpg-agent.conf|.gpg-v21-migrated)
+                continue
+                ;;
+        esac
+        cp -a "$item" "$cleanup_gpg/"
+    done
+    chmod -R go-rwx "$cleanup_gpg"
     if [[ -z "$gpg_key_id" ]]; then
-        gpg_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
+        gpg_key_id=$(gpg --batch --no-tty --with-colons --list-secret-keys | awk -F: '/^sec:/ {print $5; exit}')
     fi
+    gpg-connect-agent --homedir "$gpg_home" reloadagent /bye >/dev/null 2>&1 || true
 fi
 
 if [[ -n "$gpg_key_id" && -d "$trusted_pubkeys_dir" ]]; then
     for pub_asc in "$trusted_pubkeys_dir"/*.asc; do
         [[ -f "$pub_asc" ]] || continue
-        gpg --batch --quiet --import "$pub_asc" || true
+        gpg --batch --no-tty --quiet --import "$pub_asc" || true
     done
 fi
 
@@ -349,52 +375,74 @@ def build_header_block(entries):
     return magic + counts + bytes(idx_buf) + bytes(store_buf)
 
 
-def gpg_detached_binary_sign(payload_bytes: bytes, key_id: str) -> bytes:
+def _clean_gpg_env(gpg_path: str) -> dict:
+    env = os.environ.copy()
+    env["GNUPGHOME"] = gpg_path
+    env["GPG_TTY"] = ""
+    env.pop("DISPLAY", None)
+    env.pop("WAYLAND_DISPLAY", None)
+    env["LC_ALL"] = "C"
+    return env
+
+
+def _write_temp_passphrase_file(gpg_path: str) -> Path:
     passphrase = os.environ.get("MODERNIME_GPG_PASSPHRASE", "")
-    cmd = [
-        "gpg",
-        "--batch",
-        "--yes",
-        "--pinentry-mode",
-        "loopback",
-        "--passphrase",
-        passphrase,
-        "-u",
-        key_id,
-        "--digest-algo",
-        "SHA256",
-        "-bs",
-    ]
-    proc = subprocess.run(
-        cmd,
-        input=payload_bytes,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-    )
-    return proc.stdout
+    fd, path_str = tempfile.mkstemp(prefix=".pass-", dir=gpg_path)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, passphrase.encode("utf-8"))
+    finally:
+        os.close(fd)
+    return Path(path_str)
+
+
+def gpg_detached_binary_sign(payload_bytes: bytes, key_id: str) -> bytes:
+    gpg_path = os.environ.get("GNUPGHOME", os.path.expanduser("~/.gnupg"))
+    env = _clean_gpg_env(gpg_path)
+    pass_file = _write_temp_passphrase_file(gpg_path)
+    try:
+        cmd = [
+            "gpg",
+            "--batch",
+            "--no-tty",
+            "--yes",
+            "--homedir",
+            gpg_path,
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-file",
+            str(pass_file),
+            "-u",
+            key_id,
+            "--digest-algo",
+            "SHA256",
+            "-bs",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=payload_bytes,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                start_new_session=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            sys.stderr.write("Error: gpg detached signing timed out after 30s\n")
+            sys.exit(1)
+        if proc.returncode != 0:
+            err_msg = proc.stderr.decode("utf-8", errors="replace").strip()
+            sys.stderr.write(f"Error: gpg detached signing failed (exit {proc.returncode}): {err_msg}\n")
+            sys.exit(1)
+        return proc.stdout
+    finally:
+        pass_file.unlink(missing_ok=True)
 
 
 def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
     if not key_id:
         return
-    if shutil.which("rpmsign"):
-        gpg_path = os.environ.get("GNUPGHOME", os.path.expanduser("~/.gnupg"))
-        res = subprocess.run(
-            [
-                "rpmsign",
-                "--define",
-                f"_gpg_name {key_id}",
-                "--define",
-                f"_gpg_path {gpg_path}",
-                "--addsign",
-                str(rpm_path),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if res.returncode == 0:
-            return
 
     raw = rpm_path.read_bytes()
     if len(raw) < 96 or raw[:4] != RPM_LEAD_MAGIC:
@@ -427,9 +475,85 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
         main_entries.append((5092, 8, [hashlib.sha256(payload).hexdigest()]))
         main_entries.append((5093, 4, 8))
         main_hdr = build_header_block(main_entries)
+        unsigned_sig_hdr = build_header_block([
+            (RPMSIGTAG_SHA1, 6, hashlib.sha1(main_hdr).hexdigest()),
+            (RPMSIGTAG_SHA256, 6, hashlib.sha256(main_hdr).hexdigest()),
+            (RPMSIGTAG_SIZE, 4, len(main_hdr) + len(payload)),
+            (RPMSIGTAG_MD5, 7, hashlib.md5(main_hdr + payload).digest()),
+        ])
+        if len(unsigned_sig_hdr) % 8 != 0:
+            unsigned_sig_hdr += b"\x00" * (8 - (len(unsigned_sig_hdr) % 8))
+        rpm_path.write_bytes(lead + unsigned_sig_hdr + main_hdr + payload)
 
-    rsa_sig = gpg_detached_binary_sign(main_hdr, key_id)
-    pgp_sig = gpg_detached_binary_sign(main_hdr + payload, key_id)
+    rpmsign_bin = None
+    if os.environ.get("MODERNIME_DISABLE_RPMSIGN") != "1":
+        rpmsign_bin = os.environ.get("MODERNIME_RPMSIGN_BIN") or shutil.which("rpmsign")
+
+    rsa_sig = None
+    pgp_sig = None
+    if rpmsign_bin:
+        gpg_path = os.environ.get("GNUPGHOME", os.path.expanduser("~/.gnupg"))
+        gpg_bin = shutil.which("gpg") or "/usr/bin/gpg"
+        env = _clean_gpg_env(gpg_path)
+        pass_file = _write_temp_passphrase_file(gpg_path)
+        try:
+            extra_args = (
+                f"--batch --no-tty --yes --homedir {gpg_path} "
+                f"--pinentry-mode loopback --passphrase-file {pass_file}"
+            )
+            gpg_sign_cmd = (
+                f"{gpg_bin} gpg --batch --no-tty --yes --no-verbose --no-armor "
+                f"--homedir {gpg_path} --pinentry-mode loopback --passphrase-file {pass_file} "
+                f'--no-secmem-warning -u "%{{_gpg_name}}" '
+                f"-sbo %{{__signature_filename}} --digest-algo sha256 %{{__plaintext_filename}}"
+            )
+            try:
+                res = subprocess.run(
+                    [
+                        rpmsign_bin,
+                        "--define",
+                        f"_gpg_name {key_id}",
+                        "--define",
+                        f"_gpg_path {gpg_path}",
+                        "--define",
+                        f"__gpg {gpg_bin}",
+                        "--define",
+                        f"_gpg_sign_cmd_extra_args {extra_args}",
+                        "--define",
+                        f"__gpg_sign_cmd {gpg_sign_cmd}",
+                        "--addsign",
+                        str(rpm_path),
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    start_new_session=True,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                sys.stderr.write(f"Error: rpmsign timed out after 30s while signing {rpm_path}\n")
+                sys.exit(1)
+            if res.returncode != 0:
+                err_out = (res.stderr or res.stdout or b"").decode("utf-8", errors="replace").strip()
+                sys.stderr.write(f"Error: rpmsign failed (exit {res.returncode}) for {rpm_path}: {err_out}\n")
+                sys.exit(1)
+        finally:
+            pass_file.unlink(missing_ok=True)
+
+        signed_raw = rpm_path.read_bytes()
+        sig_tags_after, _ = parse_rpm_header_block(signed_raw, 96)
+        if RPMSIGTAG_RSA not in sig_tags_after:
+            sys.stderr.write(f"Error: rpmsign did not embed RPMSIGTAG_RSA (268) in {rpm_path}\n")
+            sys.exit(1)
+        if RPMSIGTAG_PGP in sig_tags_after:
+            return
+        rsa_sig = sig_tags_after[RPMSIGTAG_RSA]
+
+    if rsa_sig is None:
+        rsa_sig = gpg_detached_binary_sign(main_hdr, key_id)
+    if pgp_sig is None:
+        pgp_sig = gpg_detached_binary_sign(main_hdr + payload, key_id)
     sha1_hex = hashlib.sha1(main_hdr).hexdigest()
     sha256_hex = hashlib.sha256(main_hdr).hexdigest()
     md5_digest = hashlib.md5(main_hdr + payload).digest()
@@ -697,17 +821,17 @@ repomd_lines.append("</repomd>")
 PYEOF
 
 if [[ -n "$gpg_key_id" ]]; then
-    local_sign_args=(--batch --yes --digest-algo SHA256 --pinentry-mode loopback --passphrase "${gpg_passphrase:-}" -u "$gpg_key_id")
+    local_sign_args=(--batch --no-tty --yes --digest-algo SHA256 --pinentry-mode loopback --passphrase "${gpg_passphrase:-}" -u "$gpg_key_id")
     if [[ -n "$rotation_key_id" && "$rotation_key_id" != "$gpg_key_id" ]]; then
         local_sign_args+=(-u "$rotation_key_id")
     fi
     gpg "${local_sign_args[@]}" -abs \
         -o "$repo_subdir/repodata/repomd.xml.asc" "$repo_subdir/repodata/repomd.xml"
-    gpg --batch --yes --armor --export > "$output_dir/RPM-GPG-KEY-modernime"
-    gpg --batch --yes --export > "$output_dir/RPM-GPG-KEY-modernime.gpg"
+    gpg --batch --no-tty --yes --armor --export > "$output_dir/RPM-GPG-KEY-modernime"
+    gpg --batch --no-tty --yes --export > "$output_dir/RPM-GPG-KEY-modernime.gpg"
     {
         printf '# ModernIME RPM Repository Keyring Fingerprints\n'
-        gpg --batch --with-colons --fingerprint | awk -F: '
+        gpg --batch --no-tty --with-colons --fingerprint | awk -F: '
             /^pub:/ { keyid=$5 }
             /^fpr:/ && keyid != "" { printf "KeyID: %s\nFingerprint: %s\n", keyid, $10; keyid="" }
         '

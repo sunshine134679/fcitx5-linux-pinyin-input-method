@@ -853,4 +853,202 @@ if PATH="${empty_bin}" MODERNIME_SKIP_FCITX_RESTART=1 \
     fail "install.sh should reject installation when fcitx5 runtime dependency is missing"
 fi
 
+# 7f. Isolated zero-cache GPG passphrase matrix (correct / missing / wrong passphrase) for rpmsign & fallback branches
+rpmsign_test_bin=""
+if command -v rpmsign >/dev/null 2>&1; then
+    rpmsign_test_bin="$(command -v rpmsign)"
+else
+    rpmsign_shim_dir="${work_dir}/rpmsign-shim"
+    mkdir -p "${rpmsign_shim_dir}"
+    rpmsign_test_bin="${rpmsign_shim_dir}/rpmsign"
+    cat > "${rpmsign_test_bin}" <<'PYEOF'
+#!/usr/bin/env python3
+import hashlib
+import os
+from pathlib import Path
+import shlex
+import struct
+import subprocess
+import sys
+import tempfile
+
+RPM_HDR_MAGIC = b"\x8e\xad\xe8\x01"
+RPMSIGTAG_PGP = 259
+RPMSIGTAG_RSA = 268
+RPMSIGTAG_SHA1 = 269
+RPMSIGTAG_SHA256 = 273
+RPMSIGTAG_SIZE = 1000
+RPMSIGTAG_MD5 = 1004
+
+macros = {}
+rpm_target = None
+args = sys.argv[1:]
+i = 0
+while i < len(args):
+    if args[i] == "--define" and i + 1 < len(args):
+        defn = args[i + 1].strip()
+        parts = defn.split(None, 1)
+        if len(parts) == 2:
+            macros[parts[0]] = parts[1]
+        i += 2
+    elif args[i] == "--addsign" and i + 1 < len(args):
+        rpm_target = Path(args[i + 1])
+        i += 2
+    else:
+        i += 1
+
+if not rpm_target or "__gpg_sign_cmd" not in macros:
+    sys.stderr.write("rpmsign shim: missing --addsign target or __gpg_sign_cmd macro\n")
+    sys.exit(1)
+
+raw = rpm_target.read_bytes()
+nindex, hsize = struct.unpack(">II", raw[104:112])
+sig_end = (112 + nindex * 16 + hsize + 7) & ~7
+if raw[sig_end : sig_end + 4] != RPM_HDR_MAGIC:
+    sig_end = raw.find(RPM_HDR_MAGIC, 112 + nindex * 16 + hsize)
+m_nindex, m_hsize = struct.unpack(">II", raw[sig_end + 8 : sig_end + 16])
+payload_off = sig_end + 16 + m_nindex * 16 + m_hsize
+main_hdr = raw[sig_end:payload_off]
+payload = raw[payload_off:]
+
+def run_gpg_sign_macro(plain_bytes: bytes) -> bytes:
+    with tempfile.TemporaryDirectory() as td:
+        plain_f = Path(td) / "plain.bin"
+        sig_f = Path(td) / "sig.bin"
+        plain_f.write_bytes(plain_bytes)
+        cmd_str = macros["__gpg_sign_cmd"]
+        for k, v in [
+            ("%{__gpg}", macros.get("__gpg", "/usr/bin/gpg")),
+            ("%{_gpg_path}", macros.get("_gpg_path", "")),
+            ("%{_gpg_name}", macros.get("_gpg_name", "")),
+            ("%{__plaintext_filename}", str(plain_f)),
+            ("%{__signature_filename}", str(sig_f)),
+        ]:
+            cmd_str = cmd_str.replace(k, v)
+        argv = shlex.split(cmd_str)
+        # RPM's rpmgensig.c executes argv[0] with argv[1:] (where argv[1] is "gpg")
+        exec_bin = argv[0]
+        exec_args = [exec_bin] + argv[2:] if len(argv) > 1 and argv[1].endswith("gpg") else argv
+        res = subprocess.run(exec_args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode != 0:
+            sys.stderr.write(res.stderr.decode("utf-8", errors="replace"))
+            sys.exit(res.returncode)
+        return sig_f.read_bytes()
+
+rsa_sig = run_gpg_sign_macro(main_hdr)
+pgp_sig = run_gpg_sign_macro(main_hdr + payload)
+
+entries = sorted([
+    (RPMSIGTAG_PGP, 7, pgp_sig),
+    (RPMSIGTAG_RSA, 7, rsa_sig),
+    (RPMSIGTAG_SHA1, 6, hashlib.sha1(main_hdr).hexdigest()),
+    (RPMSIGTAG_SHA256, 6, hashlib.sha256(main_hdr).hexdigest()),
+    (RPMSIGTAG_SIZE, 4, len(main_hdr) + len(payload)),
+    (RPMSIGTAG_MD5, 7, hashlib.md5(main_hdr + payload).digest()),
+], key=lambda x: x[0])
+
+idx_buf = bytearray()
+store_buf = bytearray()
+for tag, dtype, val in entries:
+    if dtype == 4:
+        if len(store_buf) % 4 != 0:
+            store_buf.extend(b"\x00" * (4 - (len(store_buf) % 4)))
+        off = len(store_buf)
+        store_buf.extend(struct.pack(">I", int(val)))
+        idx_buf.extend(struct.pack(">IIII", tag, 4, off, 1))
+    elif dtype == 6:
+        off = len(store_buf)
+        b = val.encode("utf-8") + b"\x00"
+        store_buf.extend(b)
+        idx_buf.extend(struct.pack(">IIII", tag, 6, off, 1))
+    elif dtype == 7:
+        off = len(store_buf)
+        store_buf.extend(val)
+        idx_buf.extend(struct.pack(">IIII", tag, 7, off, len(val)))
+
+new_sig = b"\x8e\xad\xe8\x01\x00\x00\x00\x00" + struct.pack(">II", len(entries), len(store_buf)) + bytes(idx_buf) + bytes(store_buf)
+if len(new_sig) % 8 != 0:
+    new_sig += b"\x00" * (8 - (len(new_sig) % 8))
+rpm_target.write_bytes(raw[:96] + new_sig + main_hdr + payload)
+PYEOF
+    chmod +x "${rpmsign_test_bin}"
+fi
+
+# Verify both rpmsign branch and fallback branch with isolated zero-cache --gpg-home
+for branch_mode in "rpmsign" "fallback"; do
+    branch_env=()
+    if [ "${branch_mode}" = "rpmsign" ]; then
+        branch_env=("MODERNIME_RPMSIGN_BIN=${rpmsign_test_bin}" "MODERNIME_DISABLE_RPMSIGN=0")
+    else
+        branch_env=("MODERNIME_DISABLE_RPMSIGN=1")
+    fi
+
+    # (1) Correct passphrase in isolated zero-cache --gpg-home MUST succeed within 10s
+    timeout 10s env "${branch_env[@]}" \
+        "${repo_root}/scripts/build_rpm_repo.sh" \
+        --output-dir "${work_dir}/rpm-pass-ok-${branch_mode}" \
+        --rpm "${rpm_file}" \
+        --distro oe2409 \
+        --arch x86_64 \
+        --gpg-home "${gpg_setup_home}" \
+        --gpg-key-id "${primary_fpr}" \
+        --gpg-passphrase "${passphrase}" >/dev/null ||
+        fail "build_rpm_repo.sh (${branch_mode} branch) failed with correct passphrase in isolated --gpg-home"
+
+    # (2) Missing passphrase in isolated zero-cache --gpg-home MUST fail fast (< 10s) without GUI or hang
+    if timeout 10s env -u MODERNIME_GPG_PASSPHRASE "${branch_env[@]}" \
+        "${repo_root}/scripts/build_rpm_repo.sh" \
+        --output-dir "${work_dir}/rpm-pass-missing-${branch_mode}" \
+        --rpm "${rpm_file}" \
+        --distro oe2409 \
+        --arch x86_64 \
+        --gpg-home "${gpg_setup_home}" \
+        --gpg-key-id "${primary_fpr}" >/dev/null 2>&1; then
+        fail "build_rpm_repo.sh (${branch_mode} branch) must fail when passphrase is missing in isolated zero-cache --gpg-home"
+    fi
+
+    # (3) Wrong passphrase in isolated zero-cache --gpg-home MUST fail fast (< 10s) without GUI or hang
+    if timeout 10s env "${branch_env[@]}" \
+        "${repo_root}/scripts/build_rpm_repo.sh" \
+        --output-dir "${work_dir}/rpm-pass-wrong-${branch_mode}" \
+        --rpm "${rpm_file}" \
+        --distro oe2409 \
+        --arch x86_64 \
+        --gpg-home "${gpg_setup_home}" \
+        --gpg-key-id "${primary_fpr}" \
+        --gpg-passphrase "WrongPassphrase2026!" >/dev/null 2>&1; then
+        fail "build_rpm_repo.sh (${branch_mode} branch) must fail when passphrase is wrong in isolated zero-cache --gpg-home"
+    fi
+done
+
+# (4) Also verify --gpg-private-key-file with wrong passphrase fails fast (< 10s)
+if timeout 10s env MODERNIME_RPMSIGN_BIN="${rpmsign_test_bin}" \
+    "${repo_root}/scripts/build_rpm_repo.sh" \
+    --output-dir "${work_dir}/rpm-privkey-wrong-pass" \
+    --rpm "${rpm_file}" \
+    --distro oe2409 \
+    --arch x86_64 \
+    --gpg-private-key-file "${primary_sec_file}" \
+    --gpg-key-id "${primary_fpr}" \
+    --gpg-passphrase "WrongPassphrase2026!" >/dev/null 2>&1; then
+    fail "build_rpm_repo.sh must fail when --gpg-private-key-file is given wrong passphrase"
+fi
+
+# (5) Verify rpmsign failure does NOT silently fall back to Python signing
+failing_rpmsign="${work_dir}/failing-rpmsign"
+printf '#!/bin/sh\necho "simulated rpmsign error" >&2\nexit 2\n' > "${failing_rpmsign}"
+chmod +x "${failing_rpmsign}"
+if timeout 10s env MODERNIME_RPMSIGN_BIN="${failing_rpmsign}" \
+    "${repo_root}/scripts/build_rpm_repo.sh" \
+    --output-dir "${work_dir}/rpm-rpmsign-no-fallback" \
+    --rpm "${rpm_file}" \
+    --distro oe2409 \
+    --arch x86_64 \
+    --gpg-home "${gpg_setup_home}" \
+    --gpg-key-id "${primary_fpr}" \
+    --gpg-passphrase "${passphrase}" >/dev/null 2>&1; then
+    fail "build_rpm_repo.sh must fail immediately when rpmsign exits non-zero (must not silently fall back)"
+fi
+printf '==> [Gate 7f] Isolated zero-cache GPG passphrase matrix (correct/missing/wrong) for rpmsign & fallback: VERIFIED\n'
+
 printf 'PASS: All 7 package, signed repository, real APT client, and rollback gate checks succeeded (%s).\n' "${rpmkeys_status_summary}"
