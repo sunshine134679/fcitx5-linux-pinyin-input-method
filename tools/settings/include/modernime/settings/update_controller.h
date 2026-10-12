@@ -2,6 +2,7 @@
 
 #include "modernime/settings/runtime_controller.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -41,6 +42,14 @@ public:
 
     static RuntimeResult runSystemUpgrade(const UpdateStatus &status,
                                           const Environment &environment = {});
+
+    static bool hasActivePackageOperation();
+
+    static bool waitForActivePackageOperation(unsigned int timeoutMs = 5000);
+
+    static std::optional<RuntimeResult> takeCompletedPackageOperationResult();
+
+    static std::string lastCompletedPackageOperationStdout();
 };
 
 } // namespace modernime::settings

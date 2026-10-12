@@ -263,13 +263,18 @@ int main() {
     std::getline(logIn, loggedArgs);
     assert(loggedArgs.find("apt-get install --only-upgrade -y modernime") != std::string::npos);
 
-    // 7. Package operation timeout must check child process state, NOT force-kill active dpkg/apt transaction,
-    // and return explicit recovery guidance (dpkg --configure -a)
+    // 7a. Package operation timeout (stillRunningOnTimeout == true):
+    // - Must NOT force-kill active dpkg/apt transaction or cancel pipe communication
+    // - Must keep draining stdout/stderr in the background tracker until completion
+    // - Must block duplicate upgrade/refresh triggers while background transaction is still running
+    // - Must record final completion result once child exits
     const auto completedMarker = tempRoot / "pkg-op-completed-gracefully.txt";
     writeExecutable(
         aptBinDir / "pkexec",
         "#!/bin/sh\n"
+        "printf 'PRE_TIMEOUT_LINE\\n'\n"
         "sleep 0.25\n"
+        "printf 'POST_TIMEOUT_UPGRADE_OUTPUT_OK\\n'\n"
         "printf 'completed\\n' > \"" +
             completedMarker.string() +
             "\"\n"
@@ -283,12 +288,44 @@ int main() {
     };
     const auto timeoutRes = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
     assert(!timeoutRes.success);
+    assert(timeoutRes.message.find("检测到 apt/dpkg 子进程仍在运行或等待锁") != std::string::npos);
     assert(timeoutRes.message.find("未强制终止进程") != std::string::npos);
+    assert(timeoutRes.message.find("期间已锁定重复升级触发") != std::string::npos);
     assert(timeoutRes.message.find("dpkg --configure -a") != std::string::npos);
+    assert(UpdateController::hasActivePackageOperation());
 
-    // Wait briefly and verify the child process was NOT killed by SIGKILL and finished its transaction cleanly
-    ::usleep(300000);
+    // Duplicate upgrade or cache refresh MUST be rejected while background transaction is active
+    const auto dupUpgradeRes = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
+    assert(!dupUpgradeRes.success);
+    assert(dupUpgradeRes.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+    const auto dupRefreshRes = UpdateController::refreshPackageCache(aptStatus, timeoutEnv);
+    assert(!dupRefreshRes.success);
+    assert(dupRefreshRes.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+    // Wait for background tracker to finish draining output and reaping the child process
+    assert(UpdateController::waitForActivePackageOperation(2000));
+    assert(!UpdateController::hasActivePackageOperation());
     assert(std::filesystem::exists(completedMarker));
+    const auto capturedOut = UpdateController::lastCompletedPackageOperationStdout();
+    assert(capturedOut.find("PRE_TIMEOUT_LINE") != std::string::npos);
+    assert(capturedOut.find("POST_TIMEOUT_UPGRADE_OUTPUT_OK") != std::string::npos);
+    const auto bgDoneRes = UpdateController::takeCompletedPackageOperationResult();
+    assert(bgDoneRes.has_value());
+    assert(bgDoneRes->success);
+    assert(bgDoneRes->message.find("后台系统包管理器升级已完成") != std::string::npos);
+
+    // 7b. Package operation timeout when child has already exited (stillRunningOnTimeout == false):
+    // Spawn a subshell holding stdout open briefly while the main pkexec process exits immediately (zombie 'Z' at timeout)
+    writeExecutable(
+        aptBinDir / "pkexec",
+        "#!/bin/sh\n"
+        "(sleep 0.2) &\n"
+        "exit 1\n");
+    const auto exitedTimeoutRes = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
+    assert(!exitedTimeoutRes.success);
+    assert(exitedTimeoutRes.message.find("子进程已退出，未检测到后台仍在运行的 apt/dpkg 进程") !=
+           std::string::npos);
+    assert(!UpdateController::hasActivePackageOperation());
 
     std::filesystem::remove_all(tempRoot);
     return 0;

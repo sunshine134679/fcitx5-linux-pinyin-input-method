@@ -456,7 +456,8 @@ private:
     }
 
     void checkUpdate() {
-        if (updateBusy) {
+        if (updateBusy || backgroundPackageOpActive ||
+            UpdateController::hasActivePackageOperation()) {
             return;
         }
         updateBusy = true;
@@ -477,7 +478,8 @@ private:
     }
 
     void refreshPackageCache() {
-        if (updateBusy) {
+        if (updateBusy || backgroundPackageOpActive ||
+            UpdateController::hasActivePackageOperation()) {
             return;
         }
         updateBusy = true;
@@ -498,11 +500,62 @@ private:
         g_object_unref(task);
     }
 
+    void restoreUpdateButtonsAfterTask() {
+        const bool locked =
+            updateBusy || backgroundPackageOpActive ||
+            UpdateController::hasActivePackageOperation();
+        gtk_widget_set_sensitive(checkUpdateButton, !locked);
+        gtk_widget_set_sensitive(refreshCacheButton, !locked);
+        gtk_widget_set_sensitive(
+            runUpgradeButton,
+            !locked && lastUpdateStatus.updateAvailable &&
+                lastUpdateStatus.installChannel != "script");
+    }
+
+    static gboolean onBackgroundPackagePoll(gpointer data) {
+        auto &state = *static_cast<SharedLifetime *>(data);
+        bool keepPolling = false;
+        state->withOwner([&keepPolling](Impl &owner) {
+            keepPolling = owner.pollBackgroundPackageOperation();
+        });
+        return keepPolling ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+    }
+
+    static void destroyPollState(gpointer data) {
+        delete static_cast<SharedLifetime *>(data);
+    }
+
+    void scheduleBackgroundPackageMonitor() {
+        if (backgroundPackageOpActive) {
+            return;
+        }
+        backgroundPackageOpActive = true;
+        restoreUpdateButtonsAfterTask();
+        g_timeout_add_full(G_PRIORITY_DEFAULT, 200, onBackgroundPackagePoll,
+                           new SharedLifetime(state), destroyPollState);
+    }
+
+    bool pollBackgroundPackageOperation() {
+        if (UpdateController::hasActivePackageOperation()) {
+            return true;
+        }
+        backgroundPackageOpActive = false;
+        restoreUpdateButtonsAfterTask();
+        if (const auto completed =
+                UpdateController::takeCompletedPackageOperationResult()) {
+            setLabel(updateStatusMessage, completed->message.c_str());
+            notifyMessage(completed->message);
+            if (completed->success) {
+                checkUpdate();
+            }
+        }
+        return false;
+    }
+
     void finishCheckUpdate(const UpdateStatus *status, const GError *error) {
         updateBusy = false;
-        gtk_widget_set_sensitive(checkUpdateButton, TRUE);
-        gtk_widget_set_sensitive(refreshCacheButton, TRUE);
         if (status == nullptr) {
+            restoreUpdateButtonsAfterTask();
             setLabel(updateStatusMessage,
                      error != nullptr && error->message != nullptr
                          ? error->message
@@ -518,34 +571,28 @@ private:
                  lastUpdateStatus.changelogSummary.c_str());
         setLabel(upgradeCommandLabel, lastUpdateStatus.upgradeCommand.c_str());
         setLabel(updateStatusMessage, lastUpdateStatus.statusMessage.c_str());
-        gtk_widget_set_sensitive(
-            runUpgradeButton,
-            lastUpdateStatus.updateAvailable &&
-                lastUpdateStatus.installChannel != "script");
+        restoreUpdateButtonsAfterTask();
         notifyMessage(lastUpdateStatus.statusMessage);
     }
 
     void finishRefreshPackageCache(const UpdateRefreshResult *result,
                                    const GError *error) {
+        updateBusy = false;
         if (result == nullptr) {
-            updateBusy = false;
-            gtk_widget_set_sensitive(checkUpdateButton, TRUE);
-            gtk_widget_set_sensitive(refreshCacheButton, TRUE);
+            restoreUpdateButtonsAfterTask();
             notifyMessage(error != nullptr && error->message != nullptr
                               ? error->message
                               : "刷新软件源缓存请求未完成");
             return;
         }
         if (!result->cacheResult.success) {
-            updateBusy = false;
-            gtk_widget_set_sensitive(checkUpdateButton, TRUE);
-            gtk_widget_set_sensitive(refreshCacheButton, TRUE);
-            gtk_widget_set_sensitive(
-                runUpgradeButton,
-                lastUpdateStatus.updateAvailable &&
-                    lastUpdateStatus.installChannel != "script");
             setLabel(updateStatusMessage, result->cacheResult.message.c_str());
             notifyMessage(result->cacheResult.message);
+            if (UpdateController::hasActivePackageOperation()) {
+                scheduleBackgroundPackageMonitor();
+            } else {
+                restoreUpdateButtonsAfterTask();
+            }
             return;
         }
         finishCheckUpdate(&result->updatedStatus, nullptr);
@@ -564,7 +611,9 @@ private:
     }
 
     void runSystemUpgrade() {
-        if (updateBusy || !lastUpdateStatus.updateAvailable) {
+        if (updateBusy || backgroundPackageOpActive ||
+            UpdateController::hasActivePackageOperation() ||
+            !lastUpdateStatus.updateAvailable) {
             return;
         }
         updateBusy = true;
@@ -588,13 +637,12 @@ private:
 
     void finishSystemUpgrade(const RuntimeResult *result, const GError *error) {
         updateBusy = false;
-        gtk_widget_set_sensitive(checkUpdateButton, TRUE);
-        gtk_widget_set_sensitive(refreshCacheButton, TRUE);
-        gtk_widget_set_sensitive(
-            runUpgradeButton,
-            lastUpdateStatus.updateAvailable &&
-                lastUpdateStatus.installChannel != "script");
         if (result == nullptr) {
+            if (UpdateController::hasActivePackageOperation()) {
+                scheduleBackgroundPackageMonitor();
+            } else {
+                restoreUpdateButtonsAfterTask();
+            }
             notifyMessage(error != nullptr && error->message != nullptr
                               ? error->message
                               : "系统包管理器升级请求未完成");
@@ -602,6 +650,11 @@ private:
         }
         setLabel(updateStatusMessage, result->message.c_str());
         notifyMessage(result->message);
+        if (UpdateController::hasActivePackageOperation()) {
+            scheduleBackgroundPackageMonitor();
+        } else {
+            restoreUpdateButtonsAfterTask();
+        }
     }
 
     void startTask(bool reloadRequest) {
@@ -722,6 +775,7 @@ private:
     SharedLifetime state;
     bool busy = false;
     bool updateBusy = false;
+    bool backgroundPackageOpActive = false;
     UpdateStatus lastUpdateStatus;
     std::string pendingFocusTarget;
     GtkWidget *page = nullptr;
