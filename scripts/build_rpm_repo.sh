@@ -396,10 +396,34 @@ def _write_temp_passphrase_file(gpg_path: str) -> Path:
     return Path(path_str)
 
 
+def _run_bounded_process(cmd, env: dict, timeout_sec: float, input_bytes: bytes = None):
+    import signal
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(input=input_bytes, timeout=timeout_sec)
+        return proc.returncode, out, err
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+        raise
+
+
 def gpg_detached_binary_sign(payload_bytes: bytes, key_id: str) -> bytes:
     gpg_path = os.environ.get("GNUPGHOME", os.path.expanduser("~/.gnupg"))
     env = _clean_gpg_env(gpg_path)
     pass_file = _write_temp_passphrase_file(gpg_path)
+    sign_timeout = float(os.environ.get("MODERNIME_RPMSIGN_TIMEOUT_SEC", "30"))
     try:
         cmd = [
             "gpg",
@@ -419,23 +443,15 @@ def gpg_detached_binary_sign(payload_bytes: bytes, key_id: str) -> bytes:
             "-bs",
         ]
         try:
-            proc = subprocess.run(
-                cmd,
-                input=payload_bytes,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                start_new_session=True,
-                timeout=30,
-            )
+            rc, out, err = _run_bounded_process(cmd, env, sign_timeout, input_bytes=payload_bytes)
         except subprocess.TimeoutExpired:
-            sys.stderr.write("Error: gpg detached signing timed out after 30s\n")
-            sys.exit(1)
-        if proc.returncode != 0:
-            err_msg = proc.stderr.decode("utf-8", errors="replace").strip()
-            sys.stderr.write(f"Error: gpg detached signing failed (exit {proc.returncode}): {err_msg}\n")
-            sys.exit(1)
-        return proc.stdout
+            sys.stderr.write(f"Error: gpg detached signing timed out after {sign_timeout}s\n")
+            sys.exit(124)
+        if rc != 0:
+            err_msg = err.decode("utf-8", errors="replace").strip()
+            sys.stderr.write(f"Error: gpg detached signing failed (exit {rc}): {err_msg}\n")
+            sys.exit(128 + abs(rc) if rc < 0 else rc)
+        return out
     finally:
         pass_file.unlink(missing_ok=True)
 
@@ -488,6 +504,12 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
     rpmsign_bin = None
     if os.environ.get("MODERNIME_DISABLE_RPMSIGN") != "1":
         rpmsign_bin = os.environ.get("MODERNIME_RPMSIGN_BIN") or shutil.which("rpmsign")
+        if os.environ.get("MODERNIME_REQUIRE_NATIVE_RPM_TOOLS") == "1" and not rpmsign_bin:
+            sys.stderr.write("Error: MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1 is set, but native rpmsign is not found in PATH\n")
+            sys.exit(1)
+    elif os.environ.get("MODERNIME_REQUIRE_NATIVE_RPM_TOOLS") == "1":
+        sys.stderr.write("Error: MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1 conflicts with MODERNIME_DISABLE_RPMSIGN=1\n")
+        sys.exit(1)
 
     rsa_sig = None
     pgp_sig = None
@@ -496,6 +518,7 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
         gpg_bin = shutil.which("gpg") or "/usr/bin/gpg"
         env = _clean_gpg_env(gpg_path)
         pass_file = _write_temp_passphrase_file(gpg_path)
+        sign_timeout = float(os.environ.get("MODERNIME_RPMSIGN_TIMEOUT_SEC", "30"))
         try:
             extra_args = (
                 f"--batch --no-tty --yes --homedir {gpg_path} "
@@ -508,7 +531,7 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
                 f"-sbo %{{__signature_filename}} --digest-algo sha256 %{{__plaintext_filename}}"
             )
             try:
-                res = subprocess.run(
+                rc, out, err = _run_bounded_process(
                     [
                         rpmsign_bin,
                         "--define",
@@ -524,20 +547,16 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
                         "--addsign",
                         str(rpm_path),
                     ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=env,
-                    start_new_session=True,
-                    timeout=30,
+                    env,
+                    sign_timeout,
                 )
             except subprocess.TimeoutExpired:
-                sys.stderr.write(f"Error: rpmsign timed out after 30s while signing {rpm_path}\n")
-                sys.exit(1)
-            if res.returncode != 0:
-                err_out = (res.stderr or res.stdout or b"").decode("utf-8", errors="replace").strip()
-                sys.stderr.write(f"Error: rpmsign failed (exit {res.returncode}) for {rpm_path}: {err_out}\n")
-                sys.exit(1)
+                sys.stderr.write(f"Error: rpmsign timed out after {sign_timeout}s while signing {rpm_path}\n")
+                sys.exit(124)
+            if rc != 0:
+                err_out = (err or out or b"").decode("utf-8", errors="replace").strip()
+                sys.stderr.write(f"Error: rpmsign failed (exit {rc}) for {rpm_path}: {err_out}\n")
+                sys.exit(128 + abs(rc) if rc < 0 else rc)
         finally:
             pass_file.unlink(missing_ok=True)
 

@@ -18,6 +18,22 @@ fail() {
     exit 1
 }
 
+# Assert that a command exits with a normal non-zero exit code (1 <= rc < 124).
+# Timeouts (124), SIGKILL (137), command-not-found (126/127), or any signal/abnormal termination (rc >= 124)
+# MUST NOT be counted as a valid expected failure.
+assert_normal_nonzero_failure() {
+    local desc="$1"
+    shift
+    local rc=0
+    "$@" >/dev/null 2>&1 || rc=$?
+    if [ "${rc}" -eq 0 ]; then
+        fail "${desc} (expected normal non-zero failure, but command succeeded with exit code 0)"
+    fi
+    if [ "${rc}" -ge 124 ]; then
+        fail "${desc} (expected normal non-zero failure 1..123, but got abnormal/timeout/signal exit code ${rc})"
+    fi
+}
+
 expected_version=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUAGES CXX)$/\1/p' "${repo_root}/CMakeLists.txt")
 [ -n "${expected_version}" ] || fail "unable to parse version from CMakeLists.txt"
 
@@ -241,13 +257,13 @@ dst_path.write_bytes(src_bytes.replace(cur_ver, b"0.1.8"))
 PYEOF
 
 # Gate check: --require-persistent-gpg MUST fail when no persistent key is provided
-if env -u MODERNIME_GPG_PRIVATE_KEY -u MODERNIME_GPG_KEY_ID \
+assert_normal_nonzero_failure \
+    "ci_build_release_repos.sh --require-persistent-gpg must fail when persistent GPG key is absent" \
+    env -u MODERNIME_GPG_PRIVATE_KEY -u MODERNIME_GPG_KEY_ID \
     "${repo_root}/scripts/ci_build_release_repos.sh" \
     --assets-dir "${ci_assets_dir}" \
     --pages-dir "${work_dir}/pages-should-fail" \
-    --require-persistent-gpg >/dev/null 2>&1; then
-    fail "ci_build_release_repos.sh --require-persistent-gpg must fail when persistent GPG key is absent"
-fi
+    --require-persistent-gpg
 
 # Generate persistent primary GPG key (passphrase-protected) AND rotation GPG key to verify key persistence + dual-key rotation
 gpg_setup_home="${work_dir}/gpg-setup"
@@ -287,15 +303,15 @@ rotation_only_keyring="${work_dir}/rotation-only.gpg"
 gpg --homedir "${gpg_setup_home}" --export "${primary_fpr}" > "${primary_only_keyring}"
 gpg --homedir "${gpg_setup_home}" --export "${rotation_fpr}" > "${rotation_only_keyring}"
 
-# Gate check: passphrase-protected key without MODERNIME_GPG_PASSPHRASE MUST fail
-if env -u MODERNIME_GPG_PASSPHRASE \
+# Gate check: passphrase-protected key without MODERNIME_GPG_PASSPHRASE MUST fail with normal non-zero exit code
+assert_normal_nonzero_failure \
+    "ci_build_release_repos.sh must fail when passphrase-protected key is missing MODERNIME_GPG_PASSPHRASE" \
+    timeout 10s env -u MODERNIME_GPG_PASSPHRASE \
     "${repo_root}/scripts/ci_build_release_repos.sh" \
     --assets-dir "${ci_assets_dir}" \
     --pages-dir "${work_dir}/pages-should-fail-passphrase" \
     --gpg-private-key-file "${primary_sec_file}" \
-    --require-persistent-gpg >/dev/null 2>&1; then
-    fail "ci_build_release_repos.sh must fail when passphrase-protected key is missing MODERNIME_GPG_PASSPHRASE"
-fi
+    --require-persistent-gpg
 
 # 3a. Inaugural release deployment check (empty gh-pages baseline: v0.1.9 only, no --previous-pages-dir)
 inaugural_pages_dir="${work_dir}/pages-inaugural"
@@ -762,12 +778,12 @@ version=0.1.8
 prefix=/usr/local
 EOF
 
-if MODERNIME_PKG_ROOT="${collision_root}" sh "${deb_ctrl_dir}/preinst" install >/dev/null 2>&1; then
-    fail "DEB preinst should reject unmanaged script installation in /usr/local"
-fi
-if MODERNIME_PKG_ROOT="${collision_root}" sh "${repo_root}/packaging/rpm/preinst.sh" 1 >/dev/null 2>&1; then
-    fail "RPM preinst should reject unmanaged script installation in /usr/local"
-fi
+assert_normal_nonzero_failure \
+    "DEB preinst should reject unmanaged script installation in /usr/local" \
+    env MODERNIME_PKG_ROOT="${collision_root}" sh "${deb_ctrl_dir}/preinst" install
+assert_normal_nonzero_failure \
+    "RPM preinst should reject unmanaged script installation in /usr/local" \
+    env MODERNIME_PKG_ROOT="${collision_root}" sh "${repo_root}/packaging/rpm/preinst.sh" 1
 
 # 7b. Post-package-install failure rollback in modernime-migrate-channel
 mig_root="${work_dir}/mig-rollback"
@@ -791,17 +807,17 @@ bad_pkg_cmd="mkdir -p '${mig_to}/bin' '${mig_to}/lib/fcitx5' '${mig_to}/share/mo
 rollback_marker="${mig_root}/pkg-rollback-executed"
 rollback_pkg_cmd="rm -rf '${mig_to}/bin/modernime-settings' '${mig_to}/lib/fcitx5/modernime_fcitx5.so' '${mig_to}/share/modernime' && touch '${rollback_marker}'"
 
-if MODERNIME_DATA_HOME="${sim_data}" \
-   MODERNIME_CONFIG_HOME="${sim_config}" \
-   MODERNIME_SKIP_FCITX_RESTART=1 \
-   "${repo_root}/scripts/modernime-migrate-channel" \
+assert_normal_nonzero_failure \
+    "modernime-migrate-channel should fail when post-install channel verification fails" \
+    env MODERNIME_DATA_HOME="${sim_data}" \
+    MODERNIME_CONFIG_HOME="${sim_config}" \
+    MODERNIME_SKIP_FCITX_RESTART=1 \
+    "${repo_root}/scripts/modernime-migrate-channel" \
     --from-prefix "${mig_from}" \
     --target-prefix "${mig_to}" \
     --to-channel deb \
     --package-cmd "${bad_pkg_cmd}" \
-    --package-rollback-cmd "${rollback_pkg_cmd}" >/dev/null 2>&1; then
-    fail "modernime-migrate-channel should fail when post-install channel verification fails"
-fi
+    --package-rollback-cmd "${rollback_pkg_cmd}"
 [ -f "${rollback_marker}" ] || fail "modernime-migrate-channel did not execute --package-rollback-cmd"
 [ ! -e "${mig_to}/lib/fcitx5/modernime_fcitx5.so" ] || fail "half-installed target package files were not cleaned up on rollback"
 [ -f "${mig_from}/lib/fcitx5/modernime_fcitx5.so" ] || fail "original script installation was not restored after rollback"
@@ -819,23 +835,23 @@ EOF
 fake_arm_deb="${work_dir}/modernime_${expected_version}_arm64.deb"
 dpkg-deb --build "${work_dir}/fake-arm64-deb" "${fake_arm_deb}" >/dev/null
 
-if "${repo_root}/scripts/build_apt_repo.sh" \
+assert_normal_nonzero_failure \
+    "build_apt_repo.sh should reject arm64 DEB when building amd64 repository" \
+    "${repo_root}/scripts/build_apt_repo.sh" \
     --output-dir "${work_dir}/apt-arch-fail" \
     --deb "${fake_arm_deb}" \
     --arch amd64 \
-    --ephemeral-gpg >/dev/null 2>&1; then
-    fail "build_apt_repo.sh should reject arm64 DEB when building amd64 repository"
-fi
+    --ephemeral-gpg
 
 # 7d. Non-monotonic version regression rejection in APT repo builder
-if "${repo_root}/scripts/build_apt_repo.sh" \
+assert_normal_nonzero_failure \
+    "build_apt_repo.sh should reject non-monotonic version when --prev-version >= candidate version" \
+    "${repo_root}/scripts/build_apt_repo.sh" \
     --output-dir "${work_dir}/apt-ver-fail" \
     --deb "${deb_file}" \
     --prev-version "${expected_version}" \
     --arch amd64 \
-    --ephemeral-gpg >/dev/null 2>&1; then
-    fail "build_apt_repo.sh should reject non-monotonic version when --prev-version >= candidate version"
-fi
+    --ephemeral-gpg
 
 # 7e. Missing runtime dependency rejection in install.sh
 empty_bin="${work_dir}/empty-bin"
@@ -848,19 +864,32 @@ ln -sf "$(command -v basename)" "${empty_bin}/basename"
 ln -sf "$(command -v mkdir)" "${empty_bin}/mkdir"
 ln -sf "$(command -v rm)" "${empty_bin}/rm"
 
-if PATH="${empty_bin}" MODERNIME_SKIP_FCITX_RESTART=1 \
-    bash "${repo_root}/install.sh" "${work_dir}/missing-dep-prefix" >/dev/null 2>&1; then
-    fail "install.sh should reject installation when fcitx5 runtime dependency is missing"
-fi
+assert_normal_nonzero_failure \
+    "install.sh should reject installation when fcitx5 runtime dependency is missing" \
+    env PATH="${empty_bin}" MODERNIME_SKIP_FCITX_RESTART=1 \
+    bash "${repo_root}/install.sh" "${work_dir}/missing-dep-prefix"
 
 # 7f. Isolated zero-cache GPG passphrase matrix (correct / missing / wrong passphrase) for rpmsign & fallback branches
 rpmsign_test_bin=""
-if command -v rpmsign >/dev/null 2>&1; then
+rpmsign_mode_label=""
+rpmsign_status_summary=""
+if [ -n "${MODERNIME_RPMSIGN_BIN:-}" ]; then
+    rpmsign_test_bin="${MODERNIME_RPMSIGN_BIN}"
+    rpmsign_mode_label="custom rpmsign (${rpmsign_test_bin})"
+    rpmsign_status_summary="custom rpmsign (${rpmsign_test_bin}): EXECUTED & PASSED"
+elif command -v rpmsign >/dev/null 2>&1; then
     rpmsign_test_bin="$(command -v rpmsign)"
+    rpmsign_mode_label="native rpmsign (${rpmsign_test_bin}): EXECUTED & PASSED"
+    rpmsign_status_summary="native rpmsign: EXECUTED & PASSED"
 else
+    if [ "${MODERNIME_REQUIRE_NATIVE_RPM_TOOLS:-0}" = "1" ]; then
+        fail "MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1 is set, but native rpmsign is not installed in PATH"
+    fi
     rpmsign_shim_dir="${work_dir}/rpmsign-shim"
     mkdir -p "${rpmsign_shim_dir}"
     rpmsign_test_bin="${rpmsign_shim_dir}/rpmsign"
+    rpmsign_mode_label="native rpmsign: NOT EXECUTED on this host; simulated rpmsign harness: EXECUTED & PASSED"
+    rpmsign_status_summary="native rpmsign: NOT EXECUTED on this host (simulated rpmsign harness + fallback verified; native rpmsign runs in openEuler CI)"
     cat > "${rpmsign_test_bin}" <<'PYEOF'
 #!/usr/bin/env python3
 import hashlib
@@ -980,7 +1009,7 @@ for branch_mode in "rpmsign" "fallback"; do
     if [ "${branch_mode}" = "rpmsign" ]; then
         branch_env=("MODERNIME_RPMSIGN_BIN=${rpmsign_test_bin}" "MODERNIME_DISABLE_RPMSIGN=0")
     else
-        branch_env=("MODERNIME_DISABLE_RPMSIGN=1")
+        branch_env=("MODERNIME_DISABLE_RPMSIGN=1" "MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=0")
     fi
 
     # (1) Correct passphrase in isolated zero-cache --gpg-home MUST succeed within 10s
@@ -995,20 +1024,22 @@ for branch_mode in "rpmsign" "fallback"; do
         --gpg-passphrase "${passphrase}" >/dev/null ||
         fail "build_rpm_repo.sh (${branch_mode} branch) failed with correct passphrase in isolated --gpg-home"
 
-    # (2) Missing passphrase in isolated zero-cache --gpg-home MUST fail fast (< 10s) without GUI or hang
-    if timeout 10s env -u MODERNIME_GPG_PASSPHRASE "${branch_env[@]}" \
+    # (2) Missing passphrase in isolated zero-cache --gpg-home MUST fail fast with normal non-zero exit code (1..123, NOT 124/137)
+    assert_normal_nonzero_failure \
+        "build_rpm_repo.sh (${branch_mode} branch) must fail normally when passphrase is missing in isolated zero-cache --gpg-home" \
+        timeout 10s env -u MODERNIME_GPG_PASSPHRASE "${branch_env[@]}" \
         "${repo_root}/scripts/build_rpm_repo.sh" \
         --output-dir "${work_dir}/rpm-pass-missing-${branch_mode}" \
         --rpm "${rpm_file}" \
         --distro oe2409 \
         --arch x86_64 \
         --gpg-home "${gpg_setup_home}" \
-        --gpg-key-id "${primary_fpr}" >/dev/null 2>&1; then
-        fail "build_rpm_repo.sh (${branch_mode} branch) must fail when passphrase is missing in isolated zero-cache --gpg-home"
-    fi
+        --gpg-key-id "${primary_fpr}"
 
-    # (3) Wrong passphrase in isolated zero-cache --gpg-home MUST fail fast (< 10s) without GUI or hang
-    if timeout 10s env "${branch_env[@]}" \
+    # (3) Wrong passphrase in isolated zero-cache --gpg-home MUST fail fast with normal non-zero exit code (1..123, NOT 124/137)
+    assert_normal_nonzero_failure \
+        "build_rpm_repo.sh (${branch_mode} branch) must fail normally when passphrase is wrong in isolated zero-cache --gpg-home" \
+        timeout 10s env "${branch_env[@]}" \
         "${repo_root}/scripts/build_rpm_repo.sh" \
         --output-dir "${work_dir}/rpm-pass-wrong-${branch_mode}" \
         --rpm "${rpm_file}" \
@@ -1016,13 +1047,13 @@ for branch_mode in "rpmsign" "fallback"; do
         --arch x86_64 \
         --gpg-home "${gpg_setup_home}" \
         --gpg-key-id "${primary_fpr}" \
-        --gpg-passphrase "WrongPassphrase2026!" >/dev/null 2>&1; then
-        fail "build_rpm_repo.sh (${branch_mode} branch) must fail when passphrase is wrong in isolated zero-cache --gpg-home"
-    fi
+        --gpg-passphrase "WrongPassphrase2026!"
 done
 
-# (4) Also verify --gpg-private-key-file with wrong passphrase fails fast (< 10s)
-if timeout 10s env MODERNIME_RPMSIGN_BIN="${rpmsign_test_bin}" \
+# (4) Also verify --gpg-private-key-file with wrong passphrase fails fast with normal non-zero exit code (1..123)
+assert_normal_nonzero_failure \
+    "build_rpm_repo.sh must fail normally when --gpg-private-key-file is given wrong passphrase" \
+    timeout 10s env MODERNIME_RPMSIGN_BIN="${rpmsign_test_bin}" \
     "${repo_root}/scripts/build_rpm_repo.sh" \
     --output-dir "${work_dir}/rpm-privkey-wrong-pass" \
     --rpm "${rpm_file}" \
@@ -1030,15 +1061,15 @@ if timeout 10s env MODERNIME_RPMSIGN_BIN="${rpmsign_test_bin}" \
     --arch x86_64 \
     --gpg-private-key-file "${primary_sec_file}" \
     --gpg-key-id "${primary_fpr}" \
-    --gpg-passphrase "WrongPassphrase2026!" >/dev/null 2>&1; then
-    fail "build_rpm_repo.sh must fail when --gpg-private-key-file is given wrong passphrase"
-fi
+    --gpg-passphrase "WrongPassphrase2026!"
 
 # (5) Verify rpmsign failure does NOT silently fall back to Python signing
 failing_rpmsign="${work_dir}/failing-rpmsign"
 printf '#!/bin/sh\necho "simulated rpmsign error" >&2\nexit 2\n' > "${failing_rpmsign}"
 chmod +x "${failing_rpmsign}"
-if timeout 10s env MODERNIME_RPMSIGN_BIN="${failing_rpmsign}" \
+assert_normal_nonzero_failure \
+    "build_rpm_repo.sh must fail immediately when rpmsign exits non-zero (must not silently fall back)" \
+    timeout 10s env MODERNIME_RPMSIGN_BIN="${failing_rpmsign}" \
     "${repo_root}/scripts/build_rpm_repo.sh" \
     --output-dir "${work_dir}/rpm-rpmsign-no-fallback" \
     --rpm "${rpm_file}" \
@@ -1046,9 +1077,61 @@ if timeout 10s env MODERNIME_RPMSIGN_BIN="${failing_rpmsign}" \
     --arch x86_64 \
     --gpg-home "${gpg_setup_home}" \
     --gpg-key-id "${primary_fpr}" \
-    --gpg-passphrase "${passphrase}" >/dev/null 2>&1; then
-    fail "build_rpm_repo.sh must fail immediately when rpmsign exits non-zero (must not silently fall back)"
-fi
-printf '==> [Gate 7f] Isolated zero-cache GPG passphrase matrix (correct/missing/wrong) for rpmsign & fallback: VERIFIED\n'
+    --gpg-passphrase "${passphrase}"
 
-printf 'PASS: All 7 package, signed repository, real APT client, and rollback gate checks succeeded (%s).\n' "${rpmkeys_status_summary}"
+# (6) Deliberately hanging mock rpmsign: verify build_rpm_repo.sh kills the hanging process group on timeout (exit 124)
+# AND verify that the gate's assert_normal_nonzero_failure REJECTS exit codes 124 (timeout) and 137 (SIGKILL).
+hanging_rpmsign="${work_dir}/hanging-rpmsign"
+printf '#!/bin/sh\nsleep 30\n' > "${hanging_rpmsign}"
+chmod +x "${hanging_rpmsign}"
+
+hang_rc=0
+timeout 5s env MODERNIME_RPMSIGN_BIN="${hanging_rpmsign}" MODERNIME_RPMSIGN_TIMEOUT_SEC=1 \
+    "${repo_root}/scripts/build_rpm_repo.sh" \
+    --output-dir "${work_dir}/rpm-rpmsign-hang" \
+    --rpm "${rpm_file}" \
+    --distro oe2409 \
+    --arch x86_64 \
+    --gpg-home "${gpg_setup_home}" \
+    --gpg-key-id "${primary_fpr}" \
+    --gpg-passphrase "${passphrase}" >/dev/null 2>&1 || hang_rc=$?
+[ "${hang_rc}" -eq 124 ] || fail "Expected hanging rpmsign to be terminated with timeout exit code 124, got ${hang_rc}"
+
+if (
+    assert_normal_nonzero_failure \
+        "hanging rpmsign timeout must be rejected by expected-failure check" \
+        timeout 5s env MODERNIME_RPMSIGN_BIN="${hanging_rpmsign}" MODERNIME_RPMSIGN_TIMEOUT_SEC=1 \
+        "${repo_root}/scripts/build_rpm_repo.sh" \
+        --output-dir "${work_dir}/rpm-rpmsign-hang-gate-check" \
+        --rpm "${rpm_file}" \
+        --distro oe2409 \
+        --arch x86_64 \
+        --gpg-home "${gpg_setup_home}" \
+        --gpg-key-id "${primary_fpr}" \
+        --gpg-passphrase "${passphrase}"
+) >/dev/null 2>&1; then
+    fail "assert_normal_nonzero_failure falsely accepted timeout exit code 124 as a normal expected failure"
+fi
+
+sigkill_rpmsign="${work_dir}/sigkill-rpmsign"
+printf '#!/bin/sh\nkill -9 $$\n' > "${sigkill_rpmsign}"
+chmod +x "${sigkill_rpmsign}"
+if (
+    assert_normal_nonzero_failure \
+        "SIGKILL rpmsign (137) must be rejected by expected-failure check" \
+        timeout 5s env MODERNIME_RPMSIGN_BIN="${sigkill_rpmsign}" \
+        "${repo_root}/scripts/build_rpm_repo.sh" \
+        --output-dir "${work_dir}/rpm-rpmsign-sigkill-gate-check" \
+        --rpm "${rpm_file}" \
+        --distro oe2409 \
+        --arch x86_64 \
+        --gpg-home "${gpg_setup_home}" \
+        --gpg-key-id "${primary_fpr}" \
+        --gpg-passphrase "${passphrase}"
+) >/dev/null 2>&1; then
+    fail "assert_normal_nonzero_failure falsely accepted SIGKILL (137) as a normal expected failure"
+fi
+
+printf '==> [Gate 7f] Isolated zero-cache GPG passphrase matrix (correct/missing/wrong) & timeout/signal (124/137) rejection: VERIFIED [%s; fallback branch: EXECUTED & PASSED]\n' "${rpmsign_mode_label}"
+
+printf 'PASS: All 7 package, signed repository, real APT client, and rollback gate checks succeeded (%s; %s).\n' "${rpmkeys_status_summary}" "${rpmsign_status_summary}"
