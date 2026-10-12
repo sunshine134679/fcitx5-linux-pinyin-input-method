@@ -22,15 +22,19 @@ sudo apt-get install -f
 
 > [!NOTE]
 > **openEuler 版本兼容矩阵与 EPOL 源说明**：
-> - **openEuler ≥ 24.09**：官方 EPOL 扩展源原生提供 `fcitx5`（5.1.10+）与 `libime`（1.1.8+）。
-> - **openEuler 24.03 LTS-SP4**：官方默认仓库未打包 fcitx5。24.03 用户可通过挂载 24.09 EPOL 扩展源并**使用 `includepkgs` 进行安全隔离**（仅拉取输入法组件，避免跨版本基础库冲突）：
+> - **openEuler ≥ 24.09**：官方 EPOL 扩展源原生提供 `fcitx5`（5.1.10+）与 `libime`（1.1.8+）。启用系统自带 EPOL 源即可：
+>   ```bash
+>   sudo dnf config-manager --set-enabled EPOL || true
+>   ```
+> - **openEuler 24.03 LTS-SP4**：官方默认仓库未包含 fcitx5。24.03 用户可通过配置 24.09 EPOL 扩展源并**使用 `includepkgs` 进行精确限定**（仅拉取输入法组件，保留 GPG 校验）：
 >   ```bash
 >   sudo tee /etc/yum.repos.d/openEuler-24.09-epol.repo << 'EOF'
 >   [openEuler-24.09-epol]
 >   name=openEuler 24.09 EPOL for Fcitx5
->   baseurl=https://mirrors.huaweicloud.com/openeuler/openEuler-24.09/EPOL/main/$basearch/
+>   baseurl=https://repo.openeuler.org/openEuler-24.09/EPOL/main/$basearch/
 >   enabled=1
->   gpgcheck=0
+>   gpgcheck=1
+>   gpgkey=https://repo.openeuler.org/openEuler-24.09/OS/$basearch/RPM-GPG-KEY-openEuler
 >   priority=99
 >   includepkgs=fcitx5*,libime*,xcb-imdkit*
 >   EOF
@@ -40,10 +44,8 @@ sudo apt-get install -f
 ```bash
 # 确保已启用 EPOL 扩展源并安装基础环境与托盘依赖：
 sudo dnf install -y fcitx5 libime gtk3 libappindicator-gtk3
-# 使用 dnf 本地安装（自动解析依赖）：
-sudo dnf localinstall -y modernime-*.x86_64.rpm
-# 或使用 rpm 直接安装：
-sudo rpm -ivh modernime-*.x86_64.rpm
+# 使用 dnf 安装本地 RPM（自动从已配置仓库解析并补齐依赖）：
+sudo dnf install -y ./modernime-*.x86_64.rpm
 ```
 
 #### 3. 通用 Linux 便携归档（`.tar.gz` 免编译包）
@@ -82,7 +84,7 @@ sudo apt install \
 #### openEuler / RHEL / Fedora 构建依赖准备
 ```bash
 # 1. 确保已启用 EPOL 扩展源（openEuler 24.03 SP4 用户请先配置上方包含 includepkgs 的 24.09 EPOL 隔离源）：
-sudo sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
+sudo dnf config-manager --set-enabled EPOL || true
 
 # 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
 sudo dnf install -y \
