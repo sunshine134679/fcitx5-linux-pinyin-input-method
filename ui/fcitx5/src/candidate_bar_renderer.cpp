@@ -82,6 +82,9 @@ RenderStyle RenderStyle::reference() {
     style.preeditText = {"Noto Sans CJK SC", 20.0, 400};
     style.candidateNumberText = {"Noto Sans CJK SC", 16.0, 400};
     style.candidateText = {"Noto Sans CJK SC", 19.0, 400};
+    style.annotationText = {"Noto Sans CJK SC", 14.0, 400};
+    style.annotation = {0.42, 0.47, 0.55, 1.0};
+    style.selectedAnnotation = {0.90, 0.94, 1.0, 0.90};
     style.clipboardText = {"Noto Sans CJK SC", 20.0, 400};
     style.clipboardSubmitIconText = {"Noto Sans CJK SC", 18.0, 400};
     style.clipboardSeparator = {0.86, 0.88, 0.91, 1.0};
@@ -131,19 +134,38 @@ void CandidateBarRenderer::render(RenderSurface &surface,
             surface.textMetrics(indexText, style.candidateNumberText);
         const auto valueMetrics =
             surface.textMetrics(valueText, style.candidateText);
-        const auto textWidth = indexMetrics.width + valueMetrics.width;
+        const auto annotationMetrics =
+            candidate.annotation.empty()
+                ? TextMetrics{}
+                : surface.textMetrics(candidate.annotation, style.annotationText);
+        const auto textWidth = indexMetrics.width + valueMetrics.width +
+                               (candidate.annotation.empty() ? 0.0 : annotationMetrics.width);
         const auto textX = textWidth <= textBounds.width
                                ? textBounds.x +
                                      (textBounds.width - textWidth) / 2.0
                                : textBounds.x;
-        const auto textHeight = std::max(indexMetrics.height, valueMetrics.height);
-        const auto baseline = textBounds.y +
-                              (textBounds.height - textHeight) / 2.0 +
-                              std::max(indexMetrics.baseline, valueMetrics.baseline);
+        const auto textHeight =
+            candidate.annotation.empty()
+                ? std::max(indexMetrics.height, valueMetrics.height)
+                : std::max({indexMetrics.height, valueMetrics.height,
+                            annotationMetrics.height});
+        const auto baseline =
+            textBounds.y + (textBounds.height - textHeight) / 2.0 +
+            (candidate.annotation.empty()
+                 ? std::max(indexMetrics.baseline, valueMetrics.baseline)
+                 : std::max({indexMetrics.baseline, valueMetrics.baseline,
+                             annotationMetrics.baseline}));
         const auto color = candidate.selected ? style.selectedText : style.text;
+        const auto annotationColor =
+            candidate.selected ? style.selectedAnnotation : style.annotation;
         surface.text(indexText, textX, baseline, style.candidateNumberText, color);
         surface.text(valueText, textX + indexMetrics.width, baseline,
                      style.candidateText, color);
+        if (!candidate.annotation.empty()) {
+            surface.text(candidate.annotation,
+                         textX + indexMetrics.width + valueMetrics.width,
+                         baseline, style.annotationText, annotationColor);
+        }
     }
 }
 

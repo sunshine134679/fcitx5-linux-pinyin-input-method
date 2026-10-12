@@ -126,5 +126,26 @@ int main() {
                          clipboardSurface.operations.end(), "text:1.") ==
                    clipboardSurface.operations.end(),
                "clipboard rendering does not draw candidate number prefixes");
+
+    modernime::core::CandidatePage annotatedPage;
+    annotatedPage.items = {{"dee", "dee", 0, modernime::core::CandidateSource::Raw, 3, "马具；电极"},
+                           {"的", "de", 1, modernime::core::CandidateSource::Engine, 2, ""}};
+    annotatedPage.cursor = 0;
+    const auto annotatedLayout = modernime::ui::CandidateBarLayout::measure(
+        annotatedPage, modernime::ui::CandidateBarMetrics::reference());
+    RecordingSurface annotatedSurface;
+    modernime::ui::CandidateBarRenderer::render(annotatedSurface, annotatedLayout, style);
+    assertTrue(std::find(annotatedSurface.operations.begin(),
+                         annotatedSurface.operations.end(), "text:1.") !=
+                   annotatedSurface.operations.end(),
+               "annotated candidate renders number");
+    assertTrue(std::find(annotatedSurface.operations.begin(),
+                         annotatedSurface.operations.end(), "text:dee") !=
+                   annotatedSurface.operations.end(),
+               "annotated candidate renders main word");
+    assertTrue(std::find(annotatedSurface.operations.begin(),
+                         annotatedSurface.operations.end(), "text: (马具；电极)") !=
+                   annotatedSurface.operations.end(),
+               "annotated candidate renders annotation as secondary text");
     return EXIT_SUCCESS;
 }

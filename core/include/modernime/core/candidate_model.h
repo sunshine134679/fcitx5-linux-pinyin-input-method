@@ -30,6 +30,7 @@ struct CandidateItem final {
     // Number of bytes consumed from CandidatePage::rawInput. Zero keeps the
     // legacy meaning of consuming the complete composition.
     std::size_t consumedInputBytes = 0;
+    std::string annotation = {};
 };
 
 struct CandidatePage final {

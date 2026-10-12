@@ -383,54 +383,53 @@ void testEnglishDefinitionQualityScenarios(
 
     modernime::pinyin::PinyinCandidateProvider provider(paths, options);
 
-    // 1. 纯英文置顶词 (apple) -> 第 2 位插入中文释义
+    // 1. 纯英文置顶词 (apple) -> 首选携带中文释义 annotation，无独立释义条目
     assertTrue(provider.append("apple"), "apple is accepted");
-    assertTrue(provider.page().items.size() >= 2, "apple has at least 2 candidates");
+    assertTrue(!provider.page().items.empty(), "apple has at least 1 candidate");
     assertTrue(provider.page().items[0].text == "apple", "apple is top candidate");
-    assertTrue(provider.page().items[1].source ==
-                   modernime::core::CandidateSource::EnglishDefinition,
-               "second candidate is EnglishDefinition");
-    assertTrue(provider.page().items[1].text == "苹果；家伙",
+    assertTrue(provider.page().items[0].annotation == "苹果；家伙",
                "apple translation is 苹果；家伙");
+    for (const auto &item : provider.page().items) {
+        assertTrue(item.source != modernime::core::CandidateSource::EnglishDefinition,
+                   "no independent EnglishDefinition item for apple");
+    }
 
-    // 2. 前缀补全置顶词 (gara -> garage) -> 第 2 位插入 garage 释义，第 3 位为 gara
+    // 2. 前缀补全置顶词 (gara -> garage) -> garage 携带释义 annotation，第 2 位保留 gara
     provider.reset();
     assertTrue(provider.append("gara"), "gara is accepted");
-    assertTrue(provider.page().items.size() >= 3, "gara has at least 3 candidates");
+    assertTrue(provider.page().items.size() >= 2, "gara has at least 2 candidates");
     assertTrue(provider.page().items[0].text == "garage", "garage is top candidate for gara");
-    assertTrue(provider.page().items[1].source ==
-                   modernime::core::CandidateSource::EnglishDefinition,
-               "second candidate is EnglishDefinition for garage");
-    assertTrue(provider.page().items[1].text == "车库；汽车修理厂",
+    assertTrue(provider.page().items[0].annotation == "车库；汽车修理厂",
                "garage translation is 车库；汽车修理厂");
-    assertTrue(provider.page().items[2].text == "gara",
-               "raw gara is shifted to position 3");
+    assertTrue(provider.page().items[1].text == "gara",
+               "raw gara is at position 1 without being shifted by definition item");
 
-    // 3. 中文排第 1 (like -> 立刻) -> 绝对不插入释义
+    // 3. 中文排第 1 (like -> 立刻) -> 绝对不附加释义
     provider.reset();
     assertTrue(provider.append("like"), "like is accepted");
     assertTrue(!provider.page().items.empty(), "like has candidates");
     assertTrue(provider.page().items.front().text == "立刻", "立刻 is top candidate for like");
-    for (const auto &item : provider.page().items) {
-        assertTrue(item.source != modernime::core::CandidateSource::EnglishDefinition,
-                   "no definition inserted when Chinese is top candidate for like");
-    }
+    assertTrue(provider.page().items.front().annotation.empty(),
+               "no definition annotation when Chinese is top candidate for like");
 
-    // 4. 单音节拼音英文沉底 (de -> 的) -> 绝对不插入释义
+    // 4. 单音节拼音英文沉底 (de -> 的) -> 绝对不附加释义
     provider.reset();
     assertTrue(provider.append("de"), "de is accepted");
     assertTrue(!provider.page().items.empty(), "de has candidates");
     assertTrue(provider.page().items.front().text == "的", "的 is top candidate for de");
-    for (const auto &item : provider.page().items) {
-        assertTrue(item.source != modernime::core::CandidateSource::EnglishDefinition,
-                   "no definition inserted when single-syllable Chinese is top candidate for de");
-    }
+    assertTrue(provider.page().items.front().annotation.empty(),
+               "no definition annotation when single-syllable Chinese is top candidate for de");
 
-    // 5. 选词行为：选中第 2 位释义候选，立即上屏并清空
+    // 5. 选词行为：选中第 1 位英文候选或第 2 位 gara，立即上屏并清空
     provider.reset();
     assertTrue(provider.append("apple"), "apple re-entered");
-    assertTrue(provider.select(1), "selecting definition candidate succeeds");
-    assertTrue(provider.page().items.empty(), "composition cleared after selecting definition");
+    assertTrue(provider.select(0), "selecting apple candidate succeeds");
+    assertTrue(provider.page().items.empty(), "composition cleared after selecting apple");
+
+    provider.reset();
+    assertTrue(provider.append("gara"), "gara re-entered");
+    assertTrue(provider.select(1), "selecting gara candidate succeeds");
+    assertTrue(provider.page().items.empty(), "composition cleared after selecting gara");
 }
 
 } // namespace

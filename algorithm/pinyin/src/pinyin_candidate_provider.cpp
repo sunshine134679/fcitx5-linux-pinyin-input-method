@@ -2173,7 +2173,7 @@ private:
         }
 
         if (englishDefinitionEnabled_ && !page_.items.empty() && shared_) {
-            const auto &top = page_.items.front();
+            auto &top = page_.items.front();
             if (top.source == core::CandidateSource::Raw &&
                 core::EnglishDictionary::isEnglishWord(top.text)) {
                 auto *dict = shared_->ensureEnglishDefinitionDictionary();
@@ -2182,13 +2182,7 @@ private:
                     if (!rawDef.empty()) {
                         auto cleaned = core::EnglishDefinitionDictionary::cleanDefinition(rawDef, 12);
                         if (!cleaned.empty()) {
-                            core::CandidateItem defCandidate;
-                            defCandidate.text = std::move(cleaned);
-                            defCandidate.fullPinyin = top.fullPinyin.empty() ? top.text : top.fullPinyin;
-                            defCandidate.source = core::CandidateSource::EnglishDefinition;
-                            defCandidate.sourceIndex = std::numeric_limits<std::size_t>::max();
-                            defCandidate.consumedInputBytes = top.consumedInputBytes;
-                            page_.items.insert(std::next(page_.items.begin()), std::move(defCandidate));
+                            top.annotation = std::move(cleaned);
                         }
                     }
                 }

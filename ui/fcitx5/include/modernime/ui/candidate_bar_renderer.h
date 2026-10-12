@@ -43,6 +43,9 @@ struct RenderStyle final {
     TextStyle preeditText;
     TextStyle candidateNumberText;
     TextStyle candidateText;
+    TextStyle annotationText;
+    Color annotation;
+    Color selectedAnnotation;
     TextStyle clipboardText;
     TextStyle clipboardSubmitIconText;
     Color clipboardSeparator;

@@ -276,10 +276,15 @@ CandidateBarLayout CandidateBarLayout::measure(
         const auto number = index + 1;
         auto displayText =
             std::to_string(number) + "." + page.items[index].text;
+        std::string candidateAnnotation;
+        if (!page.items[index].annotation.empty()) {
+            candidateAnnotation = " (" + page.items[index].annotation + ")";
+        }
+        const std::string measuredText = displayText + candidateAnnotation;
         double slotWidth = metrics.candidateWidth;
         double selectedWidth = metrics.selectedWidth;
         if (textWidth) {
-            const auto measuredWidth = std::max(0.0, textWidth(displayText));
+            const auto measuredWidth = std::max(0.0, textWidth(measuredText));
             slotWidth = std::max(
                 slotWidth, measuredWidth + 2.0 * metrics.candidateTextPadding);
             selectedWidth = std::max(
@@ -294,28 +299,42 @@ CandidateBarLayout CandidateBarLayout::measure(
             }
             const auto textPadding = std::max(metrics.candidateTextPadding,
                                               metrics.selectedTextPadding);
-            displayText = ellipsize(displayText,
-                                    rightEdge - x - 2.0 * textPadding,
-                                    textWidth);
-            const auto measuredWidth =
-                std::max(0.0, textWidth(displayText));
-            slotWidth = std::min(
-                rightEdge - x,
-                std::max(metrics.candidateWidth,
-                         measuredWidth +
-                             2.0 * metrics.candidateTextPadding));
-            selectedWidth = std::min(
-                rightEdge - x,
-                std::max(metrics.selectedWidth,
-                         measuredWidth +
-                             2.0 * metrics.selectedTextPadding));
-            occupiedWidth =
-                selected ? std::max(slotWidth, selectedWidth) : slotWidth;
+            if (!candidateAnnotation.empty()) {
+                candidateAnnotation.clear();
+                const auto measuredWidth = std::max(0.0, textWidth(displayText));
+                slotWidth = std::max(
+                    metrics.candidateWidth,
+                    measuredWidth + 2.0 * metrics.candidateTextPadding);
+                selectedWidth = std::max(
+                    metrics.selectedWidth,
+                    measuredWidth + 2.0 * metrics.selectedTextPadding);
+                occupiedWidth =
+                    selected ? std::max(slotWidth, selectedWidth) : slotWidth;
+            }
+            if (x + occupiedWidth > rightEdge) {
+                displayText = ellipsize(displayText,
+                                        rightEdge - x - 2.0 * textPadding,
+                                        textWidth);
+                const auto measuredWidth =
+                    std::max(0.0, textWidth(displayText));
+                slotWidth = std::min(
+                    rightEdge - x,
+                    std::max(metrics.candidateWidth,
+                             measuredWidth +
+                                 2.0 * metrics.candidateTextPadding));
+                selectedWidth = std::min(
+                    rightEdge - x,
+                    std::max(metrics.selectedWidth,
+                             measuredWidth +
+                                 2.0 * metrics.selectedTextPadding));
+                occupiedWidth =
+                    selected ? std::max(slotWidth, selectedWidth) : slotWidth;
+            }
         }
         const auto y = metrics.panelY +
                        (metrics.panelHeight - metrics.candidateHeight) / 2.0;
         layout.candidates.push_back(
-            {{x, y, slotWidth, metrics.candidateHeight}, displayText, selected});
+            {{x, y, slotWidth, metrics.candidateHeight}, displayText, candidateAnnotation, selected});
         if (selected) {
             layout.selectedPill = {x, y, selectedWidth, metrics.selectedHeight};
         }

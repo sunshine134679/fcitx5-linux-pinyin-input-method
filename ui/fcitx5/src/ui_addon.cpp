@@ -362,8 +362,14 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
                                : variableCandidates->pageBegin();
     for (int index = 0; index < candidates->size(); ++index) {
         const auto &candidate = candidates->candidate(index);
-        page.items.push_back({candidate.text().toString(), {},
-                              pageBegin + static_cast<std::size_t>(index)});
+        core::CandidateItem item;
+        item.text = candidate.text().toString();
+        if (const auto *word =
+                dynamic_cast<const fcitx5::FcitxCandidateWord *>(&candidate)) {
+            item.annotation = word->annotation();
+        }
+        item.sourceIndex = pageBegin + static_cast<std::size_t>(index);
+        page.items.push_back(std::move(item));
     }
     return page;
 }
@@ -502,9 +508,15 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
                 const auto total = bulk == nullptr ? 0 : bulk->totalSize();
                 allItems.reserve(static_cast<std::size_t>(std::max(0, total)));
                 for (int index = 0; index < total; ++index) {
-                    allItems.push_back(
-                        {bulk->candidateFromAll(index).text().toString(), {},
-                         static_cast<std::size_t>(index)});
+                    const auto &cand = bulk->candidateFromAll(index);
+                    core::CandidateItem item;
+                    item.text = cand.text().toString();
+                    if (const auto *word =
+                            dynamic_cast<const fcitx5::FcitxCandidateWord *>(&cand)) {
+                        item.annotation = word->annotation();
+                    }
+                    item.sourceIndex = static_cast<std::size_t>(index);
+                    allItems.push_back(std::move(item));
                 }
                 variableCandidates->setPageBoundaries(
                     CandidatePagination::partition(allItems, impl_->metrics,

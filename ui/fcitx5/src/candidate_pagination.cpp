@@ -30,8 +30,11 @@ std::vector<core::PageBoundary> CandidatePagination::partition(
         while (end < items.size() &&
                end - begin < maxNumbered) {
             const auto localIndex = end - begin;
-            const auto displayText = std::to_string(localIndex + 1) + "." +
+            auto displayText = std::to_string(localIndex + 1) + "." +
                                      items[end].text;
+            if (!items[end].annotation.empty()) {
+                displayText += " (" + items[end].annotation + ")";
+            }
             const auto measuredWidth =
                 textWidth ? std::max(0.0, textWidth(displayText)) : 0.0;
             const auto itemWidth = std::max(

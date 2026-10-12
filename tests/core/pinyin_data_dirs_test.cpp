@@ -42,7 +42,7 @@ void expectCandidate(modernime::pinyin::PinyinCandidateProvider &provider,
     provider.reset();
     require(provider.append(input), "input is accepted");
     for (const auto &candidate : provider.page().items) {
-        if (candidate.text == expected) {
+        if (candidate.text == expected || candidate.annotation == expected) {
             return;
         }
     }

@@ -266,5 +266,21 @@ int main() {
     assertTrue(modernime::ui::hitTestCandidate(emptyLayout, metrics, 50.0, 50.0) == -1,
                "empty layout returns -1");
 
+    modernime::core::CandidatePage annotationPage;
+    annotationPage.items.push_back({"dee", "dee", 0, modernime::core::CandidateSource::Raw, 3, "马具；电极"});
+    annotationPage.items.push_back({"的", "de", 1, modernime::core::CandidateSource::Engine, 2, ""});
+    const auto annotationLayout = modernime::ui::CandidateBarLayout::measure(
+        annotationPage, metrics,
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 10);
+        });
+    assertTrue(annotationLayout.candidates.size() == 2, "annotation layout has 2 candidates");
+    assertTrue(annotationLayout.candidates[0].displayText == "1.dee", "candidate 0 displayText is 1.dee");
+    assertTrue(annotationLayout.candidates[0].annotation == " (马具；电极)", "candidate 0 annotation is formatted");
+    assertTrue(annotationLayout.candidates[1].displayText == "2.的", "candidate 1 displayText is 2.的");
+    assertTrue(annotationLayout.candidates[1].annotation.empty(), "candidate 1 annotation is empty");
+    assertTrue(annotationLayout.candidates[0].bounds.width > annotationLayout.candidates[1].bounds.width,
+               "candidate 0 with annotation is wider than candidate 1 without annotation");
+
     return EXIT_SUCCESS;
 }

@@ -54,18 +54,22 @@ bool clipboardTriggerFire(std::string_view preedit, const fcitx::Key &key,
 class FcitxCandidateWord final : public fcitx::CandidateWord {
 public:
     FcitxCandidateWord(std::string text, ModernIMEController *controller,
-                       std::size_t index)
+                       std::size_t index, std::string annotation = {})
         : CandidateWord(fcitx::Text(std::move(text))), controller_(controller),
-          index_(index) {}
+          index_(index), annotation_(std::move(annotation)) {}
 
     void select(fcitx::InputContext *) const override {
         if (controller_ != nullptr) {
             controller_->select(index_);
         }
     }
+
+    const std::string &annotation() const noexcept { return annotation_; }
+
 private:
     ModernIMEController *controller_;
     std::size_t index_;
+    std::string annotation_;
 };
 
 // CommonCandidateList stores every candidate, while this subclass exposes the

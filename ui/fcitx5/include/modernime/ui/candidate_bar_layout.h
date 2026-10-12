@@ -68,9 +68,19 @@ std::function<double(std::string_view)> candidateTextWidthForMode(
     std::function<double(std::string_view)> clipboardTextWidth);
 
 struct CandidateGeometry final {
-    Rect bounds;
+    Rect bounds{};
     std::string displayText;
+    std::string annotation;
     bool selected = false;
+
+    CandidateGeometry() = default;
+    CandidateGeometry(Rect boundsVal, std::string displayVal,
+                      std::string annotationVal = {}, bool selectedVal = false)
+        : bounds(boundsVal), displayText(std::move(displayVal)),
+          annotation(std::move(annotationVal)), selected(selectedVal) {}
+    CandidateGeometry(Rect boundsVal, std::string displayVal, bool selectedVal)
+        : bounds(boundsVal), displayText(std::move(displayVal)),
+          selected(selectedVal) {}
 };
 
 struct CandidateBarLayout final {

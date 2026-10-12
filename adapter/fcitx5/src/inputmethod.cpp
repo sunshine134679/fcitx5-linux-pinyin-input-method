@@ -241,7 +241,8 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     candidates->setCursorIncludeUnselected(true);
     for (std::size_t index = 0; index < page.items.size(); ++index) {
         candidates->append<FcitxCandidateWord>(page.items[index].text,
-                                               controller_, index);
+                                               controller_, index,
+                                               page.items[index].annotation);
     }
     // Fcitx5's size() is page-local, so clamp against the full published list
     // before selecting the requested page.
