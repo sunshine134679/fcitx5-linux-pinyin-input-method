@@ -218,8 +218,15 @@ repo_subdir="$output_dir/$distro_id/$target_arch"
 mkdir -p "$repo_subdir/Packages" "$repo_subdir/repodata" "$output_dir/client"
 export MODERNIME_GPG_PASSPHRASE="$gpg_passphrase"
 
+keyring_gpg_path=""
+if [[ -n "$gpg_key_id" ]]; then
+    gpg --batch --yes --armor --export > "$output_dir/RPM-GPG-KEY-modernime"
+    gpg --batch --yes --export > "$output_dir/RPM-GPG-KEY-modernime.gpg"
+    keyring_gpg_path="$output_dir/RPM-GPG-KEY-modernime.gpg"
+fi
+
 # Inspect, validate, sign (gpgcheck=1), and generate repodata for all RPM files
-python3 - "$repo_subdir" "$target_arch" "$distro_id" "$gpg_key_id" "${rpm_files[@]}" <<'PYEOF'
+python3 - "$repo_subdir" "$target_arch" "$distro_id" "$gpg_key_id" "$keyring_gpg_path" "${rpm_files[@]}" <<'PYEOF'
 import gzip
 import hashlib
 import os
@@ -228,6 +235,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import xml.sax.saxutils as saxutils
 
@@ -235,7 +243,8 @@ repo_subdir = Path(sys.argv[1]).resolve()
 target_arch = sys.argv[2]
 distro_id = sys.argv[3]
 gpg_key_id = sys.argv[4]
-rpm_inputs = [Path(p) for p in sys.argv[5:]]
+keyring_gpg_path = Path(sys.argv[5]).resolve() if sys.argv[5] else None
+rpm_inputs = [Path(p) for p in sys.argv[6:]]
 
 RPM_LEAD_MAGIC = b"\xed\xab\xee\xdb"
 RPM_HDR_MAGIC = b"\x8e\xad\xe8\x01"
@@ -524,9 +533,33 @@ for rpm_in in rpm_inputs:
     base_name = f'{pre_meta["name"]}-{pre_meta["version"]}-{pre_meta["release"]}.{pre_meta["arch"]}.rpm'
     dest_rpm = repo_subdir / "Packages" / base_name
     shutil.copy2(rpm_in, dest_rpm)
-    # Sign the RPM package itself so DNF gpgcheck=1 succeeds (preserve valid signature if already signed)
+    # Sign the RPM package itself so DNF gpgcheck=1 succeeds (preserve signature only if valid against repo keyring)
     if gpg_key_id:
-        if not pre_meta["has_gpg_sig"]:
+        sig_valid = False
+        if pre_meta["has_gpg_sig"] and keyring_gpg_path and keyring_gpg_path.is_file():
+            raw_chk = dest_rpm.read_bytes()
+            sig_t, sig_end_off = parse_rpm_header_block(raw_chk, 96)
+            hdr_off = (sig_end_off + 7) & ~7
+            if raw_chk[hdr_off : hdr_off + 4] != RPM_HDR_MAGIC:
+                hdr_off = raw_chk.find(RPM_HDR_MAGIC, sig_end_off)
+            _, pay_off = parse_rpm_header_block(raw_chk, hdr_off)
+            if RPMSIGTAG_RSA in sig_t and RPMSIGTAG_PGP in sig_t:
+                with tempfile.TemporaryDirectory() as td:
+                    td_p = Path(td)
+                    (td_p / "hdr.bin").write_bytes(raw_chk[hdr_off:pay_off])
+                    (td_p / "hdr.sig").write_bytes(sig_t[RPMSIGTAG_RSA])
+                    (td_p / "hp.bin").write_bytes(raw_chk[hdr_off:])
+                    (td_p / "hp.sig").write_bytes(sig_t[RPMSIGTAG_PGP])
+                    r1 = subprocess.run(
+                        ["gpgv", "--keyring", str(keyring_gpg_path), str(td_p / "hdr.sig"), str(td_p / "hdr.bin")],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                    r2 = subprocess.run(
+                        ["gpgv", "--keyring", str(keyring_gpg_path), str(td_p / "hp.sig"), str(td_p / "hp.bin")],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                    sig_valid = (r1.returncode == 0 and r2.returncode == 0)
+        if not sig_valid:
             sign_rpm_file(dest_rpm, gpg_key_id)
     meta = inspect_rpm(dest_rpm)
     if gpg_key_id and not meta["has_gpg_sig"]:

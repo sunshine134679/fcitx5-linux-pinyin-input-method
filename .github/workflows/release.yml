@@ -101,10 +101,12 @@ jobs:
           set -euo pipefail
           VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
           TARGET_RPM="dist/modernime-${VERSION}-1.oe24.x86_64.rpm"
+          SANDBOX_RPM="/tmp/modernime-${VERSION}-1.oe24.x86_64.rpm"
+          cp -f "$TARGET_RPM" "$SANDBOX_RPM"
 
           ./scripts/build_rpm_repo.sh \
             --output-dir /tmp/oe-repo \
-            --rpm "$TARGET_RPM" \
+            --rpm "$SANDBOX_RPM" \
             --ephemeral-gpg \
             --repo-url "file:///tmp/oe-repo"
 
@@ -121,7 +123,7 @@ jobs:
           test -f /usr/share/modernime/install-channel.txt
           grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
           dnf remove -y modernime
-          rm -f /etc/yum.repos.d/local-modernime.repo
+          rm -f /etc/yum.repos.d/local-modernime.repo "$SANDBOX_RPM"
           rm -rf /tmp/oe-repo
 
       - name: Upload RPM Artifact
@@ -301,6 +303,79 @@ jobs:
             VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
             echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Verify Production-Signed Release RPM & Pages Byte Identity
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
+          release_rpm="release-assets/modernime-${VERSION}-1.oe24.x86_64.rpm"
+          pages_rpm=$(find pages-site/rpm/oe2409/x86_64/Packages -maxdepth 1 -type f -name "modernime-${VERSION}-*.x86_64.rpm" | head -n 1)
+          test -f "$release_rpm"
+          test -n "$pages_rpm" && test -f "$pages_rpm"
+          test $(ls -1 release-assets/*.rpm 2>/dev/null | wc -l) -eq 1
+
+          echo "=== 1. Assert byte-for-byte identity between release-assets RPM and Pages repo RPM ==="
+          cmp -s "$release_rpm" "$pages_rpm"
+
+          echo "=== 2. Reject ephemeral test signing keys in production release ==="
+          key_info=$(gpg --batch --with-colons --import-options show-only --import release-assets/RPM-GPG-KEY-modernime)
+          if printf '%s\n' "$key_info" | grep -Eiq 'modernime\.invalid|Ephemeral'; then
+            echo "Error: Ephemeral test GPG key detected in production release keyring!" >&2
+            exit 1
+          fi
+
+          echo "=== 3. Verify embedded OpenPGP signatures (tags 268 & 259) on release-assets RPM ==="
+          python3 - "$release_rpm" "pages-site/rpm/RPM-GPG-KEY-modernime.gpg" "pages-site/rpm/KEY-FINGERPRINTS.txt" <<'PYEOF'
+          from pathlib import Path
+          import re
+          import struct
+          import subprocess
+          import sys
+          import tempfile
+
+          rpm_path = Path(sys.argv[1]).resolve()
+          keyring = Path(sys.argv[2]).resolve()
+          fpr_file = Path(sys.argv[3]).resolve()
+          allowed_fprs = re.findall(r"Fingerprint:\s*([0-9A-Fa-f]{40})", fpr_file.read_text(encoding="utf-8"))
+          assert allowed_fprs, "No valid 40-hex fingerprints found in KEY-FINGERPRINTS.txt"
+
+          raw = rpm_path.read_bytes()
+          assert raw[96:100] == b"\x8e\xad\xe8\x01", "Invalid RPM signature header magic"
+          nindex, hsize = struct.unpack(">II", raw[104:112])
+          idx_start = 112
+          store_start = idx_start + nindex * 16
+          store_end = store_start + hsize
+          sig_end = (store_end + 7) & ~7
+          if raw[sig_end : sig_end + 4] != b"\x8e\xad\xe8\x01":
+              sig_end = raw.find(b"\x8e\xad\xe8\x01", store_end)
+          main_nindex, main_hsize = struct.unpack(">II", raw[sig_end + 8 : sig_end + 16])
+          main_end = sig_end + 16 + main_nindex * 16 + main_hsize
+          main_hdr = raw[sig_end:main_end]
+          hdr_and_payload = raw[sig_end:]
+
+          sig_bin = {}
+          for i in range(nindex):
+              eo = idx_start + i * 16
+              tag, dtype, voff, count = struct.unpack(">IIII", raw[eo : eo + 16])
+              if dtype == 7:
+                  sig_bin[tag] = raw[store_start + voff : store_start + voff + count]
+          assert 268 in sig_bin and 259 in sig_bin, "Release RPM missing RPMSIGTAG_RSA (268) or RPMSIGTAG_PGP (259)"
+
+          with tempfile.TemporaryDirectory() as td:
+              td_p = Path(td)
+              (td_p / "hdr.bin").write_bytes(main_hdr)
+              (td_p / "hdr.sig").write_bytes(sig_bin[268])
+              (td_p / "all.bin").write_bytes(hdr_and_payload)
+              (td_p / "all.sig").write_bytes(sig_bin[259])
+              for sig_f, data_f in [("hdr.sig", "hdr.bin"), ("all.sig", "all.bin")]:
+                  res = subprocess.run(
+                      ["gpgv", "--keyring", str(keyring), "--status-fd", "1", str(td_p / sig_f), str(td_p / data_f)],
+                      capture_output=True, text=True, check=True
+                  )
+                  assert any(f"VALIDSIG {fpr}" in res.stdout for fpr in allowed_fprs), (
+                      f"Signature {sig_f} did not match any production fingerprint in {allowed_fprs}:\n{res.stdout}"
+                  )
+          PYEOF
 
       - name: Compute Checksums
         run: |

@@ -317,7 +317,27 @@ if grep -Fxq "Version: 0.1.8" "${inaugural_pages_dir}/apt/dists/noble/main/binar
 fi
 [ -f "${inaugural_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" ] ||
     fail "Inaugural RPM repository missing modernime-${expected_version}-1.oe2409.x86_64.rpm"
-printf '==> [Gate 3a] Inaugural release repository baseline (v%s only, empty gh-pages): VERIFIED\n' "${expected_version}"
+[ -f "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm" ] ||
+    fail "Canonical RPM filename missing from ci_assets_dir after sync"
+[ "$(find "${ci_assets_dir}" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 1 ] ||
+    fail "ci_assets_dir should contain exactly 1 canonical RPM file"
+cmp -s "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm" \
+    "${inaugural_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" ||
+    fail "Release asset RPM is not byte-identical to inaugural Pages RPM"
+printf '==> [Gate 3a] Inaugural release repository baseline & synced release-assets RPM (v%s): VERIFIED\n' "${expected_version}"
+
+# Gate check: if an input RPM was signed by an ephemeral test key, production build MUST overwrite it with the production key,
+# and --require-persistent-gpg MUST reject an ephemeral signing key itself.
+ephemeral_repo_dir="${work_dir}/ephemeral-rpm-repo"
+"${repo_root}/scripts/build_rpm_repo.sh" \
+    --output-dir "${ephemeral_repo_dir}" \
+    --rpm "${rpm_file}" \
+    --distro oe2409 \
+    --arch x86_64 \
+    --ephemeral-gpg >/dev/null
+# Seed ci_assets_dir with the ephemeral-signed RPM to verify that ci_build_release_repos.sh replaces the ephemeral signature
+cp -f "${ephemeral_repo_dir}/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" \
+    "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm"
 
 # 3b. Subsequent release multi-version retention check (simulated prior release pool in gh-pages + current release)
 MODERNIME_GPG_KEY_ID="${primary_fpr}" \
@@ -331,7 +351,14 @@ MODERNIME_GPG_ROTATION_KEY_ID="${rotation_fpr}" \
     --gpg-private-key-file "${primary_sec_file}" \
     --require-persistent-gpg \
     --repo-base-url "file://${pages_site_dir}"
-printf '==> [Gate 3b] Subsequent release multi-version retention (--previous-pages-dir): VERIFIED\n'
+cmp -s "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm" \
+    "${pages_site_dir}/rpm/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" ||
+    fail "Release asset RPM is not byte-identical to Pages RPM in Gate 3b"
+if cmp -s "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm" \
+    "${ephemeral_repo_dir}/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm"; then
+    fail "Release asset RPM retained ephemeral test key signature instead of being re-signed with production key"
+fi
+printf '==> [Gate 3b] Subsequent release multi-version retention & production RPM sync (--previous-pages-dir): VERIFIED\n'
 
 [ -f "${pages_site_dir}/.nojekyll" ] || fail "pages-site/.nojekyll missing"
 [ -f "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" ] || fail "apt/KEY-FINGERPRINTS.txt missing"
