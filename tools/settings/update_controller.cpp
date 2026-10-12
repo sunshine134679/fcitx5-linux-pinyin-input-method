@@ -15,14 +15,15 @@ namespace modernime::settings {
 namespace {
 
 #ifndef MODERNIME_VERSION
-#define MODERNIME_VERSION "0.1.8"
+#define MODERNIME_VERSION "0.1.9"
 #endif
 
 #ifndef MODERNIME_INSTALL_PREFIX
 #define MODERNIME_INSTALL_PREFIX "/usr"
 #endif
 
-constexpr guint kCommandTimeoutMs = 3000;
+constexpr guint kQueryTimeoutMs = 5000;
+constexpr guint kPackageOperationTimeoutMs = 300000;
 
 struct CommandOutput final {
     bool started = false;
@@ -124,7 +125,8 @@ gboolean onCommandTimeout(gpointer userData) {
 }
 
 CommandOutput runSubprocess(const std::vector<std::string> &argv,
-                            const Environment &environment) {
+                            const Environment &environment,
+                            guint timeoutMs = kQueryTimeoutMs) {
     CommandOutput result;
     if (argv.empty()) {
         return result;
@@ -167,7 +169,7 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     GCancellable *cancellable = g_cancellable_new();
 
     SubprocessState state{loop, cancellable, false, false, {}, {}};
-    GSource *timer = g_timeout_source_new(kCommandTimeoutMs);
+    GSource *timer = g_timeout_source_new(timeoutMs);
     g_source_set_callback(timer, onCommandTimeout, &state, nullptr);
     g_source_attach(timer, context);
 
@@ -176,6 +178,7 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     g_main_loop_run(loop);
 
     if (state.timedOut) {
+        result.timedOut = true;
         g_subprocess_force_exit(proc);
     }
 
@@ -610,8 +613,13 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
         argv = {pkexecBin.string(), aptGetBin.string(), "update"};
     }
 
-    const auto out = runSubprocess(argv, environment);
+    const auto out = runSubprocess(argv, environment, kPackageOperationTimeoutMs);
     if (!out.started || !out.exitedZero) {
+        if (out.timedOut) {
+            return {false,
+                    "刷新软件源缓存操作超时（超过 300 秒），请在终端手动执行：" +
+                        fallbackCmd};
+        }
         return {false,
                 "刷新软件源缓存未完成（可能已取消授权或网络不可达），您也可以在终端执行：" +
                     fallbackCmd};
@@ -654,8 +662,13 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
                 "--only-upgrade", "-y", "modernime"};
     }
 
-    const auto out = runSubprocess(argv, environment);
+    const auto out = runSubprocess(argv, environment, kPackageOperationTimeoutMs);
     if (!out.started || !out.exitedZero) {
+        if (out.timedOut) {
+            return {false,
+                    "系统包管理器升级操作超时（超过 300 秒），请在终端手动执行：" +
+                        status.upgradeCommand};
+        }
         return {false,
                 "系统包管理器升级未完成（可能已取消授权或网络受限），您也可以在终端执行：" +
                     status.upgradeCommand};

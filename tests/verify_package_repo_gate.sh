@@ -207,34 +207,34 @@ cp -f "${deb_file}" "${ci_assets_dir}/modernime_${expected_version}_amd64_ubuntu
 cp -f "${deb_file}" "${ci_assets_dir}/modernime_${expected_version}_amd64_ubuntu24.04.deb"
 cp -f "${rpm_file}" "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm"
 
-# Build synthetic v0.1.7 DEB and v0.1.7 RPM in prev_pages_dir to test multi-version retention & downgrade/rollback
-deb_017_stage="${work_dir}/deb-0.1.7-stage"
-mkdir -p "${deb_017_stage}"
-dpkg-deb -R "${deb_file}" "${deb_017_stage}"
-sed -i "s/^Version: .*/Version: 0.1.7/" "${deb_017_stage}/DEBIAN/control"
-cat > "${deb_017_stage}/usr/share/modernime/install-channel.txt" <<'EOF'
+# Build synthetic v0.1.8 DEB and v0.1.8 RPM in prev_pages_dir to test multi-version retention & downgrade/rollback
+deb_018_stage="${work_dir}/deb-0.1.8-stage"
+mkdir -p "${deb_018_stage}"
+dpkg-deb -R "${deb_file}" "${deb_018_stage}"
+sed -i "s/^Version: .*/Version: 0.1.8/" "${deb_018_stage}/DEBIAN/control"
+cat > "${deb_018_stage}/usr/share/modernime/install-channel.txt" <<'EOF'
 channel=deb
-version=0.1.7
+version=0.1.8
 prefix=/usr
 EOF
-chmod 0755 "${deb_017_stage}/DEBIAN/"* 2>/dev/null || true
-chmod 0644 "${deb_017_stage}/DEBIAN/control" 2>/dev/null || true
-deb_017_file="${work_dir}/modernime_0.1.7_amd64.deb"
-dpkg-deb --build "${deb_017_stage}" "${deb_017_file}" >/dev/null
-cp -f "${deb_017_file}" "${prev_pages_dir}/apt/pool/jammy/main/m/modernime/modernime_0.1.7_amd64_ubuntu22.04.deb"
-cp -f "${deb_017_file}" "${prev_pages_dir}/apt/pool/noble/main/m/modernime/modernime_0.1.7_amd64_ubuntu24.04.deb"
-cp -f "${deb_017_file}" "${prev_pages_dir}/apt/pool/bookworm/main/m/modernime/modernime_0.1.7_amd64_debian12.deb"
+chmod 0755 "${deb_018_stage}/DEBIAN/"* 2>/dev/null || true
+chmod 0644 "${deb_018_stage}/DEBIAN/control" 2>/dev/null || true
+deb_018_file="${work_dir}/modernime_0.1.8_amd64.deb"
+dpkg-deb --build "${deb_018_stage}" "${deb_018_file}" >/dev/null
+cp -f "${deb_018_file}" "${prev_pages_dir}/apt/pool/jammy/main/m/modernime/modernime_0.1.8_amd64_ubuntu22.04.deb"
+cp -f "${deb_018_file}" "${prev_pages_dir}/apt/pool/noble/main/m/modernime/modernime_0.1.8_amd64_ubuntu24.04.deb"
+cp -f "${deb_018_file}" "${prev_pages_dir}/apt/pool/bookworm/main/m/modernime/modernime_0.1.8_amd64_debian12.deb"
 
-rpm_017_file="${prev_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-0.1.7-1.oe24.x86_64.rpm"
-python3 - "${rpm_file}" "${rpm_017_file}" "${expected_version}" <<'PYEOF'
+rpm_018_file="${prev_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-0.1.8-1.oe24.x86_64.rpm"
+python3 - "${rpm_file}" "${rpm_018_file}" "${expected_version}" <<'PYEOF'
 from pathlib import Path
 import sys
 
 src_bytes = Path(sys.argv[1]).read_bytes()
 dst_path = Path(sys.argv[2])
 cur_ver = sys.argv[3].encode("ascii")
-assert len(cur_ver) == len(b"0.1.7"), "Version length mismatch for binary patch"
-dst_path.write_bytes(src_bytes.replace(cur_ver, b"0.1.7"))
+assert len(cur_ver) == len(b"0.1.8"), "Version length mismatch for binary patch"
+dst_path.write_bytes(src_bytes.replace(cur_ver, b"0.1.8"))
 PYEOF
 
 # Gate check: --require-persistent-gpg MUST fail when no persistent key is provided
@@ -246,14 +246,15 @@ if env -u MODERNIME_GPG_PRIVATE_KEY -u MODERNIME_GPG_KEY_ID \
     fail "ci_build_release_repos.sh --require-persistent-gpg must fail when persistent GPG key is absent"
 fi
 
-# Generate persistent primary GPG key AND rotation GPG key to verify key persistence + dual-key rotation
+# Generate persistent primary GPG key (passphrase-protected) AND rotation GPG key to verify key persistence + dual-key rotation
 gpg_setup_home="${work_dir}/gpg-setup"
 mkdir -p "${gpg_setup_home}"
 chmod 700 "${gpg_setup_home}"
-gpg --homedir "${gpg_setup_home}" --batch --generate-key <<'GPGEOF' >/dev/null 2>&1
-%no-protection
+passphrase="PassphraseProtectedKey2026!"
+gpg --homedir "${gpg_setup_home}" --batch --pinentry-mode loopback --passphrase "${passphrase}" --generate-key <<GPGEOF >/dev/null 2>&1
 Key-Type: RSA
 Key-Length: 2048
+Passphrase: ${passphrase}
 Name-Real: ModernIME Release Signing
 Name-Email: release@modernime.org
 Expire-Date: 0
@@ -276,14 +277,25 @@ rotation_fpr=$(gpg --homedir "${gpg_setup_home}" --list-secret-keys --with-colon
 
 primary_sec_file="${work_dir}/primary-secret.asc"
 rotation_sec_value=$(gpg --homedir "${gpg_setup_home}" --armor --export-secret-keys "${rotation_fpr}")
-gpg --homedir "${gpg_setup_home}" --armor --export-secret-keys "${primary_fpr}" > "${primary_sec_file}"
+gpg --homedir "${gpg_setup_home}" --armor --pinentry-mode loopback --passphrase "${passphrase}" --export-secret-keys "${primary_fpr}" > "${primary_sec_file}"
 
 primary_only_keyring="${work_dir}/primary-only.gpg"
 rotation_only_keyring="${work_dir}/rotation-only.gpg"
 gpg --homedir "${gpg_setup_home}" --export "${primary_fpr}" > "${primary_only_keyring}"
 gpg --homedir "${gpg_setup_home}" --export "${rotation_fpr}" > "${rotation_only_keyring}"
 
+# Gate check: passphrase-protected key without MODERNIME_GPG_PASSPHRASE MUST fail
+if env -u MODERNIME_GPG_PASSPHRASE \
+    "${repo_root}/scripts/ci_build_release_repos.sh" \
+    --assets-dir "${ci_assets_dir}" \
+    --pages-dir "${work_dir}/pages-should-fail-passphrase" \
+    --gpg-private-key-file "${primary_sec_file}" \
+    --require-persistent-gpg >/dev/null 2>&1; then
+    fail "ci_build_release_repos.sh must fail when passphrase-protected key is missing MODERNIME_GPG_PASSPHRASE"
+fi
+
 MODERNIME_GPG_KEY_ID="${primary_fpr}" \
+MODERNIME_GPG_PASSPHRASE="${passphrase}" \
 MODERNIME_GPG_ROTATION_PRIVATE_KEY="${rotation_sec_value}" \
 MODERNIME_GPG_ROTATION_KEY_ID="${rotation_fpr}" \
 "${repo_root}/scripts/ci_build_release_repos.sh" \
@@ -344,7 +356,7 @@ Section: utils
 Installed-Size: 16000
 Maintainer: ModernIME Developers <noreply@modernime.org>
 Architecture: amd64
-Version: 0.1.7
+Version: 0.1.8
 Description: Modern Chinese Pinyin Input Method for Fcitx5
 EOF
 
@@ -367,8 +379,8 @@ EOF
         fail "real apt-get update failed on signed APT repository for suite ${suite}"
 
     policy_out=$(LC_ALL=C LANG=C apt-cache "${apt_opts[@]}" policy modernime)
-    printf '%s\n' "${policy_out}" | grep -Fq "Installed: 0.1.7" ||
-        fail "apt-cache policy did not report Installed: 0.1.7 for ${suite}"
+    printf '%s\n' "${policy_out}" | grep -Fq "Installed: 0.1.8" ||
+        fail "apt-cache policy did not report Installed: 0.1.8 for ${suite}"
     printf '%s\n' "${policy_out}" | grep -Fq "Candidate: ${expected_version}" ||
         fail "apt-cache policy did not resolve Candidate: ${expected_version} for ${suite}"
     printf '%s\n' "${policy_out}" | grep -Fq "${expected_version} 700" ||
@@ -379,8 +391,8 @@ EOF
     madison_out=$(LC_ALL=C LANG=C apt-cache "${apt_opts[@]}" madison modernime)
     printf '%s\n' "${madison_out}" | grep -Fq "${expected_version}" ||
         fail "apt-cache madison missing ${expected_version} for ${suite}"
-    printf '%s\n' "${madison_out}" | grep -Fq "0.1.7" ||
-        fail "apt-cache madison missing retained rollback version 0.1.7 for ${suite}"
+    printf '%s\n' "${madison_out}" | grep -Fq "0.1.8" ||
+        fail "apt-cache madison missing retained rollback version 0.1.8 for ${suite}"
 done
 
 printf '=== [5/7] Verifying signed RPM/DNF repository repomd.xml.asc AND embedded RPM package OpenPGP signatures ===\n'
@@ -437,7 +449,7 @@ for pkg in root.findall("common:package", ns):
         "href": loc_el.attrib["href"],
     }
 
-assert "0.1.7" in pkgs_in_xml, "primary.xml.gz missing retained version 0.1.7"
+assert "0.1.8" in pkgs_in_xml, "primary.xml.gz missing retained version 0.1.8"
 assert expected_ver in pkgs_in_xml, f"primary.xml.gz missing current version {expected_ver}"
 
 for ver, meta in pkgs_in_xml.items():
@@ -489,7 +501,29 @@ for ver, meta in pkgs_in_xml.items():
         )
 PYEOF
 
-printf '=== [6/7] Simulating full v0.1.7 -> v%s upgrade -> v0.1.7 rollback -> uninstall lifecycle (DEB & RPM) ===\n' "${expected_version}"
+rpmkeys_cmd=()
+if command -v rpmkeys >/dev/null 2>&1; then
+    rpmkeys_cmd=(rpmkeys)
+elif [ -x "/home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/bin/rpmkeys" ]; then
+    rpmkeys_cmd=(env RPM_CONFIGDIR="/home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/lib/rpm" LD_LIBRARY_PATH="/home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/lib/x86_64-linux-gnu" /home/wsl/.gemini/antigravity/brain/ee97ab51-729a-484f-9b9d-319486601df4/scratch/unpacked/usr/bin/rpmkeys)
+fi
+
+if [ "${#rpmkeys_cmd[@]}" -gt 0 ]; then
+    rpm_client_root="${work_dir}/rpm-client-root"
+    mkdir -p "${rpm_client_root}/var/lib/rpm"
+    "${rpmkeys_cmd[@]}" --root "${rpm_client_root}" --import "${pages_site_dir}/rpm/RPM-GPG-KEY-modernime"
+    for r in "${pages_site_dir}/rpm/oe2409/x86_64/Packages"/*.rpm; do
+        rpmkeys_out=$("${rpmkeys_cmd[@]}" --root "${rpm_client_root}" -v -K "${r}")
+        printf '%s\n' "${rpmkeys_out}" | grep -qE "Header V4 RSA/SHA256 Signature.*: OK" || \
+            fail "rpmkeys verification failed for ${r}: ${rpmkeys_out}"
+        printf '%s\n' "${rpmkeys_out}" | grep -Fq "Header SHA256 digest: OK" || \
+            fail "rpmkeys Header SHA256 digest failed for ${r}: ${rpmkeys_out}"
+        printf '%s\n' "${rpmkeys_out}" | grep -Fq "Payload SHA256 digest: OK" || \
+            fail "rpmkeys Payload SHA256 digest failed for ${r}: ${rpmkeys_out}"
+    done
+fi
+
+printf '=== [6/7] Simulating full v0.1.8 -> v%s upgrade -> v0.1.8 rollback -> uninstall lifecycle (DEB & RPM) ===\n' "${expected_version}"
 deb_ctrl_dir="${work_dir}/deb-control"
 deb_rootfs_dir="${work_dir}/deb-rootfs"
 mkdir -p "${deb_ctrl_dir}" "${deb_rootfs_dir}"
@@ -504,7 +538,7 @@ mkdir -p "${sim_root}/usr/share/modernime" "${sim_config}" "${sim_data}"
 
 cat > "${sim_root}/usr/share/modernime/install-channel.txt" <<'EOF'
 channel=deb
-version=0.1.7
+version=0.1.8
 prefix=/usr
 EOF
 
@@ -559,16 +593,16 @@ lib.mdb_env_close(env)
 conn.close()
 PYEOF
 
-# 6a. DEB upgrade 0.1.7 -> 0.1.8
+# 6a. DEB upgrade 0.1.8 -> expected_version
 upgrade_backup_dir="${work_dir}/pre-upgrade-backup"
 "${repo_root}/scripts/modernime-data-guard" --backup \
     --data-dir "${sim_data}" \
     --config-dir "${sim_config}" \
     --backup-dir "${upgrade_backup_dir}"
 
-MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/preinst" upgrade 0.1.7
+MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/preinst" upgrade 0.1.8
 cp -a "${deb_rootfs_dir}/usr/." "${sim_root}/usr/"
-MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/postinst" configure 0.1.7
+MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/postinst" configure 0.1.8
 
 grep -Fxq "channel=deb" "${sim_root}/usr/share/modernime/install-channel.txt" ||
     fail "upgraded DEB system missing channel=deb"
@@ -582,12 +616,12 @@ grep -Fq "开源欧拉" "${sim_data}/user-dictionary.txt" ||
     --data-dir "${sim_data}" \
     --config-dir "${sim_config}"
 
-# 6b. DEB downgrade / rollback 0.1.8 -> 0.1.7
+# 6b. DEB downgrade / rollback expected_version -> 0.1.8
 MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/preinst" upgrade "${expected_version}"
-cp -a "${deb_017_stage}/usr/." "${sim_root}/usr/"
+cp -a "${deb_018_stage}/usr/." "${sim_root}/usr/"
 MODERNIME_PKG_ROOT="${sim_root}" sh "${deb_ctrl_dir}/postinst" configure "${expected_version}"
-grep -Fxq "version=0.1.7" "${sim_root}/usr/share/modernime/install-channel.txt" ||
-    fail "downgraded DEB system did not record version=0.1.7"
+grep -Fxq "version=0.1.8" "${sim_root}/usr/share/modernime/install-channel.txt" ||
+    fail "downgraded DEB system did not record version=0.1.8"
 "${repo_root}/scripts/modernime-data-guard" --verify \
     --data-dir "${sim_data}" \
     --config-dir "${sim_config}"
@@ -607,7 +641,7 @@ grep -Fxq "custom_theme=ocean" "${sim_config}/settings.conf" ||
 # 6d. RPM install ($1=1) -> upgrade ($1=2) -> downgrade ($1=2) -> erase ($1=0)
 mkdir -p "${sim_root}/usr"
 cp -a "${rpm_extract_dir}/rootfs/usr/." "${sim_root}/usr/"
-sed -i "s/^version=.*/version=0.1.7/" "${sim_root}/usr/share/modernime/install-channel.txt"
+sed -i "s/^version=.*/version=0.1.8/" "${sim_root}/usr/share/modernime/install-channel.txt"
 MODERNIME_PKG_ROOT="${sim_root}" sh "${repo_root}/packaging/rpm/preinst.sh" 2
 cp -a "${rpm_extract_dir}/rootfs/usr/." "${sim_root}/usr/"
 MODERNIME_PKG_ROOT="${sim_root}" sh "${repo_root}/packaging/rpm/postinst.sh" 2
@@ -652,11 +686,11 @@ ${mig_from}/lib/fcitx5/modernime_fcitx5.so
 EOF
 cat > "${mig_from}/share/modernime/install-channel.txt" <<EOF
 channel=script
-version=0.1.7
+version=0.1.8
 prefix=${mig_from}
 EOF
 
-bad_pkg_cmd="mkdir -p '${mig_to}/bin' '${mig_to}/lib/fcitx5' '${mig_to}/share/modernime' && printf '#!/bin/sh\n' > '${mig_to}/bin/modernime-settings' && chmod +x '${mig_to}/bin/modernime-settings' && printf 'pkg-so\n' > '${mig_to}/lib/fcitx5/modernime_fcitx5.so' && printf 'channel=rpm\nversion=0.1.8\n' > '${mig_to}/share/modernime/install-channel.txt'"
+bad_pkg_cmd="mkdir -p '${mig_to}/bin' '${mig_to}/lib/fcitx5' '${mig_to}/share/modernime' && printf '#!/bin/sh\n' > '${mig_to}/bin/modernime-settings' && chmod +x '${mig_to}/bin/modernime-settings' && printf 'pkg-so\n' > '${mig_to}/lib/fcitx5/modernime_fcitx5.so' && printf 'channel=rpm\nversion=${expected_version}\n' > '${mig_to}/share/modernime/install-channel.txt'"
 rollback_marker="${mig_root}/pkg-rollback-executed"
 rollback_pkg_cmd="rm -rf '${mig_to}/bin/modernime-settings' '${mig_to}/lib/fcitx5/modernime_fcitx5.so' '${mig_to}/share/modernime' && touch '${rollback_marker}'"
 

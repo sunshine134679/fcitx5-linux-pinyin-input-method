@@ -237,7 +237,7 @@ grep -F 'modernime-migrate-channel --check' "$unknown_log" >/dev/null
 
 deb_channel_prefix="$test_root/deb-channel-prefix"
 mkdir -p "$deb_channel_prefix/share/modernime"
-printf 'channel=deb\nversion=0.1.7\nprefix=%s\n' "$deb_channel_prefix" > "$deb_channel_prefix/share/modernime/install-channel.txt"
+printf 'channel=deb\nversion=0.1.8\nprefix=%s\n' "$deb_channel_prefix" > "$deb_channel_prefix/share/modernime/install-channel.txt"
 mismatched_log="$test_root/mismatched.log"
 if env \
     -u MODERNIME_CONFIG_HOME \
@@ -294,7 +294,7 @@ env \
     MODERNIME_DATA_HOME="$mig_data_home" \
     "$project_root/scripts/modernime-migrate-channel" --check --from-prefix "$mig_src_prefix" >"$check_out"
 grep -F 'Detected Channel:  script' "$check_out" >/dev/null
-grep -F 'Detected Version:  0.1.8' "$check_out" >/dev/null
+grep -F 'Detected Version:  0.1.9' "$check_out" >/dev/null
 
 # Test 6: Migration failure rolls back to preserve original script installation and prints recovery instructions
 fail_out="$test_root/migrate-fail.log"
@@ -319,20 +319,20 @@ grep -F 'channel=script' "$mig_src_prefix/share/modernime/install-channel.txt" >
 
 # Test 7: Successful migration cleans up old script files, deploys native package, and verifies version/path
 populate_deb_cmd="mkdir -p '$mig_target_prefix/bin' '$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5' '$mig_target_prefix/share/modernime/pinyin' && \
-printf '#!/bin/sh\necho 0.1.8\n' > '$mig_target_prefix/bin/modernime-settings' && \
+printf '#!/bin/sh\necho 0.1.9\n' > '$mig_target_prefix/bin/modernime-settings' && \
 chmod +x '$mig_target_prefix/bin/modernime-settings' && \
 : > '$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so' && \
 : > '$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so' && \
 : > '$mig_target_prefix/share/modernime/pinyin/modernime-knowledge.dict' && \
-printf 'channel=deb\nversion=0.1.8\nprefix=%s\n' '$mig_target_prefix' > '$mig_target_prefix/share/modernime/install-channel.txt'"
+printf 'channel=deb\nversion=0.1.9\nprefix=%s\n' '$mig_target_prefix' > '$mig_target_prefix/share/modernime/install-channel.txt'"
 
 # Test 6b: Post-install verification failure uninstalls newly installed target package and cleans target_prefix
 broken_deb_cmd="mkdir -p '$mig_target_prefix/bin' '$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5' '$mig_target_prefix/share/modernime/pinyin' && \
-printf '#!/bin/sh\necho 0.1.8\n' > '$mig_target_prefix/bin/modernime-settings' && \
+printf '#!/bin/sh\necho 0.1.9\n' > '$mig_target_prefix/bin/modernime-settings' && \
 chmod +x '$mig_target_prefix/bin/modernime-settings' && \
 : > '$mig_target_prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so' && \
 : > '$mig_target_prefix/share/modernime/pinyin/modernime-knowledge.dict' && \
-printf 'channel=rpm\nversion=0.1.8\nprefix=%s\n' '$mig_target_prefix' > '$mig_target_prefix/share/modernime/install-channel.txt'"
+printf 'channel=rpm\nversion=0.1.9\nprefix=%s\n' '$mig_target_prefix' > '$mig_target_prefix/share/modernime/install-channel.txt'"
 
 pkg_rollback_marker="$test_root/pkg-rollback-ran.txt"
 post_fail_out="$test_root/migrate-post-fail.log"

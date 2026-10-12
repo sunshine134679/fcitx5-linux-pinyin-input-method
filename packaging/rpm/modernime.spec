@@ -1,5 +1,5 @@
 Name:           modernime
-Version:        0.1.8
+Version:        0.1.9
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 # ModernIME engine, UI addon, and settings client are LGPL-2.1-or-later;
@@ -101,6 +101,14 @@ fi
 %{_datadir}/applications/modernime-settings.desktop
 
 %changelog
+* Mon Oct 12 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.9-1
+- Formalize online APT and DNF package repository upgrade architecture
+- Add signed static repository pipelines with multi-version retention and rollback support
+- Fix RPM header digests (PAYLOADDIGEST, SHA1/SHA256/MD5) and OpenPGP package signing
+- Support GPG passphrase (MODERNIME_GPG_PASSPHRASE) and dual-key rotation transitions
+- Decouple package manager long operations timeout (300s) from short queries in settings client
+- Add controlled script-to-package migration tool (modernime-migrate-channel) with transactional rollback
+
 * Mon Oct 12 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.8-1
 - Add LMDB personalization storage engine with lossless SQLite migration and process-wide shared handles
 - Implement commit consistency, exponential half-life decay, surrounding text context affinity, and sensitive context guards

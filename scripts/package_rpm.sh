@@ -50,7 +50,7 @@ dist_dir = Path(sys.argv[3]).resolve()
 
 cmake_text = (project_root / "CMakeLists.txt").read_text(encoding="utf-8")
 m = re.search(r"project\(ModernIME\s+VERSION\s+([0-9.]+)", cmake_text)
-version = m.group(1) if m else "0.1.8"
+version = m.group(1) if m else "0.1.9"
 release = os.environ.get("MODERNIME_RPM_RELEASE", "1.oe2409")
 arch = os.environ.get("MODERNIME_RPM_ARCH", "x86_64")
 pkg_name = "modernime"
@@ -97,7 +97,7 @@ payload_gz = gzip.compress(cpio_proc.stdout, compresslevel=6)
 
 def build_header_block(entries):
     # entries: list of (tag, dtype, value)
-    # dtype: 4=INT32 (int or list[int]), 6=STRING (str), 8=STRING_ARRAY (list[str])
+    # dtype: 4=INT32, 6/9=STRING, 7=BIN, 8=STRING_ARRAY
     entries = sorted(entries, key=lambda x: x[0])
     idx_buf = bytearray()
     store_buf = bytearray()
@@ -115,6 +115,11 @@ def build_header_block(entries):
             b = val.encode("utf-8") + b"\x00"
             store_buf.extend(b)
             idx_buf.extend(struct.pack(">IIII", tag, dtype, off, 1))
+        elif dtype == 7:
+            off = len(store_buf)
+            b = bytes(val)
+            store_buf.extend(b)
+            idx_buf.extend(struct.pack(">IIII", tag, 7, off, len(b)))
         elif dtype == 8:
             off = len(store_buf)
             for s in val:
@@ -171,12 +176,16 @@ hdr_entries = [
     (1118, 8, dirnames),                                  # RPMTAG_DIRNAMES
     (1124, 6, "cpio"),                                    # RPMTAG_PAYLOADFORMAT
     (1125, 6, "gzip"),                                    # RPMTAG_PAYLOADCOMPRESSOR
+    (5092, 8, [hashlib.sha256(payload_gz).hexdigest()]),  # RPMTAG_PAYLOADDIGEST
+    (5093, 4, 8),                                         # RPMTAG_PAYLOADDIGESTALGO (8 = SHA256)
 ]
 
 main_hdr = build_header_block(hdr_entries)
 sig_hdr = build_header_block([
-    (269, 6, hashlib.sha256(main_hdr).hexdigest()),       # RPMSIGTAG_SHA256
-    (1000, 4, len(main_hdr) + len(payload_gz)),           # RPMSIGTAG_SIZE
+    (269, 6, hashlib.sha1(main_hdr).hexdigest()),                 # RPMSIGTAG_SHA1 (40 hex chars)
+    (273, 6, hashlib.sha256(main_hdr).hexdigest()),               # RPMSIGTAG_SHA256 (64 hex chars)
+    (1000, 4, len(main_hdr) + len(payload_gz)),                   # RPMSIGTAG_SIZE
+    (1004, 7, hashlib.md5(main_hdr + payload_gz).digest()),        # RPMSIGTAG_MD5 (16 bytes)
 ])
 if len(sig_hdr) % 8 != 0:
     sig_hdr += b"\x00" * (8 - (len(sig_hdr) % 8))

@@ -13,6 +13,7 @@ target_arch="amd64"
 gpg_home="${GNUPGHOME:-}"
 gpg_key_id="${MODERNIME_GPG_KEY_ID:-}"
 gpg_private_key_file=""
+gpg_passphrase="${MODERNIME_GPG_PASSPHRASE:-}"
 rotation_key_id="${MODERNIME_GPG_ROTATION_KEY_ID:-}"
 trusted_pubkeys_dir="${project_root}/packaging/keys/trusted-pubkeys.d"
 ephemeral_gpg=false
@@ -116,6 +117,14 @@ while [[ $# -gt 0 ]]; do
             gpg_private_key_file="$2"
             shift 2
             ;;
+        --gpg-passphrase=*)
+            gpg_passphrase="${1#*=}"
+            shift
+            ;;
+        --gpg-passphrase)
+            gpg_passphrase="$2"
+            shift 2
+            ;;
         --rotation-key-id=*)
             rotation_key_id="${1#*=}"
             shift
@@ -201,13 +210,17 @@ if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
     chmod 700 "$cleanup_gpg"
     gpg_home="$cleanup_gpg"
     export GNUPGHOME="$gpg_home"
+    import_flags=(--batch --quiet)
+    if [[ -n "$gpg_passphrase" ]]; then
+        import_flags+=(--pinentry-mode loopback --passphrase "$gpg_passphrase")
+    fi
     if [[ -n "$gpg_private_key_file" ]]; then
-        gpg --batch --quiet --import "$gpg_private_key_file"
+        gpg "${import_flags[@]}" --import "$gpg_private_key_file"
     else
-        printf '%s\n' "$MODERNIME_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+        printf '%s\n' "$MODERNIME_GPG_PRIVATE_KEY" | gpg "${import_flags[@]}" --import
     fi
     if [[ -n "${MODERNIME_GPG_ROTATION_PRIVATE_KEY:-}" ]]; then
-        printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg --batch --quiet --import
+        printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg "${import_flags[@]}" --import
         if [[ -z "$rotation_key_id" ]]; then
             rotation_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
         fi
@@ -355,6 +368,9 @@ EOF
 
     if [[ -n "$gpg_key_id" ]]; then
         local -a sign_args=(--batch --yes --digest-algo SHA256 -u "$gpg_key_id")
+        if [[ -n "$gpg_passphrase" ]]; then
+            sign_args+=(--pinentry-mode loopback --passphrase "$gpg_passphrase")
+        fi
         if [[ -n "$rotation_key_id" && "$rotation_key_id" != "$gpg_key_id" ]]; then
             sign_args+=(-u "$rotation_key_id")
         fi

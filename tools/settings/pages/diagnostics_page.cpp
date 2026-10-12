@@ -14,7 +14,7 @@
 #include <utility>
 
 #ifndef MODERNIME_VERSION
-#define MODERNIME_VERSION "0.1.8"
+#define MODERNIME_VERSION "0.1.9"
 #endif
 
 namespace modernime::settings {

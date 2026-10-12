@@ -14,6 +14,7 @@ repo_url="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm"
 gpg_home="${GNUPGHOME:-}"
 gpg_key_id="${MODERNIME_GPG_KEY_ID:-}"
 gpg_private_key_file=""
+gpg_passphrase="${MODERNIME_GPG_PASSPHRASE:-}"
 rotation_key_id="${MODERNIME_GPG_ROTATION_KEY_ID:-}"
 trusted_pubkeys_dir="${project_root}/packaging/keys/trusted-pubkeys.d"
 ephemeral_gpg=false
@@ -88,6 +89,14 @@ while [[ $# -gt 0 ]]; do
             gpg_private_key_file="$2"
             shift 2
             ;;
+        --gpg-passphrase=*)
+            gpg_passphrase="${1#*=}"
+            shift
+            ;;
+        --gpg-passphrase)
+            gpg_passphrase="$2"
+            shift 2
+            ;;
         --rotation-key-id=*)
             rotation_key_id="${1#*=}"
             shift
@@ -157,13 +166,17 @@ if [[ -n "$gpg_private_key_file" || -n "${MODERNIME_GPG_PRIVATE_KEY:-}" ]]; then
     chmod 700 "$cleanup_gpg"
     gpg_home="$cleanup_gpg"
     export GNUPGHOME="$gpg_home"
+    import_flags=(--batch --quiet)
+    if [[ -n "$gpg_passphrase" ]]; then
+        import_flags+=(--pinentry-mode loopback --passphrase "$gpg_passphrase")
+    fi
     if [[ -n "$gpg_private_key_file" ]]; then
-        gpg --batch --quiet --import "$gpg_private_key_file"
+        gpg "${import_flags[@]}" --import "$gpg_private_key_file"
     else
-        printf '%s\n' "$MODERNIME_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+        printf '%s\n' "$MODERNIME_GPG_PRIVATE_KEY" | gpg "${import_flags[@]}" --import
     fi
     if [[ -n "${MODERNIME_GPG_ROTATION_PRIVATE_KEY:-}" ]]; then
-        printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg --batch --quiet --import
+        printf '%s\n' "$MODERNIME_GPG_ROTATION_PRIVATE_KEY" | gpg "${import_flags[@]}" --import
         if [[ -z "$rotation_key_id" ]]; then
             rotation_key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^sec:/ {id=$5} END {print id}')
         fi
@@ -205,6 +218,7 @@ fi
 rm -rf -- "$output_dir"
 repo_subdir="$output_dir/$distro_id/$target_arch"
 mkdir -p "$repo_subdir/Packages" "$repo_subdir/repodata" "$output_dir/client"
+export MODERNIME_GPG_PASSPHRASE="$gpg_passphrase"
 
 # Inspect, validate, sign (gpgcheck=1), and generate repodata for all RPM files
 python3 - "$repo_subdir" "$target_arch" "$distro_id" "$gpg_key_id" "${rpm_files[@]}" <<'PYEOF'
@@ -329,8 +343,13 @@ def build_header_block(entries):
 
 
 def gpg_detached_binary_sign(payload_bytes: bytes, key_id: str) -> bytes:
+    cmd = ["gpg", "--batch", "--yes", "-u", key_id, "--digest-algo", "SHA256"]
+    passphrase = os.environ.get("MODERNIME_GPG_PASSPHRASE")
+    if passphrase:
+        cmd.extend(["--pinentry-mode", "loopback", "--passphrase", passphrase])
+    cmd.extend(["-bs"])
     proc = subprocess.run(
-        ["gpg", "--batch", "--yes", "-u", key_id, "--digest-algo", "SHA256", "-bs"],
+        cmd,
         input=payload_bytes,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -371,9 +390,26 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
         if idx < 0:
             raise ValueError(f"Main RPM header not found in {rpm_path}")
         hdr_offset = idx
-    _, payload_offset = parse_rpm_header_block(raw, hdr_offset)
+    main_tags, payload_offset = parse_rpm_header_block(raw, hdr_offset)
     main_hdr = raw[hdr_offset:payload_offset]
     payload = raw[payload_offset:]
+
+    if 5092 not in main_tags:
+        main_entries = []
+        for t, v in main_tags.items():
+            if isinstance(v, list) and v and isinstance(v[0], str):
+                main_entries.append((t, 8, v))
+            elif isinstance(v, str):
+                main_entries.append((t, 6, v))
+            elif isinstance(v, bytes):
+                main_entries.append((t, 7, v))
+            elif isinstance(v, list) and v and isinstance(v[0], int):
+                main_entries.append((t, 4, v))
+            elif isinstance(v, int):
+                main_entries.append((t, 4, v))
+        main_entries.append((5092, 8, [hashlib.sha256(payload).hexdigest()]))
+        main_entries.append((5093, 4, 8))
+        main_hdr = build_header_block(main_entries)
 
     rsa_sig = gpg_detached_binary_sign(main_hdr, key_id)
     pgp_sig = gpg_detached_binary_sign(main_hdr + payload, key_id)
@@ -480,9 +516,10 @@ for rpm_in in rpm_inputs:
     base_name = f'{pre_meta["name"]}-{pre_meta["version"]}-{pre_meta["release"]}.{pre_meta["arch"]}.rpm'
     dest_rpm = repo_subdir / "Packages" / base_name
     shutil.copy2(rpm_in, dest_rpm)
-    # Sign the RPM package itself so DNF gpgcheck=1 succeeds
+    # Sign the RPM package itself so DNF gpgcheck=1 succeeds (preserve valid signature if already signed)
     if gpg_key_id:
-        sign_rpm_file(dest_rpm, gpg_key_id)
+        if not pre_meta["has_gpg_sig"]:
+            sign_rpm_file(dest_rpm, gpg_key_id)
     meta = inspect_rpm(dest_rpm)
     if gpg_key_id and not meta["has_gpg_sig"]:
         sys.stderr.write(f"Error: Failed to embed OpenPGP package signature in {dest_rpm}\n")
@@ -620,6 +657,9 @@ PYEOF
 
 if [[ -n "$gpg_key_id" ]]; then
     local_sign_args=(--batch --yes --digest-algo SHA256 -u "$gpg_key_id")
+    if [[ -n "$gpg_passphrase" ]]; then
+        local_sign_args+=(--pinentry-mode loopback --passphrase "$gpg_passphrase")
+    fi
     if [[ -n "$rotation_key_id" && "$rotation_key_id" != "$gpg_key_id" ]]; then
         local_sign_args+=(-u "$rotation_key_id")
     fi

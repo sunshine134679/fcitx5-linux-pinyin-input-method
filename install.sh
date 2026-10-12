@@ -558,7 +558,7 @@ channel_file="$manifest_dir/install-channel.txt"
 mkdir -p "$manifest_dir"
 {
     printf 'channel=script\n'
-    printf 'version=0.1.8\n'
+    printf 'version=0.1.9\n'
     printf 'prefix=%s\n' "$prefix"
 } > "$channel_file"
 {

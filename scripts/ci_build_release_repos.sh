@@ -12,6 +12,7 @@ previous_pages_dir=""
 require_persistent_gpg=false
 ephemeral_gpg=false
 gpg_private_key_file=""
+gpg_passphrase="${MODERNIME_GPG_PASSPHRASE:-}"
 repo_base_url="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method"
 
 usage() {
@@ -65,6 +66,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --gpg-private-key-file)
             gpg_private_key_file="$2"
+            shift 2
+            ;;
+        --gpg-passphrase=*)
+            gpg_passphrase="${1#*=}"
+            shift
+            ;;
+        --gpg-passphrase)
+            gpg_passphrase="$2"
             shift 2
             ;;
         --repo-base-url=*)
@@ -170,6 +179,11 @@ if [[ -n "$gpg_private_key_file" ]]; then
 elif [[ "$ephemeral_gpg" == true ]]; then
     apt_args+=(--ephemeral-gpg)
     rpm_args+=(--ephemeral-gpg)
+fi
+
+if [[ -n "$gpg_passphrase" ]]; then
+    apt_args+=(--gpg-passphrase "$gpg_passphrase")
+    rpm_args+=(--gpg-passphrase "$gpg_passphrase")
 fi
 
 rm -rf -- "$pages_dir"

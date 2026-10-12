@@ -418,6 +418,6 @@ fi
 rm -rf -- "$temp_work"
 printf 'Migration completed successfully!\n'
 printf '  New Channel: %s\n' "${new_channel:-$to_channel}"
-printf '  New Version: %s\n' "${new_version:-0.1.8}"
+printf '  New Version: %s\n' "${new_version:-0.1.9}"
 printf '  Target Path: %s\n' "$target_prefix"
 printf '  Plugin Path: %s/modernime_fcitx5.so\n' "$target_addon_dir"

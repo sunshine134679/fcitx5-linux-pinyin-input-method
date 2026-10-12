@@ -75,7 +75,7 @@ jobs:
             gcc gcc-c++ cmake make pkgconf-pkg-config \
             sqlite-devel lmdb-devel boost-devel \
             fcitx5-devel libime-devel \
-            gtk3-devel pango-devel cairo-devel rpm-build tar
+            gtk3-devel pango-devel cairo-devel rpm-build tar gnupg2
 
       - name: Configure and build on openEuler
         run: |
@@ -94,3 +94,22 @@ jobs:
           ls -lh *.rpm
           rpm -qpi *.rpm
           rpm -qpl *.rpm
+
+      - name: Verify Signed DNF Repository in openEuler Container
+        run: |
+          set -euo pipefail
+          RPM_FILE=$(ls build/oe/*.rpm | head -n 1)
+          ./scripts/build_rpm_repo.sh \
+            --output-dir /tmp/ci-oe-repo \
+            --rpm "$RPM_FILE" \
+            --ephemeral-gpg \
+            --repo-url "file:///tmp/ci-oe-repo"
+          rpm --import /tmp/ci-oe-repo/RPM-GPG-KEY-modernime
+          rpm -v -K /tmp/ci-oe-repo/oe2409/x86_64/Packages/*.rpm
+          cp -f /tmp/ci-oe-repo/client/modernime-openeuler-24.09.repo /etc/yum.repos.d/local-modernime.repo
+          sed -i 's|^baseurl=.*|baseurl=file:///tmp/ci-oe-repo/oe2409/x86_64|' /etc/yum.repos.d/local-modernime.repo
+          sed -i 's|^gpgkey=.*|gpgkey=file:///tmp/ci-oe-repo/RPM-GPG-KEY-modernime|' /etc/yum.repos.d/local-modernime.repo
+          dnf makecache --disablerepo="*" --enablerepo="modernime-openeuler"
+          dnf info --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          rm -f /etc/yum.repos.d/local-modernime.repo
+          rm -rf /tmp/ci-oe-repo

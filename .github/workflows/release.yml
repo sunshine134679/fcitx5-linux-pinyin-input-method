@@ -96,6 +96,34 @@ jobs:
           TARGET_NAME="modernime-${VERSION}-1.oe24.x86_64.rpm"
           mv -f "$RPM_FILE" "dist/${TARGET_NAME}"
 
+      - name: Verify Signed RPM & DNF Repository in openEuler Container
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
+          TARGET_RPM="dist/modernime-${VERSION}-1.oe24.x86_64.rpm"
+
+          ./scripts/build_rpm_repo.sh \
+            --output-dir /tmp/oe-repo \
+            --rpm "$TARGET_RPM" \
+            --ephemeral-gpg \
+            --repo-url "file:///tmp/oe-repo"
+
+          rpm --import /tmp/oe-repo/RPM-GPG-KEY-modernime
+          rpm -v -K /tmp/oe-repo/oe2409/x86_64/Packages/*.rpm
+
+          cp -f /tmp/oe-repo/client/modernime-openeuler-24.09.repo /etc/yum.repos.d/local-modernime.repo
+          sed -i 's|^baseurl=.*|baseurl=file:///tmp/oe-repo/oe2409/x86_64|' /etc/yum.repos.d/local-modernime.repo
+          sed -i 's|^gpgkey=.*|gpgkey=file:///tmp/oe-repo/RPM-GPG-KEY-modernime|' /etc/yum.repos.d/local-modernime.repo
+          dnf makecache --disablerepo="*" --enablerepo="modernime-openeuler"
+          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          rpm -q modernime
+          test -x /usr/bin/modernime-settings
+          test -f /usr/share/modernime/install-channel.txt
+          grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
+          dnf remove -y modernime
+          rm -f /etc/yum.repos.d/local-modernime.repo
+          rm -rf /tmp/oe-repo
+
       - name: Upload RPM Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -262,6 +290,18 @@ jobs:
             git worktree remove --force "$prev_pages" || true
           fi
 
+      - name: Determine Release Tag
+        id: get_tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            echo "tag=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
+            echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Compute Checksums
         run: |
           cd release-assets
@@ -280,17 +320,38 @@ jobs:
         id: deploy_pages
         uses: actions/deploy-pages@v4
 
-      - name: Determine Release Tag
-        id: get_tag
+      - name: Persist Pages Site to gh-pages branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
-            echo "tag=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          tag="${{ steps.get_tag.outputs.tag }}"
+
+          work_pages=$(mktemp -d)
+          if git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" -b gh-pages "$work_pages" 2>/dev/null; then
+            echo "Existing gh-pages branch cloned"
           else
-            VERSION=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' CMakeLists.txt)
-            echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+            echo "Initializing orphan gh-pages branch"
+            git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$work_pages"
+            cd "$work_pages"
+            git checkout --orphan gh-pages
+            git rm -rf . 2>/dev/null || true
+            cd -
           fi
+
+          cp -a pages-site/. "$work_pages/"
+          cd "$work_pages"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit in gh-pages"
+          else
+            git commit -m "deploy: update APT & RPM repositories for ${tag}"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
+          fi
+          cd -
+          rm -rf "$work_pages"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

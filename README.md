@@ -14,10 +14,10 @@ ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）�
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.8_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.8_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.8-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.8-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.9_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.9_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.9-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.9-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -235,7 +235,7 @@ cd fcitx5-linux-pinyin-input-method
 - **打包 openEuler/Fedora `.rpm`**：运行 `./scripts/package_rpm.sh`
 - **打包通用便携归档 `.tar.gz`**：运行 `./scripts/package_tarball.sh`
 
-同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.8`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
+同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.9`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
 
 
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
@@ -576,6 +576,15 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
 ## 版本更新记录
+
+### v0.1.9 (2026-10-12)
+
+- **系统包在线升级体系正式确立**：上线标准静态 APT 与 DNF 软件源流水线，Ubuntu/Debian 采用 Deb822 `.sources` 标准配置与独立 `Signed-By` 密钥环，openEuler 采用官方 RPM/DNF 软件源配置；设置客户端支持真实包管理器检查更新与缓存有效性诊断，实际安装与升级严格交给 `apt` / `dnf` 执行，彻底杜绝输入法自杀式进程内文件热覆盖。
+- **Release 发布流水线与 GitHub Pages 持久化闭环**：`release.yml` 在生成静态仓库树并部署 GitHub Pages 后，自动同步回写至 `origin/gh-pages` 分支，彻底保证未来 Release 运行时历史发行包（如 `0.1.8`、`0.1.9` 等）完整保留，支持客户端跨版本回退与锁定安装。
+- **GPG 口令保护与平滑轮换支持**：全链路接入 `MODERNIME_GPG_PASSPHRASE`，私钥导入与签名自动化支持 `--pinentry-mode loopback` 与安全口令传递；支持双密钥签名 `InRelease` 与 `repomd.xml.asc`，多公钥导出至密钥环，确保客户端平滑跨越密钥轮换窗口。
+- **RPM 标头完整性修复与标准 `rpmkeys -v -K` 校验**：修复 RPM 包体标头摘要结构，注入标准 `RPMTAG_PAYLOADDIGEST` (5092)、`RPMTAG_PAYLOADDIGESTALGO` (5093)，修正 SHA1/SHA256/MD5 标头标签，使 `rpmkeys -v -K` 校验（Header RSA、Header SHA256、Header SHA1、Payload SHA256、MD5）达成 100% OK，并在 openEuler 24.09 真实容器 CI 中通过真实 DNF 软件源集成测试。
+- **设置客户端超时解耦**：将包管理器刷新索引与版本升级的长任务超时放宽至 300 秒（5 分钟），避免因慢速网络、系统更新事务或 Polkit 提权等待导致的误超时杀进程。
+- **受控渠道迁移与事务回滚**：提供 `modernime-migrate-channel` 工具，支持从历史源码脚本安装（`channel=script`）安全迁移至系统包（`channel=deb` / `channel=rpm`），在包安装验证失败时具备自动卸载与旧版环境零损恢复能力。
 
 ### v0.1.8 (2026-10-12)
 
