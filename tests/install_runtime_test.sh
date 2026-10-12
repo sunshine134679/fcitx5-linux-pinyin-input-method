@@ -11,6 +11,10 @@ make_fake_build_tools() {
 
     cat >"$fake_bin/cmake" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1-}" == "--version" ]]; then
+    printf 'cmake version 3.28.3\n'
+    exit 0
+fi
 exit 0
 EOF
     cat >"$fake_bin/ctest" <<'EOF'
@@ -94,7 +98,7 @@ done
 ln -s "$(command -v env)" "$no_fcitx_bin/env"
 
 no_fcitx_output="$test_root/no-fcitx-output"
-env \
+if env \
     -u MODERNIME_CONFIG_HOME \
     -u MODERNIME_DESKTOP_DIR \
     HOME="$test_root/no-fcitx-home" \
@@ -102,10 +106,52 @@ env \
     MODERNIME_PREFIX="$test_root/no-fcitx-prefix" \
     MODERNIME_BUILD_DIR="$test_root/no-fcitx-build" \
     PATH="$no_fcitx_bin" \
-    bash "$project_root/install.sh" >"$no_fcitx_output" 2>&1
-grep -F 'Fcitx5 executable not found; installation completed' \
-    "$no_fcitx_output" >/dev/null
-test -f "$test_root/no-fcitx-prefix/share/modernime/install-manifest.txt"
+    bash "$project_root/install.sh" >"$no_fcitx_output" 2>&1; then
+    echo "Expected install.sh to fail without fcitx5" >&2
+    exit 1
+fi
+grep -F 'Missing required runtime dependencies' "$no_fcitx_output" >/dev/null
+test ! -e "$test_root/no-fcitx-prefix/share/modernime/install-manifest.txt"
+
+no_fcitx_output_allowed="$test_root/no-fcitx-output-allowed"
+env \
+    -u MODERNIME_CONFIG_HOME \
+    -u MODERNIME_DESKTOP_DIR \
+    HOME="$test_root/no-fcitx-home" \
+    XDG_CONFIG_HOME="$test_root/no-fcitx-config" \
+    MODERNIME_PREFIX="$test_root/no-fcitx-prefix-allowed" \
+    MODERNIME_BUILD_DIR="$test_root/no-fcitx-build-allowed" \
+    PATH="$no_fcitx_bin" \
+    bash "$project_root/install.sh" --allow-missing-deps >"$no_fcitx_output_allowed" 2>&1
+grep -F 'file deployment completed (runtime activation skipped due to missing fcitx5)' \
+    "$no_fcitx_output_allowed" >/dev/null
+test -f "$test_root/no-fcitx-prefix-allowed/share/modernime/install-manifest.txt"
+
+old_cmake_bin="$test_root/old-cmake-bin"
+make_fake_build_tools "$old_cmake_bin"
+cat >"$old_cmake_bin/cmake" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1-}" == "--version" ]]; then
+    printf 'cmake version 3.22.1\n'
+    exit 0
+fi
+exit 0
+EOF
+old_cmake_output="$test_root/old-cmake-output"
+if env \
+    -u MODERNIME_CONFIG_HOME \
+    -u MODERNIME_DESKTOP_DIR \
+    HOME="$test_root/old-cmake-home" \
+    XDG_CONFIG_HOME="$test_root/old-cmake-config" \
+    MODERNIME_PREFIX="$test_root/old-cmake-prefix" \
+    MODERNIME_BUILD_DIR="$test_root/old-cmake-build" \
+    PATH="$old_cmake_bin:$fake_bin:/usr/bin:/bin" \
+    bash "$project_root/install.sh" >"$old_cmake_output" 2>&1; then
+    echo "Expected install.sh to fail with CMake 3.22.1" >&2
+    exit 1
+fi
+grep -F 'CMake 3.24 or higher is required' "$old_cmake_output" >/dev/null
+
 
 crashing_bin="$test_root/crashing-bin"
 make_fake_build_tools "$crashing_bin"

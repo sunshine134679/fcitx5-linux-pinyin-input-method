@@ -5,22 +5,37 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source "$project_root/scripts/install_state.sh"
 
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
-if [[ $# -ge 1 && -n "${1:-}" ]]; then
+had_explicit_args=$#
+allow_missing_deps=false
+case "${MODERNIME_ALLOW_MISSING_DEPS:-}" in
+    1|true|TRUE|yes|YES)
+        allow_missing_deps=true
+        ;;
+esac
+
+while [[ $# -gt 0 ]]; do
     case "$1" in
         --prefix=*)
             prefix="${1#*=}"
+            shift
             ;;
         --prefix|-p)
             prefix="$2"
+            shift 2
+            ;;
+        --allow-missing-deps)
+            allow_missing_deps=true
             shift
             ;;
         -*)
+            shift
             ;;
         *)
             prefix="$1"
+            shift
             ;;
     esac
-fi
+done
 
 is_system_prefix=false
 if [[ "$prefix" =~ ^/(usr|opt|etc)(/|$) ]]; then
@@ -46,7 +61,70 @@ for required_command in "${required_commands[@]}"; do
     fi
 done
 
-if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" && $# -eq 0 ]]; then
+check_cmake_version() {
+    if command -v cmake >/dev/null 2>&1; then
+        local cmake_ver
+        cmake_ver=$(cmake --version 2>/dev/null | head -n1 | grep -oP '\d+\.\d+(\.\d+)?' | head -n1 || true)
+        if [[ -n "$cmake_ver" ]]; then
+            local major minor
+            major=$(echo "$cmake_ver" | cut -d. -f1)
+            minor=$(echo "$cmake_ver" | cut -d. -f2)
+            if (( major < 3 || (major == 3 && minor < 24) )); then
+                printf 'Error: CMake 3.24 or higher is required to build ModernIME from source, but found %s.\n' "$cmake_ver" >&2
+                printf 'On Ubuntu 22.04 LTS, upgrade CMake via Kitware APT repository or snap, or use the prebuilt binary package.\n' >&2
+                exit 1
+            fi
+        fi
+    fi
+}
+check_cmake_version
+
+check_runtime_dependencies() {
+    local missing_deps=()
+    if ! command -v fcitx5 >/dev/null 2>&1; then
+        missing_deps+=("fcitx5 (executable not found)")
+    fi
+
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        if [[ "$allow_missing_deps" == true ]]; then
+            printf 'Warning: Missing runtime dependencies: %s\n' "${missing_deps[*]}" >&2
+            printf 'Proceeding with installation because --allow-missing-deps or MODERNIME_ALLOW_MISSING_DEPS=1 is set.\n' >&2
+        else
+            printf 'Error: Missing required runtime dependencies:\n' >&2
+            for dep in "${missing_deps[@]}"; do
+                printf '  - %s\n' "$dep" >&2
+            done
+            printf '\n' >&2
+            printf 'ModernIME requires the Fcitx5 input method framework to run.\n' >&2
+            printf 'Please install Fcitx5 before installing ModernIME:\n' >&2
+            printf '  Ubuntu / Debian: sudo apt install fcitx5 fcitx5-chinese-addons\n' >&2
+            printf '  openEuler / Fedora: sudo dnf install fcitx5 fcitx5-chinese-addons\n' >&2
+            printf '\n' >&2
+            printf 'To deploy files without runtime verification (e.g. into an offline root/chroot), run with:\n' >&2
+            printf '  ./install.sh --allow-missing-deps\n' >&2
+            exit 1
+        fi
+    fi
+}
+check_runtime_dependencies
+
+check_runtime_dictionaries() {
+    local has_sc_dict=false
+    local has_lm=false
+    for p in /usr/share/libime/sc.dict /usr/local/share/libime/sc.dict "$prefix/share/libime/sc.dict"; do
+        if [[ -f "$p" ]]; then has_sc_dict=true; break; fi
+    done
+    for p in /usr/share/libime/zh_CN.lm /usr/lib64/libime/zh_CN.lm /usr/local/share/libime/zh_CN.lm "$prefix/share/libime/zh_CN.lm"; do
+        if [[ -f "$p" ]]; then has_lm=true; break; fi
+    done
+    if [[ "$has_sc_dict" != true || "$has_lm" != true ]]; then
+        printf 'Notice: System LibIME dictionary (sc.dict) or language model (zh_CN.lm) not detected in standard system locations.\n'
+        printf 'ModernIME includes its own offline knowledge dictionary, but recommends installing libime-data / libime-data-language-model for full pinyin vocabulary.\n'
+    fi
+}
+check_runtime_dictionaries
+
+if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" && "$had_explicit_args" -eq 0 ]]; then
     printf 'Error: Running install.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
     printf 'This prevents accidental installation or modification of your real user environment (%s).\n' "$HOME" >&2
     printf 'Specify MODERNIME_PREFIX explicitly (e.g. MODERNIME_PREFIX=/tmp/test-prefix) if intended.\n' >&2
@@ -319,9 +397,9 @@ esac
 if [[ "$skip_fcitx_restart" == true ]]; then
     printf 'Fcitx5 restart skipped by MODERNIME_SKIP_FCITX_RESTART=1\n'
 elif ! command -v fcitx5 >/dev/null 2>&1; then
-    printf 'Fcitx5 executable not found; installation completed; start it after installation with: fcitx5 -u modernime-ui\n' >&2
+    printf 'Fcitx5 executable not found; file deployment completed (runtime activation skipped due to missing fcitx5)\n' >&2
 elif ! command -v fcitx5-remote >/dev/null 2>&1; then
-    printf 'fcitx5-remote executable not found; installation completed; start it after installation with: fcitx5 -u modernime-ui\n' >&2
+    printf 'fcitx5-remote executable not found; file deployment completed (runtime activation skipped due to missing fcitx5-remote)\n' >&2
 elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     printf 'No graphical session detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5 -u modernime-ui\n' >&2
 elif [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then

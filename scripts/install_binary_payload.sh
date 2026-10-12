@@ -12,6 +12,18 @@ if [[ -z "$binary_addon" ]]; then
 fi
 binary_libdir=${binary_addon#"$payload_root/"}
 binary_libdir=${binary_libdir%/fcitx5/modernime_fcitx5.so}
+
+host_arch=$(uname -m)
+case "$host_arch" in
+    x86_64|amd64)
+        ;;
+    *)
+        printf 'Error: ModernIME binary package is built for x86_64, but host architecture is %s.\n' "$host_arch" >&2
+        printf 'Please build ModernIME from source for your architecture.\n' >&2
+        exit 1
+        ;;
+esac
+
 mkdir -p -- "$prefix"
 cp -a -- "$payload_root/." "$prefix/"
 printf 'ModernIME binary payload installed to %s\n' "$prefix"
