@@ -136,12 +136,40 @@ check_runtime_dictionaries() {
 check_runtime_dictionaries
 
 check_native_package_collision() {
-    if [[ "$is_system_prefix" != true || "$overwrite_package" == true ]]; then
+    if [[ "$overwrite_package" == true ]]; then
         return 0
     fi
+    local existing_channel_file="$prefix/share/modernime/install-channel.txt"
+    local existing_manifest_file="$prefix/share/modernime/install-manifest.txt"
+    local existing_channel=""
+    if [[ -f "$existing_channel_file" ]]; then
+        existing_channel=$(grep -E '^channel=' "$existing_channel_file" 2>/dev/null | head -n 1 | cut -d= -f2- || true)
+    fi
+    if [[ -n "$existing_channel" && "$existing_channel" != "script" ]]; then
+        printf 'Error: Existing ModernIME installation at %s belongs to channel "%s" (expected "script").\n' "$prefix" "$existing_channel" >&2
+        printf 'Overwriting a native package or mismatched installation channel directly via install.sh is blocked.\n' >&2
+        printf 'To inspect or migrate channels safely:\n' >&2
+        printf '  %s/scripts/modernime-migrate-channel --check --from-prefix "%s"\n' "$project_root" "$prefix" >&2
+        printf 'Or rerun with --overwrite-package (or MODERNIME_OVERWRITE_PACKAGE=1) to force overwrite.\n' >&2
+        exit 1
+    fi
+
+    if [[ "$is_system_prefix" != true ]]; then
+        if [[ -e "$prefix/bin/modernime-settings" && ! -f "$existing_manifest_file" && "$existing_channel" != "script" ]]; then
+            printf 'Error: Detected an untracked ModernIME installation of unknown origin at %s/bin/modernime-settings (missing install-manifest.txt).\n' "$prefix" >&2
+            printf 'Refusing to overwrite an unknown installation source by default.\n' >&2
+            printf 'Inspect with: %s/scripts/modernime-migrate-channel --check --from-prefix "%s"\n' "$project_root" "$prefix" >&2
+            printf 'Or rerun with --overwrite-package (or MODERNIME_OVERWRITE_PACKAGE=1) to override.\n' >&2
+            exit 1
+        fi
+        return 0
+    fi
+
     local candidate_files=(
         "$prefix/bin/modernime-settings"
         "$prefix/bin/modernime-session-init"
+        "$prefix/bin/modernime-data-guard"
+        "$prefix/bin/modernime-migrate-channel"
         "$prefix/share/fcitx5/addon/modernime.conf"
         "$prefix/share/fcitx5/addon/modernime-ui.conf"
         "$prefix/share/fcitx5/inputmethod/modernime.conf"
@@ -169,6 +197,14 @@ check_native_package_collision() {
             fi
         fi
     done
+
+    if [[ -e "$prefix/bin/modernime-settings" && ! -f "$existing_manifest_file" && "$existing_channel" != "script" ]]; then
+        printf 'Error: Detected an untracked ModernIME installation of unknown origin at %s/bin/modernime-settings.\n' "$prefix" >&2
+        printf 'Refusing to overwrite an unknown installation source in system prefix %s.\n' "$prefix" >&2
+        printf 'Inspect with: %s/scripts/modernime-migrate-channel --check --from-prefix "%s"\n' "$project_root" "$prefix" >&2
+        printf 'Or rerun with --overwrite-package (or MODERNIME_OVERWRITE_PACKAGE=1) to override.\n' >&2
+        exit 1
+    fi
 }
 check_native_package_collision
 
@@ -538,6 +574,7 @@ mkdir -p "$manifest_dir"
     printf '%s\n' "$prefix/bin/modernime-settings"
     printf '%s\n' "$prefix/bin/modernime-session-init"
     printf '%s\n' "$prefix/bin/modernime-data-guard"
+    printf '%s\n' "$prefix/bin/modernime-migrate-channel"
     printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
     if [[ "$is_system_prefix" != true ]]; then
         printf '%s\n' "$desktop_shortcut"

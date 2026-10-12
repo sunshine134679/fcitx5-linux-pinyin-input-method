@@ -84,6 +84,7 @@ fi
 %{_bindir}/modernime-settings
 %{_bindir}/modernime-session-init
 %{_bindir}/modernime-data-guard
+%{_bindir}/modernime-migrate-channel
 %{_libdir}/fcitx5/modernime_fcitx5.so
 %{_libdir}/fcitx5/modernime_ui.so
 %{_datadir}/fcitx5/addon/modernime.conf

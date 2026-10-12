@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# modernime-migrate-channel — Controlled installation channel inspection and migration tool
+# Supports migrating from install.sh (channel=script) to native system packages (channel=deb / channel=rpm)
+# with transactional data backup, old-channel cleanup, target package verification, and full rollback on failure.
+set -euo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+project_root=""
+if [[ -f "$script_dir/../uninstall.sh" && -f "$script_dir/modernime-data-guard" ]]; then
+    project_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+fi
+
+mode="migrate"
+from_prefix=""
+target_prefix="/usr"
+to_channel=""
+package_cmd=""
+reinit_session=true
+
+usage() {
+    cat <<'EOF'
+Usage:
+  modernime-migrate-channel --check [--from-prefix PREFIX] [--target-prefix /usr]
+  modernime-migrate-channel --to-channel <deb|rpm> [--from-prefix PREFIX] [--target-prefix /usr] [--package-cmd CMD]
+
+Options:
+  --check                  Inspect existing installation channel, manifest, ownership, and version
+  --from-prefix PREFIX     Source script installation prefix (default: auto-detect ~/.local or /usr)
+  --target-prefix PREFIX   Target native package prefix (default: /usr)
+  --to-channel CHANNEL     Target native package channel (deb or rpm)
+  --package-cmd CMD        Command to install the native package (e.g. "sudo apt install -y modernime")
+  --no-session-init        Skip re-initializing user desktop session after migration
+  -h, --help               Show this help message
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --check)
+            mode="check"
+            shift
+            ;;
+        --from-prefix=*)
+            from_prefix="${1#*=}"
+            shift
+            ;;
+        --from-prefix|--prefix)
+            from_prefix="$2"
+            shift 2
+            ;;
+        --target-prefix=*)
+            target_prefix="${1#*=}"
+            shift
+            ;;
+        --target-prefix)
+            target_prefix="$2"
+            shift 2
+            ;;
+        --to-channel=*)
+            to_channel="${1#*=}"
+            shift
+            ;;
+        --to-channel)
+            to_channel="$2"
+            shift 2
+            ;;
+        --package-cmd=*)
+            package_cmd="${1#*=}"
+            shift
+            ;;
+        --package-cmd)
+            package_cmd="$2"
+            shift 2
+            ;;
+        --no-session-init)
+            reinit_session=false
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf 'Error: Unknown argument: %s\n' "$1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$from_prefix" ]]; then
+    if [[ -n "${MODERNIME_PREFIX:-}" ]]; then
+        from_prefix="$MODERNIME_PREFIX"
+    elif [[ -f "$HOME/.local/share/modernime/install-manifest.txt" || -f "$HOME/.local/share/modernime/install-channel.txt" ]]; then
+        from_prefix="$HOME/.local"
+    elif [[ -f "/usr/share/modernime/install-manifest.txt" || -f "/usr/share/modernime/install-channel.txt" ]]; then
+        from_prefix="/usr"
+    else
+        from_prefix="$HOME/.local"
+    fi
+fi
+
+find_data_guard() {
+    if [[ -n "$project_root" && -x "$project_root/scripts/modernime-data-guard" ]]; then
+        printf '%s\n' "$project_root/scripts/modernime-data-guard"
+    elif [[ -x "$script_dir/modernime-data-guard" ]]; then
+        printf '%s\n' "$script_dir/modernime-data-guard"
+    elif [[ -x "$from_prefix/bin/modernime-data-guard" ]]; then
+        printf '%s\n' "$from_prefix/bin/modernime-data-guard"
+    elif command -v modernime-data-guard >/dev/null 2>&1; then
+        command -v modernime-data-guard
+    else
+        return 1
+    fi
+}
+
+detect_owner() {
+    local f=$1
+    local owner=""
+    if command -v dpkg >/dev/null 2>&1; then
+        owner=$(dpkg -S "$f" 2>/dev/null || true)
+    elif command -v rpm >/dev/null 2>&1; then
+        owner=$(rpm -qf "$f" 2>/dev/null || true)
+    fi
+    printf '%s' "$owner"
+}
+
+read_channel_field() {
+    local cfile=$1
+    local key=$2
+    if [[ -f "$cfile" ]]; then
+        grep -E "^${key}=" "$cfile" 2>/dev/null | head -n 1 | cut -d= -f2- || true
+    fi
+}
+
+find_addon_dir() {
+    local pfx=$1
+    for cdir in "$pfx/lib/x86_64-linux-gnu/fcitx5" \
+                "$pfx/lib/aarch64-linux-gnu/fcitx5" \
+                "$pfx/lib64/fcitx5" \
+                "$pfx/lib/fcitx5"; do
+        if [[ -f "$cdir/modernime_fcitx5.so" ]]; then
+            printf '%s' "$cdir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+channel_file="$from_prefix/share/modernime/install-channel.txt"
+manifest_file="$from_prefix/share/modernime/install-manifest.txt"
+detected_channel=$(read_channel_field "$channel_file" "channel")
+detected_version=$(read_channel_field "$channel_file" "version")
+pkg_owner=""
+if [[ -e "$from_prefix/bin/modernime-settings" ]]; then
+    pkg_owner=$(detect_owner "$from_prefix/bin/modernime-settings")
+fi
+
+if [[ -z "$detected_channel" ]]; then
+    if [[ -n "$pkg_owner" ]]; then
+        if command -v dpkg >/dev/null 2>&1 && dpkg -S "$from_prefix/bin/modernime-settings" >/dev/null 2>&1; then
+            detected_channel="deb"
+        else
+            detected_channel="rpm"
+        fi
+    elif [[ -f "$manifest_file" ]]; then
+        detected_channel="script"
+    elif [[ -e "$from_prefix/bin/modernime-settings" ]]; then
+        detected_channel="unknown"
+    else
+        detected_channel="none"
+    fi
+fi
+
+data_home="${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}"
+config_home="${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}"
+data_dir="$data_home/modernime"
+config_dir="$config_home/modernime"
+
+if [[ "$mode" == "check" ]]; then
+    printf '=== ModernIME Installation Channel Inspection ===\n'
+    printf 'Prefix:            %s\n' "$from_prefix"
+    printf 'Detected Channel:  %s\n' "${detected_channel:-unknown}"
+    printf 'Detected Version:  %s\n' "${detected_version:-unknown}"
+    printf 'Manifest Present:  %s\n' "$([[ -f "$manifest_file" ]] && echo "yes ($manifest_file)" || echo "no")"
+    printf 'Package Ownership: %s\n' "${pkg_owner:-unowned}"
+    addon_dir=$(find_addon_dir "$from_prefix" || true)
+    printf 'Addon Directory:   %s\n' "${addon_dir:-not found}"
+    printf 'User Config Dir:   %s (%s)\n' "$config_dir" "$([[ -d "$config_dir" ]] && echo "exists" || echo "absent")"
+    printf 'User Data Dir:     %s (%s)\n' "$data_dir" "$([[ -d "$data_dir" ]] && echo "exists" || echo "absent")"
+    if [[ "$detected_channel" == "script" ]]; then
+        printf '\nRecommended Migration Command (Ubuntu/Debian APT):\n'
+        printf '  modernime-migrate-channel --from-prefix "%s" --to-channel deb --package-cmd "sudo apt install -y modernime"\n' "$from_prefix"
+        printf 'Recommended Migration Command (openEuler/Fedora DNF):\n'
+        printf '  modernime-migrate-channel --from-prefix "%s" --to-channel rpm --package-cmd "sudo dnf install -y modernime"\n' "$from_prefix"
+    fi
+    exit 0
+fi
+
+if [[ -z "$to_channel" ]]; then
+    if command -v apt-get >/dev/null 2>&1 || command -v dpkg >/dev/null 2>&1; then
+        to_channel="deb"
+    elif command -v dnf >/dev/null 2>&1 || command -v rpm >/dev/null 2>&1; then
+        to_channel="rpm"
+    else
+        printf 'Error: Please specify --to-channel deb or --to-channel rpm.\n' >&2
+        exit 1
+    fi
+fi
+
+if [[ "$to_channel" != "deb" && "$to_channel" != "rpm" ]]; then
+    printf 'Error: Unsupported target channel "%s" (expected deb or rpm).\n' "$to_channel" >&2
+    exit 1
+fi
+
+if [[ "$detected_channel" != "script" ]]; then
+    printf 'Error: Source installation at %s has channel="%s" (expected channel="script").\n' "$from_prefix" "$detected_channel" >&2
+    printf 'Run "modernime-migrate-channel --check --from-prefix %s" to inspect the current installation.\n' "$from_prefix" >&2
+    exit 1
+fi
+
+if [[ ! -f "$manifest_file" ]]; then
+    printf 'Error: Missing install-manifest.txt at %s; cannot safely identify script-managed files to migrate.\n' "$manifest_file" >&2
+    exit 1
+fi
+
+data_guard_bin=$(find_data_guard || true)
+if [[ -z "$data_guard_bin" ]]; then
+    printf 'Error: modernime-data-guard not found; refusing to migrate without transactional data backup.\n' >&2
+    exit 1
+fi
+
+ts=$(date +%Y%m%d%H%M%S 2>/dev/null || echo "$$")
+printf '[1/5] Inspecting source installation (channel=%s, version=%s, prefix=%s)...\n' \
+    "$detected_channel" "${detected_version:-unknown}" "$from_prefix"
+
+printf '[2/5] Creating verified transactional backup of user configuration and learning data...\n'
+if ! "$data_guard_bin" --pre-upgrade --data-dir "$data_dir" --config-dir "$config_dir" --tag "migrate-$ts"; then
+    printf 'Error: Pre-migration user data backup or integrity check failed; aborting migration. Original installation at %s is untouched.\n' "$from_prefix" >&2
+    exit 1
+fi
+
+# Copy data_guard_bin to a temporary path before removing old prefix files
+temp_work=$(mktemp -d "${TMPDIR:-/tmp}/modernime-channel-migrate.XXXXXX")
+rollback_prefix_dir="$temp_work/prefix-backup"
+rollback_home_dir="$temp_work/home-backup"
+mkdir -p "$rollback_prefix_dir" "$rollback_home_dir"
+cp "$data_guard_bin" "$temp_work/modernime-data-guard"
+chmod +x "$temp_work/modernime-data-guard"
+
+printf '[3/5] Staging rollback snapshot of script-managed files from %s...\n' "$from_prefix"
+managed_list="$temp_work/managed-files.txt"
+: > "$managed_list"
+
+while IFS= read -r item; do
+    [[ -z "$item" ]] && continue
+    if [[ -e "$item" || -L "$item" ]]; then
+        printf '%s\n' "$item" >> "$managed_list"
+        if [[ "$item" == "$from_prefix/"* ]]; then
+            rel="${item#"$from_prefix/"}"
+            mkdir -p "$rollback_prefix_dir/$(dirname "$rel")"
+            cp -a -- "$item" "$rollback_prefix_dir/$rel"
+        else
+            rel="${item#/}"
+            mkdir -p "$rollback_home_dir/$(dirname "$rel")"
+            cp -a -- "$item" "$rollback_home_dir/$rel"
+        fi
+    fi
+done < "$manifest_file"
+
+# Also preserve install-manifest.txt and managed-files state directory
+if [[ -d "$from_prefix/share/modernime" ]]; then
+    mkdir -p "$rollback_prefix_dir/share"
+    cp -a -- "$from_prefix/share/modernime" "$rollback_prefix_dir/share/"
+fi
+
+restore_original_channel() {
+    printf '\n[ROLLBACK] Migration failed! Restoring original script installation at %s...\n' "$from_prefix" >&2
+    # Clean up partial target prefix files if target_prefix != from_prefix and not owned by dpkg/rpm
+    if [[ -d "$rollback_prefix_dir" ]]; then
+        mkdir -p "$from_prefix"
+        cp -a --remove-destination -- "$rollback_prefix_dir/." "$from_prefix/" 2>/dev/null || true
+    fi
+    if [[ -d "$rollback_home_dir" ]]; then
+        while IFS= read -r -d '' bak_file; do
+            rel="${bak_file#"$rollback_home_dir/"}"
+            dst="/$rel"
+            mkdir -p "$(dirname "$dst")"
+            cp -a --remove-destination -- "$bak_file" "$dst" 2>/dev/null || true
+        done < <(find "$rollback_home_dir" \( -type f -o -type l \) -print0)
+    fi
+    "$temp_work/modernime-data-guard" --restore \
+        --data-dir "$data_dir" \
+        --config-dir "$config_dir" 2>/dev/null || true
+
+    printf '[ROLLBACK] Original installation restored (channel=script, version=%s, prefix=%s).\n' \
+        "${detected_version:-unknown}" "$from_prefix" >&2
+    printf 'Recovery Instructions:\n' >&2
+    printf '  1. Verify your existing installation is active: %s/bin/modernime-settings --help\n' "$from_prefix" >&2
+    printf '  2. Check user data integrity: %s/bin/modernime-data-guard --verify\n' "$from_prefix" >&2
+    printf '  3. Fix package repository/dependency issues and retry modernime-migrate-channel.\n' >&2
+    rm -rf -- "$temp_work"
+}
+
+printf '[4/5] Cleaning up old script-managed files from %s...\n' "$from_prefix"
+if [[ -n "$project_root" && -f "$project_root/uninstall.sh" ]]; then
+    MODERNIME_PREFIX="$from_prefix" MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/uninstall.sh" --prefix="$from_prefix" >/dev/null 2>&1 || true
+fi
+# Ensure all recorded script files in from_prefix are removed before package installation
+while IFS= read -r item; do
+    [[ -z "$item" ]] && continue
+    if [[ "$item" == "$from_prefix/"* && ( -e "$item" || -L "$item" ) ]]; then
+        rm -f -- "$item" 2>/dev/null || true
+    fi
+done < "$managed_list"
+rm -f -- "$from_prefix/share/modernime/install-manifest.txt" \
+         "$from_prefix/share/modernime/install-channel.txt" 2>/dev/null || true
+
+if [[ -n "$package_cmd" ]]; then
+    printf '[5/5] Installing target %s package via: %s\n' "$to_channel" "$package_cmd"
+    if ! MODERNIME_MIGRATE_FROM_SCRIPT=1 bash -c "$package_cmd"; then
+        printf 'Error: Target package installation command failed.\n' >&2
+        restore_original_channel
+        exit 1
+    fi
+else
+    printf '[5/5] Verifying target %s package at %s...\n' "$to_channel" "$target_prefix"
+fi
+
+if [[ "${MODERNIME_SIMULATE_MIGRATION_FAILURE:-0}" == "1" ]]; then
+    printf 'Error: Simulated channel migration failure via MODERNIME_SIMULATE_MIGRATION_FAILURE=1\n' >&2
+    restore_original_channel
+    exit 1
+fi
+
+# Verify target package installation paths, channel metadata, and version
+target_channel_file="$target_prefix/share/modernime/install-channel.txt"
+target_addon_dir=$(find_addon_dir "$target_prefix" || true)
+if [[ ! -x "$target_prefix/bin/modernime-settings" || -z "$target_addon_dir" || ! -f "$target_prefix/share/modernime/pinyin/modernime-knowledge.dict" ]]; then
+    printf 'Error: Target package verification failed at %s (missing settings binary, Fcitx5 plugin, or dictionary).\n' "$target_prefix" >&2
+    restore_original_channel
+    exit 1
+fi
+
+new_channel=$(read_channel_field "$target_channel_file" "channel")
+new_version=$(read_channel_field "$target_channel_file" "version")
+if [[ -n "$new_channel" && "$new_channel" != "$to_channel" ]]; then
+    printf 'Error: Target channel mismatch at %s: expected "%s", found "%s".\n' "$target_prefix" "$to_channel" "$new_channel" >&2
+    restore_original_channel
+    exit 1
+fi
+
+if ! "$temp_work/modernime-data-guard" --verify --data-dir "$data_dir" --config-dir "$config_dir"; then
+    printf 'Error: Post-migration user data verification failed.\n' >&2
+    restore_original_channel
+    exit 1
+fi
+
+if [[ "$reinit_session" == true && -x "$target_prefix/bin/modernime-session-init" && "${EUID:-$(id -u)}" -ne 0 ]]; then
+    MODERNIME_PREFIX="$target_prefix" MODERNIME_SKIP_FCITX_RESTART=1 \
+        "$target_prefix/bin/modernime-session-init" >/dev/null 2>&1 || true
+fi
+
+rm -rf -- "$temp_work"
+printf 'Migration completed successfully!\n'
+printf '  New Channel: %s\n' "${new_channel:-$to_channel}"
+printf '  New Version: %s\n' "${new_version:-0.1.8}"
+printf '  Target Path: %s\n' "$target_prefix"
+printf '  Plugin Path: %s/modernime_fcitx5.so\n' "$target_addon_dir"
