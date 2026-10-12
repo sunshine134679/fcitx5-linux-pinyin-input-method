@@ -53,8 +53,8 @@ struct EngineConfig {
     float beta = 2.5f;                      // 时间衰减系数: beta * exp(-delta_t / tau)
     float gamma = 3.0f;                     // 上下文命中奖励: gamma * context_factor
     uint32_t half_life_seconds = 7 * 86400; // 时间衰减半衰期 T_1/2 (默认 7 天 = 604800 秒)
-    size_t max_dict_capacity = 50000;       // 用户词库最大容量，超出自动剪枝
-    size_t prune_target_size = 40000;       // 剪枝后保留的最优词条数
+    size_t max_dict_capacity = 200000;      // 用户词库最大容量，超出自动剪枝
+    size_t prune_target_size = 160000;      // 剪枝后保留的最优词条数
     uint32_t magic_header = 0xA55AA55A;     // 存储校验魔数
     size_t initial_lmdb_map_size = 16ULL * 1024ULL * 1024ULL; // LMDB 初始映射容量 (默认 16 MiB)
 };

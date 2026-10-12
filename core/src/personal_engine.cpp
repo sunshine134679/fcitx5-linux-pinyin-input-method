@@ -412,7 +412,7 @@ void PersonalEngine::UpdateActiveContext(std::string_view raw_before_cursor,
 }
 
 void PersonalEngine::SetMaxCapacity(size_t max_capacity, size_t prune_target) {
-    config_.max_dict_capacity = max_capacity == 0 ? 50000 : max_capacity;
+    config_.max_dict_capacity = max_capacity == 0 ? 200000 : max_capacity;
     if (prune_target > 0 && prune_target <= config_.max_dict_capacity) {
         config_.prune_target_size = prune_target;
     } else {
