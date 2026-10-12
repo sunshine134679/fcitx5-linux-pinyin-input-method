@@ -41,6 +41,7 @@ EOF
 # 1.3 模拟用户积累的个人词典、设置和学习数据库
 printf '我的自定义短语\twodezidingyiduanju\t100\n' > "$data_home/modernime/user-dictionary.txt"
 printf '[General]\nCandidateSize=9\n' > "$config_home/modernime/settings.conf"
+printf 'lmdb-learning-payload\n' > "$data_home/modernime/learning.lmdb"
 python3 - "$data_home/modernime/learning.sqlite3" <<'PYEOF'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
@@ -54,7 +55,7 @@ PYEOF
 user_dict_hash=$(sha256sum "$data_home/modernime/user-dictionary.txt" | awk '{print $1}')
 settings_hash=$(sha256sum "$config_home/modernime/settings.conf" | awk '{print $1}')
 
-printf '=== 2. 执行 v0.1.7 升级安装 ===\n'
+printf '=== 2. 执行 v0.1.8 升级安装 ===\n'
 export HOME="$home_dir"
 export MODERNIME_PREFIX="$prefix"
 export MODERNIME_BUILD_DIR="$test_root/build"
@@ -95,7 +96,7 @@ test -f "$prefix/bin/modernime-session-init"
 test -x "$prefix/bin/modernime-session-init"
 test -f "$current_addon_dir/modernime_fcitx5.so"
 test -f "$current_addon_dir/modernime_ui.so"
-test "$(head -n 1 "$current_addon_dir/modernime_fcitx5.so")" != "v0.1.6-fcitx5-plugin"
+test "$(tr -d '\0' < "$current_addon_dir/modernime_fcitx5.so" | head -n 1)" != "v0.1.6-fcitx5-plugin"
 
 # 3.3 验证用户数据完整保留且哈希不变
 test -f "$data_home/modernime/user-dictionary.txt"
@@ -109,6 +110,9 @@ test "$settings_hash" = "$current_settings_hash"
 backup_db=$(find "$data_home/modernime" -name 'learning.sqlite3.backup-*' -print -quit)
 test -n "$backup_db"
 test -f "$backup_db"
+backup_lmdb=$(find "$data_home/modernime" -name 'learning.lmdb.backup-*' -print -quit)
+test -n "$backup_lmdb"
+test -f "$backup_lmdb"
 python3 - "$backup_db" <<'PYEOF'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])

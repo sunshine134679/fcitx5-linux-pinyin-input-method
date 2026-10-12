@@ -227,6 +227,18 @@ PYEOF
         fi
         printf 'Backed up user learning database to %s\n' "$backup_target"
     fi
+    local lmdb_file="$data_dir/learning.lmdb"
+    if [[ -f "$lmdb_file" ]]; then
+        local ts_lmdb
+        ts_lmdb=$(date +%Y%m%d%H%M%S 2>/dev/null || echo "$$")
+        local lmdb_backup="$data_dir/learning.lmdb.backup-$ts_lmdb"
+        if ! cp -f -- "$lmdb_file" "$lmdb_backup"; then
+            printf 'Error: Failed to create LMDB backup from %s to %s\n' "$lmdb_file" "$lmdb_backup" >&2
+            rm -f -- "$lmdb_backup"
+            return 1
+        fi
+        printf 'Backed up user LMDB learning database to %s\n' "$lmdb_backup"
+    fi
 }
 backup_user_database
 
@@ -509,7 +521,7 @@ channel_file="$manifest_dir/install-channel.txt"
 mkdir -p "$manifest_dir"
 {
     printf 'channel=script\n'
-    printf 'version=0.1.7\n'
+    printf 'version=0.1.8\n'
     printf 'prefix=%s\n' "$prefix"
 } > "$channel_file"
 {

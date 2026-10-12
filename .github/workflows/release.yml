@@ -189,6 +189,7 @@ jobs:
           MODERNIME_CONFIG_HOME="$config_home" \
           MODERNIME_DESKTOP_DIR="$gate_dir/Desktop" \
           MODERNIME_SKIP_FCITX_RESTART=1 \
+          MODERNIME_ALLOW_MISSING_DEPS=1 \
           XDG_DATA_HOME="$data_home" \
           XDG_CONFIG_HOME="$config_home" \
           bash "$extracted_dir/install.sh" "$prefix"

@@ -1,5 +1,5 @@
 Name:           modernime
-Version:        0.1.7
+Version:        0.1.8
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 License:        LGPL-2.1-or-later
@@ -76,6 +76,13 @@ fi
 %{_datadir}/applications/modernime-settings.desktop
 
 %changelog
+* Mon Oct 12 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.8-1
+- Add LMDB personalization storage engine with lossless SQLite migration and process-wide shared handles
+- Implement commit consistency, exponential half-life decay, surrounding text context affinity, and sensitive context guards
+- Expand Chinese lexicon with names, daily phrases, and domain terms with polyphonic verification
+- Display English definitions as candidate annotations and unify Chinese/English arbitration
+- Harden online WAL/LMDB backup, staged binary payload rollback, and release upgrade lifecycle gate
+
 * Sun Oct 11 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.7-1
 - Preserve user integration files and track session profile ownership
 - Share source and portable installation lifecycle with relocatable data lookup
