@@ -199,6 +199,7 @@ grep -F 'remote:-s' "$crash_log" >/dev/null
 # Verify automatic consistent online WAL backup of user learning database during upgrade
 backup_data="$test_root/user-data"
 mkdir -p "$backup_data/modernime"
+printf 'lmdb-learning-state\n' > "$backup_data/modernime/learning.lmdb"
 python3 - "$backup_data/modernime/learning.sqlite3" <<'PYEOF'
 import sqlite3, sys
 db_path = sys.argv[1]
@@ -214,9 +215,13 @@ run_install backup \
     MODERNIME_SKIP_FCITX_RESTART=1 \
     MODERNIME_DATA_HOME="$backup_data" >"$backup_log" 2>&1
 grep -F 'Backed up user learning database to' "$backup_log" >/dev/null
+grep -F 'Backed up user LMDB learning database to' "$backup_log" >/dev/null
 backup_file=$(find "$backup_data/modernime" -name 'learning.sqlite3.backup-*' -print -quit)
 test -n "$backup_file"
 test -f "$backup_file"
+lmdb_backup_file=$(find "$backup_data/modernime" -name 'learning.lmdb.backup-*' -print -quit)
+test -n "$lmdb_backup_file"
+test -f "$lmdb_backup_file"
 python3 - "$backup_file" <<'PYEOF'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
@@ -251,6 +256,10 @@ echo "new-v2" > "$stage_test_root/payload/usr/bin/modernime-settings"
 echo "new-dict" > "$stage_test_root/payload/usr/share/modernime/pinyin/modernime-knowledge.dict"
 : > "$stage_test_root/payload/usr/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so"
 chmod +x "$stage_test_root/payload/usr/bin/modernime-settings"
+
+# Verify generated binary installer strips check_cmake_version so Ubuntu 22.04 (CMake 3.22) works
+bash "$project_root/scripts/generate_binary_installer.sh" "$stage_test_root/payload"
+! grep -F 'check_cmake_version' "$stage_test_root/payload/install.sh" >/dev/null
 
 # Test successful staged install
 project_root_main="$project_root"

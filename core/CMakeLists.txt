@@ -24,6 +24,7 @@ find_path(LMDB_INCLUDE_DIR
     NAMES lmdb.h
     HINTS
         ${LMDB_INCLUDE_DIRS}
+    PATHS
         "$ENV{HOME}/.local/include"
         "/home/$ENV{USER}/.local/include"
 )
@@ -31,6 +32,7 @@ find_library(LMDB_LIBRARY
     NAMES lmdb liblmdb.so liblmdb.a
     HINTS
         ${LMDB_LIBRARY_DIRS}
+    PATHS
         "$ENV{HOME}/.local/lib"
         "/home/$ENV{USER}/.local/lib"
 )
@@ -43,8 +45,12 @@ if(NOT TARGET LMDB::LMDB)
     set_target_properties(LMDB::LMDB PROPERTIES
         IMPORTED_LOCATION "${LMDB_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${LMDB_INCLUDE_DIR}"
-        INTERFACE_LINK_OPTIONS "-Wl,-rpath,${LMDB_LIBRARY_DIR}"
     )
+    if(NOT LMDB_LIBRARY_DIR MATCHES "^(/usr/lib|/lib)(64|/.*-linux-gnu)?$")
+        set_property(TARGET LMDB::LMDB APPEND PROPERTY
+            INTERFACE_LINK_OPTIONS "-Wl,-rpath,${LMDB_LIBRARY_DIR}"
+        )
+    endif()
 endif()
 
 target_include_directories(modernime_core PUBLIC

@@ -11,7 +11,7 @@ awk '
         requirements++; skip_requirements = 1; next
     }
     skip_requirements {
-        if ($0 == "done") { skip_requirements = 0 }
+        if ($0 == "check_cmake_version") { skip_requirements = 0 }
         next
     }
     $0 == "cmake_args=(" {

@@ -31,6 +31,10 @@ Testing/
 *.sqlite-*
 *.sqlite3
 *.sqlite3-*
+*.lmdb
+*.lmdb-*
+*.mdb
+*.mdb-*
 *.db
 *.db-*
 *.log

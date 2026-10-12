@@ -61,6 +61,7 @@ Dependencies:
   - libime / libime-pinyin
   - gtk3
   - sqlite3
+  - lmdb (liblmdb0 / lmdb-libs)
 EOF
 
 printf '==> Packaging tarball...\n'
