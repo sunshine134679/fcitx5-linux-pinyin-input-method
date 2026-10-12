@@ -1425,10 +1425,16 @@ public:
 
         core::CommitEvent event;
         event.text = candidate.text;
-        event.fullPinyin = candidate.fullPinyin.empty() ? std::string(rawInput) : candidate.fullPinyin;
-        event.rawKeystrokes = std::string(rawInput);
         event.isPartial = partialSelection;
         event.consumedInputBytes = candidate.consumedInputBytes > 0 ? candidate.consumedInputBytes : rawInput.size();
+        if (candidate.fullPinyin.empty()) {
+            event.fullPinyin = partialSelection
+                ? std::string(rawInput.substr(0, event.consumedInputBytes))
+                : std::string(rawInput);
+        } else {
+            event.fullPinyin = candidate.fullPinyin;
+        }
+        event.rawKeystrokes = std::string(rawInput.substr(0, event.consumedInputBytes));
         event.contextBefore = contextBefore_;
         event.contextAfter = contextAfter_;
         event.timestampMs = nowMilliseconds();
@@ -1462,7 +1468,6 @@ public:
                 phraseEvent.contextAfter = contextAfter_;
                 phraseEvent.timestampMs = event.timestampMs;
                 onCommitEvent(phraseEvent);
-                onCommitEvent(phraseEvent);
                 phraseTracker_.resetCommitHistory();
             } else {
                 auto formedInter = phraseTracker_.recordCommit(event);
@@ -1477,13 +1482,7 @@ public:
                     phraseEvent.contextBefore = contextBefore_;
                     phraseEvent.contextAfter = contextAfter_;
                     phraseEvent.timestampMs = event.timestampMs;
-                    if (fp.isInitialFormation) {
-                        for (int i = 0; i < fp.repetitionCount; ++i) {
-                            onCommitEvent(phraseEvent);
-                        }
-                    } else {
-                        onCommitEvent(phraseEvent);
-                    }
+                    onCommitEvent(phraseEvent);
                 }
             }
         }

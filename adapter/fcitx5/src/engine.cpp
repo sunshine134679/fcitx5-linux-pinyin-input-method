@@ -611,7 +611,8 @@ bool ModernIMEController::select(std::size_t index) {
             publishProviderPage(true);
             return true;
         }
-        if (candidate.source != core::CandidateSource::Command &&
+        if (!sensitive_ &&
+            candidate.source != core::CandidateSource::Command &&
             candidate.source != core::CandidateSource::EnglishDefinition &&
             candidate.source != core::CandidateSource::Raw &&
             !candidate.text.empty()) {
@@ -728,7 +729,7 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
     }
     const auto preedit = compositionInput_.empty() ? page_.preedit
                                                    : compositionInput_;
-    if (provider_ != nullptr) {
+    if (!sensitive_ && provider_ != nullptr) {
         core::CommitEvent event;
         event.text = preedit;
         event.rawKeystrokes = compositionInput_.empty() ? page_.rawInput : compositionInput_;
@@ -782,8 +783,33 @@ void ModernIMEController::reset() {
     singleQuoteOpen_ = false;
 }
 
+void ModernIMEController::setSensitive(bool sensitive) {
+    if (sensitive_ == sensitive) {
+        return;
+    }
+    sensitive_ = sensitive;
+    if (sensitive_) {
+        recentCommit_.valid = false;
+        fallbackContextBefore_.clear();
+        contextBefore_.clear();
+        contextAfter_.clear();
+        if (provider_ != nullptr) {
+            provider_->setLearningEnabled(false);
+            provider_->setContextLearningEnabled(false);
+            provider_->resetCommitHistory();
+        }
+    } else if (provider_ != nullptr) {
+        provider_->setLearningEnabled(options_.learningEnabled);
+        provider_->setContextLearningEnabled(options_.contextLearningEnabled);
+    }
+}
+
 void ModernIMEController::setOptions(ControllerOptions options) {
     options_ = options;
+    if (provider_ != nullptr && !sensitive_) {
+        provider_->setLearningEnabled(options_.learningEnabled);
+        provider_->setContextLearningEnabled(options_.contextLearningEnabled);
+    }
     if (!options_.inputEnabled) {
         reset();
     }

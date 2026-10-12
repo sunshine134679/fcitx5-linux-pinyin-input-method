@@ -42,7 +42,7 @@ struct PhraseFormationStats final {
 class PhraseFormationTracker final {
 public:
     explicit PhraseFormationTracker(
-        int repetitionThreshold = 5,
+        int repetitionThreshold = 3,
         std::shared_ptr<PhraseFormationStats> sharedStats = nullptr);
 
     // Intra-composition (分段选词):

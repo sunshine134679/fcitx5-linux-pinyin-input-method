@@ -24,6 +24,8 @@ public:
     }
     virtual bool remove(std::size_t) { return false; }
     virtual void setContext(std::string_view, std::string_view) {}
+    virtual void setLearningEnabled(bool) {}
+    virtual void setContextLearningEnabled(bool) {}
     virtual void onCommitEvent(const CommitEvent &) {}
     virtual void reset() = 0;
     virtual void resetCommitHistory() {}

@@ -396,8 +396,13 @@ double LearningSnapshot::boostAt(std::string_view phrase,
     const double ageMs = std::max(
         0.0, static_cast<double>(nowMs) -
                  static_cast<double>(lastSelectedMs));
-    constexpr double halfLifeMs = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
-    const double recency = std::exp(-ageMs / halfLifeMs);
+    // 半衰期 T_1/2 与时间常数 tau 的物理换算：
+    // exp(-delta_t / tau) = 2^(-delta_t / T_1/2)  ==> tau = T_1/2 / ln(2)
+    // 默认半衰期为 30 天，严格保证当经过一个半衰期时衰减因子恰好为 0.5
+    constexpr double halfLifeDays = 30.0;
+    constexpr double halfLifeMs = halfLifeDays * 24.0 * 60.0 * 60.0 * 1000.0;
+    constexpr double tauMs = halfLifeMs / 0.6931471805599453; // ln(2)
+    const double recency = std::exp(-ageMs / tauMs);
     const double frequency = std::min(
         3.0, 0.85 * std::log1p(effectiveFrequency));
     const double recentScale =

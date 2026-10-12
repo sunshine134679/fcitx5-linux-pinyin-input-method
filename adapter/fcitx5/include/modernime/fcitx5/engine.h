@@ -61,6 +61,8 @@ struct ControllerOptions final {
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
     bool characterExtractionEnabled = true;
+    bool learningEnabled = true;
+    bool contextLearningEnabled = true;
 };
 
 struct KeyBindings final {
@@ -94,6 +96,8 @@ public:
     void setContext(std::string before, std::string after);
     void reset();
     void setActive(bool active);
+    void setSensitive(bool sensitive);
+    bool isSensitive() const { return sensitive_; }
 
     std::size_t currentPageIndex() const {
         if (page_.items.empty() || page_.pageBoundaries.empty()) {
@@ -219,6 +223,7 @@ private:
     std::size_t compositionCursor_ = 0;
     std::vector<std::string> clipboardEntries_;
     RecentCommit recentCommit_;
+    bool sensitive_ = false;
 };
 
 } // namespace modernime::fcitx5

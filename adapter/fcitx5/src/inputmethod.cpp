@@ -102,7 +102,8 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             settings.punctuationEnabled,
             static_cast<std::size_t>(settings.candidatePageSize),
             settings.clipboardEnabled, settings.clipboardTrigger,
-            settings.characterExtractionEnabled};
+            settings.characterExtractionEnabled,
+            settings.learningEnabled, settings.contextLearningEnabled};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
@@ -177,6 +178,9 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
     }
 
     const auto targetCursor = static_cast<std::size_t>(text.cursor());
+    if (targetCursor > value.size()) {
+        return {};
+    }
 
     std::array<std::string::const_iterator, 64> stackRing;
     std::vector<std::string::const_iterator> heapRing;
@@ -209,6 +213,25 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
     if (!fcitx::utf8::validate(before) || !fcitx::utf8::validate(after)) {
         return {};
     }
+
+    // 过滤换行符：上下文关联不应跨换行延续
+    auto lastNl = before.find_last_of("\r\n");
+    if (lastNl != std::string::npos) {
+        before = before.substr(lastNl + 1);
+    }
+    auto firstNl = after.find_first_of("\r\n");
+    if (firstNl != std::string::npos) {
+        after = after.substr(0, firstNl);
+    }
+
+    // 过滤控制字符
+    before.erase(std::remove_if(before.begin(), before.end(), [](unsigned char c) {
+        return c < 0x20 && c != '\t';
+    }), before.end());
+    after.erase(std::remove_if(after.begin(), after.end(), [](unsigned char c) {
+        return c < 0x20 && c != '\t';
+    }), after.end());
+
     return {std::move(before), std::move(after)};
 }
 
@@ -381,11 +404,19 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
                     return;
                 }
                 auto *contextState = state(ic);
-                if (contextState != nullptr && ic->surroundingText().isValid()) {
-                    const auto context = extractSurroundingContext(
-                        ic->surroundingText(), 32);
-                    contextState->controller().setContext(context.first,
-                                                          context.second);
+                if (contextState != nullptr) {
+                    const bool isSensitive =
+                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
+                    contextState->controller().setSensitive(isSensitive);
+                    if (!isSensitive && ic->surroundingText().isValid()) {
+                        const auto context = extractSurroundingContext(
+                            ic->surroundingText(), 32);
+                        contextState->controller().setContext(context.first,
+                                                              context.second);
+                    } else if (isSensitive || !ic->surroundingText().isValid()) {
+                        contextState->controller().setContext("", "");
+                    }
                 }
             });
         clipboardTimer_ = instance_->eventLoop().addTimeEvent(
@@ -738,10 +769,16 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         if (contextState->settingsGeneration() != settingsGeneration_) {
             contextState->applySettings(settings_, settingsGeneration_);
         }
-        if (event.inputContext()->surroundingText().isValid()) {
+        const bool isSensitive =
+            event.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+            event.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
+        contextState->controller().setSensitive(isSensitive);
+        if (!isSensitive && event.inputContext()->surroundingText().isValid()) {
             const auto context = extractSurroundingContext(
                 event.inputContext()->surroundingText(), 32);
             contextState->controller().setContext(context.first, context.second);
+        } else if (isSensitive) {
+            contextState->controller().setContext("", "");
         }
         auto modernEvent = translateKey(event.key(), keyBindings_);
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
