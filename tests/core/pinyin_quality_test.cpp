@@ -432,6 +432,119 @@ void testEnglishDefinitionQualityScenarios(
     assertTrue(provider.page().items.empty(), "composition cleared after selecting gara");
 }
 
+void testExpandedLexiconAndAntiHijackingScenarios(
+    const std::filesystem::path &isolatedDictionary) {
+    auto provider = makeProvider(isolatedDictionary);
+
+    struct LexiconTestCase {
+        std::string_view pinyin;
+        std::string_view expected;
+        std::size_t maxRank;
+    };
+
+    // 1. Newly expanded historical and modern luminaries & compound surnames
+    const std::vector<LexiconTestCase> nameCases = {
+        {"zhugeliang", "诸葛亮", 3},
+        {"qianxuesen", "钱学森", 3},
+        {"aiyinsitan", "爱因斯坦", 3},
+        {"yuchijingde", "尉迟敬德", 3},
+        {"linghuchong", "令狐冲", 3},
+        {"zhaliangyong", "查良镛", 3},
+        {"liangsicheng", "梁思成", 3},
+        {"linhuiyin", "林徽因", 3},
+    };
+
+    for (const auto &tc : nameCases) {
+        provider.reset();
+        assertTrue(provider.append(tc.pinyin),
+                   std::string("append name input: ") + std::string(tc.pinyin));
+        const auto idx = indexOf(provider.page(), tc.expected);
+        assertTrue(idx < tc.maxRank,
+                   std::string("name ") + std::string(tc.expected) + " for " +
+                   std::string(tc.pinyin) + " should be within rank " +
+                   std::to_string(tc.maxRank) + ", but got index " +
+                   std::to_string(idx));
+    }
+
+    // 2. Newly expanded daily expressions
+    const std::vector<LexiconTestCase> dailyCases = {
+        {"zenmeliao", "怎么了", 3},
+        {"zenmeban", "怎么办", 3},
+        {"chabuduo", "差不多", 3},
+        {"kaiwanxiao", "开玩笑", 3},
+        {"shuashipin", "刷视频", 3},
+        {"shuapengyouquan", "刷朋友圈", 3},
+        {"wuxianyijin", "五险一金", 3},
+        {"nianzhongjiang", "年终奖", 3},
+    };
+
+    for (const auto &tc : dailyCases) {
+        provider.reset();
+        assertTrue(provider.append(tc.pinyin),
+                   std::string("append daily input: ") + std::string(tc.pinyin));
+        const auto idx = indexOf(provider.page(), tc.expected);
+        assertTrue(idx < tc.maxRank,
+                   std::string("daily expression ") + std::string(tc.expected) +
+                   " for " + std::string(tc.pinyin) + " should be within rank " +
+                   std::to_string(tc.maxRank) + ", but got index " +
+                   std::to_string(idx));
+    }
+
+    // 3. Newly expanded domain terminology (IT/AI, medical, law, finance)
+    const std::vector<LexiconTestCase> domainCases = {
+        {"xiangliangshujuku", "向量数据库", 3},
+        {"jiansuozengqiang", "检索增强", 3},
+        {"naocuzhong", "脑卒中", 3},
+        {"juanjishenjingwangluo", "卷积神经网络", 3},
+        {"zhishichanquan", "知识产权", 3},
+        {"zichanfuzhaibiao", "资产负债表", 3},
+        {"xianjinliuliangbiao", "现金流量表", 3},
+    };
+
+    for (const auto &tc : domainCases) {
+        provider.reset();
+        assertTrue(provider.append(tc.pinyin),
+                   std::string("append domain input: ") + std::string(tc.pinyin));
+        const auto idx = indexOf(provider.page(), tc.expected);
+        assertTrue(idx < tc.maxRank,
+                   std::string("domain term ") + std::string(tc.expected) +
+                   " for " + std::string(tc.pinyin) + " should be within rank " +
+                   std::to_string(tc.maxRank) + ", but got index " +
+                   std::to_string(idx));
+    }
+
+    // 4. Strict anti-hijacking validation: common words remain top candidate (#1)
+    const std::vector<std::pair<std::string_view, std::string_view>> commonTopCases = {
+        {"nihao", "你好"},
+        {"diannao", "电脑"},
+        {"zhongguo", "中国"},
+        {"beijing", "北京"},
+        {"shanghai", "上海"},
+        {"xiexie", "谢谢"},
+        {"gongzuo", "工作"},
+        {"xuexi", "学习"},
+        {"mingtian", "明天"},
+        {"jintian", "今天"},
+        {"shijian", "时间"},
+        {"de", "的"},
+        {"shi", "是"},
+        {"ni", "你"},
+        {"wo", "我"},
+    };
+
+    for (const auto &[pinyin, expectedTop] : commonTopCases) {
+        provider.reset();
+        assertTrue(provider.append(pinyin),
+                   std::string("append common word: ") + std::string(pinyin));
+        assertTrue(!provider.page().items.empty(),
+                   std::string("candidates exist for common word: ") + std::string(pinyin));
+        assertTrue(provider.page().items.front().text == expectedTop,
+                   std::string("common word ") + std::string(expectedTop) +
+                   " for " + std::string(pinyin) + " must remain top 1, but got " +
+                   provider.page().items.front().text);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -442,5 +555,7 @@ int main() {
     testOfflineFuzzyTypoAndAbbreviationRecovery(
         environment.isolatedDictionary());
     testEnglishDefinitionQualityScenarios(environment.isolatedDictionary());
+    testExpandedLexiconAndAntiHijackingScenarios(
+        environment.isolatedDictionary());
     return EXIT_SUCCESS;
 }
