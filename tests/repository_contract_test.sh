@@ -14,17 +14,54 @@ grep -F './uninstall.sh' "$readme" >/dev/null
 
 cpack_file="$project_root/cmake/ModernIMECPack.cmake"
 test -f "$cpack_file"
+grep -F 'set(CPACK_RPM_PRE_INSTALL_SCRIPT_FILE' "$cpack_file" >/dev/null
 grep -F 'set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE' "$cpack_file" >/dev/null
 grep -F 'set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE' "$cpack_file" >/dev/null
+grep -F 'set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later AND MIT")' "$cpack_file" >/dev/null
+grep -F 'fcitx5 (>= 5.0.14)' "$cpack_file" >/dev/null
+grep -F 'libime-bin (>= 1.0.11) | libimecore0 (>= 1.0.11)' "$cpack_file" >/dev/null
+grep -F 'libgtk-3-0 (>= 3.24.0) | libgtk-3-0t64 (>= 3.24.0)' "$cpack_file" >/dev/null
+grep -F 'libsqlite3-0 (>= 3.31.0)' "$cpack_file" >/dev/null
+grep -F 'liblmdb0 (>= 0.9.24)' "$cpack_file" >/dev/null
+grep -F 'set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)' "$cpack_file" >/dev/null
+grep -F 'set(CPACK_RPM_PACKAGE_AUTOREQPROV "yes")' "$cpack_file" >/dev/null
 
+deb_preinst="$project_root/packaging/debian/preinst"
+deb_postinst="$project_root/packaging/debian/postinst"
+deb_postrm="$project_root/packaging/debian/postrm"
+deb_copyright="$project_root/packaging/debian/copyright"
+rpm_preinst="$project_root/packaging/rpm/preinst.sh"
 rpm_postinst="$project_root/packaging/rpm/postinst.sh"
 rpm_postun="$project_root/packaging/rpm/postun.sh"
-test -f "$rpm_postinst" && test -s "$rpm_postinst"
-test -f "$rpm_postun" && test -s "$rpm_postun"
-bash -n "$rpm_postinst"
-bash -n "$rpm_postun"
+rpm_spec="$project_root/packaging/rpm/modernime.spec"
+
+for script_file in "$deb_preinst" "$deb_postinst" "$deb_postrm" "$rpm_preinst" "$rpm_postinst" "$rpm_postun"; do
+    test -f "$script_file" && test -s "$script_file"
+    bash -n "$script_file"
+done
+
+test -f "$project_root/LICENSE" && test -s "$project_root/LICENSE"
+grep -F 'LGPL-2.1-or-later AND MIT' "$project_root/LICENSE" >/dev/null
+test -f "$deb_copyright" && test -s "$deb_copyright"
+grep -F 'License: LGPL-2.1+' "$deb_copyright" >/dev/null
+grep -F 'License: MIT' "$deb_copyright" >/dev/null
+grep -F 'LGPL-2.1-or-later AND MIT' "$project_root/data/pinyin/THIRD_PARTY_NOTICES.md" >/dev/null
+grep -F '"package_spdx_license": "LGPL-2.1-or-later AND MIT"' "$project_root/data/pinyin/SOURCES.json" >/dev/null
+grep -F 'License:        LGPL-2.1-or-later AND MIT' "$rpm_spec" >/dev/null
+grep -F 'Requires:       fcitx5 >= 5.0.14' "$rpm_spec" >/dev/null
+grep -F 'Requires:       sqlite >= 3.31.0' "$rpm_spec" >/dev/null
+grep -F 'Requires:       lmdb-libs >= 0.9.24' "$rpm_spec" >/dev/null
+
+# Verify no user home or ~/.config / ~/.local paths are installed by CMakeLists
+if grep -En 'install\(.*(~|\$ENV\{HOME\}|\.config|\.local/share/modernime/(user_history|user_words|custom_words|user\.dict))' \
+    "$project_root/CMakeLists.txt" "$project_root/data/pinyin/CMakeLists.txt" "$project_root/tools/settings/CMakeLists.txt"; then
+    echo "User config or learning data must never be packaged into system packages" >&2
+    exit 1
+fi
+
 binary_dir="${1:-}"
 if [[ -n "$binary_dir" && -f "$binary_dir/CPackConfig.cmake" ]]; then
+    grep -F 'set(CPACK_RPM_PRE_INSTALL_SCRIPT_FILE' "$binary_dir/CPackConfig.cmake" >/dev/null
     grep -F 'set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE' "$binary_dir/CPackConfig.cmake" >/dev/null
     grep -F 'set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE' "$binary_dir/CPackConfig.cmake" >/dev/null
 fi
@@ -34,6 +71,3 @@ test -f "$session_init" && test -x "$session_init"
 bash -n "$session_init"
 grep -F 'modernime-session-init' "$project_root/tools/settings/CMakeLists.txt" >/dev/null
 grep -F '%{_bindir}/modernime-session-init' "$project_root/packaging/rpm/modernime.spec" >/dev/null
-
-
-

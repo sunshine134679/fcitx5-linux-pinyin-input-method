@@ -1,0 +1,68 @@
+ModernIME Licensing & Third-Party Notices
+=========================================
+
+SPDX-License-Identifier: LGPL-2.1-or-later AND MIT
+
+ModernIME is distributed under a composite license because the repository and
+binary packages combine ModernIME's own source code with derived offline lexical
+datasets from permissive open-source projects:
+
+1. ModernIME Source Code, Binaries, UI Addon, Settings Client, and Scripts
+   - Paths: core/, algorithm/, adapter/, ui/, tools/, config/, scripts/,
+     packaging/, cmake/, tests/, data/pinyin/modernime-hotwords.raw
+   - License: GNU Lesser General Public License v2.1 or later (LGPL-2.1-or-later)
+
+2. Offline Pinyin Knowledge Dictionary & English Definition Dictionary Data
+   - Paths:
+     * data/pinyin/modernime-knowledge.tsv
+     * data/pinyin/modernime-knowledge.raw
+     * share/modernime/pinyin/modernime-knowledge.dict (compiled binary dictionary)
+     * data/pinyin/modernime-english-dict.bin
+   - License: MIT License (with ModernIME curated additions under LGPL-2.1-or-later AND MIT)
+   - Upstream Attributions:
+     * China-idiom (https://github.com/sfyc23/China-idiom) — Copyright (c) 2019 Thunder Bouble (MIT)
+     * THUOCL (https://github.com/thunlp/THUOCL) — Copyright (c) 2018 THUNLP (MIT)
+     * python-pinyin (https://github.com/mozillazg/python-pinyin) — Copyright (c) 2016 mozillazg (MIT)
+     * ECDICT (https://github.com/skywind3000/ECDICT) — Copyright (c) Lin Wei / Skywind (MIT)
+   - Full third-party copyright notices and exact upstream commit hashes are
+     preserved in `data/pinyin/THIRD_PARTY_NOTICES.md` and `data/pinyin/SOURCES.json`.
+
+-------------------------------------------------------------------------------
+GNU LESSER GENERAL PUBLIC LICENSE
+Version 2.1, February 1999
+
+Copyright (C) 2026 ModernIME Contributors
+
+This library is free software; you can redistribute it and/or modify it under
+the terms of the GNU Lesser General Public License as published by the Free
+Software Foundation; either version 2.1 of the License, or (at your option)
+any later version.
+
+This library is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
+details.
+
+You should have received a copy of the GNU Lesser General Public License along
+with this library; if not, see <https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>.
+
+-------------------------------------------------------------------------------
+MIT LICENSE (Bundled Derived Lexical Data)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

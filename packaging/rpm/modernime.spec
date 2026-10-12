@@ -2,7 +2,9 @@ Name:           modernime
 Version:        0.1.8
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
-License:        LGPL-2.1-or-later
+# ModernIME engine, UI addon, and settings client are LGPL-2.1-or-later;
+# bundled derived pinyin knowledge and English definition dictionaries are MIT.
+License:        LGPL-2.1-or-later AND MIT
 URL:            https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
 Source0:        %{name}-%{version}.tar.gz
 
@@ -10,21 +12,23 @@ BuildRequires:  gcc-c++ >= 10
 BuildRequires:  cmake >= 3.24
 BuildRequires:  make
 BuildRequires:  pkgconf-pkg-config
-BuildRequires:  sqlite-devel
-BuildRequires:  lmdb-devel
-BuildRequires:  boost-devel
-BuildRequires:  fcitx5-devel
-BuildRequires:  libime-devel
-BuildRequires:  gtk3-devel
-BuildRequires:  pango-devel
-BuildRequires:  cairo-devel
+BuildRequires:  sqlite-devel >= 3.31.0
+BuildRequires:  lmdb-devel >= 0.9.24
+BuildRequires:  boost-devel >= 1.61
+BuildRequires:  fcitx5-devel >= 5.0.14
+BuildRequires:  libime-devel >= 1.0.11
+BuildRequires:  gtk3-devel >= 3.24.0
+BuildRequires:  pango-devel >= 1.44.0
+BuildRequires:  cairo-devel >= 1.16.0
 BuildRequires:  libappindicator-gtk3-devel
 
-Requires:       fcitx5
-Requires:       libime
-Requires:       gtk3
-Requires:       sqlite
-Requires:       lmdb-libs
+Requires:       fcitx5 >= 5.0.14
+Requires:       libime >= 1.0.11
+Requires:       gtk3 >= 3.24.0
+Requires:       pango >= 1.44.0
+Requires:       cairo >= 1.16.0
+Requires:       sqlite >= 3.31.0
+Requires:       lmdb-libs >= 0.9.24
 
 %description
 ModernIME is a modern Pinyin input method engine for Fcitx5 on Linux desktops,
@@ -37,6 +41,7 @@ Bento-designed GTK3 settings client, and comprehensive character governance.
 %build
 %cmake \
     -DCMAKE_BUILD_TYPE=Release \
+    -DMODERNIME_PACKAGE_CHANNEL=rpm \
     -DMODERNIME_BUILD_FCITX5=ON \
     -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
     -DMODERNIME_BUILD_SETTINGS=ON \
@@ -45,6 +50,18 @@ Bento-designed GTK3 settings client, and comprehensive character governance.
 
 %install
 %cmake_install
+
+%pre
+if [ -f %{_datadir}/modernime/install-channel.txt ]; then
+    existing_channel=$(grep -E '^channel=' %{_datadir}/modernime/install-channel.txt 2>/dev/null | head -n 1 | cut -d= -f2 || true)
+    if [ "$existing_channel" = "script" ] && [ "${MODERNIME_MIGRATE_FROM_SCRIPT:-0}" != "1" ]; then
+        echo "Error: Detected an existing script-based ModernIME installation in /usr (channel=script)." >&2
+        exit 1
+    fi
+fi
+if [ "${1:-1}" -ge 2 ] && [ -x %{_bindir}/modernime-data-guard ]; then
+    %{_bindir}/modernime-data-guard --pre-upgrade
+fi
 
 %post
 if [ -x %{_bindir}/update-desktop-database ]; then
@@ -63,6 +80,7 @@ if command -v fcitx5-remote >/dev/null 2>&1; then
 fi
 
 %files
+%license LICENSE
 %{_bindir}/modernime-settings
 %{_bindir}/modernime-session-init
 %{_libdir}/fcitx5/modernime_fcitx5.so
@@ -70,9 +88,14 @@ fi
 %{_datadir}/fcitx5/addon/modernime.conf
 %{_datadir}/fcitx5/addon/modernime-ui.conf
 %{_datadir}/fcitx5/inputmethod/modernime.conf
+%{_datadir}/modernime/install-channel.txt
 %{_datadir}/modernime/pinyin/modernime-knowledge.dict
 %{_datadir}/modernime/pinyin/modernime-hotwords.dict
 %{_datadir}/modernime/pinyin/modernime-english-dict.bin
+%{_datadir}/doc/modernime/LICENSE
+%{_datadir}/doc/modernime/copyright
+%{_datadir}/doc/modernime/THIRD_PARTY_NOTICES.md
+%{_datadir}/doc/modernime/SOURCES.json
 %{_datadir}/applications/modernime-settings.desktop
 
 %changelog

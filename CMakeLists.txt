@@ -7,6 +7,7 @@ option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" O
 option(MODERNIME_BUILD_TESTS "Build ModernIME tests" ON)
 option(MODERNIME_BUILD_TOOLS "Build development and visual verification tools" OFF)
 option(MODERNIME_BUILD_SETTINGS "Build the GTK3 settings client" OFF)
+set(MODERNIME_PACKAGE_CHANNEL "" CACHE STRING "Native package channel identifier (e.g. deb, rpm)")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +44,22 @@ endif()
 
 if(MODERNIME_BUILD_SETTINGS)
     add_subdirectory(tools/settings)
+endif()
+
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/copyright"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/modernime"
+)
+
+if(MODERNIME_PACKAGE_CHANNEL)
+    set(MODERNIME_GENERATED_CHANNEL_FILE "${CMAKE_CURRENT_BINARY_DIR}/install-channel.txt")
+    file(WRITE "${MODERNIME_GENERATED_CHANNEL_FILE}"
+        "channel=${MODERNIME_PACKAGE_CHANNEL}\nversion=${PROJECT_VERSION}\nprefix=${CMAKE_INSTALL_PREFIX}\n"
+    )
+    install(FILES "${MODERNIME_GENERATED_CHANNEL_FILE}"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime"
+    )
 endif()
 
 include(cmake/ModernIMECPack.cmake)

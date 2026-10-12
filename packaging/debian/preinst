@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    install|upgrade)
+        # Prevent silent overwrite of a manual install.sh installation in /usr
+        if [ -f /usr/share/modernime/install-channel.txt ]; then
+            existing_channel=$(grep -E '^channel=' /usr/share/modernime/install-channel.txt 2>/dev/null | head -n 1 | cut -d= -f2 || true)
+            if [ "$existing_channel" = "script" ] && [ "${MODERNIME_MIGRATE_FROM_SCRIPT:-0}" != "1" ]; then
+                echo "Error: Detected an existing script-based ModernIME installation in /usr (channel=script)." >&2
+                echo "To migrate safely to the native DEB package without file ownership conflicts:" >&2
+                echo "  1. Run: sudo modernime-migrate-channel --prepare-system-migration" >&2
+                echo "  2. Or uninstall the script installation first: sudo ./uninstall.sh --prefix=/usr" >&2
+                exit 1
+            fi
+        elif [ -f /usr/share/modernime/install-manifest.txt ] && [ "${MODERNIME_MIGRATE_FROM_SCRIPT:-0}" != "1" ]; then
+            echo "Error: Detected an existing script-managed install-manifest.txt in /usr." >&2
+            echo "Please migrate or uninstall the script installation before installing the DEB package." >&2
+            exit 1
+        fi
+
+        # If upgrading and modernime-data-guard is available, back up user learning data
+        if [ "$1" = "upgrade" ] && [ -x /usr/bin/modernime-data-guard ]; then
+            /usr/bin/modernime-data-guard --pre-upgrade
+        fi
+    ;;
+esac
+
+exit 0

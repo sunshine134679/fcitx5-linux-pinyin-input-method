@@ -3,6 +3,9 @@
   "generated_by": "tools/import_lexicon_bundle.py",
   "generated_on": "2026-10-12",
   "runtime_network": false,
+  "package_spdx_license": "LGPL-2.1-or-later AND MIT",
+  "code_license": "LGPL-2.1-or-later",
+  "data_license": "LGPL-2.1-or-later AND MIT",
   "generated_counts": {
     "entries": 283781,
     "distinct_phrases": 283558,
@@ -134,6 +137,19 @@
       ],
       "used_fields": ["word", "DF"],
       "pinyin_annotation": "polyphonic readings calibrated against wanxiang/duoyin, wanxiang/jichu, rime-ice, and cc-cedict"
+    },
+    {
+      "id": "modernime-curated-expansion",
+      "license": "LGPL-2.1-or-later AND MIT",
+      "role": "carefully curated names, daily expressions, and domain terminology with polyphonic verification",
+      "categories": ["person", "daily", "it", "medical", "law", "finance"],
+      "date": "2026-10-12"
+    },
+    {
+      "id": "modernime-hotwords",
+      "path": "data/pinyin/modernime-hotwords.raw",
+      "license": "LGPL-2.1-or-later",
+      "role": "first-party curated high-priority pinyin hotwords dictionary"
     },
     {
       "id": "python-pinyin",

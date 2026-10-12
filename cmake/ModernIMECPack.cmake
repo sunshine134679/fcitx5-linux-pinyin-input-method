@@ -17,33 +17,44 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ModernIME Maintainers <sunshine134679@users
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method")
-# The launcher is used by session integration but is not a linked library.
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "fcitx5")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+# Explicit lower bounds for core runtime frameworks alongside dpkg-shlibdeps SONAME resolution.
+set(MODERNIME_DEB_BASE_DEPENDS
+    "fcitx5 (>= 5.0.14), libime-bin (>= 1.0.11) | libimecore0 (>= 1.0.11) | libimecore0t64 (>= 1.0.11), libgtk-3-0 (>= 3.24.0) | libgtk-3-0t64 (>= 3.24.0), libpango-1.0-0 (>= 1.44.0), libcairo2 (>= 1.16.0), libsqlite3-0 (>= 3.31.0), liblmdb0 (>= 0.9.24)"
+)
 find_program(MODERNIME_DPKG_SHLIBDEPS dpkg-shlibdeps)
 if(MODERNIME_DPKG_SHLIBDEPS)
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "${MODERNIME_DEB_BASE_DEPENDS}")
 else()
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "fcitx5, libgtk-3-0, libsqlite3-0, liblmdb0")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS
+        "${MODERNIME_DEB_BASE_DEPENDS}, libfcitx5core7 (>= 5.0.14), libfcitx5utils2 (>= 5.0.14), libimecore0 (>= 1.0.11), libimepinyin0 (>= 1.0.11)"
+    )
 endif()
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "fcitx5-chinese-addons")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "fcitx5-chinese-addons, libime-data, libime-data-language-model")
 set(CPACK_DEBIAN_PACKAGE_SUGGESTS "fcitx5-config-qt")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postinst")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
-        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postrm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/preinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postrm"
     )
 endif()
 
 # RPM generator configuration (openEuler / Fedora / RHEL)
+# Code is LGPL-2.1-or-later; bundled derived dictionary data is MIT (see THIRD_PARTY_NOTICES.md).
 set(CPACK_RPM_PACKAGE_NAME "modernime")
-set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later")
+set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later AND MIT")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
 set(CPACK_RPM_PACKAGE_URL "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV "yes")
-set(CPACK_RPM_PACKAGE_REQUIRES "fcitx5, libime, gtk3, sqlite, lmdb-libs")
+set(CPACK_RPM_PACKAGE_REQUIRES
+    "fcitx5 >= 5.0.14, libime >= 1.0.11, gtk3 >= 3.24.0, pango >= 1.44.0, cairo >= 1.16.0, sqlite >= 3.31.0, lmdb-libs >= 0.9.24"
+)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
+    set(CPACK_RPM_PRE_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/preinst.sh")
     set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
     set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postun.sh")
+    set(CPACK_RPM_PACKAGE_PRE_INSTALL "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/preinst.sh")
     set(CPACK_RPM_PACKAGE_POST_INSTALL "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
     set(CPACK_RPM_PACKAGE_POST_UNINSTALL "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postun.sh")
 endif()

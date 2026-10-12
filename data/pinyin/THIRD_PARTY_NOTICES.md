@@ -1,6 +1,12 @@
-# 第三方数据与工具归属
+# 第三方数据与工具归属（复合许可证说明：`LGPL-2.1-or-later AND MIT`）
 
-ModernIME 的离线拼音与词典数据由以下固定版本的开源词库和工具经离线清洗、多音字交叉校准与分批筛选生成。各上游来源保留其各自的许可证与版权归属，**并未将不同许可证的数据合并声称为单一 MIT 许可的新词库**，亦不改变 ModernIME 项目自身代码的许可证。
+ModernIME 自身源码、插件、设置客户端与自建热词表采用 `LGPL-2.1-or-later` 许可证；离线拼音与词典数据由以下固定版本的开源词库和工具经离线清洗、多音字交叉校准与分批筛选生成。各上游来源保留其各自的许可证与版权归属，**并未将不同许可证的数据合并声称为单一 MIT 许可的新词库**，亦不改变 ModernIME 项目自身代码的许可证。随包分发的离线派生词典与二进制资产整体采用复合 SPDX 许可证标识 **`LGPL-2.1-or-later AND MIT`**（及 `data/pinyin/licenses/` 所附各上游许可证文本）。
+
+## ModernIME 自有代码与热词表
+
+- 路径：`core/`、`algorithm/`、`adapter/`、`ui/`、`tools/`、`scripts/`、`data/pinyin/modernime-hotwords.raw`
+- 许可证：`LGPL-2.1-or-later`
+- 说明：输入法核心引擎、Fcitx5 插件、GTK3 设置客户端及第一方网络热词词表。
 
 仓库仅提交筛选后的词语、无声调完整拼音、有界归一化频率、类别/来源标记及必要的许可证文件，不将上游完整仓库、原始压缩包、诗词全集、繁体大表或释义/例句塞入发布包。
 
@@ -71,7 +77,8 @@ ModernIME 的离线拼音与词典数据由以下固定版本的开源词库和�
 ### 8. ECDICT (`ecdict`)
 - 项目：<https://github.com/skywind3000/ECDICT>
 - 作者与归属：Lin Wei (Skywind)
-- 许可证：MIT License。
+- 用途：英文单词简明中文释义词典数据源（`modernime-english-dict.bin`）。
+- 许可证：MIT，版权归原作者所有。
 
 ### 9. Rime 八股文 / rime-essay（仅对照，未并入简体全拼主表）
 - 项目：<https://github.com/rime/rime-essay>

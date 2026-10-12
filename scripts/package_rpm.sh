@@ -11,6 +11,7 @@ printf '==> Configuring ModernIME for RPM packaging (openEuler / Fedora / RHEL).
 cmake -S "${project_root}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
+    -DMODERNIME_PACKAGE_CHANNEL=rpm \
     -DMODERNIME_BUILD_FCITX5=ON \
     -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
     -DMODERNIME_BUILD_SETTINGS=ON \
