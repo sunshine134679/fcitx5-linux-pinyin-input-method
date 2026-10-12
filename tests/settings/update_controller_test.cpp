@@ -4,9 +4,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <pthread.h>
 #include <string>
+#include <string_view>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -35,7 +38,12 @@ void writeTextFile(const std::filesystem::path &path, const std::string &content
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+    if (argc > 1 && std::string_view(argv[1]) == "--mock-zombie-exit") {
+        std::thread([]() { ::usleep(200000); }).detach();
+        ::pthread_exit(nullptr);
+    }
+
     using namespace modernime::settings;
 
     // 1. Version comparison (Debian/RPM semantics)
@@ -315,28 +323,56 @@ int main() {
     assert(bgDoneRes->success);
     assert(bgDoneRes->message.find("后台系统包管理器升级已完成") != std::string::npos);
 
-    // 7b. Package operation timeout when child has already exited (stillRunningOnTimeout == false):
-    // Spawn a subshell holding stdout open briefly while the main pkexec process exits immediately (zombie 'Z' at timeout)
+    // 7b. Package operation timeout when child main task is already in zombie 'Z' state (stillRunningOnTimeout == false):
+    const auto selfExe = std::filesystem::canonical("/proc/self/exe");
     writeExecutable(
         aptBinDir / "pkexec",
         "#!/bin/sh\n"
-        "(sleep 0.2) &\n"
-        "exit 1\n");
+        "exec \"" +
+            selfExe.string() +
+            "\" --mock-zombie-exit\n");
     const auto exitedTimeoutRes = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
     assert(!exitedTimeoutRes.success);
     assert(exitedTimeoutRes.message.find("子进程已退出，未检测到后台仍在运行的 apt/dpkg 进程") !=
            std::string::npos);
     assert(!UpdateController::hasActivePackageOperation());
 
-    // 7c. Process exit while background package operation is still active MUST NOT hang in static destruction ([P1]):
+    // 7c. Process exit while background package operation is still active:
+    // - MUST NOT hang in static destruction ([P1] Round 4)
+    // - Surviving package manager child writing to stdout and stderr AFTER the settings client
+    //   process has exited and closed all its file descriptors MUST NOT receive SIGPIPE/EPIPE
+    //   and MUST complete its transaction cleanly ([P1] Round 5)
     const auto pidFile = tempRoot / "bg-pkexec.pid";
+    const auto clientExitedMarker = tempRoot / "settings-client-exited.txt";
+    const auto postExitDoneMarker = tempRoot / "bg-pkexec-post-exit-done.txt";
     writeExecutable(
         aptBinDir / "pkexec",
         "#!/bin/sh\n"
+        "set -eu\n"
         "printf '%s\\n' \"$$\" > \"" +
             pidFile.string() +
             "\"\n"
-            "sleep 5\n"
+            "printf 'PRE_CLIENT_EXIT_STDOUT\\n'\n"
+            "printf 'PRE_CLIENT_EXIT_STDERR\\n' >&2\n"
+            "i=0\n"
+            "while [ ! -f \"" +
+            clientExitedMarker.string() +
+            "\" ] && [ \"$i\" -lt 200 ]; do\n"
+            "  sleep 0.02\n"
+            "  i=$((i + 1))\n"
+            "done\n"
+            "if [ ! -f \"" +
+            clientExitedMarker.string() +
+            "\" ]; then\n"
+            "  exit 2\n"
+            "fi\n"
+            "printf 'POST_CLIENT_EXIT_STDOUT_LINE_1\\n'\n"
+            "printf 'POST_CLIENT_EXIT_STDERR_LINE_1\\n' >&2\n"
+            "printf 'POST_CLIENT_EXIT_STDOUT_LINE_2\\n'\n"
+            "printf 'POST_CLIENT_EXIT_STDERR_LINE_2\\n' >&2\n"
+            "printf 'completed-after-client-exit\\n' > \"" +
+            postExitDoneMarker.string() +
+            "\"\n"
             "exit 0\n");
 
     const pid_t childPid = ::fork();
@@ -345,7 +381,7 @@ int main() {
         const auto res = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
         assert(!res.success);
         assert(UpdateController::hasActivePackageOperation());
-        // Full C++ std::exit(0) runs static destructors; must exit immediately without waiting 5s
+        // Full C++ std::exit(0) runs static destructors and closes all FDs in settings client
         std::exit(0);
     }
 
@@ -357,20 +393,34 @@ int main() {
             childExitedFast = WIFEXITED(waitStatus) && (WEXITSTATUS(waitStatus) == 0);
             break;
         }
-        ::usleep(25000); // 40 * 25ms = 1.0s max (well below the 5s sleep in mock pkexec)
+        ::usleep(25000); // 40 * 25ms = 1.0s max
     }
     if (!childExitedFast) {
         ::kill(childPid, SIGKILL);
         ::waitpid(childPid, &waitStatus, 0);
     }
-    if (std::filesystem::exists(pidFile)) {
+    assert(childExitedFast);
+
+    // Signal the surviving background pkexec process that the settings client process has
+    // completely terminated and all of its file descriptors have been closed by the kernel.
+    writeTextFile(clientExitedMarker, "client-exited\n");
+
+    bool bgCompletedAfterClientExit = false;
+    for (int i = 0; i < 60; ++i) {
+        if (std::filesystem::exists(postExitDoneMarker)) {
+            bgCompletedAfterClientExit = true;
+            break;
+        }
+        ::usleep(25000); // 60 * 25ms = 1.5s max
+    }
+    if (!bgCompletedAfterClientExit && std::filesystem::exists(pidFile)) {
         std::ifstream pidIn(pidFile);
         long bgPid = 0;
         if (pidIn >> bgPid && bgPid > 0) {
             ::kill(static_cast<pid_t>(bgPid), SIGTERM);
         }
     }
-    assert(childExitedFast);
+    assert(bgCompletedAfterClientExit);
 
     std::filesystem::remove_all(tempRoot);
     return 0;

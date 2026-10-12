@@ -5,10 +5,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -16,6 +18,7 @@
 #include <sstream>
 #include <sys/types.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 namespace modernime::settings {
@@ -52,12 +55,23 @@ struct SubprocessState final {
     GMainLoop *loop = nullptr;
     GCancellable *cancellable = nullptr;
     GSubprocess *proc = nullptr;
+    int stdoutFd = -1;
+    int stderrFd = -1;
     bool forceKillOnTimeout = true;
     bool timedOut = false;
     bool stillRunningOnTimeout = false;
     bool finished = false;
     std::string out;
     std::string err;
+
+    ~SubprocessState() {
+        if (stdoutFd >= 0) {
+            ::close(stdoutFd);
+        }
+        if (stderrFd >= 0) {
+            ::close(stderrFd);
+        }
+    }
 };
 
 struct ActivePackageTracker final {
@@ -72,6 +86,41 @@ struct ActivePackageTracker final {
 ActivePackageTracker &packageTracker() {
     static auto *tracker = new ActivePackageTracker();
     return *tracker;
+}
+
+int createUnlinkedTempFd() {
+    const char *tmpDir = g_get_tmp_dir();
+    std::string tmpl = std::string(tmpDir != nullptr ? tmpDir : "/tmp") +
+                       "/modernime-subproc-XXXXXX";
+    std::vector<char> buf(tmpl.begin(), tmpl.end());
+    buf.push_back('\0');
+    const int fd = ::mkostemp(buf.data(), O_CLOEXEC);
+    if (fd >= 0) {
+        ::unlink(buf.data());
+    }
+    return fd;
+}
+
+std::string readAllFromFd(int fd) {
+    if (fd < 0) {
+        return {};
+    }
+    if (::lseek(fd, 0, SEEK_SET) < 0) {
+        return {};
+    }
+    std::string content;
+    char buffer[4096];
+    while (true) {
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n > 0) {
+            content.append(buffer, static_cast<std::size_t>(n));
+        } else if (n == 0) {
+            break;
+        } else if (errno != EINTR) {
+            break;
+        }
+    }
+    return content;
 }
 
 std::string trim(std::string_view value) {
@@ -176,21 +225,13 @@ std::filesystem::path findExecutableInPath(std::string_view name,
     return {};
 }
 
-void onCommunicateDone(GObject *source, GAsyncResult *res, gpointer userData) {
+void onWaitDone(GObject *source, GAsyncResult *res, gpointer userData) {
     auto *state = static_cast<SubprocessState *>(userData);
-    gchar *stdoutBuf = nullptr;
-    gchar *stderrBuf = nullptr;
     GError *error = nullptr;
-    state->finished = g_subprocess_communicate_utf8_finish(
-        G_SUBPROCESS(source), res, &stdoutBuf, &stderrBuf, &error);
-    if (stdoutBuf != nullptr) {
-        state->out = stdoutBuf;
-        g_free(stdoutBuf);
-    }
-    if (stderrBuf != nullptr) {
-        state->err = stderrBuf;
-        g_free(stderrBuf);
-    }
+    state->finished =
+        g_subprocess_wait_finish(G_SUBPROCESS(source), res, &error);
+    state->out = readAllFromFd(state->stdoutFd);
+    state->err = readAllFromFd(state->stderrFd);
     g_clear_error(&error);
     g_main_loop_quit(state->loop);
 }
@@ -202,8 +243,8 @@ gboolean onCommandTimeout(gpointer userData) {
     if (state->forceKillOnTimeout || !state->stillRunningOnTimeout) {
         g_cancellable_cancel(state->cancellable);
     } else {
-        // Keep g_subprocess_communicate_utf8_async active so pipes are not closed/broken
-        // while the package manager child continues running in the background.
+        // Keep g_subprocess_wait_async active while the child continues writing to
+        // its unlinked regular files (immune to SIGPIPE even if modernime-settings exits).
         g_main_loop_quit(state->loop);
     }
     return G_SOURCE_REMOVE;
@@ -228,8 +269,13 @@ void startBackgroundPackageTracking(std::shared_ptr<SubprocessState> state,
         if (!state->finished) {
             g_main_loop_run(state->loop);
         }
-        // Ensure child process has completely exited and been reaped even if pipes closed early
         g_subprocess_wait(state->proc, nullptr, nullptr);
+        if (state->out.empty()) {
+            state->out = readAllFromFd(state->stdoutFd);
+        }
+        if (state->err.empty()) {
+            state->err = readAllFromFd(state->stderrFd);
+        }
         const bool exitedZero = g_subprocess_get_if_exited(state->proc) &&
                                 (g_subprocess_get_exit_status(state->proc) == 0);
 
@@ -278,9 +324,34 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
         return result;
     }
 
-    GSubprocessLauncher *launcher = g_subprocess_launcher_new(
-        static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-                                      G_SUBPROCESS_FLAGS_STDERR_PIPE));
+    const int stdoutFd = createUnlinkedTempFd();
+    const int stderrFd = createUnlinkedTempFd();
+    const int childStdoutFd = (stdoutFd >= 0) ? ::dup(stdoutFd) : -1;
+    const int childStderrFd = (stderrFd >= 0) ? ::dup(stderrFd) : -1;
+    if (stdoutFd < 0 || stderrFd < 0 || childStdoutFd < 0 || childStderrFd < 0) {
+        if (stdoutFd >= 0) {
+            ::close(stdoutFd);
+        }
+        if (stderrFd >= 0) {
+            ::close(stderrFd);
+        }
+        if (childStdoutFd >= 0) {
+            ::close(childStdoutFd);
+        }
+        if (childStderrFd >= 0) {
+            ::close(childStderrFd);
+        }
+        return result;
+    }
+
+    // Redirect child stdout/stderr to unlinked regular files instead of anonymous pipes.
+    // This guarantees that if modernime-settings exits while a package manager transaction
+    // is still running in the background, the child's stdout/stderr FDs remain valid regular
+    // file descriptions and never receive SIGPIPE/EPIPE on subsequent writes.
+    GSubprocessLauncher *launcher =
+        g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
+    g_subprocess_launcher_take_stdout_fd(launcher, childStdoutFd);
+    g_subprocess_launcher_take_stderr_fd(launcher, childStderrFd);
     g_subprocess_launcher_setenv(launcher, "LC_ALL", "C", TRUE);
     g_subprocess_launcher_setenv(launcher, "LANG", "C", TRUE);
     for (const auto &[k, v] : environment) {
@@ -304,6 +375,8 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     GSubprocess *proc = g_subprocess_launcher_spawnv(launcher, rawArgv.data(), &error);
     g_object_unref(launcher);
     if (proc == nullptr) {
+        ::close(stdoutFd);
+        ::close(stderrFd);
         g_clear_error(&error);
         return result;
     }
@@ -319,14 +392,15 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     state->loop = loop;
     state->cancellable = cancellable;
     state->proc = proc;
+    state->stdoutFd = stdoutFd;
+    state->stderrFd = stderrFd;
     state->forceKillOnTimeout = forceKillOnTimeout;
 
     GSource *timer = g_timeout_source_new(timeoutMs);
     g_source_set_callback(timer, onCommandTimeout, state.get(), nullptr);
     g_source_attach(timer, context);
 
-    g_subprocess_communicate_utf8_async(proc, nullptr, cancellable,
-                                        onCommunicateDone, state.get());
+    g_subprocess_wait_async(proc, cancellable, onWaitDone, state.get());
     g_main_loop_run(loop);
 
     g_source_destroy(timer);
@@ -345,8 +419,14 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
         }
     }
 
-    if (state->finished) {
+    if (state->finished || (forceKillOnTimeout && state->timedOut)) {
         g_subprocess_wait(proc, nullptr, nullptr);
+    }
+    if (state->out.empty()) {
+        state->out = readAllFromFd(state->stdoutFd);
+    }
+    if (state->err.empty()) {
+        state->err = readAllFromFd(state->stderrFd);
     }
     result.stdoutText = std::move(state->out);
     result.stderrText = std::move(state->err);
