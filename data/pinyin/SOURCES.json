@@ -1,26 +1,111 @@
 {
-  "format_version": 1,
-  "generated_by": "tools/generate_pinyin_knowledge.py and tools/expand_pinyin_knowledge.py",
+  "format_version": 2,
+  "generated_by": "tools/import_lexicon_bundle.py",
   "generated_on": "2026-10-12",
   "runtime_network": false,
   "generated_counts": {
-    "entries": 121057,
-    "idiom": 30779,
-    "thuocl": 89537,
-    "curated_expansion": 717
+    "entries": 283781,
+    "distinct_phrases": 283558,
+    "polyphonic_extra_readings": 223,
+    "baseline_entries": 120340,
+    "baseline_polyphonic_repairs": 539,
+    "batch1_added": 134245,
+    "batch2_added": 21307,
+    "batch3_added": 7889,
+    "batch3_quarantined_total": 15144,
+    "batch3_quarantined_manifest_rows": 400,
+    "combined_system_distinct_phrases": 460766,
+    "combined_system_distinct_keys": 468979,
+    "by_category": {
+      "daily": 152680,
+      "place": 35674,
+      "idiom": 29844,
+      "person": 17419,
+      "medical": 12588,
+      "it": 9173,
+      "law": 7077,
+      "food": 5897,
+      "poem": 3161,
+      "biology": 3123,
+      "finance": 2567,
+      "animal": 2046,
+      "chemistry": 1312,
+      "car": 1220
+    }
   },
   "sha256": {
-    "modernime-knowledge.tsv": "33cfcf7d606511efaa11b84afb61996c7a0e5014f6d9f367a4c6331259967a74",
-    "modernime-knowledge.raw": "6cd1898bceed8e258ed22143642cc3b6fcdc13ff11263d49796d62569186b105"
+    "modernime-knowledge.tsv": "a113beaba1e5257c8bc4dfad3e302dc0e3fe09387498aa4e4a1e62045f120be2",
+    "modernime-knowledge.raw": "227e7cfd8da55491bc83828cf49d74b387cf7297bf8d932d65a1c6c25561f017",
+    "POLYPHONIC_REVIEW.tsv": "a11a8eb4d4b43e978958da6b06d8a7e05ff0ca0e3032a5ff4cb9caf781e13122"
   },
   "filters": {
-    "phrase": "连续中文字符，长度 2 到 24",
-    "thuocl_frequency": "DF >= 5",
-    "deduplication": "词语 + 完整拼音，保留频率较高者；同频按固定类别和来源顺序稳定选择",
-    "polyphonic_check": "强制校核特定多音字读音（如卒中cùzhòng、尉迟yùchí、单于chányú、查良镛zhā等）",
+    "phrase": "连续中文字符（含〇），长度 2 到 24",
+    "pinyin": "无声调完整拼音，ü 统一转写为 v（NFD 分解去声调前转换），音节以单引号分隔",
+    "deduplication": "以 (phrase, full_pinyin) 为主键，保留合法多音词的不同读音条目；与系统 sc.dict 2字常见词去重，与 modernime-hotwords.raw 严格零重叠",
+    "frequency_mapping": "跨源对数压缩与多源共识加权映射至 [20, 1000]，人名/地名专名降权封顶 <= 300",
+    "polyphonic_governance": "无注音词表仅在单音字整词命中或多源注音完全一致时自动入表；强多音字冲突或无整词注音词条隔离至 POLYPHONIC_REVIEW.tsv",
+    "excluded_tables": [
+      "rime-essay (traditional Chinese)",
+      "wanxiang/shici (classical poetry corpus)",
+      "wanxiang/fangyan (dialect vocabulary)",
+      "wanxiang/abbrev, t9_abbrev, mixed, cuoyin"
+    ],
     "libime_cost": 0
   },
   "sources": [
+    {
+      "id": "wanxiang",
+      "repository": "https://github.com/amzxyz/RIME-LMDG",
+      "commit": "d378e94aa12300b47e7a6303016de5a2b9ce95ee",
+      "license": "CC-BY-4.0",
+      "license_file": "data/pinyin/licenses/CC-BY-4.0.txt",
+      "used_tables": [
+        "dicts/jichu.dict.yaml",
+        "dicts/duoyin.dict.yaml",
+        "dicts/mingren.dict.yaml",
+        "dicts/renming.dict.yaml",
+        "dicts/diming.dict.yaml",
+        "dicts/yixue.dict.yaml",
+        "dicts/yaopin.dict.yaml",
+        "dicts/huaxue.dict.yaml",
+        "dicts/wuzhong.dict.yaml"
+      ],
+      "role": "Batch 1 primary common vocabulary & polyphonic calibration; Batch 2 encyclopedic & domain expansion"
+    },
+    {
+      "id": "rime-ice",
+      "repository": "https://github.com/iDvel/rime-ice",
+      "commit": "da1fbe602e38f26db846fa10120ee64c2b0324c0",
+      "license": "GPL-3.0-only",
+      "license_file": "data/pinyin/licenses/GPL-3.0.txt",
+      "used_tables": [
+        "cn_dicts/base.dict.yaml",
+        "cn_dicts/ext.dict.yaml",
+        "cn_dicts/tencent.dict.yaml"
+      ],
+      "role": "Batch 1 cross-validation of common & compound phrases; Batch 3 unannotated phrase triage via verified upstream readings"
+    },
+    {
+      "id": "jieba",
+      "repository": "https://github.com/fxsjy/jieba",
+      "commit": "67fa2e36e72f69d9134b8a1037b83fbb070b9775",
+      "license": "MIT",
+      "used_tables": [
+        "jieba/dict.txt",
+        "extra_dict/dict.txt.big"
+      ],
+      "role": "Batch 2 frequency grading and part-of-speech (POS) verification"
+    },
+    {
+      "id": "cc-cedict",
+      "repository": "https://www.mdbg.net/chinese/dictionary?page=cc-cedict",
+      "upstream_version": "2026-10-11T08:29:27Z",
+      "sha256": "cf0bf5c8ff94316799bc82755dbe0627658d7167244060d8e4ce8d5928a6b9f5",
+      "license": "CC-BY-SA-4.0",
+      "license_file": "data/pinyin/licenses/CC-BY-SA-4.0.txt",
+      "used_fields": ["simplified_headword", "pinyin"],
+      "role": "Batch 1 phrase-level pronunciation cross-validation (definitions excluded)"
+    },
     {
       "id": "china-idiom",
       "repository": "https://github.com/sfyc23/China-idiom",
@@ -28,7 +113,7 @@
       "path": "china_idiom/idiom.csv",
       "license": "MIT",
       "used_fields": ["word"],
-      "pinyin_annotation": "python-pinyin phrase dictionary; upstream pinyin is fallback only"
+      "pinyin_annotation": "python-pinyin phrase dictionary cross-checked with wanxiang/rime-ice/cc-cedict"
     },
     {
       "id": "thuocl",
@@ -47,13 +132,8 @@
         "car",
         "animal"
       ],
-      "used_fields": ["word", "DF"]
-    },
-    {
-      "id": "modernime-curated-expansion",
-      "role": "carefully curated names, daily expressions, and domain terminology with polyphonic verification",
-      "categories": ["person", "daily", "it", "medical", "law", "finance"],
-      "date": "2026-10-12"
+      "used_fields": ["word", "DF"],
+      "pinyin_annotation": "polyphonic readings calibrated against wanxiang/duoyin, wanxiang/jichu, rime-ice, and cc-cedict"
     },
     {
       "id": "python-pinyin",
@@ -69,6 +149,15 @@
       "author": "Lin Wei (Skywind)",
       "used_fields": ["word", "translation"],
       "role": "english word concise definition dictionary"
+    },
+    {
+      "id": "rime-essay",
+      "repository": "https://github.com/rime/rime-essay",
+      "commit": "054920de4f54c9e5994276a96a4fc2a35cb51aa3",
+      "license": "LGPL-3.0",
+      "license_file": "data/pinyin/licenses/LGPL-3.0.txt",
+      "included_in_main_dict": false,
+      "role": "traditional Chinese reference only; excluded from simplified full-pinyin main dictionary"
     }
   ]
 }
