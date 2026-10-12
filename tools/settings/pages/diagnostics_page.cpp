@@ -552,6 +552,15 @@ private:
         return false;
     }
 
+    void handlePostPackageOperationState() {
+        if (UpdateController::hasActivePackageOperation()) {
+            scheduleBackgroundPackageMonitor();
+            return;
+        }
+        // Handle the race where the background task completed between timeout return and UI callback
+        pollBackgroundPackageOperation();
+    }
+
     void finishCheckUpdate(const UpdateStatus *status, const GError *error) {
         updateBusy = false;
         if (status == nullptr) {
@@ -579,20 +588,16 @@ private:
                                    const GError *error) {
         updateBusy = false;
         if (result == nullptr) {
-            restoreUpdateButtonsAfterTask();
             notifyMessage(error != nullptr && error->message != nullptr
                               ? error->message
                               : "刷新软件源缓存请求未完成");
+            handlePostPackageOperationState();
             return;
         }
         if (!result->cacheResult.success) {
             setLabel(updateStatusMessage, result->cacheResult.message.c_str());
             notifyMessage(result->cacheResult.message);
-            if (UpdateController::hasActivePackageOperation()) {
-                scheduleBackgroundPackageMonitor();
-            } else {
-                restoreUpdateButtonsAfterTask();
-            }
+            handlePostPackageOperationState();
             return;
         }
         finishCheckUpdate(&result->updatedStatus, nullptr);
@@ -638,23 +643,15 @@ private:
     void finishSystemUpgrade(const RuntimeResult *result, const GError *error) {
         updateBusy = false;
         if (result == nullptr) {
-            if (UpdateController::hasActivePackageOperation()) {
-                scheduleBackgroundPackageMonitor();
-            } else {
-                restoreUpdateButtonsAfterTask();
-            }
             notifyMessage(error != nullptr && error->message != nullptr
                               ? error->message
                               : "系统包管理器升级请求未完成");
+            handlePostPackageOperationState();
             return;
         }
         setLabel(updateStatusMessage, result->message.c_str());
         notifyMessage(result->message);
-        if (UpdateController::hasActivePackageOperation()) {
-            scheduleBackgroundPackageMonitor();
-        } else {
-            restoreUpdateButtonsAfterTask();
-        }
+        handlePostPackageOperationState();
     }
 
     void startTask(bool reloadRequest) {

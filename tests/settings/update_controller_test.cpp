@@ -6,6 +6,7 @@
 #include <fstream>
 #include <string>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -326,6 +327,50 @@ int main() {
     assert(exitedTimeoutRes.message.find("子进程已退出，未检测到后台仍在运行的 apt/dpkg 进程") !=
            std::string::npos);
     assert(!UpdateController::hasActivePackageOperation());
+
+    // 7c. Process exit while background package operation is still active MUST NOT hang in static destruction ([P1]):
+    const auto pidFile = tempRoot / "bg-pkexec.pid";
+    writeExecutable(
+        aptBinDir / "pkexec",
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$$\" > \"" +
+            pidFile.string() +
+            "\"\n"
+            "sleep 5\n"
+            "exit 0\n");
+
+    const pid_t childPid = ::fork();
+    assert(childPid >= 0);
+    if (childPid == 0) {
+        const auto res = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
+        assert(!res.success);
+        assert(UpdateController::hasActivePackageOperation());
+        // Full C++ std::exit(0) runs static destructors; must exit immediately without waiting 5s
+        std::exit(0);
+    }
+
+    int waitStatus = 0;
+    bool childExitedFast = false;
+    for (int i = 0; i < 40; ++i) {
+        const pid_t waited = ::waitpid(childPid, &waitStatus, WNOHANG);
+        if (waited == childPid) {
+            childExitedFast = WIFEXITED(waitStatus) && (WEXITSTATUS(waitStatus) == 0);
+            break;
+        }
+        ::usleep(25000); // 40 * 25ms = 1.0s max (well below the 5s sleep in mock pkexec)
+    }
+    if (!childExitedFast) {
+        ::kill(childPid, SIGKILL);
+        ::waitpid(childPid, &waitStatus, 0);
+    }
+    if (std::filesystem::exists(pidFile)) {
+        std::ifstream pidIn(pidFile);
+        long bgPid = 0;
+        if (pidIn >> bgPid && bgPid > 0) {
+            ::kill(static_cast<pid_t>(bgPid), SIGTERM);
+        }
+    }
+    assert(childExitedFast);
 
     std::filesystem::remove_all(tempRoot);
     return 0;

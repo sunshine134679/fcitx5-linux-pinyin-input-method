@@ -67,18 +67,11 @@ struct ActivePackageTracker final {
     std::optional<RuntimeResult> completedResult;
     std::string lastStdout;
     std::string lastStderr;
-    std::thread worker;
-
-    ~ActivePackageTracker() {
-        if (worker.joinable()) {
-            worker.join();
-        }
-    }
 };
 
 ActivePackageTracker &packageTracker() {
-    static ActivePackageTracker tracker;
-    return tracker;
+    static auto *tracker = new ActivePackageTracker();
+    return *tracker;
 }
 
 std::string trim(std::string_view value) {
@@ -220,19 +213,17 @@ void startBackgroundPackageTracking(std::shared_ptr<SubprocessState> state,
                                     TrackedPackageOpKind opKind,
                                     std::string fallbackCmd) {
     auto &tracker = packageTracker();
-    std::unique_lock<std::mutex> lock(tracker.mutex);
-    if (tracker.worker.joinable()) {
-        lock.unlock();
-        tracker.worker.join();
-        lock.lock();
+    {
+        std::unique_lock<std::mutex> lock(tracker.mutex);
+        tracker.cv.wait(lock, [&tracker]() { return !tracker.active; });
+        tracker.active = true;
+        tracker.completedResult.reset();
+        tracker.lastStdout.clear();
+        tracker.lastStderr.clear();
     }
-    tracker.active = true;
-    tracker.completedResult.reset();
-    tracker.lastStdout.clear();
-    tracker.lastStderr.clear();
 
-    tracker.worker = std::thread([state = std::move(state), opKind,
-                                  fallbackCmd = std::move(fallbackCmd)]() {
+    std::thread([state = std::move(state), opKind,
+                 fallbackCmd = std::move(fallbackCmd)]() {
         g_main_context_push_thread_default(state->context);
         if (!state->finished) {
             g_main_loop_run(state->loop);
@@ -273,7 +264,7 @@ void startBackgroundPackageTracking(std::shared_ptr<SubprocessState> state,
             trk.active = false;
         }
         trk.cv.notify_all();
-    });
+    }).detach();
 }
 
 CommandOutput runSubprocess(const std::vector<std::string> &argv,
@@ -753,6 +744,7 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
         return {false,
                 "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
     }
+    takeCompletedPackageOperationResult();
 
     PackageManagerKind manager = status.manager;
     if (manager == PackageManagerKind::Unknown) {
@@ -819,6 +811,7 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
         return {false,
                 "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
     }
+    takeCompletedPackageOperationResult();
     if (!status.updateAvailable) {
         return {false, "当前没有可安装的更新版本。"};
     }
@@ -894,15 +887,9 @@ bool UpdateController::hasActivePackageOperation() {
 bool UpdateController::waitForActivePackageOperation(unsigned int timeoutMs) {
     auto &tracker = packageTracker();
     std::unique_lock<std::mutex> lock(tracker.mutex);
-    const bool done = tracker.cv.wait_for(
+    return tracker.cv.wait_for(
         lock, std::chrono::milliseconds(timeoutMs),
         [&tracker]() { return !tracker.active; });
-    if (done && tracker.worker.joinable()) {
-        std::thread workerToJoin = std::move(tracker.worker);
-        lock.unlock();
-        workerToJoin.join();
-    }
-    return done;
 }
 
 std::optional<RuntimeResult> UpdateController::takeCompletedPackageOperationResult() {
