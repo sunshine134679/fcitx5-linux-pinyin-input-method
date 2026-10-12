@@ -10,6 +10,16 @@ ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）�
 
 进入 [GitHub Releases 页面](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases) 下载适合您系统架构的安装包：
 
+#### 平台与资产兼容矩阵
+
+| 资产文件名 | 适配发行版 | 架构 | 最低系统要求与基线 |
+|---|---|---|---|
+| `modernime_0.1.7_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS | x86_64 / amd64 | glibc ≥ 2.35, Fcitx5 5.0+ |
+| `modernime_0.1.7_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS / Debian 12+ | x86_64 / amd64 | glibc ≥ 2.38, Fcitx5 5.1+ |
+| `modernime-0.1.7-1.oe24.x86_64.rpm` | openEuler 24.03 SP4 / 24.09, Fedora | x86_64 | glibc ≥ 2.38, Fcitx5 5.1+ (EPOL) |
+| `modernime-0.1.7-linux-x86_64.tar.gz` | Linux 便携免编译包 | x86_64 | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| 源码构建 (`./install.sh`) | 任意 Linux (含 aarch64 / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
+
 #### 1. Ubuntu / Debian 系统（`.deb` 包）
 ```bash
 # 下载对应的 .deb 包（如 modernime_0.1.7_amd64_ubuntu24.04.deb）后执行：
@@ -48,7 +58,7 @@ sudo dnf install -y fcitx5 libime gtk3 libappindicator-gtk3
 sudo dnf install -y ./modernime-*.x86_64.rpm
 ```
 
-#### 3. 通用 Linux 便携归档（`.tar.gz` 免编译包）
+#### 3. Linux x86_64 便携归档（`.tar.gz` 免编译包，要求 glibc ≥ 2.34）
 ```bash
 # 解压预编译便携包
 tar -zxvf modernime-*-linux-x86_64.tar.gz
@@ -62,7 +72,7 @@ sudo ./install.sh /usr
 # 等价于：sudo MODERNIME_PREFIX=/usr ./install.sh
 ```
 
-归档包含 `install.sh` 和 `uninstall.sh`，与源码安装共享环境集成、安装清单及用户修改保护。安装无需 CMake 或编译器，默认离线；支持 `MODERNIME_PREFIX`、`MODERNIME_CONFIG_HOME`、`MODERNIME_DESKTOP_DIR` 和 `MODERNIME_SKIP_FCITX_RESTART`。卸载时使用安装所选的前缀，例如 `MODERNIME_PREFIX="$HOME/.local/modernime" ./uninstall.sh`。如果从 `/tmp` 或 `/var/tmp` 解压目录运行，必须显式指定 `MODERNIME_PREFIX`。三份内置词典会通过 `XDG_DATA_DIRS` 在安装前缀下定位。
+归档包含 `install.sh` 和 `uninstall.sh`，与源码安装共享环境集成、安装清单及用户修改保护。安装无需 CMake 或编译器，默认离线；支持 `MODERNIME_PREFIX`、`MODERNIME_CONFIG_HOME`、`MODERNIME_DESKTOP_DIR` 和 `MODERNIME_SKIP_FCITX_RESTART`。卸载时使用安装所选的前缀，例如 `MODERNIME_PREFIX="$HOME/.local/modernime" ./uninstall.sh`。如果从 `/tmp` 或 `/var/tmp` 解压目录运行，必须显式指定 `MODERNIME_PREFIX`。三份内置词典会通过 `XDG_DATA_DIRS` 在安装前缀下定位。若宿主为 aarch64 / ARM64 或其他架构，请选用下述“方式二：从源码一键构建安装”。
 
 ---
 

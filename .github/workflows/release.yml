@@ -98,8 +98,8 @@ jobs:
           path: dist/*.rpm
 
   build-tarball:
-    name: Build Standalone Tarball
-    runs-on: ubuntu-latest
+    name: Build Standalone Tarball (glibc 2.34+ Baseline)
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

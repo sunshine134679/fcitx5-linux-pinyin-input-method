@@ -31,7 +31,14 @@ DESTDIR="${stage_dir}/${tar_name}" cmake --install "${build_dir}"
 cat << EOF > "${stage_dir}/${tar_name}/README.txt"
 ModernIME - Modern Fcitx5 Pinyin Input Method
 Version: ${version}
+Target Platform: Linux x86_64 (glibc >= 2.34, libstdc++ >= 3.4.30)
 Repository: https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
+
+Requirements:
+  - Architecture: x86_64 / amd64
+    (For aarch64 / ARM64 or other architectures, build from source using ./install.sh)
+  - Linux distribution with glibc >= 2.34 (Ubuntu 22.04+, openEuler 24.03+, Debian 12+, Fedora 38+)
+  - Fcitx5 input method framework installed and configured
 
 Installation:
   1. User installation (recommended, no sudo needed):
@@ -41,16 +48,16 @@ Installation:
      sudo ./install.sh /usr
 
   Custom isolated installation:
-     MODERNIME_PREFIX=/custom/prefix MODERNIME_CONFIG_HOME=/custom/config \\
+     MODERNIME_PREFIX=/custom/prefix MODERNIME_CONFIG_HOME=/custom/config \
        MODERNIME_DESKTOP_DIR=/custom/desktop MODERNIME_SKIP_FCITX_RESTART=1 ./install.sh
 
   Uninstallation (use the same environment/prefix as installation):
      ./uninstall.sh
 
-The installer works offline and requires no compiler, cmake, or pkg-config.
+The installer works completely offline and requires no compiler, cmake, or pkg-config.
 
 Dependencies:
-  - fcitx5
+  - fcitx5 (with fcitx5-chinese-addons)
   - libime / libime-pinyin
   - gtk3
   - sqlite3
