@@ -44,12 +44,15 @@ data_count=$(awk -F '\t' '
     }
 ' "$data_file")
 
-if (( data_count < 100000 )); then
-    echo "拼音知识库条目过少：$data_count（要求至少 100000）" >&2
+if (( data_count < 200000 )); then
+    echo "拼音知识库条目过少：$data_count（要求至少 200000）" >&2
     exit 1
 fi
 
-for category in idiom it medical law place; do
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+python3 "$script_dir/../tools/generate_pinyin_knowledge.py" --self-test
+
+for category in daily idiom it medical law place person finance chemistry biology; do
     if ! awk -F '\t' -v wanted="$category" '$4 == wanted { found = 1 } END { exit !found }' \
         "$data_file"; then
         echo "拼音知识库缺少必需类别：$category" >&2
@@ -74,6 +77,44 @@ check_entry "一心一意" "yi'xin'yi'yi" "yxyy"
 check_entry "自然语言处理" "zi'ran'yu'yan'chu'li" "zryycl"
 check_entry "量子计算" "liang'zi'ji'suan" "lzjs"
 check_entry "阿司匹林" "a'si'pi'lin" "aspl"
+check_entry "候选栏" "hou'xuan'lan" "hxl"
+check_entry "剪贴板" "jian'tie'ban" "jtb"
+check_entry "上下文" "shang'xia'wen" "sxw"
+check_entry "设备树" "she'bei'shu" "sbs"
+check_entry "驱动程序" "qu'dong'cheng'xu" "qdcx"
+check_entry "交叉编译" "jiao'cha'bian'yi" "jcby"
+check_entry "嵌入式" "qian'ru'shi" "qrs"
+check_entry "重庆" "chong'qing" "cq"
+check_entry "重阳" "chong'yang" "cy"
+check_entry "银行" "yin'hang" "yh"
+check_entry "音乐" "yin'yue" "yy"
+check_entry "快乐" "kuai'le" "kl"
+check_entry "绿色" "lv'se" "ls"
+check_entry "女儿" "nv'er" "ne"
+check_entry "略微" "lve'wei" "lw"
+check_entry "弹出窗口" "tan'chu'chuang'kou" "tcck"
+check_entry "多重继承" "duo'chong'ji'cheng" "dcjc"
+check_entry "方法重载" "fang'fa'chong'zai" "ffcz"
+check_entry "调优" "tiao'you" "ty"
+check_entry "暴力解法" "bao'li'jie'fa" "bljf"
+check_entry "变长参数" "bian'chang'can'shu" "bccs"
+check_entry "椎间盘" "zhui'jian'pan" "zjp"
+check_entry "伺服电机" "si'fu'dian'ji" "sfdj"
+check_entry "单雄信" "shan'xiong'xin" "sxx"
+
+review_file="$(dirname "$data_file")/POLYPHONIC_REVIEW.tsv"
+if [[ -s "$review_file" ]]; then
+    review_count=$(awk -F '\t' '
+        /^#/ { next }
+        NF != 10 || $2 != "quarantined" { bad = 1 }
+        { count++ }
+        END { if (bad) exit 1; print count + 0 }
+    ' "$review_file")
+    if (( review_count < 50 )); then
+        echo "多音字待复核清单条目过少：$review_count" >&2
+        exit 1
+    fi
+fi
 
 LC_ALL=C sort -t $'\t' -k2,2 -k1,1 -k6,6 "$data_file" > "$tmp_sorted"
 if ! cmp -s "$data_file" "$tmp_sorted"; then

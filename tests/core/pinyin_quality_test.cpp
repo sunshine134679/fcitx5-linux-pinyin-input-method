@@ -560,6 +560,114 @@ void testExpandedLexiconAndAntiHijackingScenarios(
     }
 }
 
+void testExpandedLexiconAndPolyphonicCalibration(
+    const std::filesystem::path &isolatedDictionary) {
+    auto provider = makeProvider(isolatedDictionary);
+
+    struct PhraseAssertion {
+        std::string_view input;
+        std::string_view expectedText;
+        std::string_view expectedFullPinyin;
+        std::size_t maxRank;
+    };
+
+    const std::vector<PhraseAssertion> cases = {
+        // 16 acceptance target words (must be rank 0 with full input consumption)
+        {"houxuanlan", "候选栏", "hou'xuan'lan", 0},
+        {"jianpan", "键盘", "jian'pan", 0},
+        {"shangxiawen", "上下文", "shang'xia'wen", 0},
+        {"jiantieban", "剪贴板", "jian'tie'ban", 0},
+        {"shebeishu", "设备树", "she'bei'shu", 0},
+        {"qudongchengxu", "驱动程序", "qu'dong'cheng'xu", 0},
+        {"jiaochabianyi", "交叉编译", "jiao'cha'bian'yi", 0},
+        {"qianrushi", "嵌入式", "qian'ru'shi", 0},
+        {"chongqing", "重庆", "chong'qing", 0},
+        {"chongyang", "重阳", "chong'yang", 0},
+        {"yinhang", "银行", "yin'hang", 0},
+        {"yinyue", "音乐", "yin'yue", 0},
+        {"kuaile", "快乐", "kuai'le", 0},
+        {"lvse", "绿色", "lv'se", 0},
+        {"nver", "女儿", "nv'er", 0},
+        {"lvewei", "略微", "lve'wei", 0},
+        {"luewei", "略微", "lve'wei", 0},
+        // Calibrated polyphonic compound words repaired from baseline pypinyin errors
+        {"tanchuchuangkou", "弹出窗口", "tan'chu'chuang'kou", 0},
+        {"duochongjicheng", "多重继承", "duo'chong'ji'cheng", 0},
+        {"fangfachongzai", "方法重载", "fang'fa'chong'zai", 0},
+        {"tiaoyou", "调优", "tiao'you", 0},
+        {"baolijiefa", "暴力解法", "bao'li'jie'fa", 0},
+        {"bianchangcanshu", "变长参数", "bian'chang'can'shu", 0},
+        {"zhuijianpan", "椎间盘", "zhui'jian'pan", 0},
+        {"sifudianji", "伺服电机", "si'fu'dian'ji", 0},
+        {"zengyinquan", "曾荫权", "zeng'yin'quan", 0},
+        {"dubolin", "都柏林", "du'bo'lin", 0},
+        {"shanxiongxin", "单雄信", "shan'xiong'xin", 0},
+        {"dachangjin", "大长今", "da'chang'jin", 0},
+        {"duopule", "多普勒", "duo'pu'le", 0},
+        {"elegangzhou", "俄勒冈州", "e'le'gang'zhou", 0},
+        {"chuanxiong", "川芎", "chuan'xiong", 0},
+        {"bisai", "鼻塞", "bi'sai", 1},
+        {"changdu", "昌都", "chang'du", 1},
+        {"zhuankou", "沌口", "zhuan'kou", 1},
+    };
+
+    for (const auto &tc : cases) {
+        provider.reset();
+        assertTrue(provider.append(tc.input),
+                   std::string("append input: ") + std::string(tc.input));
+        const auto &page = provider.page();
+        const auto idx = indexOf(page, tc.expectedText);
+        assertTrue(idx <= tc.maxRank && idx < page.items.size(),
+                   std::string("candidate ") + std::string(tc.expectedText) +
+                       " for " + std::string(tc.input) + " ranks <= " +
+                       std::to_string(tc.maxRank));
+        assertTrue(page.items[idx].fullPinyin == tc.expectedFullPinyin,
+                   std::string("fullPinyin for ") + std::string(tc.expectedText) +
+                       " is " + std::string(tc.expectedFullPinyin));
+        assertTrue(page.items[idx].consumedInputBytes == tc.input.size(),
+                   std::string("consumedInputBytes for ") +
+                       std::string(tc.expectedText) + " consumes full input");
+        assertTrue(provider.select(idx),
+                   std::string("selecting ") + std::string(tc.expectedText) +
+                       " succeeds");
+        assertTrue(provider.page().items.empty() &&
+                       provider.page().rawInput.empty(),
+                   std::string("selecting ") + std::string(tc.expectedText) +
+                       " leaves zero residual input");
+    }
+
+    // Core single-syllable, abbreviation, and English non-regression checks
+    struct NonRegressionCase {
+        std::string_view input;
+        std::string_view expectedText;
+        std::size_t maxRank;
+    };
+    const std::vector<NonRegressionCase> regressions = {
+        {"de", "的", 0},
+        {"shi", "是", 0},
+        {"yi", "一", 2},
+        {"jian", "见", 0},
+        {"sm", "什么", 0},
+        {"gn", "功能", 0},
+        {"zw", "中文", 0},
+        {"see", "see", 0},
+        {"fee", "fee", 0},
+        {"apple", "apple", 0},
+    };
+    for (const auto &rc : regressions) {
+        provider.reset();
+        assertTrue(provider.append(rc.input),
+                   std::string("append regression input: ") +
+                       std::string(rc.input));
+        const auto idx = indexOf(provider.page(), rc.expectedText);
+        assertTrue(idx <= rc.maxRank,
+                   std::string("regression candidate ") +
+                       std::string(rc.expectedText) + " for " +
+                       std::string(rc.input) + " stays at rank <= " +
+                       std::to_string(rc.maxRank));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -571,6 +679,8 @@ int main() {
         environment.isolatedDictionary());
     testEnglishDefinitionQualityScenarios(environment.isolatedDictionary());
     testExpandedLexiconAndAntiHijackingScenarios(
+        environment.isolatedDictionary());
+    testExpandedLexiconAndPolyphonicCalibration(
         environment.isolatedDictionary());
     return EXIT_SUCCESS;
 }
