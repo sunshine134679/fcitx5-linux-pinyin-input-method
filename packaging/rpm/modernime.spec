@@ -11,6 +11,7 @@ BuildRequires:  cmake >= 3.24
 BuildRequires:  make
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  sqlite-devel
+BuildRequires:  lmdb-devel
 BuildRequires:  boost-devel
 BuildRequires:  fcitx5-devel
 BuildRequires:  libime-devel
@@ -23,6 +24,7 @@ Requires:       fcitx5
 Requires:       libime
 Requires:       gtk3
 Requires:       sqlite
+Requires:       lmdb-libs
 
 %description
 ModernIME is a modern Pinyin input method engine for Fcitx5 on Linux desktops,

@@ -85,7 +85,8 @@ sudo ./install.sh /usr
 sudo apt update
 sudo apt install \
     build-essential cmake pkg-config \
-    libsqlite3-dev libboost-dev \
+    libsqlite3-dev liblmdb-dev libboost-dev \
+    libgtest-dev libbenchmark-dev \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
     libimecore-dev libimepinyin-dev libime-bin \
     libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
@@ -99,7 +100,8 @@ sudo dnf config-manager --set-enabled EPOL || true
 # 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
 sudo dnf install -y \
     gcc gcc-c++ cmake make pkgconf-pkg-config \
-    sqlite-devel boost-devel \
+    sqlite-devel lmdb-devel boost-devel \
+    gtest-devel google-benchmark-devel \
     fcitx5-devel libime-devel \
     gtk3-devel pango-devel cairo-devel rpm-build \
     libappindicator-gtk3-devel

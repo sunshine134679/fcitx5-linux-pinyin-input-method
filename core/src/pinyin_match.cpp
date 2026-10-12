@@ -8,10 +8,13 @@
 namespace modernime::core {
 
 std::string PinyinMatchPolicy::canonical(std::string_view fullPinyin) {
+    if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
+        fullPinyin.remove_prefix(3);
+    }
     std::string result;
     result.reserve(fullPinyin.size());
     for (const char character : fullPinyin) {
-        if (character != '\'') {
+        if (character != '\'' && character != ',') {
             result.push_back(static_cast<char>(std::tolower(
                 static_cast<unsigned char>(character))));
         }
@@ -20,10 +23,13 @@ std::string PinyinMatchPolicy::canonical(std::string_view fullPinyin) {
 }
 
 std::string PinyinMatchPolicy::abbreviationKey(std::string_view fullPinyin) {
+    if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
+        fullPinyin.remove_prefix(3);
+    }
     std::string result;
     bool syllableStart = true;
     for (const char character : fullPinyin) {
-        if (character == '\'') {
+        if (character == '\'' || character == ',') {
             syllableStart = true;
             continue;
         }
@@ -95,10 +101,13 @@ bool PinyinMatchPolicy::initialsMatch(std::string_view userInput,
     if (userInput.empty() || fullPinyin.empty()) {
         return false;
     }
+    if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
+        fullPinyin.remove_prefix(3);
+    }
     std::vector<std::string_view> syllables;
     std::size_t start = 0;
     while (start < fullPinyin.size()) {
-        auto pos = fullPinyin.find('\'', start);
+        auto pos = fullPinyin.find_first_of("',", start);
         if (pos == std::string_view::npos) {
             pos = fullPinyin.size();
         }

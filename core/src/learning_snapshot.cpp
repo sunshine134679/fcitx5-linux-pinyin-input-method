@@ -175,7 +175,8 @@ LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
             index->canonicalIndex[canonical].push_back({entry.phrase, entry.pinyin});
             index->prefixIndex.emplace_back(canonical, entry.phrase, entry.pinyin);
         }
-        if (entry.pinyin.find('\'') != std::string::npos) {
+        if (entry.pinyin.find('\'') != std::string::npos ||
+            entry.pinyin.find(',') != std::string::npos) {
             const auto abbr = PinyinMatchPolicy::abbreviationKey(entry.pinyin);
             if (abbr.size() >= 2) {
                 index->abbrIndex[abbr].push_back({entry.phrase, entry.pinyin});
@@ -205,10 +206,13 @@ const LearningSnapshot::RecallIndex &LearningSnapshot::ensureRecallIndex() const
 }
 
 std::string normalizePinyin(std::string_view pinyin) {
+    if (pinyin.starts_with("!u!") || pinyin.starts_with("!U!")) {
+        pinyin.remove_prefix(3);
+    }
     std::string normalized;
     normalized.reserve(pinyin.size());
     for (const unsigned char character : pinyin) {
-        if (character == '\'') {
+        if (character == '\'' || character == ',') {
             continue;
         }
         normalized.push_back(static_cast<char>(std::tolower(character)));

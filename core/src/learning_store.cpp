@@ -1,7 +1,9 @@
 #include "modernime/core/learning_store.h"
+#include "modernime/core/personal_engine.h"
 
 #include <sqlite3.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <utility>
 
@@ -27,14 +29,53 @@ bool bindText(sqlite3_stmt *statement, int index, std::string_view value) {
                              SQLITE_TRANSIENT) == SQLITE_OK;
 }
 
+bool shouldUseLmdb(const std::filesystem::path &path) {
+    const auto ext = path.extension().string();
+    if (ext == ".lmdb" || ext == ".mdb") {
+        return true;
+    }
+    if (const char *env = std::getenv("MODERNIME_LEARNING_BACKEND")) {
+        if (std::string_view(env) == "lmdb" && ext != ".sqlite3") {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 LearningStore::LearningStore(std::filesystem::path path)
-    : path_(std::move(path)) {}
+    : path_(std::move(path)),
+      useLmdb_(shouldUseLmdb(path_)) {}
 
 LearningStore::~LearningStore() { close(); }
 
+void LearningStore::setTotalEntryLimit(std::size_t limit) {
+    totalEntryLimit_ = limit == 0 ? kMaxLearningEntries : limit;
+    if (lmdbEngine_ != nullptr) {
+        lmdbEngine_->SetMaxCapacity(totalEntryLimit_, totalEntryLimit_);
+    }
+}
+
 bool LearningStore::open() {
+    if (useLmdb_) {
+        if (lmdbEngine_ != nullptr && lmdbEngine_->IsLmdbOpen()) {
+            return true;
+        }
+        if (path_.empty()) {
+            return false;
+        }
+        EngineConfig cfg;
+        cfg.max_dict_capacity = totalEntryLimit_;
+        cfg.prune_target_size = totalEntryLimit_;
+        lmdbEngine_ = std::make_unique<PersonalEngine>(cfg);
+        if (!lmdbEngine_->OpenLmdb(path_, false)) {
+            lmdbEngine_.reset();
+            return false;
+        }
+        return true;
+    }
+
     if (db_ != nullptr) {
         return true;
     }
@@ -76,6 +117,24 @@ bool LearningStore::open() {
 }
 
 bool LearningStore::openReadOnly() {
+    if (useLmdb_) {
+        if (lmdbEngine_ != nullptr && lmdbEngine_->IsLmdbOpen()) {
+            return true;
+        }
+        if (path_.empty()) {
+            return false;
+        }
+        EngineConfig cfg;
+        cfg.max_dict_capacity = totalEntryLimit_;
+        cfg.prune_target_size = totalEntryLimit_;
+        lmdbEngine_ = std::make_unique<PersonalEngine>(cfg);
+        if (!lmdbEngine_->OpenLmdb(path_, true)) {
+            lmdbEngine_.reset();
+            return false;
+        }
+        return true;
+    }
+
     if (db_ != nullptr) {
         return true;
     }
@@ -86,6 +145,16 @@ bool LearningStore::openReadOnly() {
     }
     sqlite3_busy_timeout(db_, 0);
     return true;
+}
+
+bool LearningStore::migrateFromSqlite(const std::filesystem::path &sqlitePath) {
+    if (!useLmdb_) {
+        return false;
+    }
+    if ((lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) && !open()) {
+        return false;
+    }
+    return lmdbEngine_->MigrateFromSqlite(sqlitePath);
 }
 
 bool LearningStore::ensureSuppressionColumn() const {
@@ -118,6 +187,10 @@ bool LearningStore::ensureSuppressionColumn() const {
 }
 
 void LearningStore::close() {
+    if (lmdbEngine_ != nullptr) {
+        lmdbEngine_->CloseLmdb();
+        lmdbEngine_.reset();
+    }
     if (db_ != nullptr) {
         sqlite3_close(db_);
         db_ = nullptr;
@@ -136,6 +209,13 @@ bool LearningStore::execute(const char *sql) const {
 }
 
 bool LearningStore::backupTo(const std::filesystem::path &path) const {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return false;
+        }
+        return lmdbEngine_->BackupLmdbTo(path);
+    }
+
     if (db_ == nullptr || path.empty() || path == path_) {
         return false;
     }
@@ -173,6 +253,13 @@ bool LearningStore::backupTo(const std::filesystem::path &path) const {
 }
 
 bool LearningStore::clear() {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return false;
+        }
+        return lmdbEngine_->Clear();
+    }
+
     if (db_ == nullptr || !execute("BEGIN IMMEDIATE;")) {
         return false;
     }
@@ -240,6 +327,13 @@ bool LearningStore::recordSelection(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return false;
+        }
+        return lmdbEngine_->RecordUsage(pinyin, phrase, 1.0f, contextBefore,
+                                        contextAfter, nowMs);
+    }
     if (!applySelection(phrase, pinyin, contextBefore, contextAfter, nowMs)) {
         return false;
     }
@@ -283,6 +377,12 @@ bool LearningStore::applyNegativeFeedback(std::string_view phrase,
 
 bool LearningStore::recordNegativeFeedback(std::string_view phrase,
                                            std::string_view pinyin) {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return false;
+        }
+        return lmdbEngine_->RecordNegativeFeedback(pinyin, phrase);
+    }
     if (!applyNegativeFeedback(phrase, pinyin)) {
         return false;
     }
@@ -317,6 +417,12 @@ bool LearningStore::applySuppression(std::string_view phrase,
 
 bool LearningStore::recordSuppression(std::string_view phrase,
                                       std::string_view pinyin) {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return false;
+        }
+        return lmdbEngine_->RecordSuppression(pinyin, phrase);
+    }
     if (!applySuppression(phrase, pinyin)) {
         return false;
     }
@@ -362,6 +468,45 @@ bool LearningStore::pruneTotalEntries() const {
 }
 
 bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return false;
+        }
+        if (events.empty()) {
+            return true;
+        }
+        if (!lmdbEngine_->ReloadFromLmdb()) {
+            return false;
+        }
+        const auto currentRevision = lmdbEngine_->ResetRevision();
+        for (const auto &event : events) {
+            if (event.resetRevision.has_value() &&
+                *event.resetRevision != currentRevision) {
+                continue;
+            }
+            bool ok = false;
+            switch (event.kind) {
+            case LearningEvent::Kind::Selection:
+                ok = lmdbEngine_->RecordUsage(event.pinyin, event.phrase, 1.0f,
+                                              event.contextBefore,
+                                              event.contextAfter, event.nowMs);
+                break;
+            case LearningEvent::Kind::NegativeFeedback:
+                ok = lmdbEngine_->RecordNegativeFeedback(event.pinyin,
+                                                         event.phrase);
+                break;
+            case LearningEvent::Kind::Suppression:
+                ok = lmdbEngine_->RecordSuppression(event.pinyin, event.phrase);
+                break;
+            }
+            if (!ok) {
+                lmdbEngine_->ReloadFromLmdb();
+                return false;
+            }
+        }
+        return true;
+    }
+
     if (db_ == nullptr) {
         return false;
     }
@@ -415,6 +560,13 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
 }
 
 std::optional<std::int64_t> LearningStore::resetRevision() const {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return std::nullopt;
+        }
+        return lmdbEngine_->ResetRevision();
+    }
+
     if (db_ == nullptr) {
         return std::nullopt;
     }
@@ -432,6 +584,13 @@ std::optional<std::int64_t> LearningStore::resetRevision() const {
 }
 
 int LearningStore::schemaVersion() const {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return 0;
+        }
+        return lmdbEngine_->SchemaVersion();
+    }
+
     if (db_ == nullptr) {
         return 0;
     }
@@ -449,6 +608,18 @@ int LearningStore::schemaVersion() const {
 }
 
 std::optional<LearningStoreState> LearningStore::readState() const {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return std::nullopt;
+        }
+        if (!const_cast<PersonalEngine *>(lmdbEngine_.get())->ReloadFromLmdb()) {
+            return std::nullopt;
+        }
+        return LearningStoreState{
+            lmdbEngine_->ToLearningSnapshot(totalEntryLimit_),
+            lmdbEngine_->ResetRevision()};
+    }
+
     if (!execute("BEGIN;")) {
         return std::nullopt;
     }
@@ -463,6 +634,14 @@ std::optional<LearningStoreState> LearningStore::readState() const {
 
 std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
     std::int64_t) const {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return std::make_shared<const LearningSnapshot>();
+        }
+        const_cast<PersonalEngine *>(lmdbEngine_.get())->ReloadFromLmdb();
+        return lmdbEngine_->ToLearningSnapshot(totalEntryLimit_);
+    }
+
     std::vector<LearningEntry> entries;
     if (db_ == nullptr) {
         return std::make_shared<const LearningSnapshot>(std::move(entries));
