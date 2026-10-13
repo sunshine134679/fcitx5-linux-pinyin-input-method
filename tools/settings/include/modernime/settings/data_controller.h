@@ -14,6 +14,18 @@ enum class DictionaryConflictPolicy {
     OverwriteWithImport,
 };
 
+enum class LearningBackendKind {
+    Unknown,
+    Sqlite,
+    Lmdb,
+};
+
+struct LearningBackendInfo final {
+    LearningBackendKind kind = LearningBackendKind::Unknown;
+    std::string name;
+    std::string description;
+};
+
 struct DictionaryImportPreview final {
     bool valid = false;
     std::string error;
@@ -50,6 +62,8 @@ public:
         std::string *error = nullptr);
     static std::size_t learningEntryCount(const std::filesystem::path &path,
                                           std::string *error = nullptr);
+    static LearningBackendInfo detectActiveLearningBackend(
+        const std::filesystem::path &path);
     static bool backupAndClearLearning(const std::filesystem::path &path,
                                        const std::filesystem::path &backupPath,
                                        std::string *error = nullptr);

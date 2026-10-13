@@ -89,12 +89,15 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_learning_page_contract_tests
         settings/learning_page_contract_test.cpp
+        ../tools/settings/page_registry.cpp
+        ../tools/settings/data_controller.cpp
     )
     target_include_directories(modernime_learning_page_contract_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_learning_page_contract_tests PRIVATE
         modernime_core
+        modernime_pinyin
     )
     add_test(NAME modernime_learning_page_contract
         COMMAND modernime_learning_page_contract_tests

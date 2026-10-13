@@ -94,6 +94,16 @@ public:
             "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
         gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
         learningDataFallback = dataSection;
+
+        const auto backendInfo = DataController::detectActiveLearningBackend(path);
+        const auto backendText = "存储引擎：" + backendInfo.name + " (" + backendInfo.description + ")";
+        backendLabel = gtk_label_new(backendText.c_str());
+        addStyleClass(backendLabel, "modernime-description");
+        gtk_widget_set_halign(backendLabel, GTK_ALIGN_START);
+        gtk_label_set_line_wrap(GTK_LABEL(backendLabel), TRUE);
+        gtk_box_pack_start(GTK_BOX(dataSection), backendLabel, FALSE, FALSE,
+                           0);
+
         learningCount = gtk_label_new("正在读取学习记录…");
         addStyleClass(learningCount, "modernime-description");
         gtk_widget_set_halign(learningCount, GTK_ALIGN_START);
@@ -103,12 +113,12 @@ public:
                            0);
 
         clearLearningButton = gtk_button_new_with_label("清空学习记录");
-        setTarget(clearLearningButton, "learning-data");
+        setTarget(clearLearningButton, "learning-clear");
         gtk_widget_set_halign(clearLearningButton, GTK_ALIGN_START);
         gtk_widget_set_tooltip_text(clearLearningButton,
-                                    "备份后清空 ModernIME 的学习排序");
+                                    "备份后清空 ModernIME 的学习排序并递增重置版本");
         setAccessibleWidgetText(clearLearningButton, "清空学习记录",
-                                "先创建并验证备份，再清空本地学习排序");
+                                "先创建并验证备份，递增版本号并清空本地学习排序");
         gtk_box_pack_start(GTK_BOX(dataSection), clearLearningButton, FALSE,
                            FALSE, 0);
         g_signal_connect(learningEnabled, "notify::active", G_CALLBACK(onSwitchChanged),
@@ -154,6 +164,9 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        if (target == "learning-clear" || target == "learning-data") {
+            return focusWidgetOrFallback(clearLearningButton, learningDataFallback);
+        }
         const std::array controls{
             std::pair{learningEnabled, static_cast<GtkWidget *>(nullptr)},
             std::pair{contextLearning, static_cast<GtkWidget *>(nullptr)},
@@ -195,10 +208,11 @@ private:
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
-            "清空后将无法恢复当前学习排序，是否先备份并清空？");
+            "清空后将递增重置版本号 (reset_revision) 并使运行时调频缓存失效。\n"
+            "清空前会自动创建可恢复的时间戳备份，是否确认清空？");
         setDialogResponseAccessibility(
             GTK_DIALOG(dialog), GTK_RESPONSE_YES, "备份并清空",
-            "创建并验证备份后清空本地学习排序");
+            "创建并验证备份后递增重置版本号并清空本地学习排序");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
                                        "取消", "保留当前学习记录");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -211,7 +225,7 @@ private:
         const auto backup = learningBackupPath(impl->path);
         std::string error;
         if (DataController::backupAndClearLearning(impl->path, backup, &error)) {
-            impl->notifyMessage("学习记录已清空，备份位于 " + backup.string());
+            impl->notifyMessage("学习记录已清空（重置版本号已递增），备份位于 " + backup.string());
         } else {
             impl->notifyMessage(error);
         }
@@ -237,6 +251,7 @@ private:
     GtkWidget *learningEnabled = nullptr;
     GtkWidget *contextLearning = nullptr;
     GtkWidget *learningPath = nullptr;
+    GtkWidget *backendLabel = nullptr;
     GtkWidget *learningCount = nullptr;
     GtkWidget *clearLearningButton = nullptr;
     GtkWidget *learningDataFallback = nullptr;

@@ -287,6 +287,17 @@ void testDictionaryBackupCreationAndVerification() {
                "backup contents verified");
 }
 
+void testLearningBackendDetection() {
+    using namespace modernime::settings;
+    const auto sqliteInfo = DataController::detectActiveLearningBackend("foo/learning.sqlite3");
+    assertTrue(sqliteInfo.kind == LearningBackendKind::Sqlite, "sqlite detected");
+    assertTrue(sqliteInfo.name == "SQLite WAL", "sqlite name is SQLite WAL");
+
+    const auto lmdbInfo = DataController::detectActiveLearningBackend("foo/learning.lmdb");
+    assertTrue(lmdbInfo.kind == LearningBackendKind::Lmdb, "lmdb detected");
+    assertTrue(lmdbInfo.name == "LMDB", "lmdb name is LMDB");
+}
+
 } // namespace
 
 int main() {
@@ -297,5 +308,7 @@ int main() {
     testDictionaryBackupCreationAndVerification();
     testLearningBackupThenClear();
     testFailedBackupDoesNotClearLearning();
+    testLearningBackendDetection();
     return EXIT_SUCCESS;
 }
+

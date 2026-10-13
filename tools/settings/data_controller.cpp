@@ -283,7 +283,7 @@ std::size_t DataController::learningEntryCount(
     }
 
     core::LearningStore store(path);
-    if (!store.open()) {
+    if (!store.openReadOnly()) {
         if (error != nullptr) {
             *error = "无法打开学习数据库";
         }
@@ -293,11 +293,22 @@ std::size_t DataController::learningEntryCount(
     store.close();
     if (snapshot == nullptr) {
         if (error != nullptr) {
-            *error = "无法读取学习数据库";
+            *error = "无法读取学习数据库快照";
         }
         return 0;
     }
     return snapshot->entries().size();
+}
+
+LearningBackendInfo DataController::detectActiveLearningBackend(
+    const std::filesystem::path &path) {
+    core::LearningStore store(path);
+    if (store.isLmdbBackend()) {
+        return {LearningBackendKind::Lmdb, "LMDB",
+                "高性能内存映射引擎 (Zero-Copy MMap)"};
+    }
+    return {LearningBackendKind::Sqlite, "SQLite WAL",
+            "嵌入式关系型存储 (WAL 并发保护)"};
 }
 
 bool DataController::backupAndClearLearning(
@@ -323,7 +334,7 @@ bool DataController::backupAndClearLearning(
     }
 
     core::LearningStore verification(backupPath);
-    if (!verification.open() || verification.snapshot() == nullptr) {
+    if (!verification.openReadOnly() || verification.snapshot() == nullptr) {
         setError("learning backup could not be verified");
         return false;
     }
