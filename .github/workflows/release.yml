@@ -299,6 +299,29 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Install release gate and repository dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            liblmdb0 \
+            dpkg-dev \
+            gnupg \
+            python3 \
+            tar \
+            coreutils
+          for req_tool in python3 dpkg-deb dpkg-scanpackages gpg gpgv tar sha256sum cmp; do
+            if ! command -v "$req_tool" >/dev/null 2>&1; then
+              echo "FATAL: Required release gate tool missing: $req_tool" >&2
+              exit 1
+            fi
+          done
+          python3 - <<'PYEOF'
+          import ctypes
+          lib = ctypes.CDLL("liblmdb.so.0")
+          assert hasattr(lib, "mdb_env_create"), "liblmdb.so.0 missing mdb_env_create"
+          PYEOF
+
       - name: Verify Release Assets & Upgrade Lifecycle Gate
         run: |
           set -euo pipefail
@@ -334,7 +357,7 @@ jobs:
                    "$data_home/modernime" "$config_home/modernime" "$gate_dir/home" "$gate_dir/Desktop"
           printf 'v0.1.6-legacy\n' > "$prefix/lib/fcitx5/modernime_fcitx5.so"
           printf 'v0.1.6-legacy\n' > "$prefix/lib/fcitx5/modernime_ui.so"
-          printf 'lmdb-payload-v1\n' > "$data_home/modernime/learning.lmdb"
+          "$repo_root/scripts/modernime-data-guard" --init-lmdb "$data_home/modernime/learning.lmdb"
           python3 - "$data_home/modernime/learning.sqlite3" <<'PYEOF'
           import sqlite3, sys
           conn = sqlite3.connect(sys.argv[1])
@@ -344,6 +367,11 @@ jobs:
           conn.commit()
           conn.close()
           PYEOF
+
+          echo "--- 2a. 升级前校验合法 SQLite 与 LMDB 数据库 ---"
+          "$repo_root/scripts/modernime-data-guard" --verify \
+            --data-dir "$data_home/modernime" \
+            --config-dir "$config_home/modernime"
 
           HOME="$gate_dir/home" \
           MODERNIME_PREFIX="$prefix" \
@@ -358,13 +386,34 @@ jobs:
 
           test -x "$prefix/bin/modernime-settings"
           test -x "$prefix/bin/modernime-session-init"
-          backup_db="$(find "$data_home/modernime" -name 'learning.sqlite3.backup-*' -print -quit)"
-          test -n "$backup_db"
-          backup_lmdb="$(find "$data_home/modernime" -name 'learning.lmdb.backup-*' -print -quit)"
-          test -n "$backup_lmdb"
-          python3 - "$backup_db" <<'PYEOF'
-          import sqlite3, sys
-          conn = sqlite3.connect(sys.argv[1])
+          test -x "$prefix/bin/modernime-data-guard"
+          backup_db="$(find "$data_home/modernime" -maxdepth 1 -name 'learning.sqlite3.backup-*' ! -name '*-wal' ! -name '*-shm' -print -quit)"
+          test -n "$backup_db" && test -f "$backup_db"
+          backup_lmdb="$(find "$data_home/modernime" -maxdepth 1 -name 'learning.lmdb.backup-*' ! -name '*-lock' -print -quit)"
+          test -n "$backup_lmdb" && test -e "$backup_lmdb"
+          test -f "$data_home/modernime/backups/latest"
+          latest_backup_dir="$(cat "$data_home/modernime/backups/latest")"
+          test -d "$latest_backup_dir"
+
+          echo "--- 2b. 备份与升级后校验在线库及备份副本 ---"
+          "$prefix/bin/modernime-data-guard" --verify \
+            --data-dir "$data_home/modernime" \
+            --config-dir "$config_home/modernime"
+          "$prefix/bin/modernime-data-guard" --verify \
+            --data-dir "$latest_backup_dir"
+          python3 - "$repo_root/scripts/modernime-data-guard" "$backup_db" "$backup_lmdb" <<'PYEOF'
+          import importlib.machinery, importlib.util, sqlite3, sys
+          from pathlib import Path
+          guard_path, backup_db, backup_lmdb = sys.argv[1], sys.argv[2], sys.argv[3]
+          loader = importlib.machinery.SourceFileLoader("modernime_data_guard", guard_path)
+          spec = importlib.util.spec_from_loader(loader.name, loader)
+          mod = importlib.util.module_from_spec(spec)
+          loader.exec_module(mod)
+          sql_info = mod.verify_sqlite(Path(backup_db))
+          lmdb_info = mod.verify_lmdb(Path(backup_lmdb))
+          assert sql_info["entries_count"] == 1, f"Unexpected SQLite entries_count: {sql_info}"
+          assert lmdb_info["words_count"] >= 1, f"Unexpected LMDB words_count: {lmdb_info}"
+          conn = sqlite3.connect(backup_db)
           assert conn.execute("PRAGMA integrity_check;").fetchone()[0] == "ok"
           assert conn.execute("SELECT phrase FROM learning_entries WHERE pinyin='ceshi';").fetchone()[0] == "测试"
           conn.close()
@@ -381,14 +430,61 @@ jobs:
           test -f "$data_home/modernime/learning.sqlite3"
           test -f "$data_home/modernime/learning.lmdb"
 
+          echo "--- 2c. 卸载后再次校验保留的用户 SQLite 与 LMDB 数据库 ---"
+          "$repo_root/scripts/modernime-data-guard" --verify \
+            --data-dir "$data_home/modernime" \
+            --config-dir "$config_home/modernime"
+
+          echo "--- 2d. 验证损坏数据库必须阻断便携包安装且不覆盖现有组件 ---"
+          corrupt_root="$gate_dir/corrupt-check"
+          corrupt_prefix="$corrupt_root/prefix"
+          corrupt_data="$corrupt_root/data"
+          corrupt_config="$corrupt_root/config"
+          mkdir -p "$corrupt_prefix/lib/fcitx5" "$corrupt_data/modernime" "$corrupt_config/modernime" \
+                   "$corrupt_root/home" "$corrupt_root/Desktop"
+          printf 'v0.1.6-legacy\n' > "$corrupt_prefix/lib/fcitx5/modernime_fcitx5.so"
+          printf 'corrupt-lmdb-payload\n' > "$corrupt_data/modernime/learning.lmdb"
+          corrupt_rc=0
+          HOME="$corrupt_root/home" \
+          MODERNIME_PREFIX="$corrupt_prefix" \
+          MODERNIME_DATA_HOME="$corrupt_data" \
+          MODERNIME_CONFIG_HOME="$corrupt_config" \
+          MODERNIME_DESKTOP_DIR="$corrupt_root/Desktop" \
+          MODERNIME_SKIP_FCITX_RESTART=1 \
+          MODERNIME_ALLOW_MISSING_DEPS=1 \
+          XDG_DATA_HOME="$corrupt_data" \
+          XDG_CONFIG_HOME="$corrupt_config" \
+          bash "$extracted_dir/install.sh" "$corrupt_prefix" >/dev/null 2>&1 || corrupt_rc=$?
+          if [ "$corrupt_rc" -eq 0 ] || [ "$corrupt_rc" -ge 124 ]; then
+            echo "FATAL: Corrupt LMDB did not block install.sh with normal non-zero exit (got $corrupt_rc)" >&2
+            exit 1
+          fi
+          grep -Fxq "v0.1.6-legacy" "$corrupt_prefix/lib/fcitx5/modernime_fcitx5.so"
+          test ! -e "$corrupt_prefix/bin/modernime-settings"
+
           echo "=== 3. 验证沙箱 APT/RPM 仓库构建、RPM 包体签名与 GPG 验签门禁 ==="
           gate_assets="$gate_dir/assets-copy"
           mkdir -p "$gate_assets"
           cp -a "$repo_root/release-assets/." "$gate_assets/"
+          sandbox_gpg="$gate_dir/sandbox-gpg"
+          mkdir -p "$sandbox_gpg"
+          chmod 700 "$sandbox_gpg"
+          gpg --homedir "$sandbox_gpg" --batch --no-tty --generate-key <<'GPGEOF' 2>/dev/null
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Name-Real: ModernIME Ephemeral Gate Key
+          Name-Email: gate@modernime.invalid
+          Expire-Date: 1d
+          %commit
+          GPGEOF
+          sandbox_sec="$gate_dir/sandbox-ephemeral-sec.asc"
+          gpg --homedir "$sandbox_gpg" --batch --no-tty --armor --export-secret-keys > "$sandbox_sec"
+          gpgconf --homedir "$sandbox_gpg" --kill gpg-agent >/dev/null 2>&1 || true
           "$repo_root/scripts/ci_build_release_repos.sh" \
             --assets-dir "$gate_assets" \
             --pages-dir "$gate_dir/pages-sandbox" \
-            --ephemeral-gpg
+            --gpg-private-key-file "$sandbox_sec"
 
       - name: Build Production Signed APT & RPM Repositories
         env:

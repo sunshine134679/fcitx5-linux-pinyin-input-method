@@ -203,8 +203,6 @@ elif [[ "$ephemeral_gpg" == true || "${MODERNIME_GENERATE_EPHEMERAL_GPG:-0}" == 
 %no-protection
 Key-Type: RSA
 Key-Length: 3072
-Subkey-Type: RSA
-Subkey-Length: 3072
 Name-Real: ModernIME RPM Repository Signing Key
 Name-Email: rpm-release@modernime.invalid
 Expire-Date: 2y
