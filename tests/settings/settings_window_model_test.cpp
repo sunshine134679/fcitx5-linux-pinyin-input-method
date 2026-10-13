@@ -149,5 +149,33 @@ int main() {
                "invalid loaded key falls back to the default");
     assertTrue(!diagnosticModel.loadDiagnostics().empty(),
                "loaded settings diagnostics are exposed to the client");
+
+    // Test external modification and conflict handling in SettingsWindowModel
+    const auto extPath = directory / "external-test-settings.conf";
+    modernime::settings::SettingsWindowModel extModel(extPath);
+    assertTrue(!extModel.hasExternalModification(), "fresh model has no external modification");
+    std::string extErr;
+    assertTrue(extModel.save(&extErr), "initial save succeeds: " + extErr);
+    assertTrue(!extModel.hasExternalModification(), "saved model has no external modification");
+
+    // Modify file externally behind model's back
+    {
+        std::ofstream extOut(extPath, std::ios::app);
+        extOut << "# externally added line\n";
+    }
+    assertTrue(extModel.hasExternalModification(), "external modification is detected");
+
+    // Attempting to save should fail due to external modification conflict
+    auto modifiedDraft = extModel.settings();
+    modifiedDraft.candidatePageSize = 7;
+    extModel.setSettings(modifiedDraft);
+    std::string conflictErr;
+    assertTrue(!extModel.save(&conflictErr), "saving with external modification fails");
+    assertTrue(!conflictErr.empty(), "conflict error is reported");
+
+    // Reload from disk clears conflict
+    assertTrue(extModel.reloadFromDisk(), "reloadFromDisk succeeds");
+    assertTrue(!extModel.hasExternalModification(), "after reloadFromDisk, conflict is cleared");
+
     return EXIT_SUCCESS;
 }

@@ -49,6 +49,8 @@ inline constexpr int kDefaultCandidateFontSize = 20;
 
 ModernIMESettings defaultSettings();
 SettingsValidationResult validateSettings(const ModernIMESettings &settings);
+std::string computeSettingsHash(const ModernIMESettings &settings);
+std::string computeFileContentHash(const std::filesystem::path &path);
 
 struct SettingsPaths final {
     std::filesystem::path settingsFile;
@@ -64,6 +66,8 @@ struct SettingsPaths final {
 struct SettingsLoadResult final {
     ModernIMESettings settings = defaultSettings();
     std::vector<std::string> diagnostics;
+    std::string contentHash;
+    std::vector<std::string> rawLines;
 };
 
 class SettingsStore final {
@@ -71,7 +75,9 @@ public:
     static SettingsLoadResult load(const std::filesystem::path &path);
     static bool save(const std::filesystem::path &path,
                      const ModernIMESettings &settings,
-                     std::string *error = nullptr);
+                     std::string *error = nullptr,
+                     std::string_view expectedContentHash = {},
+                     const std::vector<std::string> *rawLinesToPreserve = nullptr);
     static bool reset(const std::filesystem::path &path,
                       std::string *error = nullptr);
 };

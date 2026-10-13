@@ -1,10 +1,27 @@
 #include "modernime/core/settings.h"
 
+#include <array>
+#include <cstdint>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace modernime::core {
 namespace {
+
+std::string fnv1a64Hex(std::string_view text) {
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const char character : text) {
+        hash ^= static_cast<std::uint8_t>(character);
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream ss;
+    ss << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return ss.str();
+}
 
 std::string trim(std::string_view value) {
     const auto first = value.find_first_not_of(" \t");
@@ -99,6 +116,49 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     return result;
 }
 
+std::string computeSettingsHash(const ModernIMESettings &settings) {
+    std::ostringstream output;
+    output << "input.enabled=" << (settings.inputEnabled ? "true" : "false")
+           << '\n'
+           << "input.default_mode="
+           << (settings.defaultMode == InputMode::Chinese ? "chinese"
+                                                            : "english")
+           << '\n'
+           << "input.toggle_key=" << settings.toggleKey << '\n'
+           << "candidate.page_size=" << settings.candidatePageSize << '\n'
+           << "candidate.font_size=" << settings.candidateFontSize << '\n'
+           << "candidate.number_selection="
+           << (settings.numberSelection ? "true" : "false") << '\n'
+           << "candidate.arrow_navigation="
+           << (settings.arrowNavigation ? "true" : "false") << '\n'
+           << "candidate.page_navigation="
+           << (settings.pageNavigation ? "true" : "false") << '\n'
+           << "punctuation.enabled="
+           << (settings.punctuationEnabled ? "true" : "false") << '\n'
+           << "learning.enabled="
+           << (settings.learningEnabled ? "true" : "false") << '\n'
+           << "learning.context_enabled="
+           << (settings.contextLearningEnabled ? "true" : "false") << '\n'
+           << "clipboard.enabled="
+           << (settings.clipboardEnabled ? "true" : "false") << '\n'
+           << "clipboard.trigger=" << settings.clipboardTrigger << '\n'
+           << "candidate.english_definition="
+           << (settings.englishDefinitionEnabled ? "true" : "false") << '\n'
+           << "candidate.character_extraction="
+           << (settings.characterExtractionEnabled ? "true" : "false") << '\n';
+    return fnv1a64Hex(output.str());
+}
+
+std::string computeFileContentHash(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return {};
+    }
+    std::ostringstream ss;
+    ss << input.rdbuf();
+    return fnv1a64Hex(ss.str());
+}
+
 SettingsPaths SettingsPaths::fromEnvironment(std::string_view xdgConfigHome,
                                              std::string_view xdgDataHome,
                                              std::string_view home) {
@@ -137,6 +197,7 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
+        result.rawLines.push_back(line);
         const auto content = trim(line);
         if (content.empty() || content.front() == '#') {
             continue;
@@ -214,12 +275,15 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
     if (!input.eof() && input.fail()) {
         result.diagnostics.push_back("unable to finish reading settings file");
     }
+    result.contentHash = computeFileContentHash(path);
     return result;
 }
 
 bool SettingsStore::save(const std::filesystem::path &path,
                          const ModernIMESettings &settings,
-                         std::string *error) {
+                         std::string *error,
+                         std::string_view expectedContentHash,
+                         const std::vector<std::string> *rawLinesToPreserve) {
     const auto setError = [error](std::string message) {
         if (error != nullptr) {
             *error = std::move(message);
@@ -235,6 +299,14 @@ bool SettingsStore::save(const std::filesystem::path &path,
         return false;
     }
     std::error_code filesystemError;
+    if (!expectedContentHash.empty() && std::filesystem::exists(path, filesystemError)) {
+        const auto currentHash = computeFileContentHash(path);
+        if (currentHash != expectedContentHash) {
+            setError("配置文件已被外部修改，请重新加载后再保存");
+            return false;
+        }
+    }
+
     if (!path.parent_path().empty()) {
         std::filesystem::create_directories(path.parent_path(),
                                             filesystemError);
@@ -252,34 +324,81 @@ bool SettingsStore::save(const std::filesystem::path &path,
         setError("unable to open temporary settings file");
         return false;
     }
-    output << "input.enabled=" << (settings.inputEnabled ? "true" : "false")
-           << '\n'
-           << "input.default_mode="
-           << (settings.defaultMode == InputMode::Chinese ? "chinese"
-                                                            : "english")
-           << '\n'
-           << "input.toggle_key=" << settings.toggleKey << '\n'
-           << "candidate.page_size=" << settings.candidatePageSize << '\n'
-           << "candidate.font_size=" << settings.candidateFontSize << '\n'
-           << "candidate.number_selection="
-           << (settings.numberSelection ? "true" : "false") << '\n'
-           << "candidate.arrow_navigation="
-           << (settings.arrowNavigation ? "true" : "false") << '\n'
-           << "candidate.page_navigation="
-           << (settings.pageNavigation ? "true" : "false") << '\n'
-           << "punctuation.enabled="
-           << (settings.punctuationEnabled ? "true" : "false") << '\n'
-           << "learning.enabled="
-           << (settings.learningEnabled ? "true" : "false") << '\n'
-           << "learning.context_enabled="
-           << (settings.contextLearningEnabled ? "true" : "false") << '\n'
-           << "clipboard.enabled="
-           << (settings.clipboardEnabled ? "true" : "false") << '\n'
-           << "clipboard.trigger=" << settings.clipboardTrigger << '\n'
-           << "candidate.english_definition="
-           << (settings.englishDefinitionEnabled ? "true" : "false") << '\n'
-           << "candidate.character_extraction="
-           << (settings.characterExtractionEnabled ? "true" : "false") << '\n';
+
+    std::unordered_map<std::string, std::string> knownSettings;
+    knownSettings["input.enabled"] = settings.inputEnabled ? "true" : "false";
+    knownSettings["input.default_mode"] =
+        settings.defaultMode == InputMode::Chinese ? "chinese" : "english";
+    knownSettings["input.toggle_key"] = settings.toggleKey;
+    knownSettings["candidate.page_size"] =
+        std::to_string(settings.candidatePageSize);
+    knownSettings["candidate.font_size"] =
+        std::to_string(settings.candidateFontSize);
+    knownSettings["candidate.number_selection"] =
+        settings.numberSelection ? "true" : "false";
+    knownSettings["candidate.arrow_navigation"] =
+        settings.arrowNavigation ? "true" : "false";
+    knownSettings["candidate.page_navigation"] =
+        settings.pageNavigation ? "true" : "false";
+    knownSettings["punctuation.enabled"] =
+        settings.punctuationEnabled ? "true" : "false";
+    knownSettings["learning.enabled"] =
+        settings.learningEnabled ? "true" : "false";
+    knownSettings["learning.context_enabled"] =
+        settings.contextLearningEnabled ? "true" : "false";
+    knownSettings["clipboard.enabled"] =
+        settings.clipboardEnabled ? "true" : "false";
+    knownSettings["clipboard.trigger"] = settings.clipboardTrigger;
+    knownSettings["candidate.english_definition"] =
+        settings.englishDefinitionEnabled ? "true" : "false";
+    knownSettings["candidate.character_extraction"] =
+        settings.characterExtractionEnabled ? "true" : "false";
+
+    std::unordered_set<std::string> writtenKeys;
+    const auto canonicalKey = [](std::string_view k) -> std::string {
+        if (k == "input.english_definition") return "candidate.english_definition";
+        if (k == "candidate.extract_character") return "candidate.character_extraction";
+        return std::string(k);
+    };
+
+    if (rawLinesToPreserve != nullptr && !rawLinesToPreserve->empty()) {
+        for (const auto &rawLine : *rawLinesToPreserve) {
+            const auto content = trim(rawLine);
+            if (content.empty() || content.front() == '#') {
+                output << rawLine << '\n';
+                continue;
+            }
+            const auto separator = content.find('=');
+            if (separator == std::string::npos) {
+                output << rawLine << '\n';
+                continue;
+            }
+            const auto key = canonicalKey(trim(std::string_view(content).substr(0, separator)));
+            auto it = knownSettings.find(key);
+            if (it != knownSettings.end()) {
+                output << key << "=" << it->second << '\n';
+                writtenKeys.insert(key);
+            } else {
+                output << rawLine << '\n';
+            }
+        }
+    }
+
+    const std::array<const char *, 15> keyOrder{
+        "input.enabled", "input.default_mode", "input.toggle_key",
+        "candidate.page_size", "candidate.font_size",
+        "candidate.number_selection", "candidate.arrow_navigation",
+        "candidate.page_navigation", "punctuation.enabled",
+        "learning.enabled", "learning.context_enabled",
+        "clipboard.enabled", "clipboard.trigger",
+        "candidate.english_definition", "candidate.character_extraction"};
+
+    for (const char *k : keyOrder) {
+        if (writtenKeys.find(k) == writtenKeys.end()) {
+            output << k << "=" << knownSettings[k] << '\n';
+        }
+    }
+
     output.close();
     if (!output) {
         std::filesystem::remove(temporary, filesystemError);

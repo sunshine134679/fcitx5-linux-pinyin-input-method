@@ -211,6 +211,63 @@ void testSharedValidationRejectsInvalidValues() {
                "clipboard validation identifies its settings field");
 }
 
+void testPreserveUnknownKeysAndCommentsAndConflict() {
+    const auto directory = testDirectory();
+    const auto path = directory / "preserved-settings.conf";
+    {
+        std::ofstream out(path);
+        out << "# A custom user comment\n"
+            << "input.enabled=true\n"
+            << "unknown.custom_flag=hello_world\n";
+    }
+
+    const auto loaded = modernime::core::SettingsStore::load(path);
+    assertTrue(!loaded.contentHash.empty(), "content hash is computed on load");
+    assertTrue(loaded.rawLines.size() == 3, "raw lines are captured");
+
+    auto updated = loaded.settings;
+    updated.inputEnabled = false;
+
+    // Test conflict check with invalid expected hash
+    std::string conflictError;
+    const bool conflictFailed = modernime::core::SettingsStore::save(
+        path, updated, &conflictError, "stale-hash-123456", &loaded.rawLines);
+    assertTrue(!conflictFailed, "save fails when expected hash does not match");
+    assertTrue(!conflictError.empty(), "conflict error message is returned");
+
+    // Test save with matching hash and rawLines preservation
+    std::string saveError;
+    const bool saveSuccess = modernime::core::SettingsStore::save(
+        path, updated, &saveError, loaded.contentHash, &loaded.rawLines);
+    assertTrue(saveSuccess, "save succeeds with matching expected hash: " + saveError);
+
+    // Verify disk content contains the comment and unknown key
+    std::ifstream in(path);
+    std::string line;
+    bool foundComment = false;
+    bool foundUnknown = false;
+    bool foundUpdatedInput = false;
+    while (std::getline(in, line)) {
+        if (line.find("# A custom user comment") != std::string::npos) {
+            foundComment = true;
+        }
+        if (line.find("unknown.custom_flag=hello_world") != std::string::npos) {
+            foundUnknown = true;
+        }
+        if (line.find("input.enabled=false") != std::string::npos) {
+            foundUpdatedInput = true;
+        }
+    }
+    assertTrue(foundComment, "comments are preserved across save");
+    assertTrue(foundUnknown, "unknown keys are preserved across save");
+    assertTrue(foundUpdatedInput, "known settings are updated");
+
+    // Test computeSettingsHash sensitivity
+    const auto hash1 = modernime::core::computeSettingsHash(loaded.settings);
+    const auto hash2 = modernime::core::computeSettingsHash(updated);
+    assertTrue(hash1 != hash2, "computeSettingsHash distinguishes modified settings");
+}
+
 } // namespace
 
 int main() {
@@ -220,5 +277,6 @@ int main() {
     testFailedSavePreservesExistingTarget();
     testSharedValidationAcceptsOnlyRuntimeToggleKeys();
     testSharedValidationRejectsInvalidValues();
+    testPreserveUnknownKeysAndCommentsAndConflict();
     return EXIT_SUCCESS;
 }

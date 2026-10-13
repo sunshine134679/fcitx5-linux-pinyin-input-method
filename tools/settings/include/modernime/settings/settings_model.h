@@ -43,12 +43,20 @@ public:
     }
     std::string_view validationError() const { return lastError_; }
 
+    const std::string &loadedHash() const { return loadedHash_; }
+    const std::string &savedHash() const { return savedHash_; }
+    bool hasExternalModification() const;
+    bool reloadFromDisk(std::string *error = nullptr);
+
 private:
     std::filesystem::path path_;
     core::ModernIMESettings loaded_;
     core::ModernIMESettings edited_;
     std::vector<std::string> loadDiagnostics_;
     std::string lastError_;
+    std::string loadedHash_;
+    std::string savedHash_;
+    std::vector<std::string> rawLines_;
     bool defaultsEdited_ = false;
     Revision savedRevision_ = 0;
     Revision reloadedRevision_ = 0;
