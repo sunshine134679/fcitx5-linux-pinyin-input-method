@@ -114,6 +114,7 @@ void overviewTaskFunction(GTask *task, gpointer, gpointer data,
                           GCancellable *) {
     const auto *request = static_cast<const OverviewTask *>(data);
     const auto runtime = RuntimeController::probe(request->remoteExecutable,
+                                                  request->paths.runtimeState,
                                                   request->environment);
     g_task_return_pointer(
         task,
@@ -255,12 +256,8 @@ private:
         static_cast<Impl *>(data)->restoreEdits();
     }
 
-    static void onApply(GtkButton *, gpointer data) {
+    static void onSave(GtkButton *, gpointer data) {
         static_cast<Impl *>(data)->saveEditedSettings(false);
-    }
-
-    static void onSaveAndClose(GtkButton *, gpointer data) {
-        static_cast<Impl *>(data)->saveEditedSettings(true);
     }
 
     static void onEditDefaults(GtkMenuItem *, gpointer data) {
@@ -284,8 +281,8 @@ private:
         if (modifiers == GDK_CONTROL_MASK &&
             (event->keyval == GDK_KEY_Return ||
              event->keyval == GDK_KEY_KP_Enter)) {
-            if (gtk_widget_is_sensitive(owner->applyButton)) {
-                gtk_button_clicked(GTK_BUTTON(owner->applyButton));
+            if (gtk_widget_is_sensitive(owner->saveButton)) {
+                gtk_button_clicked(GTK_BUTTON(owner->saveButton));
             }
             return TRUE;
         }
@@ -530,24 +527,19 @@ private:
         auto *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         const auto labels = settingsActionLabels();
         restoreButton = gtk_button_new_with_label(labels[0].data());
-        applyButton = gtk_button_new_with_label(labels[1].data());
-        saveButton = gtk_button_new_with_label(labels[2].data());
+        saveButton = gtk_button_new_with_label(labels[1].data());
         addStyleClass(saveButton, kSettingsPrimaryButtonClass);
         setAccessibleWidgetText(restoreButton, labels[0],
                                 "放弃当前会话内尚未保存的设置修改");
-        setAccessibleWidgetText(applyButton, labels[1],
+        setAccessibleWidgetText(saveButton, labels[1],
                                 "保存设置但保持窗口打开，可按 Ctrl+Enter");
-        setAccessibleWidgetText(saveButton, labels[2],
-                                "保存设置并关闭窗口");
-        for (auto *button : {restoreButton, applyButton, saveButton}) {
+        for (auto *button : {restoreButton, saveButton}) {
             gtk_box_pack_start(GTK_BOX(buttons), button, FALSE, FALSE, 0);
         }
         gtk_box_pack_end(GTK_BOX(bar), buttons, FALSE, FALSE, 0);
         g_signal_connect(restoreButton, "clicked", G_CALLBACK(onRestoreEdits),
                          this);
-        g_signal_connect(applyButton, "clicked", G_CALLBACK(onApply), this);
-        g_signal_connect(saveButton, "clicked", G_CALLBACK(onSaveAndClose),
-                         this);
+        g_signal_connect(saveButton, "clicked", G_CALLBACK(onSave), this);
         return barGuard.release();
     }
 
@@ -644,7 +636,6 @@ private:
     void updateActionState() {
         const auto validation = model.validation();
         const bool canSave = model.dirty() && validation.valid && !actionBusy;
-        gtk_widget_set_sensitive(applyButton, canSave);
         gtk_widget_set_sensitive(saveButton, canSave);
         gtk_widget_set_sensitive(restoreButton,
                                  model.dirty() && !actionBusy);
@@ -660,9 +651,6 @@ private:
         } else if (model.dirty()) {
             addStyleClass(editState, "modernime-status-dirty");
             gtk_label_set_text(GTK_LABEL(editState), "有未保存修改");
-        } else if (model.reloadRequired()) {
-            gtk_label_set_text(GTK_LABEL(editState),
-                               "设置已保存，需要重新加载 ModernIME");
         } else {
             gtk_label_set_text(GTK_LABEL(editState), "所有设置已保存");
         }
@@ -687,9 +675,7 @@ private:
             return false;
         }
         if (!model.dirty()) {
-            presentError(model.reloadRequired()
-                             ? "设置已保存，需要重新加载 ModernIME"
-                             : "没有需要保存的修改");
+            presentError("没有需要保存的修改");
             if (closeAfterSave) {
                 hideWindow();
             }
@@ -705,10 +691,12 @@ private:
             return false;
         }
 
+        updateActionState();
         requestOverviewRefresh();
-        presentError(model.reloadRequired()
-                         ? "设置已保存，需要重新加载 ModernIME"
-                         : "设置已保存");
+        const auto savedHash = model.savedContentHash();
+        const auto runtime = RuntimeController::probe(remote, paths.runtimeState, environment);
+        const auto statusMessage = describeSettingsApplication(runtime, savedHash);
+        presentError(statusMessage);
         if (closeAfterSave) {
             hideWindow();
         }
@@ -760,12 +748,12 @@ private:
         auto *dialog = gtk_message_dialog_new(
             GTK_WINDOW(windowOwner.get()), GTK_DIALOG_MODAL,
             GTK_MESSAGE_WARNING,
-            GTK_BUTTONS_NONE, "当前有未保存的修改。");
+            GTK_BUTTONS_NONE, "有未保存的修改，确定要放弃并退出吗？");
         gtk_dialog_add_button(GTK_DIALOG(dialog), "继续编辑",
                               GTK_RESPONSE_CANCEL);
         gtk_dialog_add_button(GTK_DIALOG(dialog), "放弃修改",
                               GTK_RESPONSE_REJECT);
-        gtk_dialog_add_button(GTK_DIALOG(dialog), "保存并关闭",
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "保存并退出",
                               GTK_RESPONSE_ACCEPT);
         setDialogResponseAccessibility(
             GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL, "继续编辑",
@@ -774,7 +762,7 @@ private:
             GTK_DIALOG(dialog), GTK_RESPONSE_REJECT, "放弃修改",
             "丢弃当前会话内尚未保存的设置修改并关闭窗口");
         setDialogResponseAccessibility(
-            GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "保存并关闭",
+            GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "保存并退出",
             "保存当前设置草稿，成功后关闭窗口");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
@@ -875,7 +863,6 @@ private:
     GtkWidget *editState = nullptr;
     GtkWidget *taskStatus = nullptr;
     GtkWidget *restoreButton = nullptr;
-    GtkWidget *applyButton = nullptr;
     GtkWidget *saveButton = nullptr;
     std::vector<std::pair<SettingsPageId, GtkWidget *>> navigationButtons;
 

@@ -218,6 +218,54 @@ int main(int argc, char **argv) {
     assertTrue(!missingFcitx.success && !missingFcitx.message.empty(),
                "missing Fcitx5 executable is reported");
 
+    // Test runtime application state reporting and confirmation contract
+    const auto runtimeStateFile = directory / "runtime.state";
+    {
+        std::ofstream stateOut(runtimeStateFile);
+        stateOut << "applied_content_hash=aabbccdd11223344\n";
+        stateOut << "settings_generation=42\n";
+    }
+
+    const auto statusWithState = modernime::settings::RuntimeController::probe(
+        argv[1], runtimeStateFile, baseEnvironment);
+    assertTrue(statusWithState.appliedHashAvailable, "probe finds applied hash in state file");
+    assertTrue(statusWithState.appliedContentHash == "aabbccdd11223344", "probe reads correct hash");
+    assertTrue(statusWithState.settingsGeneration == 42, "probe reads settings generation");
+
+    // describeSettingsApplication tests
+    modernime::settings::RuntimeStatus testStatus;
+    testStatus.running = false;
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
+                   "已保存，下次启用时应用",
+               "stopped engine reports next time apply");
+
+    testStatus.running = true;
+    testStatus.appliedHashAvailable = false;
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
+                   "已保存，应用状态待确认",
+               "missing state file / older plugin reports confirmation pending");
+
+    testStatus.appliedHashAvailable = true;
+    testStatus.appliedContentHash = "old_hash_0000";
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
+                   "已保存，等待输入法读取",
+               "stale applied hash reports waiting for input method to read");
+
+    testStatus.appliedContentHash = "aabbccdd11223344";
+    testStatus.inputContextAvailable = false;
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
+                   "已保存，等待新输入上下文生效",
+               "applied with no context reports waiting for new context");
+
+    testStatus.inputContextAvailable = true;
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
+                   "已保存并应用",
+               "applied with active context reports saved and applied");
+
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "") ==
+                   "设置已保存",
+               "empty saved hash reports saved");
+
     std::filesystem::remove_all(directory, cleanupError);
     return EXIT_SUCCESS;
 }

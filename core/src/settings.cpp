@@ -176,7 +176,8 @@ SettingsPaths SettingsPaths::fromEnvironment(std::string_view xdgConfigHome,
     return {modernimeConfig / "settings.conf",
             modernimeData / "user-dictionary.txt",
             modernimeData / "learning.sqlite3",
-            modernimeData / "clipboard-history.bin"};
+            modernimeData / "clipboard-history.bin",
+            modernimeConfig / "runtime.state"};
 }
 
 SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {

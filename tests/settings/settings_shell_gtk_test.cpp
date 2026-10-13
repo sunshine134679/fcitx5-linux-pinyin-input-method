@@ -462,7 +462,8 @@ int main(int argc, char **argv) {
 
     modernime::core::SettingsPaths paths{
         root / "config/settings.conf", root / "data/user.dict",
-        root / "data/learning.db", root / "data/clipboard.history"};
+        root / "data/learning.db", root / "data/clipboard.history",
+        root / "config/runtime.state"};
     {
         modernime::core::LearningStore learning(paths.learningStore);
         assert(learning.open());
@@ -486,8 +487,8 @@ int main(int argc, char **argv) {
 
         auto *search =
             findAccessibleWidget(window, GTK_TYPE_SEARCH_ENTRY, "搜索设置");
-        auto *apply = findAccessibleWidget(window, GTK_TYPE_BUTTON, "应用");
-        assert(search != nullptr && apply != nullptr);
+        auto *save = findAccessibleWidget(window, GTK_TYPE_BUTTON, "保存设置");
+        assert(search != nullptr && save != nullptr);
 
         shell.show(modernime::settings::SettingsPageId::Input,
                    "input-enabled");
@@ -598,12 +599,12 @@ int main(int argc, char **argv) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
                                      !initialInputEnabled);
         drainEvents();
-        assert(gtk_widget_get_sensitive(apply));
+        assert(gtk_widget_get_sensitive(save));
         gtk_widget_grab_focus(inputEnabled);
         assert(gtk_widget_has_focus(inputEnabled));
         dispatchKey(window, GDK_KEY_Return, GDK_CONTROL_MASK);
         assert(std::filesystem::exists(paths.settingsFile));
-        assert(!gtk_widget_get_sensitive(apply));
+        assert(!gtk_widget_get_sensitive(save));
 
         shell.show(modernime::settings::SettingsPageId::Diagnostics);
         auto *raceReload = findTarget(window, "diagnostics-reload");
@@ -617,13 +618,13 @@ int main(int argc, char **argv) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
                                      initialInputEnabled);
         drainEvents();
-        assert(gtk_widget_get_sensitive(apply));
-        gtk_button_clicked(GTK_BUTTON(apply));
-        assert(!gtk_widget_get_sensitive(apply));
+        assert(gtk_widget_get_sensitive(save));
+        gtk_button_clicked(GTK_BUTTON(save));
+        assert(!gtk_widget_get_sensitive(save));
         assert(waitUntil(
             [raceReload] { return gtk_widget_get_sensitive(raceReload); }));
         assert(findLabelText(window,
-                             "设置已保存，需要重新加载 ModernIME") != nullptr);
+                             "已保存，应用状态待确认") != nullptr);
 
         shell.show(modernime::settings::SettingsPageId::Dictionary);
         drainEvents();

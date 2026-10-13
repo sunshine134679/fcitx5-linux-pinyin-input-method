@@ -4,6 +4,7 @@
 #include <glib.h>
 
 #include <algorithm>
+#include <fstream>
 #include <string_view>
 
 namespace modernime::settings {
@@ -316,6 +317,13 @@ bool modernimeReady(const RuntimeStatus &status) {
 
 RuntimeStatus RuntimeController::probe(
     const std::filesystem::path &executable, const Environment &environment) {
+    return probe(executable, {}, environment);
+}
+
+RuntimeStatus RuntimeController::probe(
+    const std::filesystem::path &executable,
+    const std::filesystem::path &runtimeStatePath,
+    const Environment &environment) {
     RuntimeStatus status;
     const auto inputMethod = runCommand(executable, {"-n"}, environment);
     if (!inputMethod.started) {
@@ -354,6 +362,32 @@ RuntimeStatus RuntimeController::probe(
         status.message = "Fcitx5 正在运行，当前窗口暂无输入上下文";
     } else {
         status.message = "Fcitx5 正在运行";
+    }
+
+    if (!runtimeStatePath.empty()) {
+        std::error_code ec;
+        if (std::filesystem::exists(runtimeStatePath, ec)) {
+            std::ifstream in(runtimeStatePath);
+            if (in) {
+                std::string line;
+                while (std::getline(in, line)) {
+                    const auto eq = line.find('=');
+                    if (eq == std::string::npos) {
+                        continue;
+                    }
+                    const auto key = line.substr(0, eq);
+                    const auto val = line.substr(eq + 1);
+                    if (key == "applied_content_hash") {
+                        status.appliedContentHash = val;
+                        status.appliedHashAvailable = true;
+                    } else if (key == "settings_generation") {
+                        try {
+                            status.settingsGeneration = std::stoull(val);
+                        } catch (...) {}
+                    }
+                }
+            }
+        }
     }
     return status;
 }
@@ -412,6 +446,27 @@ RuntimeResult RuntimeController::reload(
     }
 
     return {false, lastError.empty() ? "ModernIME 激活失败" : lastError};
+}
+
+std::string describeSettingsApplication(
+    const RuntimeStatus &status,
+    std::string_view savedContentHash) {
+    if (savedContentHash.empty()) {
+        return "设置已保存";
+    }
+    if (!status.running) {
+        return "已保存，下次启用时应用";
+    }
+    if (!status.appliedHashAvailable) {
+        return "已保存，应用状态待确认";
+    }
+    if (status.appliedContentHash != savedContentHash) {
+        return "已保存，等待输入法读取";
+    }
+    if (status.inputContextAvailable) {
+        return "已保存并应用";
+    }
+    return "已保存，等待新输入上下文生效";
 }
 
 } // namespace modernime::settings

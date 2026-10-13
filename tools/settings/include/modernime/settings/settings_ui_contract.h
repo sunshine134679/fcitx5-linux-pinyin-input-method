@@ -19,8 +19,7 @@ constexpr SettingsWindowSize settingsMinimumWindowSize() {
 }
 
 constexpr auto settingsActionLabels() {
-    return std::array<std::string_view, 3>{"恢复修改", "应用",
-                                          "保存并关闭"};
+    return std::array<std::string_view, 2>{"放弃修改", "保存设置"};
 }
 
 constexpr auto settingsClipboardActionLabels() {

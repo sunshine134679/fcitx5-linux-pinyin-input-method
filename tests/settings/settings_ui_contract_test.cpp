@@ -29,9 +29,8 @@ int main() {
                "diagnostics uses approved copy");
 
     const auto actions = modernime::settings::settingsActionLabels();
-    assertTrue(actions.size() == 3, "all bottom bar actions are declared");
-    assertTrue(actions[0] == "恢复修改" && actions[1] == "应用" &&
-                   actions[2] == "保存并关闭",
+    assertTrue(actions.size() == 2, "all bottom bar actions are declared");
+    assertTrue(actions[0] == "放弃修改" && actions[1] == "保存设置",
                "bottom bar actions follow the approved order");
 
     const auto defaultSize = modernime::settings::settingsDefaultWindowSize();

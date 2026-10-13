@@ -45,6 +45,7 @@ public:
 
     const std::string &loadedHash() const { return loadedHash_; }
     const std::string &savedHash() const { return savedHash_; }
+    const std::string &savedContentHash() const { return savedHash_; }
     bool hasExternalModification() const;
     bool reloadFromDisk(std::string *error = nullptr);
 

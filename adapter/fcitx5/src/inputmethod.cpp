@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <fstream>
 #include <functional>
 #include <optional>
 #include <string>
@@ -26,6 +27,25 @@
 
 namespace modernime::fcitx5 {
 namespace {
+
+void writeRuntimeState(const std::filesystem::path &statePath,
+                       std::string_view contentHash,
+                       std::uint64_t generation) {
+    if (statePath.empty()) {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(statePath.parent_path(), ec);
+    const auto tempPath = statePath.string() + ".tmp";
+    std::ofstream out(tempPath, std::ios::trunc);
+    if (!out) {
+        return;
+    }
+    out << "applied_content_hash=" << contentHash << "\n";
+    out << "settings_generation=" << generation << "\n";
+    out.close();
+    std::filesystem::rename(tempPath, statePath, ec);
+}
 
 constexpr std::string_view statePropertyName = "modernime-fcitx5-state";
 
@@ -385,6 +405,10 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
         if (mtimeError) {
             userDictionaryMtime_ = {};
         }
+        writeRuntimeState(
+            settingsPaths().runtimeState,
+            core::computeFileContentHash(settingsPaths().settingsFile),
+            settingsGeneration_);
     }
     std::string historyError;
     if (!clipboardHistory_.load(&historyError)) {
@@ -684,9 +708,12 @@ void ModernIMEInputMethod::pollFileChanges() {
         std::filesystem::last_write_time(settingsFile, error);
     if (!error && settingsTime != settingsMtime_) {
         settingsMtime_ = settingsTime;
-        settings_ = core::SettingsStore::load(settingsFile).settings;
+        const auto loadResult = core::SettingsStore::load(settingsFile);
+        settings_ = loadResult.settings;
         keyBindings_ = keyBindings(settings_);
         ++settingsGeneration_;
+        writeRuntimeState(settingsPaths().runtimeState, loadResult.contentHash,
+                          settingsGeneration_);
         FCITX_INFO() << "ModernIME settings reloaded from "
                      << settingsFile.string();
     }
