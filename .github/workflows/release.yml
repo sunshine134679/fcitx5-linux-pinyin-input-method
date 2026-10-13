@@ -735,7 +735,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-target.outputs.tag }}
-          target_commitish: ${{ needs.resolve-target.outputs.source_sha }}
           name: "ModernIME ${{ needs.resolve-target.outputs.tag }}"
           draft: false
           prerelease: false

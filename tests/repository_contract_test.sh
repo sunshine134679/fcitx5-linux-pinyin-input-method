@@ -88,7 +88,11 @@ grep -F 'scripts/resolve_release_target.sh' "$release_wf" >/dev/null
 grep -F 'scripts/modernime-data-guard" --init-lmdb' "$release_wf" >/dev/null
 test "$(grep -Fc 'ref: ${{ needs.resolve-target.outputs.source_sha }}' "$release_wf")" -eq 4
 test "$(grep -Fc 'Product Source Commit SHA:' "$release_wf")" -eq 4
-grep -F 'target_commitish: ${{ needs.resolve-target.outputs.source_sha }}' "$release_wf" >/dev/null
+grep -F 'tag_name: ${{ needs.resolve-target.outputs.tag }}' "$release_wf" >/dev/null
+if grep -F 'target_commitish' "$release_wf" >/dev/null; then
+    echo "release.yml must not pass redundant target_commitish when publishing an existing tag" >&2
+    exit 1
+fi
 
 test -f "$project_root/packaging/apt/modernime.sources.in"
 grep -F 'Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg' "$project_root/packaging/apt/modernime.sources.in" >/dev/null
