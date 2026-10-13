@@ -310,46 +310,153 @@ private:
 
     static void onImport(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        auto *dialog = gtk_file_chooser_dialog_new(
+        auto *fileChooser = gtk_file_chooser_dialog_new(
             "导入用户词典", impl->parentWindow(), GTK_FILE_CHOOSER_ACTION_OPEN,
-            "取消", GTK_RESPONSE_CANCEL, "导入", GTK_RESPONSE_ACCEPT, nullptr);
-        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+            "取消", GTK_RESPONSE_CANCEL, "下一步", GTK_RESPONSE_ACCEPT, nullptr);
+        setDialogResponseAccessibility(GTK_DIALOG(fileChooser), GTK_RESPONSE_CANCEL,
                                        "取消", "关闭文件选择器且不导入词典");
         setDialogResponseAccessibility(
-            GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "导入",
-            "读取选中的文本文件并进入整体替换确认");
+            GTK_DIALOG(fileChooser), GTK_RESPONSE_ACCEPT, "下一步",
+            "读取选中的文本文件并生成合并预览");
         gchar *filename = nullptr;
-        if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-            filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        if (gtk_dialog_run(GTK_DIALOG(fileChooser)) == GTK_RESPONSE_ACCEPT) {
+            filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(fileChooser));
         }
-        gtk_widget_destroy(dialog);
+        gtk_widget_destroy(fileChooser);
         if (filename == nullptr) {
             return;
         }
-        std::vector<pinyin::UserDictionaryEntry> imported;
-        std::string error;
-        if (!DataController::importDictionary(filename, imported, &error)) {
-            impl->notifyMessage(error);
-            g_free(filename);
+
+        const auto preview = DataController::previewDictionaryImport(
+            filename, impl->dictionaryEntries);
+        g_free(filename);
+
+        if (!preview.valid) {
+            impl->notifyMessage(preview.error.empty() ? "导入失败：文件格式无效" : preview.error);
             return;
         }
-        g_free(filename);
-        auto *confirm = gtk_message_dialog_new(
-            impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
-            GTK_BUTTONS_YES_NO,
-            "导入将替换现有全部 %zu 条词条（导入文件含 %zu 条），确定继续吗？",
-            impl->dictionaryEntries.size(), imported.size());
-        setDialogResponseAccessibility(
-            GTK_DIALOG(confirm), GTK_RESPONSE_YES, "替换词典",
-            "使用导入内容整体替换当前个人词典");
-        setDialogResponseAccessibility(GTK_DIALOG(confirm), GTK_RESPONSE_NO,
-                                       "取消", "保留当前个人词典");
-        const auto confirmed = gtk_dialog_run(GTK_DIALOG(confirm));
-        gtk_widget_destroy(confirm);
-        if (confirmed == GTK_RESPONSE_YES) {
-            impl->saveEntries(imported);
-        } else {
+
+        auto *dialog = gtk_dialog_new_with_buttons(
+            "导入个人词典", impl->parentWindow(), GTK_DIALOG_MODAL,
+            "取消", GTK_RESPONSE_CANCEL, "确认导入", GTK_RESPONSE_ACCEPT, nullptr);
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+                                       "取消", "关闭导入对话框且不修改词典");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT,
+                                       "确认导入", "根据选定的规则执行词典导入");
+
+        auto *contentArea = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+        auto *mainBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        gtk_container_set_border_width(GTK_CONTAINER(mainBox), 16);
+        gtk_container_add(GTK_CONTAINER(contentArea), mainBox);
+
+        auto *headerLabel = gtk_label_new("词典导入预览统计");
+        addStyleClass(headerLabel, "modernime-section-title");
+        gtk_widget_set_halign(headerLabel, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(mainBox), headerLabel, FALSE, FALSE, 0);
+
+        auto *statsCard = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+        addStyleClass(statsCard, "modernime-card");
+        gtk_container_set_border_width(GTK_CONTAINER(statsCard), 8);
+
+        std::ostringstream s1, s2, s3, s4;
+        s1 << "• 文件包含有效词条：" << preview.totalParsed << " 条";
+        s2 << "• 新增词条（合并后追加）：" << preview.newEntries << " 条";
+        s3 << "• 完全一致词条（拼音、词条与权重相同）：" << preview.duplicateEntries << " 条";
+        s4 << "• 权重冲突词条（拼音与词条相同但权重不同）：" << preview.conflictEntries << " 条";
+
+        for (const auto &text : {s1.str(), s2.str(), s3.str(), s4.str()}) {
+            auto *label = gtk_label_new(text.c_str());
+            gtk_widget_set_halign(label, GTK_ALIGN_START);
+            gtk_box_pack_start(GTK_BOX(statsCard), label, FALSE, FALSE, 0);
+        }
+        gtk_box_pack_start(GTK_BOX(mainBox), statsCard, FALSE, FALSE, 0);
+
+        auto *modeLabel = gtk_label_new("请选择导入方式：");
+        gtk_widget_set_halign(modeLabel, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(mainBox), modeLabel, FALSE, FALSE, 0);
+
+        auto *mergeRadio = gtk_radio_button_new_with_label(
+            nullptr, "合并导入（推荐：保留当前词典，追加新词条）");
+        auto *replaceRadio = gtk_radio_button_new_with_label_from_widget(
+            GTK_RADIO_BUTTON(mergeRadio),
+            "整体替换（清空现有词典，自动创建安全备份后写入导入词条）");
+        setAccessibleWidgetText(mergeRadio, "合并导入", "保留当前词典，追加新词条");
+        setAccessibleWidgetText(replaceRadio, "整体替换", "清空现有词典，自动创建安全备份后写入导入词条");
+
+        gtk_box_pack_start(GTK_BOX(mainBox), mergeRadio, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(mainBox), replaceRadio, FALSE, FALSE, 0);
+
+        GtkWidget *conflictBox = nullptr;
+        GtkWidget *keepConflictRadio = nullptr;
+        GtkWidget *overwriteConflictRadio = nullptr;
+        if (preview.conflictEntries > 0) {
+            conflictBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+            gtk_widget_set_margin_start(conflictBox, 20);
+            auto *conflictTitle = gtk_label_new("检测到权重冲突，合并时的冲突处理规则：");
+            gtk_widget_set_halign(conflictTitle, GTK_ALIGN_START);
+            gtk_box_pack_start(GTK_BOX(conflictBox), conflictTitle, FALSE, FALSE, 0);
+
+            keepConflictRadio = gtk_radio_button_new_with_label(
+                nullptr, "保留现有词条权重（忽略导入文件中的新权重）");
+            overwriteConflictRadio = gtk_radio_button_new_with_label_from_widget(
+                GTK_RADIO_BUTTON(keepConflictRadio),
+                "使用导入权重覆盖现有词条权重");
+            setAccessibleWidgetText(keepConflictRadio, "保留现有词条权重", "合并时保留现有词条权重");
+            setAccessibleWidgetText(overwriteConflictRadio, "使用导入权重覆盖", "合并时使用导入文件权重覆盖现有词条");
+
+            gtk_box_pack_start(GTK_BOX(conflictBox), keepConflictRadio, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(conflictBox), overwriteConflictRadio, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(mainBox), conflictBox, FALSE, FALSE, 0);
+
+            g_signal_connect_swapped(
+                mergeRadio, "toggled",
+                G_CALLBACK(+[](GtkWidget *cBox, GtkToggleButton *mRadio) {
+                    gtk_widget_set_sensitive(cBox, gtk_toggle_button_get_active(mRadio));
+                }),
+                conflictBox);
+        }
+
+        gtk_widget_show_all(dialog);
+        const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
+        if (response != GTK_RESPONSE_ACCEPT) {
+            gtk_widget_destroy(dialog);
             impl->notifyMessage("已取消导入，现有词典未修改");
+            return;
+        }
+
+        const bool isReplace = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(replaceRadio));
+        DictionaryConflictPolicy policy = DictionaryConflictPolicy::KeepExisting;
+        if (overwriteConflictRadio != nullptr &&
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(overwriteConflictRadio))) {
+            policy = DictionaryConflictPolicy::OverwriteWithImport;
+        }
+        gtk_widget_destroy(dialog);
+
+        if (isReplace) {
+            std::filesystem::path backupPath;
+            std::string backupError;
+            if (!DataController::createDictionaryBackup(impl->path, &backupPath, &backupError)) {
+                impl->notifyMessage("整体替换已中止：无法创建词典备份（" + backupError + "）");
+                return;
+            }
+            if (impl->saveEntries(preview.parsedEntries)) {
+                impl->notifyMessage("已整体替换个人词典（原词典已自动备份至 " +
+                                    backupPath.filename().string() + "）");
+            }
+        } else {
+            const auto merged = DataController::mergeDictionary(
+                impl->dictionaryEntries, preview.parsedEntries, policy);
+            if (impl->saveEntries(merged)) {
+                std::ostringstream msg;
+                msg << "已成功合并导入 " << preview.newEntries << " 条新词条";
+                if (preview.conflictEntries > 0) {
+                    msg << "（" << (policy == DictionaryConflictPolicy::OverwriteWithImport
+                                        ? "已覆盖 "
+                                        : "已保留现有 ")
+                        << preview.conflictEntries << " 条冲突词条）";
+                }
+                impl->notifyMessage(msg.str());
+            }
         }
     }
 

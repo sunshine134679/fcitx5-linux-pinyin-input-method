@@ -622,11 +622,11 @@ bool isPathLocked(const char *path) {
                         if (colon1 != std::string::npos && colon2 != std::string::npos &&
                             colon1 != colon2) {
                             try {
-                                const unsigned int lMaj =
-                                    std::stoul(token.substr(0, colon1), nullptr, 16);
-                                const unsigned int lMin = std::stoul(
-                                    token.substr(colon1 + 1, colon2 - colon1 - 1),
-                                    nullptr, 16);
+                                const auto lMaj = static_cast<unsigned int>(
+                                    std::stoul(token.substr(0, colon1), nullptr, 16));
+                                const auto lMin = static_cast<unsigned int>(
+                                    std::stoul(token.substr(colon1 + 1, colon2 - colon1 - 1),
+                                               nullptr, 16));
                                 const unsigned long lIno =
                                     std::stoul(token.substr(colon2 + 1));
                                 if (lMaj == maj && lMin == min &&

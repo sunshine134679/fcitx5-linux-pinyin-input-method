@@ -205,12 +205,96 @@ void testFailedBackupDoesNotClearLearning() {
     untouched.close();
 }
 
+void testDictionaryImportPreviewAndMerge() {
+    using namespace modernime::settings;
+    using namespace modernime::pinyin;
+
+    const std::vector<UserDictionaryEntry> currentEntries = {
+        {"nihao", "你好", 10.0F},
+        {"xing", "行", 20.0F},
+        {"hang", "行", 30.0F},
+        {"nihao", "拟好", 15.0F},
+    };
+
+    const auto directory = testDirectory("merge-preview");
+    const auto importFile = directory / "import.txt";
+    {
+        std::ofstream out(importFile);
+        out << "nihao\t你好\t10\n"
+            << "xing\t行\t25\n"
+            << "hang\t行\t30\n"
+            << "shijie\t世界\t50\n";
+    }
+
+    const auto preview = DataController::previewDictionaryImport(importFile, currentEntries);
+    assertTrue(preview.valid, "import preview is valid");
+    assertTrue(preview.totalParsed == 4, "all 4 entries parsed");
+    assertTrue(preview.newEntries == 1, "exactly 1 new entry (世界)");
+    assertTrue(preview.duplicateEntries == 2, "2 identical entries (你好, hang 行)");
+    assertTrue(preview.conflictEntries == 1, "1 conflict entry (xing 行)");
+    assertTrue(preview.invalidLines == 0, "0 invalid lines");
+
+    // Test Merge with KeepExisting
+    const auto mergedKeep = DataController::mergeDictionary(
+        currentEntries, preview.parsedEntries, DictionaryConflictPolicy::KeepExisting);
+    assertTrue(mergedKeep.size() == 5, "merged size is 5");
+    bool foundXing = false;
+    bool foundShijie = false;
+    for (const auto &entry : mergedKeep) {
+        if (entry.pinyin == "xing" && entry.phrase == "行") {
+            assertTrue(entry.weight == 20.0F, "xing weight preserved at 20.0");
+            foundXing = true;
+        }
+        if (entry.pinyin == "shijie" && entry.phrase == "世界") {
+            assertTrue(entry.weight == 50.0F, "shijie added with 50.0");
+            foundShijie = true;
+        }
+    }
+    assertTrue(foundXing && foundShijie, "both entries present in KeepExisting merge");
+
+    // Test Merge with OverwriteWithImport
+    const auto mergedOverwrite = DataController::mergeDictionary(
+        currentEntries, preview.parsedEntries, DictionaryConflictPolicy::OverwriteWithImport);
+    assertTrue(mergedOverwrite.size() == 5, "merged size is 5");
+    foundXing = false;
+    for (const auto &entry : mergedOverwrite) {
+        if (entry.pinyin == "xing" && entry.phrase == "行") {
+            assertTrue(entry.weight == 25.0F, "xing weight overwritten with 25.0");
+            foundXing = true;
+        }
+    }
+    assertTrue(foundXing, "xing overwritten in OverwriteWithImport merge");
+}
+
+void testDictionaryBackupCreationAndVerification() {
+    using namespace modernime::settings;
+    using namespace modernime::pinyin;
+
+    const auto directory = testDirectory("backup-verification");
+    const auto dictPath = directory / "user-dict.txt";
+
+    std::string error;
+    assertTrue(DataController::saveDictionary(
+                   dictPath, {UserDictionaryEntry{"ceshi", "测试", 10.0F}}, &error),
+               "test dict saved");
+
+    std::filesystem::path backupPath;
+    assertTrue(DataController::createDictionaryBackup(dictPath, &backupPath, &error),
+               "backup created");
+    assertTrue(std::filesystem::exists(backupPath), "backup file exists");
+    const auto loadedBackup = DataController::loadDictionary(backupPath);
+    assertTrue(loadedBackup.size() == 1 && loadedBackup.front().phrase == "测试",
+               "backup contents verified");
+}
+
 } // namespace
 
 int main() {
     testUserDictionaryEditingAndRoundTrip();
     testDictionaryImportExportUsesValidatedRows();
     testDictionaryImportIsStrictAndNonDestructive();
+    testDictionaryImportPreviewAndMerge();
+    testDictionaryBackupCreationAndVerification();
     testLearningBackupThenClear();
     testFailedBackupDoesNotClearLearning();
     return EXIT_SUCCESS;
