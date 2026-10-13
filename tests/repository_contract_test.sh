@@ -93,6 +93,21 @@ if grep -F 'target_commitish' "$release_wf" >/dev/null; then
     echo "release.yml must not pass redundant target_commitish when publishing an existing tag" >&2
     exit 1
 fi
+grep -F 'name: Upload Signed Release Assets Bundle' "$release_wf" >/dev/null
+grep -F 'name: release-assets' "$release_wf" >/dev/null
+python3 - "$release_wf" <<'PYEOF'
+import sys
+from pathlib import Path
+content = Path(sys.argv[1]).read_text(encoding="utf-8")
+idx_sign = content.index("- name: Verify Production-Signed Release RPM & Pages Byte Identity")
+idx_sum = content.index("- name: Compute Checksums")
+idx_upload = content.index("- name: Upload Signed Release Assets Bundle")
+idx_pages = content.index("- name: Configure GitHub Pages")
+idx_release = content.index("- name: Create GitHub Release")
+assert idx_sign < idx_sum < idx_upload < idx_pages < idx_release, (
+    f"Invalid step order: sign={idx_sign}, sum={idx_sum}, upload={idx_upload}, pages={idx_pages}, release={idx_release}"
+)
+PYEOF
 
 test -f "$project_root/packaging/apt/modernime.sources.in"
 grep -F 'Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg' "$project_root/packaging/apt/modernime.sources.in" >/dev/null
