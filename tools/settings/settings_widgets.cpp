@@ -538,6 +538,118 @@ std::string_view settingsStyles() {
             box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
         }
 
+        /* Candidates Hero Preview & Controls matching layout-1.png */
+        .modernime-preview-card {
+            border: 1px solid @borders;
+            border-radius: 12px;
+            background-color: @theme_base_color;
+            padding: 16px 20px;
+            margin-bottom: 12px;
+        }
+
+        .modernime-preview-header {
+            font-size: 13px;
+            font-weight: 600;
+            color: @insensitive_fg_color;
+            margin-bottom: 8px;
+        }
+
+        .modernime-composition-text {
+            font-size: 20px;
+            font-weight: 500;
+            color: @theme_fg_color;
+            margin-bottom: 12px;
+        }
+
+        .modernime-candidate-bar-preview {
+            background-color: @theme_base_color;
+            border: 1px solid @borders;
+            border-radius: 8px;
+            padding: 6px 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .modernime-candidate-badge {
+            background-color: #2563eb;
+            color: #ffffff;
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-weight: 600;
+        }
+
+        .modernime-candidate-badge * {
+            color: #ffffff;
+        }
+
+        .modernime-candidate-item {
+            color: @theme_fg_color;
+            padding: 4px 6px;
+        }
+
+        .modernime-stepper-box {
+            border: 1px solid @borders;
+            border-radius: 6px;
+            background-color: @theme_base_color;
+        }
+
+        .modernime-stepper-btn {
+            border: none;
+            background: transparent;
+            padding: 4px 10px;
+            font-size: 15px;
+            font-weight: bold;
+            color: @theme_fg_color;
+            box-shadow: none;
+        }
+
+        .modernime-stepper-btn:hover {
+            background-color: rgba(128, 128, 128, 0.12);
+        }
+
+        .modernime-stepper-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: @theme_fg_color;
+            padding: 0 4px;
+        }
+
+        .modernime-segmented-btn {
+            border: 1px solid @borders;
+            border-radius: 6px;
+            background-color: @theme_base_color;
+            color: @theme_fg_color;
+            padding: 4px 14px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .modernime-segmented-btn:hover {
+            background-color: rgba(128, 128, 128, 0.08);
+        }
+
+        .modernime-segmented-btn.active {
+            background-color: #2563eb;
+            color: #ffffff;
+            border-color: #2563eb;
+            font-weight: 600;
+        }
+
+        .modernime-segmented-btn.active * {
+            color: #ffffff;
+        }
+
+        .modernime-tip-note {
+            font-size: 12px;
+            color: @insensitive_fg_color;
+            margin-top: 14px;
+            margin-bottom: 4px;
+        }
+
+        .modernime-sidebar-footer {
+            font-size: 11.5px;
+            color: @insensitive_fg_color;
+        }
+
         button {
             border-radius: 8px;
             padding: 5px 12px;

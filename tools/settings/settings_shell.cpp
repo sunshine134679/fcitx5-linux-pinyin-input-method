@@ -17,6 +17,7 @@
 #include "modernime/settings/settings_shell_state.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
+#include "modernime/settings/update_controller.h"
 
 #include <gio/gio.h>
 #include <gtk/gtk.h>
@@ -361,10 +362,22 @@ private:
 
     GtkWidget *buildSidebar() {
         detail::GtkWidgetGuard sidebarGuard(
-            gtk_box_new(GTK_ORIENTATION_VERTICAL, 6));
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
         auto *sidebar = sidebarGuard.get();
         addStyleClass(sidebar, kSettingsSidebarClass);
         gtk_widget_set_size_request(sidebar, 200, -1);
+
+        // Product wordmark: ModernIME matching layout-1.png
+        auto *brandBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        gtk_widget_set_margin_start(brandBox, 16);
+        gtk_widget_set_margin_top(brandBox, 16);
+        gtk_widget_set_margin_bottom(brandBox, 14);
+        auto *brandLabel = gtk_label_new(nullptr);
+        gtk_label_set_markup(GTK_LABEL(brandLabel),
+            "<b><span font='17pt' color='#0f172a'>Modern</span><span font='17pt' color='#2563eb'>IME</span></b>");
+        gtk_widget_set_halign(brandLabel, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(brandBox), brandLabel, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(sidebar), brandBox, FALSE, FALSE, 0);
 
         searchEntry = gtk_search_entry_new();
         addStyleClass(searchEntry, "modernime-search-box");
@@ -373,6 +386,9 @@ private:
                                     "仅在本地搜索设置名称和说明");
         setAccessibleWidgetText(searchEntry, "搜索设置",
                                 "仅在本地搜索设置名称和说明，按 Ctrl+F 聚焦");
+        gtk_widget_set_margin_start(searchEntry, 10);
+        gtk_widget_set_margin_end(searchEntry, 10);
+        gtk_widget_set_margin_bottom(searchEntry, 10);
         gtk_box_pack_start(GTK_BOX(sidebar), searchEntry, FALSE, FALSE, 0);
 
         searchPopover = gtk_popover_new(searchEntry);
@@ -384,26 +400,22 @@ private:
         g_signal_connect(searchEntry, "search-changed",
                          G_CALLBACK(onSearchChanged), this);
 
-        auto *navBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-        std::string_view previousGroup;
+        auto *navBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
         for (const auto &definition : settingsPageDefinitions()) {
-            if (definition.group != previousGroup) {
-                auto *group = gtk_label_new(std::string(definition.group).c_str());
-                addStyleClass(group, "modernime-sidebar-group");
-                gtk_widget_set_halign(group, GTK_ALIGN_START);
-                gtk_box_pack_start(GTK_BOX(navBox), group, FALSE, FALSE, 0);
-                previousGroup = definition.group;
-            }
             auto *button = gtk_button_new();
             addStyleClass(button, "modernime-nav-button");
             gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
             gtk_widget_set_hexpand(button, TRUE);
+            gtk_widget_set_margin_start(button, 6);
+            gtk_widget_set_margin_end(button, 6);
+            gtk_widget_set_margin_top(button, 1);
+            gtk_widget_set_margin_bottom(button, 1);
 
-            auto *btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-            gtk_widget_set_margin_start(btnBox, 4);
-            gtk_widget_set_margin_end(btnBox, 4);
-            gtk_widget_set_margin_top(btnBox, 1);
-            gtk_widget_set_margin_bottom(btnBox, 1);
+            auto *btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+            gtk_widget_set_margin_start(btnBox, 8);
+            gtk_widget_set_margin_end(btnBox, 8);
+            gtk_widget_set_margin_top(btnBox, 3);
+            gtk_widget_set_margin_bottom(btnBox, 3);
 
             auto *icon = gtk_image_new_from_icon_name(
                 iconForPage(definition.id), GTK_ICON_SIZE_BUTTON);
@@ -436,6 +448,25 @@ private:
                                             GTK_SHADOW_NONE);
         gtk_container_add(GTK_CONTAINER(navScroller), navBox);
         gtk_box_pack_start(GTK_BOX(sidebar), navScroller, TRUE, TRUE, 0);
+
+        // Sidebar bottom footer matching layout-1.png
+        const auto channel = UpdateController::detectInstallChannel(environment);
+        std::string channelText = "手动安装";
+        if (channel == "apt" || channel == "deb") {
+            channelText = "APT 安装";
+        } else if (channel == "dnf" || channel == "rpm") {
+            channelText = "DNF 安装";
+        } else if (channel == "script") {
+            channelText = "脚本安装";
+        }
+        const std::string versionFooter = "v0.1.9 · " + channelText;
+        auto *footerLabel = gtk_label_new(versionFooter.c_str());
+        addStyleClass(footerLabel, "modernime-sidebar-footer");
+        gtk_widget_set_halign(footerLabel, GTK_ALIGN_START);
+        gtk_widget_set_margin_start(footerLabel, 16);
+        gtk_widget_set_margin_bottom(footerLabel, 16);
+        gtk_widget_set_margin_top(footerLabel, 8);
+        gtk_box_pack_end(GTK_BOX(sidebar), footerLabel, FALSE, FALSE, 0);
 
         return sidebarGuard.release();
     }
@@ -541,7 +572,9 @@ private:
         gtk_widget_set_margin_top(bar, 4);
         gtk_widget_set_margin_bottom(bar, 4);
 
-        editState = gtk_label_new("所有设置已保存");
+        editState = gtk_label_new(nullptr);
+        gtk_label_set_markup(GTK_LABEL(editState),
+                             "<span foreground='#94a3b8'>●</span> 所有设置已保存");
         addStyleClass(editState, "modernime-status");
         gtk_widget_set_halign(editState, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(bar), editState, FALSE, FALSE, 0);
@@ -679,12 +712,16 @@ private:
             const auto message = validation.issues.empty()
                                      ? std::string("当前设置无法保存")
                                      : validation.issues.front().message;
-            gtk_label_set_text(GTK_LABEL(editState), message.c_str());
+            const std::string markup =
+                "<span foreground='#ef4444'>●</span> " + message;
+            gtk_label_set_markup(GTK_LABEL(editState), markup.c_str());
         } else if (model.dirty()) {
             addStyleClass(editState, "modernime-status-dirty");
-            gtk_label_set_text(GTK_LABEL(editState), "有未保存修改");
+            gtk_label_set_markup(GTK_LABEL(editState),
+                                 "<span foreground='#2563eb'>●</span> 有未保存的修改");
         } else {
-            gtk_label_set_text(GTK_LABEL(editState), "所有设置已保存");
+            gtk_label_set_markup(GTK_LABEL(editState),
+                                 "<span foreground='#94a3b8'>●</span> 所有设置已保存");
         }
     }
 

@@ -725,6 +725,10 @@ void finalizeStatus(UpdateStatus &status, bool hasRemoteRepoIndex) {
 
 } // namespace
 
+std::string UpdateController::detectInstallChannel(const Environment &environment) {
+    return ::modernime::settings::detectInstallChannel(environment);
+}
+
 int UpdateController::compareVersions(std::string_view lhsRaw, std::string_view rhsRaw) {
     const std::string lhsStorage = trim(lhsRaw);
     const std::string rhsStorage = trim(rhsRaw);

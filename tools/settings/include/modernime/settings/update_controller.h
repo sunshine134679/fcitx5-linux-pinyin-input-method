@@ -38,6 +38,8 @@ public:
 
     static bool isPackageManagerLocked();
 
+    static std::string detectInstallChannel(const Environment &environment = {});
+
     static UpdateStatus checkForUpdates(const Environment &environment = {});
 
     static RuntimeResult refreshPackageCache(const UpdateStatus &status,
