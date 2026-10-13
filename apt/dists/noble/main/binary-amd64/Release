@@ -1,0 +1,6 @@
+Archive: noble
+Version: 24.04
+Component: main
+Origin: ModernIME
+Label: ModernIME APT Repository
+Architecture: amd64

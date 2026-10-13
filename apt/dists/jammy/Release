@@ -1,0 +1,29 @@
+Architectures: amd64
+Codename: jammy
+Components: main
+Date: Tue, 13 Oct 2026 04:51:58 +0000
+Description: ModernIME APT Repository for Ubuntu 22.04 LTS (Jammy Jellyfish)
+Label: ModernIME APT Repository
+Origin: ModernIME
+Suite: jammy
+Version: 22.04
+MD5Sum:
+ d327106205c848b30289534050249858              247 Release
+ 74628d0074ab852c4951cf2c86fd0c4e             1341 main/binary-amd64/Packages
+ 61cb2b28b77fea6c2374c60170d385da              690 main/binary-amd64/Packages.gz
+ 71256dffec3dd7f368472208075b6a54              116 main/binary-amd64/Release
+SHA1:
+ 82f35e5d935bb648282bd872787b4eb6e230426b              247 Release
+ 81caba23027511be39a3d7c6620ea33942d0a50b             1341 main/binary-amd64/Packages
+ c232b58dba0a319bd073d7f5662bf9d7a95b0828              690 main/binary-amd64/Packages.gz
+ 63800d559959ec466b163f443625c7cc2494f274              116 main/binary-amd64/Release
+SHA256:
+ 759085be22ed2c3c6976569d934e35fdd214017771f6f819846c55372b57f381              247 Release
+ c3dcf933018afc23e26a03e923e7d7f519a97de8ac5d2f9a27017343948e9840             1341 main/binary-amd64/Packages
+ 0421168138becb39ad1b3362cb8dbdadc691c33ef17a000d195c34141879ec6a              690 main/binary-amd64/Packages.gz
+ 62dbf62841e904c1ece8cc48da6fe308bb172b4842604c064eb1a384ba666f20              116 main/binary-amd64/Release
+SHA512:
+ c8c9ab6b6327a0733c94d9433635178f5c8a017fcd122dbc82bf9cd2fb63815fe9fff676d682eb0891c6f6923e0fc67157b20a1b2474f2040fd44ab49a637b09              247 Release
+ 97518a0deac35de35160d8fa70f2465e35c6f74935342bc6c3dd397e3d54769d926fc946ba957eb018d0ec15fbbf915a6ea90ed378f5808e867cd0b7fceb3dcc             1341 main/binary-amd64/Packages
+ b3f53b0dd69db054820d50b139f876470f1fbb29c7993f2372e310f4867c12737901e5fc28439f820ff11a1dfafbfcfd017d0bba496b9cdea00247cc3948b4eb              690 main/binary-amd64/Packages.gz
+ 9684191a1724902a34d3859bfe4bec69dd8a245a4643ac0a21ec9d95e98af693c3eaed500f21e051b4ba2e799be26bfeec254a9b2700f7c44b9cf5c9169fcb0e              116 main/binary-amd64/Release

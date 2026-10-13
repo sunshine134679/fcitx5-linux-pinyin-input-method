@@ -1,0 +1,6 @@
+Archive: jammy
+Version: 22.04
+Component: main
+Origin: ModernIME
+Label: ModernIME APT Repository
+Architecture: amd64

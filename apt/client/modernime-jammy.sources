@@ -1,0 +1,6 @@
+Types: deb
+URIs: https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt
+Suites: jammy
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg

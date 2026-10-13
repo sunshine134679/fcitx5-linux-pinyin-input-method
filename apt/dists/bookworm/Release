@@ -1,0 +1,29 @@
+Architectures: amd64
+Codename: bookworm
+Components: main
+Date: Tue, 13 Oct 2026 04:52:00 +0000
+Description: ModernIME APT Repository for Debian 12 (Bookworm)
+Label: ModernIME APT Repository
+Origin: ModernIME
+Suite: bookworm
+Version: 12
+MD5Sum:
+ 2e69b8874adae50c5883921e17e508b3              236 Release
+ 2d93718409d3d49dc31174703227ee60             1344 main/binary-amd64/Packages
+ a7fccbc7d0acc08ac829000037c20243              692 main/binary-amd64/Packages.gz
+ e02a3c27d067032750242eec320b6a59              116 main/binary-amd64/Release
+SHA1:
+ 991f44529aab25acb8afe951083bb202a2285018              236 Release
+ 248214f020c61de944012724ba5243ca8c47e3ed             1344 main/binary-amd64/Packages
+ 3f9bed8e784cb4572cd8a07d2f755c4b8198c23f              692 main/binary-amd64/Packages.gz
+ 657509e27c76a96c144c3f1ba4df29f0f7c2b8fb              116 main/binary-amd64/Release
+SHA256:
+ a5de5a69235afa90f7646515fab3cb2c05c171f7f3126cee3099b1e90c9a723a              236 Release
+ 48847e0f088dc2049081cf331687849aba93facbdaeca49347845fa536165e6e             1344 main/binary-amd64/Packages
+ c55797290b917ddb554cc281563c5ec69d8924f739d48fb4cfa64d97c175a415              692 main/binary-amd64/Packages.gz
+ 9fa4ff60daa034389b017d513fbf3b952431e8c75d119ca818d1bb0ca5b47c9b              116 main/binary-amd64/Release
+SHA512:
+ c8c16f6544b156a58e1c7d6b9ed45961caa7107e44cb8d0e53d8e47ea1bf235d3c5ab9a1578c545b7cf53f9421465249c2a1ed5cf546fb57cbbf184f13263d03              236 Release
+ 21367943eb6956738c40c88637540767895eb4bcf47a30a83cb5fb1df699093dac7f436cb465c3b737379eb55c5e10eb37cb7c17700511b772e40b075cc98c9c             1344 main/binary-amd64/Packages
+ a701c4dfac1ac128f6cacdb9a73497f756bbe317ea12c269fac608811bdd933d4bf4e0be74ab0a42d653de8127a8d202dbe14796d8ebd8a75ed04380af886496              692 main/binary-amd64/Packages.gz
+ d6a463e708b95e0b04b8407504bfe08488274f463cf2ae5248f3fc34fd37ea64f1ff24f8e86a18b9167bcc62beb1d4b86c7f8e90a6df82c38807f57514ec80e3              116 main/binary-amd64/Release

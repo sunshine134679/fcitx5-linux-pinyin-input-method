@@ -1,0 +1,6 @@
+Archive: bookworm
+Version: 12
+Component: main
+Origin: ModernIME
+Label: ModernIME APT Repository
+Architecture: amd64

@@ -1,0 +1,8 @@
+[modernime-openeuler-24.09]
+name=ModernIME Repository for openEuler 24.09 ($basearch)
+baseurl=https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/oe2409/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/RPM-GPG-KEY-modernime
+metadata_expire=6h
