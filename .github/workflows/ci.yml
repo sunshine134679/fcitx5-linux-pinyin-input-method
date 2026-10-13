@@ -58,21 +58,21 @@ jobs:
           set -euo pipefail
           echo "timeout=60" >> /etc/dnf/dnf.conf
           echo "retries=5" >> /etc/dnf/dnf.conf
-          sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/*.repo || true
-          sed -i 's/gpgcheck=1/gpgcheck=0/g' /etc/yum.repos.d/*.repo || true
-          sed -i 's|repo.openeuler.org|mirrors.huaweicloud.com|g' /etc/yum.repos.d/*.repo || true
+          echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf
+          dnf config-manager --set-enabled EPOL || true
           if ! dnf list fcitx5-devel >/dev/null 2>&1; then
             cat << 'EOF' > /etc/yum.repos.d/openEuler-24.09-epol.repo
           [openEuler-24.09-epol]
           name=openEuler 24.09 EPOL for Fcitx5
-          baseurl=https://mirrors.huaweicloud.com/openeuler/openEuler-24.09/EPOL/main/$basearch/
+          baseurl=https://repo.openeuler.org/openEuler-24.09/EPOL/main/$basearch/
           enabled=1
-          gpgcheck=0
+          gpgcheck=1
+          gpgkey=https://repo.openeuler.org/openEuler-24.09/OS/$basearch/RPM-GPG-KEY-openEuler
           priority=99
           EOF
           fi
           dnf makecache || true
-          dnf install -y --nogpgcheck \
+          dnf install -y \
             gcc gcc-c++ cmake make pkgconf-pkg-config \
             sqlite sqlite-libs sqlite-devel lmdb-libs lmdb-devel boost-devel \
             fcitx5 fcitx5-devel libime libime-devel \

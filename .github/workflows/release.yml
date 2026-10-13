@@ -107,6 +107,40 @@ jobs:
     container:
       image: openeuler/openeuler:24.09
     steps:
+      - name: Install openEuler dependencies
+        run: |
+          set -euo pipefail
+          echo "timeout=60" >> /etc/dnf/dnf.conf
+          echo "retries=5" >> /etc/dnf/dnf.conf
+          echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf
+          dnf config-manager --set-enabled EPOL || true
+          if ! dnf list fcitx5-devel >/dev/null 2>&1; then
+            cat << 'EOF' > /etc/yum.repos.d/openEuler-24.09-epol.repo
+          [openEuler-24.09-epol]
+          name=openEuler 24.09 EPOL for Fcitx5
+          baseurl=https://repo.openeuler.org/openEuler-24.09/EPOL/main/$basearch/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://repo.openeuler.org/openEuler-24.09/OS/$basearch/RPM-GPG-KEY-openEuler
+          priority=99
+          EOF
+          fi
+          dnf makecache || true
+          dnf install -y \
+            git gcc gcc-c++ cmake make pkgconf-pkg-config \
+            sqlite sqlite-libs sqlite-devel lmdb-libs lmdb-devel boost-devel \
+            fcitx5 fcitx5-devel libime libime-devel \
+            gtk3 gtk3-devel pango pango-devel cairo cairo-devel libappindicator-gtk3-devel \
+            desktop-file-utils hicolor-icon-theme python3 cpio gzip tar \
+            rpm rpm-build rpm-sign dnf gnupg2
+
+          for native_tool in git rpm rpmkeys rpmsign dnf rpmbuild; do
+            if ! command -v "$native_tool" >/dev/null 2>&1; then
+              echo "FATAL: Required native openEuler tool missing: $native_tool" >&2
+              exit 1
+            fi
+          done
+
       - name: Checkout bound product source SHA
         uses: actions/checkout@v4
         with:
@@ -127,39 +161,6 @@ jobs:
           echo "CMake Project Version: ${cmake_ver}"
           test "$actual_sha" = "$expected_sha"
           test "$cmake_ver" = "$expected_ver"
-
-      - name: Install openEuler dependencies
-        run: |
-          set -euo pipefail
-          echo "timeout=60" >> /etc/dnf/dnf.conf
-          echo "retries=5" >> /etc/dnf/dnf.conf
-          dnf config-manager --set-enabled EPOL || true
-          if ! dnf list fcitx5-devel >/dev/null 2>&1; then
-            cat << 'EOF' > /etc/yum.repos.d/openEuler-24.09-epol.repo
-          [openEuler-24.09-epol]
-          name=openEuler 24.09 EPOL for Fcitx5
-          baseurl=https://repo.openeuler.org/openEuler-24.09/EPOL/main/$basearch/
-          enabled=1
-          gpgcheck=1
-          gpgkey=https://repo.openeuler.org/openEuler-24.09/OS/$basearch/RPM-GPG-KEY-openEuler
-          priority=99
-          EOF
-          fi
-          dnf makecache || true
-          dnf install -y \
-            gcc gcc-c++ cmake make pkgconf-pkg-config \
-            sqlite sqlite-libs sqlite-devel lmdb-libs lmdb-devel boost-devel \
-            fcitx5 fcitx5-devel libime libime-devel \
-            gtk3 gtk3-devel pango pango-devel cairo cairo-devel libappindicator-gtk3-devel \
-            desktop-file-utils hicolor-icon-theme python3 cpio gzip tar \
-            rpm rpm-build rpm-sign dnf gnupg2
-
-          for native_tool in rpm rpmkeys rpmsign dnf rpmbuild; do
-            if ! command -v "$native_tool" >/dev/null 2>&1; then
-              echo "FATAL: Required native openEuler tool missing: $native_tool" >&2
-              exit 1
-            fi
-          done
 
       - name: Build and package RPM
         run: |
