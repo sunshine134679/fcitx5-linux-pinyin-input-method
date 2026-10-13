@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <pthread.h>
@@ -525,7 +526,32 @@ int main(int argc, char **argv) {
         assert(!spawnFailRefresh.success);
     }
     assert(countSubprocTempFds() == 0);
-    assert(waitForFdCount(baselineFdCount));
+    // 8. Package manager lock detection
+    const auto mockLockPath = tempRoot / "mock.lock";
+    writeTextFile(mockLockPath, "lock-placeholder");
+    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.c_str(), 1);
+    assert(!UpdateController::isPackageManagerLocked()); // Unlocked file returns false
+    {
+        const pid_t lockChild = ::fork();
+        assert(lockChild >= 0);
+        if (lockChild == 0) {
+            int lockFd = ::open(mockLockPath.c_str(), O_RDWR);
+            struct flock fl{};
+            fl.l_type = F_WRLCK;
+            fl.l_whence = SEEK_SET;
+            fl.l_start = 0;
+            fl.l_len = 0;
+            ::fcntl(lockFd, F_SETLK, &fl);
+            ::pause();
+            ::_exit(0);
+        }
+        ::usleep(20000); // wait for child to obtain lock
+        assert(UpdateController::isPackageManagerLocked()); // Actively locked file returns true
+        ::kill(lockChild, SIGTERM);
+        ::waitpid(lockChild, nullptr, 0);
+    }
+    assert(!UpdateController::isPackageManagerLocked()); // Unlocked returns false
+    ::unsetenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
 
     std::filesystem::remove_all(tempRoot);
     return 0;

@@ -10,6 +10,7 @@
 #include "modernime/settings/pages/input_page.h"
 #include "modernime/settings/pages/learning_page.h"
 #include "modernime/settings/pages/overview_page.h"
+#include "modernime/settings/pages/updates_page.h"
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/runtime_environment.h"
 #include "modernime/settings/settings_model.h"
@@ -138,6 +139,8 @@ const char *iconForPage(SettingsPageId page) {
         return "edit-paste-symbolic";
     case SettingsPageId::Learning:
         return "starred-symbolic";
+    case SettingsPageId::Updates:
+        return "software-update-available-symbolic";
     case SettingsPageId::Diagnostics:
         return "utilities-system-monitor-symbolic";
     }
@@ -200,6 +203,9 @@ public:
             break;
         case SettingsPageId::Learning:
             learningPage->refresh(false);
+            break;
+        case SettingsPageId::Updates:
+            updatesPage->refresh();
             break;
         case SettingsPageId::Diagnostics:
             diagnosticsPage->refresh();
@@ -467,6 +473,8 @@ private:
             model, paths.learningStore,
             [this] { updateActionState(); }, notify);
         addPage(SettingsPageId::Learning, learningPage->widget());
+        updatesPage = std::make_unique<UpdatesPage>(environment, notify);
+        addPage(SettingsPageId::Updates, updatesPage->widget());
         diagnosticsPage = std::make_unique<DiagnosticsPage>(
             fcitx, remote, environment, notify,
             [this] { return model.savedRevision(); },
@@ -649,6 +657,8 @@ private:
                 return learningPage->focusTarget("learning-data");
             }
             return false;
+        case SettingsPageId::Updates:
+            return updatesPage->focusTarget(target);
         case SettingsPageId::Diagnostics:
             return diagnosticsPage->focusTarget(target);
         }
@@ -895,6 +905,7 @@ private:
     std::unique_ptr<DictionaryPage> dictionaryPage;
     std::unique_ptr<ClipboardPage> clipboardPage;
     std::unique_ptr<LearningPage> learningPage;
+    std::unique_ptr<UpdatesPage> updatesPage;
     std::unique_ptr<DiagnosticsPage> diagnosticsPage;
     GtkWidgetOwner windowOwner;
     OverviewRefreshState overviewRefresh;

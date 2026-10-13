@@ -2,20 +2,18 @@
 
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
-#include "modernime/settings/update_controller.h"
 
 #include <gio/gio.h>
 #include <gtk/gtk.h>
 
-#include <array>
+#include <filesystem>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
-
-#ifndef MODERNIME_VERSION
-#define MODERNIME_VERSION "0.1.9"
-#endif
 
 namespace modernime::settings {
 namespace {
@@ -31,34 +29,15 @@ void setTarget(GtkWidget *widget, std::string_view target) {
 }
 
 void setLabel(GtkWidget *label, const char *text) {
-    if (label != nullptr) {
-        gtk_label_set_text(GTK_LABEL(label), text);
-    }
+    gtk_label_set_text(GTK_LABEL(label), text);
 }
 
 struct RuntimeTask final {
     bool reload = false;
-    std::uint64_t reloadRevision = 0;
     std::filesystem::path fcitxExecutable;
     std::filesystem::path remoteExecutable;
     Environment environment;
-};
-
-enum class UpdateActionKind {
-    Check,
-    RefreshCache,
-    RunUpgrade,
-};
-
-struct UpdateCheckTask final {
-    UpdateActionKind action = UpdateActionKind::Check;
-    UpdateStatus currentStatus;
-    Environment environment;
-};
-
-struct UpdateRefreshResult final {
-    RuntimeResult cacheResult;
-    UpdateStatus updatedStatus;
+    std::uint64_t reloadRevision = 0;
 };
 
 void runtimeTaskFunction(GTask *task, gpointer, gpointer data,
@@ -80,45 +59,6 @@ void runtimeTaskFunction(GTask *task, gpointer, gpointer data,
         [](gpointer value) { delete static_cast<RuntimeStatus *>(value); });
 }
 
-void updateTaskFunction(GTask *task, gpointer, gpointer data,
-                        GCancellable *) {
-    const auto *request = static_cast<const UpdateCheckTask *>(data);
-    if (request->action == UpdateActionKind::RunUpgrade) {
-        g_task_return_pointer(
-            task,
-            new RuntimeResult(UpdateController::runSystemUpgrade(
-                request->currentStatus, request->environment)),
-            [](gpointer value) { delete static_cast<RuntimeResult *>(value); });
-        return;
-    }
-    if (request->action == UpdateActionKind::RefreshCache) {
-        auto res = std::make_unique<UpdateRefreshResult>();
-        res->cacheResult = UpdateController::refreshPackageCache(
-            request->currentStatus, request->environment);
-        if (res->cacheResult.success) {
-            res->updatedStatus =
-                UpdateController::checkForUpdates(request->environment);
-            if (!res->updatedStatus.offlineOrUnreachable &&
-                !res->updatedStatus.updateAvailable) {
-                res->updatedStatus.cacheMayBeStale = false;
-                res->updatedStatus.statusMessage =
-                    "已同步最新远端软件源元数据，当前已是最新版本（" +
-                    res->updatedStatus.currentVersion + "）。";
-            }
-        }
-        g_task_return_pointer(
-            task, res.release(),
-            [](gpointer value) {
-                delete static_cast<UpdateRefreshResult *>(value);
-            });
-        return;
-    }
-    g_task_return_pointer(
-        task,
-        new UpdateStatus(UpdateController::checkForUpdates(request->environment)),
-        [](gpointer value) { delete static_cast<UpdateStatus *>(value); });
-}
-
 } // namespace
 
 class DiagnosticsPage::Impl final {
@@ -134,11 +74,6 @@ public:
           notify(std::move(notifyCallback)),
           reloadRevision(std::move(reloadRevisionCallback)),
           reloadSucceeded(std::move(reloadSucceededCallback)) {
-        lastUpdateStatus.currentVersion = MODERNIME_VERSION;
-        lastUpdateStatus.refreshCacheCommand = "sudo apt update";
-        lastUpdateStatus.upgradeCommand =
-            "sudo apt update && sudo apt install --only-upgrade modernime";
-
         lifetime = detail::GObjectHandle<GObject>::adopt(
             G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr)));
         state = std::make_shared<Lifetime>(this);
@@ -164,9 +99,7 @@ public:
     void reload() { startTask(true); }
 
     bool focusTarget(std::string_view target) {
-        for (auto *control : {refreshButton, reloadButton, checkUpdateButton,
-                              refreshCacheButton, copyUpgradeButton,
-                              runUpgradeButton}) {
+        for (auto *control : {refreshButton, reloadButton}) {
             if (control == nullptr) {
                 continue;
             }
@@ -200,32 +133,12 @@ private:
         state->withOwner([](Impl &owner) { owner.reload(); });
     }
 
-    static void onCheckUpdate(GtkButton *, gpointer data) {
-        auto &state = *static_cast<SharedLifetime *>(data);
-        state->withOwner([](Impl &owner) { owner.checkUpdate(); });
-    }
-
-    static void onRefreshPackageCache(GtkButton *, gpointer data) {
-        auto &state = *static_cast<SharedLifetime *>(data);
-        state->withOwner([](Impl &owner) { owner.refreshPackageCache(); });
-    }
-
-    static void onCopyUpgradeCommand(GtkButton *, gpointer data) {
-        auto &state = *static_cast<SharedLifetime *>(data);
-        state->withOwner([](Impl &owner) { owner.copyUpgradeCommand(); });
-    }
-
-    static void onRunSystemUpgrade(GtkButton *, gpointer data) {
-        auto &state = *static_cast<SharedLifetime *>(data);
-        state->withOwner([](Impl &owner) { owner.runSystemUpgrade(); });
-    }
-
     static void destroySignalState(gpointer data, GClosure *) {
         delete static_cast<SharedLifetime *>(data);
     }
 
-    static void taskFinished(GObject *source, GAsyncResult *result,
-                             gpointer) {
+    static void runtimeTaskFinished(GObject *source, GAsyncResult *result,
+                                    gpointer) {
         auto *task = G_TASK(result);
         const auto *request = static_cast<const RuntimeTask *>(
             g_task_get_task_data(task));
@@ -252,46 +165,6 @@ private:
                 });
             }
             delete runtimeStatus;
-        }
-        g_clear_error(&error);
-    }
-
-    static void updateTaskFinished(GObject *source, GAsyncResult *result,
-                                   gpointer) {
-        auto *task = G_TASK(result);
-        const auto *request = static_cast<const UpdateCheckTask *>(
-            g_task_get_task_data(task));
-        auto *state = static_cast<SharedLifetime *>(
-            g_object_get_data(source, kStateKey));
-        GError *error = nullptr;
-
-        if (request->action == UpdateActionKind::RunUpgrade) {
-            auto *upgradeResult = static_cast<RuntimeResult *>(
-                g_task_propagate_pointer(task, &error));
-            if (state != nullptr) {
-                (*state)->withOwner([upgradeResult, error](Impl &owner) {
-                    owner.finishSystemUpgrade(upgradeResult, error);
-                });
-            }
-            delete upgradeResult;
-        } else if (request->action == UpdateActionKind::RefreshCache) {
-            auto *refreshResult = static_cast<UpdateRefreshResult *>(
-                g_task_propagate_pointer(task, &error));
-            if (state != nullptr) {
-                (*state)->withOwner([refreshResult, error](Impl &owner) {
-                    owner.finishRefreshPackageCache(refreshResult, error);
-                });
-            }
-            delete refreshResult;
-        } else {
-            auto *updateStatus = static_cast<UpdateStatus *>(
-                g_task_propagate_pointer(task, &error));
-            if (state != nullptr) {
-                (*state)->withOwner([updateStatus, error](Impl &owner) {
-                    owner.finishCheckUpdate(updateStatus, error);
-                });
-            }
-            delete updateStatus;
         }
         g_clear_error(&error);
     }
@@ -353,326 +226,19 @@ private:
             new SharedLifetime(state), destroySignalState,
             static_cast<GConnectFlags>(0));
 
-        // System Package Update Checker Card
-        auto *updateSection = createSectionCard(
-            "版本与系统更新",
-            "仅查询 APT / DNF 软件源或可信 Release 元数据，实际安装和升级始终交由系统包管理器执行。");
-        gtk_box_pack_start(GTK_BOX(page), updateSection, FALSE, FALSE, 0);
-
-        updateStatusMessage = gtk_label_new(
-            "点击“检查更新”查询本地缓存，或先点击“刷新缓存”同步远端源索引。");
-        addStyleClass(updateStatusMessage, "modernime-status");
-        gtk_widget_set_halign(updateStatusMessage, GTK_ALIGN_START);
-        gtk_label_set_line_wrap(GTK_LABEL(updateStatusMessage), TRUE);
-        gtk_label_set_max_width_chars(GTK_LABEL(updateStatusMessage), 48);
-        gtk_box_pack_start(GTK_BOX(updateSection), updateStatusMessage, FALSE,
-                           FALSE, 0);
-
-        auto *updateGrid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(updateGrid), 8);
-        gtk_grid_set_column_spacing(GTK_GRID(updateGrid), 16);
-        const auto addUpdateRow = [updateGrid](int row, std::string_view title,
-                                               const char *initialValue,
-                                               GtkWidget **value) {
-            auto *label = gtk_label_new(std::string(title).c_str());
-            gtk_widget_set_halign(label, GTK_ALIGN_START);
-            gtk_grid_attach(GTK_GRID(updateGrid), label, 0, row, 1, 1);
-            *value = gtk_label_new(initialValue);
-            addStyleClass(*value, "modernime-status");
-            gtk_widget_set_halign(*value, GTK_ALIGN_START);
-            gtk_label_set_line_wrap(GTK_LABEL(*value), TRUE);
-            gtk_label_set_max_width_chars(GTK_LABEL(*value), 42);
-            gtk_grid_attach(GTK_GRID(updateGrid), *value, 1, row, 1, 1);
-        };
-        addUpdateRow(0, "当前版本", MODERNIME_VERSION, &currentVersionLabel);
-        addUpdateRow(1, "候选版本", "未检查", &candidateVersionLabel);
-        addUpdateRow(2, "包来源与渠道", "未检查", &packageSourceLabel);
-        addUpdateRow(3, "更新摘要", "暂无更新摘要", &changelogSummaryLabel);
-        addUpdateRow(
-            4, "系统升级命令",
-            "sudo apt update && sudo apt install --only-upgrade modernime",
-            &upgradeCommandLabel);
-        gtk_label_set_selectable(GTK_LABEL(upgradeCommandLabel), TRUE);
-        gtk_box_pack_start(GTK_BOX(updateSection), updateGrid, FALSE, FALSE, 0);
-
-        auto *updateActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        checkUpdateButton = gtk_button_new_with_label("检查更新");
-        refreshCacheButton = gtk_button_new_with_label("刷新缓存");
-        copyUpgradeButton = gtk_button_new_with_label("复制命令");
-        runUpgradeButton = gtk_button_new_with_label("认证升级");
-        setTarget(checkUpdateButton, "diagnostics-check-update");
-        setTarget(refreshCacheButton, "diagnostics-refresh-cache");
-        setTarget(copyUpgradeButton, "diagnostics-copy-upgrade");
-        setTarget(runUpgradeButton, "diagnostics-run-upgrade");
-        gtk_widget_set_sensitive(runUpgradeButton, FALSE);
-        gtk_widget_set_tooltip_text(
-            checkUpdateButton, "查询 APT / DNF 本地软件源缓存中的候选版本与更新说明");
-        gtk_widget_set_tooltip_text(
-            refreshCacheButton, "通过系统认证 (pkexec) 执行 apt-get update 或 dnf makecache 同步远端软件源索引");
-        gtk_widget_set_tooltip_text(
-            copyUpgradeButton, "复制 apt / dnf 升级命令到剪贴板以供终端执行");
-        gtk_widget_set_tooltip_text(
-            runUpgradeButton, "通过系统认证 (pkexec) 调用 apt / dnf 执行升级");
-        setAccessibleWidgetText(checkUpdateButton, "检查更新",
-                                "查询 APT 或 DNF 软件源中的 ModernIME 候选版本");
-        setAccessibleWidgetText(refreshCacheButton, "刷新软件源缓存",
-                                "通过系统认证刷新 APT 或 DNF 远端软件源元数据缓存");
-        setAccessibleWidgetText(copyUpgradeButton, "复制升级命令",
-                                "复制系统包管理器升级命令到剪贴板");
-        setAccessibleWidgetText(runUpgradeButton, "通过系统认证升级",
-                                "通过系统认证调用 apt 或 dnf 升级 ModernIME");
-        gtk_box_pack_start(GTK_BOX(updateActions), checkUpdateButton, FALSE,
-                           FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(updateActions), refreshCacheButton, FALSE,
-                           FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(updateActions), copyUpgradeButton, FALSE,
-                           FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(updateActions), runUpgradeButton, FALSE,
-                           FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(updateSection), updateActions, FALSE, FALSE,
-                           0);
-
-        g_signal_connect_data(
-            checkUpdateButton, "clicked", G_CALLBACK(onCheckUpdate),
-            new SharedLifetime(state), destroySignalState,
-            static_cast<GConnectFlags>(0));
-        g_signal_connect_data(
-            refreshCacheButton, "clicked", G_CALLBACK(onRefreshPackageCache),
-            new SharedLifetime(state), destroySignalState,
-            static_cast<GConnectFlags>(0));
-        g_signal_connect_data(
-            copyUpgradeButton, "clicked", G_CALLBACK(onCopyUpgradeCommand),
-            new SharedLifetime(state), destroySignalState,
-            static_cast<GConnectFlags>(0));
-        g_signal_connect_data(
-            runUpgradeButton, "clicked", G_CALLBACK(onRunSystemUpgrade),
-            new SharedLifetime(state), destroySignalState,
-            static_cast<GConnectFlags>(0));
-
-        setSettingsFocusChain(page,
-                              {refreshButton, reloadButton, checkUpdateButton,
-                               refreshCacheButton, copyUpgradeButton,
-                               runUpgradeButton});
+        setSettingsFocusChain(page, {refreshButton, reloadButton});
     }
 
-    void checkUpdate() {
-        if (updateBusy || backgroundPackageOpActive ||
-            UpdateController::hasActivePackageOperation()) {
-            return;
-        }
-        updateBusy = true;
-        gtk_widget_set_sensitive(checkUpdateButton, FALSE);
-        gtk_widget_set_sensitive(refreshCacheButton, FALSE);
-        gtk_widget_set_sensitive(runUpgradeButton, FALSE);
-        setLabel(updateStatusMessage, "正在查询 APT / DNF 软件源版本信息…");
-
-        auto *task = g_task_new(lifetime.get(), nullptr, updateTaskFinished,
-                                nullptr);
-        auto *request = new UpdateCheckTask{UpdateActionKind::Check,
-                                            lastUpdateStatus, environment};
-        g_task_set_task_data(task, request, [](gpointer value) {
-            delete static_cast<UpdateCheckTask *>(value);
-        });
-        g_task_run_in_thread(task, updateTaskFunction);
-        g_object_unref(task);
-    }
-
-    void refreshPackageCache() {
-        if (updateBusy || backgroundPackageOpActive ||
-            UpdateController::hasActivePackageOperation()) {
-            return;
-        }
-        updateBusy = true;
-        gtk_widget_set_sensitive(checkUpdateButton, FALSE);
-        gtk_widget_set_sensitive(refreshCacheButton, FALSE);
-        gtk_widget_set_sensitive(runUpgradeButton, FALSE);
-        setLabel(updateStatusMessage,
-                 "正在通过系统认证刷新 APT / DNF 软件源元数据缓存…");
-
-        auto *task = g_task_new(lifetime.get(), nullptr, updateTaskFinished,
-                                nullptr);
-        auto *request = new UpdateCheckTask{UpdateActionKind::RefreshCache,
-                                            lastUpdateStatus, environment};
-        g_task_set_task_data(task, request, [](gpointer value) {
-            delete static_cast<UpdateCheckTask *>(value);
-        });
-        g_task_run_in_thread(task, updateTaskFunction);
-        g_object_unref(task);
-    }
-
-    void restoreUpdateButtonsAfterTask() {
-        const bool locked =
-            updateBusy || backgroundPackageOpActive ||
-            UpdateController::hasActivePackageOperation();
-        gtk_widget_set_sensitive(checkUpdateButton, !locked);
-        gtk_widget_set_sensitive(refreshCacheButton, !locked);
-        gtk_widget_set_sensitive(
-            runUpgradeButton,
-            !locked && lastUpdateStatus.updateAvailable &&
-                lastUpdateStatus.installChannel != "script");
-    }
-
-    static gboolean onBackgroundPackagePoll(gpointer data) {
-        auto &state = *static_cast<SharedLifetime *>(data);
-        bool keepPolling = false;
-        state->withOwner([&keepPolling](Impl &owner) {
-            keepPolling = owner.pollBackgroundPackageOperation();
-        });
-        return keepPolling ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
-    }
-
-    static void destroyPollState(gpointer data) {
-        delete static_cast<SharedLifetime *>(data);
-    }
-
-    void scheduleBackgroundPackageMonitor() {
-        if (backgroundPackageOpActive) {
-            return;
-        }
-        backgroundPackageOpActive = true;
-        restoreUpdateButtonsAfterTask();
-        g_timeout_add_full(G_PRIORITY_DEFAULT, 200, onBackgroundPackagePoll,
-                           new SharedLifetime(state), destroyPollState);
-    }
-
-    bool pollBackgroundPackageOperation() {
-        if (UpdateController::hasActivePackageOperation()) {
-            return true;
-        }
-        backgroundPackageOpActive = false;
-        restoreUpdateButtonsAfterTask();
-        if (const auto completed =
-                UpdateController::takeCompletedPackageOperationResult()) {
-            setLabel(updateStatusMessage, completed->message.c_str());
-            notifyMessage(completed->message);
-            if (completed->success) {
-                checkUpdate();
-            }
-        }
-        return false;
-    }
-
-    void handlePostPackageOperationState() {
-        if (UpdateController::hasActivePackageOperation()) {
-            scheduleBackgroundPackageMonitor();
-            return;
-        }
-        // Handle the race where the background task completed between timeout return and UI callback
-        pollBackgroundPackageOperation();
-    }
-
-    void finishCheckUpdate(const UpdateStatus *status, const GError *error) {
-        updateBusy = false;
-        if (status == nullptr) {
-            restoreUpdateButtonsAfterTask();
-            setLabel(updateStatusMessage,
-                     error != nullptr && error->message != nullptr
-                         ? error->message
-                         : "无法查询软件源状态；本地输入法功能正常。");
-            return;
-        }
-        lastUpdateStatus = *status;
-        setLabel(currentVersionLabel, lastUpdateStatus.currentVersion.c_str());
-        setLabel(candidateVersionLabel,
-                 lastUpdateStatus.candidateVersion.c_str());
-        setLabel(packageSourceLabel, lastUpdateStatus.packageSource.c_str());
-        setLabel(changelogSummaryLabel,
-                 lastUpdateStatus.changelogSummary.c_str());
-        setLabel(upgradeCommandLabel, lastUpdateStatus.upgradeCommand.c_str());
-        setLabel(updateStatusMessage, lastUpdateStatus.statusMessage.c_str());
-        restoreUpdateButtonsAfterTask();
-        notifyMessage(lastUpdateStatus.statusMessage);
-    }
-
-    void finishRefreshPackageCache(const UpdateRefreshResult *result,
-                                   const GError *error) {
-        updateBusy = false;
-        if (result == nullptr) {
-            notifyMessage(error != nullptr && error->message != nullptr
-                              ? error->message
-                              : "刷新软件源缓存请求未完成");
-            handlePostPackageOperationState();
-            return;
-        }
-        if (!result->cacheResult.success) {
-            setLabel(updateStatusMessage, result->cacheResult.message.c_str());
-            notifyMessage(result->cacheResult.message);
-            handlePostPackageOperationState();
-            return;
-        }
-        finishCheckUpdate(&result->updatedStatus, nullptr);
-    }
-
-    void copyUpgradeCommand() {
-        const auto &cmd = lastUpdateStatus.upgradeCommand;
-        if (auto *display = gdk_display_get_default()) {
-            if (auto *clipboard =
-                    gtk_clipboard_get_for_display(display, GDK_SELECTION_CLIPBOARD)) {
-                gtk_clipboard_set_text(clipboard, cmd.c_str(),
-                                       static_cast<gint>(cmd.size()));
-            }
-        }
-        notifyMessage("已复制系统升级命令：" + cmd);
-    }
-
-    void runSystemUpgrade() {
-        if (updateBusy || backgroundPackageOpActive ||
-            UpdateController::hasActivePackageOperation() ||
-            !lastUpdateStatus.updateAvailable) {
-            return;
-        }
-        updateBusy = true;
-        gtk_widget_set_sensitive(checkUpdateButton, FALSE);
-        gtk_widget_set_sensitive(refreshCacheButton, FALSE);
-        gtk_widget_set_sensitive(runUpgradeButton, FALSE);
-        setLabel(updateStatusMessage,
-                 "正在通过系统包管理器执行升级（等待授权与包事务完成，超时不会强杀包管理器进程）…");
-        notifyMessage("正在请求系统包管理器执行升级…");
-
-        auto *task = g_task_new(lifetime.get(), nullptr, updateTaskFinished,
-                                nullptr);
-        auto *request = new UpdateCheckTask{UpdateActionKind::RunUpgrade,
-                                            lastUpdateStatus, environment};
-        g_task_set_task_data(task, request, [](gpointer value) {
-            delete static_cast<UpdateCheckTask *>(value);
-        });
-        g_task_run_in_thread(task, updateTaskFunction);
-        g_object_unref(task);
-    }
-
-    void finishSystemUpgrade(const RuntimeResult *result, const GError *error) {
-        updateBusy = false;
-        if (result == nullptr) {
-            notifyMessage(error != nullptr && error->message != nullptr
-                              ? error->message
-                              : "系统包管理器升级请求未完成");
-            handlePostPackageOperationState();
-            return;
-        }
-        setLabel(updateStatusMessage, result->message.c_str());
-        notifyMessage(result->message);
-        handlePostPackageOperationState();
-    }
-
-    void startTask(bool reloadRequest) {
+    void startTask(bool reload) {
         if (busy) {
             return;
         }
-        busy = true;
-        gtk_widget_set_sensitive(refreshButton, FALSE);
-        gtk_widget_set_sensitive(reloadButton, FALSE);
-        if (reloadRequest) {
-            notifyMessage("正在请求重载 ModernIME…");
-        } else {
-            setLabel(statusMessage, "正在检测 Fcitx5 状态…");
-        }
-
-        auto *task =
-            g_task_new(lifetime.get(), nullptr, taskFinished, nullptr);
-        auto *request = new RuntimeTask{
-            reloadRequest,
-            reloadRequest && reloadRevision ? reloadRevision() : 0,
-            fcitx, remote, environment};
+        setBusy(true);
+        auto *task = g_task_new(lifetime.get(), nullptr, runtimeTaskFinished,
+                                nullptr);
+        const auto revision = reload && reloadRevision ? reloadRevision() : 0;
+        auto *request = new RuntimeTask{reload, fcitx, remote, environment,
+                                        revision};
         g_task_set_task_data(task, request, [](gpointer value) {
             delete static_cast<RuntimeTask *>(value);
         });
@@ -680,8 +246,7 @@ private:
         g_object_unref(task);
     }
 
-    void finishRefresh(const RuntimeStatus *runtimeStatus,
-                       const GError *error) {
+    void finishRefresh(const RuntimeStatus *runtimeStatus, const GError *error) {
         if (runtimeStatus != nullptr) {
             updateStatus(*runtimeStatus);
         } else {
@@ -771,9 +336,6 @@ private:
     detail::GObjectHandle<GObject> lifetime;
     SharedLifetime state;
     bool busy = false;
-    bool updateBusy = false;
-    bool backgroundPackageOpActive = false;
-    UpdateStatus lastUpdateStatus;
     std::string pendingFocusTarget;
     GtkWidget *page = nullptr;
     GtkWidget *statusMessage = nullptr;
@@ -783,16 +345,6 @@ private:
     GtkWidget *modernime = nullptr;
     GtkWidget *refreshButton = nullptr;
     GtkWidget *reloadButton = nullptr;
-    GtkWidget *updateStatusMessage = nullptr;
-    GtkWidget *currentVersionLabel = nullptr;
-    GtkWidget *candidateVersionLabel = nullptr;
-    GtkWidget *packageSourceLabel = nullptr;
-    GtkWidget *changelogSummaryLabel = nullptr;
-    GtkWidget *upgradeCommandLabel = nullptr;
-    GtkWidget *checkUpdateButton = nullptr;
-    GtkWidget *refreshCacheButton = nullptr;
-    GtkWidget *copyUpgradeButton = nullptr;
-    GtkWidget *runUpgradeButton = nullptr;
 };
 
 DiagnosticsPage::DiagnosticsPage(std::filesystem::path fcitx,

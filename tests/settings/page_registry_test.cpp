@@ -8,10 +8,11 @@ int main() {
     using namespace modernime::settings;
 
     const auto pages = settingsPageDefinitions();
-    assert(pages.size() == 7);
+    assert(pages.size() == 8);
     assert(pages.front().id == SettingsPageId::Overview);
     assert(pages[1].id == SettingsPageId::Input);
     assert(pages[2].id == SettingsPageId::Candidates);
+    assert(pages[6].id == SettingsPageId::Updates);
     assert(pages.back().id == SettingsPageId::Diagnostics);
 
     const auto shortcut = searchSettings("快捷键");
@@ -28,7 +29,8 @@ int main() {
         std::string_view("概览"), std::string_view("输入与按键"),
         std::string_view("候选与外观"),
         std::string_view("个人词典"), std::string_view("剪贴板"),
-        std::string_view("智能学习"), std::string_view("系统与诊断")};
+        std::string_view("智能学习"), std::string_view("更新与安装"),
+        std::string_view("系统与诊断")};
     for (std::size_t index = 0; index < pageTitles.size(); ++index) {
         const auto matches = searchSettings(pageTitles[index]);
         assert(!matches.empty());
@@ -54,8 +56,8 @@ int main() {
         assert(!matches.empty());
         bool found = false;
         for (const auto &item : matches) {
-            if (item.page == SettingsPageId::Diagnostics &&
-                item.target == "diagnostics-check-update") {
+            if (item.page == SettingsPageId::Updates &&
+                item.target == "updates-check") {
                 found = true;
                 break;
             }

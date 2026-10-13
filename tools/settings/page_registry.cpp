@@ -19,9 +19,11 @@ constexpr std::array kPages{
                            "管理 V+2 剪贴板功能和历史内容", "数据与工具"},
     SettingsPageDefinition{SettingsPageId::Learning, "learning", "智能学习",
                            "管理用户习惯学习和上下文排序", "数据与工具"},
+    SettingsPageDefinition{SettingsPageId::Updates, "updates", "更新与安装",
+                           "检查新版本、安装渠道与升级引导", "系统与支持"},
     SettingsPageDefinition{SettingsPageId::Diagnostics, "diagnostics",
                            "系统与诊断", "检查 Fcitx5 和 ModernIME 运行状态",
-                           "数据与工具"},
+                           "系统与支持"},
 };
 
 constexpr std::array kSearchEntries{
@@ -37,6 +39,8 @@ constexpr std::array kSearchEntries{
                         "管理 V+2 剪贴板功能和历史内容", "clipboard"},
     SettingsSearchEntry{SettingsPageId::Learning, "", "智能学习",
                         "管理用户习惯学习和上下文排序", "learning"},
+    SettingsSearchEntry{SettingsPageId::Updates, "", "更新与安装",
+                        "检查新版本、安装渠道与升级引导", "updates upgrade install channel"},
     SettingsSearchEntry{SettingsPageId::Diagnostics, "", "系统与诊断",
                         "检查 Fcitx5 和 ModernIME 运行状态", "diagnostics system"},
     SettingsSearchEntry{SettingsPageId::Input, "input-enabled", "启用 ModernIME",
@@ -96,8 +100,12 @@ constexpr std::array kSearchEntries{
                         "重新查询 Fcitx5 和 ModernIME 状态", "fcitx fcitx5 diagnostics refresh"},
     SettingsSearchEntry{SettingsPageId::Diagnostics, "diagnostics-reload", "重新加载 ModernIME",
                         "保存配置后重新加载 ModernIME", "fcitx fcitx5 reload restart"},
-    SettingsSearchEntry{SettingsPageId::Diagnostics, "diagnostics-check-update", "检查更新",
+    SettingsSearchEntry{SettingsPageId::Updates, "updates-check", "检查更新",
                         "查询 APT 或 DNF 软件源中的 ModernIME 候选版本", "update upgrade apt dnf 检查更新 升级 版本"},
+    SettingsSearchEntry{SettingsPageId::Updates, "updates-refresh-cache", "刷新软件源缓存",
+                        "同步系统包管理器的软件源索引元数据", "refresh cache apt dnf makecache update 刷新缓存"},
+    SettingsSearchEntry{SettingsPageId::Updates, "updates-copy-command", "复制升级命令",
+                        "复制安全升级命令至终端中执行", "copy command upgrade terminal 复制命令 升级"},
 };
 
 bool isAsciiWhitespace(char character) {

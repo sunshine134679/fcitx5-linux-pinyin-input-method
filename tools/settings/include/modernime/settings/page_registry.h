@@ -13,6 +13,7 @@ enum class SettingsPageId {
     Dictionary,
     Clipboard,
     Learning,
+    Updates,
     Diagnostics,
 };
 

@@ -141,6 +141,20 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_candidates_page_contract_tests
     )
 
+    add_executable(modernime_updates_page_contract_tests
+        settings/updates_page_contract_test.cpp
+        ../tools/settings/page_registry.cpp
+    )
+    target_include_directories(modernime_updates_page_contract_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_updates_page_contract_tests PRIVATE
+        modernime_core
+    )
+    add_test(NAME modernime_updates_page_contract
+        COMMAND modernime_updates_page_contract_tests
+    )
+
     add_executable(modernime_diagnostics_lifetime_tests
         settings/diagnostics_lifetime_test.cpp
     )
@@ -225,6 +239,7 @@ if(MODERNIME_BUILD_SETTINGS)
         ../tools/settings/pages/input_page.cpp
         ../tools/settings/pages/learning_page.cpp
         ../tools/settings/pages/overview_page.cpp
+        ../tools/settings/pages/updates_page.cpp
     )
     target_include_directories(modernime_settings_shell_gtk_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include

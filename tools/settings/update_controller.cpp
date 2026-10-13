@@ -16,6 +16,8 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <thread>
 #include <unistd.h>
@@ -570,8 +572,86 @@ bool parseTrustedMetadataFile(const std::filesystem::path &path,
     return !status.candidateVersion.empty();
 }
 
+bool isPathLocked(const char *path) {
+    std::string_view pathView(path);
+    if (pathView.ends_with(".pid")) {
+        std::ifstream pidFile(path);
+        pid_t pid = 0;
+        if (pidFile >> pid && pid > 0) {
+            if (::kill(pid, 0) == 0 || errno == EPERM) {
+                return true;
+            }
+        }
+    }
+
+    int fd = ::open(path, O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    }
+    if (fd >= 0) {
+        struct flock fl{};
+        fl.l_type = F_WRLCK;
+        fl.l_whence = SEEK_SET;
+        fl.l_start = 0;
+        fl.l_len = 0;
+        const int ret = ::fcntl(fd, F_GETLK, &fl);
+        ::close(fd);
+        if (ret == 0 && fl.l_type != F_UNLCK) {
+            return true;
+        }
+    }
+
+    struct stat st{};
+    if (::stat(path, &st) == 0) {
+        const auto targetDev = st.st_dev;
+        const auto targetIno = st.st_ino;
+        const unsigned int maj = major(targetDev);
+        const unsigned int min = minor(targetDev);
+
+        std::ifstream procLocks("/proc/locks");
+        if (procLocks.is_open()) {
+            std::string line;
+            while (std::getline(procLocks, line)) {
+                std::istringstream iss(line);
+                std::string token;
+                int col = 0;
+                while (iss >> token) {
+                    if (col == 5) {
+                        const auto colon1 = token.find(':');
+                        const auto colon2 = token.rfind(':');
+                        if (colon1 != std::string::npos && colon2 != std::string::npos &&
+                            colon1 != colon2) {
+                            try {
+                                const unsigned int lMaj =
+                                    std::stoul(token.substr(0, colon1), nullptr, 16);
+                                const unsigned int lMin = std::stoul(
+                                    token.substr(colon1 + 1, colon2 - colon1 - 1),
+                                    nullptr, 16);
+                                const unsigned long lIno =
+                                    std::stoul(token.substr(colon2 + 1));
+                                if (lMaj == maj && lMin == min &&
+                                    lIno == static_cast<unsigned long>(targetIno)) {
+                                    return true;
+                                }
+                            } catch (...) {
+                            }
+                        }
+                        break;
+                    }
+                    ++col;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 void finalizeStatus(UpdateStatus &status, bool hasRemoteRepoIndex) {
     status.checked = true;
+    if (status.packageManagerLocked) {
+        status.statusMessage =
+            "系统包管理器正忙（检测到锁占用，可能有自动更新或包管理操作正在运行），请稍后重试。";
+    }
     if (status.manager == PackageManagerKind::Dnf) {
         status.refreshCacheCommand = "sudo dnf makecache";
         status.upgradeCommand = "sudo dnf makecache && sudo dnf upgrade modernime";
@@ -685,8 +765,37 @@ int UpdateController::compareVersions(std::string_view lhsRaw, std::string_view 
     return compareDebianSegment(revA, revB);
 }
 
+bool UpdateController::isPackageManagerLocked() {
+    const char *mockLock = std::getenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
+    if (mockLock != nullptr && *mockLock != '\0') {
+        std::error_code ec;
+        if (std::filesystem::exists(mockLock, ec) && isPathLocked(mockLock)) {
+            return true;
+        }
+    }
+    const char *forceLocked = std::getenv("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED");
+    if (forceLocked != nullptr && std::string_view(forceLocked) == "1") {
+        return true;
+    }
+    for (const char *lockPath : {
+             "/var/lib/dpkg/lock-frontend",
+             "/var/lib/dpkg/lock",
+             "/var/lib/apt/lists/lock",
+             "/var/cache/apt/archives/lock",
+             "/var/lib/rpm/.rpm.lock",
+             "/var/cache/dnf/metadata_lock.pid",
+         }) {
+        std::error_code ec;
+        if (std::filesystem::exists(lockPath, ec) && isPathLocked(lockPath)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
     UpdateStatus status;
+    status.packageManagerLocked = isPackageManagerLocked();
     const auto currentVerEnv = lookupEnv(environment, "MODERNIME_CURRENT_VERSION");
     status.currentVersion = currentVerEnv.empty() ? MODERNIME_VERSION : currentVerEnv;
     status.installChannel = detectInstallChannel(environment);
@@ -831,6 +940,10 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
         return {false,
                 "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
     }
+    if (isPackageManagerLocked()) {
+        return {false,
+                "系统包管理器正忙（检测到锁占用，可能有其他包管理进程或自动更新正在运行），请等待其结束后重试。"};
+    }
     takeCompletedPackageOperationResult();
 
     PackageManagerKind manager = status.manager;
@@ -897,6 +1010,10 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
     if (hasActivePackageOperation()) {
         return {false,
                 "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
+    }
+    if (isPackageManagerLocked()) {
+        return {false,
+                "系统包管理器正忙（检测到锁占用，可能有其他包管理进程或自动更新正在运行），请等待其结束后重试。"};
     }
     takeCompletedPackageOperationResult();
     if (!status.updateAvailable) {

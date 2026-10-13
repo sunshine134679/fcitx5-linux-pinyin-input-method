@@ -27,6 +27,7 @@ add_executable(modernime-settings
     pages/input_page.cpp
     pages/learning_page.cpp
     pages/overview_page.cpp
+    pages/updates_page.cpp
     settings_window.cpp
 )
 target_include_directories(modernime-settings PRIVATE

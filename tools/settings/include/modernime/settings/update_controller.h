@@ -19,6 +19,7 @@ struct UpdateStatus final {
     bool offlineOrUnreachable = false;
     bool cacheMayBeStale = false;
     bool updateAvailable = false;
+    bool packageManagerLocked = false;
     PackageManagerKind manager = PackageManagerKind::Unknown;
     std::string currentVersion;
     std::string candidateVersion;
@@ -34,6 +35,8 @@ struct UpdateStatus final {
 class UpdateController final {
 public:
     static int compareVersions(std::string_view lhs, std::string_view rhs);
+
+    static bool isPackageManagerLocked();
 
     static UpdateStatus checkForUpdates(const Environment &environment = {});
 
