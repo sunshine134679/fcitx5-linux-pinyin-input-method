@@ -9,6 +9,7 @@ namespace modernime::settings {
 enum class SettingsPageId {
     Overview,
     Input,
+    Candidates,
     Dictionary,
     Clipboard,
     Learning,

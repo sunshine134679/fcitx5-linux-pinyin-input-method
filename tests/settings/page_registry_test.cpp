@@ -8,9 +8,10 @@ int main() {
     using namespace modernime::settings;
 
     const auto pages = settingsPageDefinitions();
-    assert(pages.size() == 6);
+    assert(pages.size() == 7);
     assert(pages.front().id == SettingsPageId::Overview);
     assert(pages[1].id == SettingsPageId::Input);
+    assert(pages[2].id == SettingsPageId::Candidates);
     assert(pages.back().id == SettingsPageId::Diagnostics);
 
     const auto shortcut = searchSettings("快捷键");
@@ -24,7 +25,8 @@ int main() {
     assert(searchSettings("   ").empty());
 
     constexpr std::array pageTitles{
-        std::string_view("概览"), std::string_view("输入体验"),
+        std::string_view("概览"), std::string_view("输入与按键"),
+        std::string_view("候选与外观"),
         std::string_view("个人词典"), std::string_view("剪贴板"),
         std::string_view("智能学习"), std::string_view("系统与诊断")};
     for (std::size_t index = 0; index < pageTitles.size(); ++index) {
@@ -39,7 +41,7 @@ int main() {
         assert(!matches.empty());
         bool found = false;
         for (const auto &item : matches) {
-            if (item.page == SettingsPageId::Input && item.target == "english-definition") {
+            if (item.page == SettingsPageId::Candidates && item.target == "english-definition") {
                 found = true;
                 break;
             }

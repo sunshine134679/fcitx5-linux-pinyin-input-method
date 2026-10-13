@@ -3,6 +3,7 @@
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/overview_model.h"
+#include "modernime/settings/pages/candidates_page.h"
 #include "modernime/settings/pages/clipboard_page.h"
 #include "modernime/settings/pages/diagnostics_page.h"
 #include "modernime/settings/pages/dictionary_page.h"
@@ -129,6 +130,8 @@ const char *iconForPage(SettingsPageId page) {
         return "go-home-symbolic";
     case SettingsPageId::Input:
         return "input-keyboard-symbolic";
+    case SettingsPageId::Candidates:
+        return "preferences-desktop-font-symbolic";
     case SettingsPageId::Dictionary:
         return "accessories-dictionary-symbolic";
     case SettingsPageId::Clipboard:
@@ -185,6 +188,9 @@ public:
             break;
         case SettingsPageId::Input:
             inputPage->refresh();
+            break;
+        case SettingsPageId::Candidates:
+            candidatesPage->refresh();
             break;
         case SettingsPageId::Dictionary:
             dictionaryPage->refresh();
@@ -349,10 +355,10 @@ private:
 
     GtkWidget *buildSidebar() {
         detail::GtkWidgetGuard sidebarGuard(
-            gtk_box_new(GTK_ORIENTATION_VERTICAL, 10));
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 6));
         auto *sidebar = sidebarGuard.get();
         addStyleClass(sidebar, kSettingsSidebarClass);
-        gtk_widget_set_size_request(sidebar, 220, -1);
+        gtk_widget_set_size_request(sidebar, 200, -1);
 
         searchEntry = gtk_search_entry_new();
         addStyleClass(searchEntry, "modernime-search-box");
@@ -372,13 +378,14 @@ private:
         g_signal_connect(searchEntry, "search-changed",
                          G_CALLBACK(onSearchChanged), this);
 
+        auto *navBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
         std::string_view previousGroup;
         for (const auto &definition : settingsPageDefinitions()) {
             if (definition.group != previousGroup) {
                 auto *group = gtk_label_new(std::string(definition.group).c_str());
                 addStyleClass(group, "modernime-sidebar-group");
                 gtk_widget_set_halign(group, GTK_ALIGN_START);
-                gtk_box_pack_start(GTK_BOX(sidebar), group, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(navBox), group, FALSE, FALSE, 0);
                 previousGroup = definition.group;
             }
             auto *button = gtk_button_new();
@@ -386,7 +393,7 @@ private:
             gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
             gtk_widget_set_hexpand(button, TRUE);
 
-            auto *btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+            auto *btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
             gtk_widget_set_margin_start(btnBox, 4);
             gtk_widget_set_margin_end(btnBox, 4);
             gtk_widget_set_margin_top(btnBox, 1);
@@ -408,13 +415,22 @@ private:
                 button, std::string(definition.subtitle).c_str());
             setAccessibleWidgetText(button, definition.title,
                                     definition.subtitle);
-            gtk_box_pack_start(GTK_BOX(sidebar), button, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(navBox), button, FALSE, FALSE, 0);
             navigationButtons.emplace_back(definition.id, button);
             g_signal_connect_data(
                 button, "clicked", G_CALLBACK(onNavigate),
                 new NavigationAction{this, definition.id},
                 destroyNavigationAction, static_cast<GConnectFlags>(0));
         }
+
+        auto *navScroller = gtk_scrolled_window_new(nullptr, nullptr);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(navScroller),
+                                       GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(navScroller),
+                                            GTK_SHADOW_NONE);
+        gtk_container_add(GTK_CONTAINER(navScroller), navBox);
+        gtk_box_pack_start(GTK_BOX(sidebar), navScroller, TRUE, TRUE, 0);
+
         return sidebarGuard.release();
     }
 
@@ -436,6 +452,10 @@ private:
         });
         addPage(SettingsPageId::Input, inputPage->widget());
         addInputPageMenu();
+        candidatesPage = std::make_unique<CandidatesPage>(model, [this] {
+            updateActionState();
+        });
+        addPage(SettingsPageId::Candidates, candidatesPage->widget());
         dictionaryPage =
             std::make_unique<DictionaryPage>(paths.userDictionary, notify);
         addPage(SettingsPageId::Dictionary, dictionaryPage->widget());
@@ -597,6 +617,8 @@ private:
             return false;
         case SettingsPageId::Input:
             return inputPage->focusTarget(target);
+        case SettingsPageId::Candidates:
+            return candidatesPage->focusTarget(target);
         case SettingsPageId::Dictionary:
             if (dictionaryPage->focusTarget(target)) {
                 return true;
@@ -735,6 +757,7 @@ private:
 
     void refreshSettingsPages() {
         inputPage->refresh();
+        candidatesPage->refresh();
         clipboardPage->refreshSettings();
         learningPage->refreshSettings();
     }
@@ -868,6 +891,7 @@ private:
 
     std::unique_ptr<OverviewPage> overviewPage;
     std::unique_ptr<InputPage> inputPage;
+    std::unique_ptr<CandidatesPage> candidatesPage;
     std::unique_ptr<DictionaryPage> dictionaryPage;
     std::unique_ptr<ClipboardPage> clipboardPage;
     std::unique_ptr<LearningPage> learningPage;

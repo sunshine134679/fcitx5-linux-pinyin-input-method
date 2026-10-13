@@ -19,13 +19,14 @@ void assertTrue(bool condition, std::string_view message) {
 
 int main() {
     const auto pages = modernime::settings::settingsPageDefinitions();
-    assertTrue(pages.size() == 6, "all six settings pages are declared");
+    assertTrue(pages.size() == 7, "all seven settings pages are declared");
     assertTrue(pages[0].title == "概览", "overview is the first page");
-    assertTrue(pages[1].title == "输入体验", "input page follows overview");
-    assertTrue(pages[2].title == "个人词典", "dictionary uses approved copy");
-    assertTrue(pages[3].title == "剪贴板", "clipboard uses approved copy");
-    assertTrue(pages[4].title == "智能学习", "learning uses approved copy");
-    assertTrue(pages[5].title == "系统与诊断",
+    assertTrue(pages[1].title == "输入与按键", "input page follows overview");
+    assertTrue(pages[2].title == "候选与外观", "candidates follows input");
+    assertTrue(pages[3].title == "个人词典", "dictionary uses approved copy");
+    assertTrue(pages[4].title == "剪贴板", "clipboard uses approved copy");
+    assertTrue(pages[5].title == "智能学习", "learning uses approved copy");
+    assertTrue(pages[6].title == "系统与诊断",
                "diagnostics uses approved copy");
 
     const auto actions = modernime::settings::settingsActionLabels();

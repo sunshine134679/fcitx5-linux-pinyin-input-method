@@ -30,6 +30,11 @@ public:
     void setCandidateOptions(bool numberSelection, bool arrowNavigation,
                              bool pageNavigation);
     void setCandidateAppearance(int candidatePageSize, int candidateFontSize);
+    void setCandidateSettings(int candidatePageSize, int candidateFontSize,
+                              bool numberSelection, bool arrowNavigation,
+                              bool pageNavigation,
+                              bool englishDefinitionEnabled);
+    void setCharacterExtractionEnabled(bool enabled);
     void setClipboardOptions(bool enabled, std::string trigger);
     void editDefaults();
     bool save(std::string *error = nullptr);

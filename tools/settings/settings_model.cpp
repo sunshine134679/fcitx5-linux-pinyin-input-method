@@ -65,6 +65,28 @@ void SettingsWindowModel::setCandidateOptions(bool numberSelection,
     setSettings(std::move(settings));
 }
 
+void SettingsWindowModel::setCandidateSettings(int candidatePageSize,
+                                              int candidateFontSize,
+                                              bool numberSelection,
+                                              bool arrowNavigation,
+                                              bool pageNavigation,
+                                              bool englishDefinitionEnabled) {
+    auto settings = edited_;
+    settings.candidatePageSize = candidatePageSize;
+    settings.candidateFontSize = candidateFontSize;
+    settings.numberSelection = numberSelection;
+    settings.arrowNavigation = arrowNavigation;
+    settings.pageNavigation = pageNavigation;
+    settings.englishDefinitionEnabled = englishDefinitionEnabled;
+    setSettings(std::move(settings));
+}
+
+void SettingsWindowModel::setCharacterExtractionEnabled(bool enabled) {
+    auto settings = edited_;
+    settings.characterExtractionEnabled = enabled;
+    setSettings(std::move(settings));
+}
+
 void SettingsWindowModel::setClipboardOptions(bool enabled, std::string trigger) {
     auto settings = edited_;
     settings.clipboardEnabled = enabled;

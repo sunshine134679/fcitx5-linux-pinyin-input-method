@@ -18,6 +18,14 @@ settingsFocusRouteForIssue(std::string_view issueKey) {
     if (issueKey == "input.toggle_key") {
         return SettingsFocusRoute{SettingsPageId::Input, "toggle-key"};
     }
+    if (issueKey == "candidate.page_size") {
+        return SettingsFocusRoute{SettingsPageId::Candidates,
+                                  "candidate-page-size"};
+    }
+    if (issueKey == "candidate.font_size") {
+        return SettingsFocusRoute{SettingsPageId::Candidates,
+                                  "candidate-font-size"};
+    }
     if (issueKey == "clipboard.trigger") {
         return SettingsFocusRoute{SettingsPageId::Clipboard,
                                   "clipboard-trigger"};
