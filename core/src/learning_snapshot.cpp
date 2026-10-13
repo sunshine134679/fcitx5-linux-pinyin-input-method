@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <mutex>
 #include <numeric>
 #include <tuple>
 #include <unordered_map>
@@ -150,6 +151,11 @@ struct LearningSnapshot::RecallIndex final {
     std::vector<std::pair<std::string, std::string>> englishIndex;
 };
 
+struct LearningSnapshot::RecallIndexCache final {
+    std::once_flag initialized;
+    std::shared_ptr<const RecallIndex> index;
+};
+
 std::shared_ptr<const LearningSnapshot::RecallIndex>
 LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
     auto index = std::make_shared<LearningSnapshot::RecallIndex>();
@@ -199,14 +205,10 @@ LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
 }
 
 const LearningSnapshot::RecallIndex &LearningSnapshot::ensureRecallIndex() const {
-    if (!baseRecallIndex_) {
-        if (baseEntries_ && !baseEntries_->empty()) {
-            baseRecallIndex_ = buildRecallIndex(*baseEntries_);
-        } else {
-            baseRecallIndex_ = std::make_shared<const RecallIndex>();
-        }
-    }
-    return *baseRecallIndex_;
+    std::call_once(baseRecallIndex_->initialized, [this] {
+        baseRecallIndex_->index = buildRecallIndex(*baseEntries_);
+    });
+    return *baseRecallIndex_->index;
 }
 
 std::string normalizePinyin(std::string_view pinyin) {
@@ -227,7 +229,9 @@ std::string normalizePinyin(std::string_view pinyin) {
 LearningSnapshot::LearningSnapshot()
     : baseEntries_(std::make_shared<const std::vector<LearningEntry>>()),
       baseIndex_(std::make_shared<const std::unordered_map<std::string, std::vector<std::size_t>>>()),
-      baseRecallIndex_(nullptr) {}
+      baseRecallIndex_(std::make_shared<RecallIndexCache>()) {
+    ensureRecallIndex();
+}
 
 LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
                                    std::size_t totalEntryLimit)
@@ -241,6 +245,11 @@ LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
     }
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(entries));
     baseIndex_ = std::move(newIndex);
+    // Prepare snapshots loaded from storage before publication. Copies share
+    // a cache whose initialization is synchronized, avoiding a lazy pointer
+    // assignment racing a copy-on-write enqueue.
+    baseRecallIndex_ = std::make_shared<RecallIndexCache>();
+    ensureRecallIndex();
 }
 
 LearningSnapshot::LearningSnapshot(const LearningSnapshot &other)
@@ -678,9 +687,11 @@ void LearningSnapshot::consolidate() {
         (*newIndex)[candidateKey(combined[idx].phrase, normalizePinyin(combined[idx].pinyin))].push_back(idx);
     }
 
-    baseRecallIndex_.reset();
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(combined));
     baseIndex_ = std::move(newIndex);
+    // Consolidation also runs on the input thread. Do not add a full recall
+    // index rebuild to every 32nd selection or each suppression operation.
+    baseRecallIndex_ = std::make_shared<RecallIndexCache>();
     delta_.clear();
     deltaIndex_.clear();
     selectionsSincePrune_ = 0;

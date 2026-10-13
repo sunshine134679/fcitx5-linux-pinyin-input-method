@@ -20,7 +20,7 @@ set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/sunshine134679/fcitx5-linu
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 # Explicit lower bounds for core runtime frameworks alongside dpkg-shlibdeps SONAME resolution.
 set(MODERNIME_DEB_BASE_DEPENDS
-    "fcitx5 (>= 5.0.14), libime-bin (>= 1.0.11) | libimecore0 (>= 1.0.11) | libimecore0t64 (>= 1.0.11), libgtk-3-0 (>= 3.24.0) | libgtk-3-0t64 (>= 3.24.0), libpango-1.0-0 (>= 1.44.0), libcairo2 (>= 1.16.0), libsqlite3-0 (>= 3.31.0), liblmdb0 (>= 0.9.24)"
+    "fcitx5 (>= 5.0.14), libime-bin (>= 1.0.11) | libimecore0 (>= 1.0.11) | libimecore0t64 (>= 1.0.11), libgtk-3-0 (>= 3.24.0) | libgtk-3-0t64 (>= 3.24.0), libpango-1.0-0 (>= 1.44.0), libcairo2 (>= 1.16.0), libsqlite3-0 (>= 3.31.0), liblmdb0 (>= 0.9.24), python3 (>= 3.10), coreutils"
 )
 find_program(MODERNIME_DPKG_SHLIBDEPS dpkg-shlibdeps)
 if(MODERNIME_DPKG_SHLIBDEPS)
@@ -65,7 +65,7 @@ set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     "/usr/share/icons/hicolor/scalable/apps"
 )
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "fcitx5 >= 5.0.14, libime >= 1.0.11, gtk3 >= 3.24.0, pango >= 1.44.0, cairo >= 1.16.0, sqlite >= 3.31.0, sqlite-libs >= 3.37.0, lmdb-libs >= 0.9.24, python3 >= 3.9, desktop-file-utils, hicolor-icon-theme"
+    "fcitx5 >= 5.0.14, libime >= 1.0.11, gtk3 >= 3.24.0, pango >= 1.44.0, cairo >= 1.16.0, sqlite >= 3.31.0, sqlite-libs >= 3.37.0, lmdb-libs >= 0.9.24, python3 >= 3.10, coreutils, desktop-file-utils, hicolor-icon-theme"
 )
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
     set(CPACK_RPM_PRE_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/preinst.sh")

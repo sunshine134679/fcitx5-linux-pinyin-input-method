@@ -95,11 +95,12 @@ private:
     static void pruneContextVariants(std::vector<LearningEntry> &entries);
     static void pruneTotalEntries(std::vector<LearningEntry> &entries, std::size_t limit);
     struct RecallIndex;
+    struct RecallIndexCache;
     static std::shared_ptr<const RecallIndex> buildRecallIndex(const std::vector<LearningEntry> &entries);
     const RecallIndex &ensureRecallIndex() const;
     std::shared_ptr<const std::vector<LearningEntry>> baseEntries_;
     std::shared_ptr<const std::unordered_map<std::string, std::vector<std::size_t>>> baseIndex_;
-    mutable std::shared_ptr<const RecallIndex> baseRecallIndex_;
+    std::shared_ptr<RecallIndexCache> baseRecallIndex_;
     std::unordered_map<std::string, LearningEntry> delta_;
     std::unordered_map<std::string, std::vector<std::string>> deltaIndex_;
     std::size_t totalEntryLimit_ = kMaxLearningEntries;

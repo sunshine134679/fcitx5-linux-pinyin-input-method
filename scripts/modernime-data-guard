@@ -296,7 +296,7 @@ def backup_lmdb(src_path: Path, dst_path: Path) -> dict:
     if os.environ.get("MODERNIME_SIMULATE_BACKUP_FAILURE") == "1":
         raise RuntimeError("Simulated backup failure via MODERNIME_SIMULATE_BACKUP_FAILURE=1")
 
-    src_info = verify_lmdb(src_path)
+    verify_lmdb(src_path)
     lib = _load_liblmdb()
     if lib is None:
         raise RuntimeError("liblmdb shared library unavailable for transactional backup")
@@ -332,14 +332,9 @@ def backup_lmdb(src_path: Path, dst_path: Path) -> dict:
         lib.mdb_env_close(env)
 
     dst_info = verify_lmdb(dst_path)
-    if dst_info["words_count"] != src_info["words_count"]:
-        raise RuntimeError(
-            f"LMDB backup entry count mismatch: src={src_info['words_count']} vs dst={dst_info['words_count']}"
-        )
-    if dst_info["schema_version"] != src_info["schema_version"]:
-        raise RuntimeError(
-            f"LMDB backup schema_version mismatch: src={src_info['schema_version']} vs dst={dst_info['schema_version']}"
-        )
+    # The source can change between verification and mdb_env_copy2. Verify the
+    # consistent copied snapshot and report its own counts/schema; comparing it
+    # with an earlier live observation rejects valid concurrent writer commits.
     return dst_info
 
 
@@ -419,7 +414,7 @@ def backup_sqlite(src_path: Path, dst_path: Path) -> dict:
     if os.environ.get("MODERNIME_SIMULATE_BACKUP_FAILURE") == "1":
         raise RuntimeError("Simulated backup failure via MODERNIME_SIMULATE_BACKUP_FAILURE=1")
 
-    src_info = verify_sqlite(src_path)
+    verify_sqlite(src_path)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     for stale in (dst_path, Path(f"{dst_path}-wal"), Path(f"{dst_path}-shm")):
         if stale.exists():
@@ -441,12 +436,8 @@ def backup_sqlite(src_path: Path, dst_path: Path) -> dict:
         src_conn.close()
 
     dst_info = verify_sqlite(dst_path)
-    if dst_info["entries_count"] != src_info["entries_count"]:
-        if dst_path.exists():
-            dst_path.unlink()
-        raise RuntimeError(
-            f"SQLite backup row count mismatch: src={src_info['entries_count']} vs dst={dst_info['entries_count']}"
-        )
+    # Connection.backup captures a consistent snapshot, which may legitimately
+    # include commits newer than the initial source verification.
     return dst_info
 
 

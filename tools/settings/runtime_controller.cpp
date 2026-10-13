@@ -12,7 +12,6 @@ namespace {
 
 constexpr guint waitTimeoutMs = 1500;
 constexpr guint startCheckTimeoutMs = 200;
-constexpr guint startOutputTimeoutMs = 250;
 constexpr int reloadAttempts = 20;
 constexpr guint reloadIntervalUs = 100000;
 
@@ -25,10 +24,28 @@ struct ProcessResult final {
     std::string error;
 };
 
-struct WaitState final {
-    GMainLoop *loop = nullptr;
-    GSubprocess *process = nullptr;
-    bool timedOut = false;
+// Each command owns its context, including its timeout. A worker must never
+// pump GTK's default context or dispatch another worker's stack callbacks.
+struct CommandLoop final {
+    GMainContext *context = g_main_context_new();
+    GMainLoop *loop = g_main_loop_new(context, FALSE);
+    GSource *timeout = nullptr;
+
+    CommandLoop() { g_main_context_push_thread_default(context); }
+    ~CommandLoop() {
+        if (timeout != nullptr) {
+            g_source_destroy(timeout);
+            g_source_unref(timeout);
+        }
+        g_main_context_pop_thread_default(context);
+        g_main_loop_unref(loop);
+        g_main_context_unref(context);
+    }
+    void setTimeout(guint milliseconds, GSourceFunc callback, gpointer data) {
+        timeout = g_timeout_source_new(milliseconds);
+        g_source_set_callback(timeout, callback, data, nullptr);
+        g_source_attach(timeout, context);
+    }
 };
 
 struct StartWaitState final {
@@ -42,8 +59,10 @@ struct StartWaitState final {
 struct CommunicationState final {
     GMainLoop *loop = nullptr;
     GCancellable *cancellable = nullptr;
+    GSubprocess *process = nullptr;
     bool timedOut = false;
     bool successful = false;
+    std::string standardOutput;
     std::string standardError;
     std::string error;
 };
@@ -57,21 +76,6 @@ std::string trim(std::string value) {
     value.erase(last + 1);
     value.erase(0, first);
     return value;
-}
-
-void waitFinished(GObject *object, GAsyncResult *result, gpointer data) {
-    auto *state = static_cast<WaitState *>(data);
-    GError *error = nullptr;
-    g_subprocess_wait_check_finish(G_SUBPROCESS(object), result, &error);
-    g_clear_error(&error);
-    g_main_loop_quit(state->loop);
-}
-
-gboolean killAfterTimeout(gpointer data) {
-    auto *state = static_cast<WaitState *>(data);
-    state->timedOut = true;
-    g_subprocess_force_exit(state->process);
-    return G_SOURCE_REMOVE;
 }
 
 void startFinished(GObject *object, GAsyncResult *result, gpointer data) {
@@ -96,16 +100,21 @@ gboolean cancelStartAfterTimeout(gpointer data) {
 void communicationFinished(GObject *object, GAsyncResult *result,
                            gpointer data) {
     auto *state = static_cast<CommunicationState *>(data);
+    gchar *standardOutput = nullptr;
     gchar *standardError = nullptr;
     GError *error = nullptr;
     state->successful = g_subprocess_communicate_utf8_finish(
-        G_SUBPROCESS(object), result, nullptr, &standardError, &error);
+        G_SUBPROCESS(object), result, &standardOutput, &standardError, &error);
+    if (standardOutput != nullptr) {
+        state->standardOutput = standardOutput;
+    }
     if (standardError != nullptr) {
         state->standardError = standardError;
     }
     if (error != nullptr) {
         state->error = error->message;
     }
+    g_free(standardOutput);
     g_free(standardError);
     g_clear_error(&error);
     g_main_loop_quit(state->loop);
@@ -114,6 +123,7 @@ void communicationFinished(GObject *object, GAsyncResult *result,
 gboolean cancelCommunicationAfterTimeout(gpointer data) {
     auto *state = static_cast<CommunicationState *>(data);
     state->timedOut = true;
+    g_subprocess_force_exit(state->process);
     g_cancellable_cancel(state->cancellable);
     return G_SOURCE_REMOVE;
 }
@@ -155,38 +165,23 @@ ProcessResult runCommand(const std::filesystem::path &executable,
     }
     result.started = true;
 
-    auto *loop = g_main_loop_new(nullptr, FALSE);
-    WaitState state{loop, process, false};
-    g_subprocess_wait_check_async(process, nullptr, waitFinished, &state);
-    const auto timeoutSource =
-        g_timeout_add(waitTimeoutMs, killAfterTimeout, &state);
-    g_main_loop_run(loop);
-    if (!state.timedOut) {
-        g_source_remove(timeoutSource);
-    }
-    g_main_loop_unref(loop);
-
-    gchar *standardOutput = nullptr;
-    gchar *standardError = nullptr;
-    GError *communicationError = nullptr;
-    if (!g_subprocess_communicate_utf8(process, nullptr, nullptr,
-                                       &standardOutput, &standardError,
-                                       &communicationError)) {
-        result.error = communicationError == nullptr
-                           ? "unable to read fcitx5-remote output"
-                           : communicationError->message;
-        g_clear_error(&communicationError);
-    }
-    if (standardOutput != nullptr) {
-        result.standardOutput = standardOutput;
-    }
-    if (standardError != nullptr) {
-        result.standardError = standardError;
-    }
-    g_free(standardOutput);
-    g_free(standardError);
+    CommandLoop loop;
+    auto *cancellable = g_cancellable_new();
+    CommunicationState state{loop.loop, cancellable, process, false, false,
+                             {}, {}, {}};
+    // Drain output while waiting. The deadline also covers descendants that
+    // inherit a pipe after the direct child has exited.
+    g_subprocess_communicate_utf8_async(process, nullptr, cancellable,
+                                      communicationFinished, &state);
+    loop.setTimeout(waitTimeoutMs, cancelCommunicationAfterTimeout, &state);
+    g_main_loop_run(loop.loop);
+    g_object_unref(cancellable);
+    result.standardOutput = std::move(state.standardOutput);
+    result.standardError = std::move(state.standardError);
+    result.error = std::move(state.error);
     result.timedOut = state.timedOut;
-    result.successful = !result.timedOut && g_subprocess_get_successful(process);
+    result.successful = !result.timedOut && state.successful &&
+                        g_subprocess_get_successful(process);
     g_object_unref(process);
     return result;
 }
@@ -202,7 +197,9 @@ ProcessResult startCommand(const std::filesystem::path &executable,
 
     GSubprocessLauncher *launcher = g_subprocess_launcher_new(
         static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
-                                      G_SUBPROCESS_FLAGS_STDERR_PIPE));
+                                      G_SUBPROCESS_FLAGS_STDERR_SILENCE));
+    // A daemon may inherit stderr long after this probe returns. Closing a
+    // captured pipe would terminate it with SIGPIPE on its next log write.
     for (const auto &[name, value] : environment) {
         g_subprocess_launcher_setenv(launcher, name.c_str(), value.c_str(),
                                      TRUE);
@@ -229,18 +226,13 @@ ProcessResult startCommand(const std::filesystem::path &executable,
 
     result.started = true;
 
-    auto *loop = g_main_loop_new(nullptr, FALSE);
+    CommandLoop loop;
     auto *cancellable = g_cancellable_new();
-    StartWaitState state{loop, cancellable, false, false, {}};
+    StartWaitState state{loop.loop, cancellable, false, false, {}};
     g_subprocess_wait_check_async(process, cancellable, startFinished, &state);
-    const auto timeoutSource =
-        g_timeout_add(startCheckTimeoutMs, cancelStartAfterTimeout, &state);
-    g_main_loop_run(loop);
-    if (!state.timedOut) {
-        g_source_remove(timeoutSource);
-    }
+    loop.setTimeout(startCheckTimeoutMs, cancelStartAfterTimeout, &state);
+    g_main_loop_run(loop.loop);
     g_object_unref(cancellable);
-    g_main_loop_unref(loop);
 
     if (state.timedOut) {
         // A running daemon is expected not to exit during the short startup
@@ -250,32 +242,8 @@ ProcessResult startCommand(const std::filesystem::path &executable,
         return result;
     }
 
-    auto *communicationLoop = g_main_loop_new(nullptr, FALSE);
-    auto *communicationCancellable = g_cancellable_new();
-    CommunicationState communicationState{
-        communicationLoop, communicationCancellable, false, false, {}, {}};
-    g_subprocess_communicate_utf8_async(
-        process, nullptr, communicationCancellable, communicationFinished,
-        &communicationState);
-    const auto communicationTimeoutSource = g_timeout_add(
-        startOutputTimeoutMs, cancelCommunicationAfterTimeout,
-        &communicationState);
-    g_main_loop_run(communicationLoop);
-    if (!communicationState.timedOut) {
-        g_source_remove(communicationTimeoutSource);
-    }
-    g_object_unref(communicationCancellable);
-    g_main_loop_unref(communicationLoop);
-    result.standardError = std::move(communicationState.standardError);
-    if (!communicationState.error.empty()) {
-        result.error = communicationState.error;
-    } else if (!result.standardError.empty()) {
-        result.error = trim(result.standardError);
-    } else if (communicationState.timedOut) {
-        result.error = "读取 Fcitx5 启动输出超时";
-    }
     result.successful = state.successful;
-    if (!result.successful && result.error.empty()) {
+    if (!result.successful) {
         result.error = state.error;
     }
     g_object_unref(process);

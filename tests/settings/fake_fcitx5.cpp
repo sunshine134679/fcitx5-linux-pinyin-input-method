@@ -29,6 +29,15 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         if (child == 0) {
+            if (const auto *marker = std::getenv("FAKE_FCITX5_LATE_OUTPUT_MARKER")) {
+                usleep(600000);
+                const char message[] = "daemon startup finished\n";
+                if (write(STDERR_FILENO, message, sizeof(message) - 1) < 0) {
+                    _exit(EXIT_FAILURE);
+                }
+                std::ofstream(marker) << "alive\n";
+                _exit(EXIT_SUCCESS);
+            }
             sleep(seconds > 0 ? static_cast<unsigned int>(seconds) : 2U);
             _exit(EXIT_SUCCESS);
         }

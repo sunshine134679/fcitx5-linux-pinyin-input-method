@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 # Shared ownership checks for generated integration files.
 # Callers set managed_state_dir; snapshots contain only installer-generated data.
+modernime_desktop_argument() {
+    # Desktop Entry values are decoded before Exec quoting is decoded.
+    # Escape both layers, including literal percent field-code characters.
+    local value=$1 character index
+    printf '"'
+    for ((index = 0; index < ${#value}; ++index)); do
+        character=${value:index:1}
+        case "$character" in
+            '\') printf '%s' '\\\\' ;;
+            '"'|'$'|'`') printf '%s%s' '\\' "$character" ;;
+            '%') printf '%%%%' ;;
+            $'\n') printf '%s' '\n' ;;
+            $'\r') printf '%s' '\r' ;;
+            $'\t') printf '%s' '\t' ;;
+            *) printf '%s' "$character" ;;
+        esac
+    done
+    printf '"'
+}
+
 modernime_write_managed_file() {
     local expected=$1 target=$2 key=$3
     local baseline="$managed_state_dir/$key.content"

@@ -56,11 +56,8 @@ rollback_on_failure() {
             cp -a --remove-destination -- "$backup_dir/." "$prefix/" 2>/dev/null || true
             rm -rf -- "$backup_dir"
         fi
-        if [[ "${is_system_prefix:-false}" != true && -x "$project_root/scripts/modernime-data-guard" ]]; then
-            "$project_root/scripts/modernime-data-guard" --restore \
-                --data-dir "${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}/modernime" \
-                --config-dir "${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}/modernime" 2>/dev/null || true
-        fi
+        # Roll back payload files only; live user writes made after the backup
+        # remain valid and must not be replaced with a pre-upgrade snapshot.
         printf 'Rollback to previous version completed.\n' >&2
     fi
     cleanup_stage

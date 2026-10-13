@@ -14,6 +14,11 @@ if [[ -z "$prefix" ]]; then
 fi
 
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
+if [[ -f "$script_dir/install_state.sh" ]]; then
+    source "$script_dir/install_state.sh"
+else
+    source "$prefix/share/modernime/install_state.sh"
+fi
 environment_dir="$config_home/environment.d"
 environment_file="$environment_dir/90-modernime.conf"
 autostart_dir="$config_home/autostart"
@@ -50,8 +55,12 @@ fi
 prefix_addon_dir=${prefix_addon_dir:-"$prefix/lib/fcitx5"}
 
 system_addon_dir=""
+system_libdir=$(pkg-config --variable=libdir Fcitx5Utils 2>/dev/null || true)
+if [[ -n "$system_libdir" ]]; then
+    system_addon_dir="$system_libdir/fcitx5"
+fi
 for sys_dir in /usr/lib64/fcitx5 /usr/lib/x86_64-linux-gnu/fcitx5 /usr/lib/aarch64-linux-gnu/fcitx5 /usr/lib/fcitx5; do
-    if [[ -d "$sys_dir" ]]; then
+    if [[ -z "$system_addon_dir" && -d "$sys_dir" ]]; then
         system_addon_dir="$sys_dir"
         break
     fi
@@ -69,7 +78,7 @@ esac
 mkdir -p "$environment_dir"
 env_tmp=$(mktemp "$environment_dir/.modernime-env.XXXXXX")
 {
-    printf 'FCITX_ADDON_DIRS=%s:%s\n' "$prefix_addon_dir" "$system_addon_dir"
+    printf 'FCITX_ADDON_DIRS="%s:%s"\n' "$prefix_addon_dir" "$system_addon_dir"
     printf 'XDG_DATA_DIRS="%s/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix"
     printf 'GTK_IM_MODULE=fcitx\n'
     printf 'QT_IM_MODULE=fcitx\n'
@@ -80,7 +89,7 @@ env_tmp=$(mktemp "$environment_dir/.modernime-env.XXXXXX")
 # 4. Write autostart entry
 mkdir -p "$autostart_dir"
 auto_tmp=$(mktemp "$autostart_dir/.modernime-auto.XXXXXX")
-autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir XDG_DATA_DIRS=$data_directories fcitx5 -d -u modernime-ui"
+autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") fcitx5 -d -u modernime-ui"
 {
     printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
     printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
@@ -89,29 +98,13 @@ autostart_exec="env FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir XDG_DAT
 } > "$auto_tmp"
 
 managed_state_dir="$prefix/share/modernime/managed-files"
-if [[ -f "$managed_state_dir/environment.content" ]] && [[ -f "$environment_file" ]] && ! cmp -s "$managed_state_dir/environment.content" "$environment_file"; then
-    rm -f "$env_tmp"
-    printf 'Preserving user-modified session environment: %s\n' "$environment_file"
-else
-    mv -f "$env_tmp" "$environment_file"
-    if [[ -d "$managed_state_dir" && -w "$managed_state_dir" ]]; then
-        cp "$environment_file" "$managed_state_dir/environment.content"
-        printf '%s\n' "$environment_file" > "$managed_state_dir/environment.path"
-    fi
-    printf 'Updated session environment: %s\n' "$environment_file"
+if [[ ! -w "$managed_state_dir" && ! -w "$prefix/share/modernime" ]]; then
+    # System packages cannot store per-user ownership records in /usr.
+    managed_state_dir="$config_home/modernime/session-managed-files"
 fi
-
-if [[ -f "$managed_state_dir/autostart.content" ]] && [[ -f "$autostart_file" ]] && ! cmp -s "$managed_state_dir/autostart.content" "$autostart_file"; then
-    rm -f "$auto_tmp"
-    printf 'Preserving user-modified autostart entry: %s\n' "$autostart_file"
-else
-    mv -f "$auto_tmp" "$autostart_file"
-    if [[ -d "$managed_state_dir" && -w "$managed_state_dir" ]]; then
-        cp "$autostart_file" "$managed_state_dir/autostart.content"
-        printf '%s\n' "$autostart_file" > "$managed_state_dir/autostart.path"
-    fi
-    printf 'Updated user autostart:     %s\n' "$autostart_file"
-fi
+modernime_write_managed_file "$env_tmp" "$environment_file" environment
+modernime_write_managed_file "$auto_tmp" "$autostart_file" autostart
+rm -f -- "$env_tmp" "$auto_tmp"
 
 # 4. Configure Fcitx5 profile to ensure modernime is in input method list
 mkdir -p "$fcitx5_config_dir"
@@ -168,14 +161,49 @@ elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
 elif [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
     printf 'Notice: No D-Bus session detected; reload skipped.\n'
 else
-    if command -v fcitx5-remote >/dev/null 2>&1; then
-        fcitx5-remote -r >/dev/null 2>&1 || true
-        fcitx5-remote -s modernime >/dev/null 2>&1 || true
-        current_im=$(fcitx5-remote -n 2>/dev/null || true)
-        if [[ "$current_im" == "modernime" ]]; then
-            printf 'Fcitx5 reloaded successfully. Active input method: modernime\n'
+    fcitx_environment=(env "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
+                       "XDG_DATA_DIRS=$data_directories" "XDG_CONFIG_HOME=$config_home")
+    run_remote() {
+        "${fcitx_environment[@]}" timeout --kill-after=0.5s 1s fcitx5-remote "$@" 2>/dev/null
+    }
+    if ! command -v fcitx5-remote >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+        printf 'Notice: fcitx5-remote or timeout not found; runtime activation skipped.\n'
+    else
+        current_state=""
+        query_result=0
+        current_state=$(run_remote) || query_result=$?
+        if [[ "$query_result" == 124 || "$query_result" == 137 ]]; then
+            printf 'Fcitx5 could not be activated: status query timed out.\n'
         else
-            printf 'Fcitx5 configuration reloaded. Current input method: %s (switch using shortcut or: fcitx5-remote -s modernime)\n' "${current_im:-none}"
+            case "$current_state" in
+                0|1|2) run_remote -r >/dev/null || true ;;
+                *) "${fcitx_environment[@]}" timeout --kill-after=1s 3s fcitx5 -d -u modernime-ui >/dev/null 2>&1 || true ;;
+            esac
+            activated=false
+            for attempt in {1..10}; do
+                query_result=0
+                current_state=$(run_remote) || query_result=$?
+                if [[ "$query_result" == 124 || "$query_result" == 137 ]]; then break; fi
+                if [[ "$current_state" == 0 ]] && run_remote -m modernime >/dev/null; then
+                    activated=true
+                    break
+                fi
+                if [[ "$current_state" == 1 || "$current_state" == 2 ]] &&
+                   run_remote -s modernime >/dev/null && run_remote -o >/dev/null; then
+                    current_im=$(run_remote -n) || current_im=""
+                    current_state=$(run_remote) || current_state=""
+                    if [[ "$current_im" == modernime && "$current_state" == 2 ]]; then
+                        activated=true
+                        break
+                    fi
+                fi
+                sleep 0.1
+            done
+            if [[ "$activated" == true ]]; then
+                printf 'Fcitx5 initialized successfully. ModernIME is ready.\n'
+            else
+                printf 'Fcitx5 could not be activated automatically; check the session and use: fcitx5-remote -s modernime\n'
+            fi
         fi
     fi
 fi

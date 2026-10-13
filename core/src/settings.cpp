@@ -1,6 +1,7 @@
 #include "modernime/core/settings.h"
 
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
@@ -48,14 +49,17 @@ bool parseInteger(std::string_view value, int &result) {
     if (value.empty()) {
         return false;
     }
-    int accumulator = 0;
-    for (const char character : value) {
-        if (character < '0' || character > '9') {
-            return false;
-        }
-        accumulator = accumulator * 10 + (character - '0');
+    if (value.front() < '0' || value.front() > '9') {
+        return false;
     }
-    result = accumulator;
+    int parsed = 0;
+    const auto conversion = std::from_chars(value.data(),
+                                            value.data() + value.size(), parsed);
+    if (conversion.ec != std::errc{} ||
+        conversion.ptr != value.data() + value.size()) {
+        return false;
+    }
+    result = parsed;
     return true;
 }
 

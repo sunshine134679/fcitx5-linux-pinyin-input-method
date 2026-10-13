@@ -67,9 +67,6 @@ private:
     static void applyEvent(LearningSnapshot &snapshot, const Event &event);
     void refreshBeforeEnqueue();
 
-    // 单个批次写失败后的退避重试间隔；初始 2 秒，翻倍至 30 秒上限。
-    static constexpr std::chrono::seconds kInitialBackoff{2};
-    static constexpr std::chrono::seconds kMaxBackoff{30};
     // 待落库事件队列上限；超出时丢弃最旧事件，防止磁盘持续故障时无界增长。
     static constexpr std::size_t kMaxQueuedEvents = 100;
 

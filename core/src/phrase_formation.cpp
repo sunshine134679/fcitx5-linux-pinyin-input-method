@@ -243,17 +243,31 @@ std::vector<FormedPhrase> PhraseFormationTracker::recordCommit(
 
     // Bounded stats capacity
     if (sharedStats_->sequenceStats.size() > 500) {
-        std::vector<std::string> keysToErase;
-        for (const auto &[k, v] : sharedStats_->sequenceStats) {
-            if (!v.formed && v.count < 3) {
-                keysToErase.push_back(k);
-                if (sharedStats_->sequenceStats.size() - keysToErase.size() <= 400) {
-                    break;
-                }
-            }
+        // Formed phrases already live in the learning store. Keep this
+        // transient repetition cache recent, so 500 old formed sequences
+        // cannot permanently evict every newly observed phrase.
+        std::vector<std::string> oldest;
+        oldest.reserve(sharedStats_->sequenceStats.size());
+        for (const auto &[key, stats] : sharedStats_->sequenceStats) {
+            (void)stats;
+            oldest.push_back(key);
         }
-        for (const auto &k : keysToErase) {
-            sharedStats_->sequenceStats.erase(k);
+        const auto eraseCount = oldest.size() - 400;
+        std::partial_sort(oldest.begin(), oldest.begin() +
+                              static_cast<std::ptrdiff_t>(eraseCount),
+                          oldest.end(), [&](const auto &left, const auto &right) {
+            const auto &a = sharedStats_->sequenceStats.at(left);
+            const auto &b = sharedStats_->sequenceStats.at(right);
+            if (a.lastObservedMs != b.lastObservedMs) {
+                return a.lastObservedMs < b.lastObservedMs;
+            }
+            if (a.formed != b.formed) {
+                return !a.formed;
+            }
+            return left < right;
+        });
+        for (std::size_t index = 0; index < eraseCount; ++index) {
+            sharedStats_->sequenceStats.erase(oldest[index]);
         }
     }
 

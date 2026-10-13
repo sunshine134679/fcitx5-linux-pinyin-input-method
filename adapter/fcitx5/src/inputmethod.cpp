@@ -343,9 +343,8 @@ void FcitxInputContextState::applySettings(
     controller().setOptions(controllerOptions(settings));
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     if (provider_ != nullptr) {
-        provider_->setLearningEnabled(settings.learningEnabled);
-        provider_->setContextLearningEnabled(
-            settings.contextLearningEnabled);
+        // setOptions applies learning flags through the controller's sensitive
+        // context gate. Do not bypass it while hot-reloading other preferences.
         provider_->setEnglishDefinitionEnabled(
             settings.englishDefinitionEnabled);
         provider_->setClipboardEnabled(settings.clipboardEnabled);

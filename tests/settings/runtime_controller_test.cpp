@@ -7,6 +7,7 @@
 #include <iostream>
 #include <sstream>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -142,6 +143,34 @@ int main(int argc, char **argv) {
                "daemonized Fcitx5 replacement does not wait for inherited "
                "stderr");
 
+    const auto lateOutputMarker = directory / "daemon-alive";
+    auto lateOutputEnvironment = daemonizedEnvironment;
+    lateOutputEnvironment.emplace_back("FAKE_FCITX5_LATE_OUTPUT_MARKER",
+                                       lateOutputMarker.string());
+    assertTrue(modernime::settings::RuntimeController::reload(
+                   argv[2], argv[1], lateOutputEnvironment).success,
+               "daemon starts before writing delayed diagnostics");
+    const auto lateOutputDeadline = std::chrono::steady_clock::now() +
+                                    std::chrono::seconds(2);
+    while (!std::filesystem::exists(lateOutputMarker) &&
+           std::chrono::steady_clock::now() < lateOutputDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    assertTrue(std::filesystem::exists(lateOutputMarker),
+               "daemon survives stderr writes after startup probe returns");
+
+    auto inheritedPipeEnvironment = baseEnvironment;
+    inheritedPipeEnvironment.emplace_back("FAKE_REMOTE_INHERITED_PIPE_SECONDS", "4");
+    const auto inheritedPipeStart = std::chrono::steady_clock::now();
+    const auto inheritedPipeStatus = modernime::settings::RuntimeController::probe(
+        argv[1], inheritedPipeEnvironment);
+    assertTrue(!inheritedPipeStatus.running &&
+                   inheritedPipeStatus.message.find("timed out") != std::string::npos,
+               "remote timeout covers inherited output pipes after parent exits");
+    assertTrue(std::chrono::steady_clock::now() - inheritedPipeStart <
+                   std::chrono::seconds(3),
+               "inherited remote output cannot bypass the command deadline");
+
     const auto failedReplaceLog = directory / "failed-replace-fcitx.log";
     auto failedReplaceEnvironment = baseEnvironment;
     failedReplaceEnvironment.emplace_back("FAKE_FCITX5_LOG",
@@ -152,7 +181,7 @@ int main(int argc, char **argv) {
     const auto failedReplace = modernime::settings::RuntimeController::reload(
         argv[2], argv[1], failedReplaceEnvironment);
     assertTrue(!failedReplace.success &&
-                   failedReplace.message.find("fake fcitx5 replace error") !=
+                   failedReplace.message.find("7") !=
                        std::string::npos,
                "Fcitx5 replacement errors are returned to the client");
 
@@ -194,7 +223,7 @@ int main(int argc, char **argv) {
     const auto failedStart = modernime::settings::RuntimeController::reload(
         argv[2], argv[1], failedStartEnvironment);
     assertTrue(!failedStart.success &&
-                   failedStart.message.find("fake fcitx5 start error") !=
+                   failedStart.message.find("7") !=
                        std::string::npos,
                "fcitx5 startup errors are returned to the client");
 

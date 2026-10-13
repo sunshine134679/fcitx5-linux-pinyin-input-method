@@ -3,6 +3,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 
 namespace {
 
@@ -41,6 +42,12 @@ void markActivated() {
 
 int main(int argc, char **argv) {
     logInvocation(argc, argv);
+    if (const auto *delay = std::getenv("FAKE_REMOTE_INHERITED_PIPE_SECONDS")) {
+        if (fork() == 0) {
+            sleep(static_cast<unsigned int>(std::atoi(delay)));
+            _exit(EXIT_SUCCESS);
+        }
+    }
     if (argc == 2 && std::string_view(argv[1]) == "-n") {
         if (std::string_view(environmentValue(
                 "FAKE_REMOTE_INPUT_METHOD_EMPTY", "0")) == "1") {

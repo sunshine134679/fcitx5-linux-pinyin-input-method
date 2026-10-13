@@ -97,6 +97,11 @@ bool LearningWriter::enqueueForPersistence(Event event) {
     }
     event.resetRevision = resetRevision_;
     events_.push_back(std::move(event));
+    if (!durablyAvailable) {
+        while (events_.size() > kMaxQueuedEvents) {
+            events_.pop_front();
+        }
+    }
     if (!durablyAvailable && retryExhausted_ && !processing_) {
         retryExhausted_ = false;
         automaticRetryCyclesRemaining_ = 1;
@@ -301,9 +306,13 @@ void LearningWriter::run() {
             processingEvents_ = events;
         }
 
-        std::lock_guard storeLock(storeMutex_);
-        const bool success = persistBatch(events);
-        const auto freshState = success ? store_->readState() : std::nullopt;
+        bool success = false;
+        std::optional<LearningStoreState> freshState;
+        {
+            std::lock_guard storeLock(storeMutex_);
+            success = persistBatch(events);
+            freshState = success ? store_->readState() : std::nullopt;
+        }
 
         {
             std::lock_guard lock(mutex_);
@@ -311,6 +320,11 @@ void LearningWriter::run() {
                 events_.insert(events_.begin(),
                                std::make_move_iterator(events.begin()),
                                std::make_move_iterator(events.end()));
+                // Include the in-flight failed batch in the limit. Events
+                // arriving during persistence are newer and take priority.
+                while (events_.size() > kMaxQueuedEvents) {
+                    events_.pop_front();
+                }
                 storageAvailable_ = false;
                 retryExhausted_ = true;
             } else {

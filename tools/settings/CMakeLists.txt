@@ -1,4 +1,6 @@
 find_package(PkgConfig REQUIRED)
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_check_modules(FCITX5_UTILS QUIET Fcitx5Utils)
 
@@ -54,3 +56,5 @@ install(PROGRAMS
     DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/desktop/modernime-settings.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/install_state.sh
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/modernime)
