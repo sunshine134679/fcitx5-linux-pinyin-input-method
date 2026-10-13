@@ -1299,4 +1299,105 @@ fi
 
 printf '==> [Gate 7f] Isolated zero-cache GPG passphrase matrix (correct/missing/wrong) & timeout/signal (124/137) rejection: VERIFIED [%s; fallback branch: EXECUTED & PASSED]\n' "${rpmsign_mode_label}"
 
+# 7g. Release tag resolution, immutable product source SHA binding, and version-mismatch rejection
+tag_test_repo="${work_dir}/tag-bind-repo"
+mkdir -p "${tag_test_repo}"
+git -C "${tag_test_repo}" init -q
+git -C "${tag_test_repo}" config user.name "Test Release Bot"
+git -C "${tag_test_repo}" config user.email "release-test@modernime.org"
+cat > "${tag_test_repo}/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.24)
+project(ModernIME VERSION 0.1.9 LANGUAGES CXX)
+EOF
+git -C "${tag_test_repo}" add CMakeLists.txt
+git -C "${tag_test_repo}" commit -q -m "release: v0.1.9 product source"
+tag_commit_019=$(git -C "${tag_test_repo}" rev-parse --verify HEAD)
+git -C "${tag_test_repo}" tag -a v0.1.9 -m "ModernIME v0.1.9"
+# Create a mismatched annotated tag v0.1.8 pointing to the 0.1.9 commit
+git -C "${tag_test_repo}" tag -a v0.1.8 -m "Mismatched tag pointing to 0.1.9 source"
+
+# Advance main HEAD with subsequent workflow/Version commits to verify workflow_dispatch binds to v0.1.9's commit, NOT main HEAD
+cat > "${tag_test_repo}/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.24)
+project(ModernIME VERSION 0.2.0 LANGUAGES CXX)
+EOF
+git -C "${tag_test_repo}" add CMakeLists.txt
+git -C "${tag_test_repo}" commit -q -m "chore: advance main past v0.1.9"
+main_head_sha=$(git -C "${tag_test_repo}" rev-parse --verify HEAD)
+[ "${tag_commit_019}" != "${main_head_sha}" ] || fail "tag_commit_019 should differ from main_head_sha"
+
+gh_out_dispatch="${work_dir}/gh-out-dispatch.txt"
+"${repo_root}/scripts/resolve_release_target.sh" \
+    --event-name workflow_dispatch \
+    --ref-type branch \
+    --ref-name main \
+    --input-tag v0.1.9 \
+    --repo-dir "${tag_test_repo}" \
+    --github-output "${gh_out_dispatch}" >/dev/null
+grep -Fxq "tag=v0.1.9" "${gh_out_dispatch}" || fail "resolve_release_target.sh did not output tag=v0.1.9 for workflow_dispatch"
+grep -Fxq "version=0.1.9" "${gh_out_dispatch}" || fail "resolve_release_target.sh did not output version=0.1.9 for workflow_dispatch"
+grep -Fxq "source_sha=${tag_commit_019}" "${gh_out_dispatch}" || fail "resolve_release_target.sh did not bind source_sha to v0.1.9 commit (${tag_commit_019})"
+
+gh_out_push="${work_dir}/gh-out-push.txt"
+"${repo_root}/scripts/resolve_release_target.sh" \
+    --event-name push \
+    --ref-type tag \
+    --ref-name v0.1.9 \
+    --repo-dir "${tag_test_repo}" \
+    --github-output "${gh_out_push}" >/dev/null
+grep -Fxq "tag=v0.1.9" "${gh_out_push}" || fail "resolve_release_target.sh did not output tag=v0.1.9 for push tag"
+grep -Fxq "source_sha=${tag_commit_019}" "${gh_out_push}" || fail "resolve_release_target.sh did not bind source_sha for push tag"
+
+# Reject workflow_dispatch without tag_name
+assert_normal_nonzero_failure \
+    "resolve_release_target.sh must reject workflow_dispatch when tag_name is empty" \
+    "${repo_root}/scripts/resolve_release_target.sh" \
+    --event-name workflow_dispatch \
+    --ref-type branch \
+    --ref-name main \
+    --input-tag "" \
+    --repo-dir "${tag_test_repo}"
+
+# Reject non-existent tag
+assert_normal_nonzero_failure \
+    "resolve_release_target.sh must reject non-existent release tag" \
+    "${repo_root}/scripts/resolve_release_target.sh" \
+    --event-name workflow_dispatch \
+    --input-tag v0.9.9 \
+    --repo-dir "${tag_test_repo}"
+
+# Reject tag whose CMakeLists.txt version does not match tag version
+assert_normal_nonzero_failure \
+    "resolve_release_target.sh must reject tag v0.1.8 when target commit CMakeLists.txt version is 0.1.9" \
+    "${repo_root}/scripts/resolve_release_target.sh" \
+    --event-name workflow_dispatch \
+    --input-tag v0.1.8 \
+    --repo-dir "${tag_test_repo}"
+
+# Reject push event on a branch instead of a tag
+assert_normal_nonzero_failure \
+    "resolve_release_target.sh must reject push event when ref_type is branch" \
+    "${repo_root}/scripts/resolve_release_target.sh" \
+    --event-name push \
+    --ref-type branch \
+    --ref-name main \
+    --repo-dir "${tag_test_repo}"
+
+# Reject building from main HEAD when bound to v0.1.9 source_sha
+assert_normal_nonzero_failure \
+    "resolve_release_target.sh --assert-checkout-sha must reject building from main HEAD instead of bound tag commit" \
+    "${repo_root}/scripts/resolve_release_target.sh" \
+    --assert-checkout-sha "${tag_commit_019}" \
+    --assert-version "0.1.9" \
+    --repo-dir "${tag_test_repo}"
+
+# Checkout bound tag commit and verify --assert-checkout-sha succeeds
+git -C "${tag_test_repo}" checkout -q "${tag_commit_019}"
+"${repo_root}/scripts/resolve_release_target.sh" \
+    --assert-checkout-sha "${tag_commit_019}" \
+    --assert-version "0.1.9" \
+    --repo-dir "${tag_test_repo}" >/dev/null || fail "--assert-checkout-sha failed on valid bound tag checkout"
+
+printf '==> [Gate 7g] Release tag resolution, immutable source SHA binding & version-mismatch rejection: VERIFIED\n'
+
 printf 'PASS: All 7 package, signed repository, real APT client, and rollback gate checks succeeded (%s; %s).\n' "${rpmkeys_status_summary}" "${rpmsign_status_summary}"

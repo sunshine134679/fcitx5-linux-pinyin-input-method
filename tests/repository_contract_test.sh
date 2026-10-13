@@ -74,11 +74,21 @@ grep -F '%{_bindir}/modernime-session-init' "$project_root/packaging/rpm/moderni
 
 for helper_script in "$project_root/scripts/modernime-migrate-channel" \
                      "$project_root/scripts/build_apt_repo.sh" \
-                     "$project_root/scripts/build_rpm_repo.sh"; do
+                     "$project_root/scripts/build_rpm_repo.sh" \
+                     "$project_root/scripts/resolve_release_target.sh"; do
     test -f "$helper_script" && test -x "$helper_script"
     bash -n "$helper_script"
 done
 test -f "$project_root/scripts/modernime-data-guard" && test -x "$project_root/scripts/modernime-data-guard"
+
+release_wf="$project_root/.github/workflows/release.yml"
+test -f "$release_wf"
+grep -F 'required: true' "$release_wf" >/dev/null
+grep -F 'scripts/resolve_release_target.sh' "$release_wf" >/dev/null
+grep -F 'scripts/modernime-data-guard" --init-lmdb' "$release_wf" >/dev/null
+test "$(grep -Fc 'ref: ${{ needs.resolve-target.outputs.source_sha }}' "$release_wf")" -eq 4
+test "$(grep -Fc 'Product Source Commit SHA:' "$release_wf")" -eq 4
+grep -F 'target_commitish: ${{ needs.resolve-target.outputs.source_sha }}' "$release_wf" >/dev/null
 
 test -f "$project_root/packaging/apt/modernime.sources.in"
 grep -F 'Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg' "$project_root/packaging/apt/modernime.sources.in" >/dev/null
