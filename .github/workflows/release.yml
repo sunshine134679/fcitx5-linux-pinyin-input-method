@@ -224,10 +224,11 @@ jobs:
           cp -f /tmp/oe-repo/client/modernime-openeuler-24.09.repo /etc/yum.repos.d/local-modernime.repo
           sed -i 's|^baseurl=.*|baseurl=file:///tmp/oe-repo/oe2409/x86_64|' /etc/yum.repos.d/local-modernime.repo
           sed -i 's|^gpgkey=.*|gpgkey=file:///tmp/oe-repo/RPM-GPG-KEY-modernime|' /etc/yum.repos.d/local-modernime.repo
-          dnf makecache --disablerepo="*" --enablerepo="modernime-openeuler"
-          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          dnf clean all -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09"
+          dnf makecache -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09"
+          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime-0.1.8-1.oe2409
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
-          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
           rpm -V modernime
           test -x /usr/bin/modernime-settings
@@ -235,7 +236,7 @@ jobs:
           test -f /usr/share/modernime/install-channel.txt
           test "$(stat -c '%a' /usr/share/modernime/install-channel.txt)" = "644"
           grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
-          dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime-0.1.8-1.oe2409
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
           rpm -V modernime
           dnf remove -y modernime

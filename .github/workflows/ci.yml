@@ -284,12 +284,12 @@ jobs:
           sed -i "s|^baseurl=.*|baseurl=file://${REPO_DIR}/oe2409/x86_64|" /etc/yum.repos.d/local-modernime.repo
           sed -i "s|^gpgkey=.*|gpgkey=file://${REPO_DIR}/RPM-GPG-KEY-modernime|" /etc/yum.repos.d/local-modernime.repo
 
-          dnf clean all --disablerepo="*" --enablerepo="modernime-openeuler"
-          dnf makecache --disablerepo="*" --enablerepo="modernime-openeuler"
-          dnf --showduplicates list --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          dnf clean all -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09"
+          dnf makecache -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09"
+          dnf --showduplicates list -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime
 
           # Install v0.1.8 baseline
-          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          dnf install -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime-0.1.8-1.oe2409
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
           grep -Fx "channel=rpm" /usr/share/modernime/install-channel.txt
           grep -Fx "version=0.1.8" /usr/share/modernime/install-channel.txt
@@ -298,25 +298,19 @@ jobs:
           mkdir -p /root/.config/modernime /root/.local/share/modernime
           printf 'page_size=9\ncustom_theme=ocean\n' > /root/.config/modernime/settings.conf
           printf '开源欧拉\tkai yuan ou la\t980\n' > /root/.local/share/modernime/user-dictionary.txt
-          python3 - /root/.local/share/modernime/learning.sqlite3 /root/.local/share/modernime/learning.lmdb <<'PYEOF'
-          import ctypes, sqlite3, sys
-          from pathlib import Path
+          /usr/bin/modernime-data-guard --init-lmdb /root/.local/share/modernime/learning.lmdb
+          python3 - /root/.local/share/modernime/learning.sqlite3 <<'PYEOF'
+          import sqlite3, sys
           conn = sqlite3.connect(sys.argv[1])
           conn.execute("PRAGMA journal_mode=WAL;")
           conn.execute("CREATE TABLE user_ngram (key TEXT PRIMARY KEY, phrase TEXT, freq INTEGER);")
           conn.execute("INSERT INTO user_ngram VALUES ('nihao', '你好世界', 42);")
           conn.commit()
           conn.close()
-          lib = ctypes.CDLL("liblmdb.so.0" if Path("/usr/lib64/liblmdb.so.0").exists() else "liblmdb.so")
-          env = ctypes.c_void_p()
-          assert lib.mdb_env_create(ctypes.byref(env)) == 0
-          assert lib.mdb_env_set_mapsize(env, 1048576) == 0
-          assert lib.mdb_env_open(env, sys.argv[2].encode(), 0x4000, 0o644) == 0
-          lib.mdb_env_close(env)
           PYEOF
 
           # Upgrade 0.1.8 -> 0.1.9
-          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
           rpm -V modernime
           for exec_bin in \
@@ -341,14 +335,14 @@ jobs:
           /usr/bin/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime
 
           # Downgrade / Rollback 0.1.9 -> 0.1.8
-          dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime-0.1.8-1.oe2409
+          dnf downgrade -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime-0.1.8-1.oe2409
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "0.1.8"
           rpm -V modernime
           grep -Fx "version=0.1.8" /usr/share/modernime/install-channel.txt
           /usr/bin/modernime-data-guard --verify --data-dir /root/.local/share/modernime --config-dir /root/.config/modernime
 
           # Re-upgrade 0.1.8 -> 0.1.9 and Uninstall
-          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler" modernime
+          dnf upgrade -y --disablerepo="*" --enablerepo="modernime-openeuler-24.09" modernime
           test "$(rpm -q --qf '%{VERSION}' modernime)" = "$VERSION"
           dnf remove -y modernime
           if rpm -q modernime >/dev/null 2>&1; then
