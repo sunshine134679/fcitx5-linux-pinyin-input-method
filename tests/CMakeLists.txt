@@ -28,6 +28,17 @@ if(MODERNIME_BUILD_SETTINGS)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
 
+    add_executable(modernime_dictionary_pronunciation_tests
+        settings/dictionary_pronunciation_test.cpp
+        ../tools/settings/dictionary_pronunciation.cpp
+    )
+    target_include_directories(modernime_dictionary_pronunciation_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include)
+    target_link_libraries(modernime_dictionary_pronunciation_tests PRIVATE
+        modernime_pinyin PkgConfig::GTK3)
+    add_test(NAME modernime_dictionary_pronunciation
+        COMMAND modernime_dictionary_pronunciation_tests)
+
     add_executable(modernime_settings_model_tests
         settings/settings_window_model_test.cpp
     )
@@ -227,6 +238,7 @@ if(MODERNIME_BUILD_SETTINGS)
 
     set(MODERNIME_SETTINGS_SHELL_TEST_SOURCES
         ../tools/settings/data_controller.cpp
+        ../tools/settings/dictionary_pronunciation.cpp
         ../tools/settings/settings_model.cpp
         ../tools/settings/runtime_controller.cpp
         ../tools/settings/update_controller.cpp

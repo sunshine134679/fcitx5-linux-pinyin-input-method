@@ -13,6 +13,7 @@ endif()
 add_executable(modernime-settings
     settings_app.cpp
     data_controller.cpp
+    dictionary_pronunciation.cpp
     settings_model.cpp
     runtime_controller.cpp
     update_controller.cpp

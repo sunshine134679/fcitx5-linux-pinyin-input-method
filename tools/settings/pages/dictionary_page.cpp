@@ -1,16 +1,21 @@
 #include "modernime/settings/pages/dictionary_page.h"
 
 #include "modernime/settings/data_controller.h"
+#include "modernime/settings/dictionary_pronunciation.h"
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/runtime_environment.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include "modernime/pinyin/user_dictionary.h"
+#include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include <gtk/gtk.h>
 
 #include <array>
 #include <cstddef>
 #include <iomanip>
+#include <memory>
+#include <algorithm>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -60,9 +65,23 @@ struct DictionaryDialogState final {
     GtkWidget *weight = nullptr;
     GtkWidget *validation = nullptr;
     GtkWidget *accept = nullptr;
+    GtkWidget *readings = nullptr;
+    GtkWidget *automatic = nullptr;
+    std::shared_ptr<const DictionaryPronunciation> pronunciation;
+    std::vector<pinyin::UserDictionaryEntry> existing;
+    detail::GObjectHandle<GCancellable> cancel =
+        detail::GObjectHandle<GCancellable>::adopt(g_cancellable_new());
+    bool alive = true;
+    bool loading = true;
+    bool autoPinyin = true;
+    bool syncing = false;
+    bool approximate = false;
 };
 
 void updateDictionaryDialogValidity(DictionaryDialogState *state) {
+    if (!state->alive) return;
+    const auto *phrase = gtk_entry_get_text(GTK_ENTRY(state->phrase));
+    const auto *reading = gtk_entry_get_text(GTK_ENTRY(state->pinyin));
     pinyin::UserDictionary dictionary;
     const auto valid = dictionary.upsert(
         gtk_entry_get_text(GTK_ENTRY(state->pinyin)),
@@ -70,14 +89,131 @@ void updateDictionaryDialogValidity(DictionaryDialogState *state) {
         static_cast<float>(gtk_spin_button_get_value(
             GTK_SPIN_BUTTON(state->weight))));
     gtk_widget_set_sensitive(state->accept, valid);
-    gtk_label_set_text(GTK_LABEL(state->validation),
-                       valid ? "" : "拼音、词条或权重格式不合法");
-    gtk_widget_set_visible(state->validation, !valid);
+    std::string message;
+    bool error = false;
+    if (*phrase == '\0') {
+        message = "输入常用词、人名或专业名词，拼音会自动建议。";
+    } else if (*reading == '\0') {
+        message = state->loading && state->autoPinyin
+            ? "正在读取本地词库，稍后自动填写拼音…"
+            : "无法自动建议这个词的读音，请填写完整拼音，例如 ni'hao。";
+    } else if (!valid) {
+        message = "请填写不带声调的完整拼音，用 ' 分隔音节，ü 写作 v。";
+        error = true;
+    } else if (!state->autoPinyin) {
+        message = "已使用你填写的读音。";
+    } else if (state->approximate) {
+        message = "这是按汉字组合的建议读音；人名和多音字请确认，也可直接修改。";
+    } else {
+        message = "已填写词库读音；人名和多音字可修改或从读音列表选择。";
+    }
+    auto *style = gtk_widget_get_style_context(state->validation);
+    if (error) gtk_style_context_add_class(style, "modernime-status-error");
+    else gtk_style_context_remove_class(style, "modernime-status-error");
+    gtk_label_set_text(GTK_LABEL(state->validation), message.c_str());
+    gtk_widget_set_sensitive(state->automatic, !state->loading && *phrase != '\0' &&
+                              state->pronunciation && state->pronunciation->available());
 }
 
-void onDictionaryDialogTextChanged(GtkEditable *, gpointer data) {
-    updateDictionaryDialogValidity(
-        static_cast<DictionaryDialogState *>(data));
+void suggestDictionaryReading(DictionaryDialogState *state) {
+    if (!state->alive || !state->autoPinyin) return;
+    const auto *phrase = gtk_entry_get_text(GTK_ENTRY(state->phrase));
+    PronunciationSuggestion suggestion;
+    if (state->pronunciation) suggestion = state->pronunciation->suggest(phrase);
+    // Previously saved personal pronunciations take precedence over guesses.
+    for (const auto &entry : state->existing) {
+        if (entry.phrase == phrase &&
+            std::find(suggestion.readings.begin(), suggestion.readings.end(), entry.pinyin) == suggestion.readings.end()) {
+            suggestion.readings.insert(suggestion.readings.begin(), entry.pinyin);
+            suggestion.approximate = false;
+        }
+    }
+    state->approximate = suggestion.approximate;
+    state->syncing = true;
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(state->readings));
+    for (const auto &reading : suggestion.readings) {
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(state->readings), reading.c_str());
+    }
+    if (!suggestion.readings.empty()) gtk_combo_box_set_active(GTK_COMBO_BOX(state->readings), 0);
+    else gtk_entry_set_text(GTK_ENTRY(state->pinyin), "");
+    state->syncing = false;
+    updateDictionaryDialogValidity(state);
+}
+
+void onDictionaryPhraseChanged(GtkEditable *, gpointer data) {
+    auto *state = static_cast<DictionaryDialogState *>(data);
+    if (state->autoPinyin) suggestDictionaryReading(state);
+    else updateDictionaryDialogValidity(state);
+}
+
+void onDictionaryReadingChanged(GtkEditable *, gpointer data) {
+    auto *state = static_cast<DictionaryDialogState *>(data);
+    if (!state->alive || state->syncing) return;
+    state->autoPinyin = false;
+    updateDictionaryDialogValidity(state);
+}
+
+void onDictionarySuggest(GtkButton *, gpointer data) {
+    auto *state = static_cast<DictionaryDialogState *>(data);
+    state->autoPinyin = true;
+    suggestDictionaryReading(state);
+}
+
+void onDictionaryDialogDestroyed(GtkWidget *, gpointer data) {
+    auto *state = static_cast<DictionaryDialogState *>(data);
+    state->alive = false;
+    g_cancellable_cancel(state->cancel.get());
+}
+
+void loadDictionaryPronunciation(GTask *task, gpointer, gpointer data, GCancellable *cancel) {
+    const auto &paths = *static_cast<std::vector<std::filesystem::path> *>(data);
+    try {
+        auto result = std::make_unique<DictionaryPronunciation>(
+            DictionaryPronunciation::load(paths, [cancel] { return g_cancellable_is_cancelled(cancel); }));
+        g_task_return_pointer(task, result.release(), [](gpointer value) {
+            delete static_cast<DictionaryPronunciation *>(value);
+        });
+    } catch (const std::exception &error) {
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error.what());
+    }
+}
+
+void onDictionaryPronunciationReady(GObject *, GAsyncResult *result, gpointer data) {
+    std::unique_ptr<std::shared_ptr<DictionaryDialogState>> owner(
+        static_cast<std::shared_ptr<DictionaryDialogState> *>(data));
+    auto &state = **owner;
+    GError *error = nullptr;
+    std::unique_ptr<DictionaryPronunciation> pronunciation(
+        static_cast<DictionaryPronunciation *>(g_task_propagate_pointer(G_TASK(result), &error)));
+    g_clear_error(&error);
+    if (!state.alive) return;
+    state.loading = false;
+    state.pronunciation = std::shared_ptr<const DictionaryPronunciation>(pronunciation.release());
+    if (state.autoPinyin) suggestDictionaryReading(&state);
+    else updateDictionaryDialogValidity(&state);
+}
+
+void startDictionaryPronunciation(const std::shared_ptr<DictionaryDialogState> &state) {
+    std::filesystem::path fallback;
+#ifdef MODERNIME_INSTALL_PREFIX
+    fallback = MODERNIME_INSTALL_PREFIX;
+#endif
+    std::error_code error;
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+    const auto prefix = installationPrefix(error ? std::filesystem::path{} : executable, fallback);
+    auto *paths = new std::vector<std::filesystem::path>{pinyin::defaultDictionaryPath()};
+    for (const auto &root : {prefix, fallback}) {
+        for (const auto *name : {"modernime-knowledge.dict", "modernime-hotwords.dict"}) {
+            paths->push_back(root / "share/modernime/pinyin" / name);
+        }
+    }
+    auto *task = g_task_new(nullptr, state->cancel.get(), onDictionaryPronunciationReady,
+                           new std::shared_ptr<DictionaryDialogState>(state));
+    g_task_set_task_data(task, paths, [](gpointer value) {
+        delete static_cast<std::vector<std::filesystem::path> *>(value);
+    });
+    g_task_run_in_thread(task, loadDictionaryPronunciation);
+    g_object_unref(task);
 }
 
 void onDictionaryDialogWeightChanged(GtkSpinButton *, gpointer data) {
@@ -93,7 +229,7 @@ public:
          std::function<void(std::string)> notifyCallback)
         : path(std::move(dictionaryPath)), notify(std::move(notifyCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "个人词典", "维护个人词条和专业名词，重载 ModernIME 后生效"));
+            "个人词典", "添加常用词、人名和专业名词，输入法会记住你的用词"));
         page = pageGuard.get();
         buildPage();
         refresh();
@@ -102,7 +238,7 @@ public:
 
     void buildPage() {
         auto *section = createSectionCard(
-            "词条列表", "拼音、词条和权重会在保存时统一校验；导入前会确认整体替换，失败不会覆盖原词典。");
+            "我的词条", "输入词条即可建议拼音；选中已有词条可修改读音或删除。");
         gtk_box_pack_start(GTK_BOX(page), section, TRUE, TRUE, 0);
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -139,8 +275,7 @@ public:
                                 "选择词条后可以编辑或删除");
         gtk_widget_set_tooltip_text(dictionaryView,
                                     "选择词条后可以编辑或删除");
-        for (const auto &column : {std::pair<const char *, int>{"拼音", 0},
-                                   {"词条", 1}, {"权重", 2}}) {
+        for (const auto &column : {std::pair<const char *, int>{"词条", 1}, {"拼音", 0}}) {
             auto *renderer = gtk_cell_renderer_text_new();
             auto *viewColumn = gtk_tree_view_column_new_with_attributes(
                 column.first, renderer, "text", column.second, nullptr);
@@ -521,7 +656,7 @@ private:
             return false;
         }
         refresh();
-        notifyMessage("用户词典已保存；重新加载输入法后生效");
+        notifyMessage("词条已保存；输入法会自动读取（约 2 秒）");
         return true;
     }
 
@@ -534,73 +669,109 @@ private:
                                        "取消", "关闭对话框且不保存词条修改");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT,
                                        "保存", "校验并保存当前词条");
+        addStyleClass(dialog, kSettingsWindowClass);
+        gtk_window_set_default_size(GTK_WINDOW(dialog), 460, -1);
         auto *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+        auto *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+        gtk_container_set_border_width(GTK_CONTAINER(body), 20);
+        gtk_container_add(GTK_CONTAINER(content), body);
+        auto *intro = gtk_label_new("保存后，输入法会自动读取这个词条。");
+        addStyleClass(intro, "modernime-description");
+        gtk_label_set_xalign(GTK_LABEL(intro), 0);
+        gtk_box_pack_start(GTK_BOX(body), intro, FALSE, FALSE, 0);
         auto *grid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+        gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
         gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
-        gtk_container_set_border_width(GTK_CONTAINER(grid), 16);
-        gtk_container_add(GTK_CONTAINER(content), grid);
+        gtk_box_pack_start(GTK_BOX(body), grid, FALSE, FALSE, 0);
 
-        auto *pinyinLabel = gtk_label_new("拼音");
         auto *phraseLabel = gtk_label_new("词条");
-        auto *weightLabel = gtk_label_new("权重");
-        gtk_widget_set_halign(pinyinLabel, GTK_ALIGN_START);
+        auto *pinyinLabel = gtk_label_new("拼音");
         gtk_widget_set_halign(phraseLabel, GTK_ALIGN_START);
-        gtk_widget_set_halign(weightLabel, GTK_ALIGN_START);
-        auto *pinyin = gtk_entry_new();
+        gtk_widget_set_halign(pinyinLabel, GTK_ALIGN_START);
         auto *phrase = gtk_entry_new();
-        auto *weight =
-            gtk_spin_button_new_with_range(0.0, 1000000000.0, 1.0);
-        setAccessibleWidgetText(pinyin, "拼音", "输入词条的完整拼音");
+        gtk_entry_set_placeholder_text(GTK_ENTRY(phrase), "例如：王小明、项目名称");
+        gtk_widget_set_hexpand(phrase, TRUE);
+        auto *readings = gtk_combo_box_text_new_with_entry();
+        auto *pinyin = gtk_bin_get_child(GTK_BIN(readings));
+        gtk_entry_set_placeholder_text(GTK_ENTRY(pinyin), "自动建议，可直接修改读音");
+        gtk_widget_set_hexpand(readings, TRUE);
+        auto *automatic = gtk_button_new_with_label("自动填写");
+        setTarget(automatic, "dictionary-suggest-pinyin");
+        setAccessibleWidgetText(automatic, "自动填写", "重新根据词条建议拼音");
+        setAccessibleWidgetText(pinyin, "拼音", "自动建议的读音，可修改人名和多音字读音");
         setAccessibleWidgetText(phrase, "词条", "输入要保存的中文词条");
-        setAccessibleWidgetText(weight, "权重",
-                                "设置词条排序权重，数值越大越靠前");
-        gtk_spin_button_set_digits(GTK_SPIN_BUTTON(weight), 3);
-        gtk_grid_attach(GTK_GRID(grid), pinyinLabel, 0, 0, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), pinyin, 1, 0, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), phraseLabel, 0, 1, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), phrase, 1, 1, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), weightLabel, 0, 2, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), weight, 1, 2, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), phraseLabel, 0, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), phrase, 1, 0, 2, 1);
+        gtk_grid_attach(GTK_GRID(grid), pinyinLabel, 0, 1, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), readings, 1, 1, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), automatic, 2, 1, 1, 1);
         auto *validation = gtk_label_new("");
-        addStyleClass(validation, "modernime-status-error");
-        gtk_widget_set_halign(validation, GTK_ALIGN_START);
-        gtk_grid_attach(GTK_GRID(grid), validation, 1, 3, 1, 1);
+        addStyleClass(validation, "modernime-description");
+        gtk_label_set_xalign(GTK_LABEL(validation), 0);
+        gtk_label_set_line_wrap(GTK_LABEL(validation), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(validation), 42);
+        gtk_grid_attach(GTK_GRID(grid), validation, 0, 2, 3, 1);
+
+        auto *advanced = gtk_expander_new("高级设置");
+        setAccessibleWidgetText(advanced, "高级设置", "可选的词条排序加成，通常无需修改");
+        auto *advancedBody = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        gtk_widget_set_margin_top(advancedBody, 10);
+        gtk_container_add(GTK_CONTAINER(advanced), advancedBody);
+        auto *weightRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        auto *weightLabel = gtk_label_new("排序加成");
+        auto *weight = gtk_spin_button_new_with_range(0.0, 1000000000.0, 1.0);
+        gtk_spin_button_set_digits(GTK_SPIN_BUTTON(weight), 3);
+        gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(weight), TRUE);
+        setAccessibleWidgetText(weight, "权重", "可选排序加成，默认 0，通常无需修改");
+        gtk_box_pack_start(GTK_BOX(weightRow), weightLabel, FALSE, FALSE, 0);
+        gtk_box_pack_end(GTK_BOX(weightRow), weight, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(advancedBody), weightRow, FALSE, FALSE, 0);
+        auto *weightHelp = gtk_label_new("默认即可；输入法会根据你的使用记录调整排序。");
+        gtk_label_set_xalign(GTK_LABEL(weightHelp), 0);
+        gtk_label_set_line_wrap(GTK_LABEL(weightHelp), TRUE);
+        addStyleClass(weightHelp, "modernime-description");
+        gtk_box_pack_start(GTK_BOX(advancedBody), weightHelp, FALSE, FALSE, 0);
+        gtk_widget_show_all(advancedBody);
+        gtk_widget_hide(advancedBody);
+        gtk_widget_set_no_show_all(advancedBody, TRUE);
+        g_signal_connect(advanced, "notify::expanded", G_CALLBACK(+[](
+            GtkExpander *expander, GParamSpec *, gpointer child) {
+                gtk_widget_set_visible(GTK_WIDGET(child), gtk_expander_get_expanded(expander));
+            }), advancedBody);
+        gtk_box_pack_start(GTK_BOX(body), advanced, FALSE, FALSE, 0);
+
+        auto state = std::make_shared<DictionaryDialogState>();
+        state->pinyin = pinyin;
+        state->phrase = phrase;
+        state->weight = weight;
+        state->validation = validation;
+        state->readings = readings;
+        state->automatic = automatic;
+        state->existing = dictionaryEntries;
+        state->autoPinyin = !selected.has_value();
+        state->accept = gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+        addStyleClass(state->accept, kSettingsPrimaryButtonClass);
+        setAccessibleWidgetText(state->accept, "保存", "校验通过后保存当前词条");
+        auto *cancel = gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
         if (selected.has_value()) {
             const auto &entry = dictionaryEntries[*selected];
             gtk_entry_set_text(GTK_ENTRY(pinyin), entry.pinyin.c_str());
             gtk_entry_set_text(GTK_ENTRY(phrase), entry.phrase.c_str());
             gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), entry.weight);
         }
-        auto state = DictionaryDialogState{
-            pinyin, phrase, weight, validation,
-            gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog),
-                                               GTK_RESPONSE_ACCEPT)};
-        setAccessibleWidgetText(state.accept, "保存",
-                                "校验通过后保存当前词条");
-        auto *cancel = gtk_dialog_get_widget_for_response(
-            GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
-        if (cancel != nullptr) {
-            setAccessibleWidgetText(cancel, "取消",
-                                    "关闭对话框且不保存词条修改");
-        }
-        setSettingsFocusChain(dialog,
-                              {pinyin, phrase, weight, cancel, state.accept});
-        gtk_dialog_set_default_response(GTK_DIALOG(dialog),
-                                        GTK_RESPONSE_ACCEPT);
+        setSettingsFocusChain(dialog, {phrase, pinyin, automatic, advanced, weight, cancel, state->accept});
+        gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
         gtk_entry_set_activates_default(GTK_ENTRY(pinyin), TRUE);
         gtk_entry_set_activates_default(GTK_ENTRY(phrase), TRUE);
-        g_signal_connect(pinyin, "changed",
-                         G_CALLBACK(onDictionaryDialogTextChanged), &state);
-        g_signal_connect(phrase, "changed",
-                         G_CALLBACK(onDictionaryDialogTextChanged), &state);
-        g_signal_connect(weight, "value-changed",
-                         G_CALLBACK(onDictionaryDialogWeightChanged), &state);
-        updateDictionaryDialogValidity(&state);
+        g_signal_connect(pinyin, "changed", G_CALLBACK(onDictionaryReadingChanged), state.get());
+        g_signal_connect(phrase, "changed", G_CALLBACK(onDictionaryPhraseChanged), state.get());
+        g_signal_connect(automatic, "clicked", G_CALLBACK(onDictionarySuggest), state.get());
+        g_signal_connect(weight, "value-changed", G_CALLBACK(onDictionaryDialogWeightChanged), state.get());
+        g_signal_connect(dialog, "destroy", G_CALLBACK(onDictionaryDialogDestroyed), state.get());
+        updateDictionaryDialogValidity(state.get());
         gtk_widget_show_all(dialog);
-        gtk_widget_set_visible(validation,
-                               !gtk_widget_get_sensitive(state.accept));
-        gtk_widget_grab_focus(pinyin);
+        gtk_widget_grab_focus(phrase);
+        startDictionaryPronunciation(state);
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         if (response != GTK_RESPONSE_ACCEPT) {
             gtk_widget_destroy(dialog);

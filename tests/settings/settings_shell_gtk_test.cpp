@@ -2,6 +2,8 @@
 #include "modernime/settings/settings_widgets.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/clipboard_history.h"
+#include "modernime/settings/data_controller.h"
+#include <libime/pinyin/pinyindictionary.h>
 
 #include <gtk/gtk.h>
 
@@ -247,6 +249,7 @@ gboolean observeControllerKey(GtkEventControllerKey *, guint keyval, guint,
 
 struct DictionaryDialogProbe final {
     bool ran = false;
+    bool editing = false;
     std::chrono::steady_clock::time_point deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(5);
 };
@@ -262,7 +265,8 @@ gboolean inspectDictionaryDialog(gpointer data) {
                                 : nullptr;
         if (GTK_IS_DIALOG(candidate) && gtk_widget_get_visible(candidate) &&
             gtk_widget_get_mapped(candidate) &&
-            title != nullptr && std::string_view(title) == "添加用户词条") {
+            title != nullptr && std::string_view(title) ==
+                (probe->editing ? "编辑用户词条" : "添加用户词条")) {
             dialog = candidate;
             break;
         }
@@ -290,26 +294,61 @@ gboolean inspectDictionaryDialog(gpointer data) {
     auto *weight =
         findAccessibleWidget(dialog, GTK_TYPE_SPIN_BUTTON, "权重");
     assert(pinyin != nullptr && phrase != nullptr && weight != nullptr);
-    gtk_entry_set_text(GTK_ENTRY(pinyin), "ni");
-    gtk_entry_set_text(GTK_ENTRY(phrase), "你");
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), 1.0);
-    assert(gtk_widget_get_sensitive(save));
+    auto *advanced = findAccessibleWidget(dialog, GTK_TYPE_EXPANDER, "高级设置");
+    auto *automatic = findTarget(dialog, "dictionary-suggest-pinyin");
+    assert(advanced != nullptr && automatic != nullptr);
+    assert(!gtk_widget_get_mapped(weight));
+    if (probe->editing) {
+        assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(pinyin))) == "zhongqing");
+        assert(gtk_spin_button_get_value(GTK_SPIN_BUTTON(weight)) == 42.125);
+        assert(waitUntil([automatic] { return gtk_widget_get_sensitive(automatic); }));
+        assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(pinyin))) == "zhongqing");
+        gtk_expander_set_expanded(GTK_EXPANDER(advanced), TRUE);
+        assert(waitUntil([weight] { return gtk_widget_get_mapped(weight); }));
+        gtk_expander_set_expanded(GTK_EXPANDER(advanced), FALSE);
+        assert(waitUntil([weight] { return !gtk_widget_get_mapped(weight); }));
+        assert(gtk_widget_get_sensitive(save));
+        probe->ran = true;
+        gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+        return G_SOURCE_REMOVE;
+    }
+    assert(gtk_spin_button_get_value(GTK_SPIN_BUTTON(weight)) == 0.0);
+    assert(!gtk_widget_get_sensitive(save));
+    assert(gtk_window_get_focus(GTK_WINDOW(dialog)) == phrase);
+    auto *oldError = findLabelText(dialog, "拼音、词条或权重格式不合法");
+    assert(oldError == nullptr || !gtk_widget_get_visible(oldError));
+    gtk_entry_set_text(GTK_ENTRY(phrase), "重庆");
+    assert(waitUntil([pinyin, save] {
+        return std::string_view(gtk_entry_get_text(GTK_ENTRY(pinyin))) == "chong'qing" &&
+               gtk_widget_get_sensitive(save);
+    }));
+    gtk_entry_set_text(GTK_ENTRY(pinyin), "zhong'qing");
+    gtk_entry_set_text(GTK_ENTRY(pinyin), "zhong3qing");
+    assert(!gtk_widget_get_sensitive(save));
+    gtk_entry_set_text(GTK_ENTRY(pinyin), "zhong'qing");
+    gtk_entry_set_text(GTK_ENTRY(phrase), "重庆城");
+    assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(pinyin))) == "zhong'qing");
+    gtk_entry_set_text(GTK_ENTRY(phrase), "重庆");
+    gtk_button_clicked(GTK_BUTTON(automatic));
+    assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(pinyin))) == "chong'qing");
 
     // Mapping precedes window activation, especially without a window manager.
     // Dispatch keyboard events only after the modal dialog owns keyboard focus;
     // GtkButton's focus traversal requires an active toplevel.
     gtk_window_present(GTK_WINDOW(dialog));
-    gtk_window_set_focus(GTK_WINDOW(dialog), pinyin);
-    assert(waitUntil([dialog, pinyin] {
+    gtk_window_set_focus(GTK_WINDOW(dialog), phrase);
+    assert(waitUntil([dialog, phrase] {
         return gtk_widget_get_mapped(dialog) &&
                gtk_window_is_active(GTK_WINDOW(dialog)) &&
-               gtk_widget_has_focus(pinyin);
+               gtk_widget_has_focus(phrase);
     }));
-    assert(hasFocusWithin(dialog, pinyin));
-    dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
     assert(hasFocusWithin(dialog, phrase));
     dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
-    assert(hasFocusWithin(dialog, weight));
+    assert(hasFocusWithin(dialog, pinyin));
+    dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
+    assert(hasFocusWithin(dialog, automatic));
+    dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
+    assert(hasFocusWithin(dialog, advanced));
     dispatchKey(dialog, GDK_KEY_Tab, GdkModifierType{});
     assert(hasFocusWithin(dialog, cancel));
     auto *actionArea = gtk_widget_get_parent(cancel);
@@ -340,7 +379,7 @@ gboolean inspectDictionaryDialog(gpointer data) {
     assert(hasFocusWithin(dialog, cancel));
 
     probe->ran = true;
-    gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+    gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
     return G_SOURCE_REMOVE;
 }
 
@@ -453,6 +492,12 @@ int main(int argc, char **argv) {
     const auto path = (root / "bin").string() + ":" +
                       (oldPath == nullptr ? "" : oldPath);
     assert(g_setenv("PATH", path.c_str(), TRUE));
+    {
+        libime::PinyinDictionary dictionary;
+        dictionary.addWord(0, "chong'qing", "重庆");
+        dictionary.save(0, (root / "pronunciation.dict").c_str(), libime::PinyinDictFormat::Binary);
+    }
+    assert(g_setenv("MODERNIME_PINYIN_DICT", (root / "pronunciation.dict").c_str(), TRUE));
 
     auto *application = gtk_application_new(
         nullptr, static_cast<GApplicationFlags>(G_APPLICATION_NON_UNIQUE));
@@ -758,6 +803,26 @@ int main(int argc, char **argv) {
         g_timeout_add(10, inspectDictionaryDialog, &dialogProbe);
         gtk_button_clicked(GTK_BUTTON(add));
         assert(dialogProbe.ran);
+        const auto added = modernime::settings::DataController::loadDictionary(paths.userDictionary);
+        assert(added.size() == 1 && added.front().phrase == "重庆");
+        assert(added.front().pinyin == "chongqing" && added.front().weight == 0.0F);
+        assert(modernime::settings::DataController::saveDictionary(
+            paths.userDictionary, {{"zhongqing", "重庆", 42.125F}}));
+        shell.show(modernime::settings::SettingsPageId::Dictionary);
+        auto *dictionaryView = findAccessibleWidget(window, GTK_TYPE_TREE_VIEW, "个人词典词条列表");
+        assert(dictionaryView != nullptr);
+        auto *firstWord = gtk_tree_path_new_from_indices(0, -1);
+        gtk_tree_view_set_cursor(GTK_TREE_VIEW(dictionaryView), firstWord, nullptr, FALSE);
+        gtk_tree_path_free(firstWord);
+        auto *edit = findAccessibleWidget(window, GTK_TYPE_BUTTON, "编辑");
+        assert(edit != nullptr && gtk_widget_get_sensitive(edit));
+        DictionaryDialogProbe editProbe;
+        editProbe.editing = true;
+        g_timeout_add(10, inspectDictionaryDialog, &editProbe);
+        gtk_button_clicked(GTK_BUTTON(edit));
+        assert(editProbe.ran);
+        const auto edited = modernime::settings::DataController::loadDictionary(paths.userDictionary);
+        assert(edited.size() == 1 && edited.front().pinyin == "zhongqing" && edited.front().weight == 42.125F);
 
         shell.show(modernime::settings::SettingsPageId::Learning);
         auto *clearLearning = findTarget(window, "learning-clear");
