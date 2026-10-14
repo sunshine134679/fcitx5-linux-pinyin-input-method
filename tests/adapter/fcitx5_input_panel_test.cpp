@@ -1,4 +1,5 @@
 #include "modernime/fcitx5/fcitx_engine.h"
+#include "modernime/core/learning_store.h"
 
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
@@ -267,9 +268,67 @@ void publishFreshTenCandidates(
                "measurement");
 }
 
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+void testSensitiveContextStaysUnlearnedAfterSettingsReload() {
+    char path[] = "/tmp/modernime-sensitive-reload-XXXXXX";
+    const auto *root = mkdtemp(path);
+    assertTrue(root != nullptr, "isolated sensitive-context data directory created");
+    const auto storePath = std::filesystem::path(root) / "learning.sqlite3";
+    {
+        auto settings = modernime::core::defaultSettings();
+        settings.learningEnabled = true;
+        settings.contextLearningEnabled = true;
+        modernime::pinyin::PinyinDataPaths paths;
+        paths.userDictionary = (std::filesystem::path(root) / "user.tsv").string();
+        paths.learningStore = storePath.string();
+        modernime::fcitx5::FcitxEngineResources resources;
+        resources.pinyin = modernime::pinyin::PinyinCandidateProvider::createSharedResources(
+            paths, {});
+        fcitx::InputContextManager manager;
+        TestInputContext context(manager);
+        modernime::fcitx5::FcitxInputContextState state(context, settings, resources, 0);
+        auto &controller = state.controller();
+        const auto commitChinese = [&] {
+            for (const auto character : std::string_view("nihao")) {
+                assertTrue(controller.handle(
+                               {modernime::fcitx5::KeyKind::Character, character, 0}),
+                           "sensitive context can compose Chinese");
+            }
+            std::size_t index = 0;
+            while (index < controller.page().items.size() &&
+                   controller.page().items[index].text != "你好") {
+                ++index;
+            }
+            assertTrue(controller.select(index), "Chinese candidate is committed");
+            assertTrue(context.commits.back() == "你好", "Chinese text reaches client");
+            assertTrue(modernime::pinyin::PinyinCandidateProvider::reloadLearningStore(
+                           resources.pinyin), "pending learning is flushed before inspecting store");
+        };
+        controller.setSensitive(true);
+        state.applySettings(settings, 1);
+        // The next key event repeats setSensitive(true); it must not undo the
+        // gate or require a transition to make the reloaded settings safe.
+        controller.setSensitive(true);
+        commitChinese();
+        modernime::core::LearningStore store(storePath);
+        assertTrue(store.openReadOnly(), "isolated learning store opens");
+        assertTrue(store.snapshot()->entries().empty(),
+                   "settings reload cannot enable learning in an already-sensitive context");
+        controller.setSensitive(false);
+        commitChinese();
+        assertTrue(store.snapshot()->hasPositiveFrequency("你好", "nihao"),
+                   "leaving sensitive context restores configured learning");
+    }
+    std::filesystem::remove_all(root);
+}
+#endif
+
 } // namespace
 
 int main() {
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    testSensitiveContextStaysUnlearnedAfterSettingsReload();
+#endif
     testDisabledActivationPreservesChineseMode();
     testLiveKeyEvents();
     fcitx::InputContextManager manager;

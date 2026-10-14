@@ -225,8 +225,7 @@ if(MODERNIME_BUILD_SETTINGS)
         SKIP_RETURN_CODE 77
     )
 
-    add_executable(modernime_settings_shell_gtk_tests
-        settings/settings_shell_gtk_test.cpp
+    set(MODERNIME_SETTINGS_SHELL_TEST_SOURCES
         ../tools/settings/data_controller.cpp
         ../tools/settings/settings_model.cpp
         ../tools/settings/runtime_controller.cpp
@@ -246,6 +245,10 @@ if(MODERNIME_BUILD_SETTINGS)
         ../tools/settings/pages/overview_page.cpp
         ../tools/settings/pages/updates_page.cpp
     )
+    add_executable(modernime_settings_shell_gtk_tests
+        settings/settings_shell_gtk_test.cpp
+        ${MODERNIME_SETTINGS_SHELL_TEST_SOURCES}
+    )
     target_include_directories(modernime_settings_shell_gtk_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
@@ -263,6 +266,31 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_shell_gtk_tests
     )
     set_tests_properties(modernime_settings_shell_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 20
+    )
+
+    add_executable(modernime_settings_save_gtk_tests
+        settings/settings_save_gtk_test.cpp
+        ${MODERNIME_SETTINGS_SHELL_TEST_SOURCES}
+    )
+    target_include_directories(modernime_settings_save_gtk_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_settings_save_gtk_tests PRIVATE
+        modernime_core modernime_pinyin PkgConfig::GTK3
+    )
+    target_compile_definitions(modernime_settings_save_gtk_tests PRIVATE
+        MODERNIME_VERSION="${PROJECT_VERSION}"
+        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+        MODERNIME_SYSTEM_FCITX5_ADDON_DIR=""
+    )
+    add_test(NAME modernime_settings_save_gtk
+        COMMAND modernime_settings_save_gtk_tests
+    )
+    set_tests_properties(modernime_settings_save_gtk PROPERTIES
         ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
         RESOURCE_LOCK modernime_gtk_display
         SKIP_RETURN_CODE 77
@@ -528,6 +556,11 @@ if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
     add_test(NAME modernime_personal_engine_benchmark
         COMMAND modernime_personal_engine_benchmark --benchmark_min_time=0.02s
     )
+    # Wall-clock P99 is a release gate; competing build/install tests can
+    # preempt the measured thread and turn scheduling delay into a regression.
+    set_tests_properties(modernime_personal_engine_benchmark PROPERTIES
+        RUN_SERIAL TRUE
+    )
 endif()
 
 add_executable(modernime_adapter_tests adapter/engine_state_test.cpp)
@@ -592,6 +625,12 @@ if(MODERNIME_BUILD_FCITX5)
     target_link_libraries(modernime_fcitx5_input_panel_tests
         PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
     )
+    if(MODERNIME_BUILD_LIBIME_PINYIN)
+        target_compile_definitions(modernime_fcitx5_input_panel_tests PRIVATE
+            MODERNIME_HAS_LIBIME_PINYIN=1
+        )
+        target_link_libraries(modernime_fcitx5_input_panel_tests PRIVATE modernime_pinyin)
+    endif()
     add_test(NAME modernime_fcitx5_input_panel
         COMMAND modernime_fcitx5_input_panel_tests
     )
@@ -676,9 +715,17 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/install_environment_test.sh
     )
+    add_test(NAME modernime_session_init
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/session_init_test.sh
+    )
     add_test(NAME modernime_settings_install
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/settings/settings_install_test.sh
+    )
+    add_test(NAME modernime_install_transaction
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/install_transaction_test.sh
     )
     add_test(NAME modernime_install_channel_collision
         COMMAND ${BASH_EXECUTABLE}

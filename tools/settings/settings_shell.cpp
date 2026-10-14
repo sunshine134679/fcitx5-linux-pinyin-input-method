@@ -92,6 +92,12 @@ struct OverviewTask final {
     core::ModernIMESettings settings;
     std::filesystem::path remoteExecutable;
     Environment environment;
+    std::string savedContentHash;
+};
+
+struct OverviewResult final {
+    OverviewSnapshot snapshot;
+    std::string applicationMessage;
 };
 
 struct GObjectUnref final {
@@ -121,9 +127,12 @@ void overviewTaskFunction(GTask *task, gpointer, gpointer data,
                                                   request->environment);
     g_task_return_pointer(
         task,
-        new OverviewSnapshot(collectOverviewSnapshot(
-            request->paths, request->settings, runtime)),
-        [](gpointer value) { delete static_cast<OverviewSnapshot *>(value); });
+        new OverviewResult{
+            collectOverviewSnapshot(request->paths, request->settings, runtime),
+            request->savedContentHash.empty()
+                ? std::string{}
+                : describeSettingsApplication(runtime, request->savedContentHash)},
+        [](gpointer value) { delete static_cast<OverviewResult *>(value); });
 }
 
 const char *iconForPage(SettingsPageId page) {
@@ -310,7 +319,7 @@ private:
     static void overviewTaskFinished(GObject *source, GAsyncResult *result,
                                      gpointer) {
         GError *error = nullptr;
-        auto *snapshot = static_cast<OverviewSnapshot *>(
+        auto *snapshot = static_cast<OverviewResult *>(
             g_task_propagate_pointer(G_TASK(result), &error));
         const auto *request =
             static_cast<const OverviewTask *>(g_task_get_task_data(G_TASK(result)));
@@ -318,8 +327,9 @@ private:
         auto *state = static_cast<SharedLifetime *>(
             g_object_get_data(source, kOverviewStateKey));
         if (state != nullptr) {
-            (*state)->withOwner([snapshot, error, generation](Impl &owner) {
-                owner.finishOverviewRefresh(generation, snapshot, error);
+            (*state)->withOwner([snapshot, error, generation, request](Impl &owner) {
+                owner.finishOverviewRefresh(generation, request->savedContentHash,
+                                            snapshot, error);
             });
         }
         delete snapshot;
@@ -512,6 +522,11 @@ private:
             [this](SettingsWindowModel::Revision revision) {
                 model.markReloaded(revision);
                 updateActionState();
+                if (revision != model.savedRevision()) {
+                    savedStatusHash = model.savedContentHash();
+                    presentError("已保存，应用状态待确认");
+                    requestOverviewRefresh();
+                }
             });
         addPage(SettingsPageId::Diagnostics, diagnosticsPage->widget());
 
@@ -761,11 +776,9 @@ private:
         }
 
         updateActionState();
+        savedStatusHash = model.savedContentHash();
+        presentError("已保存，应用状态待确认");
         requestOverviewRefresh();
-        const auto savedHash = model.savedContentHash();
-        const auto runtime = RuntimeController::probe(remote, paths.runtimeState, environment);
-        const auto statusMessage = describeSettingsApplication(runtime, savedHash);
-        presentError(statusMessage);
         if (closeAfterSave) {
             hideWindow();
         }
@@ -876,7 +889,8 @@ private:
         GObjectOwner taskOwner(G_OBJECT(g_task_new(
             overviewLifetime.get(), nullptr, overviewTaskFinished, nullptr)));
         auto request = std::make_unique<OverviewTask>(OverviewTask{
-            generation, paths, model.settings(), remote, environment});
+            generation, paths, model.settings(), remote, environment,
+            savedStatusHash});
         g_task_set_task_data(G_TASK(taskOwner.get()), request.release(),
                              [](gpointer value) {
             delete static_cast<OverviewTask *>(value);
@@ -885,11 +899,17 @@ private:
     }
 
     void finishOverviewRefresh(OverviewRefreshState::Generation generation,
-                               const OverviewSnapshot *snapshot,
+                               const std::string &savedHash,
+                               const OverviewResult *result,
                                const GError *error) {
         const bool current = overviewRefresh.complete(generation);
-        if (current && snapshot != nullptr) {
-            overviewPage->setSnapshot(*snapshot);
+        if (current && result != nullptr) {
+            overviewPage->setSnapshot(result->snapshot);
+            if (!savedHash.empty() && savedHash == savedStatusHash &&
+                savedHash == model.savedContentHash()) {
+                presentError(result->applicationMessage);
+                savedStatusHash.clear();
+            }
         } else if (current) {
             presentError(error == nullptr || error->message == nullptr
                              ? "无法读取概览"
@@ -925,6 +945,7 @@ private:
     Environment environment;
 
     bool actionBusy = false;
+    std::string savedStatusHash;
 
     GtkWidget *stack = nullptr;
     GtkWidget *searchEntry = nullptr;

@@ -103,8 +103,13 @@ while IFS= read -r path; do
         "$prefix/share/fcitx5/inputmethod/modernime.conf"|\
         "$prefix/bin/modernime-settings"|\
         "$prefix/bin/modernime-session-init"|\
+        "$prefix/share/modernime/install_state.sh"|\
         "$prefix/bin/modernime-data-guard"|\
         "$prefix/bin/modernime-migrate-channel"|\
+        "$prefix/share/doc/modernime/LICENSE"|\
+        "$prefix/share/doc/modernime/copyright"|\
+        "$prefix/share/doc/modernime/THIRD_PARTY_NOTICES.md"|\
+        "$prefix/share/doc/modernime/SOURCES.json"|\
         "$prefix/share/applications/modernime-settings.desktop")
             if [[ "$is_system_prefix" == true ]]; then
                 owner=""
@@ -160,6 +165,19 @@ for legacy_plugin in "$prefix/lib/fcitx5/modernime_fcitx5.so" \
     fi
 done
 
+addon_link="$prefix/lib/fcitx5"
+addon_link_record="$managed_state_dir/addon-link.target"
+if [[ -f "$addon_link_record" ]]; then
+    if [[ -L "$addon_link" && "$(readlink -- "$addon_link")" == "$(cat "$addon_link_record")" ]]; then
+        rm -f -- "$addon_link" "$addon_link_record"
+    elif [[ ! -e "$addon_link" && ! -L "$addon_link" ]]; then
+        rm -f -- "$addon_link_record"
+    else
+        printf 'Preserving modified addon directory alias: %s\n' "$addon_link" >&2
+        managed_files_preserved=true
+    fi
+fi
+
 if [[ "$managed_files_preserved" != true ]]; then
     rm -f -- "$manifest"
     for key in desktop environment autostart xprofile; do
@@ -176,6 +194,7 @@ rmdir --ignore-fail-on-non-empty "$prefix/lib64/fcitx5" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/lib/fcitx5" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/pinyin" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/share/doc/modernime" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$config_home/environment.d" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$config_home/autostart" 2>/dev/null || true
 if [[ -n "$recorded_environment" ]]; then

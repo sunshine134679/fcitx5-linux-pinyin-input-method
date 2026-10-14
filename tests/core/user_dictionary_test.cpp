@@ -1,6 +1,9 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/user_dictionary.h"
 
+#include <libime/pinyin/pinyindictionary.h>
+#include <libime/pinyin/pinyinencoder.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -230,9 +233,81 @@ void testUserDictionaryFastContainsWithLargeCorpus() {
     assertTrue(dict.entries().size() == 4999, "entries size decremented");
 }
 
+void testMalformedSyllablesDoNotAbortDictionaryLoad() {
+    modernime::pinyin::UserDictionary dictionary;
+    assertTrue(dictionary.upsert("zzzz", "错误", 100), "malformed row accepted for validation");
+    assertTrue(dictionary.upsert("abc", "错误", 100), "partial syllable row accepted for validation");
+    assertTrue(dictionary.upsert("nihao", "你好", 100), "valid row follows malformed rows");
+    libime::PinyinDictionary native;
+    try {
+        dictionary.addTo(native, 1);
+    } catch (const std::exception &) {
+        assertTrue(false, "malformed syllables cannot abort user dictionary loading");
+    }
+    const auto encoded = libime::PinyinEncoder::encodeFullPinyin("ni'hao");
+    bool found = false;
+    native.matchWords(encoded.data(), encoded.size(),
+                      [&](std::string_view, std::string_view phrase, float) {
+                          found = found || phrase == "你好";
+                          return true;
+                      });
+    assertTrue(found, "valid rows remain usable after malformed syllables");
+}
+
+void testAmbiguousPinyinLoadHasBoundedWork() {
+    modernime::pinyin::UserDictionary dictionary;
+    std::string pinyin;
+    std::string phrase;
+    for (int repeat = 0; repeat < 24; ++repeat) {
+        pinyin += "changan";
+        phrase += "长安";
+    }
+    assertTrue(dictionary.upsert(pinyin, phrase, 100), "ambiguous dictionary entry accepted");
+    libime::PinyinDictionary native;
+    const auto start = std::chrono::steady_clock::now();
+    dictionary.addTo(native, 1);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    assertTrue(elapsed < std::chrono::seconds(1),
+               "ambiguous pinyin loads in under one second without enumerating every path");
+}
+
+void testPinyinSegmentationPreservesExistingChoice() {
+    for (const auto pinyin : {"nihao", "changan", "tiananmen", "rengongzhineng"}) {
+        auto graph = libime::PinyinEncoder::parseUserPinyin(
+            pinyin, libime::PinyinFuzzyFlag::None);
+        std::vector<std::size_t> best;
+        graph.dfs([&](const auto &, const auto &path) {
+            if (path.size() > best.size()) { best = path; }
+            return true;
+        });
+        std::string segmented;
+        std::size_t previous = 0;
+        for (const auto end : best) {
+            if (!segmented.empty()) { segmented += '\''; }
+            segmented.append(pinyin + previous, end - previous);
+            previous = end;
+        }
+        modernime::pinyin::UserDictionary dictionary;
+        dictionary.upsert(pinyin, "测试", 100);
+        libime::PinyinDictionary native;
+        dictionary.addTo(native, 1);
+        const auto encoded = libime::PinyinEncoder::encodeFullPinyin(segmented);
+        bool found = false;
+        native.matchWords(encoded.data(), encoded.size(),
+                          [&](std::string_view, std::string_view phrase, float) {
+                              found = found || phrase == "测试";
+                              return true;
+                          });
+        assertTrue(found, "segmentation keeps the first deepest DFS choice for common phrases");
+    }
+}
+
 } // namespace
 
 int main() {
+    testAmbiguousPinyinLoadHasBoundedWork();
+    testMalformedSyllablesDoNotAbortDictionaryLoad();
+    testPinyinSegmentationPreservesExistingChoice();
     testUserDictionarySkipsBadRowsAndKeepsLastDuplicate();
     testUserDictionaryRejectsTrailingWeightData();
     testUserDictionaryRejectsMalformedPinyin();

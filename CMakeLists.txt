@@ -7,6 +7,10 @@ option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" O
 option(MODERNIME_BUILD_TESTS "Build ModernIME tests" ON)
 option(MODERNIME_BUILD_TOOLS "Build development and visual verification tools" OFF)
 option(MODERNIME_BUILD_SETTINGS "Build the GTK3 settings client" OFF)
+if(MODERNIME_BUILD_SETTINGS)
+    find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+    find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
+endif()
 set(MODERNIME_PACKAGE_CHANNEL "" CACHE STRING "Native package channel identifier (e.g. deb, rpm)")
 
 set(CMAKE_CXX_STANDARD 20)

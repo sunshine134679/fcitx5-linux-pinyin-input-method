@@ -11,6 +11,7 @@ cat >"$fake_bin/cmake" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ " $* " == *" --install "* ]]; then
+    FAKE_PREFIX="${DESTDIR:-}$FAKE_PREFIX"
     mkdir -p "$FAKE_PREFIX/bin" "$FAKE_PREFIX/share/applications"
     : >"$FAKE_PREFIX/bin/modernime-settings"
     cp "$PROJECT_ROOT/config/desktop/modernime-settings.desktop" \
@@ -65,13 +66,13 @@ grep -Fqx "$prefix/share/modernime/pinyin/modernime-knowledge.dict" "$manifest"
 grep -Fqx "$prefix/bin/modernime-settings" "$manifest"
 grep -Fqx "$prefix/share/applications/modernime-settings.desktop" "$manifest"
 grep -Fqx "$test_root/home/Desktop/modernime-settings.desktop" "$manifest"
-grep -Fqx 'Exec=modernime-settings' \
+grep -Fqx "Exec=\"$prefix/bin/modernime-settings\"" \
     "$prefix/share/applications/modernime-settings.desktop"
 grep -Fqx 'Name=ModernIME 设置' \
     "$prefix/share/applications/modernime-settings.desktop"
 grep -Fqx 'Comment=配置 ModernIME 输入体验与个人数据' \
     "$prefix/share/applications/modernime-settings.desktop"
-grep -Fqx "Exec=$prefix/bin/modernime-settings" \
+grep -Fqx "Exec=\"$prefix/bin/modernime-settings\"" \
     "$test_root/home/Desktop/modernime-settings.desktop"
 
 # A preserved symlink must not have its target permissions changed.

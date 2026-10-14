@@ -497,7 +497,9 @@ int main(int argc, char **argv) {
         auto *defaultMode = findTarget(window, "default-mode");
         auto *more = findTarget(window, "input-more");
         assert(inputEnabled != nullptr);
-        if (!gtk_widget_has_focus(inputEnabled)) {
+        if (!waitUntil([inputEnabled] {
+                return gtk_widget_has_focus(inputEnabled);
+            })) {
             drainEvents();
             return 77;
         }
@@ -532,6 +534,12 @@ int main(int argc, char **argv) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
                                      initialInputEnabled);
 
+        // Disabling the default-mode control can clear the window's focus;
+        // explicitly restore it before sending synthetic keyboard events.
+        gtk_widget_grab_focus(inputEnabled);
+        assert(waitUntil([inputEnabled] {
+            return gtk_widget_has_focus(inputEnabled);
+        }));
         dispatchKey(window, GDK_KEY_f, GDK_CONTROL_MASK);
         assert(gtk_widget_has_focus(search));
         gtk_entry_set_text(GTK_ENTRY(search), "a");
@@ -636,7 +644,7 @@ int main(int argc, char **argv) {
         assert(dialogProbe.ran);
 
         shell.show(modernime::settings::SettingsPageId::Learning);
-        auto *clearLearning = findTarget(window, "learning-data");
+        auto *clearLearning = findTarget(window, "learning-clear");
         assert(clearLearning != nullptr &&
                gtk_widget_get_sensitive(clearLearning));
         ConfirmationProbe confirmation;

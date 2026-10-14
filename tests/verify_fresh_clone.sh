@@ -6,7 +6,25 @@ test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-fresh-clone-test.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT
 
 printf '=== 1. 克隆代码仓库到沙箱隔离目录 ===\n'
-git clone "$project_root" "$test_root/repo"
+# Build a local snapshot first: cloning HEAD alone silently validates the old
+# version when this script is run before committing a fix. The original index,
+# branches and user files remain untouched.
+git clone --no-hardlinks "$project_root" "$test_root/snapshot"
+git -C "$project_root" diff --binary HEAD > "$test_root/working-tree.patch"
+if [[ -s "$test_root/working-tree.patch" ]]; then
+    git -C "$test_root/snapshot" apply "$test_root/working-tree.patch"
+fi
+while IFS= read -r -d '' path; do
+    mkdir -p -- "$test_root/snapshot/$(dirname -- "$path")"
+    cp -a -- "$project_root/$path" "$test_root/snapshot/$path"
+done < <(git -C "$project_root" ls-files --others --exclude-standard -z)
+git -C "$test_root/snapshot" add -A
+if ! git -C "$test_root/snapshot" diff --cached --quiet; then
+    git -C "$test_root/snapshot" -c user.name='ModernIME Verification' \
+        -c user.email='verification@localhost' -c commit.gpgsign=false \
+        -c core.hooksPath=/dev/null commit -m 'Isolated verification snapshot' >/dev/null
+fi
+git clone --no-hardlinks "$test_root/snapshot" "$test_root/repo"
 
 mkdir -p "$test_root/home"
 export HOME="$test_root/home"
@@ -24,6 +42,7 @@ printf '=== 2. 在沙箱环境中执行 install.sh ===\n'
 printf '=== 3. 验证沙箱安装产物完整性 ===\n'
 test -f "$MODERNIME_PREFIX/bin/modernime-settings"
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
+test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
 test -x "$MODERNIME_PREFIX/bin/modernime-session-init"
 { test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so" || \
   test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so" || \
@@ -34,6 +53,7 @@ test -x "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
 test -f "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test -f "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
+grep -Fx 'Name=modernime' "$MODERNIME_CONFIG_HOME/fcitx5/profile" >/dev/null
 test -x "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
 
 # Validate actual Fcitx metadata discovery using the installed session environment.
@@ -49,6 +69,11 @@ printf '=== 4. 在沙箱环境中执行 uninstall.sh ===\n'
 printf '=== 5. 验证沙箱卸载清理完全性 ===\n'
 test ! -e "$MODERNIME_PREFIX/bin/modernime-settings"
 test ! -e "$MODERNIME_PREFIX/bin/modernime-session-init"
+test ! -e "$MODERNIME_PREFIX/share/modernime/install_state.sh"
+test ! -e "$MODERNIME_PREFIX/share/doc/modernime/LICENSE"
+test ! -e "$MODERNIME_PREFIX/share/doc/modernime/copyright"
+test ! -e "$MODERNIME_PREFIX/share/doc/modernime/THIRD_PARTY_NOTICES.md"
+test ! -e "$MODERNIME_PREFIX/share/doc/modernime/SOURCES.json"
 test ! -e "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so"
 test ! -e "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so"
 test ! -e "$MODERNIME_PREFIX/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so"

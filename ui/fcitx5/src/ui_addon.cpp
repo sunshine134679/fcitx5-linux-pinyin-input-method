@@ -311,8 +311,9 @@ void toggleInputMethod(GtkMenuItem *, gpointer data) {
     }
 }
 
-void drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
+gboolean drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
     static_cast<ModernIMEUserInterface *>(data)->draw(context);
+    return FALSE;
 }
 
 gboolean buttonPressCallback(GtkWidget *, GdkEventButton *event, gpointer data) {
@@ -444,6 +445,14 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
 }
 
 ModernIMEUserInterface::~ModernIMEUserInterface() {
+    impl_->gtkEventSource.reset();
+    if (impl_->sharedTextLayout != nullptr) {
+        g_object_unref(impl_->sharedTextLayout);
+    }
+    for (const auto &[key, font] : impl_->sharedFontCache) {
+        (void)key;
+        pango_font_description_free(font);
+    }
     if (impl_->window != nullptr) {
         gtk_widget_destroy(impl_->window);
     }

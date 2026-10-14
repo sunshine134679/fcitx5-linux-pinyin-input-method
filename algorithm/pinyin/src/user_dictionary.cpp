@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 
@@ -93,16 +94,40 @@ std::string segmentedPinyin(std::string_view pinyin) {
     try {
         auto graph = libime::PinyinEncoder::parseUserPinyin(
             std::string(pinyin), libime::PinyinFuzzyFlag::None);
-        std::vector<std::size_t> bestPath;
-        graph.dfs([&bestPath](const libime::SegmentGraphBase &,
-                              const std::vector<std::size_t> &path) {
-            if (path.size() > bestPath.size()) {
-                bestPath = path;
+        // Edges always advance the input offset. Compute the longest suffix
+        // once per node instead of enumerating exponentially many complete
+        // paths (e.g. repeated "changan"). Retain the first edge on ties to
+        // preserve the original DFS's first deepest segmentation.
+        struct Suffix {
+            std::size_t length = 0;
+            const libime::SegmentGraphNode *next = nullptr;
+        };
+        std::unordered_map<const libime::SegmentGraphNode *, Suffix> suffixes;
+        suffixes.emplace(&graph.end(), Suffix{});
+        for (std::size_t offset = graph.size(); offset-- > 0;) {
+            for (const auto &node : graph.nodes(offset)) {
+                Suffix best;
+                for (const auto &next : node.nexts()) {
+                    const auto found = suffixes.find(&next);
+                    if (found != suffixes.end() &&
+                        found->second.length + 1 > best.length) {
+                        best = {found->second.length + 1, &next};
+                    }
+                }
+                if (best.next != nullptr) {
+                    suffixes.emplace(&node, best);
+                }
             }
-            return true;
-        });
-        if (bestPath.empty()) {
+        }
+        const auto start = suffixes.find(&graph.start());
+        if (start == suffixes.end() || start->second.next == nullptr) {
             return {};
+        }
+        std::vector<std::size_t> bestPath;
+        bestPath.reserve(start->second.length);
+        for (auto *node = &graph.start(); node != &graph.end();) {
+            node = suffixes.at(node).next;
+            bestPath.push_back(node->index());
         }
         std::string result;
         std::size_t previous = 0;
@@ -271,7 +296,14 @@ void UserDictionary::addTo(libime::PinyinDictionary &dictionary,
     for (const auto &entry : entries_) {
         const auto segmented = segmentedPinyin(entry.pinyin);
         if (!segmented.empty()) {
-            dictionary.addWord(index, segmented, entry.phrase, entry.weight);
+            try {
+                dictionary.addWord(index, segmented, entry.phrase, entry.weight);
+            } catch (const std::invalid_argument &) {
+                // Alphabetic input may still contain invalid or incomplete
+                // syllables. One imported row must not abort the engine's
+                // startup or escape the live dictionary reload callback.
+                continue;
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ set -euo pipefail
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-install-channel-test.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT
+export MODERNIME_BUILD_DIR="$test_root/build"
 
 fake_bin="$test_root/bin"
 mkdir -p "$fake_bin"
@@ -24,7 +25,7 @@ for arg in "$@"; do
     prev="$arg"
 done
 if [[ " $* " == *" --install "* ]]; then
-    target_prefix="${FAKE_PREFIX:-/usr}"
+    target_prefix="${DESTDIR:-}${FAKE_PREFIX:-/usr}"
     target_libdir="${FAKE_LIBDIR:-lib/x86_64-linux-gnu}"
     mkdir -p "$target_prefix/$target_libdir/fcitx5" \
              "$target_prefix/bin" \

@@ -188,7 +188,7 @@ sudo ./install.sh /usr
 ```bash
 sudo apt update
 sudo apt install \
-    build-essential cmake pkg-config \
+    build-essential cmake pkg-config python3 coreutils \
     libsqlite3-dev liblmdb-dev libboost-dev \
     libgtest-dev libbenchmark-dev \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
@@ -203,7 +203,7 @@ sudo dnf config-manager --set-enabled EPOL || true
 
 # 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
 sudo dnf install -y \
-    gcc gcc-c++ cmake make pkgconf-pkg-config \
+    gcc gcc-c++ cmake make pkgconf-pkg-config python3 coreutils \
     sqlite-devel lmdb-devel boost-devel \
     gtest-devel google-benchmark-devel \
     fcitx5-devel libime-devel \
@@ -212,6 +212,8 @@ sudo dnf install -y \
 ```
 
 #### 执行一键安装
+
+安装与数据备份工具需要 Python 3.10 或更高版本；会话启动使用 `coreutils` 的 `timeout` 限制远程状态查询时间。CMake 会检查这些工具，正常安装仍为离线流程。
 ```bash
 # 克隆仓库 (推荐 HTTPS)
 git clone https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method.git
@@ -260,6 +262,9 @@ MODERNIME_SKIP_TESTS=1 ./install.sh
 
 # 3. 跳过 Fcitx5 自动重启：
 MODERNIME_SKIP_FCITX_RESTART=1 ./install.sh
+
+# 4. 源码安装默认启用 Release 优化；需要调试时显式选择：
+MODERNIME_BUILD_TYPE=Debug ./install.sh
 ```
 
 ### 桌面会话与环境变量适配（LightDM / UKUI / X11）
@@ -348,6 +353,18 @@ fcitx5-remote
 ```
 
 不要重复启动多个 Fcitx5 实例。如果终端提示已有 Fcitx5 正在运行，应使用 `fcitx5-remote -r` 重载现有实例。
+
+`modernime-session-init` 会检查当前会话：Fcitx5 未运行时启动，有进程时重载配置；没有编辑器输入焦点时以输入法注册状态判断就绪。状态查询有超时，避免断连时一直等待。自定义 `MODERNIME_CONFIG_HOME` 同时用于写入配置和启动进程，含空格的前缀也可用于桌面自启。现有自启入口只在登录时启动一次，**不提供持续监护或崩溃后自动重启**；手动退出 Fcitx5、桌面/DBus 会话结束后不会强行拉起进程。
+
+### 稳定性与长期使用
+
+- 用户词典重载会跳过 LibIME 不接受的拼音条目，避免单个错误词条终止输入进程；歧义拼音拆分按图节点计算，避免穷举大量路径导致卡顿。
+- 从存储加载学习快照时预先准备召回索引，减少加载后首次按键的整库索引开销；索引缓存初始化支持并发访问。敏感输入框在设置热重载后仍禁用学习。
+- 存储持续写入失败时，待写学习队列保留最近 100 条事件，避免无限增长；已持久化的学习记录不受此队列上限影响。临时组词统计保留最近条目，使长期使用仍能学习新词。
+- 设置保存使用后台状态查询，避免远程进程迟缓时阻塞设置窗口；旧重载结果不会覆盖较新的保存状态。
+- 源码升级只备份将覆盖的安装文件，失败时恢复程序文件并保留升级期间新增的学习和配置。SQLite/LMDB 在线备份校验各自的一致性快照，不会因正常并发输入导致行数误报。
+
+开发验证运行 `ctest --test-dir build/fcitx5-debug --output-on-failure` 和 `./tests/verify_fresh_clone.sh`。后者在临时 Git 快照中纳入当前未提交改动，再全新克隆、离线安装与卸载；不会修改原工作区的 Git 索引或提交。
 
 ## 常用功能与核心特性
 
@@ -634,6 +651,6 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 ## 故障排查
 
 - CMake 提示找不到 `Fcitx5Core`、`LibIMEPinyin`、`libime_pinyindict` 或 GTK3：确认已安装上面的开发包，然后重新执行 `./install.sh`；
-- `fcitx5-remote` 没有输出：先确认 Fcitx5 已运行，再执行 `fcitx5-remote -r`；
+- `fcitx5-remote` 没有输出：没有输入焦点时 `-n` 可为空；先运行 `fcitx5-remote` 检查状态，在普通用户的图形与 DBus 会话中执行 `modernime-session-init` 恢复启动和配置。仍失败时从终端运行 `fcitx5 -D -u modernime-ui` 查看启动诊断；
 - 设置客户端找不到：直接运行 `~/.local/bin/modernime-settings`，并确认 `~/.local/share/applications/modernime-settings.desktop` 存在；
 - 在 SSH、容器或无桌面的终端安装：这是受支持的，安装脚本会跳过 Fcitx5 自动启动；回到图形会话后手动启动 Fcitx5 即可。

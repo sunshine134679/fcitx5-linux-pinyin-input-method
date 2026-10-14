@@ -6,7 +6,15 @@ data_guard="$project_root/scripts/modernime-data-guard"
 test -x "$data_guard"
 
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-upgrade-data-protection.XXXXXX")
+wal_holder_pid=""
+so_holder_pid=""
 cleanup() {
+    if [[ -n "$wal_holder_pid" ]]; then
+        kill -9 "$wal_holder_pid" 2>/dev/null || true
+    fi
+    if [[ -n "$so_holder_pid" ]]; then
+        kill -9 "$so_holder_pid" 2>/dev/null || true
+    fi
     rm -rf -- "$test_root"
 }
 trap cleanup EXIT
@@ -26,6 +34,7 @@ cat > "$payload_pkg/usr/bin/modernime-settings" <<'EOF'
 echo "modernime-settings 0.1.8"
 EOF
 cp "$project_root/scripts/modernime-session-init" "$payload_pkg/usr/bin/modernime-session-init"
+cp "$project_root/scripts/install_state.sh" "$payload_pkg/usr/share/modernime/install_state.sh"
 cp "$project_root/scripts/modernime-data-guard" "$payload_pkg/usr/bin/modernime-data-guard"
 chmod +x "$payload_pkg/usr/bin/modernime-settings" \
          "$payload_pkg/usr/bin/modernime-session-init" \
@@ -286,4 +295,105 @@ assert conn.execute("PRAGMA integrity_check;").fetchone()[0] == "ok"
 phrases = {r[0] for r in conn.execute("SELECT phrase FROM learning_entries;").fetchall()}
 assert phrases == {"你好世界", "活跃WAL词条", "并发WAL词条"}
 conn.close()
+PYEOF
+
+# A writer may commit after source verification and before the online snapshot.
+# Backup metadata must describe that snapshot, not an earlier live row count.
+python3 - "$data_guard" "$test_root/snapshot-writers" <<'PYEOF'
+import ctypes
+import importlib.machinery
+import importlib.util
+import sqlite3
+import struct
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader('snapshot_guard', sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+guard = importlib.util.module_from_spec(spec)
+loader.exec_module(guard)
+root = Path(sys.argv[2])
+root.mkdir()
+failures = []
+
+sqlite_source = root / 'live.sqlite3'
+sqlite_backup = root / 'snapshot.sqlite3'
+with sqlite3.connect(sqlite_source) as conn:
+    conn.execute('CREATE TABLE learning_entries (pinyin TEXT, phrase TEXT)')
+    conn.execute("INSERT INTO learning_entries VALUES ('old', 'before verification')")
+original_sqlite_verify = guard.verify_sqlite
+
+def sqlite_verify_with_writer(path):
+    metadata = original_sqlite_verify(path)
+    if path == sqlite_source:
+        with sqlite3.connect(sqlite_source) as conn:
+            conn.execute("INSERT INTO learning_entries VALUES ('new', 'after verification')")
+    return metadata
+
+guard.verify_sqlite = sqlite_verify_with_writer
+try:
+    metadata = guard.backup_sqlite(sqlite_source, sqlite_backup)
+    assert metadata['entries_count'] == 2, metadata
+    with sqlite3.connect(sqlite_backup) as conn:
+        assert {r[0] for r in conn.execute('SELECT phrase FROM learning_entries')} == {
+            'before verification', 'after verification'
+        }
+except Exception as exc:
+    failures.append(f'SQLite snapshot backup rejected a valid writer commit: {exc}')
+finally:
+    guard.verify_sqlite = original_sqlite_verify
+
+lmdb_source = root / 'live.lmdb'
+lmdb_backup = root / 'snapshot.lmdb'
+guard.init_test_lmdb(lmdb_source)
+lib = guard._load_liblmdb()
+
+def commit_lmdb_word():
+    env = ctypes.c_void_p()
+    assert lib.mdb_env_create(ctypes.byref(env)) == 0
+    try:
+        assert lib.mdb_env_set_maxdbs(env, 4) == 0
+        assert lib.mdb_env_open(env, str(lmdb_source).encode(), guard.MDB_NOSUBDIR | guard.MDB_NOTLS, 0o644) == 0
+        txn = ctypes.c_void_p()
+        assert lib.mdb_txn_begin(env, None, 0, ctypes.byref(txn)) == 0
+        try:
+            dbi = ctypes.c_uint()
+            assert lib.mdb_dbi_open(txn, b'words', guard.MDB_DUPSORT, ctypes.byref(dbi)) == 0
+            key_bytes = b'!u!new'
+            phrase = b'new'
+            value_bytes = struct.pack('<dqHHHBB', 5.0, 1700000000000, len(phrase), 0, 0, 0, 0) + phrase
+            key_buf = ctypes.create_string_buffer(key_bytes, len(key_bytes))
+            value_buf = ctypes.create_string_buffer(value_bytes, len(value_bytes))
+            key = guard.MDBVal(len(key_bytes), ctypes.cast(key_buf, ctypes.c_void_p))
+            value = guard.MDBVal(len(value_bytes), ctypes.cast(value_buf, ctypes.c_void_p))
+            assert lib.mdb_put(txn, dbi.value, ctypes.byref(key), ctypes.byref(value), 0) == 0
+            assert lib.mdb_txn_commit(txn) == 0
+            txn = None
+        finally:
+            if txn is not None:
+                lib.mdb_txn_abort(txn)
+    finally:
+        lib.mdb_env_close(env)
+
+original_lmdb_verify = guard.verify_lmdb
+
+def lmdb_verify_with_writer(path):
+    metadata = original_lmdb_verify(path)
+    if path == lmdb_source:
+        commit_lmdb_word()
+    return metadata
+
+guard.verify_lmdb = lmdb_verify_with_writer
+try:
+    metadata = guard.backup_lmdb(lmdb_source, lmdb_backup)
+    assert metadata['words_count'] == 2, metadata
+    assert original_lmdb_verify(lmdb_backup)['words_count'] == 2
+except Exception as exc:
+    failures.append(f'LMDB snapshot backup rejected a valid writer commit: {exc}')
+finally:
+    guard.verify_lmdb = original_lmdb_verify
+
+assert not failures, '\n'.join(failures)
+print('Online backup snapshot writer tests passed')
 PYEOF

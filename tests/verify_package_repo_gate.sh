@@ -38,18 +38,14 @@ expected_version=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUA
 [ -n "${expected_version}" ] || fail "unable to parse version from CMakeLists.txt"
 
 printf '=== [1/7] Building / verifying DEB and RPM packages (v%s) ===\n' "${expected_version}"
-deb_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.deb" 2>/dev/null | head -n 1 || true)
-if [ -z "${deb_file}" ] || [ "${repo_root}/scripts/modernime-migrate-channel" -nt "${deb_file}" ] || [ "${repo_root}/tools/settings/update_controller.cpp" -nt "${deb_file}" ]; then
-    "${repo_root}/scripts/package_deb.sh"
-    deb_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.deb" | head -n 1)
-fi
+# Validate the current source, including CMake install rules and helper scripts.
+# A few selected timestamp checks can silently reuse an obsolete package.
+"${repo_root}/scripts/package_deb.sh"
+deb_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.deb" | head -n 1)
 [ -f "${deb_file}" ] || fail "DEB package not produced in dist/"
 
-rpm_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.rpm" 2>/dev/null | head -n 1 || true)
-if [ -z "${rpm_file}" ] || [ "${repo_root}/scripts/package_rpm.sh" -nt "${rpm_file}" ] || [ "${repo_root}/scripts/modernime-migrate-channel" -nt "${rpm_file}" ] || [ "${repo_root}/tools/settings/update_controller.cpp" -nt "${rpm_file}" ]; then
-    "${repo_root}/scripts/package_rpm.sh"
-    rpm_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.rpm" | head -n 1)
-fi
+"${repo_root}/scripts/package_rpm.sh"
+rpm_file=$(find "${repo_root}/dist" -maxdepth 1 -type f -name "modernime*${expected_version}*.rpm" | head -n 1)
 [ -f "${rpm_file}" ] || fail "RPM package not produced in dist/"
 
 assert_normal_nonzero_failure \
@@ -66,6 +62,7 @@ for required_path in \
     "modernime_ui.so" \
     "./usr/bin/modernime-settings" \
     "./usr/bin/modernime-session-init" \
+    "./usr/share/modernime/install_state.sh" \
     "./usr/bin/modernime-data-guard" \
     "./usr/bin/modernime-migrate-channel" \
     "./usr/share/modernime/pinyin/modernime-knowledge.dict" \
@@ -183,7 +180,7 @@ for req_pkg, min_ver in [
     ("gtk3", "3.24.0"),
     ("sqlite-libs", "3.37.0"),
     ("lmdb-libs", "0.9.24"),
-    ("python3", "3.9"),
+    ("python3", "3.10"),
 ]:
     assert req_map.get(req_pkg) == min_ver, f"RPM missing dependency {req_pkg} >= {min_ver} (got {req_map.get(req_pkg)})"
 
@@ -266,7 +263,7 @@ for i in range(nfiles):
         }
 
 payload_reg_files = sorted(p for p in rootfs.rglob("*") if p.is_file() and not p.is_symlink())
-assert len(payload_reg_files) == 18, f"Expected 18 regular files in RPM payload, got {len(payload_reg_files)}"
+assert len(payload_reg_files) == 19, f"Expected 19 regular files in RPM payload, got {len(payload_reg_files)}"
 assert len(hdr_reg_files) == len(payload_reg_files), (
     f"RPM header regular file count ({len(hdr_reg_files)}) != payload regular file count ({len(payload_reg_files)})"
 )
@@ -298,6 +295,7 @@ if command -v rpm >/dev/null 2>&1; then
     for req_rpm_path in \
         "/usr/bin/modernime-settings" \
         "/usr/bin/modernime-session-init" \
+        "/usr/share/modernime/install_state.sh" \
         "/usr/bin/modernime-data-guard" \
         "/usr/bin/modernime-migrate-channel" \
         "/usr/share/modernime/install-channel.txt" \
@@ -310,12 +308,13 @@ if command -v rpm >/dev/null 2>&1; then
     done
     printf '  -> [NATIVE RPM]: rpm -qpl verified (%d entries)\n' "$(printf '%s\n' "${rpm_qpl_out}" | wc -l)"
 else
-    printf '  -> [SIMULATED HARNESS / PYTHON RPMFI VERIFIER]: native rpm binary not installed on host; verified all 18 RPM header file-table entries (FILESIZES, FILEMODES, FILEDIGESTS, FILEUSERNAME/GROUPNAME, DIRNAMES/DIRINDEXES/BASENAMES)\n'
+    printf '  -> [SIMULATED HARNESS / PYTHON RPMFI VERIFIER]: native rpm binary not installed on host; verified all 19 RPM header file-table entries (FILESIZES, FILEMODES, FILEDIGESTS, FILEUSERNAME/GROUPNAME, DIRNAMES/DIRINDEXES/BASENAMES)\n'
 fi
 
 for rpm_req_file in \
     "usr/bin/modernime-settings" \
     "usr/bin/modernime-session-init" \
+    "usr/share/modernime/install_state.sh" \
     "usr/bin/modernime-data-guard" \
     "usr/bin/modernime-migrate-channel" \
     "usr/share/modernime/pinyin/modernime-knowledge.dict" \

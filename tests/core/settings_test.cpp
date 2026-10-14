@@ -268,9 +268,25 @@ void testPreserveUnknownKeysAndCommentsAndConflict() {
     assertTrue(hash1 != hash2, "computeSettingsHash distinguishes modified settings");
 }
 
+void testOversizedIntegersAreRejectedWithoutWrapping() {
+    const auto directory = testDirectory();
+    const auto path = directory / "settings.conf";
+    std::ofstream(path) << "candidate.page_size=4294967301\n"
+                        << "candidate.font_size=4294967312\n"
+                        << "candidate.page_size=9999999999999999999999999999999999999999\n";
+    const auto loaded = modernime::core::SettingsStore::load(path);
+    const auto defaults = modernime::core::defaultSettings();
+    assertTrue(loaded.settings.candidatePageSize == defaults.candidatePageSize &&
+                   loaded.settings.candidateFontSize == defaults.candidateFontSize,
+               "oversized integers cannot wrap into valid settings values");
+    assertTrue(loaded.diagnostics.size() == 3,
+               "each oversized integer reports an invalid value");
+}
+
 } // namespace
 
 int main() {
+    testOversizedIntegersAreRejectedWithoutWrapping();
     testPaths();
     testDefaultsAndRoundTrip();
     testDiagnosticsAndPerKeyFallback();

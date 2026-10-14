@@ -374,16 +374,10 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
 
     GError *error = nullptr;
     GSubprocess *proc = g_subprocess_launcher_spawnv(launcher, rawArgv.data(), &error);
-    // Explicitly close childStdoutFd / childStderrFd in the parent immediately after spawnv()
-    // on both success and failure paths so no duplicated FD can ever remain open in the client.
+    // The launcher owns these descriptors and closes them when replaced. Do not
+    // close their old numbers again: another thread may already have reused them.
     g_subprocess_launcher_take_stdout_fd(launcher, -1);
     g_subprocess_launcher_take_stderr_fd(launcher, -1);
-    if (::fcntl(childStdoutFd, F_GETFD) != -1) {
-        ::close(childStdoutFd);
-    }
-    if (::fcntl(childStderrFd, F_GETFD) != -1) {
-        ::close(childStderrFd);
-    }
     g_object_unref(launcher);
     if (proc == nullptr) {
         ::close(stdoutFd);

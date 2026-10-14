@@ -3,8 +3,10 @@
 #include <gtk/gtk.h>
 
 #include <cassert>
+#include <chrono>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace {
 
@@ -12,6 +14,20 @@ void drainEvents() {
     while (gtk_events_pending()) {
         gtk_main_iteration();
     }
+}
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate) {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(5);
+    do {
+        drainEvents();
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+    return false;
 }
 
 void dispatchTab(GtkWidget *window, bool reverse) {
@@ -71,7 +87,7 @@ int main(int argc, char **argv) {
     gtk_window_present(GTK_WINDOW(window));
     drainEvents();
     gtk_widget_grab_focus(next);
-    if (!gtk_widget_has_focus(next)) {
+    if (!waitUntil([next] { return gtk_widget_has_focus(next); })) {
         gtk_widget_destroy(window);
         drainEvents();
         return 77;
@@ -138,6 +154,8 @@ int main(int argc, char **argv) {
 
     assertFocusChainsUseDirectChildren(root);
     gtk_widget_grab_focus(first);
+    // The window manager grants activation asynchronously after present().
+    assert(waitUntil([first] { return gtk_widget_has_focus(first); }));
     assert(gtk_widget_has_focus(first));
     dispatchTab(nestedWindow, false);
     assert(gtk_widget_has_focus(second));

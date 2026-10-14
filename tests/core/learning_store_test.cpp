@@ -211,8 +211,15 @@ void testWriterDetectsWalClearAndSerializesOwnWrites() {
                        cached->frequency == 300 && stored->frequency == 300 &&
                        memory->entries().size() == 1 && disk->entries().size() == 1,
                    "concurrent own writes preserve all deltas without restoring cleared rows");
-        assertTrue(settings.clear() && writer.reloadIfChanged() &&
-                       writer.snapshot()->entries().empty(),
+        const bool cleared = settings.clear();
+        bool reloaded = false;
+        for (int i = 0; i < 20 && !reloaded; ++i) {
+            reloaded = writer.reloadIfChanged();
+            if (!reloaded) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        assertTrue(cleared && reloaded && writer.snapshot()->entries().empty(),
                    "a second WAL reset is detected within the same engine lifetime");
     }
     std::filesystem::remove(path);
@@ -1357,9 +1364,104 @@ void testSchemaVersionAndBackup() {
     }
 }
 
+void testPublishedSnapshotDoesNotBuildRecallIndexOnFirstKey() {
+    std::vector<modernime::core::LearningEntry> entries;
+    entries.reserve(50000);
+    for (int index = 0; index < 50000; ++index) {
+        entries.push_back({"测试词" + std::to_string(index), "ni'hao",
+                           {}, {}, 1, 1000, 0, false});
+    }
+    const modernime::core::LearningSnapshot snapshot(std::move(entries));
+    // Publishing a new learning snapshot must not move its full index build
+    // to the next keypress, even when the query has no matching learned word.
+    const auto start = std::chrono::steady_clock::now();
+    const auto recalled = snapshot.recallCandidates("bu'cun'zai", 1000);
+    assertTrue(recalled.empty(), "unmatched query has no learned candidates");
+    assertTrue(std::chrono::steady_clock::now() - start <
+                   std::chrono::milliseconds(30),
+               "first key on a published snapshot avoids rebuilding all learning entries");
+}
+
+void testFailedWriterQueueRetainsOnlyRecentEvents() {
+    const auto path = testPath("writer-bounded-failure.sqlite3");
+    {
+        modernime::core::LearningWriter writer(path);
+        sqlite3 *fault = nullptr;
+        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK,
+                   "bounded failure test opens storage fault injector");
+        assertTrue(sqlite3_exec(fault,
+            "CREATE TRIGGER fail_bounded_queue BEFORE INSERT ON learning_entries "
+            "BEGIN SELECT RAISE(ABORT, 'disk failure'); END;",
+            nullptr, nullptr, nullptr) == SQLITE_OK,
+            "bounded queue test injects persistent write failure");
+        writer.enqueueSelection("故障首词", "guzhang", {}, {}, 1);
+        assertTrue(!writer.flush(), "initial fault leaves pending learning");
+        for (int index = 0; index < 150; ++index) {
+            writer.enqueueSelection("故障词" + std::to_string(index),
+                                     "ceshi", {}, {}, index + 2);
+        }
+        assertTrue(!writer.flush(), "storage remains unavailable after many selections");
+        assertTrue(sqlite3_exec(fault, "DROP TRIGGER fail_bounded_queue;",
+                               nullptr, nullptr, nullptr) == SQLITE_OK,
+                   "bounded queue test restores storage");
+        sqlite3_close(fault);
+        assertTrue(writer.flush(), "recent retained events persist after recovery");
+    }
+    modernime::core::LearningStore reopened(path);
+    assertTrue(reopened.open(), "bounded failure database reopens");
+    const auto snapshot = reopened.snapshot(200);
+    assertTrue(snapshot->entry("故障首词", "guzhang", {}, {}) == nullptr &&
+                   snapshot->entry("故障词49", "ceshi", {}, {}) == nullptr,
+               "old events beyond queue capacity are discarded during failure");
+    assertTrue(snapshot->entry("故障词50", "ceshi", {}, {}) != nullptr &&
+                   snapshot->entry("故障词149", "ceshi", {}, {}) != nullptr,
+               "the most recent 100 queued events survive storage recovery");
+    reopened.close();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(path.string() + "-wal", error);
+    std::filesystem::remove(path.string() + "-shm", error);
+}
+
+void testFormedPhraseStatisticsStayBounded() {
+    for (const int threshold : {1, 3}) {
+        auto stats = std::make_shared<modernime::core::PhraseFormationStats>();
+        modernime::core::PhraseFormationTracker tracker(threshold, stats);
+        for (int index = 0; index < 600; ++index) {
+            const auto codepoint = static_cast<unsigned int>(0x4e00 + index);
+            std::string character;
+            character.push_back(static_cast<char>(0xe0U | (codepoint >> 12)));
+            character.push_back(static_cast<char>(0x80U | ((codepoint >> 6) & 0x3fU)));
+            character.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+            for (int repeat = 0; repeat < threshold; ++repeat) {
+                tracker.resetCommitHistory();
+                modernime::core::CommitEvent first;
+                first.text = character;
+                first.fullPinyin = "jia";
+                first.role = modernime::core::CommitCandidateRole::Chinese;
+                first.timestampMs = index * 10 + repeat + 1;
+                tracker.recordCommit(first);
+                auto second = first;
+                second.text = "乙";
+                second.fullPinyin = "yi";
+                const auto formed = tracker.recordCommit(second);
+                if (repeat == threshold - 1) {
+                    assertTrue(!formed.empty(), "repeated pair forms a phrase");
+                }
+            }
+            assertTrue(stats->sequenceStats.size() <= 500,
+                       "formed sequences obey the 500-entry statistics bound");
+        }
+        assertTrue(!stats->sequenceStats.contains("一乙\x1fjia'yi"),
+                   "old formed sequence is evicted when capacity is reached");
+    }
+}
 } // namespace
 
 int main() {
+    testPublishedSnapshotDoesNotBuildRecallIndexOnFirstKey();
+    testFailedWriterQueueRetainsOnlyRecentEvents();
+    testFormedPhraseStatisticsStayBounded();
     testSchemaVersionAndBackup();
     testEnglishWordRecallIndex();
     testContextAssociationAndSmoothing();
