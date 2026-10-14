@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Existing Release Tag to publish (e.g. v0.1.9)'
+        description: 'Existing Release Tag to publish (e.g. v0.1.10)'
         required: true
         type: string
 
@@ -594,6 +594,10 @@ jobs:
         run: |
           set -euo pipefail
           prev_pages=""
+          git ls-remote --heads origin refs/heads/gh-pages > previous-pages-ref.txt
+          if [[ -s previous-pages-ref.txt ]]; then
+            git fetch origin refs/heads/gh-pages:refs/remotes/origin/gh-pages
+          fi
           if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
             git worktree add prev-pages origin/gh-pages
             prev_pages="prev-pages"
@@ -683,7 +687,7 @@ jobs:
       - name: Compute Checksums
         run: |
           cd release-assets
-          sha256sum * > SHA256SUMS.txt
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Upload Signed Release Assets Bundle
@@ -738,6 +742,20 @@ jobs:
           cd -
           rm -rf "$work_pages"
 
+      - name: Prepare Release Notes
+        env:
+          RELEASE_TAG: ${{ needs.resolve-target.outputs.tag }}
+          SOURCE_SHA: ${{ needs.resolve-target.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${RELEASE_TAG}.md"
+          if [[ -f "$notes" ]]; then
+            cat "$notes" > release-notes.md
+          else
+            printf '# ModernIME %s\n' "$RELEASE_TAG" > release-notes.md
+          fi
+          printf '\n## 构建源码\n\n所有发行包均来自标签 `%s` 对应的提交 `%s`。\n' "$RELEASE_TAG" "$SOURCE_SHA" >> release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -746,10 +764,6 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          body: |
-            ### 升级与软件源重要说明 (Upgrade & Repository Notes)
-            - **在线软件源首发基线 (`v0.1.9`)**：`0.1.9` 为官方签名 APT / DNF 在线软件源的首发基线版本，不提供在线回退到 `0.1.8`（自后续版本起保留多版本在线回退包池）。
-            - **`script` 渠道迁移要求**：此前通过 `./install.sh` 或便携包安装的 `script` 渠道用户，需先执行 `modernime-migrate-channel` 完成安装渠道迁移，方可使用 `apt` 或 `dnf` 升级。
-            - **构建源码绑定**：本次发布全部软件包与便携包均固定从标签 `${{ needs.resolve-target.outputs.tag }}` 指向的产品源码提交 `${{ needs.resolve-target.outputs.source_sha }}` 构建。
+          body_path: release-notes.md
           files: |
             release-assets/*

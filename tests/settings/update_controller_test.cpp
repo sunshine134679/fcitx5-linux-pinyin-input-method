@@ -150,6 +150,38 @@ int main(int argc, char **argv) {
     assert(dnfStatus.refreshCacheCommand == "sudo dnf makecache");
     assert(dnfStatus.upgradeCommand == "sudo dnf makecache && sudo dnf upgrade modernime");
 
+    // RPM channel takes precedence even if APT tools are also installed.
+    const Environment mixedRpmEnv{
+        {"PATH", aptBinDir.string() + ":" + dnfBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.8"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+    };
+    const auto mixedRpmStatus = UpdateController::checkForUpdates(mixedRpmEnv);
+    assert(mixedRpmStatus.manager == PackageManagerKind::Dnf);
+    assert(mixedRpmStatus.candidateVersion == "0.1.9-1.oe2409");
+    assert(mixedRpmStatus.upgradeCommand.find("dnf upgrade") != std::string::npos);
+
+    // Checking updates never refreshes the remote DNF cache implicitly.
+    const auto emptyDnfBinDir = tempRoot / "empty-dnf-bin";
+    std::filesystem::create_directories(emptyDnfBinDir);
+    const auto dnfCalls = tempRoot / "dnf-check-calls.log";
+    writeExecutable(emptyDnfBinDir / "dnf", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" +
+                    dnfCalls.string() + "\"\nexit 1\n");
+    const Environment emptyDnfEnv{
+        {"PATH", emptyDnfBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.8"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+    };
+    const auto emptyDnfStatus = UpdateController::checkForUpdates(emptyDnfEnv);
+    assert(emptyDnfStatus.offlineOrUnreachable);
+    assert(!emptyDnfStatus.updateAvailable);
+    std::ifstream calls(dnfCalls);
+    std::string call;
+    assert(static_cast<bool>(std::getline(calls, call)));
+    assert(call.find("--cacheonly") != std::string::npos);
+    assert(call.find("--available") != std::string::npos);
+    assert(!std::getline(calls, call));
+
     // 4. Script channel directs user to modernime-migrate-channel and refuses direct pkexec
     const Environment scriptEnv{
         {"PATH", aptBinDir.string()},

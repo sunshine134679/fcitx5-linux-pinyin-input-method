@@ -2,6 +2,8 @@
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+expected_version=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUAGES CXX)$/\1/p' "$project_root/CMakeLists.txt")
+test -n "$expected_version"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-install-channel-test.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT
 export MODERNIME_BUILD_DIR="$test_root/build"
@@ -295,7 +297,7 @@ env \
     MODERNIME_DATA_HOME="$mig_data_home" \
     "$project_root/scripts/modernime-migrate-channel" --check --from-prefix "$mig_src_prefix" >"$check_out"
 grep -F 'Detected Channel:  script' "$check_out" >/dev/null
-grep -F 'Detected Version:  0.1.9' "$check_out" >/dev/null
+grep -F "Detected Version:  $expected_version" "$check_out" >/dev/null
 
 # Test 6: Migration failure rolls back to preserve original script installation and prints recovery instructions
 fail_out="$test_root/migrate-fail.log"

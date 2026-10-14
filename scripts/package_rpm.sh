@@ -68,7 +68,9 @@ dist_dir = Path(sys.argv[3]).resolve()
 
 cmake_text = (project_root / "CMakeLists.txt").read_text(encoding="utf-8")
 m = re.search(r"project\(ModernIME\s+VERSION\s+([0-9.]+)", cmake_text)
-version = m.group(1) if m else "0.1.9"
+if not m:
+    raise SystemExit("Unable to determine ModernIME version from CMakeLists.txt")
+version = m.group(1)
 release = os.environ.get("MODERNIME_RPM_RELEASE", "1.oe2409")
 arch = os.environ.get("MODERNIME_RPM_ARCH", "x86_64")
 pkg_name = "modernime"

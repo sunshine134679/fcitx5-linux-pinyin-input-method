@@ -378,9 +378,12 @@ import sys
 raw = Path(sys.argv[1]).read_bytes()
 dst_path = Path(sys.argv[2])
 cur_ver = sys.argv[3]
-assert len(cur_ver) == len("0.1.8"), "Version length mismatch for binary patch"
-
-lead = raw[:96].replace(cur_ver.encode("ascii"), b"0.1.8")
+assert len(cur_ver) >= len("0.1.8"), "Current version cannot be shorter than the fixture"
+# Leave header offsets and CPIO file sizes intact when patch numbers gain digits.
+# RPM strings may have spare NUL bytes; channel metadata may have blank lines.
+padding = len(cur_ver) - len("0.1.8")
+lead_name = raw[10:76].rstrip(b"\x00").replace(cur_ver.encode("ascii"), b"0.1.8")
+lead = raw[:10] + lead_name.ljust(66, b"\x00") + raw[76:96]
 nindex, hsize = struct.unpack(">II", raw[104:112])
 sig_end = (112 + nindex * 16 + hsize + 7) & ~7
 if raw[sig_end : sig_end + 4] != b"\x8e\xad\xe8\x01":
@@ -393,7 +396,7 @@ old_payload_gz = raw[payload_off:]
 old_cpio = gzip.decompress(old_payload_gz)
 
 old_chan = f"channel=rpm\nversion={cur_ver}\nprefix=/usr\n".encode("ascii")
-new_chan = b"channel=rpm\nversion=0.1.8\nprefix=/usr\n"
+new_chan = b"channel=rpm\nversion=0.1.8\nprefix=/usr\n" + b"\n" * padding
 new_cpio = old_cpio.replace(old_chan, new_chan)
 new_payload_gz = gzip.compress(new_cpio, compresslevel=6)
 
@@ -408,7 +411,7 @@ new_main_hdr = (
     main_hdr.replace(old_chan_sha, new_chan_sha)
     .replace(old_gz_sha, new_gz_sha)
     .replace(old_cpio_sha, new_cpio_sha)
-    .replace(cur_ver.encode("ascii"), b"0.1.8")
+    .replace(cur_ver.encode("ascii") + b"\x00", b"0.1.8" + b"\x00" * (padding + 1))
 )
 dst_path.write_bytes(lead + raw[96:sig_end] + new_main_hdr + new_payload_gz)
 PYEOF
@@ -511,6 +514,14 @@ ephemeral_repo_dir="${work_dir}/ephemeral-rpm-repo"
 # Seed ci_assets_dir with the ephemeral-signed RPM to verify that ci_build_release_repos.sh replaces the ephemeral signature
 cp -f "${ephemeral_repo_dir}/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" \
     "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm"
+
+# Include the current version in prior Pages to exercise release retry idempotency.
+for suite in jammy noble bookworm; do
+    cp -f "${inaugural_pages_dir}/apt/pool/${suite}/main/m/modernime/modernime_${expected_version}_amd64.deb" \
+        "${prev_pages_dir}/apt/pool/${suite}/main/m/modernime/"
+done
+cp -f "${inaugural_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" \
+    "${prev_pages_dir}/rpm/oe2409/x86_64/Packages/"
 
 # 3b. Subsequent release multi-version retention check (simulated prior release pool in gh-pages + current release)
 MODERNIME_GPG_KEY_ID="${primary_fpr}" \

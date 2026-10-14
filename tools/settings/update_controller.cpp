@@ -27,7 +27,7 @@ namespace modernime::settings {
 namespace {
 
 #ifndef MODERNIME_VERSION
-#define MODERNIME_VERSION "0.1.9"
+#define MODERNIME_VERSION "0.1.10"
 #endif
 
 #ifndef MODERNIME_INSTALL_PREFIX
@@ -812,7 +812,12 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
 
     // 2. Probe APT via apt-cache policy & apt-cache show
     const auto aptCache = findExecutableInPath("apt-cache", environment);
-    if (!aptCache.empty()) {
+    const auto dnfBin = findExecutableInPath("dnf", environment);
+    const bool rpmChannel = status.installChannel == "rpm";
+    const bool debChannel = status.installChannel == "deb";
+    if (rpmChannel) status.manager = PackageManagerKind::Dnf;
+    if (debChannel) status.manager = PackageManagerKind::Apt;
+    if (!aptCache.empty() && !rpmChannel) {
         status.manager = PackageManagerKind::Apt;
         bool hasRemoteRepoIndex = false;
         const auto policyOut =
@@ -875,18 +880,15 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
     }
 
     // 3. Probe DNF on openEuler / Fedora / RHEL
-    const auto dnfBin = findExecutableInPath("dnf", environment);
-    if (!dnfBin.empty()) {
+    if (!dnfBin.empty() && !debChannel) {
         status.manager = PackageManagerKind::Dnf;
         bool hasRemoteRepoIndex = false;
         const auto infoOut = runSubprocess(
-            {dnfBin.string(), "--cacheonly", "-q", "info", "modernime"}, environment);
-        const auto &text = !infoOut.stdoutText.empty()
-                               ? infoOut.stdoutText
-                               : runSubprocess({dnfBin.string(), "-q", "info", "modernime"},
-                                               environment)
-                                     .stdoutText;
-        if (!text.empty()) {
+            {dnfBin.string(), "--cacheonly", "-q", "info", "--available", "modernime"}, environment);
+        // Cache refresh is a separate explicit action. A failed cache query
+        // must not start an implicit network request or parse partial output.
+        const auto &text = infoOut.stdoutText;
+        if (infoOut.started && infoOut.exitedZero && !text.empty()) {
             std::istringstream iss(text);
             std::string line;
             std::string ver;

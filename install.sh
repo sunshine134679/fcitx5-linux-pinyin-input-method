@@ -635,7 +635,7 @@ channel_file="$manifest_dir/install-channel.txt"
 mkdir -p "$manifest_dir"
 installed_version=$(grep -m1 '^PROJECT_VERSION:STATIC=' "$build_dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
 if [[ -z "$installed_version" ]]; then
-    installed_version=$(grep -m1 'project(ModernIME VERSION' "$project_root/CMakeLists.txt" 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo "0.1.9")
+    installed_version=$(grep -m1 'project(ModernIME VERSION' "$project_root/CMakeLists.txt" 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo "unknown")
 fi
 {
     printf 'channel=script\n'

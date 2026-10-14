@@ -14,10 +14,10 @@ ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）�
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.9_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.9_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.9-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.9-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.10_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.10_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.10-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.10-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -65,8 +65,7 @@ sudo apt install -y modernime
 # 后续检查并仅升级 ModernIME（注意：检查更新前请先执行 sudo apt update 刷新软件源缓存）：
 sudo apt update && sudo apt install --only-upgrade -y modernime
 
-# 5. 版本回退（v0.1.9 为在线 APT 仓库首发基线版本，首次发布时仓库仅含 0.1.9，不支持通过在线源回退到仓库建立前的 0.1.8；
-#    从下一版本 v0.1.10+ 起，gh-pages 分支自动保留 0.1.9+ 历史包以支持在线降级。若需回退至 0.1.8，请从 GitHub Releases 下载离线包安装）
+# 5. 版本回退（在线源保留 0.1.9 及后续历史版本；仓库建立前的 0.1.8 需从 GitHub Releases 下载离线包）
 apt-cache madison modernime
 sudo apt install -y --allow-downgrades modernime=0.1.9
 
@@ -133,7 +132,7 @@ sudo dnf install -y modernime
 # 后续升级：
 sudo dnf upgrade -y modernime
 
-# 3. 版本回退与移除 DNF 仓库（v0.1.9 为在线 DNF 仓库首发基线版本，首次发布仅含 0.1.9；从 v0.1.10+ 起支持在线 dnf downgrade 回退至 0.1.9+）
+# 3. 版本回退与移除 DNF 仓库（在线源保留 0.1.9 及后续历史版本，支持 dnf downgrade）
 sudo dnf downgrade -y modernime
 # 移除仓库配置与已导入的 GPG 公钥：
 sudo rm -f /etc/yum.repos.d/modernime-openeuler-24.09.repo
@@ -238,7 +237,7 @@ cd fcitx5-linux-pinyin-input-method
 - **打包 openEuler/Fedora `.rpm`**：运行 `./scripts/package_rpm.sh`
 - **打包通用便携归档 `.tar.gz`**：运行 `./scripts/package_tarball.sh`
 
-同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.9`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
+同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.10`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
 
 
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
@@ -314,6 +313,21 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 - **系统与诊断**：检查 Fcitx5 和 ModernIME 运行状态，手动刷新和重载。
 
 左侧搜索框按名称与说明查找设置并定位控件；`Ctrl+F` 聚焦搜索，`Ctrl+Enter` 保存。修改先保留在草稿中，点击「保存设置」后写入配置；候选外观配置由输入法自动监听应用，无需重启 Fcitx5。
+
+### 在线更新与缓存
+
+「检查新版本」只读取本地软件源缓存：DEB 安装使用 APT，RPM 安装使用 DNF；即使系统同时提供两种工具，也按实际安装渠道检测。检查不会自动访问网络或启动安装。若缓存为空、过期或未包含新版，先点击「刷新软件源缓存」，授权后再检查；也可在终端执行：
+
+```bash
+# Ubuntu / Debian
+sudo apt update
+sudo apt install --only-upgrade modernime
+# openEuler
+sudo dnf makecache --refresh
+sudo dnf upgrade modernime
+```
+
+源码和便携包安装属于 `script` 渠道。源码用户可在仓库执行 `git pull --ff-only && ./install.sh`；便携包用户下载新版后重新运行其安装脚本。若希望持续通过 APT / DNF 升级，先按上文配置签名软件源，再使用 `modernime-migrate-channel` 迁移渠道。升级完成后关闭并重新打开设置客户端以显示新版本；用户词典与学习数据按安装生命周期规则保留。
 
 ## 直接使用 CMake
 
@@ -596,6 +610,13 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
 ## 版本更新记录
+
+### v0.1.10 (2026-10-14)
+
+- **设置客户端**：候选预览与实际固定栏宽分页共用布局，9 个单字候选与 7 个双字候选保持相同栏宽；增加 Shift 切换预设，优化侧栏选中颜色与动画，并整理长软件源路径、说明及升级命令。
+- **稳定性与安装**：完善 Fcitx5 会话启动与恢复、配置保存、安装失败回滚和受控卸载，避免损失用户配置与学习数据。
+- **在线更新**：按安装渠道选择 APT / DNF，DNF 检查限定本地缓存中的可用版本，缓存缺失时提示显式刷新；发布重试替换同版本包并保留历史版本，维持签名软件源与 Release 资产一致。
+- 完整发布说明见 [v0.1.10](docs/releases/v0.1.10.md)。
 
 ### v0.1.9 (2026-10-12)
 

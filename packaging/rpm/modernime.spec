@@ -1,5 +1,5 @@
 Name:           modernime
-Version:        0.1.9
+Version:        0.1.10
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 # ModernIME engine, UI addon, and settings client are LGPL-2.1-or-later;
@@ -106,6 +106,13 @@ fi
 %{_datadir}/applications/modernime-settings.desktop
 
 %changelog
+* Wed Oct 14 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.10-1
+- Match settings preview to adaptive fixed-width candidate pagination and add Shift preset
+- Improve sidebar selection contrast and wrap long repository paths and upgrade guidance
+- Respect the installed package channel and keep automatic update checks cache-only
+- Preserve historical packages without duplicating the current version on publication retry
+- Harden installation transactions and Fcitx5 session recovery
+
 * Mon Oct 12 2026 ModernIME Maintainers <sunshine134679@users.noreply.github.com> - 0.1.9-1
 - Formalize online APT and DNF package repository upgrade architecture
 - Add signed static repository pipelines with multi-version retention and rollback support

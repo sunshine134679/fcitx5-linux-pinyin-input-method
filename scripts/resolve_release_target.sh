@@ -135,7 +135,7 @@ resolved_tag=""
 case "$event_name" in
     workflow_dispatch)
         if [[ -z "$input_tag" ]]; then
-            printf 'Error: workflow_dispatch requires an explicit existing tag_name input (e.g. v0.1.9). Building directly from branch HEAD is forbidden.\n' >&2
+            printf 'Error: workflow_dispatch requires an explicit existing tag_name input (e.g. v0.1.10). Building directly from branch HEAD is forbidden.\n' >&2
             exit 1
         fi
         resolved_tag="$input_tag"
@@ -155,7 +155,7 @@ case "$event_name" in
 esac
 
 if [[ ! "$resolved_tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-    printf 'Error: Invalid release tag format "%s" (expected vX.Y.Z, e.g. v0.1.9).\n' "$resolved_tag" >&2
+    printf 'Error: Invalid release tag format "%s" (expected vX.Y.Z, e.g. v0.1.10).\n' "$resolved_tag" >&2
     exit 1
 fi
 expected_version="${BASH_REMATCH[1]}"

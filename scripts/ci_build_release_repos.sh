@@ -154,19 +154,26 @@ declare -a rpm_args=(
     --arch x86_64
 )
 
-# Carry forward historical packages from previous_pages_dir if present (enabling apt/dnf version rollback)
+# A retry replaces the current version once, while preserving other released versions.
+cand_ver=$(dpkg-deb -f "$noble_deb" Version)
+for current_deb in "$jammy_deb" "$bookworm_deb"; do
+    if [[ "$(dpkg-deb -f "$current_deb" Version)" != "$cand_ver" ]]; then
+        printf 'Error: Release DEB artifacts must share version %s.\n' "$cand_ver" >&2
+        exit 1
+    fi
+done
 if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
-    for old_deb in "$previous_pages_dir"/apt/pool/jammy/main/m/modernime/*.deb; do
-        [[ -f "$old_deb" ]] && apt_args+=(--jammy-deb "$old_deb")
-    done
-    for old_deb in "$previous_pages_dir"/apt/pool/noble/main/m/modernime/*.deb; do
-        [[ -f "$old_deb" ]] && apt_args+=(--noble-deb "$old_deb")
-    done
-    for old_deb in "$previous_pages_dir"/apt/pool/bookworm/main/m/modernime/*.deb; do
-        [[ -f "$old_deb" ]] && apt_args+=(--bookworm-deb "$old_deb")
+    for suite in jammy noble bookworm; do
+        for old_deb in "$previous_pages_dir"/apt/pool/"$suite"/main/m/modernime/*.deb; do
+            [[ -f "$old_deb" ]] || continue
+            [[ "$(dpkg-deb -f "$old_deb" Version)" != "$cand_ver" ]] || continue
+            apt_args+=("--${suite}-deb" "$old_deb")
+        done
     done
     for old_rpm in "$previous_pages_dir"/rpm/oe2409/x86_64/Packages/*.rpm; do
-        [[ -f "$old_rpm" ]] && rpm_args+=(--rpm "$old_rpm")
+        [[ -f "$old_rpm" ]] || continue
+        [[ "$(basename "$old_rpm")" != modernime-"${cand_ver}"-*.rpm ]] || continue
+        rpm_args+=(--rpm "$old_rpm")
     done
 fi
 
@@ -204,7 +211,6 @@ if [[ "$require_persistent_gpg" == true ]]; then
 fi
 
 # Sync the signed current-version RPM from Pages repository back to assets_dir, preserving its canonical filename
-cand_ver=$(dpkg-deb -f "$noble_deb" Version)
 signed_pages_rpm=$(find_first_match "$pages_dir/rpm/oe2409/x86_64/Packages" "modernime-${cand_ver}-*.rpm" || true)
 if [[ -z "$signed_pages_rpm" || ! -f "$signed_pages_rpm" ]]; then
     printf 'Error: Signed RPM for version %s not found in %s/rpm/oe2409/x86_64/Packages\n' "$cand_ver" "$pages_dir" >&2
