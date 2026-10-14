@@ -5,13 +5,11 @@
 
 #include <gtk/gtk.h>
 
-#include <algorithm>
 #include <array>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 namespace modernime::settings {
 namespace {
@@ -19,11 +17,6 @@ namespace {
 void addStyleClass(GtkWidget *widget, std::string_view className) {
     gtk_style_context_add_class(gtk_widget_get_style_context(widget),
                                 std::string(className).c_str());
-}
-
-void removeStyleClass(GtkWidget *widget, std::string_view className) {
-    gtk_style_context_remove_class(gtk_widget_get_style_context(widget),
-                                   std::string(className).c_str());
 }
 
 void setTarget(GtkWidget *widget, std::string_view target) {
@@ -53,12 +46,10 @@ public:
     void refresh() {
         refreshing = true;
         const auto &settings = model.settings();
-        gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidatePageSize),
-                                  settings.candidatePageSize);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(candidatePageSize),
+                                 settings.candidatePageSize - core::kMinimumCandidatePageSize);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFontSize),
                                   settings.candidateFontSize);
-        updateSegmentedButtons(settings.candidatePageSize);
-        updateFontSizeLabel(settings.candidateFontSize);
         gtk_switch_set_active(GTK_SWITCH(numberSelection),
                               settings.numberSelection);
         gtk_switch_set_active(GTK_SWITCH(arrowNavigation),
@@ -67,7 +58,7 @@ public:
                               settings.pageNavigation);
         gtk_switch_set_active(GTK_SWITCH(englishDefinition),
                               settings.englishDefinitionEnabled);
-        updatePreview(settings.candidatePageSize, settings.candidateFontSize);
+        updatePreview();
         refreshing = false;
     }
 
@@ -93,13 +84,6 @@ public:
         return false;
     }
 
-    void onSegmentClicked(int value) {
-        if (refreshing) {
-            return;
-        }
-        gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidatePageSize), value);
-    }
-
 private:
     void buildUi() {
         detail::GtkWidgetGuard pageGuard(
@@ -111,7 +95,7 @@ private:
 
         setSettingsFocusChain(
             page, {candidatePageSize, candidateFontSize, numberSelection,
-                   arrowNavigation, pageNavigation, englishDefinition});
+                   englishDefinition, arrowNavigation, pageNavigation});
         refresh();
         pageGuard.release();
     }
@@ -134,84 +118,66 @@ private:
         gtk_box_pack_start(GTK_BOX(previewCard), compLabel, FALSE, FALSE, 0);
 
         auto *candidateScroller = gtk_scrolled_window_new(nullptr, nullptr);
+        addStyleClass(candidateScroller, "modernime-candidate-preview-scroller");
+        gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(candidateScroller), FALSE);
+        gtk_widget_set_tooltip_text(candidateScroller,
+            "横向滚动可查看本页全部候选；此预览不记录学习");
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(candidateScroller),
                                        GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
         gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(candidateScroller),
                                             GTK_SHADOW_NONE);
         gtk_scrolled_window_set_propagate_natural_width(
-            GTK_SCROLLED_WINDOW(candidateScroller), TRUE);
+            GTK_SCROLLED_WINDOW(candidateScroller), FALSE);
         gtk_scrolled_window_set_propagate_natural_height(
             GTK_SCROLLED_WINDOW(candidateScroller), TRUE);
-        gtk_scrolled_window_set_max_content_width(
-            GTK_SCROLLED_WINDOW(candidateScroller), 460);
-        gtk_widget_set_halign(candidateScroller, GTK_ALIGN_START);
+
+        gtk_widget_set_hexpand(candidateScroller, TRUE);
+        gtk_widget_set_halign(candidateScroller, GTK_ALIGN_FILL);
 
         candidateBarBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        setTarget(candidateBarBox, "candidate-preview");
         addStyleClass(candidateBarBox, "modernime-candidate-bar-preview");
         gtk_widget_set_halign(candidateBarBox, GTK_ALIGN_START);
         gtk_container_add(GTK_CONTAINER(candidateScroller), candidateBarBox);
 
         gtk_box_pack_start(GTK_BOX(previewCard), candidateScroller, FALSE, FALSE, 0);
+        definitionPreview = gtk_label_new("hello · int. 你好；喂");
+        addStyleClass(definitionPreview, "modernime-description");
+        gtk_widget_set_halign(definitionPreview, GTK_ALIGN_START);
+        gtk_widget_set_margin_top(definitionPreview, 8);
+        gtk_widget_set_no_show_all(definitionPreview, TRUE);
+        gtk_box_pack_start(GTK_BOX(previewCard), definitionPreview, FALSE, FALSE, 0);
     }
 
     void buildSettingsCard() {
         auto *card = createSectionCard("", "");
         gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
 
-        // Row 1: 每页候选数量
-        auto *pageSizeControlBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-        for (int val : {5, 7, 9}) {
-            auto *btn = gtk_button_new_with_label(std::to_string(val).c_str());
-            addStyleClass(btn, "modernime-segmented-btn");
-            gtk_widget_set_tooltip_text(
-                btn, ("快捷设为每页 " + std::to_string(val) + " 个候选词").c_str());
-            g_signal_connect_data(
-                btn, "clicked", G_CALLBACK(onSegmentedPageSizeClicked),
-                new PageSizeSegmentAction{this, val}, destroySegmentAction,
-                static_cast<GConnectFlags>(0));
-            gtk_box_pack_start(GTK_BOX(pageSizeControlBox), btn, FALSE, FALSE, 0);
-            segmentedButtons.push_back({val, btn});
+        // Compact native controls keep all supported values keyboard-accessible.
+        candidatePageSize = gtk_combo_box_text_new();
+        for (int value = core::kMinimumCandidatePageSize;
+             value <= core::kMaximumCandidatePageSize; ++value) {
+            gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(candidatePageSize),
+                                          (std::to_string(value) + " 个").c_str());
         }
-        candidatePageSize = gtk_spin_button_new_with_range(
-            core::kMinimumCandidatePageSize, core::kMaximumCandidatePageSize, 1.0);
-        gtk_widget_set_tooltip_text(candidatePageSize, "支持 3 ~ 9 个候选词");
         setTarget(candidatePageSize, "candidate-page-size");
-        gtk_box_pack_start(GTK_BOX(pageSizeControlBox), candidatePageSize, FALSE,
-                           FALSE, 0);
         candidatePageSizeFallback = createSettingRow(
-            "每页候选数量", "数字选词最多对应 1–9", pageSizeControlBox);
-        gtk_box_pack_start(GTK_BOX(card), candidatePageSizeFallback, FALSE,
-                           FALSE, 0);
+            "每页候选数量", "可选 3–9 个，数字选词最多对应 1–9", candidatePageSize);
+        gtk_box_pack_start(GTK_BOX(card), candidatePageSizeFallback, FALSE, FALSE, 0);
 
-        // Row 2: 候选文字大小
-        auto *stepperBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-        addStyleClass(stepperBox, "modernime-stepper-box");
-        fontSizeMinusBtn = gtk_button_new_with_label("−");
-        addStyleClass(fontSizeMinusBtn, "modernime-stepper-btn");
-        gtk_widget_set_tooltip_text(fontSizeMinusBtn, "减小字号（最小 14 pt）");
-
-        fontSizeLabel = gtk_label_new("20 pt");
-        addStyleClass(fontSizeLabel, "modernime-stepper-label");
-        gtk_widget_set_size_request(fontSizeLabel, 56, -1);
-        gtk_widget_set_halign(fontSizeLabel, GTK_ALIGN_CENTER);
-
-        fontSizePlusBtn = gtk_button_new_with_label("+");
-        addStyleClass(fontSizePlusBtn, "modernime-stepper-btn");
-        gtk_widget_set_tooltip_text(fontSizePlusBtn, "增大字号（最大 28 pt）");
-
-        gtk_box_pack_start(GTK_BOX(stepperBox), fontSizeMinusBtn, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(stepperBox), fontSizeLabel, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(stepperBox), fontSizePlusBtn, FALSE, FALSE, 0);
-
+        auto *fontControl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         candidateFontSize = gtk_spin_button_new_with_range(
             core::kMinimumCandidateFontSize, core::kMaximumCandidateFontSize, 1.0);
+        gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(candidateFontSize), TRUE);
+        gtk_entry_set_width_chars(GTK_ENTRY(candidateFontSize), 2);
         setTarget(candidateFontSize, "candidate-font-size");
-        setTarget(stepperBox, "candidate-font-size");
-
+        gtk_box_pack_start(GTK_BOX(fontControl), candidateFontSize, FALSE, FALSE, 0);
+        auto *unit = gtk_label_new("pt");
+        addStyleClass(unit, "modernime-description");
+        gtk_box_pack_start(GTK_BOX(fontControl), unit, FALSE, FALSE, 0);
         candidateFontSizeFallback = createSettingRow(
-            "候选文字大小", "可设置 14–28 pt", stepperBox);
-        gtk_box_pack_start(GTK_BOX(card), candidateFontSizeFallback, FALSE,
-                           FALSE, 0);
+            "候选文字大小", "可设置 14–28 pt，预览随调整即时更新", fontControl);
+        gtk_box_pack_start(GTK_BOX(card), candidateFontSizeFallback, FALSE, FALSE, 0);
 
         // Row 3: 数字键选词
         numberSelection = gtk_switch_new();
@@ -233,28 +199,31 @@ private:
         gtk_box_pack_start(GTK_BOX(card), englishDefinitionFallback, FALSE,
                            FALSE, 0);
 
-        // Card bottom info tip: ⓘ 中文状态下，常用中文与用户明确选择优先
-        auto *tipLabel = gtk_label_new("ⓘ  中文状态下，常用中文与用户明确选择优先");
-        addStyleClass(tipLabel, "modernime-tip-note");
-        gtk_widget_set_halign(tipLabel, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(card), tipLabel, FALSE, FALSE, 0);
+        auto *tip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        addStyleClass(tip, "modernime-tip-note");
+        auto *tipIcon = gtk_image_new_from_icon_name("dialog-information-symbolic", GTK_ICON_SIZE_MENU);
+        gtk_box_pack_start(GTK_BOX(tip), tipIcon, FALSE, FALSE, 0);
+        auto *tipLabel = gtk_label_new("中文状态下，常用中文与用户明确选择优先");
+        gtk_label_set_line_wrap(GTK_LABEL(tipLabel), TRUE);
+        gtk_label_set_xalign(GTK_LABEL(tipLabel), 0);
+        gtk_box_pack_start(GTK_BOX(tip), tipLabel, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(card), tip, FALSE, FALSE, 0);
 
-        // Keep internal navigation switches in fallback chain
+        auto *navigation = createSectionCard("候选导航", "控制方向键与翻页键的行为");
+        gtk_box_pack_start(GTK_BOX(page), navigation, FALSE, FALSE, 0);
         arrowNavigation = gtk_switch_new();
         pageNavigation = gtk_switch_new();
         setTarget(arrowNavigation, "arrow-navigation");
         setTarget(pageNavigation, "page-navigation");
-        arrowNavigationFallback = card;
-        pageNavigationFallback = card;
+        arrowNavigationFallback = createSettingRow(
+            "方向键编辑与选词", "左右移动拼音光标，上下切换候选项", arrowNavigation);
+        pageNavigationFallback = createSettingRow(
+            "候选翻页", "使用 PageUp / PageDown 和 + / = 翻页", pageNavigation);
+        gtk_box_pack_start(GTK_BOX(navigation), arrowNavigationFallback, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(navigation), pageNavigationFallback, FALSE, FALSE, 0);
 
-        g_signal_connect(candidatePageSize, "value-changed",
-                         G_CALLBACK(onSpinChanged), this);
-        g_signal_connect(fontSizeMinusBtn, "clicked",
-                         G_CALLBACK(onFontSizeMinus), this);
-        g_signal_connect(fontSizePlusBtn, "clicked",
-                         G_CALLBACK(onFontSizePlus), this);
-        g_signal_connect(candidateFontSize, "value-changed",
-                         G_CALLBACK(onFontSizeSpinChanged), this);
+        g_signal_connect(candidatePageSize, "changed", G_CALLBACK(onSpinChanged), this);
+        g_signal_connect(candidateFontSize, "value-changed", G_CALLBACK(onSpinChanged), this);
 
         for (auto *control : {numberSelection, arrowNavigation, pageNavigation,
                               englishDefinition}) {
@@ -263,130 +232,35 @@ private:
         }
     }
 
-    void updatePreview(int pageSize, int fontSize) {
-        if (candidateBarBox == nullptr) {
-            return;
-        }
+    void updatePreview() {
+        if (candidateBarBox == nullptr) return;
         clearBoxChildren(candidateBarBox);
-
-        static constexpr const char *kSamples[] = {
+        static constexpr std::array kSamples{
             "你好", "你号", "拟好", "你好啊", "你好呀",
-            "设置", "测试", "候选", "外观"
-        };
-        const int count = std::min(std::max(pageSize, 3), 5);
-
-        for (int i = 1; i <= count; ++i) {
-            auto *itemLabel = gtk_label_new(nullptr);
-            std::ostringstream ss;
-            ss << "<span font='" << fontSize << "pt'>";
-            if (i == 1) {
-                ss << "1." << kSamples[0] << "</span>";
-                gtk_label_set_markup(GTK_LABEL(itemLabel), ss.str().c_str());
-                addStyleClass(itemLabel, "modernime-candidate-badge");
-            } else {
-                ss << "<span alpha='70%'>" << i << ".</span>" << kSamples[(i - 1) % 9]
-                   << "</span>";
-                gtk_label_set_markup(GTK_LABEL(itemLabel), ss.str().c_str());
-                addStyleClass(itemLabel, "modernime-candidate-item");
-            }
-            gtk_box_pack_start(GTK_BOX(candidateBarBox), itemLabel, FALSE, FALSE,
-                               0);
+            "你好吗", "你还好", "你好吧", "你好哇"};
+        const int count = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) +
+                          core::kMinimumCandidatePageSize;
+        const int fontSize = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFontSize));
+        const bool showNumbers = gtk_switch_get_active(GTK_SWITCH(numberSelection));
+        for (int i = 0; i < count; ++i) {
+            auto *item = gtk_label_new(nullptr);
+            std::ostringstream markup;
+            markup << "<span size='" << fontSize * PANGO_SCALE << "'>";
+            if (showNumbers) markup << i + 1 << ".";
+            markup << kSamples[static_cast<std::size_t>(i)] << "</span>";
+            gtk_label_set_markup(GTK_LABEL(item), markup.str().c_str());
+            addStyleClass(item, i == 0 ? "modernime-candidate-badge" : "modernime-candidate-item");
+            gtk_box_pack_start(GTK_BOX(candidateBarBox), item, FALSE, FALSE, 0);
         }
         gtk_widget_show_all(candidateBarBox);
+        gtk_widget_set_visible(definitionPreview,
+                               gtk_switch_get_active(GTK_SWITCH(englishDefinition)));
     }
 
-    void updateSegmentedButtons(int pageSize) {
-        for (const auto &[val, btn] : segmentedButtons) {
-            if (val == pageSize) {
-                addStyleClass(btn, "active");
-            } else {
-                removeStyleClass(btn, "active");
-            }
-        }
-    }
-
-    void updateFontSizeLabel(int fontSize) {
-        if (fontSizeLabel != nullptr) {
-            gtk_label_set_text(GTK_LABEL(fontSizeLabel),
-                               (std::to_string(fontSize) + " pt").c_str());
-        }
-        if (fontSizeMinusBtn != nullptr) {
-            gtk_widget_set_sensitive(fontSizeMinusBtn,
-                                     fontSize > core::kMinimumCandidateFontSize);
-        }
-        if (fontSizePlusBtn != nullptr) {
-            gtk_widget_set_sensitive(fontSizePlusBtn,
-                                     fontSize < core::kMaximumCandidateFontSize);
-        }
-    }
-
-    struct PageSizeSegmentAction final {
-        Impl *impl = nullptr;
-        int value = 0;
-    };
-
-    static void destroySegmentAction(gpointer data, GClosure *) {
-        delete static_cast<PageSizeSegmentAction *>(data);
-    }
-
-    static void onSegmentedPageSizeClicked(GtkButton *, gpointer data) {
-        auto *action = static_cast<PageSizeSegmentAction *>(data);
-        if (action != nullptr && action->impl != nullptr) {
-            action->impl->onSegmentClicked(action->value);
-        }
-    }
-
-    static void onFontSizeMinus(GtkButton *, gpointer data) {
+    static void onSpinChanged(GtkWidget *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        if (impl == nullptr || impl->refreshing) {
-            return;
-        }
-        const int cur = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(impl->candidateFontSize));
-        if (cur > core::kMinimumCandidateFontSize) {
-            gtk_spin_button_set_value(GTK_SPIN_BUTTON(impl->candidateFontSize),
-                                      cur - 1);
-        }
-    }
-
-    static void onFontSizePlus(GtkButton *, gpointer data) {
-        auto *impl = static_cast<Impl *>(data);
-        if (impl == nullptr || impl->refreshing) {
-            return;
-        }
-        const int cur = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(impl->candidateFontSize));
-        if (cur < core::kMaximumCandidateFontSize) {
-            gtk_spin_button_set_value(GTK_SPIN_BUTTON(impl->candidateFontSize),
-                                      cur + 1);
-        }
-    }
-
-    static void onFontSizeSpinChanged(GtkSpinButton *, gpointer data) {
-        auto *impl = static_cast<Impl *>(data);
-        if (impl == nullptr || impl->refreshing) {
-            return;
-        }
-        const int fontSize = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(impl->candidateFontSize));
-        impl->updateFontSizeLabel(fontSize);
-        const int pageSize = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(impl->candidatePageSize));
-        impl->updatePreview(pageSize, fontSize);
-        impl->applyToModel();
-    }
-
-    static void onSpinChanged(GtkSpinButton *, gpointer data) {
-        auto *impl = static_cast<Impl *>(data);
-        if (impl == nullptr || impl->refreshing) {
-            return;
-        }
-        const int pageSize = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(impl->candidatePageSize));
-        impl->updateSegmentedButtons(pageSize);
-        const int fontSize = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(impl->candidateFontSize));
-        impl->updatePreview(pageSize, fontSize);
+        if (impl == nullptr || impl->refreshing) return;
+        impl->updatePreview();
         impl->applyToModel();
     }
 
@@ -395,12 +269,13 @@ private:
         if (impl == nullptr || impl->refreshing) {
             return;
         }
+        impl->updatePreview();
         impl->applyToModel();
     }
 
     void applyToModel() {
-        const int pageSize = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(candidatePageSize));
+        const int pageSize = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) +
+            core::kMinimumCandidatePageSize;
         const int fontSize = gtk_spin_button_get_value_as_int(
             GTK_SPIN_BUTTON(candidateFontSize));
         const bool numSelect =
@@ -426,14 +301,11 @@ private:
     GtkWidget *page = nullptr;
     GtkWidget *previewCard = nullptr;
     GtkWidget *candidateBarBox = nullptr;
+    GtkWidget *definitionPreview = nullptr;
 
-    std::vector<std::pair<int, GtkWidget *>> segmentedButtons;
     GtkWidget *candidatePageSize = nullptr;
     GtkWidget *candidatePageSizeFallback = nullptr;
 
-    GtkWidget *fontSizeMinusBtn = nullptr;
-    GtkWidget *fontSizeLabel = nullptr;
-    GtkWidget *fontSizePlusBtn = nullptr;
     GtkWidget *candidateFontSize = nullptr;
     GtkWidget *candidateFontSizeFallback = nullptr;
 

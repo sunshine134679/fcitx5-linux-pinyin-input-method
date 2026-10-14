@@ -36,7 +36,7 @@ int main() {
                "bottom bar actions follow the approved order");
 
     const auto defaultSize = modernime::settings::settingsDefaultWindowSize();
-    assertTrue(defaultSize.width == 860 && defaultSize.height == 620,
+    assertTrue(defaultSize.width == 980 && defaultSize.height == 720,
                "settings window uses the approved default size");
     const auto minimumSize = modernime::settings::settingsMinimumWindowSize();
     assertTrue(minimumSize.width == 720 && minimumSize.height == 520,
