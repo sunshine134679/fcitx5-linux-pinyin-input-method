@@ -170,7 +170,10 @@ jobs:
           raw = Path(sys.argv[1]).read_bytes()
           dst_path = Path(sys.argv[2])
           cur_ver = sys.argv[3]
-          lead = raw[:96].replace(cur_ver.encode("ascii"), b"0.1.8")
+          assert len(cur_ver) >= len("0.1.8"), "Current version cannot be shorter than the fixture"
+          padding = len(cur_ver) - len("0.1.8")
+          lead_name = raw[10:76].rstrip(b"\x00").replace(cur_ver.encode("ascii"), b"0.1.8")
+          lead = raw[:10] + lead_name.ljust(66, b"\x00") + raw[76:96]
           nindex, hsize = struct.unpack(">II", raw[104:112])
           sig_end = (112 + nindex * 16 + hsize + 7) & ~7
           if raw[sig_end : sig_end + 4] != b"\x8e\xad\xe8\x01":
@@ -181,14 +184,14 @@ jobs:
           old_payload_gz = raw[payload_off:]
           old_cpio = gzip.decompress(old_payload_gz)
           old_chan = f"channel=rpm\nversion={cur_ver}\nprefix=/usr\n".encode("ascii")
-          new_chan = b"channel=rpm\nversion=0.1.8\nprefix=/usr\n"
+          new_chan = b"channel=rpm\nversion=0.1.8\nprefix=/usr\n" + b"\n" * padding
           new_cpio = old_cpio.replace(old_chan, new_chan)
           new_payload_gz = gzip.compress(new_cpio, compresslevel=6)
           new_main_hdr = (
               main_hdr.replace(hashlib.sha256(old_chan).hexdigest().encode("ascii"), hashlib.sha256(new_chan).hexdigest().encode("ascii"))
               .replace(hashlib.sha256(old_payload_gz).hexdigest().encode("ascii"), hashlib.sha256(new_payload_gz).hexdigest().encode("ascii"))
               .replace(hashlib.sha256(old_cpio).hexdigest().encode("ascii"), hashlib.sha256(new_cpio).hexdigest().encode("ascii"))
-              .replace(cur_ver.encode("ascii"), b"0.1.8")
+              .replace(cur_ver.encode("ascii") + b"\x00", b"0.1.8" + b"\x00" * (padding + 1))
           )
           dst_path.write_bytes(lead + raw[96:sig_end] + new_main_hdr + new_payload_gz)
           PYEOF
