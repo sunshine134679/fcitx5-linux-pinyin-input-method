@@ -180,8 +180,113 @@ int main(int argc, char **argv) {
     std::string call;
     assert(static_cast<bool>(std::getline(calls, call)));
     assert(call.find("--cacheonly") != std::string::npos);
-    assert(call.find("--available") != std::string::npos);
+    assert(call.find("info") != std::string::npos);
+    assert(call.find("modernime") != std::string::npos);
+    assert(call.find("--available") == std::string::npos);
     assert(!std::getline(calls, call));
+
+    // 3b. Up-to-date DNF repository package (Installed Packages with remote From repo, no Available Packages)
+    // Must NOT be falsely marked offline; should report up-to-date with cacheMayBeStale=true.
+    const auto upToDateDnfBinDir = tempRoot / "uptodate-dnf-bin";
+    std::filesystem::create_directories(upToDateDnfBinDir);
+    writeExecutable(
+        upToDateDnfBinDir / "dnf",
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        "Installed Packages\n"
+        "Name         : modernime\n"
+        "Version      : 0.1.10\n"
+        "Release      : 1.oe2409\n"
+        "Architecture : x86_64\n"
+        "Repository   : @System\n"
+        "From repo    : modernime-openeuler\n"
+        "Summary      : ModernIME openEuler signed RPM\n"
+        "EOF\n"
+        "exit 0\n");
+    const Environment upToDateDnfEnv{
+        {"PATH", upToDateDnfBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.10"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+    };
+    const auto upToDateDnfStatus = UpdateController::checkForUpdates(upToDateDnfEnv);
+    assert(upToDateDnfStatus.checked);
+    assert(!upToDateDnfStatus.offlineOrUnreachable);
+    assert(!upToDateDnfStatus.updateAvailable);
+    assert(upToDateDnfStatus.cacheMayBeStale);
+    assert(upToDateDnfStatus.candidateVersion == "0.1.10");
+    assert(upToDateDnfStatus.packageSource.find("modernime-openeuler") != std::string::npos);
+    assert(upToDateDnfStatus.packageSource.find("channel=rpm") != std::string::npos);
+    assert(upToDateDnfStatus.statusMessage.find("本地软件源缓存中当前已是最新版本") != std::string::npos);
+    assert(upToDateDnfStatus.statusMessage.find("sudo dnf makecache") != std::string::npos);
+
+    // 3c. DNF output with both Installed Packages and a newer Available Packages section
+    const auto multiSectionDnfBinDir = tempRoot / "multisection-dnf-bin";
+    std::filesystem::create_directories(multiSectionDnfBinDir);
+    writeExecutable(
+        multiSectionDnfBinDir / "dnf",
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        "Installed Packages\n"
+        "Name         : modernime\n"
+        "Version      : 0.1.8\n"
+        "Release      : 1.oe2409\n"
+        "Architecture : x86_64\n"
+        "Repository   : @System\n"
+        "From repo    : modernime-openeuler\n"
+        "Summary      : ModernIME installed package\n"
+        "\n"
+        "Available Packages\n"
+        "Name         : modernime\n"
+        "Version      : 0.1.10\n"
+        "Release      : 1.oe2409\n"
+        "Architecture : x86_64\n"
+        "Repository   : modernime-openeuler\n"
+        "Summary      : ModernIME new release\n"
+        "EOF\n"
+        "exit 0\n");
+    const Environment multiSectionDnfEnv{
+        {"PATH", multiSectionDnfBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.8"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+    };
+    const auto multiSectionDnfStatus = UpdateController::checkForUpdates(multiSectionDnfEnv);
+    assert(multiSectionDnfStatus.checked);
+    assert(!multiSectionDnfStatus.offlineOrUnreachable);
+    assert(multiSectionDnfStatus.updateAvailable);
+    assert(multiSectionDnfStatus.candidateVersion == "0.1.10-1.oe2409");
+    assert(multiSectionDnfStatus.packageSource.find("modernime-openeuler") != std::string::npos);
+    assert(multiSectionDnfStatus.changelogSummary == "ModernIME new release");
+    assert(multiSectionDnfStatus.statusMessage.find("发现新版本 0.1.10-1.oe2409") != std::string::npos);
+
+    // 3d. Locally installed RPM without repository (From repo: @commandline)
+    // Must be marked offlineOrUnreachable=true
+    const auto localRpmDnfBinDir = tempRoot / "local-rpm-dnf-bin";
+    std::filesystem::create_directories(localRpmDnfBinDir);
+    writeExecutable(
+        localRpmDnfBinDir / "dnf",
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        "Installed Packages\n"
+        "Name         : modernime\n"
+        "Version      : 0.1.10\n"
+        "Release      : 1.oe2409\n"
+        "Architecture : x86_64\n"
+        "Repository   : @System\n"
+        "From repo    : @commandline\n"
+        "Summary      : ModernIME local RPM\n"
+        "EOF\n"
+        "exit 0\n");
+    const Environment localRpmDnfEnv{
+        {"PATH", localRpmDnfBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.10"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+    };
+    const auto localRpmDnfStatus = UpdateController::checkForUpdates(localRpmDnfEnv);
+    assert(localRpmDnfStatus.checked);
+    assert(localRpmDnfStatus.offlineOrUnreachable);
+    assert(!localRpmDnfStatus.updateAvailable);
+    assert(!localRpmDnfStatus.cacheMayBeStale);
+    assert(localRpmDnfStatus.statusMessage.find("sudo dnf makecache") != std::string::npos);
 
     // 4. Script channel directs user to modernime-migrate-channel and refuses direct pkexec
     const Environment scriptEnv{

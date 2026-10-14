@@ -926,39 +926,128 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
         status.manager = PackageManagerKind::Dnf;
         bool hasRemoteRepoIndex = false;
         const auto infoOut = runSubprocess(
-            {dnfBin.string(), "--cacheonly", "-q", "info", "--available", "modernime"}, environment);
+            {dnfBin.string(), "--cacheonly", "-q", "info", "modernime"}, environment);
         // Cache refresh is a separate explicit action. A failed cache query
         // must not start an implicit network request or parse partial output.
         const auto &text = infoOut.stdoutText;
         if (infoOut.started && infoOut.exitedZero && !text.empty()) {
             std::istringstream iss(text);
             std::string line;
-            std::string ver;
-            std::string rel;
-            std::string repoName;
+            enum class DnfSection { None, Installed, Available };
+            DnfSection currentSection = DnfSection::None;
+
+            std::string installedVer;
+            std::string installedRel;
+            std::string installedFromRepo;
+            std::string installedSummary;
+
+            std::string pendingAvailVer;
+            std::string pendingAvailRel;
+            std::string pendingAvailRepo;
+            std::string pendingAvailSummary;
+
+            std::string bestAvailCandidate;
+            std::string bestAvailRepo;
+            std::string bestAvailSummary;
+
+            auto isRemoteRepo = [](std::string_view r) {
+                return !r.empty() && r != "@System" && r != "installed" &&
+                       r != "@commandline" && r != "cmdline" &&
+                       !r.starts_with("@System") && !r.starts_with("/");
+            };
+
+            auto commitAvailableCandidate = [&]() {
+                if (pendingAvailVer.empty() || pendingAvailRepo.empty()) {
+                    pendingAvailVer.clear();
+                    pendingAvailRel.clear();
+                    pendingAvailRepo.clear();
+                    pendingAvailSummary.clear();
+                    return;
+                }
+                const std::string cand = pendingAvailRel.empty()
+                                             ? pendingAvailVer
+                                             : (pendingAvailVer + "-" + pendingAvailRel);
+                if (bestAvailCandidate.empty() ||
+                    UpdateController::compareVersions(cand, bestAvailCandidate) > 0) {
+                    bestAvailCandidate = cand;
+                    bestAvailRepo = pendingAvailRepo;
+                    if (!pendingAvailSummary.empty()) {
+                        bestAvailSummary = pendingAvailSummary;
+                    }
+                }
+                pendingAvailVer.clear();
+                pendingAvailRel.clear();
+                pendingAvailRepo.clear();
+                pendingAvailSummary.clear();
+            };
+
             while (std::getline(iss, line)) {
+                const auto trimmed = trim(line);
+                if (trimmed == "Installed Packages") {
+                    commitAvailableCandidate();
+                    currentSection = DnfSection::Installed;
+                    continue;
+                }
+                if (trimmed == "Available Packages") {
+                    commitAvailableCandidate();
+                    currentSection = DnfSection::Available;
+                    continue;
+                }
+
                 const auto colon = line.find(':');
                 if (colon == std::string::npos) {
                     continue;
                 }
                 const auto key = trim(std::string_view(line).substr(0, colon));
                 const auto val = trim(std::string_view(line).substr(colon + 1));
-                if (key == "Version") {
-                    ver = val;
-                } else if (key == "Release") {
-                    rel = val;
-                } else if (key == "Repository" || key == "From repo") {
-                    repoName = val;
-                    if (val != "@System" && val != "installed") {
-                        hasRemoteRepoIndex = true;
-                        status.packageSource = "DNF 仓库 " + val;
+
+                if (key == "Name" && currentSection == DnfSection::Available) {
+                    commitAvailableCandidate();
+                }
+
+                if (currentSection == DnfSection::Available || currentSection == DnfSection::None) {
+                    if (key == "Version") {
+                        pendingAvailVer = val;
+                    } else if (key == "Release") {
+                        pendingAvailRel = val;
+                    } else if (key == "Repository") {
+                        if (isRemoteRepo(val)) {
+                            pendingAvailRepo = val;
+                        }
+                    } else if (key == "Summary" && pendingAvailSummary.empty()) {
+                        pendingAvailSummary = val;
                     }
-                } else if (key == "Summary" && status.changelogSummary.empty()) {
-                    status.changelogSummary = val;
+                }
+                if (currentSection == DnfSection::Installed || currentSection == DnfSection::None) {
+                    if (key == "Version") {
+                        installedVer = val;
+                    } else if (key == "Release") {
+                        installedRel = val;
+                    } else if (key == "From repo") {
+                        if (isRemoteRepo(val)) {
+                            installedFromRepo = val;
+                        }
+                    } else if (key == "Summary" && installedSummary.empty()) {
+                        installedSummary = val;
+                    }
                 }
             }
-            if (!ver.empty() && hasRemoteRepoIndex) {
-                status.candidateVersion = rel.empty() ? ver : (ver + "-" + rel);
+            commitAvailableCandidate();
+
+            if (!bestAvailCandidate.empty()) {
+                hasRemoteRepoIndex = true;
+                status.candidateVersion = bestAvailCandidate;
+                status.packageSource = "DNF 仓库 " + bestAvailRepo;
+                if (!bestAvailSummary.empty()) {
+                    status.changelogSummary = bestAvailSummary;
+                }
+            } else if (!installedFromRepo.empty()) {
+                hasRemoteRepoIndex = true;
+                status.candidateVersion = status.currentVersion;
+                status.packageSource = "DNF 仓库 " + installedFromRepo;
+                if (!installedSummary.empty()) {
+                    status.changelogSummary = installedSummary;
+                }
             }
         }
         if (hasRemoteRepoIndex) {
