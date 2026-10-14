@@ -43,7 +43,10 @@ class WebsiteTests(unittest.TestCase):
             if href.startswith("#") and href != "#":
                 self.assertIn(href[1:], page.ids)
             elif not href.startswith("#"):
-                self.assertEqual(urlparse(href).scheme, "https")
+                if urlparse(href).scheme:
+                    self.assertEqual(urlparse(href).scheme, "https")
+                else:
+                    self.assertTrue((ROOT / "website" / href).is_file(), href)
         for asset in page.assets:
             self.assertTrue((ROOT / "website" / asset).is_file(), asset)
         readme = (ROOT / "README.md").read_text()

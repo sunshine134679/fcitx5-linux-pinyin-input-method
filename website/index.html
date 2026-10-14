@@ -25,19 +25,21 @@
   </header>
   <main id="main">
     <section class="hero">
+      <div class="hero-art" aria-hidden="true"><span class="art-word art-word-one">言</span><span class="art-word art-word-two">语</span><svg viewBox="0 0 1400 800" preserveAspectRatio="none"><path class="art-line" d="M-80 630 C250 40 540 800 800 260 S1200 60 1510 440"/><path class="art-line art-line-secondary" d="M-80 660 C250 70 540 830 800 290 S1200 90 1510 470"/></svg></div>
       <div class="container hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="status-dot"></span> MADE FOR LINUX · OPEN SOURCE</p>
-          <h1>把想说的话，<br><span class="blue">顺畅打出来。</span></h1>
+          <p class="eyebrow"><span class="status-dot"></span> 为 LINUX 而生 / OPEN SOURCE</p>
+          <h1><span class="headline-line">把想说的话，</span><span class="headline-line blue">顺畅打出来<span class="headline-period">。</span></span></h1>
           <p class="hero-description">你的 Linux，值得一个好用的中文输入法。<br>从日常聊天到专业写作，让每一次输入更合心意。</p>
           <div class="hero-actions"><a class="button" href="#download">下载 ModernIME <span aria-hidden="true">↓</span></a><a class="text-link" href="#experience">看看输入体验 <span aria-hidden="true">→</span></a></div>
           <div class="hero-meta"><span>基于 Fcitx5 + LibIME</span><span>本地习惯学习</span><span>开源可定制</span></div>
         </div>
-        <div class="hero-demo" aria-label="输入界面示意">
+        <div class="hero-demo" aria-label="输入界面示意"><span class="demo-index" aria-hidden="true">一字一句，皆是心意。</span>
           <div class="demo-top"><span class="demo-symbol">中</span><span>让表达，自然发生。</span><span class="demo-label">输入示意</span></div>
-          <div class="demo-document"><p class="document-date">A LITTLE NOTE / 一点日常</p><p>你好，Linux。</p><p>今天也有很多想法，<br>值得被<span class="demo-highlight">好好表达<span class="caret" aria-hidden="true"></span></span>。</p></div>
-          <div class="ime-window"><div class="ime-composition">hao'hao'biao'da<span class="caret" aria-hidden="true"></span><span class="ime-mode">中</span></div><div class="ime-candidates"><span class="candidate chosen"><small>1</small>好好表达</span><span class="candidate"><small>2</small>好好</span><span class="candidate"><small>3</small>表达</span><span class="candidate-arrow" aria-hidden="true">›</span></div></div>
+          <div class="demo-document"><p class="document-date">A LITTLE NOTE / 一点日常</p><p id="hero-prelude">你好，Linux。</p><p><span id="hero-context">今天也有很多想法，</span><br><span id="hero-prefix">值得被</span><span class="demo-highlight"><span id="hero-word">好好表达</span><span class="caret" aria-hidden="true"></span></span>。</p></div>
+          <div class="ime-window"><div class="ime-composition"><span id="hero-pinyin">hao'hao'biao'da</span><span class="caret" aria-hidden="true"></span><span class="ime-mode">中</span></div><div id="hero-candidates" class="ime-candidates"><span class="candidate chosen"><small>1</small>好好表达</span><span class="candidate"><small>2</small>好好</span><span class="candidate"><small>3</small>表达</span><span class="candidate-arrow" aria-hidden="true">›</span></div></div>
           <div class="demo-bottom"><span><kbd>Space</kbd> 确认首选</span><span><kbd>Shift</kbd> 中英切换</span></div>
+          <div class="hero-scene-controls" role="group" aria-label="切换输入示意"><button type="button" data-scene="hello" aria-pressed="false">日常问候</button><button type="button" data-scene="express" aria-pressed="true">自由表达</button><button type="button" data-scene="linux" aria-pressed="false">热爱 Linux</button></div>
         </div>
       </div>
       <div class="container platform-line"><span>和熟悉的 Linux 桌面一起工作</span><div><span>Ubuntu</span><span>Debian</span><span>openEuler</span><span class="platform-more">其他发行版可从源码构建 ↗</span></div></div>
@@ -60,7 +62,9 @@
 
     <section class="client-section" id="client"><div class="container">
       <div class="client-heading"><div class="section-heading"><p class="eyebrow">02 / MAKE IT YOURS</p><h2>你的输入法，<br>按你的习惯来。</h2></div><div class="client-description"><p>一个独立的 GTK3 设置客户端。<br>外观、按键、词典和剪贴板，都有清晰的入口。</p><a class="text-link" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#设置客户端布局与操作">查看使用文档 <span aria-hidden="true">↗</span></a></div></div>
-      <figure class="client-figure"><div class="screenshot-title"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>ModernIME 设置</span><span class="screenshot-tag">真实客户端截图</span></div><img src="assets/client.png" alt="ModernIME 蓝白配色的设置客户端，左侧为分类导航，右侧为剪贴板历史和操作按钮" width="980" height="720" loading="lazy"><figcaption>截图来自当前源码客户端；发布包界面以对应版本为准。</figcaption></figure>
+      <div class="gallery-navigation"><div class="gallery-tabs" role="group" aria-label="选择客户端截图"><button type="button" data-screenshot="overview" aria-pressed="true"><span>01</span> 概览</button><button type="button" data-screenshot="appearance" aria-pressed="false"><span>02</span> 候选与外观</button><button type="button" data-screenshot="clipboard" aria-pressed="false"><span>03</span> 剪贴板</button></div><span class="gallery-hint">真实界面，细节放大看 <span aria-hidden="true">↗</span></span></div>
+      <figure class="client-figure"><a id="screenshot-original" class="screenshot-link" href="assets/client-overview.png" target="_blank" rel="noopener" aria-label="在新标签页查看概览截图原图"><img id="client-screenshot" src="assets/client-overview.png" alt="ModernIME 设置客户端的概览页面" width="980" height="760" loading="lazy"><span class="image-zoom"><span aria-hidden="true">↗</span> 查看原图</span></a><figcaption><span id="screenshot-caption">概览 · 运行状态与常用设置，一目了然。</span><span class="screenshot-pagination" id="screenshot-pagination">01 / 03</span></figcaption></figure>
+      <p class="gallery-note">截图由用户提供，网页展示已清理外缘；发布包界面以对应版本为准。</p>
       <div class="client-benefits"><div><span class="step-number">01</span><h3>看得见的调整</h3><p>候选字号、栏长和释义显示，配合外观预览调整。</p></div><div><span class="step-number">02</span><h3>用得上的个人词典</h3><p>管理常用词条，导入、导出自己的用词积累。</p></div><div><span class="step-number">03</span><h3>找得到的问题线索</h3><p>集中查看运行状态、安装渠道和诊断信息。</p></div></div>
     </div></section>
 
