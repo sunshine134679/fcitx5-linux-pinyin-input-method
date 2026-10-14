@@ -180,6 +180,21 @@ bool ModernIMEController::checkRecentCommitDeletionFeedback(
         return false;
     }
 
+    // Check if the committed word is still intact in the host context
+    // (normal post-commit surrounding text update).
+    // In this case, keep recentCommit_.valid so subsequent backspace can be detected.
+    if (before.size() >= recentCommit_.text.size() &&
+        before.compare(before.size() - recentCommit_.text.size(),
+                       recentCommit_.text.size(), recentCommit_.text) == 0) {
+        std::string prefixBeforeFull =
+            before.substr(0, before.size() - recentCommit_.text.size());
+        if (prefixBeforeFull == recentCommit_.basePrefix ||
+            recentCommit_.basePrefix.ends_with(prefixBeforeFull) ||
+            prefixBeforeFull.ends_with(recentCommit_.basePrefix)) {
+            return false;
+        }
+    }
+
     // Determine the remaining in word
     std::string candidatePrefix;
     std::size_t matchedCount = 0;
@@ -202,6 +217,10 @@ bool ModernIMEController::checkRecentCommitDeletionFeedback(
     if (matchedCount == 0 || matchedCount >= utf8Chars.size()) {
         recentCommit_.valid = false;
         return false;
+    }
+
+    if (provider_ != nullptr) {
+        provider_->onNegativeFeedback(recentCommit_.text, recentCommit_.fullPinyin);
     }
 
     std::string remainingWord;

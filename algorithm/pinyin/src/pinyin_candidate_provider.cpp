@@ -1405,6 +1405,12 @@ public:
         }
     }
 
+    void onNegativeFeedback(std::string_view phrase, std::string_view pinyin) {
+        if (auto *learning = learningWriter(); learning != nullptr) {
+            learning->enqueueNegativeFeedback(phrase, pinyin);
+        }
+    }
+
     bool select(std::size_t index) {
         if (index >= page_.items.size()) {
             return false;
@@ -1891,6 +1897,8 @@ private:
             item.text = candidate.text;
             item.fullPinyin = candidate.full_pinyin;
             item.sourceIndex = candidate.source_index;
+            item.learningBoost = candidate.learning_boost;
+            item.isLexical = candidate.is_lexical || candidate.dictionary_bonus > 0.0;
             item.source = isManual
                               ? core::CandidateSource::UserDictionary
                               : (isLearned ? core::CandidateSource::Learned
@@ -1988,9 +1996,7 @@ private:
             const auto &topChinese = page_.items.front();
             if (topChinese.source == core::CandidateSource::UserDictionary) {
                 isTopChineseLexical = true;
-            } else if (topChinese.sourceIndex < result.scored.size() &&
-                       (result.scored[topChinese.sourceIndex].dictionary_bonus > 0.0 ||
-                        result.scored[topChinese.sourceIndex].is_lexical)) {
+            } else if (topChinese.isLexical) {
                 isTopChineseLexical = true;
             } else if (utf8CodePointCount(topChinese.text) == 1 &&
                        rawInput.size() <= 3) {
@@ -2071,9 +2077,13 @@ private:
                 preferEnglishOverChinese = true;
             } else if (!isTopChineseLexical) {
                 const double chineseLearningBoost =
-                    (page_.items.front().sourceIndex < result.scored.size())
-                        ? result.scored[page_.items.front().sourceIndex].learning_boost
-                        : 0.0;
+                    (page_.items.front().learningBoost > 0.0)
+                        ? page_.items.front().learningBoost
+                        : (learning != nullptr
+                               ? learning->boostAt(page_.items.front().text,
+                                                   page_.items.front().fullPinyin,
+                                                   nowMilliseconds())
+                               : 0.0);
                 if (chineseLearningBoost < 2.5) {
                     preferEnglishOverChinese = true;
                 }
@@ -2249,6 +2259,11 @@ bool PinyinCandidateProvider::remove(std::size_t index) {
 
 void PinyinCandidateProvider::onCommitEvent(const core::CommitEvent &event) {
     impl_->onCommitEvent(event);
+}
+
+void PinyinCandidateProvider::onNegativeFeedback(std::string_view phrase,
+                                                 std::string_view pinyin) {
+    impl_->onNegativeFeedback(phrase, pinyin);
 }
 
 void PinyinCandidateProvider::reset() { impl_->reset(); }

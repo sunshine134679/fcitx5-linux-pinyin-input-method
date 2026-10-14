@@ -27,6 +27,7 @@ public:
     virtual void setLearningEnabled(bool) {}
     virtual void setContextLearningEnabled(bool) {}
     virtual void onCommitEvent(const CommitEvent &) {}
+    virtual void onNegativeFeedback(std::string_view, std::string_view) {}
     virtual void reset() = 0;
     virtual void resetCommitHistory() {}
     virtual const CandidatePage &page() const = 0;

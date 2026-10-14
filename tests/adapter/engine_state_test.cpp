@@ -79,6 +79,17 @@ struct FakeProvider final : modernime::core::CandidateProvider {
         current.clear();
     }
 
+    std::vector<modernime::core::CommitEvent> commitEvents;
+    std::vector<std::pair<std::string, std::string>> negativeFeedbacks;
+
+    void onCommitEvent(const modernime::core::CommitEvent &event) override {
+        commitEvents.push_back(event);
+    }
+
+    void onNegativeFeedback(std::string_view phrase, std::string_view pinyin) override {
+        negativeFeedbacks.emplace_back(std::string(phrase), std::string(pinyin));
+    }
+
     const modernime::core::CandidatePage &page() const override {
         return current;
     }
@@ -893,5 +904,27 @@ int main() {
                        "你好" &&
                    composingHost.commits.back() == "！",
                "composition commits the candidate then the full-width mark");
+
+    FakeProvider deletionProvider;
+    RecordingHost deletionHost;
+    modernime::fcitx5::ModernIMEController deletionController(deletionHost, &deletionProvider);
+    deletionController.setContext("前文", "");
+    type(deletionController, "nihao");
+    assertTrue(deletionController.handle({modernime::fcitx5::KeyKind::Space, ' ', 0}), "commit 你好");
+    assertTrue(deletionHost.commits.back() == "你好", "committed text is 你好");
+
+    // 1. 模拟宿主应用正常上屏后通知周边文本包含完整已上屏词
+    deletionController.setContext("前文你好", "");
+    assertTrue(deletionProvider.negativeFeedbacks.empty(), "no negative feedback on normal post-commit text");
+
+    // 2. 模拟用户按 Backspace 删除了末字“好”，周边文本变为“前文你”
+    deletionController.setContext("前文你", "");
+    assertTrue(!deletionProvider.negativeFeedbacks.empty(), "negative feedback triggered for original word");
+    assertTrue(deletionProvider.negativeFeedbacks.back().first == "你好", "negative feedback on 你好");
+    assertTrue(deletionProvider.negativeFeedbacks.back().second == "ni'hao", "negative feedback on ni'hao");
+    assertTrue(!deletionProvider.commitEvents.empty(), "commit event recorded for retained prefix");
+    assertTrue(deletionProvider.commitEvents.back().text == "你", "positive commit event for retained prefix 你");
+    assertTrue(deletionProvider.commitEvents.back().fullPinyin == "ni", "positive commit event for pinyin ni");
+
     return EXIT_SUCCESS;
 }

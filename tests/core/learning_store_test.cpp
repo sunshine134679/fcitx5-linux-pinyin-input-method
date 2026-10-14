@@ -1402,7 +1402,7 @@ void testFailedWriterQueueRetainsOnlyRecentEvents() {
         }
         assertTrue(!writer.flush(), "storage remains unavailable after many selections");
         assertTrue(sqlite3_exec(fault, "DROP TRIGGER fail_bounded_queue;",
-                               nullptr, nullptr, nullptr) == SQLITE_OK,
+                                nullptr, nullptr, nullptr) == SQLITE_OK,
                    "bounded queue test restores storage");
         sqlite3_close(fault);
         assertTrue(writer.flush(), "recent retained events persist after recovery");
@@ -1456,6 +1456,69 @@ void testFormedPhraseStatisticsStayBounded() {
                    "old formed sequence is evicted when capacity is reached");
     }
 }
+
+void testLmdbKeyNormalizationNoDuplicateCount() {
+    std::error_code error;
+    const auto path = testPath("lmdb-norm.lmdb");
+    std::filesystem::remove_all(path, error);
+
+    const int64_t now = 1000000;
+    modernime::core::LearningStore lmdb(path);
+    assertTrue(lmdb.open(), "open LMDB store");
+    assertTrue(lmdb.recordSelection("你好", "ni'hao", "", "", now), "record ni'hao in LMDB");
+    const auto lmdbLoaded = lmdb.snapshot();
+    assertTrue(lmdbLoaded != nullptr, "snapshot loaded from LMDB");
+
+    modernime::core::LearningSnapshot incremental(*lmdbLoaded);
+    incremental.recordSelection("你好", "ni'hao", "", "", now);
+
+    int64_t total = 0;
+    for (const auto &e : incremental.entries()) {
+        total += e.frequency;
+    }
+    assertTrue(incremental.entries().size() == 1,
+               "normalized key prevents duplicate rows across LMDB base and delta");
+    assertTrue(total == 2, "total frequency increments to 2 without double-counting");
+    lmdb.close();
+    std::filesystem::remove_all(path, error);
+}
+
+void testPrefixRecallTopKByLearningBoost() {
+    const int64_t now = 1000000;
+    std::vector<modernime::core::LearningEntry> entries;
+    for (auto py : {"zhong'a", "zhong'ai", "zhong'an", "zhong'ang", "zhong'ao",
+                    "zhong'ba", "zhong'bai", "zhong'ban", "zhong'bang", "zhong'bao",
+                    "zhong'bei", "zhong'ben", "zhong'beng", "zhong'bi", "zhong'bian",
+                    "zhong'biao"}) {
+        entries.push_back({"词" + std::to_string(entries.size()), py, "", "", 1, now, 0, false});
+    }
+    entries.push_back({"中作", "zhong'zuo", "", "", 1000, now, 0, false});
+    assertTrue(entries.size() == 17, "17 entries created");
+
+    modernime::core::LearningSnapshot prefix(entries);
+    const auto recalled = prefix.recallCandidates("zhong", now);
+    assertTrue(recalled.size() == 16, "prefix recall returns bounded top 16");
+    const bool hasZhongZuo = std::any_of(recalled.begin(), recalled.end(),
+        [](const auto &c) { return c.phrase == "中作"; });
+    assertTrue(hasZhongZuo,
+               "highest frequency entry '中作' is recalled in top 16 despite being 17th alphabetically");
+}
+
+void testContextBoostPenalizedByNegativeFeedback() {
+    const int64_t now = 1000000;
+    modernime::core::LearningSnapshot s;
+    for (int i = 0; i < 10; ++i) {
+        s.recordSelection("绍", "shao", "王", "", now);
+    }
+    const auto before = s.contextBoost("绍", "shao", "王", "");
+    assertTrue(before > 1.0, "context boost active for frequent context pair");
+
+    for (int i = 0; i < 100; ++i) {
+        s.recordNegativeFeedback("绍", "shao");
+    }
+    const auto after = s.contextBoost("绍", "shao", "王", "");
+    assertTrue(after == 0.0, "repeated negative feedback attenuates context boost to 0");
+}
 } // namespace
 
 int main() {
@@ -1506,5 +1569,8 @@ int main() {
     testHighFrequencyDeepCandidateReachesTheTop();
     testDeeplyLearnedCandidateReachesTheFront();
     testDeltaOverlayCopyAndQueryPerformance();
+    testLmdbKeyNormalizationNoDuplicateCount();
+    testPrefixRecallTopKByLearningBoost();
+    testContextBoostPenalizedByNegativeFeedback();
     return EXIT_SUCCESS;
 }

@@ -244,19 +244,24 @@ CandidatePipelineResult buildCandidatePipeline(
                 core::PinyinMatchPolicy::segmentPinyin(item.pinyin);
             const auto key = core::candidateOrderKey(item.phrase, segmentedPinyin);
             if (seenKeys.contains(key)) {
-                if (item.learningBoost >= 1.8 ||
-                    (isAbbrInput && item.learningBoost >= 0.8)) {
-                    for (auto &existing : result.scored) {
+                for (auto &existing : result.scored) {
+                    if (existing.text == item.phrase &&
+                        existing.full_pinyin == segmentedPinyin) {
+                        existing.learning_boost =
+                            std::max(existing.learning_boost, item.learningBoost);
+                        existing.context_bonus =
+                            std::max(existing.context_bonus, item.contextBoost);
                         if (!existing.is_lexical &&
                             utf8CodePointCount(existing.text) >= 2 &&
-                            existing.text == item.phrase &&
-                            existing.full_pinyin == segmentedPinyin) {
+                            (item.learningBoost >= 1.8 ||
+                             (isAbbrInput && item.learningBoost >= 0.8))) {
                             existing.source_index =
-                                std::min(existing.source_index, recalledIdx++);
-                            break;
+                                std::min(existing.source_index, recalledIdx);
                         }
+                        break;
                     }
                 }
+                ++recalledIdx;
                 continue;
             }
             seenKeys.insert(key);

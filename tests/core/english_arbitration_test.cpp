@@ -281,6 +281,68 @@ void testDoubleLetterFaultTolerance() {
     assertTrue(provider.page().items.front().text != "的", "de'e does not collapse across explicit separator");
 }
 
+void testChinesePersonalizationBeatsEnglishWord() {
+    std::error_code error;
+    const auto learningPath = testPath("english-arbitration-panda.sqlite3");
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    // 未训练时，panda 输入首选为英文单词 panda
+    provider.reset();
+    assertTrue(provider.append("panda"), "append panda");
+    assertTrue(!provider.page().items.empty(), "panda produces candidates");
+    assertTrue(provider.page().items.front().text == "panda",
+               "unlearned panda has English word at rank 0");
+
+    // 训练“潘达 / pan'da”15 次
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    modernime::core::CommitEvent custom;
+    custom.text = "潘达";
+    custom.fullPinyin = "pan'da";
+    custom.rawKeystrokes = "panda";
+    custom.role = modernime::core::CommitCandidateRole::Chinese;
+    custom.timestampMs = now;
+    for (int i = 0; i < 15; ++i) {
+        provider.onCommitEvent(custom);
+    }
+    provider.flush();
+
+    // 再次输入 panda：中文“潘达”凭借 15 次学习积累的分数升至第一，仲裁层不应误读“盘大”的 0 分，
+    // 首选必须为中文“潘达”而非英文 panda
+    provider.reset();
+    provider.resetCommitHistory();
+    assertTrue(provider.append("panda"), "append panda after learning");
+    assertTrue(!provider.page().items.empty(), "candidates not empty");
+    assertTrue(provider.page().items.front().text == "潘达",
+               "learned Chinese '潘达' beats English 'panda' at rank 0");
+
+    // 类似地，测试“尚海 / shang'hai”15 次训练后排在首位，不会因 sourceIndex 错配读取“上海”
+    custom.text = "尚海";
+    custom.fullPinyin = "shang'hai";
+    custom.rawKeystrokes = "shanghai";
+    for (int i = 0; i < 15; ++i) {
+        provider.onCommitEvent(custom);
+    }
+    provider.flush();
+
+    provider.reset();
+    provider.resetCommitHistory();
+    assertTrue(provider.append("shanghai"), "append shanghai after learning");
+    assertTrue(!provider.page().items.empty(), "candidates not empty");
+    assertTrue(provider.page().items.front().text == "尚海",
+               "learned Chinese '尚海' reaches rank 0");
+}
+
 } // namespace
 
 int main() {
@@ -288,5 +350,6 @@ int main() {
     testGnueabihfRecall();
     testChineseAbbreviationProtection();
     testDoubleLetterFaultTolerance();
+    testChinesePersonalizationBeatsEnglishWord();
     return EXIT_SUCCESS;
 }

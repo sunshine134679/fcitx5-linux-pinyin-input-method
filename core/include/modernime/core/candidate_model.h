@@ -31,6 +31,8 @@ struct CandidateItem final {
     // legacy meaning of consuming the complete composition.
     std::size_t consumedInputBytes = 0;
     std::string annotation = {};
+    double learningBoost = 0.0;
+    bool isLexical = false;
 };
 
 struct CandidatePage final {

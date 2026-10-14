@@ -93,24 +93,45 @@ std::size_t commonSuffixCharacters(std::string_view left,
     return count;
 }
 
+} // namespace
+
+std::string normalizePinyin(std::string_view pinyin) {
+    if (pinyin.starts_with("!u!") || pinyin.starts_with("!U!")) {
+        pinyin.remove_prefix(3);
+    }
+    std::string normalized;
+    normalized.reserve(pinyin.size());
+    for (const unsigned char character : pinyin) {
+        if (character == '\'' || character == ',') {
+            continue;
+        }
+        normalized.push_back(static_cast<char>(std::tolower(character)));
+    }
+    return normalized;
+}
+
+namespace {
+
 std::string candidateKey(std::string_view phrase, std::string_view pinyin) {
+    const auto normPinyin = normalizePinyin(pinyin);
     std::string key;
-    key.reserve(phrase.size() + pinyin.size() + 1);
+    key.reserve(phrase.size() + normPinyin.size() + 1);
     key.append(phrase);
     key.push_back('\x1f');
-    key.append(pinyin);
+    key.append(normPinyin);
     return key;
 }
 
 std::string variantKey(std::string_view phrase, std::string_view pinyin,
                        std::string_view contextBefore,
                        std::string_view contextAfter) {
+    const auto normPinyin = normalizePinyin(pinyin);
     std::string key;
-    key.reserve(phrase.size() + pinyin.size() + contextBefore.size() +
+    key.reserve(phrase.size() + normPinyin.size() + contextBefore.size() +
                 contextAfter.size() + 3);
     key.append(phrase);
     key.push_back('\x1f');
-    key.append(pinyin);
+    key.append(normPinyin);
     key.push_back('\x1f');
     key.append(contextBefore);
     key.push_back('\x1f');
@@ -209,21 +230,6 @@ const LearningSnapshot::RecallIndex &LearningSnapshot::ensureRecallIndex() const
         baseRecallIndex_->index = buildRecallIndex(*baseEntries_);
     });
     return *baseRecallIndex_->index;
-}
-
-std::string normalizePinyin(std::string_view pinyin) {
-    if (pinyin.starts_with("!u!") || pinyin.starts_with("!U!")) {
-        pinyin.remove_prefix(3);
-    }
-    std::string normalized;
-    normalized.reserve(pinyin.size());
-    for (const unsigned char character : pinyin) {
-        if (character == '\'' || character == ',') {
-            continue;
-        }
-        normalized.push_back(static_cast<char>(std::tolower(character)));
-    }
-    return normalized;
 }
 
 LearningSnapshot::LearningSnapshot()
@@ -433,7 +439,8 @@ double LearningSnapshot::boostAt(std::string_view phrase,
 
 double LearningSnapshot::contextBoost(
     std::string_view phrase, std::string_view pinyin,
-    std::string_view contextBefore, std::string_view contextAfter) const {
+    std::string_view contextBefore, std::string_view contextAfter,
+    std::int64_t nowMs) const {
     if (contextBefore.empty() && contextAfter.empty()) {
         return 0.0;
     }
@@ -442,10 +449,12 @@ double LearningSnapshot::contextBoost(
     if (variants.empty()) {
         return 0.0;
     }
+    std::int64_t worstFeedback = 0;
     for (const auto *item : variants) {
         if (item->suppressed) {
             return 0.0;
         }
+        worstFeedback = std::max(worstFeedback, item->negativeFeedback);
     }
     constexpr std::size_t contextWindow = 8;
     double bestBoost = 0.0;
@@ -495,10 +504,24 @@ double LearningSnapshot::contextBoost(
             }
         }
 
-        const double freqBonus = std::min(
+        double freqBonus = std::min(
             0.40, 0.20 * std::log1p(static_cast<double>(item->frequency)));
+        if (nowMs > 0 && item->lastSelectedMs > 0) {
+            const double ageMs = std::max(
+                0.0, static_cast<double>(nowMs) -
+                         static_cast<double>(item->lastSelectedMs));
+            constexpr double halfLifeDays = 30.0;
+            constexpr double halfLifeMs = halfLifeDays * 24.0 * 60.0 * 60.0 * 1000.0;
+            constexpr double tauMs = halfLifeMs / 0.6931471805599453; // ln(2)
+            const double recency = std::exp(-ageMs / tauMs);
+            freqBonus *= (0.5 + 0.5 * recency);
+        }
         const double itemBoost = std::min(1.5, matchScore + freqBonus);
         bestBoost = std::max(bestBoost, itemBoost);
+    }
+    if (worstFeedback > 0) {
+        const double penalty = 0.5 * std::log1p(static_cast<double>(worstFeedback));
+        bestBoost = std::max(0.0, bestBoost - penalty);
     }
     return bestBoost;
 }
@@ -870,14 +893,50 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(
             [](const auto &tupleItem, const std::string &val) {
                 return std::get<0>(tupleItem) < val;
             });
-        std::size_t prefixCount = 0;
-        constexpr std::size_t kMaxPrefixRecalled = 16;
+        std::vector<RecalledCandidate> prefixCandidates;
+        std::size_t scanned = 0;
+        constexpr std::size_t kMaxScan = 256;
         while (it != baseRecall.prefixIndex.end() &&
                std::get<0>(*it).starts_with(canonicalInput) &&
-               prefixCount < kMaxPrefixRecalled) {
-            addCandidate(std::get<1>(*it), std::get<2>(*it));
+               scanned < kMaxScan) {
+            const auto &phrase = std::get<1>(*it);
+            const auto &pinyin = std::get<2>(*it);
+            const auto key = candidateOrderKey(phrase, pinyin);
+            if (!seen.contains(key) && !isSuppressed(phrase, pinyin) &&
+                hasPositiveFrequency(phrase, pinyin)) {
+                const double lBoost = boostAt(phrase, pinyin, nowMs);
+                const double cBoost =
+                    contextBoost(phrase, pinyin, contextBefore, contextAfter, nowMs);
+                prefixCandidates.push_back({phrase, pinyin, lBoost, cBoost});
+            }
             ++it;
-            ++prefixCount;
+            ++scanned;
+        }
+        constexpr std::size_t kMaxPrefixRecalled = 16;
+        if (prefixCandidates.size() > kMaxPrefixRecalled) {
+            std::partial_sort(
+                prefixCandidates.begin(),
+                prefixCandidates.begin() +
+                    static_cast<std::ptrdiff_t>(kMaxPrefixRecalled),
+                prefixCandidates.end(),
+                [](const auto &a, const auto &b) {
+                    const double scoreA = a.learningBoost + a.contextBoost;
+                    const double scoreB = b.learningBoost + b.contextBoost;
+                    if (std::abs(scoreA - scoreB) > 1e-4) {
+                        return scoreA > scoreB;
+                    }
+                    if (a.phrase != b.phrase) {
+                        return a.phrase < b.phrase;
+                    }
+                    return a.pinyin < b.pinyin;
+                });
+            prefixCandidates.resize(kMaxPrefixRecalled);
+        }
+        for (auto &cand : prefixCandidates) {
+            const auto key = candidateOrderKey(cand.phrase, cand.pinyin);
+            if (seen.insert(key).second) {
+                results.push_back(std::move(cand));
+            }
         }
     }
 

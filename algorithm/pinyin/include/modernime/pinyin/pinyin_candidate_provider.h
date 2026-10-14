@@ -79,6 +79,8 @@ public:
                           std::string *outText = nullptr) override;
     bool remove(std::size_t index) override;
     void onCommitEvent(const core::CommitEvent &event) override;
+    void onNegativeFeedback(std::string_view phrase,
+                            std::string_view pinyin) override;
     void reset() override;
     void resetCommitHistory() override;
     const core::CandidatePage &page() const override;
