@@ -11,7 +11,7 @@ struct SettingsWindowSize final {
 };
 
 constexpr SettingsWindowSize settingsDefaultWindowSize() {
-    return {860, 620};
+    return {980, 720};
 }
 
 constexpr SettingsWindowSize settingsMinimumWindowSize() {

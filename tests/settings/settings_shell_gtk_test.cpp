@@ -477,7 +477,7 @@ int main(int argc, char **argv) {
         int width = 0;
         int height = 0;
         gtk_window_get_default_size(GTK_WINDOW(window), &width, &height);
-        assert(width == 860 && height == 620);
+        assert(width == 980 && height == 720);
         gtk_window_resize(GTK_WINDOW(window), 720, 520);
         shell.present();
         drainEvents();
@@ -503,6 +503,66 @@ int main(int argc, char **argv) {
             drainEvents();
             return 77;
         }
+        // Every searchable candidate setting must be a visible, usable control.
+        shell.show(modernime::settings::SettingsPageId::Candidates);
+        drainEvents();
+        auto *candidateFont = findTarget(window, "candidate-font-size");
+        assert(candidateFont != nullptr && GTK_IS_SPIN_BUTTON(candidateFont));
+        assert(gtk_widget_get_mapped(candidateFont));
+        shell.show(modernime::settings::SettingsPageId::Candidates,
+                   "candidate-font-size");
+        assert(waitUntil([window, candidateFont] {
+            return hasFocusWithin(window, candidateFont);
+        }));
+        for (const auto target : {"arrow-navigation", "page-navigation"}) {
+            auto *control = findTarget(window, target);
+            assert(control != nullptr && GTK_IS_SWITCH(control));
+            assert(gtk_widget_get_mapped(control));
+            shell.show(modernime::settings::SettingsPageId::Candidates, target);
+            assert(waitUntil([window, control] {
+                return hasFocusWithin(window, control);
+            }));
+        }
+
+        shell.show(modernime::settings::SettingsPageId::Candidates, "number-selection");
+        drainEvents();
+        for (const auto target : {"english-definition", "arrow-navigation", "page-navigation"}) {
+            traverseFocus(window, false);
+            assert(hasFocusWithin(window, findTarget(window, target)));
+        }
+
+        auto *pageSize = findTarget(window, "candidate-page-size");
+        auto *preview = findTarget(window, "candidate-preview");
+        auto *numbers = findTarget(window, "number-selection");
+        assert(pageSize != nullptr && GTK_IS_COMBO_BOX(pageSize));
+        assert(preview != nullptr && GTK_IS_CONTAINER(preview));
+        const int originalSize = gtk_combo_box_get_active(GTK_COMBO_BOX(pageSize));
+        const int originalFont = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFont));
+        const bool originalNumbers = gtk_switch_get_active(GTK_SWITCH(numbers));
+        for (const int count : {3, 9}) {
+            gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), count - 3);
+            auto *items = gtk_container_get_children(GTK_CONTAINER(preview));
+            assert(g_list_length(items) == static_cast<guint>(count));
+            g_list_free(items);
+        }
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), 28);
+        gtk_switch_set_active(GTK_SWITCH(numbers), FALSE);
+        auto *items = gtk_container_get_children(GTK_CONTAINER(preview));
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(items->data))) == "你好");
+        auto *attributes = pango_layout_get_attributes(
+            gtk_label_get_layout(GTK_LABEL(items->data)));
+        auto *iterator = pango_attr_list_get_iterator(attributes);
+        auto *size = pango_attr_iterator_get(iterator, PANGO_ATTR_SIZE);
+        assert(size != nullptr && reinterpret_cast<PangoAttrInt *>(size)->value == 28 * PANGO_SCALE);
+        pango_attr_iterator_destroy(iterator);
+        g_list_free(items);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), originalSize);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), originalFont);
+        gtk_switch_set_active(GTK_SWITCH(numbers), originalNumbers);
+
+        // Return to the original focus route before input-page traversal checks.
+        shell.show(modernime::settings::SettingsPageId::Input, "input-enabled");
+        drainEvents();
         assert(defaultMode != nullptr && more != nullptr);
         traverseFocus(window, true);
         assert(gtk_widget_has_focus(more));

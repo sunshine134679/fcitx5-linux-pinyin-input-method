@@ -142,7 +142,7 @@ const char *iconForPage(SettingsPageId page) {
     case SettingsPageId::Input:
         return "input-keyboard-symbolic";
     case SettingsPageId::Candidates:
-        return "preferences-desktop-font-symbolic";
+        return "video-display-symbolic";
     case SettingsPageId::Dictionary:
         return "accessories-dictionary-symbolic";
     case SettingsPageId::Clipboard:
@@ -229,6 +229,7 @@ public:
 
     void presentError(std::string_view message) {
         gtk_label_set_text(GTK_LABEL(taskStatus), std::string(message).c_str());
+        gtk_widget_set_tooltip_text(taskStatus, std::string(message).c_str());
     }
 
 private:
@@ -375,7 +376,8 @@ private:
             gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
         auto *sidebar = sidebarGuard.get();
         addStyleClass(sidebar, kSettingsSidebarClass);
-        gtk_widget_set_size_request(sidebar, 200, -1);
+        gtk_widget_set_size_request(sidebar, 220, -1);
+        gtk_widget_set_hexpand(sidebar, FALSE);
 
         // Product wordmark: ModernIME matching layout-1.png
         auto *brandBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -383,8 +385,9 @@ private:
         gtk_widget_set_margin_top(brandBox, 16);
         gtk_widget_set_margin_bottom(brandBox, 14);
         auto *brandLabel = gtk_label_new(nullptr);
+        addStyleClass(brandLabel, "modernime-brand");
         gtk_label_set_markup(GTK_LABEL(brandLabel),
-            "<b><span font='17pt' color='#0f172a'>Modern</span><span font='17pt' color='#2563eb'>IME</span></b>");
+            "<b><span color='#182031'>Modern</span><span color='#1262ff'>IME</span></b>");
         gtk_widget_set_halign(brandLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(brandBox), brandLabel, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(sidebar), brandBox, FALSE, FALSE, 0);
@@ -392,6 +395,8 @@ private:
         searchEntry = gtk_search_entry_new();
         addStyleClass(searchEntry, "modernime-search-box");
         gtk_entry_set_placeholder_text(GTK_ENTRY(searchEntry), "搜索设置");
+        gtk_entry_set_width_chars(GTK_ENTRY(searchEntry), 14);
+        gtk_entry_set_max_width_chars(GTK_ENTRY(searchEntry), 18);
         gtk_widget_set_tooltip_text(searchEntry,
                                     "仅在本地搜索设置名称和说明");
         setAccessibleWidgetText(searchEntry, "搜索设置",
@@ -469,7 +474,7 @@ private:
         } else if (channel == "script") {
             channelText = "脚本安装";
         }
-        const std::string versionFooter = "v0.1.9 · " + channelText;
+        const std::string versionFooter = "v" MODERNIME_VERSION " · " + channelText;
         auto *footerLabel = gtk_label_new(versionFooter.c_str());
         addStyleClass(footerLabel, "modernime-sidebar-footer");
         gtk_widget_set_halign(footerLabel, GTK_ALIGN_START);
@@ -582,12 +587,10 @@ private:
             gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8));
         auto *bar = barGuard.get();
         addStyleClass(bar, "modernime-bottom-bar");
-        gtk_widget_set_margin_start(bar, 12);
-        gtk_widget_set_margin_end(bar, 12);
-        gtk_widget_set_margin_top(bar, 4);
-        gtk_widget_set_margin_bottom(bar, 4);
 
         editState = gtk_label_new(nullptr);
+        gtk_label_set_ellipsize(GTK_LABEL(editState), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars(GTK_LABEL(editState), 32);
         gtk_label_set_markup(GTK_LABEL(editState),
                              "<span foreground='#94a3b8'>●</span> 所有设置已保存");
         addStyleClass(editState, "modernime-status");
@@ -733,7 +736,7 @@ private:
         } else if (model.dirty()) {
             addStyleClass(editState, "modernime-status-dirty");
             gtk_label_set_markup(GTK_LABEL(editState),
-                                 "<span foreground='#2563eb'>●</span> 有未保存的修改");
+                                 "<span foreground='#1262ff'>●</span> 有未保存的修改");
         } else {
             gtk_label_set_markup(GTK_LABEL(editState),
                                  "<span foreground='#94a3b8'>●</span> 所有设置已保存");
