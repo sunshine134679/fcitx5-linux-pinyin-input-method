@@ -641,22 +641,8 @@ kbd {
   color:var(--muted);
   margin-bottom:25px
 }
-.download-card label {
-  font-size: 13px;
-  color:var(--muted);
-  margin-bottom:7px
-}
-.download-card select {
-  background:#f9fafc;
-  border:1px solid var(--line);
-  padding:11px 9px;
-  border-radius:5px;
-  color:var(--ink);
-  width:100%;
-  font-size: 13px;
-  margin-bottom:18px;
-  min-height:43px
-}
+
+
 .download-card .button {
   width:100%;
   font-size: 13px;
@@ -1092,9 +1078,7 @@ code {
   .compatibility {
     min-height:76px
   }
-  .download-card select {
-    font-size:13px
-  }
+
   .download-card .button {
     font-size:13px
   }
@@ -1318,8 +1302,8 @@ code {
 .download-card { padding: 30px 25px; border-radius: 13px; transition: border-color .3s, background .3s; }
 .download-card:hover { border-color: #b2c9f9; background: #fbfcff; }
 .download-description { font-size: 13px; }
-.download-card label { font-size: 13px; }
-.download-card select { font-size: 13px; }
+
+
 .download-note { font-size: 13px; }
 .download-footnote { font-size: 13px; }
 .source-install { margin-top: 59px; padding-top: 47px; }
@@ -1417,7 +1401,7 @@ h3 { font-weight: 700; }
   .client-benefits p { font-size: 15px; }
   .download-grid { gap: 17px; }
   .download-card { padding: 27px 24px; }
-  .download-card select { font-size: 13px; }
+
   .download-footnote { font-size: 13px; }
   .source-install { margin-top: 38px; padding-top: 34px; }
   .code-block pre { font-size: 13px; }
@@ -1465,3 +1449,122 @@ h3 { font-weight: 700; }
   }
   .faq details[open]::details-content { block-size: auto; }
 }
+
+/* Everyday scenes: flat editorial panels, with depth provided by typography. */
+[hidden] { display: none !important; }
+.hero-grid { padding-top: 92px; padding-bottom: 96px; }
+.section { padding-top: 82px; padding-bottom: 82px; }
+.everyday-section { padding: 76px 0 80px; background: #fafbfe; border-top: 1px solid var(--line); }
+.everyday-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 28px; }
+.everyday-heading > p { color: #536782; font-size: 16px; line-height: 1.9; padding-bottom: 5px; }
+.workflow-grid { display: grid; grid-template-columns: .85fr 1.35fr; gap: 56px; margin-top: 40px; align-items: center; }
+.workflow-navigation { display: grid; gap: 10px; }
+.workflow-navigation button { display: flex; align-items: center; gap: 18px; text-align: left; width: 100%; padding: 24px 20px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: var(--ink); transition: background .25s, border-color .25s; }
+.workflow-navigation button[aria-pressed="true"] { background: #edf3ff; border-color: #cadbff; }
+.workflow-number { color: #607799; font: 500 15px ui-monospace, monospace; }
+.workflow-navigation strong { display: block; font-size: 21px; font-weight: 700; }
+.workflow-navigation small { display: block; color: #536782; font-size: 14px; margin-top: 8px; line-height: 1.7; }
+.workflow-arrow { color: var(--blue); margin-left: auto; font-size: 22px; transition: transform .3s var(--ease-out); }
+.workflow-navigation button[aria-pressed="true"] .workflow-arrow { transform: rotate(45deg); }
+.workflow-stage { display: grid; position: relative; overflow: hidden; border: 1px solid #d2ddf1; border-radius: 16px; background: white; }
+.workflow-panel { grid-area: 1 / 1; position: relative; isolation: isolate; padding: 28px 30px; min-height: 530px; display: flex; flex-direction: column; }
+.workflow-topline { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: #596d88; letter-spacing: .8px; }
+.workflow-art { font-family: var(--font-display); color: #edf2fd; font-size: 112px; font-weight: 700; position: absolute; right: 22px; top: 36px; z-index: -1; letter-spacing: -8px; pointer-events: none; }
+.chat-note { display: flex; align-items: flex-start; gap: 12px; margin-top: 46px; }
+.note-avatar { border: 1px solid #cfddf7; border-radius: 9px; padding: 9px 11px; color: var(--blue); background: #f1f5ff; font-weight: 700; }
+.chat-note small { font-size: 13px; color: #596d88; }
+.chat-note p { margin-top: 7px; font-size: 17px; }
+.chat-reply { display: flex; align-self: flex-end; gap: 24px; background: #edf3ff; color: #254b92; border-radius: 10px 10px 2px 10px; padding: 12px 18px; margin-top: 24px; font-size: 17px; }
+.chat-reply > span { color: var(--blue); }
+.workflow-composition { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; background: #f8faff; border: 1px solid #dbe4f4; border-radius: 8px; padding: 13px 14px; margin-top: 27px; font-size: 15px; }
+.workflow-composition code { width: 100%; font-size: 14px; color: #536782; }
+.workflow-word { color: var(--blue); font-weight: 700; }
+.workflow-caption { font-size: 14px; color: #536782; line-height: 1.9; margin-top: auto; padding-top: 22px; }
+.writing-note { margin-top: 32px; }
+.writing-note > small { font-size: 13px; letter-spacing: 1px; color: #596d88; }
+.writing-note h3 { font-family: var(--font-display); font-size: 25px; line-height: 1.6; margin: 13px 0 11px; }
+.writing-note p { color: #536782; font-size: 17px; line-height: 2; }
+.writing-note p span { color: var(--blue); background: #edf3ff; padding: 2px 5px; }
+.writing-lines { display: grid; gap: 9px; margin-top: 14px; }
+.writing-lines i { height: 5px; background: #eaf0f8; width: 76%; border-radius: 2px; }
+.writing-lines i:last-child { width: 49%; }
+.clipboard-note { margin-top: 32px; }
+.clipboard-note > div { display: flex; align-items: center; justify-content: space-between; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
+.clipboard-note strong { font-size: 20px; }
+.clipboard-note > div > span { color: #536782; font-size: 14px; }
+.clipboard-note p { padding: 11px 0; border-bottom: 1px solid #e9eef6; }
+.clipboard-note p small { display: block; color: #596d88; font-size: 13px; }
+.clipboard-note p > span { display: block; font-size: 15px; overflow-wrap: anywhere; margin-top: 3px; }
+.vocabulary-strip { display: grid; grid-template-columns: .85fr 1.35fr; gap: 56px; border-top: 1px solid var(--line); margin-top: 48px; padding-top: 30px; align-items: center; }
+.vocabulary-strip h3 { font-size: 21px; margin-top: 11px; }
+.vocabulary-strip p { font-size: 14px; color: #536782; margin-top: 8px; }
+.vocabulary-strip .eyebrow { font-size: 13px; letter-spacing: 1px; }
+.vocabulary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 20px; }
+.vocabulary-grid > span { font-family: var(--font-display); font-weight: 700; font-size: 18px; padding: 7px 0; }
+.vocabulary-grid small { display: block; font: 500 13px system-ui, sans-serif; color: #596d88; margin-bottom: 6px; }
+
+/* Hidden scenes reserve the tallest panel, including when text wraps or zoom changes. */
+.workflow-panel[hidden] { display: flex !important; visibility: hidden; pointer-events: none; }
+
+/* Native radio semantics, without a popup obscuring the download button. */
+.system-options { border: 0; padding: 0; margin: 0 0 20px; min-width: 0; display: grid; gap: 8px; }
+.system-options legend { font-size: 13px; color: #536782; margin-bottom: 10px; }
+.system-option { display: flex; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; background: #fafbfe; transition: border-color .2s, background .2s; }
+.system-option:has(input:checked) { background: #edf3ff; border-color: #8bb2ff; }
+.system-option:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: 3px; }
+.system-option input { margin: 0; width: 16px; height: 16px; accent-color: var(--blue); flex-shrink: 0; }
+.system-option strong { display: block; font-size: 14px; font-weight: 650; line-height: 1.5; }
+.system-option small { display: block; font-size: 13px; color: #536782; margin-top: 3px; }
+.choice-mark { margin-left: auto; color: var(--blue); font-size: 17px; visibility: hidden; }
+.system-option:has(input:checked) .choice-mark { visibility: visible; }
+.download-description { margin-bottom: 20px; }
+.compatibility { min-height: 189px; padding-top: 8px; }
+.download-card .button { margin-top: auto; }
+.download-note { min-height: 70px; }
+.download-note code { display: block; font-size: 13px; line-height: 1.9; margin-top: 4px; overflow-wrap: anywhere; }
+.download-card { background: #fff; }
+
+/* Both layers share the original 49:36 frame; only opacity is animated. */
+#gallery-previous { position: absolute; inset: 0; pointer-events: none; }
+.gallery-tabs button { position: relative; }
+.gallery-tabs button[data-pending="true"] { color: var(--blue); border-color: #9bbcff; background: #f8faff; }
+.gallery-tabs button[data-pending="true"]::after { content: ""; position: absolute; inset: auto 12px 5px; height: 2px; background: #1762ff; animation: preparing .85s ease-in-out infinite alternate; transform-origin: left; }
+@keyframes preparing { from { transform: scaleX(.2); opacity: .4; } to { transform: scaleX(1); opacity: 1; } }
+@media (max-width: 1050px) {
+  .workflow-grid, .vocabulary-strip { gap: 28px; }
+  .workflow-panel { padding: 26px 23px; }
+  .workflow-navigation button { padding: 20px 14px; gap: 12px; }
+  .workflow-navigation strong { font-size: 19px; }
+  .vocabulary-grid { column-gap: 12px; }
+  .vocabulary-grid > span { font-size: 16px; }
+  .system-option { padding: 10px 8px; gap: 8px; }
+  .system-option strong { font-size: 13px; }
+  .choice-mark { display: none; }
+}
+@media (max-width: 760px) {
+  .hero-grid { padding-top: 64px; padding-bottom: 48px; }
+  .section { padding-top: 60px; padding-bottom: 60px; }
+  .everyday-section { padding: 56px 0; }
+  .everyday-heading { display: block; }
+  .everyday-heading > p { margin-top: 20px; font-size: 15px; }
+  .workflow-grid { grid-template-columns: 1fr; gap: 20px; margin-top: 28px; }
+  .workflow-navigation { grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .workflow-navigation button { display: block; padding: 12px 8px; text-align: center; border-color: var(--line); background: white; }
+  .workflow-navigation strong { font-size: 15px; margin-top: 5px; }
+  .workflow-navigation small, .workflow-arrow { display: none; }
+  .workflow-number { font-size: 13px; }
+  .workflow-panel { min-height: 530px; padding: 24px 20px; }
+  .workflow-topline { font-size: 13px; letter-spacing: .3px; }
+  .workflow-art { font-size: 90px; right: 14px; }
+  .chat-note p, .chat-reply, .writing-note p { font-size: 15px; }
+  .writing-note h3 { font-size: 23px; }
+  .workflow-composition { gap: 10px; font-size: 14px; }
+  .vocabulary-strip { grid-template-columns: 1fr; gap: 22px; margin-top: 32px; padding-top: 25px; }
+  .vocabulary-grid { grid-template-columns: repeat(2, 1fr); }
+  .compatibility { min-height: 90px; }
+  .download-note { min-height: 0; }
+  .system-option { padding: 13px; }
+  .system-option strong { font-size: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

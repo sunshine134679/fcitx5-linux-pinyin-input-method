@@ -32,7 +32,7 @@ document.querySelectorAll("[data-demo]").forEach(button => {
 let releaseAssets = null;
 function updateDebDownload() {
   const button = document.getElementById("deb-download");
-  const distro = document.getElementById("ubuntu-version").value;
+  const distro = document.querySelector("input[name=deb-system]:checked").value;
   if (!releaseAssets) {
     button.href = `https://github.com/${repository}/releases/download/v0.1.11/modernime_0.1.11_amd64_${distro}.deb`;
     return;
@@ -41,7 +41,7 @@ function updateDebDownload() {
   button.href = asset ? asset.browser_download_url : releasePage;
   button.firstChild.textContent = asset ? "下载 .deb " : "查看可用安装包 ";
 }
-document.getElementById("ubuntu-version").addEventListener("change", updateDebDownload);
+document.querySelectorAll("input[name=deb-system]").forEach(option => option.addEventListener("change", updateDebDownload));
 
 document.getElementById("copy-install").addEventListener("click", async () => {
   const text = document.getElementById("install-command").textContent;
@@ -150,9 +150,19 @@ if (typeof document.addEventListener === "function") {
   });
 }
 
+// Static scene contents remain readable; switching never waits for a network request.
+document.querySelectorAll("[data-workflow]").forEach(button => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-workflow]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+  document.querySelectorAll("[data-workflow-panel]").forEach(panel => {
+    const selected = panel.dataset.workflowPanel === button.dataset.workflow;
+    panel.hidden = !selected;
+    if (selected) transitionContent(panel);
+  });
+}));
+
 // Observe once, then disconnect each element. No perpetual animation or scroll loop.
 if (typeof IntersectionObserver === "function" && !reducedMotion.matches) {
-  const elements = document.querySelectorAll(".section-heading, .interactive-demo, .feature-stack, .detail-strip, .client-heading, .gallery-navigation, .client-figure, .client-benefits, .download-card, .source-install, .help-grid, .open-source");
+  const elements = document.querySelectorAll(".section-heading, .interactive-demo, .feature-stack, .detail-strip, .client-heading, .gallery-navigation, .client-figure, .client-benefits, .download-card, .source-install, .help-grid, .open-source, .everyday-heading, .workflow-grid, .vocabulary-strip");
   const observer = new IntersectionObserver(entries => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
