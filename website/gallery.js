@@ -5,6 +5,15 @@
   const previous = document.getElementById("gallery-previous");
   const original = document.getElementById("screenshot-original");
   const status = document.getElementById("gallery-status");
+  const loading = document.getElementById("gallery-loading");
+  function announce(message, error = false) {
+    status.textContent = message;
+    status.classList.toggle("sr-only", !error);
+  }
+  function indicateLoading(title = "") {
+    loading.hidden = !title;
+    loading.textContent = title ? `${title} · 加载中…` : "";
+  }
   const motion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : {matches: true};
   const cache = new Map();
   let revision = 0;
@@ -60,10 +69,10 @@
     document.getElementById("screenshot-pagination").textContent = shot.number;
     buttons.forEach(item => item.setAttribute("aria-pressed", String(item === button)));
     displayed = button;
-    status.textContent = `已显示${shot.title}`;
+    announce(`已显示${shot.title}`);
     if (previous && typeof image.animate === "function" && !motion.matches) {
       previous.hidden = false;
-      const timing = {duration: 420, easing: "cubic-bezier(.22,.68,0,1)"};
+      const timing = {duration: 240, easing: "cubic-bezier(.22,.68,0,1)"};
       const outgoing = previous.animate([{opacity: 1}, {opacity: 0}], timing);
       const incoming = image.animate([{opacity: 0}, {opacity: 1}], timing);
       animations = [outgoing, incoming];
@@ -76,21 +85,24 @@
     button.addEventListener("focus", () => warm(button));
     button.addEventListener("click", async () => {
       const current = ++revision;
+      indicateLoading();
       buttons.forEach(item => item.setAttribute("data-pending", String(item === button && item !== displayed)));
       if (button === displayed && image.complete && image.naturalWidth > 0) {
         image.setAttribute("aria-busy", "false");
-        status.textContent = `已显示${button.dataset.title}`;
+        announce(`已显示${button.dataset.title}`);
         return;
       }
       image.setAttribute("aria-busy", "true");
-      status.textContent = `正在准备${button.dataset.title}…`;
+      announce(`正在准备${button.dataset.title}…`);
+      indicateLoading(button.dataset.title);
       try {
         await loadImage(button.dataset);
         if (current === revision) show(button);
       } catch {
-        if (current === revision) status.textContent = "截图加载失败，保留当前图片。请点击标签重试。";
+        if (current === revision) announce("截图加载失败，保留当前图片。请点击标签重试。", true);
       } finally {
         if (current === revision) {
+          indicateLoading();
           image.setAttribute("aria-busy", "false");
           buttons.forEach(item => item.setAttribute("data-pending", "false"));
         }

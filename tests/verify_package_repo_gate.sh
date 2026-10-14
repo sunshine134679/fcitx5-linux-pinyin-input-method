@@ -80,6 +80,12 @@ for required_path in \
         fail "DEB missing required file: ${required_path}"
 done
 
+for icon_size in 16 32 48 64 128 256 512; do
+    icon_path="./usr/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"
+    printf '%s\n' "${deb_contents}" | grep -Fq "${icon_path}" ||
+        fail "DEB missing application icon: ${icon_path}"
+done
+
 for dep_bound in \
     "fcitx5 (>= 5.0.14)" \
     "libime-bin (>= 1.0.11)" \
@@ -263,7 +269,15 @@ for i in range(nfiles):
         }
 
 payload_reg_files = sorted(p for p in rootfs.rglob("*") if p.is_file() and not p.is_symlink())
-assert len(payload_reg_files) == 19, f"Expected 19 regular files in RPM payload, got {len(payload_reg_files)}"
+icon_paths = [rootfs / f"usr/share/icons/hicolor/{size}x{size}/apps/modernime.png"
+              for size in (16, 32, 48, 64, 128, 256, 512)]
+for icon in icon_paths:
+    assert icon.is_file(), f"RPM missing application icon: {icon}"
+    assert icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), f"Invalid PNG icon: {icon}"
+expected_regular_files = 19 + len(icon_paths)
+assert len(payload_reg_files) == expected_regular_files, (
+    f"Expected {expected_regular_files} regular files in RPM payload, got {len(payload_reg_files)}"
+)
 assert len(hdr_reg_files) == len(payload_reg_files), (
     f"RPM header regular file count ({len(hdr_reg_files)}) != payload regular file count ({len(payload_reg_files)})"
 )
@@ -308,7 +322,7 @@ if command -v rpm >/dev/null 2>&1; then
     done
     printf '  -> [NATIVE RPM]: rpm -qpl verified (%d entries)\n' "$(printf '%s\n' "${rpm_qpl_out}" | wc -l)"
 else
-    printf '  -> [SIMULATED HARNESS / PYTHON RPMFI VERIFIER]: native rpm binary not installed on host; verified all 19 RPM header file-table entries (FILESIZES, FILEMODES, FILEDIGESTS, FILEUSERNAME/GROUPNAME, DIRNAMES/DIRINDEXES/BASENAMES)\n'
+    printf '  -> [SIMULATED HARNESS / PYTHON RPMFI VERIFIER]: native rpm binary not installed on host; verified every RPM header file-table entry (FILESIZES, FILEMODES, FILEDIGESTS, FILEUSERNAME/GROUPNAME, DIRNAMES/DIRINDEXES/BASENAMES)\n'
 fi
 
 for rpm_req_file in \

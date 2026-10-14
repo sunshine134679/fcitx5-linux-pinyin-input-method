@@ -55,6 +55,10 @@ test -f "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test -f "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 grep -Fx 'Name=modernime' "$MODERNIME_CONFIG_HOME/fcitx5/profile" >/dev/null
 test -x "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
+for icon_size in 16 32 48 64 128 256 512; do
+    test -s "$MODERNIME_PREFIX/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"
+done
+grep -Fx "Icon=$MODERNIME_PREFIX/share/icons/hicolor/512x512/apps/modernime.png" "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop" >/dev/null
 
 # Validate actual Fcitx metadata discovery using the installed session environment.
 set -a
@@ -81,6 +85,9 @@ test ! -e "$MODERNIME_PREFIX/lib/fcitx5/modernime_ui.so"
 test ! -e "$MODERNIME_PREFIX/lib64/fcitx5/modernime_ui.so"
 test ! -e "$MODERNIME_PREFIX/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so"
 test ! -e "$MODERNIME_DESKTOP_DIR/modernime-settings.desktop"
+for icon_size in 16 32 48 64 128 256 512; do
+    test ! -e "$MODERNIME_PREFIX/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"
+done
 test ! -e "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test ! -e "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 

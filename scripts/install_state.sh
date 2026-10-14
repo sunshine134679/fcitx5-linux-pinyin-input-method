@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Shared ownership checks for generated integration files.
 # Callers set managed_state_dir; snapshots contain only installer-generated data.
+modernime_desktop_string() {
+    # Plain Desktop Entry strings use one escaping layer, unlike Exec arguments.
+    local value=$1
+    value=${value//\\/\\\\}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '%s' "$value"
+}
+
 modernime_desktop_argument() {
     # Desktop Entry values are decoded before Exec quoting is decoded.
     # Escape both layers, including literal percent field-code characters.

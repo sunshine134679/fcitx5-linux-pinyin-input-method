@@ -579,7 +579,7 @@ if [[ "$is_system_prefix" != true ]]; then
         printf '%s\n' 'Name=ModernIME 设置'
         printf '%s\n' 'Comment=Configure ModernIME input method'
         printf 'Exec=%s\n' "$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
-        printf '%s\n' 'Icon=input-keyboard'
+        printf 'Icon=%s\n' "$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
         printf '%s\n' 'Terminal=false'
         printf '%s\n' 'Categories=Settings;Utility;'
     } > "$desktop_tmp"
@@ -596,7 +596,8 @@ if [[ "$is_system_prefix" != true ]]; then
     application_desktop="$prefix/share/applications/modernime-settings.desktop"
     if [[ -f "$application_desktop" ]]; then
         MODERNIME_DESKTOP_EXEC="$(modernime_desktop_argument "$prefix/bin/modernime-settings")" \
-            awk '/^Exec=/ { print "Exec=" ENVIRON["MODERNIME_DESKTOP_EXEC"]; next } { print }' \
+        MODERNIME_DESKTOP_ICON="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")" \
+            awk '/^Exec=/ { print "Exec=" ENVIRON["MODERNIME_DESKTOP_EXEC"]; next } /^Icon=/ { print "Icon=" ENVIRON["MODERNIME_DESKTOP_ICON"]; next } { print }' \
                 "$application_desktop" > "$desktop_tmp"
         cp -- "$desktop_tmp" "$application_desktop"
     fi
@@ -646,6 +647,10 @@ EOF
     modernime_write_profile_block "$desktop_tmp" "$xprofile_file"
 fi
 
+if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -d "$prefix/share/icons/hicolor" ]]; then
+    gtk-update-icon-cache -q -t -f "$prefix/share/icons/hicolor" 2>/dev/null || true
+fi
+
 manifest_dir="$prefix/share/modernime"
 manifest="$manifest_dir/install-manifest.txt"
 channel_file="$manifest_dir/install-channel.txt"
@@ -678,6 +683,9 @@ fi
     printf '%s\n' "$prefix/bin/modernime-data-guard"
     printf '%s\n' "$prefix/bin/modernime-migrate-channel"
     printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
+    for icon_size in 16 32 48 64 128 256 512; do
+        printf '%s\n' "$prefix/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"
+    done
     printf '%s\n' "$prefix/share/doc/modernime/LICENSE"
     printf '%s\n' "$prefix/share/doc/modernime/copyright"
     printf '%s\n' "$prefix/share/doc/modernime/THIRD_PARTY_NOTICES.md"

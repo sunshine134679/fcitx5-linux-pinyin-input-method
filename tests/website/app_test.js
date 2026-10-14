@@ -14,7 +14,7 @@ class Element {
   replaceChildren(...children) { this.children = children; }
 }
 async function run(release, options = {}) {
-  const elements = Object.fromEntries(["demo-pinyin", "demo-candidates", "deb-download", "copy-install", "copy-status", "install-command", "release-version", "release-status", "rpm-download", "portable-download", "checksum-link", "hero-prelude", "hero-context", "hero-prefix", "hero-word", "hero-pinyin", "hero-candidates", "client-screenshot", "gallery-previous", "screenshot-original", "screenshot-caption", "screenshot-pagination", "gallery-status"].map(id => [id, new Element()]));
+  const elements = Object.fromEntries(["demo-pinyin", "demo-candidates", "deb-download", "copy-install", "copy-status", "install-command", "release-version", "release-status", "rpm-download", "portable-download", "checksum-link", "hero-prelude", "hero-context", "hero-prefix", "hero-word", "hero-pinyin", "hero-candidates", "client-screenshot", "gallery-previous", "screenshot-original", "screenshot-caption", "screenshot-pagination", "gallery-status", "gallery-loading"].map(id => [id, new Element()]));
   elements["install-command"].textContent = "git clone https://github.com/example/project.git\n./install.sh";
   const buttons = ["single", "double"].map(sample => {const b = new Element(); b.dataset.demo = sample; return b;});
   const sceneButtons = ["hello", "express", "linux"].map(scene => {const b = new Element(); b.dataset.scene = scene; return b;});
@@ -32,6 +32,7 @@ async function run(release, options = {}) {
     for (const [, key, value] of tag.matchAll(/data-([a-z]+)="([^"]*)"/g)) b.dataset[key] = value;
     return b;
   });
+  elements["gallery-loading"].hidden = true;
   elements["client-screenshot"].complete = true;
   elements["client-screenshot"].naturalWidth = options.initialFailure ? 0 : 2940;
   elements["client-screenshot"].src = "assets/client-overview-1x.webp";
@@ -93,6 +94,7 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(failedGallery.elements["client-screenshot"].src, "assets/client-overview-1x.webp", "a failed load must keep the last usable screenshot");
   assert.equal(failedGallery.elements["screenshot-pagination"].textContent, "01 / 03");
   assert.match(failedGallery.elements["gallery-status"].textContent, /重试/);
+  assert.equal(failedGallery.elements["gallery-status"].attributes["sr-only"], false, "load failures must remain visible");
   const initialFailure = await run(null, {initialFailure: true, manualImages: true});
   const recovered = initialFailure.screenshotButtons[0].events.click();
   assert.equal(initialFailure.pendingImages.length, 1, "clicking the current tab must retry a failed initial image");
@@ -102,6 +104,8 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   const racingGallery = await run(fixture, {manualImages: true});
   const first = racingGallery.screenshotButtons[1].events.click();
   const latest = racingGallery.screenshotButtons[2].events.click();
+  assert.equal(racingGallery.elements["gallery-loading"].hidden, false, "pending selections need visible feedback while retaining the decoded old frame");
+  assert.match(racingGallery.elements["gallery-loading"].textContent, /剪贴板/);
   assert.equal(racingGallery.pendingImages[0].srcset, racingGallery.screenshotButtons[1].dataset.srcset, "preloads and displayed images must use the same responsive candidates");
   assert.equal(racingGallery.pendingImages[0].sizes, racingGallery.elements["client-screenshot"].sizes);
   assert.equal(racingGallery.elements["client-screenshot"].src, "assets/client-overview-1x.webp");
@@ -112,6 +116,8 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(racingGallery.elements["client-screenshot"].src, "assets/client-clipboard-1x.webp", "a late earlier request must not replace the latest choice");
   assert.equal(racingGallery.elements["screenshot-pagination"].textContent, "03 / 03");
   assert.equal(racingGallery.elements["client-screenshot"].attributes["aria-busy"], "false");
+  assert.equal(racingGallery.elements["gallery-loading"].hidden, true);
+  assert.equal(racingGallery.elements["gallery-status"].attributes["sr-only"], true);
   // Superseded successful loads are still decoded and cached for a later visit.
   await racingGallery.screenshotButtons[1].events.click();
   assert.equal(racingGallery.pendingImages.length, 2);
@@ -205,7 +211,7 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(motion.reveal.attributes["is-visible"], true);
   assert.equal(motion.observers[0].unobserved, true);
   await motion.screenshotButtons[1].events.click();
-  assert.equal(motion.elements["client-screenshot"].lastAnimation.duration, 420);
+  assert.equal(motion.elements["client-screenshot"].lastAnimation.duration, 240);
   motion.reduce();
   assert.equal(motion.observers[0].disconnected, true);
   assert.equal(motion.root.attributes["motion-ready"], undefined);

@@ -340,6 +340,7 @@ private:
     void buildWindow() {
         windowOwner.reset(gtk_application_window_new(application));
         gtk_window_set_title(GTK_WINDOW(windowOwner.get()), "ModernIME 设置");
+        gtk_window_set_icon_name(GTK_WINDOW(windowOwner.get()), "modernime");
         const auto defaultSize = settingsDefaultWindowSize();
         gtk_window_set_default_size(GTK_WINDOW(windowOwner.get()),
                                     defaultSize.width, defaultSize.height);

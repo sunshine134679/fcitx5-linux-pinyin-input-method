@@ -13,6 +13,11 @@ set -euo pipefail
 if [[ " $* " == *" --install "* ]]; then
     FAKE_PREFIX="${DESTDIR:-}$FAKE_PREFIX"
     mkdir -p "$FAKE_PREFIX/bin" "$FAKE_PREFIX/share/applications"
+    for icon_size in 16 32 48 64 128 256 512; do
+        icon_dir="$FAKE_PREFIX/share/icons/hicolor/${icon_size}x${icon_size}/apps"
+        mkdir -p "$icon_dir"
+        cp "$PROJECT_ROOT/config/icons/${icon_size}x${icon_size}/modernime.png" "$icon_dir/modernime.png"
+    done
     : >"$FAKE_PREFIX/bin/modernime-settings"
     cp "$PROJECT_ROOT/config/desktop/modernime-settings.desktop" \
         "$FAKE_PREFIX/share/applications/modernime-settings.desktop"
@@ -66,6 +71,14 @@ grep -Fqx "$prefix/share/modernime/pinyin/modernime-knowledge.dict" "$manifest"
 grep -Fqx "$prefix/bin/modernime-settings" "$manifest"
 grep -Fqx "$prefix/share/applications/modernime-settings.desktop" "$manifest"
 grep -Fqx "$test_root/home/Desktop/modernime-settings.desktop" "$manifest"
+for icon_size in 16 32 48 64 128 256 512; do
+    icon="$prefix/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"
+    test -s "$icon"
+    grep -Fqx "$icon" "$manifest"
+done
+for launcher in "$prefix/share/applications/modernime-settings.desktop" "$test_root/home/Desktop/modernime-settings.desktop"; do
+    grep -Fqx "Icon=$prefix/share/icons/hicolor/512x512/apps/modernime.png" "$launcher"
+done
 grep -Fqx "Exec=\"$prefix/bin/modernime-settings\"" \
     "$prefix/share/applications/modernime-settings.desktop"
 grep -Fqx 'Name=ModernIME 设置' \
@@ -138,6 +151,9 @@ env \
     bash "$project_root/uninstall.sh" >/dev/null
 test ! -e "$prefix/bin/modernime-settings"
 test ! -e "$prefix/share/applications/modernime-settings.desktop"
+for icon_size in 16 32 48 64 128 256 512; do
+    test ! -e "$prefix/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"
+done
 test -f "$prefix/share/applications/unrelated.desktop"
 cmp "$environment_file" "$test_root/environment.expected"
 cmp "$autostart_file" "$test_root/autostart.expected"
@@ -149,6 +165,22 @@ env -u MODERNIME_CONFIG_HOME -u MODERNIME_DESKTOP_DIR \
     MODERNIME_PREFIX="$prefix" PATH="$fake_bin:/usr/bin:/bin" \
     bash "$project_root/uninstall.sh" >/dev/null
 test ! -e "$manifest"
+
+# A literal backslash in the install prefix must survive Desktop Entry decoding.
+escaped_prefix="$test_root/prefix\\brand\\test"
+escaped_env=(env HOME="$test_root/home" MODERNIME_PREFIX="$escaped_prefix"
+    MODERNIME_CONFIG_HOME="$test_root/escaped-config"
+    MODERNIME_DESKTOP_DIR="$test_root/escaped-desktop"
+    MODERNIME_BUILD_DIR="$test_root/escaped-build" FAKE_PREFIX="$escaped_prefix"
+    PROJECT_ROOT="$project_root" MODERNIME_SKIP_FCITX_RESTART=1
+    PATH="$fake_bin:/usr/bin:/bin")
+"${escaped_env[@]}" bash "$project_root/install.sh" >/dev/null
+for launcher in "$escaped_prefix/share/applications/modernime-settings.desktop" "$test_root/escaped-desktop/modernime-settings.desktop"; do
+    grep -Fqx "Icon=$test_root/prefix\\\\brand\\\\test/share/icons/hicolor/512x512/apps/modernime.png" "$launcher"
+done
+test -s "$escaped_prefix/share/icons/hicolor/512x512/apps/modernime.png"
+"${escaped_env[@]}" bash "$project_root/uninstall.sh" >/dev/null
+test ! -e "$escaped_prefix/share/icons/hicolor/512x512/apps/modernime.png"
 test -f "$test_root/home/Desktop/unrelated.desktop"
 
 # A custom config directory must leave HOME/.xprofile untouched.

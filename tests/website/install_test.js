@@ -14,7 +14,7 @@ async function tests() {
     const copy = element("copy"); copy.dataset.copy = "apt-source-command"; copy.dataset.status = "apt-copy-status";
     const open = element("open"); open.dataset.openInstall = "apt-install";
     const mobileLink = element("mobile-link");
-    element("mobile-menu"); element("mobile-menu-toggle");
+    element("mobile-menu").contains = target => target === mobileLink; element("mobile-menu-toggle");
     const keyboard = {};
     let copied, selected = false;
     const document = {getElementById: element, addEventListener: (name, action) => {keyboard[name] = action;}, querySelector: () => options.find(item => item.checked), querySelectorAll: selector => selector === "input[name=deb-system]" ? options : selector === "[data-copy]" ? [copy] : selector === "[data-open-install]" ? [open] : selector === "[data-mobile-link]" ? [mobileLink] : [], createRange: () => ({selectNodeContents: () => {selected = true;}})};
@@ -39,6 +39,11 @@ async function tests() {
   app.keyboard.keydown({key: "Escape"});
   assert.equal(app.elements["mobile-menu"].open, false);
   assert.equal(app.elements["mobile-menu-toggle"].focused, true);
+  app.elements["mobile-menu"].open = true;
+  app.keyboard.pointerdown({target: app.mobileLink});
+  assert.equal(app.elements["mobile-menu"].open, true, "inside clicks must retain native menu behavior");
+  app.keyboard.pointerdown({target: {}});
+  assert.equal(app.elements["mobile-menu"].open, false, "outside clicks must dismiss the menu");
   const existing = app.elements["apt-source-command"].textContent;
   app.options[2].dataset.suite = "../../unsafe";
   app.options[2].events.change();

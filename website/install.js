@@ -32,6 +32,10 @@
   document.querySelectorAll("[data-mobile-link]").forEach(link => link.addEventListener("click", () => {
     document.getElementById("mobile-menu").open = false;
   }));
+  document.addEventListener("pointerdown", event => {
+    const menu = document.getElementById("mobile-menu");
+    if (menu.open && !menu.contains(event.target)) menu.open = false;
+  });
   if (document.addEventListener) document.addEventListener("keydown", event => {
     const menu = document.getElementById("mobile-menu");
     if (event.key === "Escape" && menu.open) {

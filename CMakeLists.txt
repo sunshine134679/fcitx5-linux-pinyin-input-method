@@ -50,6 +50,12 @@ if(MODERNIME_BUILD_SETTINGS)
     add_subdirectory(tools/settings)
 endif()
 
+# Pre-exported assets keep clean-clone builds offline and need no image tools.
+foreach(MODERNIME_ICON_SIZE IN ITEMS 16 32 48 64 128 256 512)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/icons/${MODERNIME_ICON_SIZE}x${MODERNIME_ICON_SIZE}/modernime.png"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${MODERNIME_ICON_SIZE}x${MODERNIME_ICON_SIZE}/apps")
+endforeach()
+
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/copyright"

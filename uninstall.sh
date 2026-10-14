@@ -110,6 +110,13 @@ while IFS= read -r path; do
         "$prefix/share/doc/modernime/copyright"|\
         "$prefix/share/doc/modernime/THIRD_PARTY_NOTICES.md"|\
         "$prefix/share/doc/modernime/SOURCES.json"|\
+        "$prefix/share/icons/hicolor/16x16/apps/modernime.png"|\
+        "$prefix/share/icons/hicolor/32x32/apps/modernime.png"|\
+        "$prefix/share/icons/hicolor/48x48/apps/modernime.png"|\
+        "$prefix/share/icons/hicolor/64x64/apps/modernime.png"|\
+        "$prefix/share/icons/hicolor/128x128/apps/modernime.png"|\
+        "$prefix/share/icons/hicolor/256x256/apps/modernime.png"|\
+        "$prefix/share/icons/hicolor/512x512/apps/modernime.png"|\
         "$prefix/share/applications/modernime-settings.desktop")
             if [[ "$is_system_prefix" == true ]]; then
                 owner=""
@@ -144,6 +151,10 @@ while IFS= read -r path; do
             ;;
     esac
 done < "$manifest"
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -d "$prefix/share/icons/hicolor" ]]; then
+    gtk-update-icon-cache -q -t -f "$prefix/share/icons/hicolor" 2>/dev/null || true
+fi
 
 for legacy_plugin in "$prefix/lib/fcitx5/modernime_fcitx5.so" \
                      "$prefix/lib/fcitx5/modernime_ui.so" \
