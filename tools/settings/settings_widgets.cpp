@@ -161,6 +161,7 @@ std::string_view settingsStyles() {
         .modernime-settings {
             background-color: @theme_bg_color;
             color: @theme_fg_color;
+            border-radius: 12px;
             font-family: "Noto Sans", "Noto Sans CJK SC", sans-serif;
             font-size: 14px;
         }
@@ -411,6 +412,7 @@ std::string_view settingsStyles() {
         .modernime-bottom-bar {
             border-top: 1px solid @borders;
             background-color: @theme_bg_color;
+            border-radius: 0 0 12px 12px;
             padding: 12px 24px;
         }
 
