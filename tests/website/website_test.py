@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Check website destinations, assets, and signed repository preservation."""
+import hashlib
+import re
+import struct
 import importlib.util
 from html.parser import HTMLParser
 from pathlib import Path
@@ -62,6 +65,21 @@ class WebsiteTests(unittest.TestCase):
                     return text.replace(" ", "-")
                 self.assertTrue(any(slug(line) == fragment for line in readme.splitlines() if line.startswith("#")), link)
 
+    def test_gallery_uses_distinct_high_resolution_screenshots(self):
+        html = (ROOT / "website/index.html").read_text()
+        paths = re.findall(r'data-src="([^"]+)"', html)
+        self.assertEqual(len(paths), 3)
+        digests = []
+        for path in paths:
+            data = (ROOT / "website" / path).read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(struct.unpack(">II", data[16:24]), (2940, 2160))
+            digests.append(hashlib.sha256(data).hexdigest())
+        self.assertEqual(len(set(digests)), 3)
+        self.assertIn('src="gallery.js"', html)
+        workflow = (ROOT / ".github/workflows/website.yml").read_text()
+        self.assertRegex(workflow, r'git add[^\n]+gallery\.js')
+
     def test_overlay_preserves_every_package_file_and_is_idempotent(self):
         with tempfile.TemporaryDirectory(prefix="modernime-website-") as temp:
             destination = Path(temp) / "pages"
@@ -71,9 +89,20 @@ class WebsiteTests(unittest.TestCase):
                 path.write_bytes(b"signed package repository fixture\x00")
             before = overlay.repository_digest(destination)
             overlay.prepare(ROOT / "website", destination)
+            page_before = (destination / "index.html").read_bytes()
             overlay.prepare(ROOT / "website", destination)
+            self.assertEqual((destination / "index.html").read_bytes(), page_before)
             self.assertEqual(before, overlay.repository_digest(destination))
-            self.assertEqual((destination / "index.html").read_bytes(), (ROOT / "website/index.html").read_bytes())
+            self.assertTrue((destination / "index.html").is_file())
+
+    def test_deployed_script_and_style_urls_change_with_content(self):
+        with tempfile.TemporaryDirectory(prefix="modernime-website-cache-") as temp:
+            destination = Path(temp) / "pages"
+            overlay.prepare(ROOT / "website", destination)
+            html = (destination / "index.html").read_text()
+            for name in ("app.js", "gallery.js", "styles.css"):
+                digest = hashlib.sha256((ROOT / "website" / name).read_bytes()).hexdigest()[:12]
+                self.assertIn(f'{name}?v={digest}', html)
 
     def test_overlay_rejects_symlink_before_mutation(self):
         with tempfile.TemporaryDirectory(prefix="modernime-website-") as temp:

@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 import shutil
 
-FILES = ("index.html", "styles.css", "app.js")
+FILES = ("index.html", "styles.css", "app.js", "gallery.js")
 
 
 def repository_digest(root):
@@ -52,6 +52,12 @@ def prepare(source, destination):
     destination.mkdir(parents=True, exist_ok=True)
     for name in FILES:
         shutil.copyfile(source / name, destination / name)
+    # A new page must never reuse the previous release's cached scripts/styles.
+    html = (source / "index.html").read_text(encoding="utf-8")
+    for name in ("styles.css", "app.js", "gallery.js"):
+        digest = hashlib.sha256((source / name).read_bytes()).hexdigest()[:12]
+        html = html.replace(f'"{name}"', f'"{name}?v={digest}"')
+    (destination / "index.html").write_text(html, encoding="utf-8")
     shutil.copytree(source / "assets", destination / "assets", dirs_exist_ok=True)
     (destination / ".nojekyll").touch()
     if before != repository_digest(destination):

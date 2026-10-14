@@ -150,30 +150,6 @@ if (typeof document.addEventListener === "function") {
   });
 }
 
-const screenshots = {
-  overview: {src: "assets/client-overview.png", title: "概览", caption: "概览 · 运行状态与常用设置，一目了然。", number: "01 / 03"},
-  appearance: {src: "assets/client-appearance.png", title: "候选与外观", caption: "候选与外观 · 每一处显示细节，按你的喜好来。", number: "02 / 03"},
-  clipboard: {src: "assets/client-clipboard.png", title: "剪贴板", caption: "剪贴板 · 常用内容，随取随用。", number: "03 / 03"}
-};
-let screenshotRevision = 0;
-document.querySelectorAll("[data-screenshot]").forEach(button => button.addEventListener("click", async () => {
-  const shot = screenshots[button.dataset.screenshot];
-  if (!shot) return;
-  const revision = ++screenshotRevision;
-  const image = document.getElementById("client-screenshot");
-  image.src = shot.src;
-  image.alt = `ModernIME 设置客户端的${shot.title}页面`;
-  document.getElementById("screenshot-original").href = shot.src;
-  document.getElementById("screenshot-original").setAttribute("aria-label", `在新标签页查看${shot.title}截图原图`);
-  document.getElementById("screenshot-caption").textContent = shot.caption;
-  document.getElementById("screenshot-pagination").textContent = shot.number;
-  document.querySelectorAll("[data-screenshot]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
-  if (typeof image.decode === "function") {
-    try { await image.decode(); } catch { return; }
-  }
-  if (revision === screenshotRevision) transitionContent(image);
-}));
-
 // Observe once, then disconnect each element. No perpetual animation or scroll loop.
 if (typeof IntersectionObserver === "function" && !reducedMotion.matches) {
   const elements = document.querySelectorAll(".section-heading, .interactive-demo, .feature-stack, .detail-strip, .client-heading, .gallery-navigation, .client-figure, .client-benefits, .download-card, .source-install, .help-grid, .open-source");
