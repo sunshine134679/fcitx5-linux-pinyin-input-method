@@ -1,6 +1,7 @@
 #include "modernime/settings/settings_shell.h"
 #include "modernime/settings/settings_widgets.h"
 #include "modernime/core/learning_store.h"
+#include "modernime/core/clipboard_history.h"
 
 #include <gtk/gtk.h>
 
@@ -464,6 +465,12 @@ int main(int argc, char **argv) {
         root / "config/settings.conf", root / "data/user.dict",
         root / "data/learning.db", root / "data/clipboard.history",
         root / "config/runtime.state"};
+    const std::string longClipboardText = std::string(8192, 'x') + "\n完整结尾";
+    {
+        modernime::core::ClipboardHistory clipboardHistory;
+        clipboardHistory.observe(longClipboardText);
+        assert(clipboardHistory.save(paths.clipboardHistory));
+    }
     {
         modernime::core::LearningStore learning(paths.learningStore);
         assert(learning.open());
@@ -484,6 +491,7 @@ int main(int argc, char **argv) {
         assert(gtk_widget_get_mapped(window));
         gtk_window_get_size(GTK_WINDOW(window), &width, &height);
         assert(width == 720 && height == 520);
+
 
         auto *search =
             findAccessibleWidget(window, GTK_TYPE_SEARCH_ENTRY, "搜索设置");
@@ -774,6 +782,38 @@ int main(int argc, char **argv) {
                 [reload] { return gtk_widget_get_sensitive(reload); }));
             assert(lineCount(fcitxLog) == attempt);
         }
+
+        // Full clipboard text is loaded on demand into a bounded reading area.
+        shell.show(modernime::settings::SettingsPageId::Clipboard);
+        drainEvents();
+        auto *historyList = findTarget(window, "clipboard-history");
+        assert(historyList != nullptr);
+        auto *firstHistoryRow = GTK_WIDGET(gtk_list_box_get_row_at_index(
+            GTK_LIST_BOX(historyList), 0));
+        assert(firstHistoryRow != nullptr);
+        assert(findWidgetByType(firstHistoryRow, GTK_TYPE_TEXT_VIEW) == nullptr);
+        auto *expandHistory = findAccessibleWidget(firstHistoryRow, GTK_TYPE_BUTTON, "展开");
+        assert(expandHistory != nullptr);
+        gtk_button_clicked(GTK_BUTTON(expandHistory));
+        drainEvents();
+        auto *historyReader = findWidgetByType(firstHistoryRow, GTK_TYPE_TEXT_VIEW);
+        assert(historyReader != nullptr && gtk_widget_get_mapped(historyReader));
+        auto *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(historyReader));
+        GtkTextIter begin, end;
+        gtk_text_buffer_get_bounds(buffer, &begin, &end);
+        auto *fullText = gtk_text_buffer_get_text(buffer, &begin, &end, FALSE);
+        assert(longClipboardText == fullText);
+        g_free(fullText);
+        assert(!gtk_text_view_get_editable(GTK_TEXT_VIEW(historyReader)));
+        auto *readingScroll = gtk_widget_get_ancestor(historyReader, GTK_TYPE_SCROLLED_WINDOW);
+        assert(readingScroll != nullptr);
+        assert(gtk_widget_get_allocated_height(readingScroll) <= 220);
+        gtk_button_clicked(GTK_BUTTON(expandHistory));
+        drainEvents();
+        assert(!gtk_widget_get_mapped(historyReader));
+        assert(gtk_list_box_row_get_index(gtk_list_box_get_selected_row(
+                   GTK_LIST_BOX(historyList))) == 0);
+
     }
 
     CloseApplicationProbe closeProbe;

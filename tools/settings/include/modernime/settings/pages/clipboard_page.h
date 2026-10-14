@@ -139,7 +139,7 @@ inline ClipboardItemMeta analyzeClipboardContent(std::string_view text) {
         badgeClass = "modernime-badge-text";
     }
 
-    std::string preview = isLong ? makeCollapsedPreview(text, 3, 120) : std::string(text);
+    std::string preview = isLong ? makeCollapsedPreview(text, 2, 120) : std::string(text);
 
     return ClipboardItemMeta{
         std::move(badge),
