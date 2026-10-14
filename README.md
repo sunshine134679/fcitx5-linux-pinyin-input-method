@@ -1,8 +1,12 @@
 # ModernIME
 
+**官方网站：[了解 ModernIME 与下载安装](https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/)** · [GitHub Releases](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest)
+
 ModernIME 是一个面向 Linux 桌面的现代化 Fcitx5 拼音输入法，包含候选栏、用户习惯学习、用户词典、剪贴板入口，以及全新 Bento 仪表盘美学的独立 GTK3 设置客户端。深度对标商业成熟输入法（微信输入法达到 93.5% 体验对标），具备四阶智能拼音容错引擎、国家通用规范汉字分级防护与生僻字专项治理、单音节英文次选消除、微信同款 `v` 模式金融大写与数字转换、六大行业深度专业词库、符号与 Emoji 宏、全链路极致低延迟热路径（DeltaOverlay 增量覆盖选词、O(1) 词库索引、长文档极速打字、Pango 渲染对象池化）、首键零延迟响应、单键 Shift 极速切换、游戏化按键录制、英文单词中文释义候选、正反斜线顿号双键兼容、成对翻页键、全量中文标点规范化、高频简拼智能校准、候选外观自定义与即时热重载，以及 openEuler / RPM / Debian / Ubuntu 全平台无缝适配等特性。
 
 ## 快速安装与发行包下载
+
+官网提供按系统选择安装包、固定栏宽候选演示和安装指南入口，下载区会只读同步最新正式发布；网络不可用时保留已核验版本的下载链接。官网和签名 APT/RPM 软件源共用 GitHub Pages，网站更新及版本发布均保留软件源路径。网站源码及维护说明见 [`website/README.md`](website/README.md)。
 
 ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）与 **源码一键构建安装**，全面适配 **Ubuntu / Debian** 与 **openEuler / RHEL / Fedora** 等多版本主流 Linux 操作系统。
 

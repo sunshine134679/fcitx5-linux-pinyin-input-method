@@ -369,6 +369,9 @@ jobs:
     name: Publish GitHub Release & Signed Package Repositories
     needs: [resolve-target, build-ubuntu, build-openeuler, build-tarball]
     runs-on: ubuntu-latest
+    concurrency:
+      group: modernime-github-pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deploy_pages.outputs.page_url }}
@@ -699,6 +702,23 @@ jobs:
           name: release-assets
           path: release-assets/*
           if-no-files-found: error
+
+      # Website copy is independent of the immutable product release tag.
+      # Re-publishing an older tag must preserve the current official homepage.
+      - name: Checkout current official website
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: official-website-source
+          sparse-checkout: |
+            website
+            scripts/prepare_website.py
+          sparse-checkout-cone-mode: false
+
+      - name: Include official website without changing package repositories
+        run: |
+          python3 official-website-source/scripts/prepare_website.py \
+            --source official-website-source/website --destination pages-site
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

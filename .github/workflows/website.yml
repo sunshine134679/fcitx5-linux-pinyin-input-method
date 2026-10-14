@@ -1,0 +1,71 @@
+name: Official Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'scripts/prepare_website.py'
+      - 'tests/website/**'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: modernime-github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout website source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Verify website and safe package-repository overlay
+        run: |
+          python3 tests/website/website_test.py
+          node tests/website/app_test.js
+
+      - name: Checkout existing signed repositories
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: pages-site
+
+      - name: Prepare website while preserving APT and RPM
+        run: |
+          test -f pages-site/apt/dists/noble/InRelease
+          test -f pages-site/rpm/oe2409/x86_64/repodata/repomd.xml
+          python3 scripts/prepare_website.py --destination pages-site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload website and signed repositories
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-site
+
+      - name: Deploy official website
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Persist website with signed repositories
+        working-directory: pages-site
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html styles.css app.js assets .nojekyll
+          if ! git diff --cached --quiet; then
+            git commit -m 'Publish ModernIME official website'
+            git push origin HEAD:gh-pages
+          fi
