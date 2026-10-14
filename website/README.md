@@ -12,7 +12,7 @@ python3 tests/website/website_test.py
 node tests/website/app_test.js
 ```
 
-访问 `http://localhost:4173`。下载区从 GitHub Releases 只读查询最新正式发布；断网、超时或限流时，回退到已核验的 v0.1.10 资产。新增发行版或变更资产命名时，应同步调整 `app.js` 的兼容规则和页面说明。复制按钮在权限不足时会选中命令，供手动复制。
+访问 `http://localhost:4173`。下载区从 GitHub Releases 只读查询最新正式发布；断网、超时或限流时，回退到已核验的 v0.1.11 资产。新增发行版或变更资产命名时，应同步调整 `app.js` 的兼容规则和页面说明。复制按钮在权限不足时会选中命令，供手动复制。
 
 ## 发布与软件源共存
 
