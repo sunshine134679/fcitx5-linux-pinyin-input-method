@@ -490,6 +490,9 @@ migrate_legacy_plugins() {
         "$target_prefix/lib/aarch64-linux-gnu/fcitx5"
     )
     for cdir in "${candidate_dirs[@]}"; do
+        if [[ -L "$cdir" ]]; then
+            continue
+        fi
         if [[ "$cdir" != "$current_addon_dir" && -d "$cdir" ]]; then
             for old_plugin in "$cdir/modernime_fcitx5.so" "$cdir/modernime_ui.so"; do
                 if [[ -f "$old_plugin" || -L "$old_plugin" ]]; then
@@ -509,13 +512,17 @@ migrate_legacy_plugins() {
                 "$target_prefix"/lib*/fcitx5/modernime_ui.so|\
                 "$target_prefix"/lib/*-linux-gnu/fcitx5/modernime_fcitx5.so|\
                 "$target_prefix"/lib/*-linux-gnu/fcitx5/modernime_ui.so)
-                    if [[ "$old_path" != "$current_addon_dir/modernime_fcitx5.so" && \
-                          "$old_path" != "$current_addon_dir/modernime_ui.so" && \
-                          -f "$old_path" ]]; then
-                        printf 'Migrating legacy manifest plugin: removing obsolete %s\n' "$old_path"
-                        rm -f -- "$old_path"
-                        rmdir --ignore-fail-on-non-empty "$(dirname -- "$old_path")" 2>/dev/null || true
-                        rmdir --ignore-fail-on-non-empty "$(dirname -- "$(dirname -- "$old_path")")" 2>/dev/null || true
+                    local base_name
+                    base_name=$(basename -- "$old_path")
+                    if [[ "$old_path" != "$current_addon_dir/$base_name" && -f "$old_path" ]]; then
+                        local old_real
+                        old_real=$(readlink -f "$old_path" 2>/dev/null || true)
+                        if [[ "$old_real" != "$target_real/$base_name" ]]; then
+                            printf 'Migrating legacy manifest plugin: removing obsolete %s\n' "$old_path"
+                            rm -f -- "$old_path"
+                            rmdir --ignore-fail-on-non-empty "$(dirname -- "$old_path")" 2>/dev/null || true
+                            rmdir --ignore-fail-on-non-empty "$(dirname -- "$(dirname -- "$old_path")")" 2>/dev/null || true
+                        fi
                     fi
                     ;;
             esac
