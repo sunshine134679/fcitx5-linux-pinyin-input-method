@@ -80,6 +80,24 @@ class WebsiteTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/website.yml").read_text()
         self.assertRegex(workflow, r'git add[^\n]+gallery\.js')
 
+    def test_scene_and_system_controls_match_their_content(self):
+        html = (ROOT / "website/index.html").read_text()
+        controls = re.findall(r'<input[^>]+name="deb-system"[^>]*>', html)
+        self.assertEqual(len(controls), 2)
+        self.assertEqual(sum("checked" in tag for tag in controls), 1)
+        self.assertTrue(all('type="radio"' in tag for tag in controls))
+        self.assertEqual(set(re.findall(r'value="(ubuntu[^"]+)"', "".join(controls))), {"ubuntu24.04", "ubuntu22.04"})
+        buttons = re.findall(r'data-workflow="([^"]+)"', html)
+        panels = re.findall(r'data-workflow-panel="([^"]+)"', html)
+        self.assertEqual(buttons, panels)
+        self.assertEqual(len(set(buttons)), 3)
+        for name in buttons:
+            self.assertIn(f'aria-controls="workflow-{name}"', html)
+            self.assertIn(f'id="workflow-{name}"', html)
+        previous = re.search(r'<img[^>]+id="gallery-previous"[^>]*>', html).group()
+        self.assertNotIn('src=', previous, "hidden transition layer must not trigger eager image download")
+        self.assertIn('aria-hidden="true"', previous)
+
     def test_overlay_preserves_every_package_file_and_is_idempotent(self):
         with tempfile.TemporaryDirectory(prefix="modernime-website-") as temp:
             destination = Path(temp) / "pages"
