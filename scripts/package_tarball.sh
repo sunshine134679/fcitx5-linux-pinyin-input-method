@@ -57,6 +57,8 @@ Installation:
 The installer works completely offline and requires no compiler, cmake, or pkg-config.
 
 Dependencies:
+  - python3 >= 3.10 (upgrade backups and migration)
+  - coreutils (timeout for session status checks)
   - fcitx5 (with fcitx5-chinese-addons)
   - libime / libime-pinyin
   - gtk3

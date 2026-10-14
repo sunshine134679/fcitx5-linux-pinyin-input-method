@@ -108,7 +108,8 @@ old_plugin="$test_root/old-plugin"
 printf 'old executable\n' > "$old_settings"
 printf 'old plugin\n' > "$old_plugin"
 
-for scenario in rollback fresh backup deploy stage success learning binary-learning; do
+expected_version=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUAGES CXX)$/\1/p' "$project_root/CMakeLists.txt")
+for scenario in rollback fresh backup deploy stage success binary-success learning binary-learning; do
     case_root="$test_root/$scenario"
     prefix="$case_root/prefix"
     mkdir -p "$case_root/home" "$case_root/tmp"
@@ -122,7 +123,12 @@ for scenario in rollback fresh backup deploy stage success learning binary-learn
         exec 9< "$prefix/lib/fcitx5/modernime_fcitx5.so"
     fi
     installer="$project_root/install.sh"
-    if [[ "$scenario" == binary-learning ]]; then installer="$binary_package/install.sh"; fi
+    if [[ "$scenario" == binary-learning || "$scenario" == binary-success ]]; then
+        installer="$binary_package/install.sh"
+        # A binary installer must use its bundled version, not an unrelated cache.
+        mkdir -p "$case_root/build"
+        printf 'PROJECT_VERSION:STATIC=99.99.99\n' > "$case_root/build/CMakeCache.txt"
+    fi
     if [[ "$scenario" == learning || "$scenario" == binary-learning ]]; then
         mkdir -p "$case_root/data/modernime" "$case_root/config/modernime"
         printf 'before upgrade\n' > "$case_root/config/modernime/settings.conf"
@@ -148,11 +154,11 @@ SEED
         TEST_LEARNING_DB="$case_root/data/modernime/learning.sqlite3" TEST_LEARNING_WRITER="$learning_writer" \
         PATH="$fake_bin:/usr/bin:/bin" \
         bash "$installer" > "$case_root/install.log" 2>&1; then
-        if [[ "$scenario" != success ]]; then
+        if [[ "$scenario" != success && "$scenario" != binary-success ]]; then
             printf 'FAIL (%s): installer unexpectedly succeeded\n' "$scenario" >&2
             failures=$((failures + 1))
         fi
-    elif [[ "$scenario" == success ]]; then
+    elif [[ "$scenario" == success || "$scenario" == binary-success ]]; then
         printf 'FAIL (success): installer failed\n' >&2
         cat "$case_root/install.log" >&2
         failures=$((failures + 1))
@@ -163,7 +169,9 @@ SEED
         deploy) check grep -qF 'injected deployment failure' "$case_root/install.log" ;;
         stage) check grep -qF 'injected staging failure' "$case_root/install.log" ;;
     esac
-    if [[ "$scenario" == success ]]; then
+    if [[ "$scenario" == success || "$scenario" == binary-success ]]; then
+        check grep -Fxq "version=$expected_version" "$prefix/share/modernime/install-channel.txt"
+        check grep -Fxq 'channel=script' "$prefix/share/modernime/install-channel.txt"
         check cmp "$payload/bin/modernime-settings" "$prefix/bin/modernime-settings"
         check cmp "$payload/lib/fcitx5/modernime_fcitx5.so" "$prefix/lib/fcitx5/modernime_fcitx5.so"
         check cmp "$payload/share/modernime/pinyin/new dictionary.dict" "$prefix/share/modernime/pinyin/new dictionary.dict"

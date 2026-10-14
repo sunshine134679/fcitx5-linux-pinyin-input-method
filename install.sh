@@ -5,7 +5,8 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source "$project_root/scripts/install_state.sh"
 
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
-had_explicit_args=$#
+explicit_prefix=false
+[[ -n "${MODERNIME_PREFIX:-}" ]] && explicit_prefix=true
 allow_missing_deps=false
 case "${MODERNIME_ALLOW_MISSING_DEPS:-}" in
     1|true|TRUE|yes|YES)
@@ -17,10 +18,12 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --prefix=*)
             prefix="${1#*=}"
+            explicit_prefix=true
             shift
             ;;
         --prefix|-p)
             prefix="$2"
+            explicit_prefix=true
             shift 2
             ;;
         --allow-missing-deps)
@@ -36,10 +39,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             prefix="$1"
+            explicit_prefix=true
             shift
             ;;
     esac
 done
+
+if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && "$explicit_prefix" != true ]]; then
+    printf 'Error: Running install.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
+    printf 'This prevents accidental installation or modification of your real user environment (%s).\n' "$HOME" >&2
+    printf 'Specify MODERNIME_PREFIX explicitly (e.g. MODERNIME_PREFIX=/tmp/test-prefix) if intended.\n' >&2
+    exit 1
+fi
 
 overwrite_package=${overwrite_package:-false}
 case "${MODERNIME_OVERWRITE_PACKAGE:-}" in
@@ -234,12 +245,6 @@ backup_user_database() {
 }
 backup_user_database
 
-if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" && "$had_explicit_args" -eq 0 ]]; then
-    printf 'Error: Running install.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
-    printf 'This prevents accidental installation or modification of your real user environment (%s).\n' "$HOME" >&2
-    printf 'Specify MODERNIME_PREFIX explicitly (e.g. MODERNIME_PREFIX=/tmp/test-prefix) if intended.\n' >&2
-    exit 1
-fi
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
@@ -633,7 +638,10 @@ manifest_dir="$prefix/share/modernime"
 manifest="$manifest_dir/install-manifest.txt"
 channel_file="$manifest_dir/install-channel.txt"
 mkdir -p "$manifest_dir"
-installed_version=$(grep -m1 '^PROJECT_VERSION:STATIC=' "$build_dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
+installed_version=${binary_version:-}
+if [[ -z "$installed_version" ]]; then
+    installed_version=$(grep -m1 '^PROJECT_VERSION:STATIC=' "$build_dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
+fi
 if [[ -z "$installed_version" ]]; then
     installed_version=$(grep -m1 'project(ModernIME VERSION' "$project_root/CMakeLists.txt" 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo "unknown")
 fi

@@ -294,3 +294,38 @@ if (
 fi
 # Previous version in dest must still be intact
 grep -Fqx 'new-v2' "$stage_test_root/dest/bin/modernime-settings"
+
+# Refusal from a temporary directory must happen before user data backup;
+# unrelated CLI flags do not authorize writing to the default user prefix.
+guard_package="$test_root/guard-package"
+mkdir -p "$guard_package/scripts" "$test_root/guard-data/modernime"
+cp "$project_root/install.sh" "$guard_package/install.sh"
+cp "$project_root/scripts/install_state.sh" "$guard_package/scripts/install_state.sh"
+cat > "$guard_package/scripts/modernime-data-guard" <<'GUARD'
+import os
+with open(os.environ["TEST_GUARD_LOG"], "a") as log:
+    log.write("backup was called\n")
+GUARD
+cp "$guard_package/scripts/modernime-data-guard" "$stage_test_root/payload/scripts/modernime-data-guard"
+for guard_installer in "$guard_package/install.sh" "$stage_test_root/payload/install.sh"; do
+for mode in no-prefix flags-only; do
+    guard_args=()
+    [[ "$mode" == flags-only ]] && guard_args+=(--allow-missing-deps)
+    if env -u MODERNIME_PREFIX -u SUDO_USER \
+        HOME="$test_root/guard-home" MODERNIME_BUILD_DIR="$test_root/guard-build" \
+        MODERNIME_CONFIG_HOME="$test_root/guard-config" MODERNIME_DATA_HOME="$test_root/guard-data" \
+        MODERNIME_DESKTOP_DIR="$test_root/guard-desktop" MODERNIME_SKIP_FCITX_RESTART=1 \
+        TEST_GUARD_LOG="$test_root/guard-calls-$mode" PATH="$fake_bin:/usr/bin:/bin" \
+        bash "$guard_installer" "${guard_args[@]}" > "$test_root/guard-output-$mode" 2>&1; then
+        printf 'Expected temporary-directory refusal for %s\n' "$mode" >&2
+        exit 1
+    fi
+    grep -F 'Running install.sh from temporary directory' "$test_root/guard-output-$mode" >/dev/null
+    if [[ -s "$test_root/guard-calls-$mode" ]]; then
+        printf 'Unsafe temporary install touched user data before refusal (%s)\n' "$mode" >&2
+        exit 1
+    fi
+    test ! -e "$test_root/guard-home/.local"
+done
+done
+printf 'Source/binary install runtime and early temporary-directory protection passed\n'

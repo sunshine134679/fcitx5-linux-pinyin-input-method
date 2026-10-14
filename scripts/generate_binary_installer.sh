@@ -2,11 +2,16 @@
 set -euo pipefail
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 package_root=${1:?Usage: generate_binary_installer.sh PACKAGE_ROOT}
+package_version=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUAGES CXX)$/\1/p' "$project_root/CMakeLists.txt")
+if [[ ! "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'Cannot determine the bundled ModernIME version\n' >&2
+    exit 1
+fi
 mkdir -p "$package_root/scripts"
 # Keep the source installer's lifecycle as the single authority. These exact,
 # checked anchors delimit its build-only requirements and build/install block;
 # source layout changes fail packaging rather than silently changing policy.
-awk '
+awk -v package_version="$package_version" '
     $0 == "required_commands=(cmake ctest pkg-config)" {
         requirements++; skip_requirements = 1; next
     }
@@ -20,6 +25,7 @@ awk '
     skip_build {
         if ($0 == "cmake_libdir=${cmake_libdir:-lib}") {
             skip_build = 0
+            print "binary_version=\"" package_version "\""
             print "source \"$project_root/scripts/install_binary_payload.sh\""
             print "cmake_libdir=\"$binary_libdir\""
         }
