@@ -39,3 +39,11 @@
      *注：`install.sh` 与 `uninstall.sh` 已内置防误删保护，若在 `/tmp` 或 `/var/tmp` 路径下执行且未显式指定 `MODERNIME_PREFIX`，将直接拒绝执行并报警，防止误清宿主用户真实环境配置。*
   3. **文档同步更新**：同步更新 `README.md` 中的特性描述、配置项、快捷键与常见排错指南。
 
+---
+
+## 5. 算法更新与打字体验防退化准则 (Algorithm Evolution & Anti-Regression Baseline)
+- 在对 ModernIME 的**候选排序、拼音切分、中英仲裁、自学习、分段造词、纠错或持久化存储算法**进行任何更新、重构或参数调整之前：
+  1. **更新前必读**：**必须先完整查阅 [`docs/ALGORITHM_EVOLUTION.md`](file:///home/wsl/ModernIME/docs/ALGORITHM_EVOLUTION.md)** 中的「算法更新前必读核对清单」与「体验不可退化不变量矩阵」；
+  2. **防特性覆盖**：严禁任何以“优化某单项指标”为由破坏、覆盖或削弱既有算法特性的行为（例如严禁降低 200,000 词库容量上限、严禁让生僻英文抢占高频中文、严禁破坏艾宾浩斯时间遗忘衰减等）；
+  3. **更新后必记**：新算法开发并通过 CTest、GTest 和 Benchmark 验证后，**必须在 `docs/ALGORITHM_EVOLUTION.md` 中追加记录**本次新增特性的算法逻辑、实现的具体代码文件、以及给用户实际打字体验带来的变化。
+
