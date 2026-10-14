@@ -255,6 +255,7 @@ if(MODERNIME_BUILD_SETTINGS)
     target_link_libraries(modernime_settings_shell_gtk_tests PRIVATE
         modernime_core
         modernime_pinyin
+        modernime_ui_layout
         PkgConfig::GTK3
     )
     target_compile_definitions(modernime_settings_shell_gtk_tests PRIVATE
@@ -280,7 +281,7 @@ if(MODERNIME_BUILD_SETTINGS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_settings_save_gtk_tests PRIVATE
-        modernime_core modernime_pinyin PkgConfig::GTK3
+        modernime_core modernime_pinyin modernime_ui_layout PkgConfig::GTK3
     )
     target_compile_definitions(modernime_settings_save_gtk_tests PRIVATE
         MODERNIME_VERSION="${PROJECT_VERSION}"

@@ -38,6 +38,7 @@ target_include_directories(modernime-settings PRIVATE
 target_link_libraries(modernime-settings PRIVATE
     modernime_core
     modernime_pinyin
+    modernime_ui_layout
     PkgConfig::GTK3
 )
 target_compile_features(modernime-settings PRIVATE cxx_std_20)

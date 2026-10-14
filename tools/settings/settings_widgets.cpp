@@ -205,39 +205,48 @@ std::string_view settingsStyles() {
             margin: 1px 0;
             border: 1px solid transparent;
             color: @theme_fg_color;
-            transition: all 120ms ease;
+            transition: background-color 150ms ease, border-color 150ms ease;
         }
 
         .modernime-nav-button:hover {
             background-color: #edf0f5;
         }
 
-        .modernime-nav-button.suggested-action,
-        .modernime-nav-button.suggested-action:hover,
-        .modernime-nav-button.suggested-action:active,
-        .modernime-nav-button.suggested-action:focus,
-        .modernime-nav-button.suggested-action:focus:hover,
-        .modernime-nav-button.suggested-action:focus:active,
-        .modernime-nav-button:checked,
-        .modernime-nav-button:checked:hover,
-        .modernime-nav-button:checked:active,
-        .modernime-nav-button:checked:focus {
+        .modernime-settings .modernime-nav-button.modernime-nav-selected {
             background-color: #e5edff;
             background-image: none;
             color: @theme_selected_bg_color;
-            border: 1px solid transparent;
             outline-color: @theme_selected_bg_color;
             box-shadow: none;
             font-weight: 600;
         }
-
-        .modernime-nav-button.suggested-action image,
-        .modernime-nav-button.suggested-action label,
-        .modernime-nav-button.suggested-action *,
-        .modernime-nav-button:checked image,
-        .modernime-nav-button:checked label,
-        .modernime-nav-button:checked * {
+        .modernime-settings .modernime-nav-button.modernime-nav-selected:hover,
+        .modernime-settings .modernime-nav-button.modernime-nav-selected:active {
+            background-color: #dbe7ff;
+        }
+        .modernime-nav-button.modernime-nav-selected * {
             color: @theme_selected_bg_color;
+        }
+
+        .modernime-code-block {
+            background-color: #f6f7f9;
+            border: 1px solid @borders;
+            border-radius: 8px;
+            padding: 12px;
+            color: #34445c;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .modernime-update-notice {
+            background-color: #eef4ff;
+            border: 1px solid #dce7ff;
+            border-radius: 8px;
+            padding: 12px;
+            color: #284870;
+        }
+        .modernime-update-notice label, .modernime-update-notice image {
+            color: #284870;
         }
 
         .modernime-page,
@@ -588,37 +597,6 @@ std::string_view settingsStyles() {
             margin-bottom: 8px;
         }
 
-        .modernime-candidate-preview-scroller {
-            background-color: #ffffff;
-            border: 1px solid @borders;
-            border-radius: 8px;
-        }
-
-        .modernime-candidate-bar-preview {
-            background-color: @theme_base_color;
-            border: none;
-            border-radius: 8px;
-            padding: 6px;
-            box-shadow: none;
-        }
-
-        .modernime-candidate-badge {
-            background-color: #1262ff;
-            color: #ffffff;
-            border-radius: 6px;
-            padding: 4px 10px;
-            font-weight: 600;
-        }
-
-        .modernime-candidate-badge * {
-            color: #ffffff;
-        }
-
-        .modernime-candidate-item {
-            color: @theme_fg_color;
-            padding: 4px 6px;
-        }
-
         .modernime-tip-note {
             font-size: 12px;
             color: @insensitive_fg_color;
@@ -724,14 +702,6 @@ std::string_view settingsStyles() {
             background-color: @theme_selected_bg_color;
             border-color: @theme_selected_bg_color;
             color: #ffffff;
-        }
-        .modernime-settings .modernime-nav-button.suggested-action {
-            background-color: #e5edff;
-            color: @theme_selected_bg_color;
-        }
-        .modernime-settings .modernime-nav-button.suggested-action:hover,
-        .modernime-settings .modernime-nav-button.suggested-action:active {
-            background-color: #dbe7ff;
         }
     )css";
 }

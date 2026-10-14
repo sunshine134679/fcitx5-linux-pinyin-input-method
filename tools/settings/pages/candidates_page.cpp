@@ -2,11 +2,14 @@
 
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
+#include "modernime/ui/cairo_render_surface.h"
+#include "modernime/ui/candidate_pagination.h"
 
 #include <gtk/gtk.h>
 
 #include <array>
-#include <sstream>
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -24,13 +27,6 @@ void setTarget(GtkWidget *widget, std::string_view target) {
                            g_strdup(std::string(target).c_str()), g_free);
 }
 
-void clearBoxChildren(GtkWidget *box) {
-    auto *children = gtk_container_get_children(GTK_CONTAINER(box));
-    for (auto *item = children; item != nullptr; item = item->next) {
-        gtk_widget_destroy(GTK_WIDGET(item->data));
-    }
-    g_list_free(children);
-}
 
 } // namespace
 
@@ -94,7 +90,7 @@ private:
         buildSettingsCard();
 
         setSettingsFocusChain(
-            page, {candidatePageSize, candidateFontSize, numberSelection,
+            page, {previewExample, candidatePageSize, candidateFontSize, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation});
         refresh();
         pageGuard.release();
@@ -105,42 +101,40 @@ private:
         addStyleClass(previewCard, "modernime-preview-card");
         gtk_box_pack_start(GTK_BOX(page), previewCard, FALSE, FALSE, 0);
 
+        auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         auto *headerLabel = gtk_label_new("外观预览 · 不记录学习");
         addStyleClass(headerLabel, "modernime-preview-header");
         gtk_widget_set_halign(headerLabel, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(previewCard), headerLabel, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(header), headerLabel, TRUE, TRUE, 0);
+        previewExample = gtk_combo_box_text_new();
+        for (const auto *text : {"单字", "双字", "混合词组"}) {
+            gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(previewExample), text);
+        }
+        gtk_combo_box_set_active(GTK_COMBO_BOX(previewExample), 1);
+        setTarget(previewExample, "candidate-preview-example");
+        setAccessibleWidgetText(previewExample, "预览示例", "切换单字、双字或不同长度的候选，比较同一候选栏的容量");
+        gtk_box_pack_end(GTK_BOX(header), previewExample, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(previewCard), header, FALSE, FALSE, 0);
 
-        auto *compLabel = gtk_label_new(nullptr);
-        gtk_label_set_markup(GTK_LABEL(compLabel),
-                             "nihao<span foreground='#2563eb' font_weight='bold'>|</span>");
-        addStyleClass(compLabel, "modernime-composition-text");
-        gtk_widget_set_halign(compLabel, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(previewCard), compLabel, FALSE, FALSE, 0);
+        compositionLabel = gtk_label_new(nullptr);
+        addStyleClass(compositionLabel, "modernime-composition-text");
+        gtk_widget_set_halign(compositionLabel, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(previewCard), compositionLabel, FALSE, FALSE, 0);
 
-        auto *candidateScroller = gtk_scrolled_window_new(nullptr, nullptr);
-        addStyleClass(candidateScroller, "modernime-candidate-preview-scroller");
-        gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(candidateScroller), FALSE);
-        gtk_widget_set_tooltip_text(candidateScroller,
-            "横向滚动可查看本页全部候选；此预览不记录学习");
-        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(candidateScroller),
-                                       GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
-        gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(candidateScroller),
-                                            GTK_SHADOW_NONE);
-        gtk_scrolled_window_set_propagate_natural_width(
-            GTK_SCROLLED_WINDOW(candidateScroller), FALSE);
-        gtk_scrolled_window_set_propagate_natural_height(
-            GTK_SCROLLED_WINDOW(candidateScroller), TRUE);
-
-        gtk_widget_set_hexpand(candidateScroller, TRUE);
-        gtk_widget_set_halign(candidateScroller, GTK_ALIGN_FILL);
-
-        candidateBarBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        setTarget(candidateBarBox, "candidate-preview");
-        addStyleClass(candidateBarBox, "modernime-candidate-bar-preview");
-        gtk_widget_set_halign(candidateBarBox, GTK_ALIGN_START);
-        gtk_container_add(GTK_CONTAINER(candidateScroller), candidateBarBox);
-
-        gtk_box_pack_start(GTK_BOX(previewCard), candidateScroller, FALSE, FALSE, 0);
+        // Draw the real candidate bar. Its width depends on the capacity and
+        // font settings, never on the length of the example words.
+        candidatePreview = gtk_drawing_area_new();
+        setTarget(candidatePreview, "candidate-preview");
+        gtk_widget_set_hexpand(candidatePreview, TRUE);
+        gtk_box_pack_start(GTK_BOX(previewCard), candidatePreview, FALSE, FALSE, 0);
+        g_signal_connect(candidatePreview, "draw", G_CALLBACK(onPreviewDraw), this);
+        g_signal_connect(previewExample, "changed", G_CALLBACK(onExampleChanged), this);
+        previewSummary = gtk_label_new(nullptr);
+        addStyleClass(previewSummary, "modernime-description");
+        gtk_label_set_xalign(GTK_LABEL(previewSummary), 0.0F);
+        gtk_label_set_line_wrap(GTK_LABEL(previewSummary), TRUE);
+        setTarget(previewSummary, "candidate-preview-summary");
+        gtk_box_pack_start(GTK_BOX(previewCard), previewSummary, FALSE, FALSE, 0);
         definitionPreview = gtk_label_new("hello · int. 你好；喂");
         addStyleClass(definitionPreview, "modernime-description");
         gtk_widget_set_halign(definitionPreview, GTK_ALIGN_START);
@@ -162,7 +156,7 @@ private:
         }
         setTarget(candidatePageSize, "candidate-page-size");
         candidatePageSizeFallback = createSettingRow(
-            "每页候选数量", "可选 3–9 个，数字选词最多对应 1–9", candidatePageSize);
+            "候选栏长度", "以可容纳的单字候选数为基准（3–9 个），词组按长度自动分页", candidatePageSize);
         gtk_box_pack_start(GTK_BOX(card), candidatePageSizeFallback, FALSE, FALSE, 0);
 
         auto *fontControl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -233,28 +227,76 @@ private:
     }
 
     void updatePreview() {
-        if (candidateBarBox == nullptr) return;
-        clearBoxChildren(candidateBarBox);
-        static constexpr std::array kSamples{
-            "你好", "你号", "拟好", "你好啊", "你好呀",
-            "你好吗", "你还好", "你好吧", "你好哇"};
-        const int count = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) +
-                          core::kMinimumCandidatePageSize;
+        if (candidatePreview == nullptr) return;
+        static constexpr std::array single{
+            "你", "尼", "呢", "泥", "拟", "逆", "妮", "倪", "腻"};
+        static constexpr std::array doubleWords{
+            "你好", "你号", "拟好", "拟合", "霓虹", "倪皓", "逆号", "泥壕", "妮好"};
+        static constexpr std::array mixed{
+            "你好", "你号", "拟好", "你好啊", "你好呀", "你好吗", "你还好", "你好吧", "你好哇"};
+        const int example = gtk_combo_box_get_active(GTK_COMBO_BOX(previewExample));
+        const auto &samples = example == 0 ? single : example == 1 ? doubleWords : mixed;
+        const int capacity = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) +
+                             core::kMinimumCandidatePageSize;
         const int fontSize = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFontSize));
-        const bool showNumbers = gtk_switch_get_active(GTK_SWITCH(numberSelection));
-        for (int i = 0; i < count; ++i) {
-            auto *item = gtk_label_new(nullptr);
-            std::ostringstream markup;
-            markup << "<span size='" << fontSize * PANGO_SCALE << "'>";
-            if (showNumbers) markup << i + 1 << ".";
-            markup << kSamples[static_cast<std::size_t>(i)] << "</span>";
-            gtk_label_set_markup(GTK_LABEL(item), markup.str().c_str());
-            addStyleClass(item, i == 0 ? "modernime-candidate-badge" : "modernime-candidate-item");
-            gtk_box_pack_start(GTK_BOX(candidateBarBox), item, FALSE, FALSE, 0);
+        metrics = ui::CandidateBarMetrics::reference(fontSize, capacity);
+        renderStyle = ui::RenderStyle::reference();
+        renderStyle.candidateText.size = fontSize;
+        renderStyle.candidateNumberText.size = std::max(10, fontSize - 4);
+        renderStyle.preeditText.size = std::max(12, fontSize - 2);
+        core::CandidatePage candidatePage;
+        for (const auto *sample : samples) {
+            core::CandidateItem item;
+            item.text = sample;
+            candidatePage.items.push_back(std::move(item));
         }
-        gtk_widget_show_all(candidateBarBox);
-        gtk_widget_set_visible(definitionPreview,
-                               gtk_switch_get_active(GTK_SWITCH(englishDefinition)));
+        auto *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        {
+            ui::CairoRenderSurface measure(surface);
+            const auto textWidth = [&](std::string_view value) {
+                const auto separator = value.find('.');
+                if (separator == std::string_view::npos) {
+                    return measure.textWidth(value, renderStyle.candidateText);
+                }
+                return measure.textWidth(value.substr(0, separator + 1), renderStyle.candidateNumberText) +
+                       measure.textWidth(value.substr(separator + 1), renderStyle.candidateText);
+            };
+            const auto boundaries = ui::CandidatePagination::partition(candidatePage.items, metrics, textWidth);
+            if (!boundaries.empty()) candidatePage.items.resize(boundaries.front().end);
+            previewLayout = ui::CandidateBarLayout::measure(candidatePage, metrics, textWidth);
+        }
+        cairo_surface_destroy(surface);
+        gtk_widget_set_size_request(candidatePreview, 1, static_cast<int>(std::ceil(metrics.canvasHeight)));
+        gtk_label_set_markup(GTK_LABEL(compositionLabel), example == 0
+            ? "ni<span foreground='#2563eb' font_weight='bold'>|</span>"
+            : "nihao<span foreground='#2563eb' font_weight='bold'>|</span>");
+        std::string accessibleCandidates;
+        for (const auto &candidate : previewLayout.candidates) {
+            if (!accessibleCandidates.empty()) accessibleCandidates += " · ";
+            accessibleCandidates += candidate.displayText;
+        }
+        setAccessibleWidgetText(candidatePreview, "候选栏预览", accessibleCandidates);
+        const auto summary = "长度可容纳 " + std::to_string(capacity) +
+            " 个单字候选 · 当前页 " + std::to_string(previewLayout.candidates.size()) + " 个 · 按词长自动分页";
+        gtk_label_set_text(GTK_LABEL(previewSummary), summary.c_str());
+        gtk_widget_queue_draw(candidatePreview);
+        gtk_widget_set_visible(definitionPreview, gtk_switch_get_active(GTK_SWITCH(englishDefinition)));
+    }
+
+    static gboolean onPreviewDraw(GtkWidget *widget, cairo_t *context, gpointer data) {
+        auto *impl = static_cast<Impl *>(data);
+        const double scale = std::min(1.0, gtk_widget_get_allocated_width(widget) / impl->metrics.canvasWidth);
+        cairo_save(context);
+        cairo_scale(context, scale, scale);
+        ui::CairoRenderSurface surface(context);
+        ui::CandidateBarRenderer::render(surface, impl->previewLayout, impl->renderStyle);
+        cairo_restore(context);
+        return FALSE;
+    }
+
+    static void onExampleChanged(GtkWidget *, gpointer data) {
+        // This is a local example; it must not mark user settings as modified.
+        static_cast<Impl *>(data)->updatePreview();
     }
 
     static void onSpinChanged(GtkWidget *, gpointer data) {
@@ -300,7 +342,13 @@ private:
 
     GtkWidget *page = nullptr;
     GtkWidget *previewCard = nullptr;
-    GtkWidget *candidateBarBox = nullptr;
+    GtkWidget *candidatePreview = nullptr;
+    GtkWidget *previewExample = nullptr;
+    GtkWidget *compositionLabel = nullptr;
+    GtkWidget *previewSummary = nullptr;
+    ui::CandidateBarMetrics metrics;
+    ui::CandidateBarLayout previewLayout;
+    ui::RenderStyle renderStyle;
     GtkWidget *definitionPreview = nullptr;
 
     GtkWidget *candidatePageSize = nullptr;

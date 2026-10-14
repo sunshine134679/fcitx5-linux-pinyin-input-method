@@ -202,6 +202,19 @@ private:
         applyStatus(lastStatus);
     }
 
+    static GtkWidget *wrappedLabel(const char *text, bool selectable = false) {
+        auto *label = gtk_label_new(text);
+        gtk_label_set_xalign(GTK_LABEL(label), 0.0F);
+        gtk_label_set_yalign(GTK_LABEL(label), 0.0F);
+        gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+        gtk_label_set_line_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+        gtk_label_set_max_width_chars(GTK_LABEL(label), 1);
+        gtk_label_set_selectable(GTK_LABEL(label), selectable);
+        gtk_widget_set_hexpand(label, TRUE);
+        gtk_widget_set_halign(label, GTK_ALIGN_FILL);
+        return label;
+    }
+
     void buildVersionSection() {
         auto *section = createSectionCard(
             "当前版本与安装渠道", "当前运行的 ModernIME 版本、软件包分发方式与软件源。");
@@ -215,17 +228,24 @@ private:
             auto *label = gtk_label_new(std::string(title).c_str());
             gtk_widget_set_halign(label, GTK_ALIGN_START);
             gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-            *valLabel = gtk_label_new(initial);
+            gtk_widget_set_valign(label, GTK_ALIGN_START);
+            *valLabel = wrappedLabel(initial);
             addStyleClass(*valLabel, "modernime-status");
-            gtk_widget_set_halign(*valLabel, GTK_ALIGN_START);
-            gtk_label_set_line_wrap(GTK_LABEL(*valLabel), TRUE);
             gtk_grid_attach(GTK_GRID(grid), *valLabel, 1, row, 1, 1);
         };
 
         addRow(0, "当前版本", MODERNIME_VERSION, &currentVersionLabel);
         addRow(1, "安装渠道", "检测中…", &channelLabel);
-        addRow(2, "软件源位置", "检测中…", &sourceLabel);
         gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
+        auto *sourceTitle = wrappedLabel("软件源位置");
+        addStyleClass(sourceTitle, "modernime-setting-title");
+        gtk_widget_set_margin_top(sourceTitle, 14);
+        gtk_widget_set_margin_bottom(sourceTitle, 6);
+        gtk_box_pack_start(GTK_BOX(section), sourceTitle, FALSE, FALSE, 0);
+        sourceLabel = wrappedLabel("检测中…", true);
+        setTarget(sourceLabel, "updates-source");
+        addStyleClass(sourceLabel, "modernime-code-block");
+        gtk_box_pack_start(GTK_BOX(section), sourceLabel, FALSE, FALSE, 0);
     }
 
     void buildCheckSection() {
@@ -233,11 +253,16 @@ private:
             "新版本检查", "通过只读查询检查软件源是否有可用的新版本。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
-        statusMessageLabel = gtk_label_new("点击“检查新版本”查询软件源是否有更新。");
-        addStyleClass(statusMessageLabel, "modernime-status");
-        gtk_widget_set_halign(statusMessageLabel, GTK_ALIGN_START);
-        gtk_label_set_line_wrap(GTK_LABEL(statusMessageLabel), TRUE);
-        gtk_box_pack_start(GTK_BOX(section), statusMessageLabel, FALSE, FALSE, 0);
+        auto *notice = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        addStyleClass(notice, "modernime-update-notice");
+        gtk_widget_set_margin_bottom(notice, 12);
+        auto *icon = gtk_image_new_from_icon_name("dialog-information-symbolic", GTK_ICON_SIZE_BUTTON);
+        gtk_widget_set_valign(icon, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(notice), icon, FALSE, FALSE, 0);
+        statusMessageLabel = wrappedLabel("点击“检查新版本”查询软件源是否有更新。");
+        setTarget(statusMessageLabel, "updates-status");
+        gtk_box_pack_start(GTK_BOX(notice), statusMessageLabel, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(section), notice, FALSE, FALSE, 0);
 
         auto *grid = gtk_grid_new();
         gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
@@ -247,16 +272,22 @@ private:
             auto *label = gtk_label_new(std::string(title).c_str());
             gtk_widget_set_halign(label, GTK_ALIGN_START);
             gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-            *valLabel = gtk_label_new(initial);
+            gtk_widget_set_valign(label, GTK_ALIGN_START);
+            *valLabel = wrappedLabel(initial);
             addStyleClass(*valLabel, "modernime-status");
-            gtk_widget_set_halign(*valLabel, GTK_ALIGN_START);
-            gtk_label_set_line_wrap(GTK_LABEL(*valLabel), TRUE);
             gtk_grid_attach(GTK_GRID(grid), *valLabel, 1, row, 1, 1);
         };
 
         addRow(0, "候选新版本", "未检查", &candidateVersionLabel);
-        addRow(1, "更新说明", "暂无", &changelogLabel);
         gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
+        auto *summaryTitle = wrappedLabel("更新说明");
+        addStyleClass(summaryTitle, "modernime-description");
+        gtk_widget_set_margin_top(summaryTitle, 10);
+        gtk_box_pack_start(GTK_BOX(section), summaryTitle, FALSE, FALSE, 0);
+        changelogLabel = wrappedLabel("暂无", true);
+        gtk_widget_set_margin_top(changelogLabel, 4);
+        gtk_widget_set_margin_bottom(changelogLabel, 12);
+        gtk_box_pack_start(GTK_BOX(section), changelogLabel, FALSE, FALSE, 0);
 
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         checkButton = gtk_button_new_with_label("检查新版本");
@@ -280,7 +311,7 @@ private:
 
     void buildUpgradeGuideSection() {
         auto *section = createSectionCard(
-            "安全升级引导", "在 Linux 系统中，包管理器升级须通过终端安全执行，客户端避免无提权死锁。");
+            "安全升级引导", "复制升级命令到终端执行，由系统包管理器完成更新。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
         guideDescLabel = gtk_label_new(
@@ -290,11 +321,10 @@ private:
         gtk_label_set_line_wrap(GTK_LABEL(guideDescLabel), TRUE);
         gtk_box_pack_start(GTK_BOX(section), guideDescLabel, FALSE, FALSE, 0);
 
-        commandLabel = gtk_label_new("sudo apt update && sudo apt install --only-upgrade modernime");
-        addStyleClass(commandLabel, "modernime-clipboard-card");
-        gtk_widget_set_halign(commandLabel, GTK_ALIGN_FILL);
-        gtk_label_set_selectable(GTK_LABEL(commandLabel), TRUE);
-        gtk_label_set_line_wrap(GTK_LABEL(commandLabel), TRUE);
+        commandLabel = wrappedLabel("sudo apt update && sudo apt install --only-upgrade modernime", true);
+        addStyleClass(commandLabel, "modernime-code-block");
+        gtk_widget_set_margin_top(commandLabel, 8);
+        gtk_widget_set_margin_bottom(commandLabel, 10);
         gtk_box_pack_start(GTK_BOX(section), commandLabel, FALSE, FALSE, 0);
 
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);

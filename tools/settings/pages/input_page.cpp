@@ -176,7 +176,7 @@ public:
         buildShortcutSection();
         buildPunctuationSection();
         setSettingsFocusChain(
-            page, {inputEnabled, defaultMode, toggleKey, characterExtraction,
+            page, {inputEnabled, defaultMode, shiftPreset, toggleKey, characterExtraction,
                    punctuation});
         refresh();
         pageGuard.release();
@@ -220,10 +220,18 @@ public:
         setTarget(toggleKey, "toggle-key");
         setAccessibleWidgetText(toggleKey, "中英文切换快捷键",
                                 "点击后按下键盘按键以设置中英文切换快捷键");
+        auto *shortcutControls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        shiftPreset = gtk_button_new_with_label("Shift");
+        setTarget(shiftPreset, "toggle-key-shift");
+        setAccessibleWidgetText(shiftPreset, "使用 Shift 切换", "设为轻按 Shift 单键切换中英文；也可点击右侧录制组合键");
+        gtk_widget_set_tooltip_text(shiftPreset, "使用 Shift 单键切换中英文");
+        gtk_box_pack_start(GTK_BOX(shortcutControls), shiftPreset, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(shortcutControls), toggleKey, FALSE, FALSE, 0);
+        g_signal_connect(shiftPreset, "clicked", G_CALLBACK(onShiftPresetClicked), this);
         toggleKeyFallback = createSettingRow(
             "中英文切换快捷键",
-            "支持 Ctrl+Space、Alt+Space、Super+Space 或 Ctrl+Shift+Space。",
-            toggleKey);
+            "支持 Shift 单键、Ctrl+Space、Alt+Space、Super+Space 或 Ctrl+Shift+Space。",
+            shortcutControls);
         gtk_box_pack_start(GTK_BOX(section), toggleKeyFallback, FALSE, FALSE,
                             0);
 
@@ -258,6 +266,18 @@ public:
         g_signal_connect(punctuation, "notify::active", G_CALLBACK(onSwitchChanged), this);
     }
 
+    static const char *shortcutLabel(const std::string &value) {
+        return value == "Shift_L" || value == "Shift_R" ? "Shift" : value.c_str();
+    }
+
+    static void onShiftPresetClicked(GtkButton *, gpointer data) {
+        auto *impl = static_cast<Impl *>(data);
+        impl->stopRecording(false);
+        impl->toggleKeyValue = "Shift_L";
+        gtk_button_set_label(GTK_BUTTON(impl->toggleKey), "Shift");
+        onChanged(nullptr, impl);
+    }
+
     static void onToggleKeyClicked(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
         if (impl->refreshing) {
@@ -285,12 +305,12 @@ public:
         removeStyleClass(toggleKey, "recording");
         if (applyNewValue && !newValue.empty()) {
             toggleKeyValue = std::move(newValue);
-            gtk_button_set_label(GTK_BUTTON(toggleKey), toggleKeyValue.c_str());
+            gtk_button_set_label(GTK_BUTTON(toggleKey), shortcutLabel(toggleKeyValue));
             onChanged(nullptr, this);
         } else {
             gtk_button_set_label(GTK_BUTTON(toggleKey),
                                  toggleKeyValue.empty() ? "点击设置快捷键"
-                                                        : toggleKeyValue.c_str());
+                                                        : shortcutLabel(toggleKeyValue));
             updateState();
         }
     }
@@ -399,7 +419,7 @@ public:
         }
         gtk_button_set_label(GTK_BUTTON(toggleKey),
                              toggleKeyValue.empty() ? "点击设置快捷键"
-                                                    : toggleKeyValue.c_str());
+                                                    : shortcutLabel(toggleKeyValue));
         gtk_switch_set_active(GTK_SWITCH(characterExtraction),
                               settings.characterExtractionEnabled);
         gtk_switch_set_active(GTK_SWITCH(punctuation),
@@ -413,14 +433,14 @@ public:
         if (!state.dependentControlsSensitive && isRecording) {
             stopRecording(false);
         }
-        for (auto *control : {defaultMode, toggleKey, characterExtraction, punctuation}) {
+        for (auto *control : {defaultMode, shiftPreset, toggleKey, characterExtraction, punctuation}) {
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         }
         setWidgetError(toggleKey, !state.toggleKeyValid,
                        state.toggleKeyMessage);
         if (state.toggleKeyValid && !isRecording) {
             gtk_widget_set_tooltip_text(
-                toggleKey, "点击以录制新的快捷键（例如 Ctrl+Space）");
+                toggleKey, "点击录制组合键，或轻按 Shift 录制单键；按 Esc 取消");
         }
     }
 
@@ -429,6 +449,7 @@ public:
             std::pair{inputEnabled, static_cast<GtkWidget *>(nullptr)},
             std::pair{defaultMode, defaultModeFallback},
             std::pair{toggleKey, toggleKeyFallback},
+            std::pair{shiftPreset, toggleKeyFallback},
             std::pair{characterExtraction, characterExtractionFallback},
             std::pair{punctuation, punctuationFallback},
         };
@@ -449,6 +470,7 @@ public:
     GtkWidget *defaultMode = nullptr;
     GtkWidget *defaultModeFallback = nullptr;
     GtkWidget *toggleKey = nullptr;
+    GtkWidget *shiftPreset = nullptr;
     GtkWidget *toggleKeyFallback = nullptr;
     std::string toggleKeyValue;
     bool isRecording = false;

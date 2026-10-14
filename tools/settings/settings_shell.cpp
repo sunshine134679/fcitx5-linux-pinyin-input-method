@@ -624,9 +624,9 @@ private:
 
     void updateNavigation(SettingsPageId selected) {
         for (const auto &[page, button] : navigationButtons) {
-            removeStyleClass(button, kSettingsPrimaryButtonClass);
+            removeStyleClass(button, "modernime-nav-selected");
             if (page == selected) {
-                addStyleClass(button, kSettingsPrimaryButtonClass);
+                addStyleClass(button, "modernime-nav-selected");
             }
         }
     }

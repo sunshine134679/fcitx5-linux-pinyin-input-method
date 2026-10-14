@@ -490,6 +490,29 @@ int main(int argc, char **argv) {
         auto *save = findAccessibleWidget(window, GTK_TYPE_BUTTON, "保存设置");
         assert(search != nullptr && save != nullptr);
 
+        // A selected navigation item must retain readable blue text on focus.
+        shell.show(modernime::settings::SettingsPageId::Overview);
+        auto *overviewNav = findAccessibleWidget(window, GTK_TYPE_BUTTON, "概览");
+        assert(overviewNav != nullptr);
+        gtk_widget_grab_focus(overviewNav);
+        assert(waitUntil([overviewNav] { return gtk_widget_has_focus(overviewNav); }));
+        auto *navLabel = findWidgetByType(overviewNav, GTK_TYPE_LABEL);
+        assert(navLabel != nullptr);
+        const auto checkNavColor = [navLabel] {
+            GdkRGBA color{};
+            gtk_style_context_get_color(gtk_widget_get_style_context(navLabel),
+                                        gtk_widget_get_state_flags(navLabel), &color);
+            assert(color.blue > 0.85 && color.red < 0.2 && color.green < 0.5);
+        };
+        // Let CSS transitions settle before checking the focused descendant.
+        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        drainEvents();
+        checkNavColor();
+        gtk_widget_set_state_flags(overviewNav, GTK_STATE_FLAG_PRELIGHT, FALSE);
+        drainEvents();
+        checkNavColor();
+        gtk_widget_unset_state_flags(overviewNav, GTK_STATE_FLAG_PRELIGHT);
+
         shell.show(modernime::settings::SettingsPageId::Input,
                    "input-enabled");
         drainEvents();
@@ -535,27 +558,33 @@ int main(int argc, char **argv) {
         auto *preview = findTarget(window, "candidate-preview");
         auto *numbers = findTarget(window, "number-selection");
         assert(pageSize != nullptr && GTK_IS_COMBO_BOX(pageSize));
-        assert(preview != nullptr && GTK_IS_CONTAINER(preview));
+        assert(preview != nullptr && GTK_IS_DRAWING_AREA(preview));
+        auto *example = findTarget(window, "candidate-preview-example");
+        auto *summary = findTarget(window, "candidate-preview-summary");
+        assert(example != nullptr && summary != nullptr);
         const int originalSize = gtk_combo_box_get_active(GTK_COMBO_BOX(pageSize));
         const int originalFont = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFont));
         const bool originalNumbers = gtk_switch_get_active(GTK_SWITCH(numbers));
-        for (const int count : {3, 9}) {
-            gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), count - 3);
-            auto *items = gtk_container_get_children(GTK_CONTAINER(preview));
-            assert(g_list_length(items) == static_cast<guint>(count));
-            g_list_free(items);
-        }
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), 20);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), 6);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(example), 0);
+        drainEvents();
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 9 个") != std::string_view::npos);
+        const int singleWidth = gtk_widget_get_allocated_width(preview);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(example), 1);
+        drainEvents();
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 7 个") != std::string_view::npos);
+        assert(gtk_widget_get_allocated_width(preview) == singleWidth);
+        const auto *description = atk_object_get_description(gtk_widget_get_accessible(preview));
+        assert(description != nullptr && std::string_view(description).find("7.逆号") != std::string_view::npos);
+        assert(std::string_view(description).find("8.") == std::string_view::npos);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), 0);
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 3 个") != std::string_view::npos);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), 6);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), 28);
         gtk_switch_set_active(GTK_SWITCH(numbers), FALSE);
-        auto *items = gtk_container_get_children(GTK_CONTAINER(preview));
-        assert(std::string_view(gtk_label_get_text(GTK_LABEL(items->data))) == "你好");
-        auto *attributes = pango_layout_get_attributes(
-            gtk_label_get_layout(GTK_LABEL(items->data)));
-        auto *iterator = pango_attr_list_get_iterator(attributes);
-        auto *size = pango_attr_iterator_get(iterator, PANGO_ATTR_SIZE);
-        assert(size != nullptr && reinterpret_cast<PangoAttrInt *>(size)->value == 28 * PANGO_SCALE);
-        pango_attr_iterator_destroy(iterator);
-        g_list_free(items);
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 7 个") != std::string_view::npos);
+        // Number selection changes keyboard behavior, not the real bar's labels.
         gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), originalSize);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), originalFont);
         gtk_switch_set_active(GTK_SWITCH(numbers), originalNumbers);
@@ -570,6 +599,25 @@ int main(int argc, char **argv) {
         assert(gtk_widget_has_focus(inputEnabled));
         traverseFocus(window, false);
         assert(hasFocusWithin(window, defaultMode));
+
+        auto *shiftPreset = findTarget(window, "toggle-key-shift");
+        auto *toggleKey = findTarget(window, "toggle-key");
+        assert(shiftPreset != nullptr && toggleKey != nullptr);
+        gtk_button_clicked(GTK_BUTTON(shiftPreset));
+        assert(std::string_view(gtk_button_get_label(GTK_BUTTON(toggleKey))) == "Shift");
+        assert(!gtk_style_context_has_class(gtk_widget_get_style_context(toggleKey), "error"));
+        assert(gtk_widget_get_sensitive(save));
+        gtk_button_clicked(GTK_BUTTON(save));
+        assert(!gtk_widget_get_sensitive(save));
+        assert(modernime::core::SettingsStore::load(paths.settingsFile).settings.toggleKey == "Shift_L");
+        shell.show(modernime::settings::SettingsPageId::Input, "toggle-key");
+        assert(std::string_view(gtk_button_get_label(GTK_BUTTON(toggleKey))) == "Shift");
+        // Restore the default combination through the real recording control.
+        gtk_button_clicked(GTK_BUTTON(toggleKey));
+        gtk_widget_grab_focus(toggleKey);
+        dispatchKey(window, GDK_KEY_space, GdkModifierType(GDK_CONTROL_MASK | GDK_SHIFT_MASK));
+        assert(std::string_view(gtk_button_get_label(GTK_BUTTON(toggleKey))) == "Ctrl+Shift+Space");
+        gtk_button_clicked(GTK_BUTTON(save));
 
         const bool initialInputEnabled = gtk_toggle_button_get_active(
             GTK_TOGGLE_BUTTON(inputEnabled));

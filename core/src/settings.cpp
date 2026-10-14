@@ -65,7 +65,8 @@ bool parseInteger(std::string_view value, int &result) {
 
 bool validToggleKey(std::string_view value) {
     return value == "Ctrl+Space" || value == "Alt+Space" ||
-           value == "Super+Space" || value == "Ctrl+Shift+Space";
+           value == "Super+Space" || value == "Ctrl+Shift+Space" ||
+           value == "Shift_L" || value == "Shift_R";
 }
 
 bool validClipboardTrigger(std::string_view value) {
@@ -99,13 +100,13 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     if (!validToggleKey(settings.toggleKey)) {
         result.issues.push_back(
             {"input.toggle_key",
-             "中英文切换快捷键仅支持 Ctrl+Space、Alt+Space、Super+Space 或 "
+             "中英文切换快捷键仅支持 Shift 单键、Ctrl+Space、Alt+Space、Super+Space 或 "
              "Ctrl+Shift+Space"});
     }
     if (settings.candidatePageSize < kMinimumCandidatePageSize ||
         settings.candidatePageSize > kMaximumCandidatePageSize) {
         result.issues.push_back(
-            {"candidate.page_size", "每页候选词数仅支持 3 到 9 之间的整数"});
+            {"candidate.page_size", "候选栏的单字容量仅支持 3 到 9 之间的整数"});
     }
     if (settings.candidateFontSize < kMinimumCandidateFontSize ||
         settings.candidateFontSize > kMaximumCandidateFontSize) {

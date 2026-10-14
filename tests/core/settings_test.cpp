@@ -155,9 +155,24 @@ void testFailedSavePreservesExistingTarget() {
     assertTrue(content == "preserve", "failed save preserves target data");
 }
 
+void testShiftShortcutsRoundTrip() {
+    const auto directory = testDirectory();
+    const auto path = directory / "shift-settings.conf";
+    for (const auto *key : {"Shift_L", "Shift_R"}) {
+        auto settings = modernime::core::defaultSettings();
+        settings.toggleKey = key;
+        std::string error;
+        assertTrue(modernime::core::SettingsStore::save(path, settings, &error),
+                   "single Shift setting saves: " + error);
+        const auto loaded = modernime::core::SettingsStore::load(path);
+        assertTrue(loaded.diagnostics.empty(), "Shift reload has no diagnostic");
+        assertTrue(loaded.settings.toggleKey == key, "both Shift keys round-trip");
+    }
+}
+
 void testSharedValidationAcceptsOnlyRuntimeToggleKeys() {
     for (const auto *toggleKey : {"Ctrl+Space", "Alt+Space", "Super+Space",
-                                  "Ctrl+Shift+Space"}) {
+                                  "Ctrl+Shift+Space", "Shift_L", "Shift_R"}) {
         auto settings = modernime::core::defaultSettings();
         settings.toggleKey = toggleKey;
         const auto validation = modernime::core::validateSettings(settings);
@@ -292,6 +307,7 @@ int main() {
     testDiagnosticsAndPerKeyFallback();
     testFailedSavePreservesExistingTarget();
     testSharedValidationAcceptsOnlyRuntimeToggleKeys();
+    testShiftShortcutsRoundTrip();
     testSharedValidationRejectsInvalidValues();
     testPreserveUnknownKeysAndCommentsAndConflict();
     return EXIT_SUCCESS;
