@@ -48,6 +48,7 @@ struct CommandOutput final {
     bool exitedZero = false;
     bool timedOut = false;
     bool stillRunningOnTimeout = false;
+    int exitStatus = -1;
     std::string stdoutText;
     std::string stderrText;
 };
@@ -132,6 +133,43 @@ std::string trim(std::string_view value) {
     }
     const auto last = value.find_last_not_of(" \t\r\n");
     return std::string(value.substr(first, last - first + 1));
+}
+
+std::string packageOperationFailureMessage(const CommandOutput &output,
+                                          std::string_view action,
+                                          const std::string &fallbackCommand) {
+    std::string message(action);
+    message += "未完成";
+    if (!output.started) {
+        message += "（无法启动系统认证或包管理器）";
+    } else if (output.exitStatus >= 0) {
+        message += "（退出码 " + std::to_string(output.exitStatus) + "）";
+    }
+    message += "。";
+    if (output.stderrText.find("No authentication agent found") != std::string::npos ||
+        output.stderrText.find("Error creating textual authentication agent") != std::string::npos) {
+        message += "当前会话没有图形授权代理，请关闭此窗口，从桌面应用菜单重新打开 ModernIME 设置后重试。";
+    }
+
+    const auto rawDiagnostic = trim(output.stderrText.empty() ? output.stdoutText
+                                                            : output.stderrText);
+    if (!rawDiagnostic.empty()) {
+        gchar *valid = g_utf8_make_valid(rawDiagnostic.data(), rawDiagnostic.size());
+        constexpr glong kMaxDiagnosticChars = 600;
+        const glong diagnosticLength = g_utf8_strlen(valid, -1);
+        const bool truncated = diagnosticLength > kMaxDiagnosticChars;
+        gchar *excerpt = g_utf8_substring(valid, 0,
+                                         truncated ? kMaxDiagnosticChars : diagnosticLength);
+        message += "\n系统返回：";
+        message += excerpt;
+        if (truncated) {
+            message += "…";
+        }
+        g_free(excerpt);
+        g_free(valid);
+    }
+    message += "\n也可在终端执行：" + fallbackCommand;
+    return message;
 }
 
 std::string lookupEnv(const Environment &environment, std::string_view key) {
@@ -382,6 +420,9 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     if (proc == nullptr) {
         ::close(stdoutFd);
         ::close(stderrFd);
+        if (error != nullptr) {
+            result.stderrText = error->message;
+        }
         g_clear_error(&error);
         return result;
     }
@@ -434,7 +475,8 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     result.stdoutText = std::move(state->out);
     result.stderrText = std::move(state->err);
     if (state->finished && !state->timedOut && g_subprocess_get_if_exited(proc)) {
-        result.exitedZero = (g_subprocess_get_exit_status(proc) == 0);
+        result.exitStatus = g_subprocess_get_exit_status(proc);
+        result.exitedZero = (result.exitStatus == 0);
     }
 
     g_object_unref(cancellable);
@@ -998,9 +1040,7 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
                     "刷新软件源缓存操作超时（子进程已退出，未检测到后台仍在运行的包管理器进程），请在终端手动执行：" +
                         fallbackCmd};
         }
-        return {false,
-                "刷新软件源缓存未完成（可能已取消授权或网络不可达），您也可以在终端执行：" +
-                    fallbackCmd};
+        return {false, packageOperationFailureMessage(out, "刷新软件源缓存", fallbackCmd)};
     }
     return {true, "已刷新系统软件源缓存，正在重新检查可用版本…"};
 }
@@ -1074,9 +1114,8 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
                     "系统包管理器升级操作超时（子进程已退出，未检测到后台仍在运行的 apt/dpkg 进程）。若此前包状态未完成配置，请先执行 sudo dpkg --configure -a && sudo apt-get install -f 恢复，随后在终端运行：" +
                         status.upgradeCommand};
         }
-        return {false,
-                "系统包管理器升级未完成（可能已取消授权或网络受限），您也可以在终端执行：" +
-                    status.upgradeCommand};
+        return {false, packageOperationFailureMessage(out, "系统包管理器升级",
+                                                     status.upgradeCommand)};
     }
     return {true,
             "已通过系统包管理器完成 ModernIME 升级，请点击“重新加载 ModernIME”使其生效。"};

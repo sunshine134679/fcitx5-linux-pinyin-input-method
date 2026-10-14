@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <glib.h>
 #include <pthread.h>
 #include <string>
 #include <string_view>
@@ -298,6 +299,47 @@ int main(int argc, char **argv) {
         assert(refreshLoggedArgs.find("apt-get update") != std::string::npos);
     }
 
+    // Preserve the actual authorization failure instead of guessing network loss.
+    writeExecutable(aptBinDir / "pkexec",
+                    "#!/bin/sh\necho 'Error executing command as another user: No authentication agent found.' >&2\nexit 127\n");
+    const auto noAgentRefresh = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+    assert(!noAgentRefresh.success);
+    assert(noAgentRefresh.message.find("No authentication agent found") != std::string::npos);
+    assert(noAgentRefresh.message.find("桌面应用菜单") != std::string::npos);
+    assert(noAgentRefresh.message.find("sudo apt update") != std::string::npos);
+    const auto noAgentUpgrade = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+    assert(!noAgentUpgrade.success);
+    assert(noAgentUpgrade.message.find("No authentication agent found") != std::string::npos);
+
+    // pkexec's fallback text agent also fails when a GUI process has no controlling TTY.
+    writeExecutable(aptBinDir / "pkexec",
+                    "#!/bin/sh\necho 'Error creating textual authentication agent: Error opening current controlling terminal' >&2\nexit 127\n");
+    const auto noTerminalRefresh = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+    assert(!noTerminalRefresh.success);
+    assert(noTerminalRefresh.message.find("桌面应用菜单") != std::string::npos);
+    assert(noTerminalRefresh.message.find("Error creating textual authentication agent") != std::string::npos);
+
+    // Package-manager diagnostics and the failing exit status remain visible.
+    writeExecutable(aptBinDir / "pkexec",
+                    "#!/bin/sh\necho 'E: Could not resolve packages.example.test' >&2\nexit 100\n");
+    const auto networkRefresh = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+    assert(!networkRefresh.success);
+    assert(networkRefresh.message.find("Could not resolve packages.example.test") != std::string::npos);
+    assert(networkRefresh.message.find("100") != std::string::npos);
+
+    // Long / invalid subprocess output must remain bounded and valid for GTK labels.
+    writeExecutable(aptBinDir / "pkexec",
+                    "#!/bin/sh\nprintf '\\377' >&2\ni=0\n"
+                    "while [ \"$i\" -lt 1000 ]; do printf '错' >&2; i=$((i+1)); done\nexit 1\n");
+    const auto longDiagnostic = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+    assert(!longDiagnostic.success);
+    assert(g_utf8_validate(longDiagnostic.message.c_str(), -1, nullptr));
+    assert(g_utf8_strlen(longDiagnostic.message.c_str(), -1) < 800);
+    assert(longDiagnostic.message.find("…") != std::string::npos);
+    assert(longDiagnostic.message.find("sudo apt update") != std::string::npos);
+
+    writeExecutable(aptBinDir / "pkexec",
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"" + pkexecLog.string() + "\"\nexit 0\n");
     const auto upgradeRes = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
     assert(upgradeRes.success);
     std::ifstream logIn(pkexecLog);
@@ -554,8 +596,10 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 15; ++i) {
         const auto spawnFailRes = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
         assert(!spawnFailRes.success);
+        assert(spawnFailRes.message.find("系统返回：") != std::string::npos);
         const auto spawnFailRefresh = UpdateController::refreshPackageCache(aptStatus, aptEnv);
         assert(!spawnFailRefresh.success);
+        assert(spawnFailRefresh.message.find("系统返回：") != std::string::npos);
     }
     assert(countSubprocTempFds() == 0);
     // 8. Package manager lock detection

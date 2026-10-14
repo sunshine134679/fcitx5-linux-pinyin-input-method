@@ -278,7 +278,7 @@ private:
             gtk_grid_attach(GTK_GRID(grid), *valLabel, 1, row, 1, 1);
         };
 
-        addRow(0, "候选新版本", "未检查", &candidateVersionLabel);
+        addRow(0, "缓存候选版本", "未检查", &candidateVersionLabel);
         gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
         auto *summaryTitle = wrappedLabel("更新说明");
         addStyleClass(summaryTitle, "modernime-description");

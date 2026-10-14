@@ -327,6 +327,8 @@ sudo dnf makecache --refresh
 sudo dnf upgrade modernime
 ```
 
+「缓存候选版本」来自本机缓存，刷新失败时会保留原值，不能据此判断线上最新版。客户端会显示刷新或升级失败的实际错误与退出码。如果提示 `No authentication agent found`，当前启动会话缺少图形授权代理：关闭窗口，从桌面应用菜单重新打开 ModernIME 设置后重试，或在终端执行上面的刷新命令。SSH、远程终端或没有授权代理的桌面会话可能遇到此问题；系统缓存刷新需要管理员授权。
+
 源码和便携包安装属于 `script` 渠道。源码用户可在仓库执行 `git pull --ff-only && ./install.sh`；便携包用户下载新版后重新运行其安装脚本。若希望持续通过 APT / DNF 升级，先按上文配置签名软件源，再使用 `modernime-migrate-channel` 迁移渠道。升级完成后关闭并重新打开设置客户端以显示新版本；用户词典与学习数据按安装生命周期规则保留。
 
 ## 直接使用 CMake
