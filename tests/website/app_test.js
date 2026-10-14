@@ -34,9 +34,10 @@ async function run(release, options = {}) {
   });
   elements["client-screenshot"].complete = true;
   elements["client-screenshot"].naturalWidth = options.initialFailure ? 0 : 2940;
-  elements["client-screenshot"].src = "assets/client-overview-3x.png";
+  elements["client-screenshot"].src = "assets/client-overview-1x.webp";
+  elements["client-screenshot"].sizes = "980px";
   elements["screenshot-pagination"].textContent = "01 / 03";
-  elements["screenshot-original"].href = elements["client-screenshot"].src;
+  elements["screenshot-original"].href = "assets/client-overview-3x.png";
   const pendingImages = [];
   const imageRequests = [];
   let finishDecode;
@@ -80,14 +81,16 @@ const base = `https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
 const names = ["modernime_0.1.12_amd64_ubuntu24.04.deb", "modernime_0.1.12_amd64_ubuntu22.04.deb", "modernime-0.1.12-1.oe24.x86_64.rpm", "modernime-0.1.12-linux-x86_64.tar.gz", "SHA256SUMS.txt"];
 const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_download_url: base + name}))};
 (async () => {
+  await require("./install_test.js")();
   const standaloneGallery = await run(null, {galleryOnly: true});
   await standaloneGallery.screenshotButtons[1].events.pointerenter?.();
   assert.equal(typeof standaloneGallery.screenshotButtons[1].events.pointerenter, "function", "pointer intent should warm the screenshot before clicking");
   await standaloneGallery.screenshotButtons[1].events.click();
-  assert.equal(standaloneGallery.elements["client-screenshot"].src, "assets/client-appearance-3x.png");
+  assert.equal(standaloneGallery.elements["client-screenshot"].src, "assets/client-appearance-1x.webp");
+  assert.match(standaloneGallery.elements["client-screenshot"].srcset || "", /980w/, "gallery switches must retain responsive source candidates");
   const failedGallery = await run(fixture, {imageFailure: true});
   await failedGallery.screenshotButtons[1].events.click();
-  assert.equal(failedGallery.elements["client-screenshot"].src, "assets/client-overview-3x.png", "a failed load must keep the last usable screenshot");
+  assert.equal(failedGallery.elements["client-screenshot"].src, "assets/client-overview-1x.webp", "a failed load must keep the last usable screenshot");
   assert.equal(failedGallery.elements["screenshot-pagination"].textContent, "01 / 03");
   assert.match(failedGallery.elements["gallery-status"].textContent, /重试/);
   const initialFailure = await run(null, {initialFailure: true, manualImages: true});
@@ -99,12 +102,14 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   const racingGallery = await run(fixture, {manualImages: true});
   const first = racingGallery.screenshotButtons[1].events.click();
   const latest = racingGallery.screenshotButtons[2].events.click();
-  assert.equal(racingGallery.elements["client-screenshot"].src, "assets/client-overview-3x.png");
+  assert.equal(racingGallery.pendingImages[0].srcset, racingGallery.screenshotButtons[1].dataset.srcset, "preloads and displayed images must use the same responsive candidates");
+  assert.equal(racingGallery.pendingImages[0].sizes, racingGallery.elements["client-screenshot"].sizes);
+  assert.equal(racingGallery.elements["client-screenshot"].src, "assets/client-overview-1x.webp");
   racingGallery.pendingImages[1].onload();
   await latest;
   racingGallery.pendingImages[0].onload();
   await first;
-  assert.equal(racingGallery.elements["client-screenshot"].src, "assets/client-clipboard-3x.png", "a late earlier request must not replace the latest choice");
+  assert.equal(racingGallery.elements["client-screenshot"].src, "assets/client-clipboard-1x.webp", "a late earlier request must not replace the latest choice");
   assert.equal(racingGallery.elements["screenshot-pagination"].textContent, "03 / 03");
   assert.equal(racingGallery.elements["client-screenshot"].attributes["aria-busy"], "false");
   // Superseded successful loads are still decoded and cached for a later visit.
@@ -122,10 +127,10 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   const decoding = await run(null, {manualImages: true, manualDecode: true});
   const decoded = decoding.screenshotButtons[1].events.click();
   decoding.pendingImages[0].onload();
-  assert.equal(decoding.elements["client-screenshot"].src, "assets/client-overview-3x.png", "keep the old frame until decoding finishes");
+  assert.equal(decoding.elements["client-screenshot"].src, "assets/client-overview-1x.webp", "keep the old frame until decoding finishes");
   decoding.finishDecode();
   await decoded;
-  assert.equal(decoding.elements["client-screenshot"].src, "assets/client-appearance-3x.png");
+  assert.equal(decoding.elements["client-screenshot"].src, "assets/client-appearance-1x.webp");
   const warmed = await run(null, {galleryOnly: true, motion: true});
   warmed.observers[0].callback([{isIntersecting: true}]);
   await new Promise(resolve => setImmediate(resolve));
@@ -147,6 +152,9 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   app.systemOptions[1].checked = true;
   await app.systemOptions[1].events.change();
   assert.equal(e["deb-download"].href, base + names[1]);
+  app.systemOptions[1].checked = false; app.systemOptions[2].checked = true;
+  await app.systemOptions[2].events.change();
+  assert.equal(e["deb-download"].href, base + names[1], "Debian 12 must retain the compatible package while using its own Bookworm source");
   assert.equal(e["rpm-download"].href, base + names[2]);
   assert.equal(e["portable-download"].href, base + names[3]);
   assert.equal(e["checksum-link"].href, base + names[4]);
@@ -167,7 +175,7 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(e["hero-pinyin"].textContent, "zi'you'sheng'zhang");
   assert.equal(app.sceneButtons[2].attributes["aria-pressed"], "true");
   await app.screenshotButtons[1].events.click();
-  assert.equal(e["client-screenshot"].src, "assets/client-appearance-3x.png");
+  assert.equal(e["client-screenshot"].src, "assets/client-appearance-1x.webp");
   assert.equal(e["screenshot-original"].href, "assets/client-appearance-3x.png");
   assert.equal(e["screenshot-pagination"].textContent, "02 / 03");
   await app.screenshotButtons[2].events.click();

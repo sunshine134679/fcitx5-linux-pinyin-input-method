@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Check website destinations, assets, and signed repository preservation."""
 import hashlib
+import json
+import subprocess
+import xml.etree.ElementTree as ET
 import re
 import struct
 import importlib.util
@@ -33,7 +36,7 @@ class Page(HTMLParser):
             self.links.append(attrs.get("href", ""))
         if tag in ("img", "script") and attrs.get("src"):
             self.assets.append(attrs["src"])
-        if tag == "link" and attrs.get("href"):
+        if tag == "link" and attrs.get("href") and attrs.get("rel") in ("icon", "stylesheet"):
             self.assets.append(attrs["href"])
 
 
@@ -63,11 +66,11 @@ class WebsiteTests(unittest.TestCase):
                     text = line.lstrip("# ").lower()
                     text = "".join(c for c in text if not unicodedata.category(c).startswith("P") or c in "-_")
                     return text.replace(" ", "-")
-                self.assertTrue(any(slug(line) == fragment for line in readme.splitlines() if line.startswith("#")), link)
+                self.assertTrue(fragment in Page(readme).ids or any(slug(line) == fragment for line in readme.splitlines() if line.startswith("#")), link)
 
     def test_gallery_uses_distinct_high_resolution_screenshots(self):
         html = (ROOT / "website/index.html").read_text()
-        paths = re.findall(r'data-src="([^"]+)"', html)
+        paths = re.findall(r'data-original="([^"]+)"', html)
         self.assertEqual(len(paths), 3)
         digests = []
         for path in paths:
@@ -83,7 +86,7 @@ class WebsiteTests(unittest.TestCase):
     def test_scene_and_system_controls_match_their_content(self):
         html = (ROOT / "website/index.html").read_text()
         controls = re.findall(r'<input[^>]+name="deb-system"[^>]*>', html)
-        self.assertEqual(len(controls), 2)
+        self.assertEqual(len(controls), 3)
         self.assertEqual(sum("checked" in tag for tag in controls), 1)
         self.assertTrue(all('type="radio"' in tag for tag in controls))
         self.assertEqual(set(re.findall(r'value="(ubuntu[^"]+)"', "".join(controls))), {"ubuntu24.04", "ubuntu22.04"})
@@ -97,6 +100,65 @@ class WebsiteTests(unittest.TestCase):
         previous = re.search(r'<img[^>]+id="gallery-previous"[^>]*>', html).group()
         self.assertNotIn('src=', previous, "hidden transition layer must not trigger eager image download")
         self.assertIn('aria-hidden="true"', previous)
+
+    def test_search_metadata_and_responsive_sources(self):
+        html = (ROOT / "website/index.html").read_text()
+        base = "https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/"
+        self.assertIn(f'rel="canonical" href="{base}"', html)
+        self.assertIn('name="twitter:card" content="summary_large_image"', html)
+        data = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S).group(1))
+        self.assertEqual(data["@type"], "SoftwareApplication")
+        self.assertEqual(data["url"], base)
+        self.assertEqual(data["softwareVersion"], "0.1.11")
+        self.assertEqual(data["offers"]["price"], "0")
+        self.assertTrue((ROOT / "website" / data["screenshot"].removeprefix(base)).is_file())
+        tree = ET.fromstring((ROOT / "website/sitemap.xml").read_text())
+        self.assertEqual(tree.find("{*}url/{*}loc").text, base)
+        self.assertIn(base + "sitemap.xml", (ROOT / "website/robots.txt").read_text())
+        sets = re.findall(r'data-srcset="([^"]+)"', html)
+        self.assertEqual(len(sets), 3)
+        for source in sets:
+            for entry in source.split(", "):
+                asset, width = entry.split(" ")
+                self.assertIn(width, ("980w", "2940w"))
+                content = (ROOT / "website" / asset).read_bytes()
+                self.assertEqual(content[:4], b"RIFF")
+                self.assertEqual(content[8:16], b"WEBPVP8L", "screenshots must retain lossless text rendering")
+                self.assertEqual(content[20], 0x2F)
+                dimensions = int.from_bytes(content[21:25], "little")
+                self.assertEqual((dimensions & 0x3FFF) + 1, int(width[:-1]))
+                self.assertEqual(((dimensions >> 14) & 0x3FFF) + 1, 720 if width == "980w" else 2160)
+        with tempfile.TemporaryDirectory(prefix="modernime-website-seo-") as temp:
+            overlay.prepare(ROOT / "website", Path(temp) / "pages")
+            for name in ("install.js", "sitemap.xml", "robots.txt"):
+                self.assertTrue((Path(temp) / "pages" / name).is_file())
+
+    def test_repository_commands_parse_without_execution(self):
+        class Commands(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.current = None
+                self.code = {}
+            def handle_starttag(self, tag, attributes):
+                attrs = dict(attributes)
+                if tag == "code" and attrs.get("id", "").endswith("-command"):
+                    self.current = attrs["id"]
+                    self.code[self.current] = ""
+            def handle_data(self, data):
+                if self.current:
+                    self.code[self.current] += data
+            def handle_endtag(self, tag):
+                if tag == "code":
+                    self.current = None
+        parser = Commands()
+        parser.feed((ROOT / "website/index.html").read_text())
+        for name, command in parser.code.items():
+            result = subprocess.run(["bash", "-n"], input=command, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, f"{name}: {result.stderr}")
+        self.assertEqual(len([key for key in parser.code if key.startswith(("apt-", "dnf-"))]), 6)
+        self.assertIn("/usr/share/keyrings/modernime-archive-keyring.gpg", parser.code["apt-key-command"])
+        self.assertIn("&&", parser.code["apt-source-command"])
+        self.assertNotIn("--nogpgcheck", "".join(parser.code.values()))
 
     def test_overlay_preserves_every_package_file_and_is_idempotent(self):
         with tempfile.TemporaryDirectory(prefix="modernime-website-") as temp:
@@ -118,7 +180,7 @@ class WebsiteTests(unittest.TestCase):
             destination = Path(temp) / "pages"
             overlay.prepare(ROOT / "website", destination)
             html = (destination / "index.html").read_text()
-            for name in ("app.js", "gallery.js", "styles.css"):
+            for name in ("app.js", "gallery.js", "install.js", "styles.css"):
                 digest = hashlib.sha256((ROOT / "website" / name).read_bytes()).hexdigest()[:12]
                 self.assertIn(f'{name}?v={digest}', html)
 

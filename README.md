@@ -6,22 +6,22 @@ ModernIME 是一个面向 Linux 桌面的现代化 Fcitx5 拼音输入法，包�
 
 ## 快速安装与发行包下载
 
-官网提供平铺系统版本选择、固定栏宽候选演示、日常聊天／专业写作／剪贴板场景与词库展示，以及预加载解码缓存和交叉淡入的 3× 高清客户端图库、原图查看、安装指南入口，下载区会只读同步最新正式发布；网络不可用时保留已核验版本的下载链接。官网和签名 APT/RPM 软件源共用 GitHub Pages，网站更新及版本发布均保留软件源路径。网站源码及维护说明见 [`website/README.md`](website/README.md)。
+官网首屏列出拼音容错、本地习惯学习、专业词库、V 模式与独立设置客户端；输入体验包含紧凑场景示意和真实 GTK3 客户端图库。截图使用同源 1× / 3× 无损 WebP，按屏幕分辨率加载，支持预解码缓存、交叉淡入和 PNG 原图查看。下载区优先提供签名 APT / DNF 软件源的分步复制命令，保留安装包直接下载，并在附近展示“重新登录 → 添加 ModernIME → 开始输入”。手机导航可直接跳转体验、设置与安装；最新正式发布查询失败时保留已核验版本的下载链接。官网和签名 APT/RPM 软件源共用 GitHub Pages，网站更新及版本发布均保留软件源路径。网站源码及维护说明见 [`website/README.md`](website/README.md)。
 
-ModernIME 支持 **GitHub Releases 预编译安装包直接安装**（推荐）与 **源码一键构建安装**，全面适配 **Ubuntu / Debian** 与 **openEuler / RHEL / Fedora** 等多版本主流 Linux 操作系统。
+ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**，方便后续升级；也提供 **GitHub Releases 安装包直接下载**与 **源码一键构建安装**。Ubuntu / Debian 与 openEuler 的版本、架构和依赖边界见下表，其他发行版请按源码构建说明准备依赖。
 
-### 方式一：下载预编译安装包（推荐，开箱即用）
+### 方式一：软件源安装与预编译安装包
 
-进入 [GitHub Releases 页面](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases) 下载适合您系统架构的安装包：
+在[官网下载安装区](https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/#download)选择系统并展开 APT / DNF 安装，可复制三组命令；也可进入 [GitHub Releases 页面](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases) 下载适合您系统架构的安装包。已有脚本安装请先[迁移安装渠道](#install-channel-migration)，避免跨渠道覆盖。
 
 #### 平台与资产兼容矩阵
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.10_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.10_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.10-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.10-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.11_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.11_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.11-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.11-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -149,6 +149,8 @@ sudo dnf clean all
 sudo rpm --import https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/RPM-GPG-KEY-modernime
 sudo dnf install -y ./modernime-*.x86_64.rpm
 ```
+
+<a id="install-channel-migration"></a>
 
 #### 2.5 安装渠道隔离与可控迁移（`script` ↔ `deb`/`rpm`）
 

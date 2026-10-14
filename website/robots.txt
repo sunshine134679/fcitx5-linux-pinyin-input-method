@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /fcitx5-linux-pinyin-input-method/
+Sitemap: https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/sitemap.xml
