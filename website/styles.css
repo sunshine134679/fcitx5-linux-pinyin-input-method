@@ -526,7 +526,7 @@ code { font-family: ui-monospace,SFMono-Regular,Consolas,monospace; }
   padding: 7px .15em;
   gap: .15em;
 }
-.live-candidates span:first-child { background: var(--blue); color: white; border-radius: 4px; }
+.live-candidates span:first-child { background: var(--blue); color: white; border-radius: 4px; padding-inline: .55em; flex-shrink: 0; }
 .live-candidates small { opacity: .7; font-size: .55em; }
 .feature-stack { display: flex; flex-direction: column; justify-content: center; }
 .feature-stack article {
