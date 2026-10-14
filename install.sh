@@ -488,6 +488,8 @@ fi
 migrate_legacy_plugins() {
     local target_prefix=$1
     local current_addon_dir=$2
+    local current_addon_real
+    current_addon_real=$(readlink -f "$current_addon_dir" 2>/dev/null || true)
     local candidate_dirs=(
         "$target_prefix/lib/fcitx5"
         "$target_prefix/lib64/fcitx5"
@@ -498,9 +500,19 @@ migrate_legacy_plugins() {
         if [[ -L "$cdir" ]]; then
             continue
         fi
+        local cdir_real
+        cdir_real=$(readlink -f "$cdir" 2>/dev/null || true)
+        if [[ -n "$current_addon_real" && -n "$cdir_real" && "$cdir_real" == "$current_addon_real" ]]; then
+            continue
+        fi
         if [[ "$cdir" != "$current_addon_dir" && -d "$cdir" ]]; then
             for old_plugin in "$cdir/modernime_fcitx5.so" "$cdir/modernime_ui.so"; do
                 if [[ -f "$old_plugin" || -L "$old_plugin" ]]; then
+                    local plugin_real
+                    plugin_real=$(readlink -f "$old_plugin" 2>/dev/null || true)
+                    if [[ -n "$current_addon_real" && "$plugin_real" == "$current_addon_real/$(basename -- "$old_plugin")" ]]; then
+                        continue
+                    fi
                     printf 'Migrating legacy plugin layout: removing obsolete %s\n' "$old_plugin"
                     rm -f -- "$old_plugin"
                 fi
@@ -522,7 +534,7 @@ migrate_legacy_plugins() {
                     if [[ "$old_path" != "$current_addon_dir/$base_name" && -f "$old_path" ]]; then
                         local old_real
                         old_real=$(readlink -f "$old_path" 2>/dev/null || true)
-                        if [[ "$old_real" != "$target_real/$base_name" ]]; then
+                        if [[ -n "$current_addon_real" && "$old_real" != "$current_addon_real/$base_name" ]]; then
                             printf 'Migrating legacy manifest plugin: removing obsolete %s\n' "$old_path"
                             rm -f -- "$old_path"
                             rmdir --ignore-fail-on-non-empty "$(dirname -- "$old_path")" 2>/dev/null || true
