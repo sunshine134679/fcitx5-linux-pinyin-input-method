@@ -1,6 +1,8 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/core/learning_store.h"
 #include "modernime/core/pinyin_match.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -597,31 +599,128 @@ void testRareAndRadicalCharactersGovernance(const std::filesystem::path &learnin
                "xa top candidate must be 西安");
 }
 
+// 8. 历史休眠高频词反超与前后鼻音个性化容错专项模拟测试
+void testDormantDisplacementAndNasalTypoPersonalization(const std::filesystem::path &learningPath) {
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+    const auto threeDaysAgoMs = nowMs - 3LL * 24LL * 3600LL * 1000LL;
+
+    // 预置 3 天前的历史休眠记录（模拟导入词典，如“试”频次 1400，“自”频次 35）
+    {
+        modernime::core::LearningStore store(learningPath);
+        assertTrue(store.open(), "open store for dormant priming");
+        for (int i = 0; i < 1400; ++i) {
+            store.recordSelection("试", "shi", {}, {}, threeDaysAgoMs);
+        }
+        for (int i = 0; i < 35; ++i) {
+            store.recordSelection("自", "zi", {}, {}, threeDaysAgoMs);
+        }
+    }
+
+    auto provider = makeSimulationProvider(learningPath);
+
+    // 1. 测试 shi：初始状态“试”位居首位（因为历史高达 1400 次）
+    {
+        provider.reset();
+        assertTrue(provider.append("shi"), "append shi");
+        assertTrue(!provider.page().items.empty(), "candidates exist for shi");
+        assertTrue(provider.page().items.front().text == "试", "初始状态 试 为首位");
+
+        // 用户在当前会话中连续选择 3 次“是”
+        for (int i = 0; i < 3; ++i) {
+            provider.reset();
+            assertTrue(provider.append("shi"), "append shi");
+            const auto shiIdx = indexOf(provider.page(), "是");
+            assertTrue(shiIdx < provider.page().items.size(), "是 exists");
+            assertTrue(provider.select(shiIdx), "select 是");
+        }
+
+        // 当前活跃选择的“是”迅速反超休眠多日的“试”，晋升为 Rank 0！
+        provider.reset();
+        assertTrue(provider.append("shi"), "append shi after selecting 是");
+        assertTrue(provider.page().items.front().text == "是",
+                   "当前会话连续选用‘是’后，迅速反超多日前休眠的‘试’晋升为 Rank 0");
+    }
+
+    // 2. 测试 zi：初始状态“自”位居首位
+    {
+        provider.reset();
+        assertTrue(provider.append("zi"), "append zi");
+        assertTrue(!provider.page().items.empty(), "candidates exist for zi");
+        assertTrue(provider.page().items.front().text == "自", "初始状态 自 为首位");
+
+        // 用户在当前会话中连续选择 5 次“字”
+        for (int i = 0; i < 5; ++i) {
+            provider.reset();
+            assertTrue(provider.append("zi"), "append zi");
+            const auto ziIdx = indexOf(provider.page(), "字");
+            assertTrue(ziIdx < provider.page().items.size(), "字 exists");
+            assertTrue(provider.select(ziIdx), "select 字");
+        }
+
+        // 当前活跃选择的“字”反超休眠的“自”，晋升为 Rank 0！
+        provider.reset();
+        assertTrue(provider.append("zi"), "append zi after selecting 字");
+        assertTrue(provider.page().items.front().text == "字",
+                   "当前会话选用‘字’后，反超多日前休眠的‘自’晋升为 Rank 0");
+    }
+
+    // 3. 测试前后鼻音容错个性化：常用“更新 gengxin”，误输入 genxin 或 genxing 均能推“更新”
+    {
+        // 训练选用 5 次“更新”
+        for (int i = 0; i < 5; ++i) {
+            provider.reset();
+            assertTrue(provider.append("gengxin"), "append gengxin");
+            const auto gxIdx = indexOf(provider.page(), "更新");
+            assertTrue(gxIdx < provider.page().items.size(), "更新 exists");
+            assertTrue(provider.select(gxIdx), "select 更新");
+        }
+
+        // 输入 genxin（en 误打 eng），首选必须推荐“更新”
+        provider.reset();
+        assertTrue(provider.append("genxin"), "append genxin");
+        assertTrue(!provider.page().items.empty(), "candidates exist for genxin");
+        assertTrue(provider.page().items.front().text == "更新",
+                   "误输入 genxin 时，基于前后鼻音容错与个性化习惯首推‘更新’");
+
+        // 输入 genxing（ing 误打 in），首选必须推荐“更新”
+        provider.reset();
+        assertTrue(provider.append("genxing"), "append genxing");
+        assertTrue(!provider.page().items.empty(), "candidates exist for genxing");
+        assertTrue(provider.page().items.front().text == "更新",
+                   "误输入 genxing 时，基于前后鼻音容错与个性化习惯首推‘更新’");
+    }
+}
+
 } // namespace
 
 int main() {
     const auto learningPath = testPath("daily-simulation-learning.sqlite3");
 
-    std::cout << "[1/7] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
+    std::cout << "[1/8] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
     testSinglePinyinPriorities(learningPath);
 
-    std::cout << "[2/7] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
+    std::cout << "[2/8] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
     testMultiSyllablePhrasesAndHotwords(learningPath);
 
-    std::cout << "[3/7] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
+    std::cout << "[3/8] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
     testAbbreviationsAndInitialisms(learningPath);
 
-    std::cout << "[4/7] Running Smart Learning Dynamic Evolution Tests...\n";
+    std::cout << "[4/8] Running Smart Learning Dynamic Evolution Tests...\n";
     testSmartLearningDynamics(learningPath);
 
-    std::cout << "[5/7] Running Smart Typo Correction Engine Tests...\n";
+    std::cout << "[5/8] Running Smart Typo Correction Engine Tests...\n";
     testSmartTypoCorrectionEngine(learningPath);
 
-    std::cout << "[6/7] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
+    std::cout << "[6/8] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
     testMultiPersonaWeChatParityBenchmarks(learningPath);
 
-    std::cout << "[7/7] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
+    std::cout << "[7/8] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
     testRareAndRadicalCharactersGovernance(learningPath);
+
+    std::cout << "[8/8] Running Dormant Displacement & Nasal Typo Personalization Benchmark...\n";
+    testDormantDisplacementAndNasalTypoPersonalization(learningPath);
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);

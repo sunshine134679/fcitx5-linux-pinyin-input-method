@@ -21,6 +21,23 @@ CandidateRanker::rank(std::string_view userInput,
         candidate.stability_bonus = 0.0;
         candidate.decoder_bonus = 0.0;
     }
+    std::unordered_map<int, std::int64_t> latestByPriority;
+    for (const auto &candidate : candidates) {
+        auto &latest = latestByPriority[candidate.match_priority];
+        latest = std::max(latest, candidate.last_selected_ms);
+    }
+    constexpr double kDormantHalfLifeMs = 12.0 * 3600.0 * 1000.0;
+    constexpr double kDormantTauMs = kDormantHalfLifeMs / 0.6931471805599453;
+    for (auto &candidate : candidates) {
+        const auto latest = latestByPriority[candidate.match_priority];
+        if (latest > 0 && candidate.last_selected_ms > 0 && candidate.last_selected_ms < latest) {
+            const auto ageSinceLatest = latest - candidate.last_selected_ms;
+            candidate.dormant_factor =
+                std::exp(-static_cast<double>(ageSinceLatest) / kDormantTauMs);
+        } else {
+            candidate.dormant_factor = 1.0;
+        }
+    }
     float minimumDecoderScore = std::numeric_limits<float>::max();
     float maximumDecoderScore = std::numeric_limits<float>::lowest();
     for (const auto &candidate : candidates) {

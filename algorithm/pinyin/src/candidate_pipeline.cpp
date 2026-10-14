@@ -153,9 +153,11 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.context_bonus = learning->contextBoost(
                 candidate.text, candidate.full_pinyin, contextBefore,
                 contextAfter);
+            candidate.last_selected_ms = learning->lastSelectedMs(
+                candidate.text, candidate.full_pinyin);
         }
         if (index == 0 && charCount == 1) {
-            candidate.unigram_anchor = 3.0;
+            candidate.unigram_anchor = (candidate.learning_boost >= 1.8) ? 0.0 : 3.0;
         }
         seenKeys.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
@@ -219,9 +221,11 @@ CandidatePipelineResult buildCandidatePipeline(
                 candidate.context_bonus = learning->contextBoost(
                     candidate.text, candidate.full_pinyin, contextBefore,
                     contextAfter);
+                candidate.last_selected_ms = learning->lastSelectedMs(
+                    candidate.text, candidate.full_pinyin);
             }
             if (index == 0 && charCount == 1) {
-                candidate.unigram_anchor = 3.0;
+                candidate.unigram_anchor = (candidate.learning_boost >= 1.8) ? 0.0 : 3.0;
             }
             result.scored.push_back(std::move(candidate));
         }
@@ -251,6 +255,9 @@ CandidatePipelineResult buildCandidatePipeline(
                             std::max(existing.learning_boost, item.learningBoost);
                         existing.context_bonus =
                             std::max(existing.context_bonus, item.contextBoost);
+                        existing.last_selected_ms =
+                            std::max(existing.last_selected_ms,
+                                     learning->lastSelectedMs(existing.text, existing.full_pinyin));
                         if (!existing.is_lexical &&
                             utf8CodePointCount(existing.text) >= 2 &&
                             (item.learningBoost >= 1.8 ||
@@ -271,6 +278,8 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = segmentedPinyin;
             candidate.learning_boost = item.learningBoost;
             candidate.context_bonus = item.contextBoost;
+            candidate.last_selected_ms =
+                learning->lastSelectedMs(candidate.text, candidate.full_pinyin);
             const auto dictResult = dictionaryBonus(
                 dictionary, candidate.full_pinyin, candidate.text);
             candidate.dictionary_bonus = dictResult.bonus;

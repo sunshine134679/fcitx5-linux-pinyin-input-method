@@ -437,6 +437,19 @@ double LearningSnapshot::boostAt(std::string_view phrase,
     return std::clamp(frequency + recent - penalty, -2.0, 4.0);
 }
 
+std::int64_t LearningSnapshot::lastSelectedMs(
+    std::string_view phrase, std::string_view pinyin) const {
+    const auto normalized = normalizePinyin(pinyin);
+    const auto variants = collectVariants(phrase, normalized);
+    std::int64_t lastSelected = 0;
+    for (const auto *item : variants) {
+        if (!item->suppressed) {
+            lastSelected = std::max(lastSelected, item->lastSelectedMs);
+        }
+    }
+    return lastSelected;
+}
+
 double LearningSnapshot::contextBoost(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,

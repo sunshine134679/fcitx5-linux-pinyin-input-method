@@ -63,6 +63,8 @@ public:
                               std::string_view pinyin) const;
     double boostAt(std::string_view phrase, std::string_view pinyin,
                    std::int64_t nowMs) const;
+    std::int64_t lastSelectedMs(std::string_view phrase,
+                                std::string_view pinyin) const;
     bool isSuppressed(std::string_view phrase,
                       std::string_view pinyin) const;
     double contextBoost(std::string_view phrase, std::string_view pinyin,

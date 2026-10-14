@@ -854,7 +854,34 @@ std::size_t PinyinMatchPolicy::matchTypoSyllable(std::string_view input,
         }
     }
 
-    // 1. gn <-> ng (e.g. input "dign" vs syllable "ding")
+    // 1. 前后鼻音容错及末尾字母 g 漏打/误击容错:
+    //    en <-> eng (如 gen <-> geng), in <-> ing (如 xin <-> xing), an <-> ang (如 gan <-> gang)
+    for (const auto &[frontNasal, backNasal] : {
+             std::pair<std::string_view, std::string_view>{"en", "eng"},
+             std::pair<std::string_view, std::string_view>{"in", "ing"},
+             std::pair<std::string_view, std::string_view>{"an", "ang"}}) {
+        if (syllable.ends_with(backNasal)) {
+            const auto prefixLen = syllable.size() - backNasal.size();
+            if (input.size() >= prefixLen + frontNasal.size() &&
+                input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+                input.substr(prefixLen, frontNasal.size()) == frontNasal) {
+                if (input.size() < prefixLen + backNasal.size() ||
+                    input.substr(prefixLen, backNasal.size()) != backNasal) {
+                    return prefixLen + frontNasal.size();
+                }
+            }
+        }
+        if (syllable.ends_with(frontNasal)) {
+            const auto prefixLen = syllable.size() - frontNasal.size();
+            if (input.size() >= prefixLen + backNasal.size() &&
+                input.substr(0, prefixLen) == syllable.substr(0, prefixLen) &&
+                input.substr(prefixLen, backNasal.size()) == backNasal) {
+                return prefixLen + backNasal.size();
+            }
+        }
+    }
+
+    // 2. gn <-> ng (e.g. input "dign" vs syllable "ding")
     //    mg -> ng (adjacent key slip: input "dimg" vs syllable "ding")
     if (syllable.ends_with("ng")) {
         const auto prefixLen = syllable.size() - 2;
@@ -1074,6 +1101,20 @@ bool PinyinMatchPolicy::isTypoPrefix(std::string_view input,
                                      std::string_view syllable) {
     if (input.empty() || syllable.empty()) {
         return false;
+    }
+    for (const auto &[frontNasal, backNasal] : {
+             std::pair<std::string_view, std::string_view>{"en", "eng"},
+             std::pair<std::string_view, std::string_view>{"in", "ing"},
+             std::pair<std::string_view, std::string_view>{"an", "ang"}}) {
+        if (syllable.ends_with(backNasal)) {
+            const auto prefixLen = syllable.size() - backNasal.size();
+            if (input.starts_with(syllable.substr(0, prefixLen))) {
+                const auto tail = input.substr(prefixLen);
+                if (tail == frontNasal) {
+                    return true;
+                }
+            }
+        }
     }
     if (syllable.ends_with("ng")) {
         const auto prefixLen = syllable.size() - 2;

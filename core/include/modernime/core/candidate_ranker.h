@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -19,7 +20,7 @@ inline constexpr double ContextPriorWeight = 14.0;
 inline constexpr double LearningPriorCap = 180.0;
 inline constexpr double DecoderPriorWeight = 0.25;
 
-inline double computeAdaptiveLearning(double learning_boost) {
+inline double computeAdaptiveLearning(double learning_boost, double dormant_factor = 1.0) {
     if (learning_boost <= 0.0) {
         return std::max(-16.0, LearningPriorWeight * learning_boost);
     }
@@ -32,7 +33,7 @@ inline double computeAdaptiveLearning(double learning_boost) {
     double progressive = 0.0;
     if (learning_boost > 1.8) {
         const double excess = learning_boost - 1.8;
-        progressive = 36.0 * std::pow(excess, 1.7);
+        progressive = dormant_factor * 36.0 * std::pow(excess, 1.7);
     }
     return std::min(LearningPriorCap, linear + progressive);
 }
@@ -49,13 +50,15 @@ struct CandidateScore final {
     double dictionary_bonus = 0.0;
     double context_bonus = 0.0;
     double unigram_anchor = 0.0;
+    std::int64_t last_selected_ms = 0;
+    double dormant_factor = 1.0;
     bool is_rare = false;
     bool is_level1 = false;
     bool is_lexical = false;
 
     double final_score() const {
         double score = static_cast<double>(source_index) -
-               computeAdaptiveLearning(learning_boost) - stability_bonus -
+               computeAdaptiveLearning(learning_boost, dormant_factor) - stability_bonus -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor;
