@@ -17,6 +17,24 @@ Homepage: https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
 Description: Modern Fcitx5 Pinyin Input Method for Linux Desktops
 
 Package: modernime
+Version: 0.1.11
+Architecture: amd64
+Maintainer: ModernIME Maintainers <sunshine134679@users.noreply.github.com>
+Installed-Size: 22444
+Depends: fcitx5 (>= 5.0.14), libime-bin (>= 1.0.11) | libimecore0 (>= 1.0.11) | libimecore0t64 (>= 1.0.11), libgtk-3-0 (>= 3.24.0) | libgtk-3-0t64 (>= 3.24.0), libpango-1.0-0 (>= 1.44.0), libcairo2 (>= 1.16.0), libsqlite3-0 (>= 3.31.0), liblmdb0 (>= 0.9.24), python3 (>= 3.10), coreutils, libatk1.0-0 (>= 1.12.4), libayatana-appindicator3-1 (>= 0.4.90), libc6 (>= 2.34), libcairo2 (>= 1.2.4), libfcitx5core7 (>= 5.0.14), libfcitx5utils2 (>= 5.0.14), libgcc-s1 (>= 3.0), libglib2.0-0 (>= 2.51.0), libgtk-3-0 (>= 3.21.5), libimecore0 (>= 1.0.11), libimepinyin0 (>= 1.0.11), liblmdb0 (>= 0.9.14), libpango-1.0-0 (>= 1.22.0), libpangocairo-1.0-0 (>= 1.14.0), libsqlite3-0 (>= 3.6.11), libstdc++6 (>= 12)
+Recommends: fcitx5-chinese-addons, libime-data, libime-data-language-model
+Suggests: fcitx5-config-qt
+Filename: pool/jammy/main/m/modernime/modernime_0.1.11_amd64.deb
+Size: 8306514
+MD5sum: cf98762fbb34f3d51e4b48bcfca38963
+SHA1: d2cec6237a34fe7082c8a7858f49cdad2229efd6
+SHA256: 74c1104803431eb5987bc82f50978a3f20849d66dd7db36863d0bea39929d0fb
+Section: utils
+Priority: optional
+Homepage: https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
+Description: Modern Fcitx5 Pinyin Input Method for Linux Desktops
+
+Package: modernime
 Version: 0.1.9
 Architecture: amd64
 Maintainer: ModernIME Maintainers <sunshine134679@users.noreply.github.com>

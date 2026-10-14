@@ -1,29 +1,29 @@
 Architectures: amd64
 Codename: bookworm
 Components: main
-Date: Wed, 14 Oct 2026 03:22:11 +0000
+Date: Wed, 14 Oct 2026 10:09:38 +0000
 Description: ModernIME APT Repository for Debian 12 (Bookworm)
 Label: ModernIME APT Repository
 Origin: ModernIME
 Suite: bookworm
 Version: 12
 MD5Sum:
- 88100a10a63d6907cd465ce0bfe4db76              236 Release
- a8a11f471fdef4611dd42667888abde8             2720 main/binary-amd64/Packages
- 33e77a9e6e48115fd2432d55cf4fb3c3              846 main/binary-amd64/Packages.gz
+ 1e6d59c50839809f7129b234080f1e0a              236 Release
+ 354a858e8548868627968460bcda468e             4096 main/binary-amd64/Packages
+ fc5cae8d5aece08e140f0bec31c45497              968 main/binary-amd64/Packages.gz
  e02a3c27d067032750242eec320b6a59              116 main/binary-amd64/Release
 SHA1:
- ce5f8b8d84ecbd6e49baab6897cf3fc9296bcf2c              236 Release
- a1d3fa607f06dc247389607e1e04e7723f8c8c8f             2720 main/binary-amd64/Packages
- 0c7c99487f753b0c672806b9ccb64deed2549b2f              846 main/binary-amd64/Packages.gz
+ 9f857c5b7353d293b13f48d0a851b0a7a46e9498              236 Release
+ f6b5233efc617ffaf0d4123b6948133f96363f09             4096 main/binary-amd64/Packages
+ 69e67f7929c3401f3823a98ac3bd2e1b75a4e5e4              968 main/binary-amd64/Packages.gz
  657509e27c76a96c144c3f1ba4df29f0f7c2b8fb              116 main/binary-amd64/Release
 SHA256:
- 974c29fed1a300c05fdb5b0f89ced272aa1ab0ae922d31c6d8f3953ac2794ed6              236 Release
- 344124d6ace6b727b18656cf82d0b76f2d2f1ed44638b8442cec48a9506cd0f0             2720 main/binary-amd64/Packages
- d5372521bc6517fce3f8e12245b405d40744708ee2c13d24263c37a2459d7118              846 main/binary-amd64/Packages.gz
+ bce5f8df5d8c89c122b5a57be15b8f30f70b93699951a9b6f0c2e5b7dec69b97              236 Release
+ 5f1537e3e67ef028fdad94015d420bb78b856f91c4d82d1473dac297bc34d0e0             4096 main/binary-amd64/Packages
+ 6ac73e33cd68b49ae348b91656bbd7099d00b235f00db5e9e8383096ac2de67a              968 main/binary-amd64/Packages.gz
  9fa4ff60daa034389b017d513fbf3b952431e8c75d119ca818d1bb0ca5b47c9b              116 main/binary-amd64/Release
 SHA512:
- b9e9697b56d61c085ffe87894af81348444c39e97f887fce105cadbb6d32a1487271f739a09e6b5f5396b452047bd5c9c4f017979db96cff54c34f9c40dd7ff0              236 Release
- fdf5aa3e6bcc7bfd49ddcbfac7ebe3bcda1cb451a010aca20010027554a10135db01dd5c7ec315c5350ef598f02edb354c8e60a766d3d27b2fef1c3b3b4feaa2             2720 main/binary-amd64/Packages
- d3c3aafe6ed029fbcc0d14d91967abcb9736b897163b9961aa33afbcbf14d788da437047b1919d45f912a18d44e17bf3357f9a9464cfacb711cc3394772e04c5              846 main/binary-amd64/Packages.gz
+ 9eb9a4618e14e0d4ef7622ef55fadd16a840ef9ed94f186de540b08c909f98ca148770b2b9d524ce1d63a14fd02902ab9d5f1f25504243e367782ce65d081d84              236 Release
+ 429840827cdcb2ef67b60b33e33bad078f4f0b1f88be5d14366c32aee48935a722b24a7888d4e5eadabec858b9adff7a86870f12da2bde0565f7990255b51ebf             4096 main/binary-amd64/Packages
+ ff18d85e786e1ea90c7f32f956ab438d676aafc7cd0e931f479db6124629268589855bdfbd1e2ace192b224db30aad2eb8faa372c65e722f200ec1205f40dadd              968 main/binary-amd64/Packages.gz
  d6a463e708b95e0b04b8407504bfe08488274f463cf2ae5248f3fc34fd37ea64f1ff24f8e86a18b9167bcc62beb1d4b86c7f8e90a6df82c38807f57514ec80e3              116 main/binary-amd64/Release

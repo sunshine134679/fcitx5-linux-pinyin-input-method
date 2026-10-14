@@ -1,29 +1,29 @@
 Architectures: amd64
 Codename: jammy
 Components: main
-Date: Wed, 14 Oct 2026 03:22:09 +0000
+Date: Wed, 14 Oct 2026 10:09:35 +0000
 Description: ModernIME APT Repository for Ubuntu 22.04 LTS (Jammy Jellyfish)
 Label: ModernIME APT Repository
 Origin: ModernIME
 Suite: jammy
 Version: 22.04
 MD5Sum:
- 4bee6049a59c8f31806392180fe6b1c1              247 Release
- 9955b95c65489c06c3153b5245ee42d7             2714 main/binary-amd64/Packages
- d72910296c393771966801df2a7085f2              842 main/binary-amd64/Packages.gz
+ 62aa29b1000adf1cca8b45ded6d155e6              247 Release
+ 89140cda1af6e69fdf5d7b627958606a             4087 main/binary-amd64/Packages
+ bb5ecd6fb6848ef495c0793e99f3293f              965 main/binary-amd64/Packages.gz
  71256dffec3dd7f368472208075b6a54              116 main/binary-amd64/Release
 SHA1:
- 7d3d8f5f416dc56720450da943724610d91c1a87              247 Release
- a50659d72e43bf22fa80233f4a160f6331e19361             2714 main/binary-amd64/Packages
- 99624417d948e06d2f30eca52e5cc1d6e7038340              842 main/binary-amd64/Packages.gz
+ d2bd77b927a64d325271aacb22c2ac969cd01f7b              247 Release
+ 0baca0cd59e6daa8f6319dafe4772b1c25437076             4087 main/binary-amd64/Packages
+ 621cbbcd7ddf88714dc71b33b5568e54fa349394              965 main/binary-amd64/Packages.gz
  63800d559959ec466b163f443625c7cc2494f274              116 main/binary-amd64/Release
 SHA256:
- 0096e4a9d057ce8fa920bb828ce9485cc38203f80b4675b79b6f0cbbab365735              247 Release
- 0f0cb34ad20d96b4834d7a1e4f482f1f145d1aea28d4d18c8b9c146ebaac1b05             2714 main/binary-amd64/Packages
- 6482ecb6cc120891cd2158560e2bf4063ab23843a6b53fdc60a6471fe69247e3              842 main/binary-amd64/Packages.gz
+ 1be22a57058bbe601211268f31cbf2972eb45754e1e2907441e5d5aaea7a301f              247 Release
+ 96edea1fd6e790aa5e58d18f9aefc244de6157454de8d2c74ec48517495e2af3             4087 main/binary-amd64/Packages
+ 834115787b3af642be225a22f41c9111f0729eb76958f48713c95b2c53fb587a              965 main/binary-amd64/Packages.gz
  62dbf62841e904c1ece8cc48da6fe308bb172b4842604c064eb1a384ba666f20              116 main/binary-amd64/Release
 SHA512:
- a4ae2fc87a09543debbf3aa31ba447efe44731d8faa73c31a4bff0feff85fa4321b0188540bea0881ef25624d070d7ad64348cf7a6993010bf525182db98a167              247 Release
- 2388bffc5fc68f124252987a94fc825115238d8a820764448e113e26dcdd0903455b4408b3cc661eae1fd36fb907d5fbf00387e57acd9afe895cfbcec31a895c             2714 main/binary-amd64/Packages
- e9136b5b16a8e1c43053214b7bcb342a1612ab82ec13964d34e687df373e83a9b2a4e652e5a707778fd4221f068de0ea9eb0e78fb269fa7da966cde2f95975f1              842 main/binary-amd64/Packages.gz
+ b6708afd39c5ca90d5074a990c632065fd122482569a3a1b3fe3cb77d587e4452d3d8eda032040303065f5385d33b2e135765de40bd45f5ea8c9bce6aae68cc7              247 Release
+ ea6810b38695fde1e81551b67d6bdffd0f0e3a234abd04a310b2f229bf9d6197d0dd76402c4eeca2e8a0b3a7c333d7df9f881dc697de6d32d181799f30c25e06             4087 main/binary-amd64/Packages
+ a3c9280c1611218a7330007033748b7e3cfdd5e1c3fb35ceb750fcd9d3590777637656920de112916abbb5441dec1d65998a4b95dc7c4a3afe52106f97c066dd              965 main/binary-amd64/Packages.gz
  9684191a1724902a34d3859bfe4bec69dd8a245a4643ac0a21ec9d95e98af693c3eaed500f21e051b4ba2e799be26bfeec254a9b2700f7c44b9cf5c9169fcb0e              116 main/binary-amd64/Release
