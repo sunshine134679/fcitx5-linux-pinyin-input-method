@@ -24,6 +24,8 @@ struct CommitEvent final {
     std::string contextBefore;          // 光标前上下文
     std::string contextAfter;           // 光标后上下文
     std::int64_t timestampMs = 0;       // 提交时间戳 (毫秒)
+    std::size_t candidateIndex = 0;     // 候选位次 (0 为首选/默认空格上屏，>=1 为次选手动挑选)
+    bool isDeviation = false;           // 是否为显式偏差/手动挑选/造词/留字
 
     bool operator==(const CommitEvent &) const = default;
 };

@@ -27,6 +27,8 @@ public:
                                 std::string_view fullPinyin);
     static int priority(std::string_view userInput,
                         std::string_view fullPinyin);
+    static bool isValidPinyinSequence(std::string_view text);
+    static bool isCoreChineseWord(std::string_view text, std::string_view pinyin);
 };
 
 } // namespace modernime::core

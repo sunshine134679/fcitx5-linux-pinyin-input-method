@@ -221,6 +221,36 @@
 
 ---
 
+### 13. 差量偏差自学习与回车拼音串防转英文保护 (Deviation-Only Learning & Raw Pinyin Protection)
+
+- **触发背景与根因定位**：
+  1. 用户在打字时偶发将未完成拼音串（如 `jianpan`）直接敲回车上屏。系统此前在 `CommitCandidateRole::Raw` 判定中直接转为英文记录，导致未在英文词典中的合法拼音全串被作为英文自学习词入库。随后输入其前缀 `jianp` 时，英文预测器召回了已入库的 `jianpan`，并篡夺第 1 候选位置，将正确的中文高频词「键盘」挤至第 3 位（截图 `media_1792073097557.png`）。
+  2. 传统输入法对用户日常默认敲空格直接上屏的首选高频核心词（如「是」、「这个」、「的」、「你」、「好」、「吗」等）进行无差别全局频次累加，导致个性化学习库中核心词频次无限膨胀并与词典语言模型先验冲突，极易引发次选词或脏词在特定前缀下的异常篡位。微信输入法采用差量自学习（Deviation-Only Learning）模式：无上下文语境下敲空格直接选中的 Rank 0 绝对高频核心词不记录无条件全局频次（频次保持为 0），保留语言模型先验的纯洁性；仅在发生次选翻页点选（Rank $\ge 1$）、组词成句反馈、退格删除提权或特定上下文连接时记录自学习。
+
+- **算法逻辑与核心防御**：
+  1. **拼音音节全串识别与回车裸串防误学英文 (`core/include/modernime/core/pinyin_match.h`, `core/src/pinyin_match.cpp`)**：
+     - 实现 `PinyinMatchPolicy::isValidPinyinSequence(text)`：基于递归贪心动态规划检验 ASCII 字符串是否完全由合法标准普通话拼音音节（如 `jian` + `pan`, `ni` + `hao` 等）拼合而成。
+     - 在 `LearningWriter::enqueueCommit` 与 `LearningStore::recordCommit` 中拦截：当上屏事件角色为 `Raw` 且输入完全为合法拼音音节串、且不在静态英文词典中时，**禁止**作为英文候选学习入库。
+  2. **英文召回双重隔离守护 (`core/src/learning_snapshot.cpp`)**：
+     - 在快照构建与 `recallEnglishWords` 中新增 `isRecallableEnglishWord` 过滤：非英文字符串若由纯拼音音节组成，绝不建立英文字典索引，确保即便历史遗留脏数据也无法在打字时被作为英文词预测召回。
+  3. **差量偏差自学习 (Deviation-Only Learning) (`core/src/learning_writer.cpp`, `core/src/learning_store.cpp`, `algorithm/pinyin/src/pinyin_candidate_provider.cpp`)**：
+     - `CommitEvent` 携带候选位次 `candidateIndex` 与偏差标记 `isDeviation`。
+     - 在 `PinyinCandidateProvider::select` 中，次选（`index > 0`）自动标记 `isDeviation = true`；组词成句、单字拆词（`extractCharacter`）、退格删除纠错（`finalizeRecentCommitDeletion`）均标记 `isDeviation = true`。
+     - 当选择默认 Rank 0 核心字词（如 `是/shi`, `这个/zhege`, `的/de`, `你/ni`, `好/hao`, `吗/ma`, `和/he`, `在/zai`, `有/you`, `了/le`, `不/bu`, `我/wo`, `不是/bushi`, `好的/haode`, `可以/keyi` 等），且处于无上下文、非偏差点选、非组词状态时，跳过无条件全局频次累加（保持先验 0 污染）；若用户在特定上下文中选择或次选点选，则正常记录其偏好。
+  4. **全量脏数据净化 (`cleanse_learning_store.py`)**：
+     - 彻底清除个人学习库中的回车拼音串英文脏记录（如 `jianpan`, `genxin`, `gengxin`, `shi`, `zi` 等），恢复纯净词条。
+
+- **打字体验变化**：
+  - 用户偶发将拼音敲回车上屏（如 `jianpan`），绝不会被当成英文单词学习，更不会在输入 `jianp` 时冒出 `jianpan` 抢占「键盘」首位；
+  - 核心高频词在日常敲空格上屏时不会无限堆叠频次，语言模型先验与个性化次选学习完美平衡，彻底告别核心高频词被莫名其妙的自造词/次选词挤下首位的现象。
+
+- **回归验证**：
+  - `modernime_english_arbitration_tests`：新增 `testRawPinyinCommitDoesNotPolluteEnglishPrediction`，验证连续回车上屏 `jianpan` 后输入 `jianp`，首选 100% 稳居「键盘」；
+  - `modernime_pinyin_daily_simulation_tests`：1,000 轮日常高频场景仿真测试（15,000 次输入与干扰评估）100% 通过，0 篡位；
+  - `modernime_personal_engine_gtest`：64/64 项单元测试全部通过。
+
+---
+
 ## 三、用户体验不可退化不变量矩阵 (The "Never-Break" Matrix)
 
 每一次算法变更，都**必须**在单元测试或端到端验证中确认以下“不可破坏行为”：
@@ -254,6 +284,7 @@
 | **25** | `gara` 在旧/新 LibIME 下 | 普通、学习后、跨前缀屏蔽 | 内部非法音节不误当完整精确拼音；英文完整身份、消费四字节 | 修复英文补全时破坏有效全拼或短码中文保护 | Provider 英文补全与 `EnglishArbitration` |
 | **26** | `shi`、`zhege`、`de` | 导入包含高频次选的外部词库 | 首选稳居「**是**」、「**这个**」、「**的**」 | 被畸形频次的「试」、「这歌」、「地」等篡夺首位 | `pinyin_daily_simulation_test` (Scene 9) |
 | **27** | 14 组高频词 1,000 轮连续输入 | 14,000 次候选评估 + 周期性偶选干扰 | 1,000 轮全周期零篡位（**100% 稳居首选**） | 出现任何单次偶选篡位或首选下沉 | `pinyin_daily_simulation_test` (Scene 9) |
+| **28** | 回车上屏拼音串（如 `jianpan`）后输入前缀 `jianp`；日常空格输入首选核心词 | 外部干扰 / 快速打字 | `jianp` 首选必须稳居「**键盘**」；核心词空格上屏不污染先验 | 拼音被误学为英文并篡位抢占；核心词被次选或自造词挤掉 | `modernime_english_arbitration_tests`、`modernime_pinyin_daily_simulation_tests` |
 
 
 

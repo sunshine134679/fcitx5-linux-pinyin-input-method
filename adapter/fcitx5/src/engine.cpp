@@ -284,6 +284,7 @@ void ModernIMEController::finalizeRecentCommitDeletion() {
         event.consumedInputBytes = recentCommit_.currentPinyin.size();
         event.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
+        event.isDeviation = true;
         const bool singleCharacter =
             recentCommit_.currentPinyin.find('\'') == std::string::npos;
         if (singleCharacter) {

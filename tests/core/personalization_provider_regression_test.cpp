@@ -123,6 +123,7 @@ TEST_F(PersonalizationProviderRegression, SuppressedNativeCandidateStaysHiddenAc
     explicitCommit.rawKeystrokes = "nihao";
     explicitCommit.role = CommitCandidateRole::Chinese;
     explicitCommit.timestampMs = 1700000000000LL;
+    explicitCommit.isDeviation = true;
     restarted.onCommitEvent(explicitCommit);
     ASSERT_TRUE(restarted.flush());
     restarted.reset();
@@ -144,6 +145,7 @@ TEST_F(PersonalizationProviderRegression, ExplicitSelectionInSharedContextRestor
     selection.rawKeystrokes = "nihao";
     selection.role = CommitCandidateRole::Chinese;
     selection.timestampMs = 1700000000000LL;
+    selection.isDeviation = true;
     second.onCommitEvent(selection);
     ASSERT_TRUE(second.flush());
     first.reset();

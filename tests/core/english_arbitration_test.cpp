@@ -312,6 +312,7 @@ void testChinesePersonalizationBeatsEnglishWord() {
     custom.rawKeystrokes = "panda";
     custom.role = modernime::core::CommitCandidateRole::Chinese;
     custom.timestampMs = now;
+    custom.isDeviation = true;
     for (int i = 0; i < 15; ++i) {
         provider.onCommitEvent(custom);
     }
@@ -330,6 +331,7 @@ void testChinesePersonalizationBeatsEnglishWord() {
     custom.text = "尚海";
     custom.fullPinyin = "shang'hai";
     custom.rawKeystrokes = "shanghai";
+    custom.isDeviation = true;
     for (int i = 0; i < 15; ++i) {
         provider.onCommitEvent(custom);
     }
@@ -343,6 +345,74 @@ void testChinesePersonalizationBeatsEnglishWord() {
                "learned Chinese '尚海' reaches rank 0");
 }
 
+void testRawPinyinCommitDoesNotPolluteEnglishPrediction() {
+    std::error_code error;
+    const auto learningPath = testPath("english-arbitration-raw-pinyin.sqlite3");
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+        // 1. 模拟用户打拼音 jianpan 并按回车上屏（Raw commit）2 次
+        for (int i = 0; i < 2; ++i) {
+            modernime::core::CommitEvent rawCommit;
+            rawCommit.text = "jianpan";
+            rawCommit.fullPinyin = "jianpan";
+            rawCommit.rawKeystrokes = "jianpan";
+            rawCommit.role = modernime::core::CommitCandidateRole::Raw;
+            rawCommit.isPartial = false;
+            rawCommit.consumedInputBytes = 7;
+            provider.onCommitEvent(rawCommit);
+        }
+        assertTrue(provider.flush(), "flush raw pinyin commit");
+
+        // 2. 验证学习库中没有将 jianpan 记录为英文单词
+        modernime::core::LearningStore store(learningPath);
+        assertTrue(store.open(), "learning store opens");
+        const auto snap = store.snapshot();
+        const auto recalled = snap->recallEnglishWords("jianp", 5, 0);
+        bool hasJianpan = false;
+        for (const auto &w : recalled) {
+            if (w.text == "jianpan") {
+                hasJianpan = true;
+                break;
+            }
+        }
+        assertTrue(!hasJianpan, "raw pinyin jianpan is NOT recalled as English word");
+
+        // 3. 用户输入 jianp：首选必须为中文“键盘”，绝不允许被 jianpan 挤占
+        provider.reset();
+        provider.resetCommitHistory();
+        assertTrue(provider.append("jianp"), "append jianp");
+        assertTrue(!provider.page().items.empty(), "jianp produces candidates");
+        assertTrue(provider.page().items.front().text == "键盘",
+                   "top candidate for jianp must be Chinese '键盘'");
+
+        // 4. 验证差量偏差自学习：直接敲空格选择 Rank 0 核心中文词（无上下文），频次保持为 0
+        provider.reset();
+        provider.resetCommitHistory();
+        assertTrue(provider.append("shi"), "append shi");
+        assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "是",
+                   "top candidate for shi is '是'");
+        assertTrue(provider.select(0), "select rank 0 candidate '是'");
+        provider.flush();
+
+        // 验证数据库中“是”频次依然为 0（未写入无条件冗余频次）
+        const auto snap2 = store.snapshot();
+        const auto shiEntry = snap2->entry("是", "shi", "", "");
+        assertTrue(shiEntry == nullptr, "unconditioned rank 0 selection of '是' has 0 frequency in learning store");
+    }
+    std::filesystem::remove(learningPath, error);
+}
+
 } // namespace
 
 int main() {
@@ -351,5 +421,6 @@ int main() {
     testChineseAbbreviationProtection();
     testDoubleLetterFaultTolerance();
     testChinesePersonalizationBeatsEnglishWord();
+    testRawPinyinCommitDoesNotPolluteEnglishPrediction();
     return EXIT_SUCCESS;
 }
