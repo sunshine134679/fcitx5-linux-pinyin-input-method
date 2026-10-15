@@ -21,6 +21,8 @@ struct MDB_env;
 
 namespace modernime::core {
 
+struct LearningEvent;
+
 // 词条元数据结构体（常驻内存 / LMDB 二进制零拷贝序列化存储）
 #pragma pack(push, 1)
 struct WordMeta {
@@ -110,6 +112,11 @@ public:
                      std::string_view context_after = {},
                      std::optional<int64_t> timestamp_ms = std::nullopt);
 
+    // Applies all events and reset checks in one LMDB transaction.
+    // Empty input repairs excess context variants left by older versions.
+    bool RecordLearningBatch(const std::vector<LearningEvent> &events,
+                             float initial_weight = 1.0f);
+
     bool RecordNegativeFeedback(std::string_view pinyin_key,
                                 std::string_view text);
     bool RecordSuppression(std::string_view pinyin_key,
@@ -156,6 +163,9 @@ public:
     size_t LmdbMapSize() const noexcept;
     bool FlushToLmdb();
     bool ReloadFromLmdb();
+    // Exports entries and their clear revision from the same read transaction.
+    bool ReadLearningState(std::vector<LearningEntry> &entries,
+                           int64_t &reset_revision) const;
     bool BackupLmdbTo(const std::filesystem::path &backup_path) const;
     bool Clear();
 
@@ -197,8 +207,7 @@ private:
                                std::string_view query_context,
                                std::string_view text) const noexcept;
 
-    bool PersistVariantToLmdb(std::string_view norm_key,
-                              const StoredVariant &variant);
+    void PruneContextVariants();
     bool EnsureMapCapacity(size_t required_extra_bytes = 0);
     bool RebuildCompactIndex(std::string_view norm_key);
 
@@ -226,6 +235,7 @@ private:
     unsigned int words_dbi_ = 0;
     unsigned int meta_dbi_ = 0;
     bool lmdb_read_only_ = false;
+    size_t last_lmdb_txn_id_ = 0;
     mutable std::mutex lmdb_mutex_;
 };
 

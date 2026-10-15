@@ -14,6 +14,7 @@ class PinyinDictionary;
 } // namespace libime
 
 namespace modernime::pinyin {
+class RecentChoices;
 
 struct CandidatePipelineResult final {
     std::vector<core::CandidateScore> scored;
@@ -28,6 +29,7 @@ CandidatePipelineResult buildCandidatePipeline(
     std::string_view contextBefore = {},
     std::string_view contextAfter = {},
     const std::vector<std::string> &previousOrder = {},
-    const libime::PinyinContext *typoContext = nullptr);
+    const libime::PinyinContext *typoContext = nullptr,
+    const RecentChoices *recentChoices = nullptr);
 
 } // namespace modernime::pinyin

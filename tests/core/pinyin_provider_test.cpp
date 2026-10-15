@@ -1473,11 +1473,8 @@ int main() {
                "reloaded learned input is accepted");
     const auto reloadedLearnedIndex = indexOf(reloadedLearnedProvider.page(),
                                               "你好");
-    assertTrue(reloadedLearnedIndex < reloadedLearnedProvider.page().items.size(),
-               "system candidate remains after learned suppression restart");
-    assertTrue(reloadedLearnedProvider.page().items[reloadedLearnedIndex].source ==
-                   modernime::core::CandidateSource::Engine,
-               "suppressed candidate is no longer classified as learned");
+    assertTrue(reloadedLearnedIndex == reloadedLearnedProvider.page().items.size(),
+               "learned suppression also hides the native candidate after restart");
     std::filesystem::remove(learnedPath, error);
     std::filesystem::remove(learnedPath.string() + "-wal", error);
     std::filesystem::remove(learnedPath.string() + "-shm", error);

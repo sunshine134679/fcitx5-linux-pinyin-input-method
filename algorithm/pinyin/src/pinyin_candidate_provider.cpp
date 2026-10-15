@@ -2,12 +2,15 @@
 
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/candidate_pipeline.h"
+#include "modernime/pinyin/candidate_prefixes.h"
+#include "modernime/pinyin/recent_choice.h"
 #include "modernime/pinyin/user_dictionary.h"
 
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/english_dictionary.h"
 #include "modernime/core/english_definition_dictionary.h"
 #include "modernime/core/learning_writer.h"
+#include "modernime/core/learning_store.h"
 #include "modernime/core/phrase_formation.h"
 #include "modernime/core/settings.h"
 
@@ -1196,6 +1199,31 @@ public:
     std::shared_ptr<core::PhraseFormationStats> phraseStats =
         std::make_shared<core::PhraseFormationStats>();
 
+    // Read-only fallback for providers created with learning disabled. Loaded
+    // during shared-resource initialization, not on each keystroke.
+    std::unique_ptr<core::LearningStore> visibilityReader;
+    std::shared_ptr<const core::LearningSnapshot> visibilitySnapshot;
+    std::int64_t visibilityRevision = 0;
+
+    bool reloadVisibility() {
+        if (visibilityReader == nullptr) {
+            visibilityReader = std::make_unique<core::LearningStore>(learningStorePath);
+            if (!visibilityReader->openReadOnly()) {
+                visibilityReader.reset();
+                return false;
+            }
+        }
+        const auto state = visibilityReader->readState();
+        if (!state) return false;
+        visibilitySnapshot = state->snapshot;
+        visibilityRevision = state->resetRevision;
+        return true;
+    }
+
+    std::shared_ptr<const core::LearningSnapshot> visibleLearning() const {
+        return learning != nullptr ? learning->snapshot() : visibilitySnapshot;
+    }
+
     core::LearningWriter *ensureLearningWriter() {
         if (learning == nullptr && !learningStorePath.empty()) {
             learning =
@@ -1228,7 +1256,7 @@ public:
         if (learning != nullptr) {
             return learning->reload();
         }
-        return false;
+        return reloadVisibility();
     }
 };
 
@@ -1292,6 +1320,8 @@ PinyinCandidateProvider::createSharedResources(
     // 避免首键触发数十毫秒的 SQLite 磁盘打开与全表反序列化。
     if (options.learningEnabled) {
         resources->ensureLearningWriter();
+    } else {
+        resources->reloadVisibility();
     }
     return resources;
 }
@@ -1321,7 +1351,15 @@ bool PinyinCandidateProvider::refreshLearningStore(
             }
             return true;
         }
+    }    if (resources != nullptr && resources->learning == nullptr &&
+        resources->visibilityReader != nullptr) {
+        const auto revision = resources->visibilityReader->resetRevision();
+        if (revision && *revision != resources->visibilityRevision && resources->reloadVisibility()) {
+            if (resources->phraseStats != nullptr) resources->phraseStats->clear();
+            return true;
+        }
     }
+
     return false;
 }
 
@@ -1390,6 +1428,11 @@ public:
     }
 
     void onCommitEvent(const core::CommitEvent &event) {
+        if (!learningEnabled_) {
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
+            return;
+        }
         if (event.role == core::CommitCandidateRole::Command) {
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
@@ -1402,10 +1445,14 @@ public:
         }
         if (auto *learning = learningWriter(); learning != nullptr) {
             learning->enqueueCommit(event);
+            // An explicit positive selection restores the same canonical identity
+            // in both the persistent snapshot and this context's immediate mask.
+            suppressedLearned_.erase(candidateKey(event.fullPinyin, event.text));
         }
     }
 
     void onNegativeFeedback(std::string_view phrase, std::string_view pinyin) {
+        recentChoices_.clear();
         if (auto *learning = learningWriter(); learning != nullptr) {
             learning->enqueueNegativeFeedback(phrase, pinyin);
         }
@@ -1446,6 +1493,11 @@ public:
         event.timestampMs = nowMilliseconds();
         if (candidate.source == core::CandidateSource::UserDictionary) {
             event.role = core::CommitCandidateRole::UserDictionary;
+        } else if (candidate.source == core::CandidateSource::Raw &&
+                   candidate.text != rawInput) {
+            // Completion consumes only the typed prefix, but learns the whole
+            // English word. Literal raw commits retain their original identity.
+            event.role = core::CommitCandidateRole::English;
         } else if (candidate.source == core::CandidateSource::Raw) {
             event.role = core::CommitCandidateRole::Raw;
         } else if (core::EnglishDictionary::isEnglishWord(candidate.text)) {
@@ -1454,7 +1506,9 @@ public:
             event.role = core::CommitCandidateRole::Chinese;
         }
 
-        if (partialSelection) {
+        if (!learningEnabled_) {
+            onCommitEvent(event);
+        } else if (partialSelection) {
             phraseTracker_.recordPartialSelection(
                 candidate.text, event.fullPinyin, rawInput, event.consumedInputBytes);
             onCommitEvent(event);
@@ -1503,6 +1557,10 @@ public:
             context->clear();
             refresh();
             return true;
+        }
+        if (learningEnabled_ && (event.role == core::CommitCandidateRole::Chinese ||
+                                 event.role == core::CommitCandidateRole::UserDictionary)) {
+            recentChoices_.record(rawInput, candidate.text, candidate.fullPinyin, partialSelection);
         }
         appendFallbackContext(candidate.text);
         if (partialSelection) {
@@ -1693,8 +1751,8 @@ public:
         if (candidate.source == core::CandidateSource::Learned ||
             candidate.source == core::CandidateSource::Engine) {
             // Engine 源候选来自系统词典，无法像用户词典那样物理删除；
-            // 插入会话级屏蔽集合，让 refresh() 把它过滤出候选列表，
-            // 否则用户按删词后系统词典词原地复活，删词形同虚设。
+            // 记录本地兜底屏蔽，并在下方写入共享持久化快照；refresh()
+            // 以快照为准，令其他输入上下文和重启后也一致隐藏此词。
             suppressedLearned_.insert(
                 candidateKey(candidate.fullPinyin, candidate.text));
         }
@@ -1707,7 +1765,7 @@ public:
     }
 
     void appendFallbackContext(std::string_view text) {
-        if (text.empty() || !contextLearningEnabled_) {
+        if (text.empty() || !contextLearningEnabled_ || !learningEnabled_) {
             return;
         }
         fallbackContextBefore_.append(text);
@@ -1746,6 +1804,7 @@ public:
     }
 
     void resetCommitHistory() {
+        recentChoices_.clear();
         phraseTracker_.resetCommitHistory();
         fallbackContextBefore_.clear();
         contextBefore_.clear();
@@ -1753,7 +1812,7 @@ public:
     }
 
     void setContext(std::string_view before, std::string_view after) {
-        if (!contextLearningEnabled_) {
+        if (!contextLearningEnabled_ || !learningEnabled_) {
             contextBefore_.clear();
             contextAfter_.clear();
             fallbackContextBefore_.clear();
@@ -1764,7 +1823,19 @@ public:
         fallbackContextBefore_ = before;
     }
 
-    void setLearningEnabled(bool enabled) { learningEnabled_ = enabled; }
+    void setLearningEnabled(bool enabled) {
+        learningEnabled_ = enabled;
+        if (!enabled) {
+            recentChoices_.clear();
+            // Shared normal-mode counts survive; only this context's unfinished
+            // sequences and surrounding text are discarded at the boundary.
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
+            fallbackContextBefore_.clear();
+            contextBefore_.clear();
+            contextAfter_.clear();
+        }
+    }
 
     void setContextLearningEnabled(bool enabled) {
         contextLearningEnabled_ = enabled;
@@ -1836,10 +1907,19 @@ private:
             return;
         }
 
-        const auto learning = [&] {
-            auto *writer = learningWriter();
-            return writer != nullptr ? writer->snapshot() : nullptr;
-        }();
+        // Suppression is a visibility contract, independent of permission to
+        // learn. Disabled/sensitive sessions may read tombstones, never enqueue
+        // selections or use personal scoring features through this snapshot.
+        const auto visibility = shared_->visibleLearning();
+        const auto learning = learningEnabled_ ? visibility : nullptr;
+        const auto isSuppressed = [&](std::string_view text,
+                                      std::string_view pinyin) {
+            // A shared positive selection or external clear can remove a
+            // tombstone. Prefer the live snapshot over a stale context mask.
+            return visibility != nullptr
+                       ? visibility->isSuppressed(text, pinyin)
+                       : suppressedLearned_.contains(candidateKey(pinyin, text));
+        };
         std::unique_ptr<libime::PinyinContext> typoContext;
         const auto correctedInput = correctTypoInput(rawInput);
         if (correctedInput != rawInput) {
@@ -1851,9 +1931,10 @@ private:
                 typoContext.reset();
             }
         }
+        const auto requestNowMs = nowMilliseconds();
         const auto result = buildCandidatePipeline(
-            *context, *ime().dict(), learning.get(), nowMilliseconds(),
-            contextBefore_, contextAfter_, previousOrder, typoContext.get());
+            *context, *ime().dict(), learning.get(), requestNowMs,
+            contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_);
         const auto segmentedInput =
             automaticallySegmentedPreedit(rawInput, result);
         const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);
@@ -1889,7 +1970,7 @@ private:
             const bool isManual = userDictionary().contains(
                 candidate.full_pinyin, candidate.text);
             auto key = candidateKey(candidate.full_pinyin, candidate.text);
-            if (!isManual && suppressedLearned_.contains(key)) {
+            if (isSuppressed(candidate.text, candidate.full_pinyin)) {
                 continue;
             }
             const bool isLearned = !isManual && learning != nullptr &&
@@ -1906,6 +1987,7 @@ private:
             item.fullPinyin = candidate.full_pinyin;
             item.sourceIndex = candidate.source_index;
             item.learningBoost = candidate.learning_boost;
+            item.recentChoiceBonus = candidate.recent_choice_bonus;
             item.isLexical = candidate.is_lexical || candidate.dictionary_bonus > 0.0;
             item.source = isManual
                               ? core::CandidateSource::UserDictionary
@@ -1936,8 +2018,13 @@ private:
         interleaveHigherNativeRankFuzzyCandidate(rawInput, fullItems);
         const auto *bestFullSentence =
             fullItems.empty() ? nullptr : &fullItems.front();
+        const auto prefixEvidence = bestFullSentence != nullptr
+            ? buildPrefixEvidence(*bestFullSentence, prefixEnds, rawInput,
+                                  partialPool, learning.get(), requestNowMs, &recentChoices_)
+            : std::vector<core::CandidateItem>{};
         page_.items = mixCandidateItems(fullItems, partialPool,
-                                        bestFullSentence, prefixEnds, rawInput);
+                                        bestFullSentence, prefixEnds, rawInput,
+                                        &prefixEvidence);
 
         const auto macroCandidates =
             generateMacroCandidates(rawInput, canonicalInput);
@@ -2054,8 +2141,7 @@ private:
         if (canPredictEnglish && learning != nullptr) {
             const auto learned = learning->recallEnglishWords(rawInput, 3, nowMilliseconds());
             for (const auto &item : learned) {
-                if (!suppressedLearned_.contains(candidateKey(item.text, item.text)) &&
-                    !learning->isSuppressed(item.text, item.text)) {
+                if (!isSuppressed(item.text, item.text)) {
                     predictedWords.push_back(item.text);
                 }
             }
@@ -2063,15 +2149,14 @@ private:
         if (shouldPredictEnglish) {
             const auto staticWords = core::EnglishDictionary::predictWords(rawInput, 3);
             for (const auto &w : staticWords) {
-                if (std::find(predictedWords.begin(), predictedWords.end(), w) == predictedWords.end()) {
+                if (!isSuppressed(w, w) &&
+                    std::find(predictedWords.begin(), predictedWords.end(), w) == predictedWords.end()) {
                     predictedWords.emplace_back(w);
                 }
             }
         }
 
-        const bool isEnglishSuppressed =
-            suppressedLearned_.contains(candidateKey(rawInput, rawInput)) ||
-            (learning != nullptr && learning->isSuppressed(rawInput, rawInput));
+        const bool isEnglishSuppressed = isSuppressed(rawInput, rawInput);
 
         bool preferEnglishOverChinese = false;
         if (page_.items.empty()) {
@@ -2144,7 +2229,7 @@ private:
             if (!predictedWords.empty()) {
                 core::CandidateItem predictedCandidate;
                 predictedCandidate.text = std::string(predictedWords.front());
-                predictedCandidate.fullPinyin = std::string(rawInput);
+                predictedCandidate.fullPinyin = predictedCandidate.text;
                 predictedCandidate.source = core::CandidateSource::Raw;
                 predictedCandidate.consumedInputBytes = rawInput.size();
 
@@ -2158,7 +2243,7 @@ private:
             if (!predictedWords.empty()) {
                 core::CandidateItem predictedCandidate;
                 predictedCandidate.text = std::string(predictedWords.front());
-                predictedCandidate.fullPinyin = std::string(rawInput);
+                predictedCandidate.fullPinyin = predictedCandidate.text;
                 predictedCandidate.source = core::CandidateSource::Raw;
                 predictedCandidate.consumedInputBytes = rawInput.size();
 
@@ -2185,6 +2270,16 @@ private:
             }
             page_.preedit = segmentedInput;
         }
+
+        // Cover generated macros, raw/English candidates and future sources as
+        // well as the native pipeline. Commands are actions, not learned words.
+        page_.items.erase(
+            std::remove_if(page_.items.begin(), page_.items.end(),
+                           [&](const auto &item) {
+                               return item.source != core::CandidateSource::Command &&
+                                      isSuppressed(item.text, item.fullPinyin);
+                           }),
+            page_.items.end());
 
         if (englishDefinitionEnabled_ && !page_.items.empty() && shared_) {
             auto &top = page_.items.front();
@@ -2218,6 +2313,7 @@ private:
 
     std::shared_ptr<SharedResources> shared_;
     core::PhraseFormationTracker phraseTracker_;
+    RecentChoices recentChoices_;
     std::unique_ptr<libime::PinyinContext> context;
     bool contextLearningEnabled_ = true;
     bool learningEnabled_ = true;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -41,6 +42,8 @@ struct RecalledEnglishWord final {
 };
 
 std::string normalizePinyin(std::string_view pinyin);
+
+class LearningSnapshotShard;
 
 class LearningSnapshot final {
 public:
@@ -92,24 +95,17 @@ public:
                            std::string_view pinyin);
 
 private:
-    std::vector<const LearningEntry *> collectVariants(
-        std::string_view phrase, std::string_view normalizedPinyin) const;
-    void consolidate();
-    static void pruneContextVariants(std::vector<LearningEntry> &entries);
-    static void pruneTotalEntries(std::vector<LearningEntry> &entries, std::size_t limit);
-    struct RecallIndex;
-    struct RecallIndexCache;
-    static std::shared_ptr<const RecallIndex> buildRecallIndex(const std::vector<LearningEntry> &entries);
-    const RecallIndex &ensureRecallIndex() const;
-    std::shared_ptr<const std::vector<LearningEntry>> baseEntries_;
-    std::shared_ptr<const std::unordered_map<std::string, std::vector<std::size_t>>> baseIndex_;
-    std::shared_ptr<RecallIndexCache> baseRecallIndex_;
-    std::unordered_map<std::string, LearningEntry> delta_;
-    std::unordered_map<std::string, std::vector<std::string>> deltaIndex_;
+    // Bound local index reconstruction at the unchanged 200k capacity.
+    // 512 shards halve mutation/eviction work; recall still merges globally.
+    static constexpr std::size_t kShardCount = 512;
+    std::size_t shardFor(std::string_view phrase) const;
+    LearningSnapshotShard &mutableShard(std::string_view phrase);
+    void finishMutation(std::size_t previousCount, std::string_view phrase);
+    std::array<std::shared_ptr<LearningSnapshotShard>, kShardCount> shards_{};
     std::size_t totalEntryLimit_ = kMaxLearningEntries;
-    std::uint32_t selectionsSincePrune_ = 0;
-    mutable std::vector<LearningEntry> materializedEntries_;
-    mutable bool materializedDirty_ = true;
+    std::size_t entryCount_ = 0;
+    struct EntriesCache;
+    std::shared_ptr<EntriesCache> entriesCache_;
 };
 
 } // namespace modernime::core

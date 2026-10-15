@@ -517,6 +517,11 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     if(GTEST_INCLUDE_DIR AND GTEST_LIBRARY AND GTEST_MAIN_LIBRARY)
         add_executable(modernime_personal_engine_gtest
             core/personal_engine_gtest.cpp
+            core/personalization_snapshot_regression_test.cpp
+            core/personalization_storage_regression_test.cpp
+            core/personalization_provider_regression_test.cpp
+            core/personalization_controller_regression_test.cpp
+            core/candidate_ranking_regression_test.cpp
             ../adapter/fcitx5/src/engine.cpp
         )
         target_include_directories(modernime_personal_engine_gtest PRIVATE
@@ -567,7 +572,7 @@ if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
         INSTALL_RPATH "${BENCHMARK_LIB_DIR}"
     )
     add_test(NAME modernime_personal_engine_benchmark
-        COMMAND modernime_personal_engine_benchmark --benchmark_min_time=0.02s
+        COMMAND modernime_personal_engine_benchmark --benchmark_min_time=0.02
     )
     # Wall-clock P99 is a release gate; competing build/install tests can
     # preempt the measured thread and turn scheduling delay into a regression.

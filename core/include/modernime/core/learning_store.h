@@ -15,6 +15,12 @@ struct sqlite3;
 
 namespace modernime::core {
 
+namespace detail {
+// Returns the lowercase ASCII word only for an explicit full-word selection.
+std::string canonicalEnglishSelectionWord(std::string_view phrase,
+                                          std::string_view pinyin);
+} // namespace detail
+
 struct LearningEvent final {
     enum class Kind { Selection, NegativeFeedback, Suppression };
 

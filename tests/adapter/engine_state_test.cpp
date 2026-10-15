@@ -857,12 +857,14 @@ int main() {
     RecordingHost unavailableContextHost;
     modernime::fcitx5::ModernIMEController unavailableContextController(
         unavailableContextHost);
-    unavailableContextController.setContext("", "");
+    unavailableContextController.setContext(
+        "", "", modernime::fcitx5::ContextAvailability::Unavailable);
     assertTrue(unavailableContextController.handle(
                    {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
                    unavailableContextHost.commits.back() == "“",
                "quote opens when surrounding text is unavailable");
-    unavailableContextController.setContext("", "");
+    unavailableContextController.setContext(
+        "", "", modernime::fcitx5::ContextAvailability::Unavailable);
     assertTrue(unavailableContextController.handle(
                    {modernime::fcitx5::KeyKind::Punctuation, '"', 0}) &&
                    unavailableContextHost.commits.back() == "”",
@@ -919,6 +921,9 @@ int main() {
 
     // 2. 模拟用户按 Backspace 删除了末字“好”，周边文本变为“前文你”
     deletionController.setContext("前文你", "");
+    assertTrue(deletionProvider.negativeFeedbacks.empty(), "single-character feedback waits for the next input");
+    assertTrue(deletionProvider.commitEvents.empty(), "tentative retained character has not been learned");
+    type(deletionController, "n");
     assertTrue(!deletionProvider.negativeFeedbacks.empty(), "negative feedback triggered for original word");
     assertTrue(deletionProvider.negativeFeedbacks.back().first == "你好", "negative feedback on 你好");
     assertTrue(deletionProvider.negativeFeedbacks.back().second == "ni'hao", "negative feedback on ni'hao");

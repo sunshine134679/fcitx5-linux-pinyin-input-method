@@ -46,4 +46,7 @@
   1. **更新前必读**：**必须先完整查阅 [`docs/ALGORITHM_EVOLUTION.md`](file:///home/wsl/ModernIME/docs/ALGORITHM_EVOLUTION.md)** 中的「算法更新前必读核对清单」与「体验不可退化不变量矩阵」；
   2. **防特性覆盖**：严禁任何以“优化某单项指标”为由破坏、覆盖或削弱既有算法特性的行为（例如严禁降低 200,000 词库容量上限、严禁让生僻英文抢占高频中文、严禁破坏艾宾浩斯时间遗忘衰减等）；
   3. **更新后必记**：新算法开发并通过 CTest、GTest 和 Benchmark 验证后，**必须在 `docs/ALGORITHM_EVOLUTION.md` 中追加记录**本次新增特性的算法逻辑、实现的具体代码文件、以及给用户实际打字体验带来的变化。
+  4. **架构与契约**：修改前同时查阅 [`docs/ALGORITHM_ARCHITECTURE.md`](docs/ALGORITHM_ARCHITECTURE.md) 的特性契约、参数用途及交互表，按 [`docs/ALGORITHM_CHANGE_GUIDE.md`](docs/ALGORITHM_CHANGE_GUIDE.md) 记录涉及的契约 ID、状态权限、依赖、预期差异与验证证据。新候选来源不得绕过已有隐私、学习资格、持久屏蔽、用户清空和消费范围边界；不同用途的衰减参数不得因重构而盲目统一。
+  5. **增删与验收**：新增特性登记稳定 ID；停用或删除时检查依赖、保留退役 ID 与历史记录，禁止把删除算法等同于静默删除用户数据。无意图行为变化的场景保留原测试断言；验收时确认 GTest、Benchmark 等必需测试实际注册，未注册或跳过不能记为通过。架构文档中的待迁移设计和拟建 CI 能力不得描述成已经实现。
+  6. **候选链路**：涉及候选召回、排序、混排、前缀派生、分页、绘制或选择映射时，查阅 [`docs/CANDIDATE_PIPELINE_ARCHITECTURE.md`](docs/CANDIDATE_PIPELINE_ARCHITECTURE.md) 的阶段职责和子契约。新来源不得自行插入固定高位；派生项不得用父词证据覆盖自身学习；学习验收必须包含重复选择后的最终全局位置、物理页面和消费范围，不能仅以词频或评分增加作为有效提权的证明。文档中的新晋升目标需经实现与验证后才能宣称达成。
 

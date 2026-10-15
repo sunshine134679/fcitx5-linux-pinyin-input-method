@@ -44,6 +44,27 @@ bool shouldUseLmdb(const std::filesystem::path &path) {
 
 } // namespace
 
+std::string detail::canonicalEnglishSelectionWord(std::string_view phrase,
+                                                  std::string_view pinyin) {
+    if (phrase.empty() || phrase.size() > 64) {
+        return {};
+    }
+    std::string lower;
+    lower.reserve(phrase.size());
+    bool has_alpha = false;
+    for (const unsigned char c : phrase) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+            has_alpha = true;
+            lower.push_back(static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c));
+        } else if (c == '_' || c == '-') {
+            lower.push_back(static_cast<char>(c));
+        } else {
+            return {};
+        }
+    }
+    return has_alpha && normalizePinyin(pinyin) == lower ? lower : std::string{};
+}
+
 LearningStore::LearningStore(std::filesystem::path path)
     : path_(std::move(path)),
       useLmdb_(shouldUseLmdb(path_)) {}
@@ -284,16 +305,28 @@ bool LearningStore::applySelection(
         return false;
     }
     const auto normalized = normalizePinyin(pinyin);
-    constexpr const char *clearSuppressionSql =
-        "UPDATE learning_entries SET suppressed = 0 "
-        "WHERE pinyin = ? AND phrase = ?;";
+    std::vector<std::string> clearKeys{normalized};
+    const auto englishWord = detail::canonicalEnglishSelectionWord(phrase, pinyin);
+    for (size_t length = 1; length < englishWord.size(); ++length) {
+        clearKeys.push_back(englishWord.substr(0, length));
+    }
+    // Exact prefix keys use the existing (pinyin, phrase) index. No full-table
+    // scan, migration, or frequency increment is needed to clear old aliases.
+    std::string clearSuppressionSql =
+        "UPDATE learning_entries SET suppressed = 0 WHERE phrase = ? AND pinyin IN (";
+    for (size_t i = 0; i < clearKeys.size(); ++i) {
+        clearSuppressionSql += i == 0 ? "?" : ",?";
+    }
+    clearSuppressionSql += ");";
     sqlite3_stmt *clearStatement = nullptr;
-    if (sqlite3_prepare_v2(db_, clearSuppressionSql, -1, &clearStatement,
+    if (sqlite3_prepare_v2(db_, clearSuppressionSql.c_str(), -1, &clearStatement,
                            nullptr) != SQLITE_OK) {
         return false;
     }
-    const bool clearBound = bindText(clearStatement, 1, normalized) &&
-                            bindText(clearStatement, 2, phrase);
+    bool clearBound = bindText(clearStatement, 1, phrase);
+    for (size_t i = 0; i < clearKeys.size() && clearBound; ++i) {
+        clearBound = bindText(clearStatement, static_cast<int>(i + 2), clearKeys[i]);
+    }
     const bool clearSuccess = clearBound &&
                               sqlite3_step(clearStatement) == SQLITE_DONE;
     sqlite3_finalize(clearStatement);
@@ -475,36 +508,7 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
         if (events.empty()) {
             return true;
         }
-        if (!lmdbEngine_->ReloadFromLmdb()) {
-            return false;
-        }
-        const auto currentRevision = lmdbEngine_->ResetRevision();
-        for (const auto &event : events) {
-            if (event.resetRevision.has_value() &&
-                *event.resetRevision != currentRevision) {
-                continue;
-            }
-            bool ok = false;
-            switch (event.kind) {
-            case LearningEvent::Kind::Selection:
-                ok = lmdbEngine_->RecordUsage(event.pinyin, event.phrase, 1.0f,
-                                              event.contextBefore,
-                                              event.contextAfter, event.nowMs);
-                break;
-            case LearningEvent::Kind::NegativeFeedback:
-                ok = lmdbEngine_->RecordNegativeFeedback(event.pinyin,
-                                                         event.phrase);
-                break;
-            case LearningEvent::Kind::Suppression:
-                ok = lmdbEngine_->RecordSuppression(event.pinyin, event.phrase);
-                break;
-            }
-            if (!ok) {
-                lmdbEngine_->ReloadFromLmdb();
-                return false;
-            }
-        }
-        return true;
+        return lmdbEngine_->RecordLearningBatch(events);
     }
 
     if (db_ == nullptr) {
@@ -612,12 +616,14 @@ std::optional<LearningStoreState> LearningStore::readState() const {
         if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
             return std::nullopt;
         }
-        if (!const_cast<PersonalEngine *>(lmdbEngine_.get())->ReloadFromLmdb()) {
+        std::vector<LearningEntry> entries;
+        int64_t revision = 0;
+        if (!lmdbEngine_->ReadLearningState(entries, revision)) {
             return std::nullopt;
         }
         return LearningStoreState{
-            lmdbEngine_->ToLearningSnapshot(totalEntryLimit_),
-            lmdbEngine_->ResetRevision()};
+            std::make_shared<const LearningSnapshot>(std::move(entries), totalEntryLimit_),
+            revision};
     }
 
     if (!execute("BEGIN;")) {
@@ -638,8 +644,8 @@ std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
         if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
             return std::make_shared<const LearningSnapshot>();
         }
-        const_cast<PersonalEngine *>(lmdbEngine_.get())->ReloadFromLmdb();
-        return lmdbEngine_->ToLearningSnapshot(totalEntryLimit_);
+        const auto state = readState();
+        return state ? state->snapshot : nullptr;
     }
 
     std::vector<LearningEntry> entries;

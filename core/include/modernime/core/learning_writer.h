@@ -88,6 +88,7 @@ private:
     // snapshots handed out by snapshot() stay immutable even if a future
     // caller reads them from another thread.
     std::shared_ptr<const LearningSnapshot> snapshot_;
+    std::uint64_t snapshotVersion_ = 0;
     bool stopping_ = false;
     bool processing_ = false;
     // A failed batch stays queued. flush() explicitly starts the next bounded

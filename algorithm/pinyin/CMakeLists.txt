@@ -3,6 +3,9 @@ find_package(LibIMEPinyin REQUIRED)
 
 add_library(modernime_pinyin STATIC
     src/candidate_mixer.cpp
+    src/candidate_prefixes.cpp
+    src/recent_choice.cpp
+    src/candidate_features.cpp
     src/candidate_pipeline.cpp
     src/pinyin_candidate_provider.cpp
     src/user_dictionary.cpp

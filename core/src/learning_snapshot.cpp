@@ -8,6 +8,7 @@
 #include <limits>
 #include <mutex>
 #include <numeric>
+#include <queue>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -165,25 +166,106 @@ std::string toLowerAscii(std::string_view text) {
     return result;
 }
 
-struct LearningSnapshot::RecallIndex final {
+class LearningSnapshotShard final {
+    friend class LearningSnapshot;
+public:
+    LearningSnapshotShard();
+    explicit LearningSnapshotShard(
+        std::vector<LearningEntry> entries,
+        std::size_t totalEntryLimit = kMaxLearningEntries);
+    LearningSnapshotShard(const LearningSnapshotShard &other);
+    LearningSnapshotShard &operator=(const LearningSnapshotShard &other);
+    LearningSnapshotShard(LearningSnapshotShard &&other) noexcept = default;
+    LearningSnapshotShard &operator=(LearningSnapshotShard &&other) noexcept = default;
+    ~LearningSnapshotShard() = default;
+
+    const LearningEntry *entry(std::string_view phrase,
+                               std::string_view pinyin,
+                               std::string_view contextBefore,
+                               std::string_view contextAfter) const;
+    // Frequency aggregated across every context variant of (phrase, pinyin).
+    bool hasPositiveFrequency(std::string_view phrase,
+                              std::string_view pinyin) const;
+    double boostAt(std::string_view phrase, std::string_view pinyin,
+                   std::int64_t nowMs) const;
+    std::int64_t lastSelectedMs(std::string_view phrase,
+                                std::string_view pinyin) const;
+    bool isSuppressed(std::string_view phrase,
+                      std::string_view pinyin) const;
+    double contextBoost(std::string_view phrase, std::string_view pinyin,
+                        std::string_view contextBefore,
+                        std::string_view contextAfter,
+                        std::int64_t nowMs = 0) const;
+
+    std::vector<RecalledEnglishWord> recallEnglishWords(
+        std::string_view prefix, std::size_t limit = 5,
+        std::int64_t nowMs = 0) const;
+
+    const std::vector<LearningEntry> &entries() const;
+    const LearningEntry *weakestEntry() const;
+
+    void recordSelection(std::string_view phrase, std::string_view pinyin,
+                         std::string_view contextBefore,
+                         std::string_view contextAfter, std::int64_t nowMs);
+    void recordNegativeFeedback(std::string_view phrase,
+                                std::string_view pinyin);
+    void recordSuppression(std::string_view phrase,
+                           std::string_view pinyin);
+
+private:
+    std::vector<const LearningEntry *> collectVariants(
+        std::string_view phrase, std::string_view normalizedPinyin) const;
+    std::vector<const LearningEntry *> collectExactVariants(
+        std::string_view phrase, std::string_view normalizedPinyin) const;
+    void consolidate();
+    static void pruneContextVariants(std::vector<LearningEntry> &entries);
+    static void pruneTotalEntries(std::vector<LearningEntry> &entries, std::size_t limit);
+    struct RecallIndex;
+    struct RecallIndexCache;
+    static std::shared_ptr<const RecallIndex> buildRecallIndex(const std::vector<LearningEntry> &entries);
+    const RecallIndex &ensureRecallIndex() const;
+    std::shared_ptr<const std::vector<LearningEntry>> baseEntries_;
+    std::shared_ptr<const std::unordered_map<std::string, std::vector<std::size_t>>> baseIndex_;
+    std::shared_ptr<RecallIndexCache> baseRecallIndex_;
+    std::unordered_map<std::string, LearningEntry> delta_;
+    std::unordered_map<std::string, std::vector<std::string>> deltaIndex_;
+    std::size_t totalEntryLimit_ = kMaxLearningEntries;
+    std::uint32_t selectionsSincePrune_ = 0;
+    mutable std::vector<LearningEntry> materializedEntries_;
+    mutable bool materializedDirty_ = true;
+    mutable std::size_t weakestIndex_ = 0;
+    mutable bool weakestDirty_ = true;
+};
+
+
+struct LearningSnapshotShard::RecallIndex final {
     std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> canonicalIndex;
     std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> abbrIndex;
     std::vector<std::tuple<std::string, std::string, std::string>> prefixIndex;
+    std::vector<std::string> abbreviationKeys;
     std::vector<std::pair<std::string, std::string>> englishIndex;
+    std::unordered_map<std::string, std::vector<std::string>> englishKeys;
 };
 
-struct LearningSnapshot::RecallIndexCache final {
+struct LearningSnapshotShard::RecallIndexCache final {
     std::once_flag initialized;
     std::shared_ptr<const RecallIndex> index;
 };
 
-std::shared_ptr<const LearningSnapshot::RecallIndex>
-LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
-    auto index = std::make_shared<LearningSnapshot::RecallIndex>();
+std::shared_ptr<const LearningSnapshotShard::RecallIndex>
+LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entries) {
+    auto index = std::make_shared<LearningSnapshotShard::RecallIndex>();
     std::unordered_set<std::string> seen;
     std::unordered_set<std::string> seenEnglish;
     seen.reserve(entries.size());
     for (const auto &entry : entries) {
+        if (isAsciiWord(entry.phrase)) {
+            const auto key = normalizePinyin(entry.pinyin);
+            if (!key.empty() && toLowerAscii(entry.phrase).starts_with(key)) {
+                auto &keys = index->englishKeys[entry.phrase];
+                if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
+            }
+        }
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
         }
@@ -214,9 +296,11 @@ LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
             }
         }
     }
+    for (const auto &[key, candidates] : index->abbrIndex) index->abbreviationKeys.push_back(key);
+    std::sort(index->abbreviationKeys.begin(), index->abbreviationKeys.end());
     std::sort(index->prefixIndex.begin(), index->prefixIndex.end(),
               [](const auto &a, const auto &b) {
-                  return std::get<0>(a) < std::get<0>(b);
+                  return a < b;
               });
     std::sort(index->englishIndex.begin(), index->englishIndex.end(),
               [](const auto &a, const auto &b) {
@@ -225,21 +309,21 @@ LearningSnapshot::buildRecallIndex(const std::vector<LearningEntry> &entries) {
     return index;
 }
 
-const LearningSnapshot::RecallIndex &LearningSnapshot::ensureRecallIndex() const {
+const LearningSnapshotShard::RecallIndex &LearningSnapshotShard::ensureRecallIndex() const {
     std::call_once(baseRecallIndex_->initialized, [this] {
         baseRecallIndex_->index = buildRecallIndex(*baseEntries_);
     });
     return *baseRecallIndex_->index;
 }
 
-LearningSnapshot::LearningSnapshot()
+LearningSnapshotShard::LearningSnapshotShard()
     : baseEntries_(std::make_shared<const std::vector<LearningEntry>>()),
       baseIndex_(std::make_shared<const std::unordered_map<std::string, std::vector<std::size_t>>>()),
       baseRecallIndex_(std::make_shared<RecallIndexCache>()) {
     ensureRecallIndex();
 }
 
-LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
+LearningSnapshotShard::LearningSnapshotShard(std::vector<LearningEntry> entries,
                                    std::size_t totalEntryLimit)
     : totalEntryLimit_(totalEntryLimit == 0 ? kMaxLearningEntries : totalEntryLimit) {
     pruneContextVariants(entries);
@@ -258,7 +342,7 @@ LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
     ensureRecallIndex();
 }
 
-LearningSnapshot::LearningSnapshot(const LearningSnapshot &other)
+LearningSnapshotShard::LearningSnapshotShard(const LearningSnapshotShard &other)
     : baseEntries_(other.baseEntries_),
       baseIndex_(other.baseIndex_),
       baseRecallIndex_(other.baseRecallIndex_),
@@ -268,7 +352,7 @@ LearningSnapshot::LearningSnapshot(const LearningSnapshot &other)
       selectionsSincePrune_(other.selectionsSincePrune_),
       materializedDirty_(true) {}
 
-LearningSnapshot &LearningSnapshot::operator=(const LearningSnapshot &other) {
+LearningSnapshotShard &LearningSnapshotShard::operator=(const LearningSnapshotShard &other) {
     if (this != &other) {
         baseEntries_ = other.baseEntries_;
         baseIndex_ = other.baseIndex_;
@@ -278,11 +362,12 @@ LearningSnapshot &LearningSnapshot::operator=(const LearningSnapshot &other) {
         totalEntryLimit_ = other.totalEntryLimit_;
         selectionsSincePrune_ = other.selectionsSincePrune_;
         materializedDirty_ = true;
+        weakestDirty_ = true;
     }
     return *this;
 }
 
-std::vector<const LearningEntry *> LearningSnapshot::collectVariants(
+std::vector<const LearningEntry *> LearningSnapshotShard::collectExactVariants(
     std::string_view phrase, std::string_view normalizedPinyin) const {
     std::vector<const LearningEntry *> result;
     const auto cKey = candidateKey(phrase, normalizedPinyin);
@@ -321,11 +406,32 @@ std::vector<const LearningEntry *> LearningSnapshot::collectVariants(
     return result;
 }
 
-const LearningEntry *LearningSnapshot::entry(
+std::vector<const LearningEntry *> LearningSnapshotShard::collectVariants(
+    std::string_view phrase, std::string_view normalizedPinyin) const {
+    if (!isAsciiWord(phrase) || normalizedPinyin != toLowerAscii(phrase)) {
+        return collectExactVariants(phrase, normalizedPinyin);
+    }
+    std::unordered_set<std::string> keys{std::string(normalizedPinyin)};
+    const auto &index = ensureRecallIndex();
+    const auto found = index.englishKeys.find(std::string(phrase));
+    if (found != index.englishKeys.end()) keys.insert(found->second.begin(), found->second.end());
+    for (const auto &[key, item] : delta_) {
+        const auto py = normalizePinyin(item.pinyin);
+        if (item.phrase == phrase && !py.empty() && toLowerAscii(phrase).starts_with(py)) keys.insert(py);
+    }
+    std::vector<const LearningEntry *> result;
+    for (const auto &key : keys) {
+        auto variants = collectExactVariants(phrase, key);
+        result.insert(result.end(), variants.begin(), variants.end());
+    }
+    return result;
+}
+
+const LearningEntry *LearningSnapshotShard::entry(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter) const {
     const auto normalized = normalizePinyin(pinyin);
-    const auto variants = collectVariants(phrase, normalized);
+    const auto variants = collectExactVariants(phrase, normalized);
     const LearningEntry *base = nullptr;
     for (const auto *cand : variants) {
         if (cand->contextBefore == contextBefore &&
@@ -339,7 +445,7 @@ const LearningEntry *LearningSnapshot::entry(
     return base;
 }
 
-bool LearningSnapshot::isSuppressed(std::string_view phrase,
+bool LearningSnapshotShard::isSuppressed(std::string_view phrase,
                                     std::string_view pinyin) const {
     const auto normalized = normalizePinyin(pinyin);
     const auto variants = collectVariants(phrase, normalized);
@@ -351,7 +457,7 @@ bool LearningSnapshot::isSuppressed(std::string_view phrase,
     return false;
 }
 
-bool LearningSnapshot::hasPositiveFrequency(std::string_view phrase,
+bool LearningSnapshotShard::hasPositiveFrequency(std::string_view phrase,
                                             std::string_view pinyin) const {
     const auto normalized = normalizePinyin(pinyin);
     const auto variants = collectVariants(phrase, normalized);
@@ -378,7 +484,7 @@ std::size_t countUtf8Characters(std::string_view value) {
     return count;
 }
 
-double LearningSnapshot::boostAt(std::string_view phrase,
+double LearningSnapshotShard::boostAt(std::string_view phrase,
                                  std::string_view pinyin,
                                  std::int64_t nowMs) const {
     const auto normalized = normalizePinyin(pinyin);
@@ -437,7 +543,7 @@ double LearningSnapshot::boostAt(std::string_view phrase,
     return std::clamp(frequency + recent - penalty, -2.0, 4.0);
 }
 
-std::int64_t LearningSnapshot::lastSelectedMs(
+std::int64_t LearningSnapshotShard::lastSelectedMs(
     std::string_view phrase, std::string_view pinyin) const {
     const auto normalized = normalizePinyin(pinyin);
     const auto variants = collectVariants(phrase, normalized);
@@ -450,7 +556,7 @@ std::int64_t LearningSnapshot::lastSelectedMs(
     return lastSelected;
 }
 
-double LearningSnapshot::contextBoost(
+double LearningSnapshotShard::contextBoost(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) const {
@@ -539,7 +645,7 @@ double LearningSnapshot::contextBoost(
     return bestBoost;
 }
 
-void LearningSnapshot::recordSelection(
+void LearningSnapshotShard::recordSelection(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) {
@@ -603,14 +709,14 @@ void LearningSnapshot::recordSelection(
     }
 
     materializedDirty_ = true;
+    weakestDirty_ = true;
     ++selectionsSincePrune_;
-    if (delta_.size() >= 32 || selectionsSincePrune_ >= 32 ||
-        (baseEntries_ && baseEntries_->size() + delta_.size() > totalEntryLimit_)) {
-        consolidate();
-    }
+    // Only this small shard is rebuilt. Published shards have no unindexed
+    // delta, so queries never scan accumulating overlays across all shards.
+    consolidate();
 }
 
-void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,
+void LearningSnapshotShard::recordNegativeFeedback(std::string_view phrase,
                                               std::string_view pinyin) {
     const auto normalized = normalizePinyin(pinyin);
     const auto cKey = candidateKey(phrase, normalized);
@@ -647,10 +753,11 @@ void LearningSnapshot::recordNegativeFeedback(std::string_view phrase,
         }
     }
     materializedDirty_ = true;
+    weakestDirty_ = true;
     consolidate();
 }
 
-void LearningSnapshot::recordSuppression(std::string_view phrase,
+void LearningSnapshotShard::recordSuppression(std::string_view phrase,
                                          std::string_view pinyin) {
     const auto normalized = normalizePinyin(pinyin);
     const auto cKey = candidateKey(phrase, normalized);
@@ -689,10 +796,11 @@ void LearningSnapshot::recordSuppression(std::string_view phrase,
         }
     }
     materializedDirty_ = true;
+    weakestDirty_ = true;
     consolidate();
 }
 
-void LearningSnapshot::consolidate() {
+void LearningSnapshotShard::consolidate() {
     std::vector<LearningEntry> combined;
     std::unordered_set<std::string> seenKeys;
     if (baseEntries_) {
@@ -725,16 +833,17 @@ void LearningSnapshot::consolidate() {
 
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(combined));
     baseIndex_ = std::move(newIndex);
-    // Consolidation also runs on the input thread. Do not add a full recall
-    // index rebuild to every 32nd selection or each suppression operation.
+    // This is a local shard consolidation. Build its index before publication.
     baseRecallIndex_ = std::make_shared<RecallIndexCache>();
+    ensureRecallIndex();
     delta_.clear();
     deltaIndex_.clear();
     selectionsSincePrune_ = 0;
     materializedDirty_ = true;
+    weakestDirty_ = true;
 }
 
-const std::vector<LearningEntry> &LearningSnapshot::entries() const {
+const std::vector<LearningEntry> &LearningSnapshotShard::entries() const {
     if (delta_.empty() && baseEntries_) {
         return *baseEntries_;
     }
@@ -764,7 +873,27 @@ const std::vector<LearningEntry> &LearningSnapshot::entries() const {
     return materializedEntries_;
 }
 
-void LearningSnapshot::pruneContextVariants(std::vector<LearningEntry> &entries) {
+
+const LearningEntry *LearningSnapshotShard::weakestEntry() const {
+    const auto &all = entries();
+    if (all.empty()) return nullptr;
+    if (weakestDirty_) {
+        weakestIndex_ = 0;
+        for (std::size_t i = 1; i < all.size(); ++i) {
+            const auto &a = all[i];
+            const auto &b = all[weakestIndex_];
+            if (a.suppressed != b.suppressed ? a.suppressed :
+                a.lastSelectedMs != b.lastSelectedMs ? a.lastSelectedMs < b.lastSelectedMs :
+                a.frequency != b.frequency ? a.frequency < b.frequency : true) {
+                weakestIndex_ = i;
+            }
+        }
+        weakestDirty_ = false;
+    }
+    return &all[weakestIndex_];
+}
+
+void LearningSnapshotShard::pruneContextVariants(std::vector<LearningEntry> &entries) {
     constexpr std::size_t maximumVariants = 8;
     std::unordered_map<std::string, std::vector<std::size_t>> variants;
     for (std::size_t index = 0; index < entries.size(); ++index) {
@@ -816,7 +945,7 @@ void LearningSnapshot::pruneContextVariants(std::vector<LearningEntry> &entries)
     entries = std::move(retained);
 }
 
-void LearningSnapshot::pruneTotalEntries(std::vector<LearningEntry> &entries,
+void LearningSnapshotShard::pruneTotalEntries(std::vector<LearningEntry> &entries,
                                         std::size_t limit) {
     if (entries.size() <= limit) {
         return;
@@ -854,132 +983,7 @@ void LearningSnapshot::pruneTotalEntries(std::vector<LearningEntry> &entries,
     entries = std::move(retained);
 }
 
-std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(
-    std::string_view userInput, std::int64_t nowMs,
-    std::string_view contextBefore, std::string_view contextAfter) const {
-    if (userInput.empty()) {
-        return {};
-    }
-    const auto canonicalInput = PinyinMatchPolicy::canonical(userInput);
-    const bool isAbbr = PinyinMatchPolicy::isAbbreviationInput(userInput);
-
-    std::vector<RecalledCandidate> results;
-    std::unordered_set<std::string> seen;
-
-    auto addCandidate = [&](std::string_view phrase, std::string_view pinyin) {
-        const auto key = candidateOrderKey(phrase, pinyin);
-        if (!seen.insert(key).second) {
-            return;
-        }
-        if (isSuppressed(phrase, pinyin) || !hasPositiveFrequency(phrase, pinyin)) {
-            return;
-        }
-        const double lBoost = boostAt(phrase, pinyin, nowMs);
-        const double cBoost = contextBoost(phrase, pinyin, contextBefore, contextAfter);
-        results.push_back({std::string(phrase), std::string(pinyin), lBoost, cBoost});
-    };
-
-    const auto &baseRecall = ensureRecallIndex();
-    if (!canonicalInput.empty()) {
-        const auto it = baseRecall.canonicalIndex.find(canonicalInput);
-        if (it != baseRecall.canonicalIndex.end()) {
-            for (const auto &[phrase, pinyin] : it->second) {
-                addCandidate(phrase, pinyin);
-            }
-        }
-    }
-
-    if (isAbbr) {
-        const auto it = baseRecall.abbrIndex.find(std::string(userInput));
-        if (it != baseRecall.abbrIndex.end()) {
-            for (const auto &[phrase, pinyin] : it->second) {
-                addCandidate(phrase, pinyin);
-            }
-        }
-    }
-
-    if (canonicalInput.size() >= 3) {
-        auto it = std::lower_bound(
-            baseRecall.prefixIndex.begin(),
-            baseRecall.prefixIndex.end(),
-            canonicalInput,
-            [](const auto &tupleItem, const std::string &val) {
-                return std::get<0>(tupleItem) < val;
-            });
-        std::vector<RecalledCandidate> prefixCandidates;
-        std::size_t scanned = 0;
-        constexpr std::size_t kMaxScan = 256;
-        while (it != baseRecall.prefixIndex.end() &&
-               std::get<0>(*it).starts_with(canonicalInput) &&
-               scanned < kMaxScan) {
-            const auto &phrase = std::get<1>(*it);
-            const auto &pinyin = std::get<2>(*it);
-            const auto key = candidateOrderKey(phrase, pinyin);
-            if (!seen.contains(key) && !isSuppressed(phrase, pinyin) &&
-                hasPositiveFrequency(phrase, pinyin)) {
-                const double lBoost = boostAt(phrase, pinyin, nowMs);
-                const double cBoost =
-                    contextBoost(phrase, pinyin, contextBefore, contextAfter, nowMs);
-                prefixCandidates.push_back({phrase, pinyin, lBoost, cBoost});
-            }
-            ++it;
-            ++scanned;
-        }
-        constexpr std::size_t kMaxPrefixRecalled = 16;
-        if (prefixCandidates.size() > kMaxPrefixRecalled) {
-            std::partial_sort(
-                prefixCandidates.begin(),
-                prefixCandidates.begin() +
-                    static_cast<std::ptrdiff_t>(kMaxPrefixRecalled),
-                prefixCandidates.end(),
-                [](const auto &a, const auto &b) {
-                    const double scoreA = a.learningBoost + a.contextBoost;
-                    const double scoreB = b.learningBoost + b.contextBoost;
-                    if (std::abs(scoreA - scoreB) > 1e-4) {
-                        return scoreA > scoreB;
-                    }
-                    if (a.phrase != b.phrase) {
-                        return a.phrase < b.phrase;
-                    }
-                    return a.pinyin < b.pinyin;
-                });
-            prefixCandidates.resize(kMaxPrefixRecalled);
-        }
-        for (auto &cand : prefixCandidates) {
-            const auto key = candidateOrderKey(cand.phrase, cand.pinyin);
-            if (seen.insert(key).second) {
-                results.push_back(std::move(cand));
-            }
-        }
-    }
-
-    for (const auto &[vKey, entry] : delta_) {
-        if (entry.suppressed || entry.frequency <= 0) {
-            continue;
-        }
-        const bool asciiWord = isAsciiWord(entry.phrase);
-        const std::string recallPinyin =
-            asciiWord ? entry.pinyin : PinyinMatchPolicy::segmentPinyin(entry.pinyin);
-        const auto canonicalPinyin = PinyinMatchPolicy::canonical(recallPinyin);
-        bool match = false;
-        if (!canonicalInput.empty() && canonicalPinyin == canonicalInput) {
-            match = true;
-        } else if (isAbbr &&
-                   (PinyinMatchPolicy::abbreviationKey(recallPinyin) == userInput ||
-                    PinyinMatchPolicy::initialsMatch(userInput, recallPinyin))) {
-            match = true;
-        } else if (canonicalInput.size() >= 3 && canonicalPinyin.starts_with(canonicalInput)) {
-            match = true;
-        }
-        if (match) {
-            addCandidate(entry.phrase, recallPinyin);
-        }
-    }
-
-    return results;
-}
-
-std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(
+std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
     std::string_view prefix, std::size_t limit, std::int64_t nowMs) const {
     if (prefix.size() < 2) {
         return {};
@@ -1070,6 +1074,245 @@ std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(
         results.resize(limit);
     }
     return results;
+}
+
+// Immutable snapshots share 512 independently indexed shards. A publication
+// copies pointers and the affected shard only; the 200k vocabulary is never
+// copied or reindexed merely because 32 selections have accumulated.
+struct LearningSnapshot::EntriesCache final {
+    std::once_flag initialized;
+    std::vector<LearningEntry> entries;
+};
+
+LearningSnapshot::LearningSnapshot() : entriesCache_(std::make_shared<EntriesCache>()) {}
+LearningSnapshot::LearningSnapshot(std::vector<LearningEntry> entries,
+                                   std::size_t totalEntryLimit)
+    : totalEntryLimit_(totalEntryLimit == 0 ? kMaxLearningEntries : totalEntryLimit),
+      entriesCache_(std::make_shared<EntriesCache>()) {
+    // Reuse the established global eviction policy when loading an oversized
+    // store, then partition it. Context variants of one phrase stay together.
+    if (entries.size() > totalEntryLimit_) {
+        LearningSnapshotShard bounded(std::move(entries), totalEntryLimit_);
+        entries = bounded.entries();
+    }
+    std::array<std::vector<LearningEntry>, kShardCount> partitions;
+    for (auto &item : entries) partitions[shardFor(item.phrase)].push_back(std::move(item));
+    for (std::size_t i = 0; i < kShardCount; ++i) {
+        if (!partitions[i].empty()) {
+            shards_[i] = std::make_shared<LearningSnapshotShard>(std::move(partitions[i]), totalEntryLimit_);
+            entryCount_ += shards_[i]->entries().size();
+            shards_[i]->weakestEntry();
+        }
+    }
+}
+LearningSnapshot::LearningSnapshot(const LearningSnapshot &other)
+    : shards_(other.shards_), totalEntryLimit_(other.totalEntryLimit_), entryCount_(other.entryCount_), entriesCache_(other.entriesCache_) {}
+LearningSnapshot &LearningSnapshot::operator=(const LearningSnapshot &other) {
+    if (this != &other) {
+        shards_ = other.shards_;
+        totalEntryLimit_ = other.totalEntryLimit_;
+        entryCount_ = other.entryCount_;
+        entriesCache_ = other.entriesCache_;
+    }
+    return *this;
+}
+std::size_t LearningSnapshot::shardFor(std::string_view phrase) const {
+    return std::hash<std::string_view>{}(phrase) % kShardCount;
+}
+LearningSnapshotShard &LearningSnapshot::mutableShard(std::string_view phrase) {
+    auto &shard = shards_[shardFor(phrase)];
+    if (!shard) shard = std::make_shared<LearningSnapshotShard>();
+    else if (!shard.unique()) shard = std::make_shared<LearningSnapshotShard>(*shard);
+    return *shard;
+}
+void LearningSnapshot::finishMutation(std::size_t previousCount, std::string_view phrase) {
+    entryCount_ = entryCount_ - previousCount + shards_[shardFor(phrase)]->entries().size();
+    entriesCache_ = std::make_shared<EntriesCache>();
+    shards_[shardFor(phrase)]->weakestEntry();
+    while (entryCount_ > totalEntryLimit_) {
+        // Each immutable shard publishes its weakest entry in advance. Global
+        // eviction compares only 512 cached values, then rebuilds one shard.
+        // Ties evict the last item in the materialized order, as before.
+        std::size_t victimShard = kShardCount;
+        const LearningEntry *weakest = nullptr;
+        for (std::size_t i = 0; i < kShardCount; ++i) {
+            if (!shards_[i]) continue;
+            const auto *candidate = shards_[i]->weakestEntry();
+            if (!candidate) continue;
+            if (!weakest || (candidate->suppressed != weakest->suppressed ? candidate->suppressed :
+                candidate->lastSelectedMs != weakest->lastSelectedMs ? candidate->lastSelectedMs < weakest->lastSelectedMs :
+                candidate->frequency != weakest->frequency ? candidate->frequency < weakest->frequency : true)) {
+                victimShard = i;
+                weakest = candidate;
+            }
+        }
+        const auto &original = shards_[victimShard]->entries();
+        const auto victim = static_cast<std::size_t>(weakest - original.data());
+        auto retained = original;
+        retained.erase(retained.begin() + static_cast<std::ptrdiff_t>(victim));
+        shards_[victimShard] = std::make_shared<LearningSnapshotShard>(std::move(retained), totalEntryLimit_);
+        shards_[victimShard]->weakestEntry();
+        --entryCount_;
+    }
+}
+const LearningEntry *LearningSnapshot::entry(std::string_view phrase, std::string_view pinyin,
+                                            std::string_view before, std::string_view after) const {
+    const auto &s = shards_[shardFor(phrase)];
+    return s ? s->entry(phrase, pinyin, before, after) : nullptr;
+}
+bool LearningSnapshot::hasPositiveFrequency(std::string_view phrase, std::string_view pinyin) const {
+    const auto &s = shards_[shardFor(phrase)];
+    return s && s->hasPositiveFrequency(phrase, pinyin);
+}
+bool LearningSnapshot::isSuppressed(std::string_view phrase, std::string_view pinyin) const {
+    const auto &s = shards_[shardFor(phrase)];
+    return s && s->isSuppressed(phrase, pinyin);
+}
+double LearningSnapshot::boostAt(std::string_view phrase, std::string_view pinyin, std::int64_t now) const {
+    const auto &s = shards_[shardFor(phrase)];
+    return s ? s->boostAt(phrase, pinyin, now) : 0;
+}
+std::int64_t LearningSnapshot::lastSelectedMs(std::string_view phrase, std::string_view pinyin) const {
+    const auto &s = shards_[shardFor(phrase)];
+    return s ? s->lastSelectedMs(phrase, pinyin) : 0;
+}
+double LearningSnapshot::contextBoost(std::string_view phrase, std::string_view pinyin,
+    std::string_view before, std::string_view after, std::int64_t now) const {
+    const auto &s = shards_[shardFor(phrase)];
+    return s ? s->contextBoost(phrase, pinyin, before, after, now) : 0;
+}
+void LearningSnapshot::recordSelection(std::string_view phrase, std::string_view pinyin,
+    std::string_view before, std::string_view after, std::int64_t now) {
+    auto &s = mutableShard(phrase);
+    const auto count = s.entries().size();
+    s.recordSelection(phrase, pinyin, before, after, now);
+    finishMutation(count, phrase);
+}
+void LearningSnapshot::recordNegativeFeedback(std::string_view phrase, std::string_view pinyin) {
+    auto &s = mutableShard(phrase);
+    const auto count = s.entries().size();
+    s.recordNegativeFeedback(phrase, pinyin);
+    finishMutation(count, phrase);
+}
+void LearningSnapshot::recordSuppression(std::string_view phrase, std::string_view pinyin) {
+    auto &s = mutableShard(phrase);
+    const auto count = s.entries().size();
+    s.recordSuppression(phrase, pinyin);
+    finishMutation(count, phrase);
+}
+const std::vector<LearningEntry> &LearningSnapshot::entries() const {
+    std::call_once(entriesCache_->initialized, [this] {
+        auto &entries = entriesCache_->entries;
+        entries.reserve(entryCount_);
+        for (const auto &s : shards_) if (s) {
+            const auto &part = s->entries();
+            entries.insert(entries.end(), part.begin(), part.end());
+        }
+    });
+    return entriesCache_->entries;
+}
+
+std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_view input,
+    std::int64_t now, std::string_view before, std::string_view after) const {
+    if (input.empty()) return {};
+    std::vector<RecalledCandidate> result, prefixes;
+    std::unordered_set<std::string> seen;
+    const auto canonical = PinyinMatchPolicy::canonical(input);
+    const bool abbreviated = PinyinMatchPolicy::isAbbreviationInput(input);
+    auto append = [&](std::string_view phrase, std::string_view pinyin,
+                      std::vector<RecalledCandidate> &destination) {
+        const auto key = candidateOrderKey(phrase, pinyin);
+        if (seen.contains(key) || isSuppressed(phrase, pinyin) ||
+            !hasPositiveFrequency(phrase, pinyin)) return;
+        if (&destination == &result) seen.insert(key);
+        destination.push_back({std::string(phrase), std::string(pinyin),
+            boostAt(phrase, pinyin, now), contextBoost(phrase, pinyin, before, after, now)});
+    };
+    using Prefix = std::tuple<std::string, std::string, std::string>;
+    struct Cursor { const std::vector<Prefix> *entries; std::size_t offset; };
+    auto later = [](const Cursor &a, const Cursor &b) {
+        return (*a.entries)[a.offset] > (*b.entries)[b.offset];
+    };
+    std::priority_queue<Cursor, std::vector<Cursor>, decltype(later)> ranges(later);
+    for (const auto &shard : shards_) if (shard) {
+        const auto &index = shard->ensureRecallIndex();
+        const auto exact = index.canonicalIndex.find(canonical);
+        if (!canonical.empty() && exact != index.canonicalIndex.end()) {
+            for (const auto &[phrase, pinyin] : exact->second) append(phrase, pinyin, result);
+        }
+        if (abbreviated) {
+            // Each zh/ch/sh can be either one digraph initial or two
+            // syllable initials. Search only prefixes present in this shard's
+            // sorted abbreviation keys, rather than enumerating 2^N strings.
+            std::string key;
+            const auto visit = [&](auto self, std::size_t offset) -> void {
+                const auto found = std::lower_bound(index.abbreviationKeys.begin(), index.abbreviationKeys.end(), key);
+                if (found == index.abbreviationKeys.end() || !found->starts_with(key)) return;
+                if (offset == input.size()) {
+                    const auto abbr = index.abbrIndex.find(key);
+                    if (abbr != index.abbrIndex.end()) {
+                        for (const auto &[phrase, pinyin] : abbr->second) {
+                            if (key == input || PinyinMatchPolicy::initialsMatch(input, pinyin)) append(phrase, pinyin, result);
+                        }
+                    }
+                    return;
+                }
+                key.push_back(input[offset]);
+                self(self, offset + 1);
+                if (offset + 1 < input.size() && input[offset + 1] == 'h' &&
+                    (input[offset] == 'z' || input[offset] == 'c' || input[offset] == 's')) self(self, offset + 2);
+                key.pop_back();
+            };
+            visit(visit, 0);
+        }
+        if (canonical.size() >= 3) {
+            const auto begin = std::lower_bound(index.prefixIndex.begin(), index.prefixIndex.end(), canonical,
+                [](const auto &item, const std::string &key) { return std::get<0>(item) < key; });
+            if (begin != index.prefixIndex.end() && std::get<0>(*begin).starts_with(canonical)) {
+                ranges.push({&index.prefixIndex, static_cast<std::size_t>(begin - index.prefixIndex.begin())});
+            }
+        }
+    }
+    // Merge sorted ranges before consuming the original global 256-entry
+    // budget, so hash partitioning cannot starve lexically earlier candidates.
+    for (std::size_t scanned = 0; scanned < 256 && !ranges.empty(); ++scanned) {
+        auto cursor = ranges.top();
+        ranges.pop();
+        const auto &[key, phrase, pinyin] = (*cursor.entries)[cursor.offset];
+        append(phrase, pinyin, prefixes);
+        ++cursor.offset;
+        if (cursor.offset < cursor.entries->size() &&
+            std::get<0>((*cursor.entries)[cursor.offset]).starts_with(canonical)) ranges.push(cursor);
+    }
+    std::sort(prefixes.begin(), prefixes.end(), [](const auto &a, const auto &b) {
+        const double aScore = a.learningBoost + a.contextBoost;
+        const double bScore = b.learningBoost + b.contextBoost;
+        if (std::abs(aScore - bScore) > 1e-4) return aScore > bScore;
+        if (a.phrase != b.phrase) return a.phrase < b.phrase;
+        return a.pinyin < b.pinyin;
+    });
+    if (prefixes.size() > 16) prefixes.resize(16);
+    for (auto &candidate : prefixes) {
+        if (seen.insert(candidateOrderKey(candidate.phrase, candidate.pinyin)).second)
+            result.push_back(std::move(candidate));
+    }
+    return result;
+}
+std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(std::string_view prefix,
+    std::size_t limit, std::int64_t now) const {
+    std::vector<RecalledEnglishWord> result;
+    for (const auto &s : shards_) if (s) {
+        auto part = s->recallEnglishWords(prefix, limit, now);
+        result.insert(result.end(), std::make_move_iterator(part.begin()), std::make_move_iterator(part.end()));
+    }
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
+        if (std::abs(a.score - b.score) > 1e-6) return a.score > b.score;
+        if (a.frequency != b.frequency) return a.frequency > b.frequency;
+        if (a.lastSelectedMs != b.lastSelectedMs) return a.lastSelectedMs > b.lastSelectedMs;
+        return a.text < b.text;
+    });
+    if (result.size() > limit) result.resize(limit);
+    return result;
 }
 
 } // namespace modernime::core

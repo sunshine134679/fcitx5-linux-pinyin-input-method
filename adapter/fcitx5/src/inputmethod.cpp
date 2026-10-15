@@ -185,11 +185,17 @@ pinyin::PinyinProviderOptions pinyinOptions(
 }
 #endif
 
-std::pair<std::string, std::string>
-extractSurroundingContext(const fcitx::SurroundingText &text,
+struct SurroundingContext final {
+    std::string first;
+    std::string second;
+    ContextAvailability availability = ContextAvailability::Valid;
+};
+
+static SurroundingContext
+extractSurroundingContextState(const fcitx::SurroundingText &text,
                           std::size_t maxChars) {
     if (!text.isValid() || maxChars == 0) {
-        return {};
+        return {"", "", ContextAvailability::Invalidated};
     }
 
     const auto &value = text.text();
@@ -199,7 +205,7 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
 
     const auto targetCursor = static_cast<std::size_t>(text.cursor());
     if (targetCursor > value.size()) {
-        return {};
+        return {"", "", ContextAvailability::Invalidated};
     }
 
     std::array<std::string::const_iterator, 64> stackRing;
@@ -217,6 +223,9 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
         ring[charIndex % (maxChars + 1)] = it;
     }
 
+    if (charIndex != targetCursor) {
+        return {"", "", ContextAvailability::Invalidated};
+    }
     const auto cursorIterator = it;
     const auto beforeCount = std::min(maxChars, charIndex);
     const auto begin = ring[(charIndex - beforeCount) % (maxChars + 1)];
@@ -231,7 +240,7 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
     std::string before(begin, cursorIterator);
     std::string after(cursorIterator, end);
     if (!fcitx::utf8::validate(before) || !fcitx::utf8::validate(after)) {
-        return {};
+        return {"", "", ContextAvailability::Invalidated};
     }
 
     // 过滤换行符：上下文关联不应跨换行延续
@@ -252,7 +261,20 @@ extractSurroundingContext(const fcitx::SurroundingText &text,
         return c < 0x20 && c != '\t';
     }), after.end());
 
-    return {std::move(before), std::move(after)};
+    // A line boundary yielding an empty local window is not evidence that
+    // the previous committed word was deleted. Drop its pending feedback.
+    const auto availability =
+        lastNl != std::string::npos && before.empty() && after.empty()
+            ? ContextAvailability::Invalidated
+            : ContextAvailability::Valid;
+    return {std::move(before), std::move(after), availability};
+}
+
+std::pair<std::string, std::string>
+extractSurroundingContext(const fcitx::SurroundingText &text,
+                          std::size_t maxChars) {
+    auto context = extractSurroundingContextState(text, maxChars);
+    return {std::move(context.first), std::move(context.second)};
 }
 
 FcitxEngineHost::FcitxEngineHost(fcitx::InputContext &inputContext)
@@ -433,12 +455,18 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
                         ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
                     contextState->controller().setSensitive(isSensitive);
                     if (!isSensitive && ic->surroundingText().isValid()) {
-                        const auto context = extractSurroundingContext(
+                        const auto context = extractSurroundingContextState(
                             ic->surroundingText(), 32);
                         contextState->controller().setContext(context.first,
-                                                              context.second);
-                    } else if (isSensitive || !ic->surroundingText().isValid()) {
-                        contextState->controller().setContext("", "");
+                                                              context.second,
+                                                              context.availability);
+                    } else {
+                        const auto availability =
+                            !isSensitive && !ic->capabilityFlags().test(
+                                fcitx::CapabilityFlag::SurroundingText)
+                                ? ContextAvailability::Unavailable
+                                : ContextAvailability::Invalidated;
+                        contextState->controller().setContext("", "", availability);
                     }
                 }
             });
@@ -800,11 +828,17 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             event.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
         contextState->controller().setSensitive(isSensitive);
         if (!isSensitive && event.inputContext()->surroundingText().isValid()) {
-            const auto context = extractSurroundingContext(
+            const auto context = extractSurroundingContextState(
                 event.inputContext()->surroundingText(), 32);
-            contextState->controller().setContext(context.first, context.second);
-        } else if (isSensitive) {
-            contextState->controller().setContext("", "");
+            contextState->controller().setContext(
+                context.first, context.second, context.availability);
+        } else {
+            const auto availability =
+                !isSensitive && !event.inputContext()->capabilityFlags().test(
+                    fcitx::CapabilityFlag::SurroundingText)
+                    ? ContextAvailability::Unavailable
+                    : ContextAvailability::Invalidated;
+            contextState->controller().setContext("", "", availability);
         }
         auto modernEvent = translateKey(event.key(), keyBindings_);
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
@@ -825,6 +859,11 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             return;
         }
         if (!modernEvent.has_value()) {
+            if (contextState->controller().page().preedit.empty() &&
+                !event.inputContext()->surroundingText().isValid()) {
+                contextState->controller().setContext(
+                    "", "", ContextAvailability::Invalidated);
+            }
             if (shouldCommitCompositionBeforePassThrough(
                     contextState->controller().page().preedit, event.key())) {
                 contextState->controller().handle({KeyKind::Enter, 0, 0});

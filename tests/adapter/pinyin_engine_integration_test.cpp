@@ -432,21 +432,24 @@ int main() {
         modernime::fcitx5::ModernIMEController ctxController(ctxHost, &ctxProvider);
 
         // Train: commit 王 (no surrounding text, setContext("", "") called)
-        ctxController.setContext("", "");
+        ctxController.setContext(
+            "", "", modernime::fcitx5::ContextAvailability::Unavailable);
         for (char c : std::string_view("wang")) {
             ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
         ctxController.select(indexOf(ctxController.page(), "王"));
 
         // Train: commit 绍
-        ctxController.setContext("", "");
+        ctxController.setContext(
+            "", "", modernime::fcitx5::ContextAvailability::Unavailable);
         for (char c : std::string_view("shao")) {
             ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
         ctxController.select(indexOf(ctxController.page(), "绍"));
 
         // Train: commit 龙
-        ctxController.setContext("", "");
+        ctxController.setContext(
+            "", "", modernime::fcitx5::ContextAvailability::Unavailable);
         for (char c : std::string_view("long")) {
             ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
@@ -458,14 +461,16 @@ int main() {
         ctxController.reset();
 
         // 1. Commit 王
-        ctxController.setContext("", "");
+        ctxController.setContext(
+            "", "", modernime::fcitx5::ContextAvailability::Unavailable);
         for (char c : std::string_view("wang")) {
             ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
         ctxController.select(indexOf(ctxController.page(), "王"));
 
         // 2. Type shao without surrounding text:
-        ctxController.setContext("", "");
+        ctxController.setContext(
+            "", "", modernime::fcitx5::ContextAvailability::Unavailable);
         for (char c : std::string_view("shao")) {
             ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
@@ -475,7 +480,8 @@ int main() {
         ctxController.select(0);
 
         // 3. Type long without surrounding text:
-        ctxController.setContext("", "");
+        ctxController.setContext(
+            "", "", modernime::fcitx5::ContextAvailability::Unavailable);
         for (char c : std::string_view("long")) {
             ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
@@ -486,7 +492,8 @@ int main() {
 
         // 4. Punctuation resets fallback context:
         ctxController.handle({modernime::fcitx5::KeyKind::Punctuation, ',', 0});
-        ctxController.setContext("", "");
+        ctxController.setContext(
+            "", "", modernime::fcitx5::ContextAvailability::Unavailable);
         for (char c : std::string_view("shao")) {
             ctxController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
@@ -845,7 +852,7 @@ int main() {
         delProvider.flush();
 
         // 验证即时提权：输入 shao，目标字 "绍" 即跃升为第 1 候选！
-        delController.setContext("我来", "");
+        delController.setContext("我来绍", "");
         for (char c : std::string_view("shao")) {
             delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }
@@ -874,7 +881,7 @@ int main() {
         delProvider.flush();
 
         // 验证即时提权：输入 long，目标字 "龙" 稳居第 1 候选！
-        delController.setContext("文章", "");
+        delController.setContext("文章龙", "");
         for (char c : std::string_view("long")) {
             delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
         }

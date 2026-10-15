@@ -1,5 +1,7 @@
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/core/common_characters.h"
+#include "modernime/core/candidate_ranker.h"
+#include "modernime/pinyin/candidate_prefixes.h"
 
 #include <algorithm>
 #include <optional>
@@ -7,114 +9,12 @@
 #include <unordered_set>
 
 namespace modernime::pinyin {
-namespace {
-
-std::size_t utf8CharacterCount(std::string_view text) {
-    return static_cast<std::size_t>(
-        std::count_if(text.begin(), text.end(), [](const char character) {
-            return (static_cast<unsigned char>(character) & 0xC0U) != 0x80U;
-        }));
-}
-
-std::optional<std::string> utf8Prefix(std::string_view text,
-                                      std::size_t characterCount) {
-    std::size_t seen = 0;
-    for (std::size_t offset = 0; offset < text.size(); ++offset) {
-        if ((static_cast<unsigned char>(text[offset]) & 0xC0U) == 0x80U) {
-            continue;
-        }
-        if (seen == characterCount) {
-            return std::string(text.substr(0, offset));
-        }
-        ++seen;
-    }
-    if (seen == characterCount) {
-        return std::string(text);
-    }
-    return std::nullopt;
-}
-
-std::size_t pinyinSyllableCount(std::string_view fullPinyin) {
-    if (fullPinyin.empty()) {
-        return 0;
-    }
-    return static_cast<std::size_t>(
-               std::count(fullPinyin.begin(), fullPinyin.end(), '\'')) +
-           1;
-}
-
-std::optional<std::string> pinyinPrefix(std::string_view fullPinyin,
-                                        std::size_t syllableCount) {
-    std::size_t separators = 0;
-    for (std::size_t offset = 0; offset < fullPinyin.size(); ++offset) {
-        if (fullPinyin[offset] != '\'') {
-            continue;
-        }
-        ++separators;
-        if (separators == syllableCount) {
-            return std::string(fullPinyin.substr(0, offset));
-        }
-    }
-    return std::nullopt;
-}
-
-std::optional<core::CandidateItem> derivedPrefix(
-    const core::CandidateItem &bestFullSentence,
-    const std::vector<std::size_t> &syllablePrefixEnds,
-    std::string_view rawPinyin, std::size_t syllableCount) {
-    if (syllableCount == 0 || syllablePrefixEnds.size() < syllableCount ||
-        syllablePrefixEnds[syllableCount - 1] >= rawPinyin.size()) {
-        return std::nullopt;
-    }
-
-    const auto totalSyllables =
-        pinyinSyllableCount(bestFullSentence.fullPinyin);
-    if (totalSyllables != syllablePrefixEnds.size() + 1 ||
-        utf8CharacterCount(bestFullSentence.text) != totalSyllables) {
-        return std::nullopt;
-    }
-
-    const auto text = utf8Prefix(bestFullSentence.text, syllableCount);
-    const auto fullPinyin =
-        pinyinPrefix(bestFullSentence.fullPinyin, syllableCount);
-    if (!text.has_value() || !fullPinyin.has_value()) {
-        return std::nullopt;
-    }
-
-    auto result = bestFullSentence;
-    result.text = *text;
-    result.fullPinyin = *fullPinyin;
-    result.consumedInputBytes = syllablePrefixEnds[syllableCount - 1];
-    return result;
-}
-
-std::optional<std::string> matchingBestTextPrefix(
-    const core::CandidateItem &candidate,
-    const core::CandidateItem &bestFullSentence,
-    const std::vector<std::size_t> &syllablePrefixEnds) {
-    const auto syllableCount = pinyinSyllableCount(candidate.fullPinyin);
-    if (syllableCount == 0 || syllableCount > syllablePrefixEnds.size() ||
-        candidate.consumedInputBytes !=
-            syllablePrefixEnds[syllableCount - 1]) {
-        return std::nullopt;
-    }
-    const auto expectedPinyin =
-        pinyinPrefix(bestFullSentence.fullPinyin, syllableCount);
-    if (!expectedPinyin.has_value() ||
-        candidate.fullPinyin != *expectedPinyin) {
-        return std::nullopt;
-    }
-    return utf8Prefix(bestFullSentence.text, syllableCount);
-}
-
-} // namespace
-
 std::vector<core::CandidateItem> mixCandidateItems(
     const std::vector<core::CandidateItem> &fullCandidates,
     const std::vector<core::CandidateItem> &partialCandidates,
     const core::CandidateItem *bestFullSentence,
     const std::vector<std::size_t> &syllablePrefixEnds,
-    std::string_view rawPinyin) {
+    std::string_view rawPinyin, const std::vector<core::CandidateItem> *prefixEvidence) {
     if (bestFullSentence == nullptr || fullCandidates.empty() ||
         syllablePrefixEnds.size() < 2) {
         auto result = fullCandidates;
@@ -135,10 +35,35 @@ std::vector<core::CandidateItem> mixCandidateItems(
         return true;
     };
 
+    const auto derived = prefixEvidence != nullptr ? *prefixEvidence :
+        buildPrefixEvidence(*bestFullSentence, syllablePrefixEnds, rawPinyin, partialCandidates);
+    const core::CandidateItem *threeSyllable = nullptr, *twoSyllable = nullptr;
+    for (const auto &item : derived) {
+        const auto syllables = std::count(item.fullPinyin.begin(), item.fullPinyin.end(), '\'') + 1;
+        if (syllables == 3) threeSyllable = &item;
+        if (syllables == 2) twoSyllable = &item;
+    }
+    const core::CandidateItem *personalPrefix = nullptr;
+    const auto considerPersonal = [&](const core::CandidateItem &item) {
+        if (item.learningBoost < 1.8 || !item.consumedInputBytes ||
+            item.consumedInputBytes >= rawPinyin.size()) {
+            return;
+        }
+        const auto preference = [](const core::CandidateItem &candidate) {
+            return core::computeAdaptiveLearning(candidate.learningBoost) + candidate.recentChoiceBonus;
+        };
+        if (personalPrefix == nullptr || preference(item) > preference(*personalPrefix)) {
+            personalPrefix = &item;
+        }
+    };
+    for (const auto &item : partialCandidates) considerPersonal(item);
+    if (threeSyllable) considerPersonal(*threeSyllable);
+    if (twoSyllable) considerPersonal(*twoSyllable);
+
     append(*bestFullSentence);
-    const auto threeSyllable = derivedPrefix(
-        *bestFullSentence, syllablePrefixEnds, rawPinyin, 3);
-    if (threeSyllable.has_value()) {
+    if (personalPrefix != nullptr) {
+        append(*personalPrefix);
+    } else if (threeSyllable) {
         append(*threeSyllable);
     }
     const core::CandidateItem *runnerUpFullSentence = nullptr;
@@ -149,18 +74,16 @@ std::vector<core::CandidateItem> mixCandidateItems(
             break;
         }
     }
-    const auto twoSyllable = derivedPrefix(
-        *bestFullSentence, syllablePrefixEnds, rawPinyin, 2);
-    if (twoSyllable.has_value()) {
+    if (personalPrefix != nullptr && threeSyllable) {
+        append(*threeSyllable);
+    }
+    if (twoSyllable != nullptr) {
         append(*twoSyllable);
     }
 
     const core::CandidateItem *homophone = nullptr;
     for (const auto &candidate : partialCandidates) {
-        const auto bestTextPrefix = matchingBestTextPrefix(
-            candidate, *bestFullSentence, syllablePrefixEnds);
-        if (!bestTextPrefix.has_value() ||
-            candidate.text == *bestTextPrefix ||
+        if (!isMatchingSentenceHomophone(candidate, *bestFullSentence, syllablePrefixEnds) ||
             seenText.contains(candidate.text) ||
             core::CommonCharacters::containsRare(candidate.text) ||
             !core::CommonCharacters::isLevel1(
@@ -173,8 +96,8 @@ std::vector<core::CandidateItem> mixCandidateItems(
     }
 
     const bool enforcesTopFiveFullSentenceQuota =
-        runnerUpFullSentence != nullptr && threeSyllable.has_value() &&
-        twoSyllable.has_value();
+        runnerUpFullSentence != nullptr && threeSyllable != nullptr &&
+        twoSyllable != nullptr;
     if (homophone == nullptr && enforcesTopFiveFullSentenceQuota &&
         result.size() < 5) {
         core::CandidateItem rawFallback;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "modernime/core/candidate_prior.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -55,22 +57,35 @@ struct CandidateScore final {
     bool is_rare = false;
     bool is_level1 = false;
     bool is_lexical = false;
+    double recent_choice_bonus = 0.0;
 
-    double final_score() const {
+    double base_prior() const {
         double score = static_cast<double>(source_index) -
-               computeAdaptiveLearning(learning_boost, dormant_factor) - stability_bonus -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor;
-        if (is_rare && learning_boost < 1.8) {
-            score += 100.0;
-        } else if (is_level1) {
+        if (!is_rare && is_level1) {
             score -= 2.0;
         }
         if (is_lexical) {
             score -= 3.0;
         }
         return score;
+    }
+
+    double rare_penalty() const { return is_rare && learning_boost < 1.8 ? 100.0 : 0.0; }
+
+    // Keep the established trusted-abbreviation admission boundary separate
+    // from the bounded preference cost used within an admitted group.
+    double abbreviation_admission_score() const {
+        return base_prior() - computeAdaptiveLearning(learning_boost, dormant_factor) -
+               stability_bonus + rare_penalty();
+    }
+
+    double final_score() const {
+        return boundedCandidatePrior(base_prior()) -
+               computeAdaptiveLearning(learning_boost, dormant_factor) -
+               stability_bonus - recent_choice_bonus + rare_penalty();
     }
 };
 

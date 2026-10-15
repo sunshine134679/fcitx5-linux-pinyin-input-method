@@ -52,6 +52,7 @@ bool LearningWriter::enqueueSelection(
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSelection(phrase, pinyin, contextBefore, contextAfter, nowMs);
     snapshot_ = std::move(next);
+    ++snapshotVersion_;
     return enqueueForPersistence(
         {EventKind::Selection, std::string(phrase), std::string(pinyin),
          std::string(contextBefore), std::string(contextAfter), nowMs});
@@ -73,6 +74,7 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordNegativeFeedback(phrase, pinyin);
     snapshot_ = std::move(next);
+    ++snapshotVersion_;
     return enqueueForPersistence({EventKind::NegativeFeedback,
                                   std::string(phrase), std::string(pinyin),
                                   {}, {}, 0});
@@ -85,14 +87,14 @@ bool LearningWriter::enqueueSuppression(std::string_view phrase,
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSuppression(phrase, pinyin);
     snapshot_ = std::move(next);
+    ++snapshotVersion_;
     return enqueueForPersistence({EventKind::Suppression, std::string(phrase),
                                   std::string(pinyin), {}, {}, 0});
 }
 
 bool LearningWriter::enqueueForPersistence(Event event) {
     const bool durablyAvailable = storageAvailable_;
-    if (stopping_ ||
-        (!durablyAvailable && !processing_ && events_.empty())) {
+    if (stopping_) {
         return false;
     }
     event.resetRevision = resetRevision_;
@@ -245,6 +247,7 @@ void LearningWriter::rebaseSnapshot(const LearningStoreState &state,
     apply(events_);
     resetRevision_ = state.resetRevision;
     snapshot_ = std::move(next);
+    ++snapshotVersion_;
 }
 
 bool LearningWriter::persistBatch(const std::vector<Event> &events) {
@@ -314,6 +317,27 @@ void LearningWriter::run() {
             freshState = success ? store_->readState() : std::nullopt;
         }
 
+        // Replay pending input without holding the input mutex. If another
+        // enqueue/clear changes the version, its optimistic snapshot remains
+        // authoritative and the next batch can publish a fresh rebase.
+        std::shared_ptr<LearningSnapshot> prepared;
+        std::uint64_t capturedVersion = 0;
+        if (success && freshState) {
+            std::vector<Event> pending;
+            {
+                std::lock_guard lock(mutex_);
+                capturedVersion = snapshotVersion_;
+                pending.assign(events_.begin(), events_.end());
+            }
+            prepared = std::make_shared<LearningSnapshot>(*freshState->snapshot);
+            for (const auto &event : pending) {
+                if (event.resetRevision == freshState->resetRevision) applyEvent(*prepared, event);
+            }
+        }
+
+        // Release obsolete vocabulary allocations after unlocking; enqueue
+        // must not wait for the destruction of a large retired snapshot.
+        std::shared_ptr<const LearningSnapshot> retiredSnapshot;
         {
             std::lock_guard lock(mutex_);
             if (!success) {
@@ -331,8 +355,20 @@ void LearningWriter::run() {
                 storageAvailable_ = true;
                 retryExhausted_ = false;
                 automaticRetryCyclesRemaining_ = 1;
-                if (freshState.has_value()) {
-                    rebaseSnapshot(*freshState, false);
+                if (freshState && freshState->resetRevision > resetRevision_) {
+                    // A previously unseen clear takes precedence even when
+                    // input arrived during preparation. Every queued event
+                    // still has the older generation and must be discarded.
+                    retiredSnapshot = std::move(snapshot_);
+                    snapshot_ = freshState->snapshot;
+                    resetRevision_ = freshState->resetRevision;
+                    ++snapshotVersion_;
+                } else if (freshState && prepared &&
+                           freshState->resetRevision == resetRevision_ &&
+                           capturedVersion == snapshotVersion_) {
+                    retiredSnapshot = std::move(snapshot_);
+                    snapshot_ = std::move(prepared);
+                    ++snapshotVersion_;
                 }
             }
             processingEvents_.clear();

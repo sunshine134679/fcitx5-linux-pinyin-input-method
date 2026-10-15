@@ -1,5 +1,9 @@
 #include "modernime/core/candidate_ranker.h"
 #include "modernime/core/learning_snapshot.h"
+#include "modernime/core/learning_store.h"
+#include "modernime/core/learning_writer.h"
+#include <sqlite3.h>
+#include <unistd.h>
 #include "modernime/core/personal_engine.h"
 
 #include <benchmark/benchmark.h>
@@ -295,6 +299,131 @@ PercentileStats measurePercentiles(int iterations, Fn &&fn) {
     return {at_pct(0.50), at_pct(0.95), at_pct(0.99)};
 }
 
+
+std::vector<modernime::core::LearningEntry> snapshotVocabulary(std::size_t count) {
+    std::vector<modernime::core::LearningEntry> entries;
+    entries.reserve(count);
+    entries.push_back({"你好", "nihao", {}, {}, 1, 1700000000000LL, 0, false});
+    for (std::size_t i = 1; i < count; ++i) {
+        std::string word = "term";
+        auto value = i;
+        for (int n = 0; n < 5; ++n) { word += char('a' + value % 26); value /= 26; }
+        entries.push_back({word, word, {}, {}, 1, 1700000000000LL, 0, false});
+    }
+    return entries;
+}
+
+void verifyPublishedSnapshotLatency(std::size_t count) {
+    auto snapshot = std::make_shared<modernime::core::LearningSnapshot>(snapshotVocabulary(count));
+    std::int64_t timestamp = 1700000000000LL;
+    const auto publication = measurePercentiles(1000, [&] {
+        auto next = std::make_shared<modernime::core::LearningSnapshot>(*snapshot);
+        next->recordSelection("你好", "nihao", {}, {}, ++timestamp);
+        auto recalled = next->recallCandidates("nihao", timestamp);
+        benchmark::DoNotOptimize(recalled);
+        snapshot = std::move(next);
+    });
+    const auto recall = measurePercentiles(2000, [&] {
+        auto recalled = snapshot->recallCandidates("nihao", timestamp);
+        benchmark::DoNotOptimize(recalled);
+    });
+    const auto negative = measurePercentiles(128, [&] {
+        auto next = std::make_shared<modernime::core::LearningSnapshot>(*snapshot);
+        next->recordNegativeFeedback("你好", "nihao");
+        benchmark::DoNotOptimize(next->recallCandidates("nihao", timestamp));
+        snapshot = std::move(next);
+    });
+    const auto suppression = measurePercentiles(128, [&] {
+        auto next = std::make_shared<modernime::core::LearningSnapshot>(*snapshot);
+        next->recordSuppression("你好", "nihao");
+        benchmark::DoNotOptimize(next->recallCandidates("nihao", timestamp));
+        snapshot = std::move(next);
+    });
+    std::size_t inserted = 0;
+    const auto insertion = measurePercentiles(128, [&] {
+        auto next = std::make_shared<modernime::core::LearningSnapshot>(*snapshot);
+        next->recordSelection("新增词" + std::to_string(++inserted), "xin'zeng'ci", {}, {}, ++timestamp);
+        benchmark::DoNotOptimize(next->recallCandidates("nihao", timestamp));
+        snapshot = std::move(next);
+    });
+    std::cout << "  Published snapshot " << count << " entries: selection+next recall P99="
+              << publication.p99_us << " us, recall P99=" << recall.p99_us
+              << " us, negative+recall P99=" << negative.p99_us
+              << " us, suppression+recall P99=" << suppression.p99_us
+              << " us, new word+recall P99=" << insertion.p99_us << " us\n";
+    if (recall.p99_us >= 1000 || publication.p99_us >= 5000 ||
+        negative.p99_us >= 5000 || suppression.p99_us >= 5000 || insertion.p99_us >= 5000) {
+        std::cerr << "Published snapshot latency exceeded recall 1ms / publication 5ms gate!\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+void verifyBusyWriterLatency() {
+    auto pattern = (std::filesystem::temp_directory_path() / "modernime-writer-bench-XXXXXX").string();
+    if (!mkdtemp(pattern.data())) std::exit(EXIT_FAILURE);
+    const auto path = std::filesystem::path(pattern) / "learning.sqlite3";
+    modernime::core::LearningStore store(path);
+    if (!store.open()) std::exit(EXIT_FAILURE);
+    store.close();
+    sqlite3 *connection = nullptr;
+    if (sqlite3_open(path.c_str(), &connection) != SQLITE_OK) std::exit(EXIT_FAILURE);
+    sqlite3_stmt *insert = nullptr;
+    if (sqlite3_exec(connection, "BEGIN", nullptr, nullptr, nullptr) != SQLITE_OK ||
+        sqlite3_prepare_v2(connection,
+            "INSERT INTO learning_entries(pinyin,phrase,frequency,last_selected_ms) VALUES(?,?,1,1700000000000)",
+            -1, &insert, nullptr) != SQLITE_OK) std::exit(EXIT_FAILURE);
+    for (const auto &item : snapshotVocabulary(50000)) {
+        sqlite3_bind_text(insert, 1, item.pinyin.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insert, 2, item.phrase.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(insert) != SQLITE_DONE) std::exit(EXIT_FAILURE);
+        sqlite3_reset(insert);
+    }
+    sqlite3_finalize(insert);
+    if (sqlite3_exec(connection, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK) std::exit(EXIT_FAILURE);
+    {
+        modernime::core::LearningWriter writer(path);
+        if (sqlite3_exec(connection, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) != SQLITE_OK) std::exit(EXIT_FAILURE);
+        std::vector<double> samples;
+        for (int i = 0; i < 128; ++i) {
+            const auto start = std::chrono::steady_clock::now();
+            writer.enqueueSelection("你好", "nihao", {}, {}, 1700000001000LL + i);
+            benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", 1700000001000LL + i));
+            samples.push_back(std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count());
+        }
+        if (sqlite3_exec(connection, "ROLLBACK", nullptr, nullptr, nullptr) != SQLITE_OK || !writer.flush()) std::exit(EXIT_FAILURE);
+        const auto *entry = writer.snapshot()->entry("你好", "nihao", {}, {});
+        if (!entry || entry->frequency != 129) std::exit(EXIT_FAILURE);
+        std::sort(samples.begin(), samples.end());
+        const double p99 = samples[126];
+        std::cout << "  Busy SQLite writer 50000 entries: enqueue+next recall P99=" << p99
+                  << " us; 128 events persisted exactly once\n";
+        if (p99 >= 5000) {
+            std::cerr << "Busy writer input-side P99 exceeded 5ms gate!\n";
+            std::exit(EXIT_FAILURE);
+        }
+        samples.clear();
+        for (int i = 0; i < 1024; ++i) {
+            const auto start = std::chrono::steady_clock::now();
+            writer.enqueueSelection("你好", "nihao", {}, {}, 1700000002000LL + i);
+            benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", 1700000002000LL + i));
+            samples.push_back(std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count());
+        }
+        if (!writer.flush()) std::exit(EXIT_FAILURE);
+        std::sort(samples.begin(), samples.end());
+        std::cout << "  Concurrent SQLite writer 50000 entries: enqueue+next recall P99="
+                  << samples[1013] << " us, maximum=" << samples.back() << " us\n";
+        if (samples[1013] >= 5000 || samples.back() >= 30000) {
+            std::cerr << "Background rebase blocked input beyond P99 5ms / maximum 30ms gate!\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
+    sqlite3_close(connection);
+    std::filesystem::remove_all(pattern);
+}
+
 void runPercentileAndMemoryVerification() {
     const std::size_t rss_before = currentRssKiB();
     const auto &fix = sharedFixture();
@@ -389,6 +518,9 @@ void runPercentileAndMemoryVerification() {
 
 int main(int argc, char **argv) {
     runPercentileAndMemoryVerification();
+    verifyPublishedSnapshotLatency(50000);
+    verifyPublishedSnapshotLatency(200000);
+    verifyBusyWriterLatency();
     ::benchmark::Initialize(&argc, argv);
     if (::benchmark::ReportUnrecognizedArguments(argc, argv)) {
         return 1;

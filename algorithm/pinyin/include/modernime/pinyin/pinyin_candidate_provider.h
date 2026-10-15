@@ -43,7 +43,8 @@ public:
     class SharedResources;
 
     // Builds the shared resources; never returns null. options.learningEnabled
-    // decides whether the shared learning writer exists.
+    // decides whether the shared learning writer exists. Disabled resources
+    // load existing suppression through a read-only store without creating a DB.
     static std::shared_ptr<SharedResources> createSharedResources(
         const PinyinDataPaths &paths, const PinyinProviderOptions &options);
 

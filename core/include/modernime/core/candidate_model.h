@@ -33,6 +33,7 @@ struct CandidateItem final {
     std::string annotation = {};
     double learningBoost = 0.0;
     bool isLexical = false;
+    double recentChoiceBonus = 0.0;
 };
 
 struct CandidatePage final {

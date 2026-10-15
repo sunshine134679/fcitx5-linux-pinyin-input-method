@@ -81,10 +81,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake pkg-config \
-            libsqlite3-dev liblmdb-dev libboost-dev \
+            libsqlite3-dev liblmdb-dev libboost-dev libgtest-dev libbenchmark-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
             libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
             libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev
+
+      - name: Verify algorithm and installation regressions before packaging
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/release-tests -DCMAKE_BUILD_TYPE=Release \
+            -DMODERNIME_BUILD_FCITX5=ON \
+            -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
+            -DMODERNIME_BUILD_SETTINGS=ON \
+            -DMODERNIME_BUILD_TESTS=ON
+          cmake --build build/release-tests --parallel 2
+          ctest --test-dir build/release-tests --show-only=json-v1 > build/release-tests/registered-tests.json
+          python3 - <<'PYEOF'
+          import json
+          from pathlib import Path
+          tests = {t['name'] for t in json.loads(Path('build/release-tests/registered-tests.json').read_text())['tests']}
+          required = {'modernime_personal_engine_gtest', 'modernime_personal_engine_benchmark',
+                      'modernime_install_runtime', 'modernime_install_environment', 'modernime_settings_install'}
+          missing = required - tests
+          assert not missing, f'Required release tests not registered: {sorted(missing)}'
+          PYEOF
+          unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
+          ctest --test-dir build/release-tests --output-on-failure --parallel 2
 
       - name: Build and package DEB
         run: |

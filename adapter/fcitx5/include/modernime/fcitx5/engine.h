@@ -45,6 +45,10 @@ enum class KeyKind {
     CommitLastCharacter,
 };
 
+// Empty valid text is a real document state; unavailable clients may use the
+// bounded continuous-commit fallback. Invalidated state drops that fallback.
+enum class ContextAvailability { Valid, Unavailable, Invalidated };
+
 struct KeyEvent final {
     KeyKind kind = KeyKind::Character;
     char character = 0;
@@ -93,7 +97,8 @@ public:
     bool select(std::size_t index);
     bool extractCharacter(bool firstChar);
     bool removeCurrent();
-    void setContext(std::string before, std::string after);
+    void setContext(std::string before, std::string after,
+                    ContextAvailability availability = ContextAvailability::Valid);
     void reset();
     void setActive(bool active);
     void setSensitive(bool sensitive);
@@ -222,6 +227,7 @@ private:
     std::string contextBefore_;
     std::string contextAfter_;
     std::string fallbackContextBefore_;
+    ContextAvailability contextAvailability_ = ContextAvailability::Unavailable;
     ControllerOptions options_;
     bool active_ = true;
     bool clipboardMode_ = false;

@@ -100,14 +100,14 @@ CandidateRanker::rank(std::string_view userInput,
             PinyinMatchPolicy::trustedShortAbbreviationMatch(
                 userInput, candidate.full_pinyin, candidate.text)) {
             abbreviationPromoted[index] = true;
-            bestTrustedScore = std::min(bestTrustedScore, candidate.final_score());
+            bestTrustedScore = std::min(bestTrustedScore, candidate.abbreviation_admission_score());
         }
     }
     if (std::isfinite(bestTrustedScore)) {
         for (std::size_t index = 0; index < candidates.size(); ++index) {
             const auto &candidate = candidates[index];
             if (candidate.match_priority == 1 && candidate.learning_boost >= 2.5 &&
-                candidate.final_score() < bestTrustedScore) {
+                candidate.abbreviation_admission_score() < bestTrustedScore) {
                 abbreviationPromoted[index] = true;
             }
         }
@@ -119,8 +119,18 @@ CandidateRanker::rank(std::string_view userInput,
             }
         }
     }
+    std::vector<double> preferenceCosts;
+    preferenceCosts.reserve(candidates.size());
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        // Unadmitted alternatives must not use preference normalization to
+        // bypass the existing trusted-abbreviation boundary.
+        const auto &candidate = candidates[i];
+        preferenceCosts.push_back(std::isfinite(bestTrustedScore) &&
+                candidate.match_priority == 1 && !abbreviationPromoted[i]
+            ? candidate.abbreviation_admission_score() : candidate.final_score());
+    }
     std::stable_sort(order.begin(), order.end(),
-                     [&candidates, &abbreviationPromoted](std::size_t left,
+                     [&candidates, &abbreviationPromoted, &preferenceCosts](std::size_t left,
                                                         std::size_t right) -> bool {
         const auto &a = candidates[left];
         const auto &b = candidates[right];
@@ -130,10 +140,14 @@ CandidateRanker::rank(std::string_view userInput,
         if (abbreviationPromoted[left] != abbreviationPromoted[right]) {
             return abbreviationPromoted[left];
         }
-        if (a.final_score() != b.final_score()) {
-            return a.final_score() < b.final_score();
+        if (preferenceCosts[left] != preferenceCosts[right]) {
+            return preferenceCosts[left] < preferenceCosts[right];
         }
-        return a.source_index < b.source_index;
+        if (a.source_index != b.source_index) {
+            return a.source_index < b.source_index;
+        }
+        return candidateOrderKey(a.text, a.full_pinyin) <
+               candidateOrderKey(b.text, b.full_pinyin);
     });
     return order;
 }

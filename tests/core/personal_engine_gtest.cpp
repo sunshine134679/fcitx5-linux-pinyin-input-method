@@ -659,7 +659,7 @@ TEST(PersonalEngineTest, DeletionFeedbackCharacterExtractionAndPriorityElevation
         provider.flush();
 
         // 验证即时提权：输入 shao，首位必须为“绍”
-        controller.setContext("古城", "");
+        controller.setContext("古城绍", "");
         for (char c : std::string_view("shao")) {
             ASSERT_TRUE(controller.handle(
                 {modernime::fcitx5::KeyKind::Character, c, 0}));
@@ -683,7 +683,7 @@ TEST(PersonalEngineTest, DeletionFeedbackCharacterExtractionAndPriorityElevation
         provider.flush();
 
         // 验证即时提权：输入 shao，首位必须为“绍”
-        controller.setContext("自我", "");
+        controller.setContext("自我绍", "");
         for (char c : std::string_view("shao")) {
             ASSERT_TRUE(controller.handle(
                 {modernime::fcitx5::KeyKind::Character, c, 0}));
@@ -711,7 +711,7 @@ TEST(PersonalEngineTest, DeletionFeedbackCharacterExtractionAndPriorityElevation
         provider.flush();
 
         // 验证即时提权：输入 long，首位必须为“龙”
-        controller.setContext("传神", "");
+        controller.setContext("传神龙", "");
         for (char c : std::string_view("long")) {
             ASSERT_TRUE(controller.handle(
                 {modernime::fcitx5::KeyKind::Character, c, 0}));
