@@ -34,7 +34,7 @@ function updateDebDownload() {
   const button = document.getElementById("deb-download");
   const distro = document.querySelector("input[name=deb-system]:checked").value;
   if (!releaseAssets) {
-    button.href = `https://github.com/${repository}/releases/download/v0.1.11/modernime_0.1.11_amd64_${distro}.deb`;
+    button.href = `https://github.com/${repository}/releases/download/v0.1.12/modernime_0.1.12_amd64_${distro}.deb`;
     return;
   }
   const asset = releaseAssets.find(item => new RegExp(`^modernime[_-].*amd64[_-]${distro}\\.deb$`).test(item.name));
@@ -86,116 +86,9 @@ async function refreshRelease() {
     const checksums = releaseAssets.find(asset => asset.name === "SHA256SUMS.txt");
     document.getElementById("checksum-link").href = checksums ? checksums.browser_download_url : releasePage;
   } catch {
-    document.getElementById("release-status").textContent = "暂时无法获取最新版本，当前显示 v0.1.11 的下载链接。可前往 GitHub Releases 查看最新发布。";
+    document.getElementById("release-status").textContent = "暂时无法获取最新版本，当前显示 v0.1.12 的下载链接。可前往 GitHub Releases 查看最新发布。";
   } finally {
     clearTimeout(timeout);
   }
 }
 refreshRelease();
-
-// Presentation effects are optional: controls and content work without motion APIs.
-const reducedMotion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : {matches: true};
-function transitionContent(element) {
-  if (element && typeof element.animate === "function" && !reducedMotion.matches) {
-    element.animate([{opacity: .25, transform: "translateY(7px)"}, {opacity: 1, transform: "translateY(0)"}], {duration: 430, easing: "cubic-bezier(.16,1,.3,1)"});
-  }
-}
-const scenes = {
-  hello: {prelude: "你好，Linux。", context: "每次新的相遇，", prefix: "先说一句", word: "你好", pinyin: "ni'hao", candidates: ["你好", "你号", "拟好"]},
-  express: {prelude: "你好，Linux。", context: "今天也有很多想法，", prefix: "值得被", word: "好好表达", pinyin: "hao'hao'biao'da", candidates: ["好好表达", "好好", "表达"]},
-  linux: {prelude: "热爱，始于自由。", context: "熟悉的桌面，新的灵感，", prefix: "正在", word: "自由生长", pinyin: "zi'you'sheng'zhang", candidates: ["自由生长", "自由", "生长"]}
-};
-let typingTimer = null;
-let currentScene = "express";
-function renderScene(name, type = true) {
-  const scene = scenes[name];
-  if (!scene) return;
-  currentScene = name;
-  clearTimeout(typingTimer);
-  for (const field of ["prelude", "context", "prefix", "word"]) {
-    const element = document.getElementById(`hero-${field}`);
-    if (element) element.textContent = scene[field];
-  }
-  document.querySelectorAll("[data-scene]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.scene === name)));
-  const candidates = document.getElementById("hero-candidates");
-  if (candidates) {
-    candidates.replaceChildren(...scene.candidates.map((word, index) => {
-      const candidate = document.createElement("span");
-      candidate.className = index === 0 ? "candidate chosen" : "candidate";
-      const number = document.createElement("small");
-      number.textContent = String(index + 1);
-      candidate.append(number, document.createTextNode(word));
-      return candidate;
-    }));
-    transitionContent(candidates);
-  }
-  const composition = document.getElementById("hero-pinyin");
-  if (!composition) return;
-  if (!type || reducedMotion.matches || document.hidden) {
-    composition.textContent = scene.pinyin;
-    return;
-  }
-  let length = 0;
-  function next() {
-    composition.textContent = scene.pinyin.slice(0, ++length);
-    if (length < scene.pinyin.length) typingTimer = setTimeout(next, 55);
-  }
-  next();
-}
-document.querySelectorAll("[data-scene]").forEach(button => button.addEventListener("click", () => renderScene(button.dataset.scene)));
-document.querySelectorAll("[data-demo]").forEach(button => button.addEventListener("click", () => transitionContent(document.getElementById("demo-candidates"))));
-if (typeof document.addEventListener === "function") {
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) renderScene(currentScene, false);
-  });
-}
-
-// Static scene contents remain readable; switching never waits for a network request.
-document.querySelectorAll("[data-workflow]").forEach(button => button.addEventListener("click", () => {
-  document.querySelectorAll("[data-workflow]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
-  document.querySelectorAll("[data-workflow-panel]").forEach(panel => {
-    const selected = panel.dataset.workflowPanel === button.dataset.workflow;
-    panel.hidden = !selected;
-    if (selected) transitionContent(panel);
-  });
-}));
-
-// Observe once, then disconnect each element. No perpetual animation or scroll loop.
-if (typeof IntersectionObserver === "function" && !reducedMotion.matches) {
-  const elements = document.querySelectorAll(".section-heading, .interactive-demo, .feature-stack, .detail-strip, .client-heading, .gallery-navigation, .client-figure, .client-benefits, .download-card, .source-install, .help-grid, .open-source, .everyday-heading, .workflow-grid, .vocabulary-strip");
-  const observer = new IntersectionObserver(entries => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add("is-visible");
-        observer.unobserve(entry.target);
-      }
-    });
-  }, {threshold: .08});
-  elements.forEach(element => {
-    element.setAttribute("data-reveal", "");
-    observer.observe(element);
-  });
-  document.documentElement.classList.add("motion-ready");
-  renderScene(currentScene);
-  if (reducedMotion.addEventListener) reducedMotion.addEventListener("change", () => {
-    if (reducedMotion.matches) {
-      observer.disconnect();
-      document.documentElement.classList.remove("motion-ready");
-      renderScene(currentScene, false);
-    }
-  });
-}
-if (typeof window.addEventListener === "function" && typeof requestAnimationFrame === "function") {
-  let scheduled = false;
-  function updateProgress() {
-    const root = document.documentElement;
-    const total = root.scrollHeight - root.clientHeight;
-    root.style.setProperty("--reading-progress", total > 0 ? Math.min(1, Math.max(0, window.scrollY / total)) : 0);
-    scheduled = false;
-  }
-  window.addEventListener("scroll", () => {
-    if (!scheduled) { scheduled = true; requestAnimationFrame(updateProgress); }
-  }, {passive: true});
-  window.addEventListener("resize", updateProgress);
-  updateProgress();
-}
