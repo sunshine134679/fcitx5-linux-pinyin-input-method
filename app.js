@@ -34,7 +34,7 @@ function updateDebDownload() {
   const button = document.getElementById("deb-download");
   const distro = document.querySelector("input[name=deb-system]:checked").value;
   if (!releaseAssets) {
-    button.href = `https://github.com/${repository}/releases/download/v0.1.12/modernime_0.1.12_amd64_${distro}.deb`;
+    button.href = `https://github.com/${repository}/releases/download/v0.1.13/modernime_0.1.13_amd64_${distro}.deb`;
     return;
   }
   const asset = releaseAssets.find(item => new RegExp(`^modernime[_-].*amd64[_-]${distro}\\.deb$`).test(item.name));
@@ -86,7 +86,7 @@ async function refreshRelease() {
     const checksums = releaseAssets.find(asset => asset.name === "SHA256SUMS.txt");
     document.getElementById("checksum-link").href = checksums ? checksums.browser_download_url : releasePage;
   } catch {
-    document.getElementById("release-status").textContent = "暂时无法获取最新版本，当前显示 v0.1.12 的下载链接。可前往 GitHub Releases 查看最新发布。";
+    document.getElementById("release-status").textContent = "暂时无法获取最新版本，当前显示 v0.1.13 的下载链接。可前往 GitHub Releases 查看最新发布。";
   } finally {
     clearTimeout(timeout);
   }
