@@ -175,6 +175,17 @@
 
 ---
 
+### 特性 11：跨版本英文准入与严格模型基线（v0.1.13，2026-10-15）
+
+- **问题与算法调整**：Ubuntu 22.04 的 LibIME 将 `gara` 解码为 `ga'r'a`，去掉分隔符后看似精确匹配，提前阻止 `garage` 补全。`algorithm/pinyin/src/pinyin_candidate_provider.cpp` 在精确完整拼音否决前复用既有内部音节合法性检查；有效全拼、可信简拼与短码中文保护仍使用原策略。没有新增状态、来源、参数或持久格式。
+- **契约与体验**：涉及 `ALG-PINYIN/ZHEN/IDENTITY/SUPPRESS`、`CAND-ELIGIBILITY/FALLBACK/IDENTITY`。旧版系统恢复英文补全，消费仍为实际四字节，按完整英文词学习并跨前缀持久屏蔽。隐私、禁学、清空、容量与各用途时间衰减保持原边界。影响、依赖、状态权限及回退说明见 [本版变更记录](releases/v0.1.13.md#算法变更影响记录)。
+- **避免改词序掩盖环境差异**：`tests/core/native_pinyin_test_baseline.h` 独立使用系统 LibIME，不读取 Provider 分数或学习数据。只有五组原生行为同时符合已审计旧模型，才启用旧模型三词精确全局位置 `调优=7`、`死锁=3`、`破折号=15`；`d1c3195` 独立构建与本版结果相同。新版与未知模型保留原排名标准；这是行为基线，不是版本判断或安全指纹。对应测试为 `pinyin_provider_test.cpp`、`pinyin_quality_test.cpp`、`pinyin_daily_simulation_test.cpp`。单字/纠错差异由原生 oracle 检验，不能把旧模型冷启动位置称为新版金样通过，也没有增加词典加分去强推少数词。
+- **学习验收**：两套模型均真实选择上述三词十次，每次验证完整拼音和消费范围；选择后清除提交上下文，最终全局第一，flush 后通用身份频次恰为十，重新打开仍全局第一。保持既有候选回归的物理分页和选择映射验收。
+- **发布生命周期修复**：`core/{include/modernime/core,src}/persistent_clipboard_history.*` 用设备、inode、大小、mtime、ctime 检测外部原子替换，新增同时间戳/同尺寸回归；`tests/adapter/fcitx5_input_panel_test.cpp` 检查真实文本及光标，并重置多 Instance 夹具的全局选项状态，兼容 Fcitx 5.0.14。CI Debug 正确性与 Release 性能门禁分别执行，Benchmark 保留原阈值；发行构建强制检查 GTest、Benchmark 和安装测试实际注册。
+- **验证**：新旧两套 LibIME 模型五项定向 CTest 各 5/5（包含 64 个 GTest）；真实 Fcitx 5.0.14 输入面板等三项回归通过。最终本机安装完整 CTest 63 项通过、3 项 GTK 跳过、0 失败，Benchmark 实际执行；隔离全新克隆安装/卸载闭环通过。没有新增生产依赖或用户数据迁移；桌面打字、真实字体、跨 DPI 与 Wayland/X11 事件仍未完整验收。
+
+---
+
 ## 三、用户体验不可退化不变量矩阵 (The "Never-Break" Matrix)
 
 每一次算法变更，都**必须**在单元测试或端到端验证中确认以下“不可破坏行为”：
@@ -205,6 +216,7 @@
 | **22** | 会话清除/共享/敏感/禁学 | 近期选择窗口 | 持久次数保留，窗口不泄露或补记 | 私密或其他 Provider 的意图参与评分 | `CandidateRankingRegression`、`RecentChoiceRegression` |
 | **23** | 原生候选一选三次负反馈 | 带符号学习 | 负增益保留；同先验落后中性项 | 默认零吞掉负反馈 | `NativeCandidatePreservesNegativeLearningEvidence` |
 | **24** | 已屏蔽你好/garage 后禁学重开 | 中文、前缀、英文及设置清空 | 屏蔽有效；不建新库；清空代次生效 | 禁学使已删除候选复活 | `DisablingLearningDoesNotRestorePersistentlySuppressedCandidates`、Provider 旧断言 |
+| **25** | `gara` 在旧/新 LibIME 下 | 普通、学习后、跨前缀屏蔽 | 内部非法音节不误当完整精确拼音；英文完整身份、消费四字节 | 修复英文补全时破坏有效全拼或短码中文保护 | Provider 英文补全与 `EnglishArbitration` |
 
 
 

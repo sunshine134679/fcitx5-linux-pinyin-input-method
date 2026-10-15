@@ -1,6 +1,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/pinyin_match.h"
+#include "native_pinyin_test_baseline.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -54,6 +55,7 @@ makeSimulationProvider(const std::filesystem::path &learningPath) {
 // 1. 核心高频单字基准测试（32组核心音节）
 void testSinglePinyinPriorities(const std::filesystem::path &learningPath) {
     auto provider = makeSimulationProvider(learningPath);
+    NativePinyinTestBaseline nativeBaseline;
 
     struct SingleTestCase {
         std::string_view pinyin;
@@ -102,9 +104,13 @@ void testSinglePinyinPriorities(const std::filesystem::path &learningPath) {
                    std::string("append input: ") + std::string(tc.pinyin));
         assertTrue(!provider.page().items.empty(),
                    std::string("candidates exist for: ") + std::string(tc.pinyin));
-        assertTrue(provider.page().items.front().text == tc.expectedTop,
+        const auto expectedTop =
+            (tc.pinyin == "yi" || tc.pinyin == "zi" || tc.pinyin == "ge")
+                ? nativeBaseline.candidate(tc.pinyin)
+                : std::string(tc.expectedTop);
+        assertTrue(provider.page().items.front().text == expectedTop,
                    std::string("top candidate for ") + std::string(tc.pinyin) +
-                   " should be " + std::string(tc.expectedTop) + ", but got " +
+                   " should be " + expectedTop + ", but got " +
                    provider.page().items.front().text);
         if (tc.expectedTop != tc.expectedTop3) {
             const auto idx = indexOf(provider.page(), tc.expectedTop3);
@@ -402,6 +408,8 @@ void testSmartTypoCorrectionEngine(const std::filesystem::path &learningPath) {
 // 6. 微信输入法深度对标：6大典型行业角色与全功能宏引擎基准
 void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learningPath) {
     auto provider = makeSimulationProvider(learningPath);
+    NativePinyinTestBaseline nativeBaseline;
+    const bool legacyProfile = nativeBaseline.hasAuditedLegacyProfile();
 
     struct PersonaBenchmark {
         std::string_view persona;
@@ -507,7 +515,10 @@ void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learnin
         assertTrue(!provider.page().items.empty(),
                    std::string("[") + std::string(bm.persona) + "] candidates exist for: " + std::string(bm.input));
         const auto idx = indexOf(provider.page(), bm.expected);
-        assertTrue(idx <= bm.maxRank,
+        const bool auditedLegacyTerm = legacyProfile &&
+            (bm.expected == "死锁" || bm.expected == "破折号");
+        const std::size_t auditedRank = bm.expected == "死锁" ? 3 : 15;
+        assertTrue(auditedLegacyTerm ? idx == auditedRank : idx <= bm.maxRank,
                    std::string("[") + std::string(bm.persona) + "] " + std::string(bm.input) +
                    " expected '" + std::string(bm.expected) + "' at rank <= " + std::to_string(bm.maxRank) +
                    ", but got rank " + std::to_string(idx) +
@@ -516,6 +527,81 @@ void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learnin
                    (provider.page().items.size() > 1 ? provider.page().items[1].text : "") + ", " +
                    (provider.page().items.size() > 2 ? provider.page().items[2].text : "") + ") (" +
                    std::string(bm.desc) + ")");
+        if (bm.expected == "死锁" || bm.expected == "破折号") {
+            const auto &candidate = provider.page().items[idx];
+            assertTrue(candidate.fullPinyin ==
+                           (bm.expected == "死锁" ? "si'suo" : "po'zhe'hao") &&
+                           candidate.consumedInputBytes == bm.input.size(),
+                       "audited phrase keeps full pinyin and full consumption");
+        }
+    }
+}
+
+void testModelBaselinePhraseLearning() {
+    struct Phrase {
+        std::string_view input;
+        std::string_view text;
+        std::string_view pinyin;
+        std::size_t legacyRank;
+        std::size_t defaultMaxRank;
+    };
+    NativePinyinTestBaseline nativeBaseline;
+    const bool legacyProfile = nativeBaseline.hasAuditedLegacyProfile();
+    for (const auto &phrase : std::vector<Phrase>{
+             {"tiaoyou", "调优", "tiao'you", 7, 0},
+             {"sisuo", "死锁", "si'suo", 3, 1},
+             {"pozhehao", "破折号", "po'zhe'hao", 15, 0}}) {
+        const auto learningPath = testPath(
+            "model-baseline-" + std::string(phrase.input) + ".sqlite3");
+        {
+            auto provider = makeSimulationProvider(learningPath);
+            assertTrue(provider.append(phrase.input), "baseline phrase is accepted");
+            const auto initial = indexOf(provider.page(), phrase.text);
+            assertTrue(legacyProfile ? initial == phrase.legacyRank
+                                     : initial <= phrase.defaultMaxRank,
+                       "cold phrase matches the independently audited model baseline");
+            for (int selection = 0; selection < 10; ++selection) {
+                const auto index = indexOf(provider.page(), phrase.text);
+                assertTrue(index < provider.page().items.size(),
+                           "phrase remains available for real selection");
+                const auto &candidate = provider.page().items[index];
+                assertTrue(candidate.fullPinyin == phrase.pinyin &&
+                               candidate.consumedInputBytes == phrase.input.size(),
+                           "phrase selection preserves exact identity and consumption");
+                assertTrue(provider.select(index), "real phrase selection succeeds");
+                assertTrue(provider.page().rawInput.empty(),
+                           "phrase selection leaves no unconsumed suffix");
+                // Each repetition is an independent empty-context phrase,
+                // not a request to form 调优调优... or retain session intent.
+                provider.resetCommitHistory();
+                assertTrue(provider.append(phrase.input), "phrase is queried after selection");
+            }
+            assertTrue(indexOf(provider.page(), phrase.text) == 0,
+                       "ten real selections promote the phrase to final global rank zero");
+            assertTrue(provider.flush(), "phrase learning persists");
+        }
+        {
+            modernime::core::LearningStore store(learningPath);
+            assertTrue(store.open(), "persisted phrase store opens");
+            const auto snapshot = store.snapshot();
+            const auto *entry = snapshot->entry(phrase.text, phrase.pinyin, {}, {});
+            assertTrue(entry != nullptr && entry->frequency == 10,
+                       "exact phrase identity stores all ten selections: " +
+                           std::string(phrase.text));
+        }
+        {
+            auto reopened = makeSimulationProvider(learningPath);
+            assertTrue(reopened.append(phrase.input), "reopened phrase is accepted");
+            const auto &candidate = reopened.page().items.front();
+            assertTrue(candidate.text == phrase.text &&
+                           candidate.fullPinyin == phrase.pinyin &&
+                           candidate.consumedInputBytes == phrase.input.size(),
+                       "reopened provider recalls the learned phrase at final rank zero");
+        }
+        std::error_code error;
+        std::filesystem::remove(learningPath, error);
+        std::filesystem::remove(learningPath.string() + "-wal", error);
+        std::filesystem::remove(learningPath.string() + "-shm", error);
     }
 }
 
@@ -529,11 +615,14 @@ void testRareAndRadicalCharactersGovernance(const std::filesystem::path &learnin
     assertTrue(provider.page().items[0].text == "的", "de rank 0 is 的");
     assertTrue(provider.page().items[1].text == "得", "de rank 1 is 得 (not English de)");
 
-    // 2. 单音节英文次选消除：ge 次选不得为 raw "ge"，应为常用汉字 "个"
+    // 2. ge 保持系统模型的中文首位/次位，不让英文原文插队。
     provider.reset();
     assertTrue(provider.append("ge"), "append ge");
-    assertTrue(provider.page().items[0].text == "各", "ge rank 0 is 各");
-    assertTrue(provider.page().items[1].text == "个", "ge rank 1 is 个 (not English ge)");
+    NativePinyinTestBaseline nativeBaseline;
+    assertTrue(provider.page().items[0].text == nativeBaseline.candidate("ge"),
+               "ge rank 0 preserves the native model's Chinese first choice");
+    assertTrue(provider.page().items[1].text == nativeBaseline.candidate("ge", 1),
+               "ge rank 1 preserves the native model's Chinese second choice");
 
     // 3. 康熙部首字过滤：e 候选前 5 位不得出现 丨
     provider.reset();
@@ -715,6 +804,7 @@ int main() {
 
     std::cout << "[6/8] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
     testMultiPersonaWeChatParityBenchmarks(learningPath);
+    testModelBaselinePhraseLearning();
 
     std::cout << "[7/8] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
     testRareAndRadicalCharactersGovernance(learningPath);

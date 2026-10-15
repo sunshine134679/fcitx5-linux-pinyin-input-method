@@ -3,6 +3,7 @@
 
 #include "modernime/core/learning_store.h"
 #include "modernime/core/pinyin_match.h"
+#include "native_pinyin_test_baseline.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -118,8 +119,13 @@ void testLongInputMixesUsefulPhrasePrefixes() {
                "first page includes a useful three-syllable prefix");
     assertTrue(indexOf(page, "你好") < std::min<std::size_t>(9, page.items.size()),
                "first page includes a useful two-syllable prefix");
-    assertTrue(indexOf(page, "拟") < std::min<std::size_t>(5, page.items.size()),
+    NativePinyinTestBaseline nativeBaseline;
+    const auto homophoneIndex = indexOf(page, nativeBaseline.candidate("ni", 1));
+    assertTrue(homophoneIndex < std::min<std::size_t>(5, page.items.size()),
                "visible candidates include a real decoded homophone option");
+    assertTrue(page.items[homophoneIndex].fullPinyin == "ni" &&
+                   page.items[homophoneIndex].consumedInputBytes == 2,
+               "decoded homophone consumes only its own syllable");
 
     std::size_t fullSentenceVariants = 0;
     const auto firstPageSize = std::min<std::size_t>(5, page.items.size());

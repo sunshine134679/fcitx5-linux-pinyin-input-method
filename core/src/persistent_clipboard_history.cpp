@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <system_error>
+#include <sys/stat.h>
 #include <utility>
 
 namespace modernime::core {
@@ -13,19 +14,30 @@ void setError(std::string *error, std::string message) {
     }
 }
 
-std::filesystem::file_time_type currentMtime(const std::filesystem::path &path,
-                                             bool &valid) {
-    std::error_code code;
-    const auto mtime = std::filesystem::last_write_time(path, code);
-    valid = !code;
-    return mtime;
-}
-
 } // namespace
 
 PersistentClipboardHistory::PersistentClipboardHistory(
     std::filesystem::path path)
     : path_(std::move(path)) {}
+
+PersistentClipboardHistory::FileState
+PersistentClipboardHistory::currentFileState() const {
+    struct stat metadata {};
+    if (::stat(path_.c_str(), &metadata) != 0) {
+        return {};
+    }
+    // save() replaces the file atomically, so device/inode detect edits even
+    // when mtime and size repeat. ctime also covers in-place rewrites and inode
+    // reuse between polls without reading the full clipboard on every poll.
+    return {static_cast<std::uintmax_t>(metadata.st_dev),
+            static_cast<std::uintmax_t>(metadata.st_ino),
+            static_cast<std::uintmax_t>(metadata.st_size),
+            std::chrono::seconds(metadata.st_mtim.tv_sec) +
+                std::chrono::nanoseconds(metadata.st_mtim.tv_nsec),
+            std::chrono::seconds(metadata.st_ctim.tv_sec) +
+                std::chrono::nanoseconds(metadata.st_ctim.tv_nsec),
+            true};
+}
 
 bool PersistentClipboardHistory::quarantineCorruptFile() const {
     std::error_code filesystemError;
@@ -59,10 +71,7 @@ bool PersistentClipboardHistory::load(std::string *error) {
     }
     dirty_ = false;
     pendingObservations_.clear();
-    bool mtimeValid = false;
-    const auto mtime = currentMtime(path_, mtimeValid);
-    knownMtime_ = mtime;
-    knownMtimeValid_ = mtimeValid;
+    knownFileState_ = currentFileState();
     return loaded_;
 }
 
@@ -104,16 +113,14 @@ bool PersistentClipboardHistory::reloadIfExternallyChanged(
     if (dirty_) {
         return false;
     }
-    bool mtimeValid = false;
-    const auto mtime = currentMtime(path_, mtimeValid);
-    if (!mtimeValid) {
+    const auto state = currentFileState();
+    if (!state.valid) {
         return false;
     }
-    if (knownMtimeValid_ && mtime == knownMtime_) {
+    if (state == knownFileState_) {
         return false;
     }
-    knownMtime_ = mtime;
-    knownMtimeValid_ = true;
+    knownFileState_ = state;
     const bool result = history_.load(path_, error);
     if (!result && quarantineCorruptFile()) {
         // 外部修改把文件写坏时同样隔离备份并继续运行。
@@ -140,10 +147,7 @@ bool PersistentClipboardHistory::flush(std::string *error) {
 }
 
 bool PersistentClipboardHistory::persist(std::string *error) {
-    bool currentMtimeValid = false;
-    const auto mtime = currentMtime(path_, currentMtimeValid);
-    if (currentMtimeValid != knownMtimeValid_ ||
-        (currentMtimeValid && mtime != knownMtime_)) {
+    if (currentFileState() != knownFileState_) {
         ClipboardHistory latest;
         if (!latest.load(path_, error)) {
             return false;
@@ -162,9 +166,7 @@ bool PersistentClipboardHistory::persist(std::string *error) {
     }
     dirty_ = false;
     pendingObservations_.clear();
-    bool mtimeValid = false;
-    knownMtime_ = currentMtime(path_, mtimeValid);
-    knownMtimeValid_ = mtimeValid;
+    knownFileState_ = currentFileState();
     return true;
 }
 

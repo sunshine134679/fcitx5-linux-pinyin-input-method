@@ -78,9 +78,9 @@ async function run(release, options = {}) {
   await new Promise(resolve => setImmediate(resolve));
   return {pendingImages, imageRequests, finishDecode: () => finishDecode(), elements, systemOptions, workflowButtons, workflowPanels, buttons, sceneButtons, screenshotButtons, root, reveal, observers, typing, reduce: () => {media.matches = true; mediaChanged.forEach(action => action());}, copied: () => copied, selected: () => selected};
 }
-const tag = "v0.1.12";
+const tag = "v9.8.7";
 const base = `https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/download/${tag}/`;
-const names = ["modernime_0.1.12_amd64_ubuntu24.04.deb", "modernime_0.1.12_amd64_ubuntu22.04.deb", "modernime-0.1.12-1.oe24.x86_64.rpm", "modernime-0.1.12-linux-x86_64.tar.gz", "SHA256SUMS.txt"];
+const names = ["modernime_9.8.7_amd64_ubuntu24.04.deb", "modernime_9.8.7_amd64_ubuntu22.04.deb", "modernime-9.8.7-1.oe24.x86_64.rpm", "modernime-9.8.7-linux-x86_64.tar.gz", "SHA256SUMS.txt"];
 const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_download_url: base + name}))};
 (async () => {
   await require("./install_test.js")();
@@ -153,7 +153,7 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.ok(!fs.readFileSync(path.join(__dirname, "../../website/index.html"), "utf8").includes("<select"), "system versions must be visible choices, not a popup covering download actions");
   const app = await run(fixture);
   const e = app.elements;
-  assert.equal(e["release-version"].textContent, "最新发布 v0.1.12");
+  assert.equal(e["release-version"].textContent, `最新发布 ${tag}`);
   assert.equal(e["deb-download"].href, base + names[0]);
   app.systemOptions[0].checked = false;
   app.systemOptions[1].checked = true;
@@ -192,7 +192,7 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(app.copied(), e["install-command"].textContent);
   const offline = await run(null, {copyFailure: true});
   await offline.systemOptions[0].events.change();
-  assert.match(offline.elements["deb-download"].href, /v0\.1\.12\/.*ubuntu24\.04\.deb$/);
+  assert.match(offline.elements["deb-download"].href, /v0\.1\.13\/.*ubuntu24\.04\.deb$/);
   assert.match(offline.elements["release-status"].textContent, /暂时无法/);
   await offline.elements["copy-install"].events.click();
   assert.equal(offline.selected(), true);

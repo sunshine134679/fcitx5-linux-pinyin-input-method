@@ -2,6 +2,8 @@
 
 #include "modernime/core/clipboard_history.h"
 
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -29,6 +31,19 @@ public:
     }
 
 private:
+    // A timestamp alone cannot identify rapid atomic replacements on
+    // filesystems with coarse clock resolution.
+    struct FileState {
+        std::uintmax_t device = 0;
+        std::uintmax_t inode = 0;
+        std::uintmax_t size = 0;
+        std::chrono::nanoseconds modified{};
+        std::chrono::nanoseconds changed{};
+        bool valid = false;
+
+        bool operator==(const FileState &) const = default;
+    };
+    FileState currentFileState() const;
     bool persist(std::string *error);
     // 把无法读取的剪贴板历史文件改名备份（.corrupt-<时间戳>），
     // 使剪贴板功能可以从空历史继续运行而不是永久失效。
@@ -42,8 +57,7 @@ private:
     // Clipboard observation is independent of history edits by other clients.
     std::string lastObservedText_;
     bool hasObservedText_ = false;
-    std::filesystem::file_time_type knownMtime_{};
-    bool knownMtimeValid_ = false;
+    FileState knownFileState_;
 };
 
 } // namespace modernime::core

@@ -164,7 +164,7 @@ ID 永久稳定。特性停用后保留 ID 和历史，不能把旧 ID 分配给
 |---|---|---|---|
 | `ALG-PINYIN` 拼音解析 | 全拼/简拼/混拼及无撇号兼容；`wangshaolong` 可生成 `wsl` | `pinyin_match.cpp`、快照索引 | `modernime_pinyin_match`；Snapshot 回归 `DigraphInitialsRemainIndexedAfterPublication` |
 | `ALG-TYPO` 容错 | 重复元音与模糊补充不破坏正常中文；保留 CommonTypo 构建能力检查 | Provider、`candidate_pipeline.cpp` | `modernime_pinyin_quality`、`modernime_pinyin_provider` |
-| `ALG-ZHEN` 中英仲裁 | `de/shi/qu` 高频中文保护；中文声母不被生僻英文抢占，已学技术词可补全 | Provider、英文词典 | `modernime_english_arbitration`、`modernime_personal_engine_gtest` |
+| `ALG-ZHEN` 中英仲裁 | `de/shi/qu` 高频中文保护；中文声母不被生僻英文抢占，已学技术词可补全；含内部非法音节的解码项不能作为完整精确拼音提前否决英文 | Provider、英文词典 | `modernime_english_arbitration`、`modernime_personal_engine_gtest` |
 | `ALG-RANK` 中文排序 | 匹配等级与可信简拼规则优先；偶发选字不破坏常用字，重复学习能上位；比较器无环 | `candidate_ranker.h/.cpp`、管线 | `modernime_pinyin_match`（排列传递性）、`modernime_pinyin_quality` |
 | `ALG-DECAY` 遗忘与频率 | 对数频率、各自时间机制、负反馈和近期学习保持原用途 | `personal_engine.cpp`、`learning_snapshot.cpp`、Ranker | `modernime_personal_engine_gtest`、`modernime_learning_store`；迁移须补齐三策略固定时钟对照 |
 | `ALG-CONTEXT` 上下文 | 有效空文本清除旧上下文；仅不支持采集的连续输入可回退；失效状态丢弃待确认证据 | `inputmethod.cpp`、`engine.cpp`、学习清洗 | Controller 回归；`modernime_engine_state` |
