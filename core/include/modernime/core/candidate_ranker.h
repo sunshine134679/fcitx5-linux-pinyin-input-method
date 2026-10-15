@@ -62,7 +62,7 @@ struct CandidateScore final {
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor;
-        if (is_rare) {
+        if (is_rare && learning_boost < 1.8) {
             score += 100.0;
         } else if (is_level1) {
             score -= 2.0;

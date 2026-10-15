@@ -812,5 +812,81 @@ int main() {
         std::filesystem::remove(delLearningPath.string() + "-shm", ec);
     }
 
+    // -------------------------------------------------------------------------
+    // Task 10: 成语/词语输入后删词留字（后缀与内部单字提取）即时提权至首位
+    // -------------------------------------------------------------------------
+    {
+        std::error_code ec;
+        const auto delLearningPath =
+            std::filesystem::temp_directory_path() / "modernime-engine-del-feedback-idiom.sqlite3";
+        std::filesystem::remove(delLearningPath, ec);
+        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+
+        modernime::pinyin::PinyinDataPaths delPaths;
+        delPaths.learningStore = delLearningPath.string();
+        modernime::pinyin::PinyinCandidateProvider delProvider(delPaths);
+        RecordingHost delHost;
+        modernime::fcitx5::ModernIMEController delController(
+            delHost, &delProvider);
+
+        // 1. 后缀留字测试：输入 jieshao，选择候选 "介绍"
+        delController.setContext("我来", "");
+        for (char c : std::string_view("jieshao")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto jieshaoIdx = indexOf(delController.page(), "介绍");
+        assertTrue(jieshaoIdx < delController.page().items.size(), "found 介绍 in candidates");
+        assertTrue(delController.select(jieshaoIdx), "selected 介绍");
+        assertTrue(delHost.commits.back() == "介绍", "committed 介绍");
+
+        // 删去前缀 "介"，留下目标字 "绍"，周边文本更新为 "我来绍"
+        delController.setContext("我来绍", "");
+        delProvider.flush();
+
+        // 验证即时提权：输入 shao，目标字 "绍" 即跃升为第 1 候选！
+        delController.setContext("我来", "");
+        for (char c : std::string_view("shao")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!delController.page().items.empty(), "has candidates for shao");
+        assertTrue(delController.page().items.front().text == "绍",
+                   "绍 is immediately promoted to top candidate after suffix extraction");
+        delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 2. 4 字成语多步退格与内部单字提取测试：输入 hualongdianjing，选择候选 "画龙点睛"
+        delController.setContext("文章", "");
+        for (char c : std::string_view("hualongdianjing")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        const auto hldjIdx = indexOf(delController.page(), "画龙点睛");
+        assertTrue(hldjIdx < delController.page().items.size(), "found 画龙点睛 in candidates");
+        assertTrue(delController.select(hldjIdx), "selected 画龙点睛");
+
+        // 模拟用户连续退格删去 "睛"、"点"，保留 "画龙"
+        delController.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+        delController.setContext("文章画龙点", "");
+        delController.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+        delController.setContext("文章画龙", "");
+
+        // 模拟用户删除 "画"，精确定位留下目标字 "龙"
+        delController.setContext("文章龙", "");
+        delProvider.flush();
+
+        // 验证即时提权：输入 long，目标字 "龙" 稳居第 1 候选！
+        delController.setContext("文章", "");
+        for (char c : std::string_view("long")) {
+            delController.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        }
+        assertTrue(!delController.page().items.empty(), "has candidates for long");
+        assertTrue(delController.page().items.front().text == "龙",
+                   "龙 is immediately promoted to top candidate after idiom internal character extraction");
+        delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        std::filesystem::remove(delLearningPath, ec);
+        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
+        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+    }
+
     return EXIT_SUCCESS;
 }

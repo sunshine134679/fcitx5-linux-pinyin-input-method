@@ -258,10 +258,11 @@ CandidatePipelineResult buildCandidatePipeline(
                         existing.last_selected_ms =
                             std::max(existing.last_selected_ms,
                                      learning->lastSelectedMs(existing.text, existing.full_pinyin));
+                        const bool isSingleChar =
+                            utf8CodePointCount(existing.text) == 1;
                         if (!existing.is_lexical &&
-                            utf8CodePointCount(existing.text) >= 2 &&
                             (item.learningBoost >= 1.8 ||
-                             (isAbbrInput && item.learningBoost >= 0.8))) {
+                             (!isSingleChar && isAbbrInput && item.learningBoost >= 0.8))) {
                             existing.source_index =
                                 std::min(existing.source_index, recalledIdx);
                         }

@@ -630,3 +630,123 @@ TEST(PersonalEngineTest, SegmentedPhraseFormationAndSingleCharExtraction) {
     std::filesystem::remove(lmdb_path, ec);
     std::filesystem::remove(lmdb_path.string() + "-lock", ec);
 }
+
+// 10. 成语及词语删字留单字即时提权至首位（前缀/后缀/内部字提取）
+TEST(PersonalEngineTest, DeletionFeedbackCharacterExtractionAndPriorityElevation) {
+    const auto lmdb_path = makeTempPath("del-feedback-elevation.lmdb");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = lmdb_path.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        RecordingHost host;
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+        // 10.1 前缀留字场景：输入 shaoxing 提交“绍兴”，删除“兴”留下“绍”
+        controller.setContext("古城", "");
+        for (char c : std::string_view("shaoxing")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        const auto shaoxingIdx = indexOf(controller.page(), "绍兴");
+        ASSERT_LT(shaoxingIdx, controller.page().items.size());
+        ASSERT_TRUE(controller.select(shaoxingIdx));
+
+        // 宿主应用删除末字“兴”，周边文本变为“古城绍”
+        controller.setContext("古城绍", "");
+        provider.flush();
+
+        // 验证即时提权：输入 shao，首位必须为“绍”
+        controller.setContext("古城", "");
+        for (char c : std::string_view("shao")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        ASSERT_FALSE(controller.page().items.empty());
+        EXPECT_EQ(controller.page().items.front().text, "绍");
+        controller.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 10.2 后缀留字场景：输入 jieshao 提交“介绍”，删除“介”留下“绍”
+        controller.setContext("自我", "");
+        for (char c : std::string_view("jieshao")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        const auto jieshaoIdx = indexOf(controller.page(), "介绍");
+        ASSERT_LT(jieshaoIdx, controller.page().items.size());
+        ASSERT_TRUE(controller.select(jieshaoIdx));
+
+        // 宿主应用删除首字“介”，周边文本变为“自我绍”
+        controller.setContext("自我绍", "");
+        provider.flush();
+
+        // 验证即时提权：输入 shao，首位必须为“绍”
+        controller.setContext("自我", "");
+        for (char c : std::string_view("shao")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        ASSERT_FALSE(controller.page().items.empty());
+        EXPECT_EQ(controller.page().items.front().text, "绍");
+        controller.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 10.3 成语内部提取场景：输入 hualongdianjing 提交“画龙点睛”，删除多余字留下“龙”
+        controller.setContext("传神", "");
+        for (char c : std::string_view("hualongdianjing")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        const auto hldjIdx = indexOf(controller.page(), "画龙点睛");
+        ASSERT_LT(hldjIdx, controller.page().items.size());
+        ASSERT_TRUE(controller.select(hldjIdx));
+
+        // 连续退格与光标移动，最终留下“龙”
+        controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+        controller.setContext("传神画龙点", "");
+        controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+        controller.setContext("传神画龙", "");
+        controller.setContext("传神龙", "");
+        provider.flush();
+
+        // 验证即时提权：输入 long，首位必须为“龙”
+        controller.setContext("传神", "");
+        for (char c : std::string_view("long")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        ASSERT_FALSE(controller.page().items.empty());
+        EXPECT_EQ(controller.page().items.front().text, "龙");
+        controller.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+
+        // 10.4 全词删除负反馈验证：提交后整词删除，不误学单字且原词获负反馈
+        controller.setContext("临时", "");
+        for (char c : std::string_view("ceshi")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        ASSERT_TRUE(controller.select(0)); // 提交“测试”
+        controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+        controller.setContext("临时", ""); // 全部删除恢复前缀
+        provider.flush();
+
+        // 验证没有误学单字“测”
+        controller.setContext("临时", "");
+        for (char c : std::string_view("ce")) {
+            ASSERT_TRUE(controller.handle(
+                {modernime::fcitx5::KeyKind::Character, c, 0}));
+        }
+        const auto ceIdx = indexOf(controller.page(), "测");
+        if (ceIdx < controller.page().items.size()) {
+            EXPECT_NE(controller.page().items[ceIdx].source,
+                      modernime::core::CandidateSource::Learned);
+        }
+        controller.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
+    }
+
+    std::error_code ec;
+    std::filesystem::remove(lmdb_path, ec);
+    std::filesystem::remove(lmdb_path.string() + "-lock", ec);
+}
+

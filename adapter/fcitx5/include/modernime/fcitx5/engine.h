@@ -197,15 +197,23 @@ private:
     void appendFallbackContext(std::string_view text);
 
     struct RecentCommit final {
-        std::string text;
-        std::string fullPinyin;
+        std::string originalText;
+        std::string originalPinyin;
+        std::string currentText;
+        std::string currentPinyin;
         std::string basePrefix;
         std::string contextAfter;
         std::chrono::steady_clock::time_point timestamp;
         bool valid = false;
+        std::vector<std::string> originalChars;
+        std::vector<std::string> originalSyllables;
     };
+    void initRecentCommit(const core::CandidateItem &candidate,
+                          const std::string &basePrefix,
+                          const std::string &contextAfter);
     bool checkRecentCommitDeletionFeedback(const std::string &before,
                                            const std::string &after);
+    void finalizeRecentCommitDeletion();
 
     EngineHost &host_;
     core::CandidateProvider *provider_ = nullptr;

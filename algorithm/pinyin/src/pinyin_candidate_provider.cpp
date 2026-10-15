@@ -1632,7 +1632,15 @@ public:
         event.timestampMs = nowMilliseconds();
 
         phraseTracker_.cancelComposition();
-        onCommitEvent(event);
+        core::CommitEvent genericEvent = event;
+        genericEvent.contextBefore.clear();
+        genericEvent.contextAfter.clear();
+        for (int rep = 0; rep < 3; ++rep) {
+            onCommitEvent(genericEvent);
+        }
+        if (!contextBefore_.empty() || !contextAfter_.empty()) {
+            onCommitEvent(event);
+        }
         appendFallbackContext(chosenChar);
 
         context->clear();

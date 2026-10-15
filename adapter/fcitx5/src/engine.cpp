@@ -97,6 +97,90 @@ ModernIMEController::ModernIMEController(EngineHost &host,
                                          ControllerOptions options)
     : host_(host), provider_(provider), options_(options) {}
 
+void ModernIMEController::initRecentCommit(
+    const core::CandidateItem &candidate, const std::string &basePrefix,
+    const std::string &contextAfter) {
+    recentCommit_.valid = false;
+    recentCommit_.originalChars.clear();
+    recentCommit_.originalSyllables.clear();
+
+    if (candidate.text.empty()) {
+        return;
+    }
+
+    std::vector<std::string> utf8Chars;
+    for (std::size_t i = 0; i < candidate.text.size(); ) {
+        unsigned char c = static_cast<unsigned char>(candidate.text[i]);
+        std::size_t len = 1;
+        if ((c & 0x80) == 0) {
+            return;
+        } else if ((c & 0xE0) == 0xC0) {
+            return;
+        } else if ((c & 0xF0) == 0xE0) {
+            len = 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            len = 4;
+        } else {
+            return;
+        }
+        if (i + len > candidate.text.size()) {
+            return;
+        }
+        utf8Chars.push_back(candidate.text.substr(i, len));
+        i += len;
+    }
+
+    if (utf8Chars.size() < 2) {
+        return;
+    }
+
+    std::string fullPinyin =
+        candidate.fullPinyin.empty() ? page_.rawInput : candidate.fullPinyin;
+    std::string segmentedPinyin;
+    if (fullPinyin.find('\'') != std::string::npos) {
+        segmentedPinyin = fullPinyin;
+    } else {
+        segmentedPinyin = core::PinyinMatchPolicy::segmentPinyin(fullPinyin);
+    }
+
+    std::string_view pView = segmentedPinyin;
+    while (!pView.empty() && pView.front() == '\'') {
+        pView.remove_prefix(1);
+    }
+    while (!pView.empty() && pView.back() == '\'') {
+        pView.remove_suffix(1);
+    }
+
+    std::vector<std::string> syllables;
+    std::size_t start = 0;
+    while (start < pView.size()) {
+        auto pos = pView.find('\'', start);
+        if (pos == std::string_view::npos) {
+            syllables.push_back(std::string(pView.substr(start)));
+            break;
+        }
+        if (pos > start) {
+            syllables.push_back(std::string(pView.substr(start, pos - start)));
+        }
+        start = pos + 1;
+    }
+
+    if (syllables.size() != utf8Chars.size()) {
+        return;
+    }
+
+    recentCommit_.originalText = candidate.text;
+    recentCommit_.originalPinyin = segmentedPinyin;
+    recentCommit_.currentText = candidate.text;
+    recentCommit_.currentPinyin = segmentedPinyin;
+    recentCommit_.basePrefix = basePrefix;
+    recentCommit_.contextAfter = contextAfter;
+    recentCommit_.timestamp = std::chrono::steady_clock::now();
+    recentCommit_.originalChars = std::move(utf8Chars);
+    recentCommit_.originalSyllables = std::move(syllables);
+    recentCommit_.valid = true;
+}
+
 bool ModernIMEController::checkRecentCommitDeletionFeedback(
     const std::string &before, const std::string &after) {
     if (!recentCommit_.valid || provider_ == nullptr) {
@@ -106,150 +190,194 @@ bool ModernIMEController::checkRecentCommitDeletionFeedback(
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - recentCommit_.timestamp);
-    if (elapsed > std::chrono::milliseconds(10000)) {
+    if (elapsed > std::chrono::milliseconds(15000)) {
         recentCommit_.valid = false;
         return false;
     }
 
-    if (recentCommit_.text.empty() || recentCommit_.fullPinyin.empty()) {
+    const auto &chars = recentCommit_.originalChars;
+    const auto &sylls = recentCommit_.originalSyllables;
+    const std::size_t k = chars.size();
+    if (k < 2 || sylls.size() != k) {
         recentCommit_.valid = false;
         return false;
     }
 
-    // Decompose committed text into Chinese characters (3 or 4 byte UTF-8)
-    std::vector<std::string> utf8Chars;
-    for (std::size_t i = 0; i < recentCommit_.text.size(); ) {
-        unsigned char c = static_cast<unsigned char>(recentCommit_.text[i]);
-        std::size_t len = 1;
-        if ((c & 0x80) == 0) {
-            recentCommit_.valid = false;
-            return false;
-        } else if ((c & 0xE0) == 0xC0) {
-            recentCommit_.valid = false;
-            return false;
-        } else if ((c & 0xF0) == 0xE0) {
-            len = 3;
-        } else if ((c & 0xF8) == 0xF0) {
-            len = 4;
-        } else {
-            recentCommit_.valid = false;
-            return false;
-        }
-        if (i + len > recentCommit_.text.size()) {
-            recentCommit_.valid = false;
-            return false;
-        }
-        utf8Chars.push_back(recentCommit_.text.substr(i, len));
-        i += len;
-    }
-
-    if (utf8Chars.size() < 2) {
+    // After context must be compatible if provided
+    if (!recentCommit_.contextAfter.empty() && !after.empty() &&
+        !after.starts_with(recentCommit_.contextAfter) &&
+        !recentCommit_.contextAfter.starts_with(after)) {
         recentCommit_.valid = false;
         return false;
     }
 
-    // Split fullPinyin into syllables
-    std::string_view pinyinView = recentCommit_.fullPinyin;
-    while (!pinyinView.empty() && pinyinView.front() == '\'') {
-        pinyinView.remove_prefix(1);
-    }
-    while (!pinyinView.empty() && pinyinView.back() == '\'') {
-        pinyinView.remove_suffix(1);
-    }
-    std::vector<std::string> syllables;
-    std::size_t start = 0;
-    while (start < pinyinView.size()) {
-        auto pos = pinyinView.find('\'', start);
-        if (pos == std::string_view::npos) {
-            syllables.push_back(std::string(pinyinView.substr(start)));
-            break;
-        }
-        if (pos > start) {
-            syllables.push_back(std::string(pinyinView.substr(start, pos - start)));
-        }
-        start = pos + 1;
-    }
-    if (syllables.size() != utf8Chars.size()) {
-        recentCommit_.valid = false;
-        return false;
-    }
-
-    // After context must match (cursor did not move to another position)
-    if (!recentCommit_.contextAfter.empty() && after != recentCommit_.contextAfter) {
-        recentCommit_.valid = false;
-        return false;
-    }
-
-    // Check if the committed word is still intact in the host context
-    // (normal post-commit surrounding text update).
-    // In this case, keep recentCommit_.valid so subsequent backspace can be detected.
-    if (before.size() >= recentCommit_.text.size() &&
-        before.compare(before.size() - recentCommit_.text.size(),
-                       recentCommit_.text.size(), recentCommit_.text) == 0) {
+    // Check if the original committed word is still intact in the host context
+    if (before.size() >= recentCommit_.originalText.size() &&
+        before.compare(before.size() - recentCommit_.originalText.size(),
+                       recentCommit_.originalText.size(), recentCommit_.originalText) == 0) {
         std::string prefixBeforeFull =
-            before.substr(0, before.size() - recentCommit_.text.size());
+            before.substr(0, before.size() - recentCommit_.originalText.size());
         if (prefixBeforeFull == recentCommit_.basePrefix ||
             recentCommit_.basePrefix.ends_with(prefixBeforeFull) ||
-            prefixBeforeFull.ends_with(recentCommit_.basePrefix)) {
+            prefixBeforeFull.ends_with(recentCommit_.basePrefix) ||
+            prefixBeforeFull.empty() || recentCommit_.basePrefix.empty()) {
             return false;
         }
     }
 
-    // Determine the remaining in word
-    std::string candidatePrefix;
-    std::size_t matchedCount = 0;
-    for (std::size_t i = 0; i < utf8Chars.size() - 1; ++i) {
-        candidatePrefix += utf8Chars[i];
-        if (before.size() >= candidatePrefix.size() &&
-            before.compare(before.size() - candidatePrefix.size(),
-                           candidatePrefix.size(), candidatePrefix) == 0) {
-            std::string prefixBeforeCandidate =
-                before.substr(0, before.size() - candidatePrefix.size());
-            if (prefixBeforeCandidate == recentCommit_.basePrefix ||
-                recentCommit_.basePrefix.ends_with(prefixBeforeCandidate) ||
-                prefixBeforeCandidate.ends_with(recentCommit_.basePrefix)) {
-                matchedCount = i + 1;
+    // Check if entire word was deleted (0 characters remain):
+    // e.g. before matches/ends with basePrefix and after matches/starts with contextAfter,
+    // with no characters from originalChars present.
+    const bool prefixMatches =
+        before == recentCommit_.basePrefix ||
+        (before.empty() && recentCommit_.basePrefix.empty()) ||
+        (!recentCommit_.basePrefix.empty() && before.ends_with(recentCommit_.basePrefix));
+    const bool suffixMatches =
+        after == recentCommit_.contextAfter ||
+        (after.empty() && recentCommit_.contextAfter.empty()) ||
+        (!recentCommit_.contextAfter.empty() && after.starts_with(recentCommit_.contextAfter));
+
+    if (prefixMatches && suffixMatches) {
+        bool anyCharPresent = false;
+        for (const auto &c : chars) {
+            if (before.find(c) != std::string::npos || after.find(c) != std::string::npos) {
+                anyCharPresent = true;
                 break;
             }
         }
+        if (!anyCharPresent) {
+            provider_->onNegativeFeedback(recentCommit_.originalText,
+                                         recentCommit_.originalPinyin);
+            provider_->resetCommitHistory();
+            recentCommit_.valid = false;
+            return true;
+        }
     }
 
-    if (matchedCount == 0 || matchedCount >= utf8Chars.size()) {
+    // Find the best matching contiguous subsegment chars[i...j] (0 <= i <= j < k)
+    // from longest to shortest.
+    int bestI = -1;
+    int bestJ = -1;
+    for (int len = static_cast<int>(k) - 1; len >= 1; --len) {
+        for (int i = 0; i + len <= static_cast<int>(k); ++i) {
+            int j = i + len - 1;
+            std::string subText;
+            for (int idx = i; idx <= j; ++idx) {
+                subText += chars[idx];
+            }
+            if (before.size() >= subText.size() &&
+                before.compare(before.size() - subText.size(), subText.size(), subText) == 0) {
+                std::string prefix = before.substr(0, before.size() - subText.size());
+                if (prefix == recentCommit_.basePrefix ||
+                    recentCommit_.basePrefix.ends_with(prefix) ||
+                    prefix.ends_with(recentCommit_.basePrefix) ||
+                    prefix.empty() || recentCommit_.basePrefix.empty()) {
+                    bestI = i;
+                    bestJ = j;
+                    break;
+                }
+            }
+            if (after.size() >= subText.size() &&
+                after.compare(0, subText.size(), subText) == 0) {
+                if (before == recentCommit_.basePrefix ||
+                    recentCommit_.basePrefix.ends_with(before) ||
+                    before.ends_with(recentCommit_.basePrefix) ||
+                    before.empty() || recentCommit_.basePrefix.empty()) {
+                    bestI = i;
+                    bestJ = j;
+                    break;
+                }
+            }
+        }
+        if (bestI != -1) {
+            break;
+        }
+    }
+
+    if (bestI == -1) {
         recentCommit_.valid = false;
         return false;
     }
 
-    if (provider_ != nullptr) {
-        provider_->onNegativeFeedback(recentCommit_.text, recentCommit_.fullPinyin);
+    const std::size_t matchedCount = static_cast<std::size_t>(bestJ - bestI + 1);
+
+    if (matchedCount == 1) {
+        // Target single character extracted!
+        const auto &targetChar = chars[bestI];
+        const auto &targetSyll = sylls[bestI];
+
+        provider_->onNegativeFeedback(recentCommit_.originalText,
+                                     recentCommit_.originalPinyin);
+
+        core::CommitEvent event;
+        event.text = targetChar;
+        event.fullPinyin = targetSyll;
+        event.rawKeystrokes = targetSyll;
+        event.role = core::CommitCandidateRole::Chinese;
+        event.isPartial = false;
+        event.consumedInputBytes = targetSyll.size();
+        event.contextBefore = "";
+        event.contextAfter = "";
+        event.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        // Dispatch 3 times so learningBoost >= 1.8 activates progressive promotion
+        for (int rep = 0; rep < 3; ++rep) {
+            provider_->onCommitEvent(event);
+        }
+        if (!recentCommit_.basePrefix.empty()) {
+            event.contextBefore = recentCommit_.basePrefix;
+            event.contextAfter = after;
+            provider_->onCommitEvent(event);
+        }
+
+        provider_->resetCommitHistory();
+        recentCommit_.valid = false;
+        return true;
     }
 
+    // matchedCount >= 2: User partially deleted, update current progress and keep valid
     std::string remainingWord;
     std::string remainingPinyin;
-    for (std::size_t i = 0; i < matchedCount; ++i) {
-        remainingWord += utf8Chars[i];
+    for (int idx = bestI; idx <= bestJ; ++idx) {
+        remainingWord += chars[idx];
         if (!remainingPinyin.empty()) {
             remainingPinyin += '\'';
         }
-        remainingPinyin += syllables[i];
+        remainingPinyin += sylls[idx];
     }
-
-    core::CommitEvent event;
-    event.text = remainingWord;
-    event.fullPinyin = remainingPinyin;
-    event.rawKeystrokes = remainingPinyin;
-    event.role = core::CommitCandidateRole::Chinese;
-    event.isPartial = false;
-    event.consumedInputBytes = remainingPinyin.size();
-    event.contextBefore = recentCommit_.basePrefix;
-    event.contextAfter = after;
-    event.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-
-    provider_->onCommitEvent(event);
-    provider_->resetCommitHistory();
-    recentCommit_.valid = false;
+    recentCommit_.currentText = remainingWord;
+    recentCommit_.currentPinyin = remainingPinyin;
+    recentCommit_.timestamp = now;
     return true;
 }
+
+void ModernIMEController::finalizeRecentCommitDeletion() {
+    if (!recentCommit_.valid || provider_ == nullptr) {
+        recentCommit_.valid = false;
+        return;
+    }
+    if (!recentCommit_.currentText.empty() &&
+        recentCommit_.currentText != recentCommit_.originalText) {
+        provider_->onNegativeFeedback(recentCommit_.originalText,
+                                     recentCommit_.originalPinyin);
+        core::CommitEvent event;
+        event.text = recentCommit_.currentText;
+        event.fullPinyin = recentCommit_.currentPinyin;
+        event.rawKeystrokes = recentCommit_.currentPinyin;
+        event.role = core::CommitCandidateRole::Chinese;
+        event.isPartial = false;
+        event.consumedInputBytes = recentCommit_.currentPinyin.size();
+        event.contextBefore = recentCommit_.basePrefix;
+        event.contextAfter = contextAfter_;
+        event.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        provider_->onCommitEvent(event);
+        provider_->resetCommitHistory();
+    }
+    recentCommit_.valid = false;
+}
+
 
 void ModernIMEController::setContext(std::string before, std::string after) {
     if (!before.empty() || !after.empty()) {
@@ -306,8 +434,12 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return false;
     }
 
-    if (event.kind != KeyKind::Backspace || !compositionInput_.empty()) {
-        recentCommit_.valid = false;
+    const bool isNavigationOrDeletion =
+        (event.kind == KeyKind::Backspace || event.kind == KeyKind::DeleteForward ||
+         event.kind == KeyKind::MoveCompositionLeft ||
+         event.kind == KeyKind::MoveCompositionRight);
+    if (!isNavigationOrDeletion || !compositionInput_.empty()) {
+        finalizeRecentCommitDeletion();
     }
 
     switch (event.kind) {
@@ -635,16 +767,9 @@ bool ModernIMEController::select(std::size_t index) {
             candidate.source != core::CandidateSource::EnglishDefinition &&
             candidate.source != core::CandidateSource::Raw &&
             !candidate.text.empty()) {
-            recentCommit_.text = candidate.text;
-            recentCommit_.fullPinyin = candidate.fullPinyin.empty()
-                                           ? page_.rawInput
-                                           : candidate.fullPinyin;
-            recentCommit_.basePrefix = basePrefix;
-            recentCommit_.contextAfter = contextAfter_;
-            recentCommit_.timestamp = std::chrono::steady_clock::now();
-            recentCommit_.valid = true;
+            initRecentCommit(candidate, basePrefix, contextAfter_);
         } else {
-            recentCommit_.valid = false;
+            finalizeRecentCommitDeletion();
         }
         clearComposition();
         return true;
@@ -658,7 +783,7 @@ bool ModernIMEController::select(std::size_t index) {
 }
 
 bool ModernIMEController::extractCharacter(bool firstChar) {
-    recentCommit_.valid = false;
+    finalizeRecentCommitDeletion();
     if (!active() || clipboardMode_ || page_.items.empty() || provider_ == nullptr) {
         return false;
     }
@@ -720,7 +845,7 @@ bool ModernIMEController::commitPunctuation(char ascii) {
     if (!converted.has_value()) {
         return false;
     }
-    recentCommit_.valid = false;
+    finalizeRecentCommitDeletion();
     if (!page_.preedit.empty()) {
         const bool committed = !page_.items.empty() ? commitCurrent()
                                                     : commitRawPreedit();
@@ -742,7 +867,7 @@ bool ModernIMEController::commitPunctuation(char ascii) {
 }
 
 bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
-    recentCommit_.valid = false;
+    finalizeRecentCommitDeletion();
     if (page_.preedit.empty()) {
         return false;
     }
@@ -792,7 +917,7 @@ void ModernIMEController::clearComposition() {
 }
 
 void ModernIMEController::reset() {
-    recentCommit_.valid = false;
+    finalizeRecentCommitDeletion();
     fallbackContextBefore_.clear();
     if (provider_ != nullptr) {
         provider_->resetCommitHistory();
@@ -808,7 +933,7 @@ void ModernIMEController::setSensitive(bool sensitive) {
     }
     sensitive_ = sensitive;
     if (sensitive_) {
-        recentCommit_.valid = false;
+        finalizeRecentCommitDeletion();
         fallbackContextBefore_.clear();
         contextBefore_.clear();
         contextAfter_.clear();
@@ -836,7 +961,7 @@ void ModernIMEController::setOptions(ControllerOptions options) {
 
 void ModernIMEController::setActive(bool active) {
     active_ = active;
-    recentCommit_.valid = false;
+    finalizeRecentCommitDeletion();
     if (!this->active()) {
         reset();
     }
