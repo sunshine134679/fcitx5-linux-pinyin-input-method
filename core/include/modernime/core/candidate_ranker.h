@@ -58,6 +58,7 @@ struct CandidateScore final {
     bool is_level1 = false;
     bool is_lexical = false;
     double recent_choice_bonus = 0.0;
+    std::size_t phrase_length = 0;
 
     double base_prior() const {
         double score = static_cast<double>(source_index) -
@@ -69,6 +70,11 @@ struct CandidateScore final {
         }
         if (is_lexical) {
             score -= 3.0;
+            if (source_index == 0) {
+                score -= 2.0;
+            }
+        } else if (phrase_length >= 2 && context_bonus <= 0.0 && recent_choice_bonus <= 0.0) {
+            score += 3.0;
         }
         return score;
     }

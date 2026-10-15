@@ -98,6 +98,7 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
     const auto dict = dictionaryBonus(dictionary, candidate.full_pinyin, candidate.text);
     candidate.dictionary_bonus = dict.bonus;
     const auto count = utf8CodePointCount(candidate.text);
+    candidate.phrase_length = count;
     candidate.is_lexical = count >= 2 && dict.is_lexical;
     candidate.is_rare = core::CommonCharacters::containsRare(candidate.text);
     candidate.is_level1 = !candidate.is_rare && count == 1 &&
@@ -112,7 +113,7 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
         candidate.last_selected_ms = request.learning->lastSelectedMs(
             candidate.text, candidate.full_pinyin);
     }
-    if (count != 1 || candidate.learning_boost >= 1.8) candidate.unigram_anchor = 0.0;
+    if (count != 1) candidate.unigram_anchor = 0.0;
     candidate.recent_choice_bonus = 0.0;
     if (request.recentChoices != nullptr && candidate.learning_boost >= 1.8) {
         candidate.recent_choice_bonus = request.recentChoices->bonus(

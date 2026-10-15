@@ -57,3 +57,7 @@ Testing/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Local scratch and user data
+modern_ime_personalization/
+

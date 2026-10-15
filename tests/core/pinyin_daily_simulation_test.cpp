@@ -782,35 +782,174 @@ void testDormantDisplacementAndNasalTypoPersonalization(const std::filesystem::p
     }
 }
 
+// 9. 1,000 轮日常高频打字抗污染与首选稳定性压力基准测试
+void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
+    const auto stressPath = testPath("anti-pollution-stress.sqlite3");
+    {
+        modernime::core::LearningStore store(stressPath);
+        assertTrue(store.open(), "open stress store for seed setup");
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto oneDayAgo = now - 86400000LL;
+
+        // 模拟已导入经清洗/截断的外部词典词条（安全上限内）
+        for (int i = 0; i < 3; ++i) {
+            store.recordSelection("试", "shi", {}, {}, oneDayAgo);
+            store.recordSelection("地", "de", {}, {}, oneDayAgo);
+            store.recordSelection("骂", "ma", {}, {}, oneDayAgo);
+            store.recordSelection("盒", "he", {}, {}, oneDayAgo);
+            store.recordSelection("豪", "hao", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 20; ++i) {
+            store.recordSelection("这歌", "zhe'ge", {}, {}, oneDayAgo);
+            store.recordSelection("不失", "bu'shi", {}, {}, oneDayAgo);
+            store.recordSelection("豪德", "hao'de", {}, {}, oneDayAgo);
+            store.recordSelection("科一", "ke'yi", {}, {}, oneDayAgo);
+        }
+
+        // 真实日常高频基线
+        for (int i = 0; i < 25; ++i) {
+            store.recordSelection("是", "shi", {}, {}, oneDayAgo);
+            store.recordSelection("好", "hao", {}, {}, oneDayAgo);
+            store.recordSelection("好的", "hao'de", {}, {}, oneDayAgo);
+            store.recordSelection("可以", "ke'yi", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 28; ++i) {
+            store.recordSelection("这个", "zhe'ge", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 30; ++i) {
+            store.recordSelection("你", "ni", {}, {}, oneDayAgo);
+            store.recordSelection("吗", "ma", {}, {}, oneDayAgo);
+            store.recordSelection("和", "he", {}, {}, oneDayAgo);
+            store.recordSelection("不是", "bu'shi", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 100; ++i) {
+            store.recordSelection("的", "de", {}, {}, oneDayAgo);
+        }
+    }
+
+    auto provider = makeSimulationProvider(stressPath);
+
+    struct StressTarget {
+        std::string_view input;
+        std::string_view expectedTop;
+        std::string_view forbiddenTop;
+    };
+
+    const std::vector<StressTarget> targets = {
+        {"shi", "是", "试"},
+        {"zhege", "这个", "这歌"},
+        {"zhe'ge", "这个", "这歌"},
+        {"de", "的", "地"},
+        {"ni", "你", "泥"},
+        {"ma", "吗", "骂"},
+        {"he", "和", "盒"},
+        {"hao", "好", "豪"},
+        {"bushi", "不是", "不失"},
+        {"bu'shi", "不是", "不失"},
+        {"haode", "好的", "豪德"},
+        {"hao'de", "好的", "豪德"},
+        {"keyi", "可以", "科一"},
+        {"ke'yi", "可以", "科一"}
+    };
+
+    uint64_t totalEvaluations = 0;
+    uint64_t usurpationCount = 0;
+
+    for (int round = 0; round < 1000; ++round) {
+        for (const auto &t : targets) {
+            provider.reset();
+            assertTrue(provider.append(std::string(t.input)), "append stress input");
+            assertTrue(!provider.page().items.empty(), "non-empty candidate page");
+            const auto topText = provider.page().items.front().text;
+            ++totalEvaluations;
+
+            if (topText != t.expectedTop) {
+                std::cerr << "Round " << round << " Usurpation on input '" << t.input
+                          << "': expected '" << t.expectedTop << "', got '" << topText << "'\n";
+                ++usurpationCount;
+            }
+            assertTrue(topText != t.forbiddenTop, "Forbidden word usurped top rank");
+            assertTrue(topText == t.expectedTop, "Expected top candidate must be rank 0");
+
+            // 模拟用户真实打字选用首选，持续产生合法学习
+            const auto selIdx = indexOf(provider.page(), t.expectedTop);
+            if (selIdx < provider.page().items.size()) {
+                assertTrue(provider.select(selIdx), "select top candidate in stress test");
+            }
+        }
+
+        // 每 50 轮模拟一次偶发次选，验证不会发生单次偶选篡位
+        if (round % 50 == 25) {
+            provider.reset();
+            assertTrue(provider.append("shi"), "append shi for occasional pick");
+            const auto shiIdx = indexOf(provider.page(), "试");
+            if (shiIdx < provider.page().items.size()) {
+                provider.select(shiIdx);
+            }
+            provider.reset();
+            assertTrue(provider.append("shi"), "append shi post occasional pick");
+            assertTrue(provider.page().items.front().text == "是",
+                       "Occasional selection of '试' must not hijack '是'");
+
+            provider.reset();
+            assertTrue(provider.append("de"), "append de for occasional pick");
+            const auto deIdx = indexOf(provider.page(), "地");
+            if (deIdx < provider.page().items.size()) {
+                provider.select(deIdx);
+            }
+            provider.reset();
+            assertTrue(provider.append("de"), "append de post occasional pick");
+            assertTrue(provider.page().items.front().text == "的",
+                       "Occasional selection of '地' must not hijack '的'");
+        }
+
+        if (round % 100 == 99) {
+            provider.flush();
+        }
+    }
+
+    assertTrue(usurpationCount == 0, "Stress benchmark must have 0 usurpations across 1000 rounds");
+    assertTrue(totalEvaluations == 14000, "1000 rounds x 14 targets = 14,000 evaluations");
+
+    std::error_code error;
+    std::filesystem::remove(stressPath, error);
+    std::filesystem::remove(stressPath.string() + "-wal", error);
+    std::filesystem::remove(stressPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
     const auto learningPath = testPath("daily-simulation-learning.sqlite3");
 
-    std::cout << "[1/8] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
+    std::cout << "[1/9] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
     testSinglePinyinPriorities(learningPath);
 
-    std::cout << "[2/8] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
+    std::cout << "[2/9] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
     testMultiSyllablePhrasesAndHotwords(learningPath);
 
-    std::cout << "[3/8] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
+    std::cout << "[3/9] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
     testAbbreviationsAndInitialisms(learningPath);
 
-    std::cout << "[4/8] Running Smart Learning Dynamic Evolution Tests...\n";
+    std::cout << "[4/9] Running Smart Learning Dynamic Evolution Tests...\n";
     testSmartLearningDynamics(learningPath);
 
-    std::cout << "[5/8] Running Smart Typo Correction Engine Tests...\n";
+    std::cout << "[5/9] Running Smart Typo Correction Engine Tests...\n";
     testSmartTypoCorrectionEngine(learningPath);
 
-    std::cout << "[6/8] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
+    std::cout << "[6/9] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
     testMultiPersonaWeChatParityBenchmarks(learningPath);
     testModelBaselinePhraseLearning();
 
-    std::cout << "[7/8] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
+    std::cout << "[7/9] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
     testRareAndRadicalCharactersGovernance(learningPath);
 
-    std::cout << "[8/8] Running Dormant Displacement & Nasal Typo Personalization Benchmark...\n";
+    std::cout << "[8/9] Running Dormant Displacement & Nasal Typo Personalization Benchmark...\n";
     testDormantDisplacementAndNasalTypoPersonalization(learningPath);
+
+    std::cout << "[9/9] Running 1,000-Round Anti-Pollution & High-Frequency Stress Simulation Benchmark...\n";
+    testOneThousandRoundsAntiPollutionStress(learningPath);
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);
