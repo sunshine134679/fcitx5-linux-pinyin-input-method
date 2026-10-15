@@ -41,6 +41,32 @@ class Page(HTMLParser):
 
 
 class WebsiteTests(unittest.TestCase):
+    def test_tag_bound_release_owns_automatic_deployment(self):
+        spec = importlib.util.spec_from_file_location(
+            "website_deployment", ROOT / "scripts/resolve_website_deployment.py")
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        tag = "refs/tags/v0.1.13"
+        source = "a" * 40
+        annotated = "b" * 40 + "\t" + tag + "\n" + source + "\t" + tag + "^{}\n"
+        def refs(tags, main=source):
+            return tags + "\n" + main + "\trefs/heads/main"
+        self.assertFalse(policy.should_deploy("push", source, tag, refs(annotated)))
+        self.assertFalse(policy.should_deploy("push", source, tag, refs(source + "\t" + tag)))
+        self.assertTrue(policy.should_deploy("workflow_dispatch", source, tag, ""))
+        self.assertTrue(policy.should_deploy("push", "c" * 40, tag, refs(annotated, "c" * 40)))
+        self.assertFalse(policy.should_deploy("push", source, tag, refs("")))
+        self.assertFalse(policy.should_deploy("push", source, tag, refs(source + "\trefs/tags/v0.1.12")))
+        self.assertFalse(policy.should_deploy("push", "c" * 40, tag, refs(annotated)),
+                         "superseded website commits must not publish an older homepage")
+        workflow = (ROOT / ".github/workflows/website.yml").read_text()
+        self.assertEqual(workflow.count("ref: " + chr(36) + "{{ github.sha }}"), 2,
+                         "ownership and publication must use the same immutable triggering SHA")
+        self.assertNotIn("    paths:", workflow,
+                         "every newer main tip must schedule a replacement for superseded runs")
+        self.assertEqual(workflow.count("python3 scripts/resolve_website_deployment.py"), 2,
+                         "recheck ownership after acquiring the shared publishing lock")
+
     def test_local_links_and_assets_exist(self):
         page = Page((ROOT / "website/index.html").read_text())
         self.assertEqual(len(page.ids), len(set(page.ids)))
