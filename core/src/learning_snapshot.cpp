@@ -162,9 +162,11 @@ bool isRecallableEnglishWord(std::string_view text) {
     if (!isAsciiWord(text)) {
         return false;
     }
+    if (EnglishDictionary::isEnglishWord(text)) {
+        return true;
+    }
     // Prevent Chinese pinyin sequences (like "jianpan", "nihao") from being treated as English words.
-    if (PinyinMatchPolicy::isValidPinyinSequence(text) &&
-        !EnglishDictionary::isEnglishWord(text)) {
+    if (PinyinMatchPolicy::isValidPinyinSequence(text)) {
         return false;
     }
     return true;
@@ -272,7 +274,8 @@ LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entrie
     std::unordered_set<std::string> seenEnglish;
     seen.reserve(entries.size());
     for (const auto &entry : entries) {
-        if (isRecallableEnglishWord(entry.phrase)) {
+        const bool englishWord = isRecallableEnglishWord(entry.phrase);
+        if (englishWord) {
             const auto key = normalizePinyin(entry.pinyin);
             if (!key.empty() && toLowerAscii(entry.phrase).starts_with(key)) {
                 auto &keys = index->englishKeys[entry.phrase];
@@ -282,7 +285,6 @@ LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entrie
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
         }
-        const bool englishWord = isRecallableEnglishWord(entry.phrase);
         if (englishWord) {
             const auto lower = toLowerAscii(entry.phrase);
             if (seenEnglish.insert(lower).second) {

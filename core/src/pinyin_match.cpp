@@ -92,27 +92,48 @@ bool segmentConcatenatedPinyin(std::string_view text,
     return false;
 }
 
+bool canSegmentPinyin(std::string_view text,
+                      std::size_t offset,
+                      std::array<unsigned char, 64> &failed) {
+    if (offset == text.size()) {
+        return true;
+    }
+    if (failed[offset]) {
+        return false;
+    }
+    const std::size_t maxLen = std::min<std::size_t>(6, text.size() - offset);
+    for (std::size_t len = maxLen; len >= 1; --len) {
+        const auto candidate = text.substr(offset, len);
+        if (isValidMandarinSyllable(candidate)) {
+            if (canSegmentPinyin(text, offset + len, failed)) {
+                return true;
+            }
+        }
+    }
+    failed[offset] = 1;
+    return false;
+}
+
 } // namespace
 
 bool PinyinMatchPolicy::isValidPinyinSequence(std::string_view text) {
     if (text.empty() || text.size() > 48) {
         return false;
     }
-    std::string lower;
-    lower.reserve(text.size());
-    for (const unsigned char ch : text) {
+    std::array<char, 48> lowerBuf;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(text[i]);
         if (!std::isalpha(ch)) {
             return false;
         }
-        lower.push_back(static_cast<char>(std::tolower(ch)));
+        lowerBuf[i] = static_cast<char>(std::tolower(ch));
     }
+    std::string_view lower(lowerBuf.data(), text.size());
     if (isValidMandarinSyllable(lower)) {
         return true;
     }
-    std::vector<std::string_view> syllables;
-    syllables.reserve(8);
-    std::vector<unsigned char> failed(lower.size() + 1, 0);
-    return segmentConcatenatedPinyin(lower, 0, syllables, failed) && !syllables.empty();
+    std::array<unsigned char, 64> failed{};
+    return canSegmentPinyin(lower, 0, failed);
 }
 
 bool PinyinMatchPolicy::isCoreChineseWord(std::string_view text, std::string_view pinyin) {
