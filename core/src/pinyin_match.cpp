@@ -94,6 +94,49 @@ bool segmentConcatenatedPinyin(std::string_view text,
 
 } // namespace
 
+bool PinyinMatchPolicy::isValidPinyinSequence(std::string_view text) {
+    if (text.empty() || text.size() > 48) {
+        return false;
+    }
+    std::string lower;
+    lower.reserve(text.size());
+    for (const unsigned char ch : text) {
+        if (!std::isalpha(ch)) {
+            return false;
+        }
+        lower.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    if (isValidMandarinSyllable(lower)) {
+        return true;
+    }
+    std::vector<std::string_view> syllables;
+    syllables.reserve(8);
+    std::vector<unsigned char> failed(lower.size() + 1, 0);
+    return segmentConcatenatedPinyin(lower, 0, syllables, failed) && !syllables.empty();
+}
+
+bool PinyinMatchPolicy::isCoreChineseWord(std::string_view text, std::string_view pinyin) {
+    const auto can = canonical(pinyin);
+    if (text == "是" && can == "shi") return true;
+    if (text == "的" && can == "de") return true;
+    if (text == "你" && can == "ni") return true;
+    if (text == "好" && can == "hao") return true;
+    if (text == "吗" && can == "ma") return true;
+    if (text == "和" && can == "he") return true;
+    if (text == "在" && can == "zai") return true;
+    if (text == "有" && can == "you") return true;
+    if (text == "了" && can == "le") return true;
+    if (text == "不" && can == "bu") return true;
+    if (text == "我" && can == "wo") return true;
+
+    if (text == "这个" && can == "zhege") return true;
+    if (text == "不是" && can == "bushi") return true;
+    if (text == "好的" && can == "haode") return true;
+    if (text == "可以" && can == "keyi") return true;
+
+    return false;
+}
+
 std::string PinyinMatchPolicy::canonical(std::string_view fullPinyin) {
     if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
         fullPinyin.remove_prefix(3);

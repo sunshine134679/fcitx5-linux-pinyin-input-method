@@ -850,7 +850,8 @@ void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
         {"haode", "好的", "豪德"},
         {"hao'de", "好的", "豪德"},
         {"keyi", "可以", "科一"},
-        {"ke'yi", "可以", "科一"}
+        {"ke'yi", "可以", "科一"},
+        {"jianp", "键盘", "jianpan"}
     };
 
     uint64_t totalEvaluations = 0;
@@ -859,6 +860,7 @@ void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
     for (int round = 0; round < 1000; ++round) {
         for (const auto &t : targets) {
             provider.reset();
+            provider.resetCommitHistory();
             assertTrue(provider.append(std::string(t.input)), "append stress input");
             assertTrue(!provider.page().items.empty(), "non-empty candidate page");
             const auto topText = provider.page().items.front().text;
@@ -910,7 +912,7 @@ void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
     }
 
     assertTrue(usurpationCount == 0, "Stress benchmark must have 0 usurpations across 1000 rounds");
-    assertTrue(totalEvaluations == 14000, "1000 rounds x 14 targets = 14,000 evaluations");
+    assertTrue(totalEvaluations == 15000, "1000 rounds x 15 targets = 15,000 evaluations");
 
     std::error_code error;
     std::filesystem::remove(stressPath, error);

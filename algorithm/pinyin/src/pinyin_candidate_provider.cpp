@@ -1491,6 +1491,10 @@ public:
         event.contextBefore = contextBefore_;
         event.contextAfter = contextAfter_;
         event.timestampMs = nowMilliseconds();
+        event.candidateIndex = index;
+        if (index > 0) {
+            event.isDeviation = true;
+        }
         if (candidate.source == core::CandidateSource::UserDictionary) {
             event.role = core::CommitCandidateRole::UserDictionary;
         } else if (candidate.source == core::CandidateSource::Raw &&
@@ -1525,6 +1529,7 @@ public:
                 phraseEvent.isPartial = false;
                 phraseEvent.consumedInputBytes = formedIntra->rawKeystrokes.size();
                 phraseEvent.timestampMs = event.timestampMs;
+                phraseEvent.isDeviation = true;
                 onCommitEvent(phraseEvent);
                 phraseTracker_.resetCommitHistory();
             } else {
@@ -1538,6 +1543,7 @@ public:
                     phraseEvent.isPartial = false;
                     phraseEvent.consumedInputBytes = fp.rawKeystrokes.size();
                     phraseEvent.timestampMs = event.timestampMs;
+                    phraseEvent.isDeviation = true;
                     if (fp.isInitialFormation) {
                         for (int i = 0; i < fp.repetitionCount; ++i) {
                             onCommitEvent(phraseEvent);
@@ -1688,6 +1694,7 @@ public:
         event.contextBefore = contextBefore_;
         event.contextAfter = contextAfter_;
         event.timestampMs = nowMilliseconds();
+        event.isDeviation = true;
 
         phraseTracker_.cancelComposition();
         core::CommitEvent genericEvent = event;

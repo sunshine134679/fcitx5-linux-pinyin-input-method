@@ -1,5 +1,6 @@
 #include "modernime/core/learning_snapshot.h"
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/english_dictionary.h"
 #include "modernime/core/pinyin_match.h"
 
 #include <algorithm>
@@ -157,6 +158,18 @@ bool isAsciiWord(std::string_view text) {
     return hasAlpha;
 }
 
+bool isRecallableEnglishWord(std::string_view text) {
+    if (!isAsciiWord(text)) {
+        return false;
+    }
+    // Prevent Chinese pinyin sequences (like "jianpan", "nihao") from being treated as English words.
+    if (PinyinMatchPolicy::isValidPinyinSequence(text) &&
+        !EnglishDictionary::isEnglishWord(text)) {
+        return false;
+    }
+    return true;
+}
+
 std::string toLowerAscii(std::string_view text) {
     std::string result;
     result.reserve(text.size());
@@ -259,7 +272,7 @@ LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entrie
     std::unordered_set<std::string> seenEnglish;
     seen.reserve(entries.size());
     for (const auto &entry : entries) {
-        if (isAsciiWord(entry.phrase)) {
+        if (isRecallableEnglishWord(entry.phrase)) {
             const auto key = normalizePinyin(entry.pinyin);
             if (!key.empty() && toLowerAscii(entry.phrase).starts_with(key)) {
                 auto &keys = index->englishKeys[entry.phrase];
@@ -269,15 +282,15 @@ LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entrie
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
         }
-        const bool asciiWord = isAsciiWord(entry.phrase);
-        if (asciiWord) {
+        const bool englishWord = isRecallableEnglishWord(entry.phrase);
+        if (englishWord) {
             const auto lower = toLowerAscii(entry.phrase);
             if (seenEnglish.insert(lower).second) {
                 index->englishIndex.emplace_back(lower, entry.phrase);
             }
         }
         const std::string recallPinyin =
-            asciiWord ? entry.pinyin : PinyinMatchPolicy::segmentPinyin(entry.pinyin);
+            englishWord ? entry.pinyin : PinyinMatchPolicy::segmentPinyin(entry.pinyin);
         const auto key = candidateOrderKey(entry.phrase, recallPinyin);
         if (!seen.insert(key).second) {
             continue;
@@ -287,7 +300,7 @@ LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entrie
             index->canonicalIndex[canonical].push_back({entry.phrase, recallPinyin});
             index->prefixIndex.emplace_back(canonical, entry.phrase, recallPinyin);
         }
-        if (!asciiWord ||
+        if (!englishWord ||
             recallPinyin.find('\'') != std::string::npos ||
             recallPinyin.find(',') != std::string::npos) {
             const auto abbr = PinyinMatchPolicy::abbreviationKey(recallPinyin);
@@ -408,7 +421,7 @@ std::vector<const LearningEntry *> LearningSnapshotShard::collectExactVariants(
 
 std::vector<const LearningEntry *> LearningSnapshotShard::collectVariants(
     std::string_view phrase, std::string_view normalizedPinyin) const {
-    if (!isAsciiWord(phrase) || normalizedPinyin != toLowerAscii(phrase)) {
+    if (!isRecallableEnglishWord(phrase) || normalizedPinyin != toLowerAscii(phrase)) {
         return collectExactVariants(phrase, normalizedPinyin);
     }
     std::unordered_set<std::string> keys{std::string(normalizedPinyin)};
@@ -1012,7 +1025,7 @@ std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
         }
-        if (isAsciiWord(entry.phrase)) {
+        if (isRecallableEnglishWord(entry.phrase)) {
             const auto lower = toLowerAscii(entry.phrase);
             if (lower.starts_with(lowerPrefix)) {
                 if (matchedPhrases.insert(entry.phrase).second) {

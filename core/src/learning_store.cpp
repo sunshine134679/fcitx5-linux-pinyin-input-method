@@ -1,5 +1,7 @@
 #include "modernime/core/learning_store.h"
+#include "modernime/core/english_dictionary.h"
 #include "modernime/core/personal_engine.h"
+#include "modernime/core/pinyin_match.h"
 
 #include <sqlite3.h>
 
@@ -377,7 +379,33 @@ bool LearningStore::recordCommit(const CommitEvent &event) {
     if (event.role == CommitCandidateRole::Command) {
         return true;
     }
+    // Protection 1: Raw pinyin sequence (e.g. "jianpan", "nihao") committed via Enter
+    // must NEVER be learned as an English word into user history.
+    if (event.role == CommitCandidateRole::Raw) {
+        if (PinyinMatchPolicy::isValidPinyinSequence(event.text) &&
+            !EnglishDictionary::isEnglishWord(event.text)) {
+            return true;
+        }
+    }
+
     const auto pinyinKey = event.fullPinyin.empty() ? event.text : event.fullPinyin;
+
+    // Protection 2: Deviation-Only Learning (WeChat Input Method paradigm)
+    // When selecting default Rank 0 Chinese core candidate (e.g. "是", "这个", "的", "你", "好")
+    // without surrounding context, do not increment unconditioned global frequency to keep LM priors clean and intact.
+    if (event.role == CommitCandidateRole::Chinese &&
+        event.candidateIndex == 0 &&
+        !event.isDeviation &&
+        !event.isPartial &&
+        event.contextBefore.empty() &&
+        event.contextAfter.empty() &&
+        PinyinMatchPolicy::isCoreChineseWord(event.text, pinyinKey)) {
+        const auto snap = snapshot();
+        if (snap == nullptr || !snap->hasPositiveFrequency(event.text, pinyinKey)) {
+            return true;
+        }
+    }
+
     return recordSelection(event.text, pinyinKey, event.contextBefore,
                            event.contextAfter, event.timestampMs);
 }
