@@ -39,6 +39,16 @@ std::size_t utf8SequenceLength(unsigned char lead) noexcept {
     return 0;
 }
 
+std::size_t countUtf8Codepoints(std::string_view text) noexcept {
+    std::size_t count = 0;
+    for (char c : text) {
+        if (!isUtf8ContinuationByte(static_cast<unsigned char>(c))) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 bool isValidUtf8Codepoint(std::string_view slice) noexcept {
     if (slice.empty()) {
         return false;
@@ -2466,6 +2476,14 @@ bool PersonalEngine::ImportFromFile(const std::string &file_path, bool merge) {
                         meta.last_selected_ms =
                             static_cast<int64_t>(meta.last_used_timestamp) * 1000LL;
                     }
+                }
+                constexpr uint32_t kMaxImportedHitCount = 20;
+                constexpr uint32_t kMaxImportedSingleCharHitCount = 3;
+                const auto codepoint_count = countUtf8Codepoints(text);
+                if (codepoint_count == 1) {
+                    meta.hit_count = std::min(meta.hit_count, kMaxImportedSingleCharHitCount);
+                } else {
+                    meta.hit_count = std::min(meta.hit_count, kMaxImportedHitCount);
                 }
                 StoredVariant v;
                 v.text = std::move(text);

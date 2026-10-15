@@ -90,6 +90,37 @@ int main() {
     assertTrue(!history.reloadIfExternallyChanged(&error),
                "an unchanged file does not trigger another reload");
 
+    // Atomic saves may share a filesystem timestamp, including rewrites of
+    // the same size. Such edits must still replace the runtime's stale state.
+    const auto collisionPath = directory / "timestamp-collision.bin";
+    modernime::core::PersistentClipboardHistory collision(collisionPath);
+    assertTrue(collision.load(&error) && collision.observe("original", &error),
+               "timestamp collision fixture starts");
+    const auto collisionMtime = std::filesystem::last_write_time(collisionPath);
+    const auto collisionSize = std::filesystem::file_size(collisionPath);
+    modernime::core::ClipboardHistory collisionEditor;
+    collisionEditor.observe("replaced");
+    assertTrue(collisionEditor.save(collisionPath, &error),
+               "editor replaces history with the same serialized size");
+    std::filesystem::last_write_time(collisionPath, collisionMtime);
+    assertTrue(std::filesystem::file_size(collisionPath) == collisionSize &&
+                   std::filesystem::last_write_time(collisionPath) == collisionMtime,
+               "external replacement preserves timestamp and size");
+    assertTrue(collision.reloadIfExternallyChanged(&error) &&
+                   collision.entries() == std::vector<std::string>{"replaced"},
+               "same-timestamp replacement is reloaded");
+    assertTrue(!collision.reloadIfExternallyChanged(&error),
+               "unchanged replacement is not repeatedly reloaded");
+    collisionEditor.clear();
+    assertTrue(collisionEditor.save(collisionPath, &error),
+               "editor clears history without advancing its timestamp");
+    std::filesystem::last_write_time(collisionPath, collisionMtime);
+    assertTrue(collision.reloadIfExternallyChanged(&error) &&
+                   collision.entries().empty(),
+               "same-timestamp clear is reloaded");
+    assertTrue(!collision.observe("original", &error) && collision.entries().empty(),
+               "same clipboard does not resurrect a same-timestamp clear");
+
     // A corrupt history file must be quarantined and rebuilt instead of
     // permanently disabling the clipboard feature.
     const auto corruptPath = directory / "corrupt-history.bin";
@@ -244,6 +275,22 @@ int main() {
     assertTrue(editor.load(dirtyPath, &error) &&
                    editor.entries() == std::vector<std::string>{"new pending copy"},
                "dirty retry persists only the pending copy after external clear");
+
+    // The merge performed during a dirty retry needs the same collision
+    // detection as polling, or it can silently resurrect a cleared base.
+    const auto retryMtime = std::filesystem::last_write_time(dirtyPath);
+    std::filesystem::create_directory(dirtyTemporary, filesystemError);
+    assertTrue(!filesystemError && dirty.observe("collision pending", &error) &&
+                   !error.empty(), "same-timestamp retry has a pending copy");
+    std::filesystem::remove(dirtyTemporary, filesystemError);
+    editor.clear();
+    assertTrue(!filesystemError && editor.save(dirtyPath, &error),
+               "editor clears history before same-timestamp retry");
+    std::filesystem::last_write_time(dirtyPath, retryMtime);
+    assertTrue(dirty.flush(&error), "same-timestamp dirty retry succeeds");
+    assertTrue(editor.load(dirtyPath, &error) &&
+                   editor.entries() == std::vector<std::string>{"collision pending"},
+               "same-timestamp retry saves only the pending copy");
 
     return EXIT_SUCCESS;
 }

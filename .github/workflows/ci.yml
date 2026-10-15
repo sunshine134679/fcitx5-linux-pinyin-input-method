@@ -36,7 +36,19 @@ jobs:
       - name: Run headless CTest
         run: |
           unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
-          ctest --test-dir build/ci --output-on-failure -E 'settings_focus_gtk|settings_shell_gtk' --parallel $(nproc)
+          ctest --test-dir build/ci --output-on-failure -E 'settings_focus_gtk|settings_shell_gtk|^modernime_personal_engine_benchmark$' --parallel $(nproc)
+
+      # Latency budgets describe shipped optimized code. Keep Debug correctness
+      # coverage above, and run the same mandatory benchmark in Release mode.
+      - name: Run optimized algorithm performance gate
+        run: |
+          cmake -S . -B build/ci-performance -DCMAKE_BUILD_TYPE=Release \
+            -DMODERNIME_BUILD_FCITX5=ON \
+            -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
+            -DMODERNIME_BUILD_SETTINGS=ON \
+            -DMODERNIME_BUILD_TESTS=ON
+          cmake --build build/ci-performance --target modernime_personal_engine_benchmark --parallel 2
+          ctest --test-dir build/ci-performance --output-on-failure -R '^modernime_personal_engine_benchmark$'
 
       - name: Verify DEB packaging
         run: |

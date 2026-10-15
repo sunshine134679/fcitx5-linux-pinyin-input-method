@@ -3,11 +3,6 @@ name: Official Website
 on:
   push:
     branches: [main]
-    paths:
-      - 'website/**'
-      - 'scripts/prepare_website.py'
-      - 'tests/website/**'
-      - '.github/workflows/website.yml'
   workflow_dispatch:
 
 permissions:
@@ -16,7 +11,25 @@ permissions:
   id-token: write
 
 jobs:
+  resolve-deployment:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.ownership.outputs.deploy }}
+    steps:
+      - name: Checkout immutable website source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Resolve website or release ownership
+        id: ownership
+        run: |
+          python3 scripts/resolve_website_deployment.py \
+            --event "${{ github.event_name }}" \
+            --github-output "$GITHUB_OUTPUT"
+
   publish:
+    needs: resolve-deployment
+    if: needs.resolve-deployment.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: modernime-github-pages
@@ -28,39 +41,53 @@ jobs:
       - name: Checkout website source
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
+
+      - name: Recheck ownership inside the shared Pages lock
+        id: current_ownership
+        run: |
+          python3 scripts/resolve_website_deployment.py \
+            --event "${{ github.event_name }}" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Verify website and safe package-repository overlay
+        if: steps.current_ownership.outputs.deploy == 'true'
         run: |
           python3 tests/website/website_test.py
           node tests/website/app_test.js
           node tests/website/motion_test.js
 
       - name: Checkout existing signed repositories
+        if: steps.current_ownership.outputs.deploy == 'true'
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: pages-site
 
       - name: Prepare website while preserving APT and RPM
+        if: steps.current_ownership.outputs.deploy == 'true'
         run: |
           test -f pages-site/apt/dists/noble/InRelease
           test -f pages-site/rpm/oe2409/x86_64/repodata/repomd.xml
           python3 scripts/prepare_website.py --destination pages-site
 
       - name: Configure Pages
+        if: steps.current_ownership.outputs.deploy == 'true'
         uses: actions/configure-pages@v5
 
       - name: Upload website and signed repositories
+        if: steps.current_ownership.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: pages-site
 
       - name: Deploy official website
+        if: steps.current_ownership.outputs.deploy == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
 
       - name: Persist website with signed repositories
+        if: steps.current_ownership.outputs.deploy == 'true'
         working-directory: pages-site
         run: |
           git config user.name 'github-actions[bot]'

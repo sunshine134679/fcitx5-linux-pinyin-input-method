@@ -8,6 +8,7 @@
 #include <fcitx/event.h>
 #include <fcitx-utils/keysymgen.h>
 #include <filesystem>
+#include <getopt.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -22,6 +23,13 @@ void assertTrue(bool condition, std::string_view message) {
         std::cerr << "fcitx5 input panel test failed: " << message << '\n';
         std::exit(EXIT_FAILURE);
     }
+}
+
+bool clientPreeditCleared(fcitx::InputContext &context) {
+    const auto &preedit = context.inputPanel().clientPreedit();
+    // Fcitx 5.0.14 preserves the empty segment in Text(""); newer versions
+    // normalize it away. Verify client-visible text and cursor, not segments.
+    return preedit.toString().empty() && preedit.cursor() == 0;
 }
 
 class TestInputContext final : public fcitx::InputContext {
@@ -92,8 +100,10 @@ void testDisabledActivationPreservesChineseMode() {
                "engine starts globally disabled in Chinese default mode");
     char program[] = "modernime-test";
     char disable[] = "--disable=all";
-    char *argv[] = {program, disable};
+    char *argv[] = {program, disable, nullptr};
     {
+        // getopt state is process-global, including across Fcitx instances.
+        optind = 0;
         fcitx::Instance instance(2, argv);
         instance.initialize();
         modernime::fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
@@ -134,8 +144,10 @@ void testLiveKeyEvents() {
                "number selection is disabled in isolated engine settings");
     char program[] = "modernime-test";
     char disable[] = "--disable=all";
-    char *argv[] = {program, disable};
+    char *argv[] = {program, disable, nullptr};
     {
+        // getopt state is process-global, including across Fcitx instances.
+        optind = 0;
         fcitx::Instance instance(2, argv);
         instance.initialize();
         modernime::fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
@@ -155,7 +167,7 @@ void testLiveKeyEvents() {
             assertTrue(!event.accepted(), "zero passes through to the client");
             assertTrue(!context.commits.empty() && context.commits.back() == "ni",
                        "raw composition is committed before zero passes through");
-            assertTrue(context.inputPanel().clientPreedit().empty(),
+            assertTrue(clientPreeditCleared(context),
                        "zero clears pending composition before client insertion");
             // Emulate the application's insertion after the engine returns.
             context.commits.emplace_back("0");
@@ -169,7 +181,7 @@ void testLiveKeyEvents() {
         fcitx::KeyEvent literal(&context, fcitx::Key(FcitxKey_KP_3));
         engine.keyEvent(entry, literal);
         assertTrue(!literal.accepted() && context.commits.back() == "ni" &&
-                       context.inputPanel().clientPreedit().empty(),
+                       clientPreeditCleared(context),
                    "disabled number selection commits pinyin before a literal digit");
         for (const auto symbol : {FcitxKey_v, FcitxKey_1, FcitxKey_KP_3,
                                   FcitxKey_period, FcitxKey_0, FcitxKey_KP_5}) {
@@ -201,7 +213,7 @@ void testLiveKeyEvents() {
         settings.inputEnabled = false;
         state->applySettings(settings, 0);
         assertTrue(!state->controller().active() &&
-                       context.inputPanel().clientPreedit().empty(),
+                       clientPreeditCleared(context),
                    "hot disabling input resets the existing composition immediately");
         fcitx::KeyEvent toggle(&context, fcitx::Key(FcitxKey_space,
                              fcitx::KeyStates(fcitx::KeyState::Ctrl)));
@@ -362,7 +374,7 @@ int main() {
 
     page.clear();
     host.publishPage(page);
-    assertTrue(inputContext.inputPanel().clientPreedit().empty(),
+    assertTrue(clientPreeditCleared(inputContext),
                "client preedit is cleared after reset");
     assertTrue(inputContext.preeditUpdates == 3,
                "clearing preedit sends an update");

@@ -2070,6 +2070,12 @@ private:
             page_.items.begin(), page_.items.end(),
             [&rawInput](const auto &item) {
                 return item.source != core::CandidateSource::Raw &&
+                       // Older LibIME can decode an internal bare initial as
+                       // a syllable (gara -> ga'r'a). Removing apostrophes
+                       // alone makes that look exact, but it must not veto
+                       // English completion. Trusted abbreviations retain
+                       // their separate eligibility check below.
+                       !hasInvalidInternalPinyinSegment(item.fullPinyin) &&
                        (core::PinyinMatchPolicy::exactInputMatch(
                             rawInput, item.fullPinyin) ||
                         core::PinyinMatchPolicy::isFullTypoMatch(

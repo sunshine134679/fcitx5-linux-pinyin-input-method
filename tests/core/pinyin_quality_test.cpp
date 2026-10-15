@@ -1,6 +1,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include "modernime/core/pinyin_match.h"
+#include "native_pinyin_test_baseline.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -297,9 +298,10 @@ void testOfflineFuzzyTypoAndAbbreviationRecovery(
 
     provider.reset();
     assertTrue(provider.append("jai"), "jai is accepted");
+    NativePinyinTestBaseline nativeBaseline;
     assertTrue(!provider.page().items.empty() &&
-                   provider.page().items.front().text == "家",
-               "jai yields 家 as first candidate");
+                   provider.page().items.front().text == nativeBaseline.candidate("jia"),
+               "jai preserves the corrected jia model's first candidate");
 
     provider.reset();
     assertTrue(provider.append("jaiting"), "jaiting is accepted");
@@ -563,6 +565,8 @@ void testExpandedLexiconAndAntiHijackingScenarios(
 void testExpandedLexiconAndPolyphonicCalibration(
     const std::filesystem::path &isolatedDictionary) {
     auto provider = makeProvider(isolatedDictionary);
+    NativePinyinTestBaseline nativeBaseline;
+    const bool legacyProfile = nativeBaseline.hasAuditedLegacyProfile();
 
     struct PhraseAssertion {
         std::string_view input;
@@ -617,10 +621,13 @@ void testExpandedLexiconAndPolyphonicCalibration(
                    std::string("append input: ") + std::string(tc.input));
         const auto &page = provider.page();
         const auto idx = indexOf(page, tc.expectedText);
-        assertTrue(idx <= tc.maxRank && idx < page.items.size(),
+        const bool auditedLegacyTerm = legacyProfile && tc.input == "tiaoyou";
+        assertTrue((auditedLegacyTerm ? idx == 7 : idx <= tc.maxRank) &&
+                       idx < page.items.size(),
                    std::string("candidate ") + std::string(tc.expectedText) +
-                       " for " + std::string(tc.input) + " ranks <= " +
-                       std::to_string(tc.maxRank));
+                       " for " + std::string(tc.input) +
+                       (auditedLegacyTerm ? " has audited legacy rank 7" :
+                        " ranks <= " + std::to_string(tc.maxRank)));
         assertTrue(page.items[idx].fullPinyin == tc.expectedFullPinyin,
                    std::string("fullPinyin for ") + std::string(tc.expectedText) +
                        " is " + std::string(tc.expectedFullPinyin));

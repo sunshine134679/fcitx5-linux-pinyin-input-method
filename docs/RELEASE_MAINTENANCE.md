@@ -7,9 +7,9 @@
 1. 同步 CMake 版本、README 当前产物名和版本记录、`docs/releases/vX.Y.Z.md`、官网 `index.html` 与 `app.js` 后备版本，以及官网版本断言。历史发布说明保留原版本。
 2. 按 AGENTS.md 验证算法契约、完整 CTest、实际注册的 GTest/Benchmark、官网回归与隔离全新克隆安装卸载。没有图形会话时明确记录 GTK 跳过，不能记为通过。含私有未跟踪数据的工作区应先制作仅含源码的隔离快照再运行 `tests/verify_fresh_clone.sh`，该脚本会复制未跟踪文件。
 3. 提交并正常推送代码到发布分支/主分支；核对远程主分支的新提交。不可强推覆盖别人改动。创建新标签并推送，触发 `.github/workflows/release.yml`。
-4. Release 工作流校验标签版本与源码 SHA，两套 Ubuntu 构建先检查必需算法及安装测试的注册与执行，再生成 DEB；openEuler 原生容器生成 RPM；同时构建便携包。
+4. CI 保留 Debug 正确性回归，单独用 Release 构建执行原 Benchmark 性能预算；Debug 的额外开销不应混入发行性能比较。Release 工作流校验标签版本与源码 SHA，两套 Ubuntu 构建先检查必需算法及安装测试的注册与执行，再生成 DEB；openEuler 原生容器生成 RPM；同时构建便携包。
 5. 发布门禁验证资产、升级备份、回滚、卸载及签名，再生成生产签名 APT/DNF 仓库。保留历史版本，同版本重试替换包。持久 GPG 私钥和口令由 GitHub Actions Secrets 提供，禁止临时测试密钥进入生产。
-6. 同一流水线部署 Pages、持久化 `gh-pages` 并创建带源码 SHA 的 GitHub Release。官网独立流水线与 Release 共用 Pages 并发组，并保留 APT/RPM 目录，避免覆盖在线源。
+6. 同一流水线部署 Pages、持久化 `gh-pages` 并创建带源码 SHA 的 GitHub Release。官网归属检测在每次 main 推送运行，确保过时任务退出后有最新任务接续；官网独立流水线与 Release 共用 Pages 并发组，并保留 APT/RPM 目录。自动官网部署先检查不可变触发 SHA：当前产品版本没有标签或标签绑定同一提交时，由 Release 统一部署；已有发行版本下的普通官网更改照常部署。检测与发布均 checkout 同一 SHA，并在共享部署锁内复核 main 是否仍指向它；过时自动任务退出，防止排队旧任务覆盖新首页。手动 workflow_dispatch 可显式部署选定 ref。
 
 ## 发布后验收
 
@@ -25,8 +25,14 @@
 - 源码：先确认工作区无未提交改动，在跟踪发布代码的分支执行 `git pull --ff-only && ./install.sh`。
 - 便携：下载新版归档并校验，执行其 `install.sh`。源码和便携均记录 `channel=script`，不会通过 APT/DNF 直接跨渠道覆盖；需要转换时使用 `modernime-migrate-channel`。
 
+系统词典/语言模型变化应先独立回放原生 LibIME 和变更前源码。当前测试仅对已审计的五组旧模型行为使用三词精确位置基线，新模型与未知模型保持原排名要求；不能只改最大排名阈值来消除失败。两套模型均执行真实选择、完整消费、最终位置和持久召回验收。模型 SHA256、差异及证据见 [v0.1.13](releases/v0.1.13.md)。
+
 Google Benchmark 的最短运行时间使用 `--benchmark_min_time=0.02`，兼容旧版纯浮点解析器；不要改成旧版不接受的 `0.02s`。参见 [v1.6.1 参数解析实现](https://github.com/google/benchmark/blob/v1.6.1/src/commandlineflags.cc)。
 
 ## 失败与修复
 
 发布失败先查失败作业，不把仅推送标签记为发布成功。网络或基础设施故障可重试原标签；源码修复必须创建更高版本的新标签，不移动已发布标签。严禁为了通过门禁跳过必需算法测试、降低性能阈值或换用临时签名密钥。仓库签名或生产 Secrets 缺失时保留旧的在线源并明确报告阻塞。
+
+## 2026-10-15 分发维护记录
+
+v0.1.13 的 CI、Ubuntu 22.04/24.04、RPM、便携包、生产签名与 Release 均成功；gh-pages 包含新版本。官网与 Release 曾先后用相同触发 SHA 部署不同站点产物，公网在普通缓存过期后仍返回旧软件源。发布归属由 scripts/resolve_website_deployment.py 单独判断，官网自动推送让位发行提交，并绑定不可变 SHA；10 项官网测试覆盖归属、标签剥离、标签缺失、手动部署及完整仓库保留。该现象不作为 GitHub 内部实现机制已获证明的结论。

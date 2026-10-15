@@ -18,10 +18,10 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.12_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.12_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.12-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.12-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.13_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.13_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.13-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.13-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -631,7 +631,21 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ## 版本更新记录
 
-### v0.1.12 (2026-10-15)
+### v0.1.13 (2026-10-15)
+
+- **算法结构**：将中文候选链路拆为召回、统一特征计算、前缀派生、会话选择窗口与混排模块；补充特性契约、状态权限、扩展与退役指南，便于后续增删功能并保留成熟行为。
+- **候选提权**：约束静态先验，重复明确选择可以越过冷门候选；`shi→试`、`jian→见/键` 纳入全局排序与物理分页验收，前缀候选读取自身学习证据。
+- **个性化稳定性**：修复隐私边界、删字反馈、持久屏蔽、英语词条身份、写入事务和清空一致性；保留时间遗忘与 200,000 词容量。会话选择窗口不写磁盘，重启后仍按持久学习证据排序。
+- **跨版本交付修复**：修复旧版 LibIME 英文资格判定、Fcitx 空文本测试兼容与剪贴板同时间戳重载；Debug 正确性测试与 Release 性能门禁分别执行。
+- **在线源发布**：发行提交由 Release 统一部署官网与签名源，普通官网更新按不可变触发 SHA 部署并保留全部软件源文件，防止重复部署和分支推进竞态。
+- **性能与交付**：学习快照改为 512 分片；本地 200,000 词新词学习加召回 P99 为 2.72 ms。发行构建校验 GTest、Benchmark 与安装测试已注册并实际运行；同步更新官网版本与签名 APT/DNF 更新源。
+- 验证：63 项 CTest 通过、3 项需图形会话的 GTK 测试跳过；其中 GTest 64/64 通过；隔离全新克隆安装卸载通过。尚未验证真实桌面打字与跨 DPI 显示。
+- 发布与在线更新维护流程见 [RELEASE_MAINTENANCE.md](docs/RELEASE_MAINTENANCE.md)。
+- 完整发布说明见 [v0.1.13](docs/releases/v0.1.13.md)，架构与使用回放见 [算法架构](docs/ALGORITHM_ARCHITECTURE.md)、[候选链路](docs/CANDIDATE_PIPELINE_ARCHITECTURE.md)、[模拟体验记录](docs/ALGORITHM_USAGE_SIMULATION_2026-10-15.md)。
+
+### v0.1.12 (2026-10-15，发行门禁未通过)
+
+此标签未生成正式 Release，Ubuntu 22.04 门禁发现兼容性问题；保留原标签，修复通过后以 v0.1.13 发布。以下为该标签的算法变更记录。
 
 - **算法结构**：将中文候选链路拆为召回、统一特征计算、前缀派生、会话选择窗口与混排模块；补充特性契约、状态权限、扩展与退役指南，便于后续增删功能并保留成熟行为。
 - **候选提权**：约束静态先验，重复明确选择可以越过冷门候选；`shi→试`、`jian→见/键` 纳入全局排序与物理分页验收，前缀候选读取自身学习证据。

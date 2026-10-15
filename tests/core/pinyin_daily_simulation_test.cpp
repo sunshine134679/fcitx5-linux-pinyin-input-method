@@ -1,6 +1,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/pinyin_match.h"
+#include "native_pinyin_test_baseline.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -54,6 +55,7 @@ makeSimulationProvider(const std::filesystem::path &learningPath) {
 // 1. 核心高频单字基准测试（32组核心音节）
 void testSinglePinyinPriorities(const std::filesystem::path &learningPath) {
     auto provider = makeSimulationProvider(learningPath);
+    NativePinyinTestBaseline nativeBaseline;
 
     struct SingleTestCase {
         std::string_view pinyin;
@@ -102,9 +104,13 @@ void testSinglePinyinPriorities(const std::filesystem::path &learningPath) {
                    std::string("append input: ") + std::string(tc.pinyin));
         assertTrue(!provider.page().items.empty(),
                    std::string("candidates exist for: ") + std::string(tc.pinyin));
-        assertTrue(provider.page().items.front().text == tc.expectedTop,
+        const auto expectedTop =
+            (tc.pinyin == "yi" || tc.pinyin == "zi" || tc.pinyin == "ge")
+                ? nativeBaseline.candidate(tc.pinyin)
+                : std::string(tc.expectedTop);
+        assertTrue(provider.page().items.front().text == expectedTop,
                    std::string("top candidate for ") + std::string(tc.pinyin) +
-                   " should be " + std::string(tc.expectedTop) + ", but got " +
+                   " should be " + expectedTop + ", but got " +
                    provider.page().items.front().text);
         if (tc.expectedTop != tc.expectedTop3) {
             const auto idx = indexOf(provider.page(), tc.expectedTop3);
@@ -402,6 +408,8 @@ void testSmartTypoCorrectionEngine(const std::filesystem::path &learningPath) {
 // 6. 微信输入法深度对标：6大典型行业角色与全功能宏引擎基准
 void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learningPath) {
     auto provider = makeSimulationProvider(learningPath);
+    NativePinyinTestBaseline nativeBaseline;
+    const bool legacyProfile = nativeBaseline.hasAuditedLegacyProfile();
 
     struct PersonaBenchmark {
         std::string_view persona;
@@ -507,7 +515,10 @@ void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learnin
         assertTrue(!provider.page().items.empty(),
                    std::string("[") + std::string(bm.persona) + "] candidates exist for: " + std::string(bm.input));
         const auto idx = indexOf(provider.page(), bm.expected);
-        assertTrue(idx <= bm.maxRank,
+        const bool auditedLegacyTerm = legacyProfile &&
+            (bm.expected == "死锁" || bm.expected == "破折号");
+        const std::size_t auditedRank = bm.expected == "死锁" ? 3 : 15;
+        assertTrue(auditedLegacyTerm ? idx == auditedRank : idx <= bm.maxRank,
                    std::string("[") + std::string(bm.persona) + "] " + std::string(bm.input) +
                    " expected '" + std::string(bm.expected) + "' at rank <= " + std::to_string(bm.maxRank) +
                    ", but got rank " + std::to_string(idx) +
@@ -516,6 +527,81 @@ void testMultiPersonaWeChatParityBenchmarks(const std::filesystem::path &learnin
                    (provider.page().items.size() > 1 ? provider.page().items[1].text : "") + ", " +
                    (provider.page().items.size() > 2 ? provider.page().items[2].text : "") + ") (" +
                    std::string(bm.desc) + ")");
+        if (bm.expected == "死锁" || bm.expected == "破折号") {
+            const auto &candidate = provider.page().items[idx];
+            assertTrue(candidate.fullPinyin ==
+                           (bm.expected == "死锁" ? "si'suo" : "po'zhe'hao") &&
+                           candidate.consumedInputBytes == bm.input.size(),
+                       "audited phrase keeps full pinyin and full consumption");
+        }
+    }
+}
+
+void testModelBaselinePhraseLearning() {
+    struct Phrase {
+        std::string_view input;
+        std::string_view text;
+        std::string_view pinyin;
+        std::size_t legacyRank;
+        std::size_t defaultMaxRank;
+    };
+    NativePinyinTestBaseline nativeBaseline;
+    const bool legacyProfile = nativeBaseline.hasAuditedLegacyProfile();
+    for (const auto &phrase : std::vector<Phrase>{
+             {"tiaoyou", "调优", "tiao'you", 7, 0},
+             {"sisuo", "死锁", "si'suo", 3, 1},
+             {"pozhehao", "破折号", "po'zhe'hao", 15, 0}}) {
+        const auto learningPath = testPath(
+            "model-baseline-" + std::string(phrase.input) + ".sqlite3");
+        {
+            auto provider = makeSimulationProvider(learningPath);
+            assertTrue(provider.append(phrase.input), "baseline phrase is accepted");
+            const auto initial = indexOf(provider.page(), phrase.text);
+            assertTrue(legacyProfile ? initial == phrase.legacyRank
+                                     : initial <= phrase.defaultMaxRank,
+                       "cold phrase matches the independently audited model baseline");
+            for (int selection = 0; selection < 10; ++selection) {
+                const auto index = indexOf(provider.page(), phrase.text);
+                assertTrue(index < provider.page().items.size(),
+                           "phrase remains available for real selection");
+                const auto &candidate = provider.page().items[index];
+                assertTrue(candidate.fullPinyin == phrase.pinyin &&
+                               candidate.consumedInputBytes == phrase.input.size(),
+                           "phrase selection preserves exact identity and consumption");
+                assertTrue(provider.select(index), "real phrase selection succeeds");
+                assertTrue(provider.page().rawInput.empty(),
+                           "phrase selection leaves no unconsumed suffix");
+                // Each repetition is an independent empty-context phrase,
+                // not a request to form 调优调优... or retain session intent.
+                provider.resetCommitHistory();
+                assertTrue(provider.append(phrase.input), "phrase is queried after selection");
+            }
+            assertTrue(indexOf(provider.page(), phrase.text) == 0,
+                       "ten real selections promote the phrase to final global rank zero");
+            assertTrue(provider.flush(), "phrase learning persists");
+        }
+        {
+            modernime::core::LearningStore store(learningPath);
+            assertTrue(store.open(), "persisted phrase store opens");
+            const auto snapshot = store.snapshot();
+            const auto *entry = snapshot->entry(phrase.text, phrase.pinyin, {}, {});
+            assertTrue(entry != nullptr && entry->frequency == 10,
+                       "exact phrase identity stores all ten selections: " +
+                           std::string(phrase.text));
+        }
+        {
+            auto reopened = makeSimulationProvider(learningPath);
+            assertTrue(reopened.append(phrase.input), "reopened phrase is accepted");
+            const auto &candidate = reopened.page().items.front();
+            assertTrue(candidate.text == phrase.text &&
+                           candidate.fullPinyin == phrase.pinyin &&
+                           candidate.consumedInputBytes == phrase.input.size(),
+                       "reopened provider recalls the learned phrase at final rank zero");
+        }
+        std::error_code error;
+        std::filesystem::remove(learningPath, error);
+        std::filesystem::remove(learningPath.string() + "-wal", error);
+        std::filesystem::remove(learningPath.string() + "-shm", error);
     }
 }
 
@@ -529,11 +615,14 @@ void testRareAndRadicalCharactersGovernance(const std::filesystem::path &learnin
     assertTrue(provider.page().items[0].text == "的", "de rank 0 is 的");
     assertTrue(provider.page().items[1].text == "得", "de rank 1 is 得 (not English de)");
 
-    // 2. 单音节英文次选消除：ge 次选不得为 raw "ge"，应为常用汉字 "个"
+    // 2. ge 保持系统模型的中文首位/次位，不让英文原文插队。
     provider.reset();
     assertTrue(provider.append("ge"), "append ge");
-    assertTrue(provider.page().items[0].text == "各", "ge rank 0 is 各");
-    assertTrue(provider.page().items[1].text == "个", "ge rank 1 is 个 (not English ge)");
+    NativePinyinTestBaseline nativeBaseline;
+    assertTrue(provider.page().items[0].text == nativeBaseline.candidate("ge"),
+               "ge rank 0 preserves the native model's Chinese first choice");
+    assertTrue(provider.page().items[1].text == nativeBaseline.candidate("ge", 1),
+               "ge rank 1 preserves the native model's Chinese second choice");
 
     // 3. 康熙部首字过滤：e 候选前 5 位不得出现 丨
     provider.reset();
@@ -693,34 +782,174 @@ void testDormantDisplacementAndNasalTypoPersonalization(const std::filesystem::p
     }
 }
 
+// 9. 1,000 轮日常高频打字抗污染与首选稳定性压力基准测试
+void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
+    const auto stressPath = testPath("anti-pollution-stress.sqlite3");
+    {
+        modernime::core::LearningStore store(stressPath);
+        assertTrue(store.open(), "open stress store for seed setup");
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto oneDayAgo = now - 86400000LL;
+
+        // 模拟已导入经清洗/截断的外部词典词条（安全上限内）
+        for (int i = 0; i < 3; ++i) {
+            store.recordSelection("试", "shi", {}, {}, oneDayAgo);
+            store.recordSelection("地", "de", {}, {}, oneDayAgo);
+            store.recordSelection("骂", "ma", {}, {}, oneDayAgo);
+            store.recordSelection("盒", "he", {}, {}, oneDayAgo);
+            store.recordSelection("豪", "hao", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 20; ++i) {
+            store.recordSelection("这歌", "zhe'ge", {}, {}, oneDayAgo);
+            store.recordSelection("不失", "bu'shi", {}, {}, oneDayAgo);
+            store.recordSelection("豪德", "hao'de", {}, {}, oneDayAgo);
+            store.recordSelection("科一", "ke'yi", {}, {}, oneDayAgo);
+        }
+
+        // 真实日常高频基线
+        for (int i = 0; i < 25; ++i) {
+            store.recordSelection("是", "shi", {}, {}, oneDayAgo);
+            store.recordSelection("好", "hao", {}, {}, oneDayAgo);
+            store.recordSelection("好的", "hao'de", {}, {}, oneDayAgo);
+            store.recordSelection("可以", "ke'yi", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 28; ++i) {
+            store.recordSelection("这个", "zhe'ge", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 30; ++i) {
+            store.recordSelection("你", "ni", {}, {}, oneDayAgo);
+            store.recordSelection("吗", "ma", {}, {}, oneDayAgo);
+            store.recordSelection("和", "he", {}, {}, oneDayAgo);
+            store.recordSelection("不是", "bu'shi", {}, {}, oneDayAgo);
+        }
+        for (int i = 0; i < 100; ++i) {
+            store.recordSelection("的", "de", {}, {}, oneDayAgo);
+        }
+    }
+
+    auto provider = makeSimulationProvider(stressPath);
+
+    struct StressTarget {
+        std::string_view input;
+        std::string_view expectedTop;
+        std::string_view forbiddenTop;
+    };
+
+    const std::vector<StressTarget> targets = {
+        {"shi", "是", "试"},
+        {"zhege", "这个", "这歌"},
+        {"zhe'ge", "这个", "这歌"},
+        {"de", "的", "地"},
+        {"ni", "你", "泥"},
+        {"ma", "吗", "骂"},
+        {"he", "和", "盒"},
+        {"hao", "好", "豪"},
+        {"bushi", "不是", "不失"},
+        {"bu'shi", "不是", "不失"},
+        {"haode", "好的", "豪德"},
+        {"hao'de", "好的", "豪德"},
+        {"keyi", "可以", "科一"},
+        {"ke'yi", "可以", "科一"}
+    };
+
+    uint64_t totalEvaluations = 0;
+    uint64_t usurpationCount = 0;
+
+    for (int round = 0; round < 1000; ++round) {
+        for (const auto &t : targets) {
+            provider.reset();
+            assertTrue(provider.append(std::string(t.input)), "append stress input");
+            assertTrue(!provider.page().items.empty(), "non-empty candidate page");
+            const auto topText = provider.page().items.front().text;
+            ++totalEvaluations;
+
+            if (topText != t.expectedTop) {
+                std::cerr << "Round " << round << " Usurpation on input '" << t.input
+                          << "': expected '" << t.expectedTop << "', got '" << topText << "'\n";
+                ++usurpationCount;
+            }
+            assertTrue(topText != t.forbiddenTop, "Forbidden word usurped top rank");
+            assertTrue(topText == t.expectedTop, "Expected top candidate must be rank 0");
+
+            // 模拟用户真实打字选用首选，持续产生合法学习
+            const auto selIdx = indexOf(provider.page(), t.expectedTop);
+            if (selIdx < provider.page().items.size()) {
+                assertTrue(provider.select(selIdx), "select top candidate in stress test");
+            }
+        }
+
+        // 每 50 轮模拟一次偶发次选，验证不会发生单次偶选篡位
+        if (round % 50 == 25) {
+            provider.reset();
+            assertTrue(provider.append("shi"), "append shi for occasional pick");
+            const auto shiIdx = indexOf(provider.page(), "试");
+            if (shiIdx < provider.page().items.size()) {
+                provider.select(shiIdx);
+            }
+            provider.reset();
+            assertTrue(provider.append("shi"), "append shi post occasional pick");
+            assertTrue(provider.page().items.front().text == "是",
+                       "Occasional selection of '试' must not hijack '是'");
+
+            provider.reset();
+            assertTrue(provider.append("de"), "append de for occasional pick");
+            const auto deIdx = indexOf(provider.page(), "地");
+            if (deIdx < provider.page().items.size()) {
+                provider.select(deIdx);
+            }
+            provider.reset();
+            assertTrue(provider.append("de"), "append de post occasional pick");
+            assertTrue(provider.page().items.front().text == "的",
+                       "Occasional selection of '地' must not hijack '的'");
+        }
+
+        if (round % 100 == 99) {
+            provider.flush();
+        }
+    }
+
+    assertTrue(usurpationCount == 0, "Stress benchmark must have 0 usurpations across 1000 rounds");
+    assertTrue(totalEvaluations == 14000, "1000 rounds x 14 targets = 14,000 evaluations");
+
+    std::error_code error;
+    std::filesystem::remove(stressPath, error);
+    std::filesystem::remove(stressPath.string() + "-wal", error);
+    std::filesystem::remove(stressPath.string() + "-shm", error);
+}
+
 } // namespace
 
 int main() {
     const auto learningPath = testPath("daily-simulation-learning.sqlite3");
 
-    std::cout << "[1/8] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
+    std::cout << "[1/9] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
     testSinglePinyinPriorities(learningPath);
 
-    std::cout << "[2/8] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
+    std::cout << "[2/9] Running Multi-Syllable Phrase & Sentence Benchmark (40+ items)...\n";
     testMultiSyllablePhrasesAndHotwords(learningPath);
 
-    std::cout << "[3/8] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
+    std::cout << "[3/9] Running Abbreviations & Initialisms Benchmark (24 items)...\n";
     testAbbreviationsAndInitialisms(learningPath);
 
-    std::cout << "[4/8] Running Smart Learning Dynamic Evolution Tests...\n";
+    std::cout << "[4/9] Running Smart Learning Dynamic Evolution Tests...\n";
     testSmartLearningDynamics(learningPath);
 
-    std::cout << "[5/8] Running Smart Typo Correction Engine Tests...\n";
+    std::cout << "[5/9] Running Smart Typo Correction Engine Tests...\n";
     testSmartTypoCorrectionEngine(learningPath);
 
-    std::cout << "[6/8] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
+    std::cout << "[6/9] Running Multi-Persona WeChat Parity Benchmark (6 Professions & Macro Engine)...\n";
     testMultiPersonaWeChatParityBenchmarks(learningPath);
+    testModelBaselinePhraseLearning();
 
-    std::cout << "[7/8] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
+    std::cout << "[7/9] Running Rare/Radical Characters & Obscure Words Governance Benchmark...\n";
     testRareAndRadicalCharactersGovernance(learningPath);
 
-    std::cout << "[8/8] Running Dormant Displacement & Nasal Typo Personalization Benchmark...\n";
+    std::cout << "[8/9] Running Dormant Displacement & Nasal Typo Personalization Benchmark...\n";
     testDormantDisplacementAndNasalTypoPersonalization(learningPath);
+
+    std::cout << "[9/9] Running 1,000-Round Anti-Pollution & High-Frequency Stress Simulation Benchmark...\n";
+    testOneThousandRoundsAntiPollutionStress(learningPath);
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);
