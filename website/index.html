@@ -23,6 +23,7 @@
   <link rel="icon" href="assets/favicon.png" type="image/png" sizes="32x32">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
+  <script src="motion.js" defer></script>
   <script src="gallery.js" defer></script>
   <script src="install.js" defer></script>
 </head>
@@ -54,6 +55,7 @@
           <div class="ime-window"><div class="ime-composition"><span id="hero-pinyin">hao'hao'biao'da</span><span class="caret" aria-hidden="true"></span><span class="ime-mode">中</span></div><div id="hero-candidates" class="ime-candidates"><span class="candidate chosen"><small>1</small>好好表达</span><span class="candidate"><small>2</small>好好</span><span class="candidate"><small>3</small>表达</span><span class="candidate-arrow" aria-hidden="true">›</span></div></div>
           <div class="demo-bottom"><span><kbd>Space</kbd> 确认首选</span><span><kbd>Shift</kbd> 中英切换</span></div>
           <div class="hero-scene-controls" role="group" aria-label="切换输入示意"><button type="button" data-scene="hello" aria-pressed="false">日常问候</button><button type="button" data-scene="express" aria-pressed="true">自由表达</button><button type="button" data-scene="linux" aria-pressed="false">热爱 Linux</button></div>
+          <div class="hero-motion-controls"><span>输入场景演示</span><div><button type="button" id="hero-motion-toggle" aria-pressed="false" hidden>暂停轮播</button><button type="button" id="hero-motion-replay" hidden>重播当前场景</button></div></div>
         </div>
       </div>
       <div class="container platform-line"><span>和熟悉的 Linux 桌面一起工作</span><div><span>Ubuntu</span><span>Debian</span><span>openEuler</span><a class="platform-more" href="#source-install">其他发行版可从源码构建 <svg class="link-arrow link-arrow--right" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></a></div></div>

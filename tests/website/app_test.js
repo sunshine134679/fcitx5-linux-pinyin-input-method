@@ -71,6 +71,7 @@ async function run(release, options = {}) {
     // The gallery still initializes when the separate main script is missing.
   } else {
     vm.runInContext(source, context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "../../website/motion.js"), "utf8"), context);
   }
   const galleryFile = path.join(__dirname, "../../website/gallery.js");
   vm.runInContext(fs.readFileSync(galleryFile, "utf8"), context);

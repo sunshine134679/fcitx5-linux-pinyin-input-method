@@ -180,7 +180,7 @@ class WebsiteTests(unittest.TestCase):
             destination = Path(temp) / "pages"
             overlay.prepare(ROOT / "website", destination)
             html = (destination / "index.html").read_text()
-            for name in ("app.js", "gallery.js", "install.js", "styles.css"):
+            for name in ("app.js", "motion.js", "gallery.js", "install.js", "styles.css"):
                 digest = hashlib.sha256((ROOT / "website" / name).read_bytes()).hexdigest()[:12]
                 self.assertIn(f'{name}?v={digest}', html)
 
