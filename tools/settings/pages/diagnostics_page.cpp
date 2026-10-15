@@ -59,6 +59,26 @@ void runtimeTaskFunction(GTask *task, gpointer, gpointer data,
         [](gpointer value) { delete static_cast<RuntimeStatus *>(value); });
 }
 
+void applyStatusBadge(GtkWidget *widget, std::string_view text) {
+    if (widget == nullptr) {
+        return;
+    }
+    auto *context = gtk_widget_get_style_context(widget);
+    for (const auto *cls : {"modernime-badge-green", "modernime-badge-neutral",
+                            "modernime-badge-amber", "modernime-badge-red"}) {
+        gtk_style_context_remove_class(context, cls);
+    }
+    if (text == "可用" || text == "正在运行" || text == "已激活") {
+        gtk_style_context_add_class(context, "modernime-badge-green");
+    } else if (text == "已就绪" || text == "modernime" || text == "暂无输入上下文") {
+        gtk_style_context_add_class(context, "modernime-badge-neutral");
+    } else if (text == "未激活" || text == "未获取" || text == "检测中…") {
+        gtk_style_context_add_class(context, "modernime-badge-amber");
+    } else {
+        gtk_style_context_add_class(context, "modernime-badge-red");
+    }
+}
+
 } // namespace
 
 class DiagnosticsPage::Impl final {
@@ -174,25 +194,37 @@ private:
             "运行状态", "如果状态异常，可以在这里重新加载 ModernIME。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
+        statusBanner = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        addStyleClass(statusBanner, "modernime-status-banner");
+        statusIcon = gtk_image_new_from_icon_name("dialog-information-symbolic",
+                                                  GTK_ICON_SIZE_BUTTON);
+        gtk_widget_set_valign(statusIcon, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(statusBanner), statusIcon, FALSE, FALSE, 0);
+
         statusMessage = gtk_label_new("正在读取 Fcitx5 状态…");
-        addStyleClass(statusMessage, "modernime-status");
         gtk_widget_set_halign(statusMessage, GTK_ALIGN_START);
+        gtk_widget_set_valign(statusMessage, GTK_ALIGN_CENTER);
         gtk_label_set_line_wrap(GTK_LABEL(statusMessage), TRUE);
-        gtk_box_pack_start(GTK_BOX(section), statusMessage, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(statusBanner), statusMessage, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(section), statusBanner, FALSE, FALSE, 0);
 
         auto *statusGrid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(statusGrid), 8);
-        gtk_grid_set_column_spacing(GTK_GRID(statusGrid), 16);
+        gtk_grid_set_row_spacing(GTK_GRID(statusGrid), 10);
+        gtk_grid_set_column_spacing(GTK_GRID(statusGrid), 24);
         const auto labels = settingsRuntimeStatusLabels();
         const auto addStatusRow = [statusGrid](int row,
                                                std::string_view title,
                                                GtkWidget **value) {
             auto *label = gtk_label_new(std::string(title).c_str());
+            addStyleClass(label, "modernime-description");
             gtk_widget_set_halign(label, GTK_ALIGN_START);
+            gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
             gtk_grid_attach(GTK_GRID(statusGrid), label, 0, row, 1, 1);
+
             *value = gtk_label_new("检测中…");
-            addStyleClass(*value, "modernime-status");
+            applyStatusBadge(*value, "检测中…");
             gtk_widget_set_halign(*value, GTK_ALIGN_START);
+            gtk_widget_set_valign(*value, GTK_ALIGN_CENTER);
             gtk_grid_attach(GTK_GRID(statusGrid), *value, 1, row, 1, 1);
         };
         addStatusRow(0, labels[0], &availability);
@@ -201,7 +233,8 @@ private:
         addStatusRow(3, labels[3], &modernime);
         gtk_box_pack_start(GTK_BOX(section), statusGrid, FALSE, FALSE, 0);
 
-        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        gtk_widget_set_margin_top(actions, 18);
         refreshButton = gtk_button_new_with_label("刷新状态");
         reloadButton = gtk_button_new_with_label("重新加载 ModernIME");
         setTarget(refreshButton, "diagnostics-refresh");
@@ -275,15 +308,23 @@ private:
     }
 
     void updateStatus(const RuntimeStatus &runtimeStatus) {
-        setLabel(availability, runtimeStatus.available ? "可用" : "不可用");
-        setLabel(service, runtimeStatus.running ? "正在运行" : "未运行");
-        setLabel(inputMethod,
-                 runtimeStatus.currentInputMethod.empty()
-                     ? (runtimeStatus.inputContextAvailable ? "未获取"
-                                                            : "暂无输入上下文")
-                     : runtimeStatus.currentInputMethod.c_str());
-        setLabel(
-            modernime,
+        const auto availText = runtimeStatus.available ? "可用" : "不可用";
+        setLabel(availability, availText);
+        applyStatusBadge(availability, availText);
+
+        const auto serviceText = runtimeStatus.running ? "正在运行" : "未运行";
+        setLabel(service, serviceText);
+        applyStatusBadge(service, serviceText);
+
+        const std::string imText =
+            runtimeStatus.currentInputMethod.empty()
+                ? (runtimeStatus.inputContextAvailable ? "未获取"
+                                                       : "暂无输入上下文")
+                : runtimeStatus.currentInputMethod;
+        setLabel(inputMethod, imText.c_str());
+        applyStatusBadge(inputMethod, imText);
+
+        const std::string modernimeText =
             runtimeStatus.modernimeActive
                 ? "已激活"
                 : (!runtimeStatus.modernimeAvailable
@@ -292,22 +333,61 @@ private:
                                   runtimeStatus.running
                               ? "已就绪"
                               : (runtimeStatus.running ? "未激活"
-                                                       : "未运行"))));
+                                                       : "未运行")));
+        setLabel(modernime, modernimeText.c_str());
+        applyStatusBadge(modernime, modernimeText);
+
         setLabel(statusMessage,
                  runtimeStatus.message.empty()
                      ? "无法读取 Fcitx5 状态"
                      : runtimeStatus.message.c_str());
+
+        if (statusBanner != nullptr) {
+            auto *bannerContext = gtk_widget_get_style_context(statusBanner);
+            gtk_style_context_remove_class(bannerContext, "success");
+            gtk_style_context_remove_class(bannerContext, "warning");
+            gtk_style_context_remove_class(bannerContext, "error");
+            if (runtimeStatus.running && runtimeStatus.modernimeActive) {
+                gtk_style_context_add_class(bannerContext, "success");
+                gtk_image_set_from_icon_name(GTK_IMAGE(statusIcon),
+                                             "emblem-ok-symbolic",
+                                             GTK_ICON_SIZE_BUTTON);
+            } else if (runtimeStatus.running) {
+                gtk_style_context_add_class(bannerContext, "warning");
+                gtk_image_set_from_icon_name(GTK_IMAGE(statusIcon),
+                                             "dialog-warning-symbolic",
+                                             GTK_ICON_SIZE_BUTTON);
+            } else {
+                gtk_style_context_add_class(bannerContext, "error");
+                gtk_image_set_from_icon_name(GTK_IMAGE(statusIcon),
+                                             "dialog-error-symbolic",
+                                             GTK_ICON_SIZE_BUTTON);
+            }
+        }
     }
 
     void updateFailure(const char *message) {
         setLabel(availability, "检测失败");
+        applyStatusBadge(availability, "检测失败");
         setLabel(service, "未知");
+        applyStatusBadge(service, "未知");
         setLabel(inputMethod, "未获取");
+        applyStatusBadge(inputMethod, "未获取");
         setLabel(modernime, "未知");
+        applyStatusBadge(modernime, "未知");
         setLabel(statusMessage,
                  message == nullptr || *message == '\0'
                      ? "无法读取 Fcitx5 状态"
                      : message);
+        if (statusBanner != nullptr) {
+            auto *bannerContext = gtk_widget_get_style_context(statusBanner);
+            gtk_style_context_remove_class(bannerContext, "success");
+            gtk_style_context_remove_class(bannerContext, "warning");
+            gtk_style_context_add_class(bannerContext, "error");
+            gtk_image_set_from_icon_name(GTK_IMAGE(statusIcon),
+                                         "dialog-error-symbolic",
+                                         GTK_ICON_SIZE_BUTTON);
+        }
     }
 
     void setBusy(bool value, bool resolvePendingFocus = true) {
@@ -338,6 +418,8 @@ private:
     bool busy = false;
     std::string pendingFocusTarget;
     GtkWidget *page = nullptr;
+    GtkWidget *statusBanner = nullptr;
+    GtkWidget *statusIcon = nullptr;
     GtkWidget *statusMessage = nullptr;
     GtkWidget *availability = nullptr;
     GtkWidget *service = nullptr;

@@ -222,30 +222,33 @@ private:
 
         auto *grid = gtk_grid_new();
         gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 16);
+        gtk_grid_set_column_spacing(GTK_GRID(grid), 24);
 
         const auto addRow = [grid](int row, std::string_view title, const char *initial, GtkWidget **valLabel) {
             auto *label = gtk_label_new(std::string(title).c_str());
+            addStyleClass(label, "modernime-description");
             gtk_widget_set_halign(label, GTK_ALIGN_START);
             gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
             gtk_widget_set_valign(label, GTK_ALIGN_START);
             *valLabel = wrappedLabel(initial);
-            addStyleClass(*valLabel, "modernime-status");
             gtk_grid_attach(GTK_GRID(grid), *valLabel, 1, row, 1, 1);
         };
 
         addRow(0, "当前版本", MODERNIME_VERSION, &currentVersionLabel);
         addRow(1, "安装渠道", "检测中…", &channelLabel);
-        gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
-        auto *sourceTitle = wrappedLabel("软件源位置");
-        addStyleClass(sourceTitle, "modernime-setting-title");
-        gtk_widget_set_margin_top(sourceTitle, 14);
-        gtk_widget_set_margin_bottom(sourceTitle, 6);
-        gtk_box_pack_start(GTK_BOX(section), sourceTitle, FALSE, FALSE, 0);
+
+        auto *sourceTitle = gtk_label_new("软件源");
+        addStyleClass(sourceTitle, "modernime-description");
+        gtk_widget_set_halign(sourceTitle, GTK_ALIGN_START);
+        gtk_widget_set_valign(sourceTitle, GTK_ALIGN_START);
+        gtk_grid_attach(GTK_GRID(grid), sourceTitle, 0, 2, 1, 1);
+
         sourceLabel = wrappedLabel("检测中…", true);
         setTarget(sourceLabel, "updates-source");
         addStyleClass(sourceLabel, "modernime-code-block");
-        gtk_box_pack_start(GTK_BOX(section), sourceLabel, FALSE, FALSE, 0);
+        gtk_grid_attach(GTK_GRID(grid), sourceLabel, 1, 2, 1, 1);
+
+        gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
     }
 
     void buildCheckSection() {
@@ -255,7 +258,7 @@ private:
 
         auto *notice = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
         addStyleClass(notice, "modernime-update-notice");
-        gtk_widget_set_margin_bottom(notice, 12);
+        gtk_widget_set_margin_bottom(notice, 8);
         auto *icon = gtk_image_new_from_icon_name("dialog-information-symbolic", GTK_ICON_SIZE_BUTTON);
         gtk_widget_set_valign(icon, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(notice), icon, FALSE, FALSE, 0);
@@ -264,33 +267,10 @@ private:
         gtk_box_pack_start(GTK_BOX(notice), statusMessageLabel, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(section), notice, FALSE, FALSE, 0);
 
-        auto *grid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 16);
-
-        const auto addRow = [grid](int row, std::string_view title, const char *initial, GtkWidget **valLabel) {
-            auto *label = gtk_label_new(std::string(title).c_str());
-            gtk_widget_set_halign(label, GTK_ALIGN_START);
-            gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-            gtk_widget_set_valign(label, GTK_ALIGN_START);
-            *valLabel = wrappedLabel(initial);
-            addStyleClass(*valLabel, "modernime-status");
-            gtk_grid_attach(GTK_GRID(grid), *valLabel, 1, row, 1, 1);
-        };
-
-        addRow(0, "缓存候选版本", "未检查", &candidateVersionLabel);
-        gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
-        auto *summaryTitle = wrappedLabel("更新说明");
-        addStyleClass(summaryTitle, "modernime-description");
-        gtk_widget_set_margin_top(summaryTitle, 10);
-        gtk_box_pack_start(GTK_BOX(section), summaryTitle, FALSE, FALSE, 0);
-        changelogLabel = wrappedLabel("暂无", true);
-        gtk_widget_set_margin_top(changelogLabel, 4);
-        gtk_widget_set_margin_bottom(changelogLabel, 12);
-        gtk_box_pack_start(GTK_BOX(section), changelogLabel, FALSE, FALSE, 0);
-
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_widget_set_margin_bottom(actions, 12);
         checkButton = gtk_button_new_with_label("检查新版本");
+        addStyleClass(checkButton, kSettingsPrimaryButtonClass);
         refreshCacheButton = gtk_button_new_with_label("刷新软件源缓存");
         setTarget(checkButton, "updates-check");
         setTarget(refreshCacheButton, "updates-refresh-cache");
@@ -307,6 +287,30 @@ private:
         g_signal_connect_data(refreshCacheButton, "clicked", G_CALLBACK(onRefreshCacheClicked),
                              new SharedLifetime(state), destroySignalState,
                              static_cast<GConnectFlags>(0));
+
+        auto *grid = gtk_grid_new();
+        gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+        gtk_grid_set_column_spacing(GTK_GRID(grid), 24);
+
+        const auto addRow = [grid](int row, std::string_view title, const char *initial, GtkWidget **valLabel) {
+            auto *label = gtk_label_new(std::string(title).c_str());
+            addStyleClass(label, "modernime-description");
+            gtk_widget_set_halign(label, GTK_ALIGN_START);
+            gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
+            gtk_widget_set_valign(label, GTK_ALIGN_START);
+            *valLabel = wrappedLabel(initial);
+            gtk_grid_attach(GTK_GRID(grid), *valLabel, 1, row, 1, 1);
+        };
+
+        addRow(0, "缓存候选版本", "未检查", &candidateVersionLabel);
+        gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
+        auto *summaryTitle = wrappedLabel("更新说明");
+        addStyleClass(summaryTitle, "modernime-description");
+        gtk_widget_set_margin_top(summaryTitle, 10);
+        gtk_box_pack_start(GTK_BOX(section), summaryTitle, FALSE, FALSE, 0);
+        changelogLabel = wrappedLabel("暂无", true);
+        gtk_widget_set_margin_top(changelogLabel, 4);
+        gtk_box_pack_start(GTK_BOX(section), changelogLabel, FALSE, FALSE, 0);
     }
 
     void buildUpgradeGuideSection() {

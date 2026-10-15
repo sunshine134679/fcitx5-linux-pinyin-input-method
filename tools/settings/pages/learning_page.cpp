@@ -101,19 +101,20 @@ public:
         addStyleClass(backendLabel, "modernime-description");
         gtk_widget_set_halign(backendLabel, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(backendLabel), TRUE);
-        gtk_box_pack_start(GTK_BOX(dataSection), backendLabel, FALSE, FALSE,
-                           0);
 
         learningCount = gtk_label_new("正在读取学习记录…");
         addStyleClass(learningCount, "modernime-description");
         gtk_widget_set_halign(learningCount, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(dataSection), learningCount, FALSE, FALSE,
-                           0);
-        gtk_box_pack_start(GTK_BOX(dataSection), learningPath, FALSE, FALSE,
-                           0);
+
+        auto *infoBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+        gtk_box_pack_start(GTK_BOX(infoBox), backendLabel, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(infoBox), learningCount, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(infoBox), learningPath, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(dataSection), infoBox, FALSE, FALSE, 0);
 
         clearLearningButton = gtk_button_new_with_label("清空学习记录");
         setTarget(clearLearningButton, "learning-clear");
+        gtk_widget_set_margin_top(clearLearningButton, 12);
         gtk_widget_set_halign(clearLearningButton, GTK_ALIGN_START);
         gtk_widget_set_tooltip_text(clearLearningButton,
                                     "备份后清空 ModernIME 的学习排序并递增重置版本");

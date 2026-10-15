@@ -575,12 +575,9 @@ private:
                                "modernime-settings-target",
                                g_strdup("input-more"), g_free);
         gtk_menu_button_set_popup(GTK_MENU_BUTTON(menuButton), menu);
-        menuGuard.release();
-        gtk_box_pack_start(GTK_BOX(inputPage->widget()), menuButton, FALSE,
-                           FALSE, 0);
+        setPageHeaderAction(inputPage->widget(), menuButton);
         prependSettingsFocusChainChild(inputPage->widget(), menuButton);
         menuButtonGuard.release();
-        gtk_box_reorder_child(GTK_BOX(inputPage->widget()), menuButton, 2);
     }
 
     GtkWidget *buildBottomBar() {

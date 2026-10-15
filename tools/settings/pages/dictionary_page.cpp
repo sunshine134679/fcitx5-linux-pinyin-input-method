@@ -255,11 +255,13 @@ public:
                                 "按拼音或词条关键词实时筛选个人词典");
         gtk_box_pack_start(GTK_BOX(searchRow), searchLabel, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(searchRow), dictionarySearch, TRUE, TRUE, 0);
+        gtk_widget_set_margin_bottom(searchRow, 10);
         gtk_box_pack_start(GTK_BOX(section), searchRow, FALSE, FALSE, 0);
 
         dictionaryCount = gtk_label_new("正在读取用户词典…");
         addStyleClass(dictionaryCount, "modernime-description");
         gtk_widget_set_halign(dictionaryCount, GTK_ALIGN_START);
+        gtk_widget_set_margin_bottom(dictionaryCount, 8);
         gtk_box_pack_start(GTK_BOX(section), dictionaryCount, FALSE, FALSE, 0);
 
         auto dictionaryStoreOwner =
@@ -279,18 +281,20 @@ public:
             auto *renderer = gtk_cell_renderer_text_new();
             auto *viewColumn = gtk_tree_view_column_new_with_attributes(
                 column.first, renderer, "text", column.second, nullptr);
+            gtk_tree_view_column_set_expand(viewColumn, TRUE);
             gtk_tree_view_append_column(GTK_TREE_VIEW(dictionaryView),
                                         viewColumn);
         }
         auto *scrolled = gtk_scrolled_window_new(nullptr, nullptr);
         gtk_widget_set_vexpand(scrolled, TRUE);
-        gtk_widget_set_size_request(scrolled, -1, 220);
+        gtk_widget_set_size_request(scrolled, -1, 160);
         gtk_container_add(GTK_CONTAINER(scrolled), dictionaryView);
         gtk_box_pack_start(GTK_BOX(section), scrolled, TRUE, TRUE, 0);
         dictionaryState = gtk_label_new("");
         addStyleClass(dictionaryState, "modernime-description");
         gtk_widget_set_halign(dictionaryState, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(dictionaryState), TRUE);
+        gtk_widget_set_margin_top(dictionaryState, 6);
         gtk_box_pack_start(GTK_BOX(section), dictionaryState, FALSE, FALSE, 0);
         auto *selection =
             gtk_tree_view_get_selection(GTK_TREE_VIEW(dictionaryView));
@@ -298,8 +302,11 @@ public:
         g_signal_connect(selection, "changed", G_CALLBACK(onSelectionChanged),
                          this);
 
-        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        gtk_widget_set_margin_top(actions, 10);
+        gtk_widget_set_margin_bottom(actions, 2);
         addButton = gtk_button_new_with_label("添加");
+        addStyleClass(addButton, kSettingsPrimaryButtonClass);
         editButton = gtk_button_new_with_label("编辑");
         deleteButton = gtk_button_new_with_label("删除");
         importButton = gtk_button_new_with_label("导入");
@@ -323,7 +330,7 @@ public:
                              exportButton}) {
             gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
         }
-        gtk_box_pack_start(GTK_BOX(page), actions, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(section), actions, FALSE, FALSE, 0);
         g_signal_connect(addButton, "clicked", G_CALLBACK(onAdd), this);
         g_signal_connect(editButton, "clicked", G_CALLBACK(onEdit), this);
         g_signal_connect(deleteButton, "clicked", G_CALLBACK(onDelete), this);

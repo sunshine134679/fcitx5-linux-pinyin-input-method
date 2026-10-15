@@ -112,25 +112,41 @@ void setSettingsFocusChain(
 }
 
 void prependSettingsFocusChainChild(GtkWidget *container, GtkWidget *child) {
-    if (!GTK_IS_CONTAINER(container) || child == nullptr ||
-        gtk_widget_get_parent(child) != container) {
+    if (!GTK_IS_CONTAINER(container) || child == nullptr) {
         return;
     }
-    GList *chain = nullptr;
-    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    const bool hasChain =
-        gtk_container_get_focus_chain(GTK_CONTAINER(container), &chain);
-    G_GNUC_END_IGNORE_DEPRECATIONS
-    if (!hasChain) {
+    std::vector<GtkWidget *> path;
+    auto *current = child;
+    while (current != nullptr && current != container) {
+        path.push_back(current);
+        current = gtk_widget_get_parent(current);
+    }
+    if (current != container || path.empty()) {
+        return;
+    }
+    auto *parent = container;
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
+        auto *item = *it;
+        if (!GTK_IS_CONTAINER(parent)) {
+            break;
+        }
+        GList *chain = nullptr;
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        const bool hasChain =
+            gtk_container_get_focus_chain(GTK_CONTAINER(parent), &chain);
+        G_GNUC_END_IGNORE_DEPRECATIONS
+        if (hasChain && chain != nullptr) {
+            chain = g_list_remove(chain, item);
+            chain = g_list_prepend(chain, item);
+        } else {
+            chain = g_list_append(nullptr, item);
+        }
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        gtk_container_set_focus_chain(GTK_CONTAINER(parent), chain);
+        G_GNUC_END_IGNORE_DEPRECATIONS
         g_list_free(chain);
-        return;
+        parent = item;
     }
-    chain = g_list_remove(chain, child);
-    chain = g_list_prepend(chain, child);
-    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    gtk_container_set_focus_chain(GTK_CONTAINER(container), chain);
-    G_GNUC_END_IGNORE_DEPRECATIONS
-    g_list_free(chain);
 }
 
 void setDialogResponseAccessibility(GtkDialog *dialog, int response,
@@ -264,13 +280,14 @@ std::string_view settingsStyles() {
             font-size: 26px;
             font-weight: 700;
             color: @theme_fg_color;
+            letter-spacing: -0.2px;
         }
 
         .modernime-page-subtitle {
             font-size: 13px;
             color: @insensitive_fg_color;
-            margin-top: 2px;
-            margin-bottom: 4px;
+            margin-top: 1px;
+            margin-bottom: 0;
         }
 
         .modernime-description,
@@ -287,17 +304,19 @@ std::string_view settingsStyles() {
             margin-bottom: 4px;
         }
 
-        .modernime-section > .modernime-description { margin-bottom: 6px; }
+        .modernime-section > .modernime-description {
+            margin-bottom: 12px;
+        }
 
         .modernime-section-title {
-            margin-bottom: 6px;
-            font-size: 15px;
-            font-weight: 700;
+            margin-bottom: 4px;
+            font-size: 16px;
+            font-weight: 600;
             color: @theme_fg_color;
         }
 
         .modernime-setting-row {
-            padding: 12px 0;
+            padding: 10px 0;
             border-bottom: 1px solid #e6eaf0;
         }
 
@@ -359,32 +378,89 @@ std::string_view settingsStyles() {
 
         /* Status & Badges */
         .modernime-status {
-            padding: 4px 10px;
+            border-radius: 6px;
+        }
+
+        .modernime-status-banner {
+            background-color: #f0f6ff;
+            border: 1px solid #d0e1fd;
             border-radius: 8px;
+            padding: 9px 13px;
+            margin-bottom: 14px;
+        }
+        .modernime-status-banner label {
+            color: #1e3a8a;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .modernime-status-banner image {
+            color: #2563eb;
+        }
+        .modernime-status-banner.error {
+            background-color: #fef2f2;
+            border-color: #fecaca;
+        }
+        .modernime-status-banner.error label {
+            color: #991b1b;
+        }
+        .modernime-status-banner.error image {
+            color: #dc2626;
+        }
+        .modernime-status-banner.warning {
+            background-color: #fffbeb;
+            border-color: #fde68a;
+        }
+        .modernime-status-banner.warning label {
+            color: #92400e;
+        }
+        .modernime-status-banner.warning image {
+            color: #d97706;
+        }
+        .modernime-status-banner.success {
+            background-color: #f0fdf4;
+            border-color: #bbf7d0;
+        }
+        .modernime-status-banner.success label {
+            color: #166534;
+        }
+        .modernime-status-banner.success image {
+            color: #16a34a;
         }
 
         .modernime-badge-green {
-            background-color: rgba(34, 197, 94, 0.15);
-            color: #16a34a;
+            background-color: rgba(34, 197, 94, 0.12);
+            color: #15803d;
             font-weight: 600;
-            border-radius: 16px;
-            padding: 4px 12px;
+            font-size: 12.5px;
+            border-radius: 6px;
+            padding: 3px 8px;
         }
 
         .modernime-badge-amber {
-            background-color: rgba(245, 158, 11, 0.15);
-            color: #d97706;
+            background-color: rgba(245, 158, 11, 0.12);
+            color: #b45309;
             font-weight: 600;
-            border-radius: 16px;
-            padding: 4px 12px;
+            font-size: 12.5px;
+            border-radius: 6px;
+            padding: 3px 8px;
+        }
+
+        .modernime-badge-red {
+            background-color: rgba(239, 68, 68, 0.12);
+            color: #b91c1c;
+            font-weight: 600;
+            font-size: 12.5px;
+            border-radius: 6px;
+            padding: 3px 8px;
         }
 
         .modernime-badge-neutral {
-            background-color: rgba(128, 128, 128, 0.12);
-            color: @theme_fg_color;
+            background-color: rgba(100, 116, 139, 0.10);
+            color: #334155;
             font-weight: 500;
-            border-radius: 8px;
-            padding: 4px 10px;
+            font-size: 12.5px;
+            border-radius: 6px;
+            padding: 3px 8px;
         }
 
         .modernime-status-dirty {
@@ -413,7 +489,7 @@ std::string_view settingsStyles() {
             border-top: 1px solid @borders;
             background-color: @theme_bg_color;
             border-radius: 0 0 12px 12px;
-            padding: 12px 24px;
+            padding: 14px 28px;
         }
 
         /* Preview Box */
@@ -675,30 +751,63 @@ void installSettingsStyles() {
     g_object_unref(provider);
 }
 
-GtkWidget *createPageShell(std::string_view title, std::string_view subtitle) {
+GtkWidget *createPageShell(std::string_view title, std::string_view subtitle,
+                           GtkWidget *headerAction) {
+    detail::GtkWidgetGuard actionGuard(headerAction);
     detail::GtkWidgetGuard pageGuard(
         gtk_box_new(GTK_ORIENTATION_VERTICAL, 12));
     auto *page = pageGuard.get();
     addStyleClass(page, "modernime-page");
     gtk_widget_set_margin_start(page, 24);
     gtk_widget_set_margin_end(page, 24);
-    gtk_widget_set_margin_top(page, 22);
-    gtk_widget_set_margin_bottom(page, 16);
+    gtk_widget_set_margin_top(page, 20);
+    gtk_widget_set_margin_bottom(page, 18);
     setAccessibleWidgetText(page, title, subtitle);
+
+    auto *headerBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_set_margin_bottom(headerBox, 6);
+    g_object_set_data(G_OBJECT(page), "modernime-page-header", headerBox);
+
+    auto *titlesBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_set_hexpand(titlesBox, TRUE);
 
     auto *heading = gtk_label_new(std::string(title).c_str());
     addStyleClass(heading, "modernime-page-title");
     gtk_widget_set_halign(heading, GTK_ALIGN_START);
     setAccessibleWidgetText(heading, title, "页面标题");
-    gtk_box_pack_start(GTK_BOX(page), heading, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(titlesBox), heading, FALSE, FALSE, 0);
 
-    auto *description = gtk_label_new(std::string(subtitle).c_str());
-    addStyleClass(description, "modernime-page-subtitle");
-    gtk_widget_set_halign(description, GTK_ALIGN_START);
-    gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
-    setAccessibleWidgetText(description, subtitle, "页面说明");
-    gtk_box_pack_start(GTK_BOX(page), description, FALSE, FALSE, 0);
+    if (!subtitle.empty()) {
+        auto *description = gtk_label_new(std::string(subtitle).c_str());
+        addStyleClass(description, "modernime-page-subtitle");
+        gtk_widget_set_halign(description, GTK_ALIGN_START);
+        gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
+        setAccessibleWidgetText(description, subtitle, "页面说明");
+        gtk_box_pack_start(GTK_BOX(titlesBox), description, FALSE, FALSE, 0);
+    }
+    gtk_box_pack_start(GTK_BOX(headerBox), titlesBox, TRUE, TRUE, 0);
+
+    if (headerAction != nullptr) {
+        gtk_widget_set_valign(headerAction, GTK_ALIGN_START);
+        gtk_widget_set_halign(headerAction, GTK_ALIGN_END);
+        gtk_box_pack_end(GTK_BOX(headerBox), actionGuard.release(), FALSE, FALSE, 0);
+    }
+
+    gtk_box_pack_start(GTK_BOX(page), headerBox, FALSE, FALSE, 0);
     return pageGuard.release();
+}
+
+void setPageHeaderAction(GtkWidget *page, GtkWidget *action) {
+    if (page == nullptr || action == nullptr) {
+        return;
+    }
+    auto *headerBox = static_cast<GtkWidget *>(
+        g_object_get_data(G_OBJECT(page), "modernime-page-header"));
+    if (headerBox != nullptr && GTK_IS_BOX(headerBox)) {
+        gtk_widget_set_valign(action, GTK_ALIGN_START);
+        gtk_widget_set_halign(action, GTK_ALIGN_END);
+        gtk_box_pack_end(GTK_BOX(headerBox), action, FALSE, FALSE, 0);
+    }
 }
 
 GtkWidget *createSectionCard(std::string_view title,
@@ -721,6 +830,7 @@ GtkWidget *createSectionCard(std::string_view title,
         gtk_widget_set_halign(help, GTK_ALIGN_FILL);
         gtk_label_set_xalign(GTK_LABEL(help), 0);
         gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
+        gtk_widget_set_margin_bottom(help, 10);
         setAccessibleWidgetText(help, description, "设置分组说明");
         gtk_box_pack_start(GTK_BOX(card), help, FALSE, FALSE, 0);
     }

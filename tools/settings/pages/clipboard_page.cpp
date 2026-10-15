@@ -127,7 +127,7 @@ public:
         historyScrolled = scrolled;
         gtk_widget_set_vexpand(historyScrolled, TRUE);
         gtk_widget_set_hexpand(historyScrolled, TRUE);
-        gtk_widget_set_size_request(historyScrolled, -1, 280);
+        gtk_widget_set_size_request(historyScrolled, -1, 160);
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(historyScrolled),
                                        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
         gtk_container_add(GTK_CONTAINER(historyScrolled), historyListBox);
@@ -138,6 +138,7 @@ public:
         addStyleClass(historyState, "modernime-description");
         gtk_widget_set_halign(historyState, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(historyState), TRUE);
+        gtk_widget_set_margin_top(historyState, 6);
         gtk_box_pack_start(GTK_BOX(historySection), historyState, FALSE, FALSE,
                            0);
 
@@ -162,6 +163,7 @@ public:
         gtk_box_pack_start(GTK_BOX(historySection), historyActions, FALSE, FALSE,
                            0);
         gtk_box_reorder_child(GTK_BOX(historySection), historyActions, 3);
+        gtk_box_reorder_child(GTK_BOX(historySection), historyState, 4);
 
         auto *refreshButton = gtk_button_new_with_label("刷新历史");
         gtk_widget_set_halign(refreshButton, GTK_ALIGN_START);

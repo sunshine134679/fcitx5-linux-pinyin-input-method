@@ -30,7 +30,9 @@ void prependSettingsFocusChainChild(GtkWidget *container, GtkWidget *child);
 void setDialogResponseAccessibility(GtkDialog *dialog, int response,
                                     std::string_view name,
                                     std::string_view description);
-GtkWidget *createPageShell(std::string_view title, std::string_view subtitle);
+GtkWidget *createPageShell(std::string_view title, std::string_view subtitle,
+                           GtkWidget *headerAction = nullptr);
+void setPageHeaderAction(GtkWidget *page, GtkWidget *action);
 GtkWidget *createSectionCard(std::string_view title,
                              std::string_view description);
 GtkWidget *createScrollablePage(GtkWidget *page);
