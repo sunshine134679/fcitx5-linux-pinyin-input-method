@@ -1073,7 +1073,12 @@ std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
 
     std::sort(results.begin(), results.end(),
               [](const auto &a, const auto &b) {
-                  if (std::abs(a.score - b.score) > 1e-6) {
+                  const bool aFin = std::isfinite(a.score);
+                  const bool bFin = std::isfinite(b.score);
+                  if (aFin != bFin) {
+                      return aFin;
+                  }
+                  if (aFin && a.score != b.score) {
                       return a.score > b.score;
                   }
                   if (a.frequency != b.frequency) {
@@ -1302,7 +1307,10 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
     std::sort(prefixes.begin(), prefixes.end(), [](const auto &a, const auto &b) {
         const double aScore = a.learningBoost + a.contextBoost;
         const double bScore = b.learningBoost + b.contextBoost;
-        if (std::abs(aScore - bScore) > 1e-4) return aScore > bScore;
+        const bool aFin = std::isfinite(aScore);
+        const bool bFin = std::isfinite(bScore);
+        if (aFin != bFin) return aFin;
+        if (aFin && aScore != bScore) return aScore > bScore;
         if (a.phrase != b.phrase) return a.phrase < b.phrase;
         return a.pinyin < b.pinyin;
     });
@@ -1321,7 +1329,10 @@ std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(std::strin
         result.insert(result.end(), std::make_move_iterator(part.begin()), std::make_move_iterator(part.end()));
     }
     std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
-        if (std::abs(a.score - b.score) > 1e-6) return a.score > b.score;
+        const bool aFin = std::isfinite(a.score);
+        const bool bFin = std::isfinite(b.score);
+        if (aFin != bFin) return aFin;
+        if (aFin && a.score != b.score) return a.score > b.score;
         if (a.frequency != b.frequency) return a.frequency > b.frequency;
         if (a.lastSelectedMs != b.lastSelectedMs) return a.lastSelectedMs > b.lastSelectedMs;
         return a.text < b.text;

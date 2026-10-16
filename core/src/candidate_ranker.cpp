@@ -4,6 +4,7 @@
 #include "modernime/core/pinyin_match.h"
 
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <unordered_map>
 
@@ -140,8 +141,15 @@ CandidateRanker::rank(std::string_view userInput,
         if (abbreviationPromoted[left] != abbreviationPromoted[right]) {
             return abbreviationPromoted[left];
         }
-        if (preferenceCosts[left] != preferenceCosts[right]) {
-            return preferenceCosts[left] < preferenceCosts[right];
+        const double aCost = preferenceCosts[left];
+        const double bCost = preferenceCosts[right];
+        const bool aFin = std::isfinite(aCost);
+        const bool bFin = std::isfinite(bCost);
+        if (aFin != bFin) {
+            return aFin;
+        }
+        if (aFin && aCost != bCost) {
+            return aCost < bCost;
         }
         if (a.source_index != b.source_index) {
             return a.source_index < b.source_index;

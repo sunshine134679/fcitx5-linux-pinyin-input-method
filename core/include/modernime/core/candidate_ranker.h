@@ -23,6 +23,9 @@ inline constexpr double LearningPriorCap = 180.0;
 inline constexpr double DecoderPriorWeight = 0.25;
 
 inline double computeAdaptiveLearning(double learning_boost, double dormant_factor = 1.0) {
+    if (!std::isfinite(learning_boost)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     if (learning_boost <= 0.0) {
         return std::max(-16.0, LearningPriorWeight * learning_boost);
     }

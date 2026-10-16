@@ -719,10 +719,24 @@ std::vector<PersonalCandidate> PersonalEngine::QueryCandidates(
 
     std::sort(results.begin(), results.end(),
               [](const PersonalCandidate &a, const PersonalCandidate &b) {
-                  if (std::abs(a.dynamic_score - b.dynamic_score) > 1e-6f) {
+                  const bool aFin = std::isfinite(a.dynamic_score);
+                  const bool bFin = std::isfinite(b.dynamic_score);
+                  if (aFin != bFin) {
+                      return aFin;
+                  }
+                  if (aFin && a.dynamic_score != b.dynamic_score) {
                       return a.dynamic_score > b.dynamic_score;
                   }
-                  return a.text < b.text;
+                  if (a.meta.hit_count != b.meta.hit_count) {
+                      return a.meta.hit_count > b.meta.hit_count;
+                  }
+                  if (a.meta.last_selected_ms != b.meta.last_selected_ms) {
+                      return a.meta.last_selected_ms > b.meta.last_selected_ms;
+                  }
+                  if (a.text != b.text) {
+                      return a.text < b.text;
+                  }
+                  return a.raw_pinyin < b.raw_pinyin;
               });
     return results;
 }
@@ -786,10 +800,24 @@ std::vector<PersonalCandidate> PersonalEngine::QueryPrefixCandidates(
     }
     std::sort(results.begin(), results.end(),
               [](const PersonalCandidate &a, const PersonalCandidate &b) {
-                  if (std::abs(a.dynamic_score - b.dynamic_score) > 1e-6f) {
+                  const bool aFin = std::isfinite(a.dynamic_score);
+                  const bool bFin = std::isfinite(b.dynamic_score);
+                  if (aFin != bFin) {
+                      return aFin;
+                  }
+                  if (aFin && a.dynamic_score != b.dynamic_score) {
                       return a.dynamic_score > b.dynamic_score;
                   }
-                  return a.text < b.text;
+                  if (a.meta.hit_count != b.meta.hit_count) {
+                      return a.meta.hit_count > b.meta.hit_count;
+                  }
+                  if (a.meta.last_selected_ms != b.meta.last_selected_ms) {
+                      return a.meta.last_selected_ms > b.meta.last_selected_ms;
+                  }
+                  if (a.text != b.text) {
+                      return a.text < b.text;
+                  }
+                  return a.raw_pinyin < b.raw_pinyin;
               });
     if (results.size() > limit) {
         results.resize(limit);
@@ -901,10 +929,24 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbCandidates(
     }
     std::sort(results.begin(), results.end(),
               [](const PersonalCandidate &a, const PersonalCandidate &b) {
-                  if (std::abs(a.dynamic_score - b.dynamic_score) > 1e-6f) {
+                  const bool aFin = std::isfinite(a.dynamic_score);
+                  const bool bFin = std::isfinite(b.dynamic_score);
+                  if (aFin != bFin) {
+                      return aFin;
+                  }
+                  if (aFin && a.dynamic_score != b.dynamic_score) {
                       return a.dynamic_score > b.dynamic_score;
                   }
-                  return a.text < b.text;
+                  if (a.meta.hit_count != b.meta.hit_count) {
+                      return a.meta.hit_count > b.meta.hit_count;
+                  }
+                  if (a.meta.last_selected_ms != b.meta.last_selected_ms) {
+                      return a.meta.last_selected_ms > b.meta.last_selected_ms;
+                  }
+                  if (a.text != b.text) {
+                      return a.text < b.text;
+                  }
+                  return a.raw_pinyin < b.raw_pinyin;
               });
     return results;
 }
@@ -1010,10 +1052,24 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbPrefixCandidates(
     }
     std::sort(results.begin(), results.end(),
               [](const PersonalCandidate &a, const PersonalCandidate &b) {
-                  if (std::abs(a.dynamic_score - b.dynamic_score) > 1e-6f) {
+                  const bool aFin = std::isfinite(a.dynamic_score);
+                  const bool bFin = std::isfinite(b.dynamic_score);
+                  if (aFin != bFin) {
+                      return aFin;
+                  }
+                  if (aFin && a.dynamic_score != b.dynamic_score) {
                       return a.dynamic_score > b.dynamic_score;
                   }
-                  return a.text < b.text;
+                  if (a.meta.hit_count != b.meta.hit_count) {
+                      return a.meta.hit_count > b.meta.hit_count;
+                  }
+                  if (a.meta.last_selected_ms != b.meta.last_selected_ms) {
+                      return a.meta.last_selected_ms > b.meta.last_selected_ms;
+                  }
+                  if (a.text != b.text) {
+                      return a.text < b.text;
+                  }
+                  return a.raw_pinyin < b.raw_pinyin;
               });
     if (results.size() > limit) {
         results.resize(limit);
@@ -2331,13 +2387,24 @@ void PersonalEngine::Prune() {
             if (a.suppressed != b.suppressed) {
                 return !a.suppressed && b.suppressed;
             }
-            if (std::abs(a.score - b.score) > 1e-6f) {
+            const bool aFin = std::isfinite(a.score);
+            const bool bFin = std::isfinite(b.score);
+            if (aFin != bFin) {
+                return aFin;
+            }
+            if (aFin && a.score != b.score) {
                 return a.score > b.score;
             }
             if (a.last_ms != b.last_ms) {
                 return a.last_ms > b.last_ms;
             }
-            return a.hit_count > b.hit_count;
+            if (a.hit_count != b.hit_count) {
+                return a.hit_count > b.hit_count;
+            }
+            if (a.key != b.key) {
+                return a.key < b.key;
+            }
+            return a.index < b.index;
         });
 
     std::map<std::string, std::vector<StoredVariant>, std::less<>> new_db;
