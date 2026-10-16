@@ -999,7 +999,17 @@ public:
             observedEpochViewState_ = curViewState;
             changed = true;
         }
+        if (changed) {
+            revokePageAuthorization();
+        }
         return changed;
+    }
+
+    void revokePageAuthorization() {
+        pageAuthorized_ = false;
+        ++generation;
+        page_.generation = generation;
+        page_.items.clear();
     }
 
     core::CommitEvent makeCommitEvent(
@@ -1032,10 +1042,10 @@ public:
     std::optional<core::CandidateSelectionOutcome> selectConfirmed(
         const core::CandidateSelectionRequest &request,
         std::uint64_t providerGeneration) {
-        if (providerGeneration != page_.generation) {
+        if (checkResourceChanges()) {
             return std::nullopt;
         }
-        if (checkResourceChanges()) {
+        if (!pageAuthorized_ || providerGeneration != page_.generation) {
             return std::nullopt;
         }
         if (shared_ && shared_->epochViewState() == core::EpochViewState::Reloading) {
@@ -1181,6 +1191,9 @@ public:
         if (checkResourceChanges()) {
             return false;
         }
+        if (!pageAuthorized_) {
+            return false;
+        }
         if (shared_ && shared_->epochViewState() == core::EpochViewState::Reloading) {
             return false;
         }
@@ -1286,6 +1299,9 @@ public:
 
     bool remove(std::size_t index) {
         if (checkResourceChanges()) {
+            return false;
+        }
+        if (!pageAuthorized_) {
             return false;
         }
         if (shared_ && shared_->epochViewState() == core::EpochViewState::Reloading) {
@@ -1476,7 +1492,8 @@ public:
     }
 
     const core::CandidatePage &page() const {
-        if (const_cast<Impl *>(this)->checkResourceChanges()) {
+        if (const_cast<Impl *>(this)->checkResourceChanges() ||
+            (!pageAuthorized_ && context && !context->userInput().empty())) {
             const_cast<Impl *>(this)->refresh();
         }
         return page_;
@@ -1532,6 +1549,7 @@ private:
         ++generation;
         page_.generation = generation;
         if (rawInput.empty()) {
+            pageAuthorized_ = false;
             return;
         }
 
@@ -1542,6 +1560,7 @@ private:
             item.fullPinyin = rawInput;
             item.consumedInputBytes = 0;
             page_.items.push_back(std::move(item));
+            pageAuthorized_ = false;
             return;
         }
 
@@ -1836,6 +1855,7 @@ private:
         auto compResult = composeCandidates(compInput);
         page_.items = std::move(compResult.items);
         page_.preedit = std::move(compResult.preedit);
+        pageAuthorized_ = !page_.items.empty();
     }
 
     std::shared_ptr<SharedResources> shared_;
@@ -1853,6 +1873,7 @@ private:
     std::string fallbackContextBefore_;
     std::unordered_set<std::string> suppressedLearned_;
     std::uint64_t generation = 0;
+    bool pageAuthorized_ = false;
     std::uint64_t observedDictionaryGeneration_ = 0;
     std::int64_t observedLearningRevision_ = 0;
     core::EpochViewState observedEpochViewState_ = core::EpochViewState::Ready;

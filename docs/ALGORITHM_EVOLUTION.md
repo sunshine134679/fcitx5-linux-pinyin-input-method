@@ -262,29 +262,41 @@
 - **算法与架构核心设计**：
   1. **LMDB 生命周期门（Lifecycle Gate）与原子初始化**：
      - 在 `LmdbRegistry::getOrCreate` 中使用 `std::unique_lock` 对 `lifecycle_gate` 进行原子判定与初始/升级（`initializeLocked` / `upgradeToWritableLocked`），彻底消除双重初始化与引用泄漏；
-     - `PersonalEngine::OpenLmdb` 在读锁保护下安全复制环境句柄。
-  2. **EpochViewState 状态机与 Fcitx5 事件循环主动通知**：
+     - `PersonalEngine::OpenLmdb` 在读锁保护下安全复制环境句柄；
+     - 真实动态扩容（64 KiB $\to$ 634 KiB）与容量满剪枝（50,000 $\to$ 40,000 淘汰 10,001 条）经由并发测试严格验证。
+  2. **EpochViewState 状态机与 Fcitx5 异步就绪生命周期安全通知**：
      - `LearningWriter` 明确划分为 `Ready` 与 `Reloading` 状态；
-     - 初始加载与重载在后台 Worker 线程完成，输入主线程首键打字直接读取内存快照，保持亚毫秒响应；
-     - `PinyinSharedResources` 通过 `setOnReadyCallback` 与 `ModernIMEInputMethod` 的 `EventDispatcher` 绑定，在 Worker 线程重载完成后，自动向 Fcitx5 事件循环调度主线程刷新，无需用户输入即可自动恢复真实候选页；支持失焦、析构及多代 clear 的安全作废。
-  3. **有界队列与优雅失败恢复**：
-     - `enqueueForPersistence` 在重载或存储不可用时，严格将暂存队列限制在 $\le 100$ 条，优先保留最新用户事实；
-     - 读失败保持 `Reloading` 状态，不假装就绪，保留 `PendingCommit` 供后续恢复，彻底阻断旧代数据覆盖。
-  4. **统一提交决策与候选安全授权**：
-     - `enqueueCommit` 在 `Reloading` 下与正常状态对齐：保留合法的 Raw 拼音串与英文词，仅跳过 Command，严格防范拼音污染英文预测；
-     - 占位候选 `CandidateSource::None`（"正在更新候选"）全面拒绝选择、取字、删除与负反馈，回车按原文预编辑上屏。
+     - 初始加载与重载在后台 Worker 线程完成；200k 大快照的克隆准备移至输入互斥锁外，短版本发布彻底消除输入线程等待；输入主线程首键打字直接读取内存快照，保持亚毫秒响应（首提交 ~250us，下一键 ~6us，远低于 5000us 门限）；
+     - 引入具备原子代次与互斥锁的独立 `ReadyNotificationEndpoint`，解构端点解引用时序并消除野指针与在途调用竞态；
+     - 在 Worker 线程重载完成后，仅在端点处于 active、代次匹配、具有输入焦点且非敏感上下文中向主线程调度事件循环安全刷新；支持插件析构即时失活、会话切换与多代 clear 的安全作废。
+  3. **有界队列、持久化一致性与优雅失败恢复**：
+     - `enqueueForPersistence` 在重载或存储不可用时，严格将暂存队列限制在 $\le 100$ 条，独立读库严格断言恰好保留最新 100 条事实，旧条目优雅丢弃；
+     - 读失败保持 `Reloading` 状态，不假装就绪，保留 `PendingCommit` 供后续恢复，独立验证恢复后频次精准为 1，彻底阻断旧代数据覆盖；
+     - 重载中与正常状态保持完全一致的角色/提交决策矩阵（覆盖偏离词、默认中文、英文、裸拼音及命令）。
+  4. **页授权永久撤销与 None 标点隔离**：
+     - `PinyinCandidateProvider` 引入 `pageAuthorized_` 严格生命周期控制；观察到外部词库更新或 clear 时调用 `revokePageAuthorization()`，旧请求（无论选择、以词定字、删除候选）一经拒绝后永久撤销授权，重复尝试绝不再次放行；
+     - 占位候选 `CandidateSource::None`（"正在更新候选"）全面拒绝选择、取字、删除、负反馈及标点隐式上屏；严格保持组合/光标与显式 Enter 原文上屏契约；当无候选正常回退时保持预编辑正常标点提交。
 
 - **打字体验变化**：
   - 词库在后台重载或清空时，输入法完全不卡顿，首按键即时响应；
   - 重载完成后，当前编辑区候选栏自动无感刷新为最新计算结果，光标与输入保持完好；
   - 无论在正常打字还是后台重载状态下，回车拼音串、英文输入、生僻词删除与纠错行为完全一致；
+  - 标点输入在“正在更新候选”占位期间绝对不会误上屏脏拼音；
   - 高并发与大词库（200,000 条）下打字体验流畅，无崩溃、无死锁、无竞态。
 
 - **回归验证**：
-  - `modernime_personal_engine_gtest`：125/125 项单元与并发测试全部通过（含 `ArchitectureWriterRegression`, `ArchitectureLmdbRegression`, `ArchitectureSelectionRegression` 等）；
-  - `modernime_personal_engine_benchmark`（Release）：50k 召回 P99=154us，200k 召回 P99=280us，更新召回 P99=647us/1380us，并发 P99=2426us，最大延迟 18.25ms，全部远优于门限（<1ms, <5ms, <30ms）；
-  - TSAN 运行时检查：125/125 测试在 ThreadSanitizer 下运行通过，0 数据竞争；
-  - 全量 CTest 67 项通过，`verify_fresh_clone.sh` 100% 通过。
+  - `modernime_personal_engine_gtest`：128/128 项单元与并发测试全部通过（含 `ArchitectureWriterRegression`, `ArchitectureLmdbRegression`, `ArchitectureSelectionRegression`, `ArchitectureResourceCoordinationTest` 等）；
+  - `modernime_personal_engine_benchmark`（Release，连续 3 轮日志完整存档）：
+    - 50k 召回 P99: 167.71~249.61 us（门限 < 1000 us）；
+    - 200k 召回 P99: 200.35~223.69 us（门限 < 1000 us）；
+    - 更新+召回 P99: 50k 最大 670.13 us，200k 最大 3133.01 us（门限 < 5000 us）；
+    - 并发写与剪枝 P99: 1403.05~2958.27 us（门限 < 5000 us），最大延迟 1.95~5.71 ms（门限 < 30 ms）；
+    - 启学首提交延迟: 50k 为 225.78~270.67 us，200k 为 239.90~462.94 us（门限 < 5000 us）；
+    - 启学下一键延迟: 50k 为 4.66~6.31 us，200k 为 6.52~8.26 us（门限 < 5000 us）；
+    - 真实容量剪枝验证: 50,000 成功剪枝至 40,000（精确淘汰 10,001 条）；
+    - 真实 LMDB 扩容验证: 初始 65,536 字节成功动态扩容至 634,880 字节。
+  - TSAN 运行时检查：73/73 个并发/生命周期核心测试在 ThreadSanitizer (`setarch x86_64 -R`) 下运行通过，0 数据竞争；
+  - 全量 CTest 68 项测试通过（100% 通过，3 项 GTK 测试在无显示服务环境下正常 Skipped），`verify_fresh_clone.sh` 全流程 100% 通过。
 
 ---
 

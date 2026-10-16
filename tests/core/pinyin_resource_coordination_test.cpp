@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <sqlite3.h>
 
 namespace modernime::pinyin {
 namespace {
@@ -244,5 +245,180 @@ TEST_F(ArchitectureResourceCoordinationTest, ReloadingStateRejectsSelectionExtra
     writer->flush();
 }
 
+// 7. S1: Page authorization is permanently revoked on resource changes across clear and Ready
+TEST_F(ArchitectureResourceCoordinationTest, OldPageAuthorizationRevokedPermanentlyAcrossClearAndReady) {
+    PinyinProviderOptions options;
+    options.learningEnabled = true;
+    auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
+    ASSERT_NE(shared, nullptr);
+
+    auto *writer = shared->ensureLearningWriter();
+    ASSERT_NE(writer, nullptr);
+
+    PinyinCandidateProvider provider(shared, options);
+    ASSERT_TRUE(provider.append("ceshi"));
+    const auto oldPage = provider.page();
+    ASSERT_FALSE(oldPage.items.empty());
+    const auto oldGen = oldPage.generation;
+
+    core::CandidateSelectionRequest oldReq;
+    oldReq.displayGeneration = oldGen;
+    oldReq.globalIndex = 0;
+    oldReq.expected = core::candidateIdentity(oldPage.items[0], oldPage);
+
+    // Pause worker and clear store to trigger Reloading
+    writer->pauseWorkerForTest(true);
+    {
+        core::LearningStore externalStore(paths.learningStore);
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+    ASSERT_TRUE(writer->reloadIfChanged());
+    ASSERT_EQ(shared->epochViewState(), core::EpochViewState::Reloading);
+
+    // Call 1 on old request during Reloading: must be rejected
+    EXPECT_FALSE(provider.selectConfirmed(oldReq, oldGen).has_value());
+    EXPECT_FALSE(provider.extractCharacter(0, true));
+    EXPECT_FALSE(provider.remove(0));
+
+    // Call 2 on old request during Reloading (without calling page() or append()):
+    // MUST STILL BE REJECTED!
+    EXPECT_FALSE(provider.selectConfirmed(oldReq, oldGen).has_value());
+    EXPECT_FALSE(provider.extractCharacter(0, true));
+    EXPECT_FALSE(provider.remove(0));
+
+    // Now resume worker and flush to transition to Ready
+    writer->pauseWorkerForTest(false);
+    ASSERT_TRUE(writer->flush());
+    ASSERT_EQ(shared->epochViewState(), core::EpochViewState::Ready);
+
+    // After transitioning to Ready, WITHOUT calling page() or append():
+    // The old page authorization must REMAIN REVOKED!
+    // Call 1 after Ready:
+    EXPECT_FALSE(provider.selectConfirmed(oldReq, oldGen).has_value());
+    EXPECT_FALSE(provider.extractCharacter(0, true));
+    EXPECT_FALSE(provider.remove(0));
+
+    // Call 2 after Ready:
+    // In unpatched code, this succeeds because checkResourceChanges() returns false!
+    EXPECT_FALSE(provider.selectConfirmed(oldReq, oldGen).has_value());
+    EXPECT_FALSE(provider.extractCharacter(0, true));
+    EXPECT_FALSE(provider.remove(0));
+
+    // User dictionary reload:
+    {
+        std::ofstream userDict(paths.userDictionary, std::ios::app);
+        userDict << "xinci 新词 200\n";
+    }
+    PinyinCandidateProvider::reloadUserDictionaryDetailed(shared);
+
+    // Repeated calls to old request must still be rejected!
+    EXPECT_FALSE(provider.selectConfirmed(oldReq, oldGen).has_value());
+    EXPECT_FALSE(provider.selectConfirmed(oldReq, oldGen).has_value());
+    EXPECT_FALSE(provider.extractCharacter(0, true));
+    EXPECT_FALSE(provider.remove(0));
+
+    // Now explicitly refresh / build new page
+    const auto &newPage = provider.page();
+    EXPECT_GT(newPage.generation, oldGen);
+    ASSERT_FALSE(newPage.items.empty());
+
+    core::CandidateSelectionRequest newReq;
+    newReq.displayGeneration = newPage.generation;
+    newReq.globalIndex = 0;
+    newReq.expected = core::candidateIdentity(newPage.items[0], newPage);
+
+    // New request with new generation succeeds
+    const auto outcome = provider.selectConfirmed(newReq, newPage.generation);
+    EXPECT_TRUE(outcome.has_value());
+}
+
+// 8. T11-A10: Async startup initial commit does not block input thread and persists fact exactly once
+TEST_F(ArchitectureResourceCoordinationTest, T11_A10_AsyncStartupInitialCommitDoesNotBlockInput) {
+    // Populate database with 1000 items to simulate non-trivial dataset
+    {
+        core::LearningStore initStore(paths.learningStore);
+        ASSERT_TRUE(initStore.open());
+        for (int i = 0; i < 1000; ++i) {
+            initStore.recordSelection("已有词" + std::to_string(i), "ci", "", "", 1000000 + i);
+        }
+        initStore.close();
+    }
+
+    PinyinProviderOptions options;
+    options.learningEnabled = true;
+    auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
+    ASSERT_NE(shared, nullptr);
+
+    // Prepare async writer
+    auto *writer = shared->ensureLearningWriter(/*synchronousInitialLoad=*/false);
+    ASSERT_NE(writer, nullptr);
+
+    PinyinCandidateProvider provider(shared, options);
+
+    // Initial commit on input thread immediately while background load may still be running
+    core::CommitEvent initialCommit;
+    initialCommit.text = "首提交";
+    initialCommit.fullPinyin = "shoutijiao";
+    initialCommit.role = core::CommitCandidateRole::Chinese;
+    initialCommit.candidateIndex = 1;
+    initialCommit.isDeviation = true;
+    initialCommit.timestampMs = 2000000;
+
+    const auto t0 = std::chrono::steady_clock::now();
+    EXPECT_TRUE(writer->enqueueCommit(initialCommit));
+    const auto initialCommitDurationUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    // Must not block input thread (gate: < 5000 us)
+    EXPECT_LT(initialCommitDurationUs, 5000);
+
+    // Next key / commit on input thread
+    core::CommitEvent nextCommit = initialCommit;
+    nextCommit.text = "下一键";
+    nextCommit.fullPinyin = "xiayijian";
+    nextCommit.timestampMs = 2000001;
+    const auto t1 = std::chrono::steady_clock::now();
+    EXPECT_TRUE(writer->enqueueCommit(nextCommit));
+    const auto nextKeyDurationUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t1).count();
+    EXPECT_LT(nextKeyDurationUs, 5000);
+
+    // Typing append also does not block
+    EXPECT_TRUE(provider.append("ceshi"));
+
+    // Wait for background persistence and rebase
+    EXPECT_TRUE(writer->flush());
+    EXPECT_EQ(shared->epochViewState(), core::EpochViewState::Ready);
+
+    // Verify snapshot has positive frequency for both
+    EXPECT_TRUE(writer->snapshot()->hasPositiveFrequency("首提交", "shoutijiao"));
+    EXPECT_TRUE(writer->snapshot()->hasPositiveFrequency("下一键", "xiayijian"));
+
+    // Independently verify SQLite database: exactly 1 entry for each with frequency == 1
+    {
+        sqlite3 *db = nullptr;
+        ASSERT_EQ(sqlite3_open(paths.learningStore.c_str(), &db), SQLITE_OK);
+        for (const auto &phrase : {"首提交", "下一键"}) {
+            sqlite3_stmt *stmt = nullptr;
+            ASSERT_EQ(sqlite3_prepare_v2(db, "SELECT count(*), frequency FROM learning_entries WHERE phrase = ?;", -1, &stmt, nullptr), SQLITE_OK);
+            sqlite3_bind_text(stmt, 1, phrase, -1, SQLITE_TRANSIENT);
+            ASSERT_EQ(sqlite3_step(stmt), SQLITE_ROW);
+            EXPECT_EQ(sqlite3_column_int(stmt, 0), 1);
+            EXPECT_EQ(sqlite3_column_int(stmt, 1), 1);
+            sqlite3_finalize(stmt);
+        }
+        sqlite3_close(db);
+    }
+
+    // Toggle learning disabled and enabled to verify no side effects
+    provider.setLearningEnabled(false);
+    EXPECT_TRUE(provider.append("ceshi"));
+    provider.setLearningEnabled(true);
+    EXPECT_TRUE(provider.append("a"));
+}
+
 } // namespace
 } // namespace modernime::pinyin
+

@@ -232,6 +232,11 @@ void LearningWriter::pauseWorkerAfterReadForTest(bool pause) {
     }
 }
 
+bool LearningWriter::isWorkerWaitingAfterReadForTest() const {
+    std::lock_guard lock(mutex_);
+    return workerWaitingAfterRead_;
+}
+
 void LearningWriter::setOnReadyCallback(std::function<void()> callback) {
     std::function<void()> invokeImmediately;
     {
@@ -303,6 +308,13 @@ bool LearningWriter::reloadIfChanged() {
 }
 
 void LearningWriter::refreshBeforeEnqueue() {
+    {
+        std::lock_guard lock(mutex_);
+        if (viewState_ == EpochViewState::Reloading) {
+            return;
+        }
+    }
+
     // Read the clear generation before tagging new input. Otherwise the first
     // selection after clear, but before the next timer tick, looks pre-clear.
     std::lock_guard observerLock(observerMutex_);
@@ -474,10 +486,17 @@ void LearningWriter::run() {
             }
             {
                 std::unique_lock lock(mutex_);
+                workerWaitingAfterRead_ = true;
                 resumeWorkerCv_.wait(lock, [this] { return !workerPausedAfterRead_ || stopping_; });
+                workerWaitingAfterRead_ = false;
             }
             if (stopping_) {
                 return;
+            }
+
+            std::shared_ptr<LearningSnapshot> preparedSnapshot;
+            if (freshState.has_value() && freshState->snapshot != nullptr) {
+                preparedSnapshot = std::make_shared<LearningSnapshot>(*freshState->snapshot);
             }
 
             std::function<void()> onReady;
@@ -490,7 +509,7 @@ void LearningWriter::run() {
                                      std::make_move_iterator(retiredSnapshots_.end()));
                     retiredSnapshots_.clear();
                 }
-                if (!freshState.has_value()) {
+                if (!freshState.has_value() || preparedSnapshot == nullptr) {
                     storageAvailable_ = false;
                     retryExhausted_ = true;
                 } else if (freshState->resetRevision < resetRevision_) {
@@ -502,7 +521,7 @@ void LearningWriter::run() {
                     retryExhausted_ = false;
                     automaticRetryCyclesRemaining_ = 1;
 
-                    auto freshSnapshot = std::make_shared<LearningSnapshot>(*freshState->snapshot);
+                    auto freshSnapshot = std::move(preparedSnapshot);
                     std::deque<Event> validEvents;
                     for (auto &event : events_) {
                         if (event.resetRevision < freshState->resetRevision) {

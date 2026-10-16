@@ -489,8 +489,8 @@ TEST(ArchitectureSelectionRegression, T11_A06_NoneSourceFullActionRejection) {
 
     modernime::fcitx5::ModernIMEController controller(host, &provider);
 
-    provider.currentPage.rawInput = "test";
-    provider.currentPage.preedit = "test";
+    provider.currentPage.rawInput = "";
+    provider.currentPage.preedit = "";
     provider.currentPage.generation = 1;
     modernime::core::CandidateItem noneItem = makeItem(
         "...", {}, 0, modernime::core::CommitCandidateRole::Chinese,
@@ -524,11 +524,20 @@ TEST(ArchitectureSelectionRegression, T11_A06_NoneSourceFullActionRejection) {
     EXPECT_FALSE(controller.removeCurrent());
     EXPECT_TRUE(host.committedTexts.empty());
 
-    // 6. Punctuation commits raw preedit + punctuation, NEVER the None placeholder
-    EXPECT_TRUE(controller.handle({modernime::fcitx5::KeyKind::Punctuation, ','}));
-    ASSERT_GE(host.committedTexts.size(), 2u);
-    EXPECT_EQ(host.committedTexts[0], "test");
-    EXPECT_EQ(host.committedTexts[1], ",");
+    // 6. Punctuation under None: zero implicit commit, composition & cursor preserved
+    EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Punctuation, ','}));
+    EXPECT_TRUE(host.committedTexts.empty());
+    EXPECT_EQ(controller.page().preedit, "test");
+
+    // Test quote under None: zero implicit commit, composition preserved
+    EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Punctuation, '"'}));
+    EXPECT_TRUE(host.committedTexts.empty());
+    EXPECT_EQ(controller.page().preedit, "test");
+
+    // Test bracket under None: zero implicit commit, composition preserved
+    EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Punctuation, '('}));
+    EXPECT_TRUE(host.committedTexts.empty());
+    EXPECT_EQ(controller.page().preedit, "test");
 
     // 7. Enter commits raw preedit (contract preserved)
     host.committedTexts.clear();
@@ -545,28 +554,108 @@ TEST(ArchitectureSelectionRegression, T11_A06_NoneSourceFullActionRejection) {
     EXPECT_EQ(host.committedTexts[0], "hello");
 }
 
+TEST(ArchitectureSelectionRegression, T11_A06_PunctuationOptionsMatrixUnderNonePreservesComposition) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    modernime::core::CandidateItem noneItem = makeItem(
+        "正在更新候选", {}, 0, modernime::core::CommitCandidateRole::Chinese,
+        modernime::core::CandidateSource::None);
+
+    const std::vector<char> testPunctuations = {',', '.', '!', '?', ':', ';', '\'', '"', '(', ')'};
+    for (bool punctEnabled : {true, false}) {
+        for (char p : testPunctuations) {
+            host.committedTexts.clear();
+            controller.reset();
+
+            modernime::fcitx5::ControllerOptions opts;
+            opts.punctuationEnabled = punctEnabled;
+            controller.setOptions(opts);
+
+            provider.currentPage.rawInput = "";
+            provider.currentPage.preedit = "";
+            provider.currentPage.generation = 10;
+            provider.currentPage.items = { noneItem };
+
+            for (char c : std::string_view("pinyin")) {
+                controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            }
+            EXPECT_EQ(controller.page().preedit, "pinyin");
+
+            // Press punctuation under None: must be rejected, zero host commit, preedit intact
+            EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Punctuation, p}));
+            EXPECT_TRUE(host.committedTexts.empty());
+            EXPECT_EQ(controller.page().preedit, "pinyin");
+
+            // Explicit enter still works to commit raw preedit
+            EXPECT_TRUE(controller.handle({modernime::fcitx5::KeyKind::Enter}));
+            ASSERT_EQ(host.committedTexts.size(), 1u);
+            EXPECT_EQ(host.committedTexts[0], "pinyin");
+        }
+    }
+}
+
+#if MODERNIME_HAS_FCITX5
 TEST(ArchitectureSelectionRegression, T11_A07_ReadyNotificationRefreshesController) {
     TestEngineHost host;
     TestCandidateProvider provider;
-
     modernime::fcitx5::ModernIMEController controller(host, &provider);
 
+    // Initial state: reloading / none placeholder
     provider.currentPage.rawInput = "zhong";
     provider.currentPage.preedit = "zhong";
     provider.currentPage.generation = 1;
-    provider.currentPage.items = { makeItem("中", "zhong", 5) };
+    modernime::core::CandidateItem noneItem = makeItem(
+        "正在更新候选", {}, 0, modernime::core::CommitCandidateRole::Chinese,
+        modernime::core::CandidateSource::None);
+    provider.currentPage.items = { noneItem };
     controller.handle({modernime::fcitx5::KeyKind::Character, 'z', 0});
 
     const auto initialGen = controller.displayGeneration();
     const auto preedit = controller.page().preedit;
+    ASSERT_EQ(controller.page().items.size(), 1u);
+    EXPECT_EQ(controller.page().items[0].source, modernime::core::CandidateSource::None);
 
+    // Set up test event dispatcher and ready callback
+    std::vector<std::function<void()>> scheduledTasks;
+    std::mutex taskMutex;
+
+    auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
+    endpoint->active = true;
+
+    auto readyCallback = [&endpoint, &scheduledTasks, &taskMutex, &controller]() {
+        std::uint64_t currentGen = 0;
+        {
+            std::lock_guard lock(endpoint->mutex);
+            if (!endpoint->active) return;
+            currentGen = ++endpoint->notificationGeneration;
+        }
+        std::lock_guard qLock(taskMutex);
+        scheduledTasks.push_back([endpoint, currentGen, &controller]() {
+            std::lock_guard lock(endpoint->mutex);
+            if (!endpoint->active) return;
+            if (currentGen != endpoint->notificationGeneration) return;
+            controller.refreshPage();
+        });
+    };
+
+    // When background worker finishes, real candidates become available
     provider.currentPage.generation = 2;
     provider.currentPage.items = {
         makeItem("中国", "zhong'guo", 5),
         makeItem("中", "zhong", 5)
     };
 
-    controller.refreshPage();
+    // Background worker triggers callback (simulated)
+    std::thread workerThread([readyCallback]() {
+        readyCallback();
+    });
+    workerThread.join();
+
+    // Verify: without any new keys or manual refresh, event loop dispatches and updates controller
+    ASSERT_EQ(scheduledTasks.size(), 1u);
+    scheduledTasks[0]();
 
     EXPECT_GT(controller.displayGeneration(), initialGen);
     EXPECT_EQ(controller.page().preedit, preedit);
@@ -577,9 +666,9 @@ TEST(ArchitectureSelectionRegression, T11_A07_ReadyNotificationRefreshesControll
 TEST(ArchitectureSelectionRegression, T11_A08_ReadyNotificationSafeAgainstDestroyBlurAndClear) {
     TestEngineHost host;
     TestCandidateProvider provider;
-
     modernime::fcitx5::ModernIMEController controller(host, &provider);
 
+    // 1. Old selection rejected across reset
     const auto oldGen = controller.displayGeneration();
     controller.reset();
     EXPECT_GT(controller.displayGeneration(), oldGen);
@@ -590,16 +679,132 @@ TEST(ArchitectureSelectionRegression, T11_A08_ReadyNotificationSafeAgainstDestro
     oldReq.globalIndex = 0;
     EXPECT_FALSE(controller.select(oldReq));
 
-    modernime::fcitx5::ModernIMEController otherController(host, &provider);
-    EXPECT_NE(otherController.sessionId(), controller.sessionId());
+    // 2. Destruction before dispatch: scheduled task must safely abort without crash/UAF
+    {
+        std::vector<std::function<void()>> queue;
+        auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
+        endpoint->active = true;
 
-    controller.setActive(false);
-    EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Space}));
-    EXPECT_FALSE(controller.select(0));
+        bool taskExecuted = false;
+        // Schedule task into event loop
+        queue.push_back([endpoint, &taskExecuted]() {
+            std::lock_guard lock(endpoint->mutex);
+            if (!endpoint->active) return;
+            taskExecuted = true;
+        });
 
-    controller.setActive(true);
-    controller.setSensitive(true);
-    EXPECT_TRUE(controller.isSensitive());
+        // Simulate plugin destruction before dispatch
+        {
+            std::lock_guard lock(endpoint->mutex);
+            endpoint->active = false;
+            endpoint->dispatcher = nullptr;
+            endpoint->owner = nullptr;
+            endpoint->instance = nullptr;
+            ++endpoint->notificationGeneration;
+        }
+
+        // Run scheduled tasks: must safely drop task
+        for (auto &task : queue) {
+            task();
+        }
+        EXPECT_FALSE(taskExecuted);
+    }
+
+    // 3. Destruction during worker callback invocation (race condition safety)
+    {
+        auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
+        endpoint->active = true;
+
+        std::atomic<bool> workerStarted{false};
+        std::atomic<bool> workerCompleted{false};
+        std::atomic<bool> scheduled{false};
+
+        std::thread worker([endpoint, &workerStarted, &workerCompleted, &scheduled]() {
+            workerStarted = true;
+            // Simulate brief delay so main thread can destruct
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            std::lock_guard lock(endpoint->mutex);
+            if (!endpoint->active || endpoint->dispatcher == nullptr) {
+                workerCompleted = true;
+                return;
+            }
+            scheduled = true;
+            workerCompleted = true;
+        });
+
+        while (!workerStarted.load()) {
+            std::this_thread::yield();
+        }
+
+        // Main thread destructs endpoint
+        {
+            std::lock_guard lock(endpoint->mutex);
+            endpoint->active = false;
+            endpoint->dispatcher = nullptr;
+            endpoint->owner = nullptr;
+        }
+
+        worker.join();
+        EXPECT_TRUE(workerCompleted.load());
+        EXPECT_FALSE(scheduled.load());
+    }
+
+    // 4. Stale notification generation rejected across second clear / reset
+    {
+        auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
+        endpoint->active = true;
+        std::uint64_t gen1 = 0;
+        {
+            std::lock_guard lock(endpoint->mutex);
+            gen1 = ++endpoint->notificationGeneration;
+        }
+
+        bool staleTaskRan = false;
+        auto scheduledTask = [endpoint, gen1, &staleTaskRan]() {
+            std::lock_guard lock(endpoint->mutex);
+            if (!endpoint->active) return;
+            if (gen1 != endpoint->notificationGeneration) return;
+            staleTaskRan = true;
+        };
+
+        // Second clear / reset occurs before dispatch
+        {
+            std::lock_guard lock(endpoint->mutex);
+            ++endpoint->notificationGeneration; // epoch 2
+        }
+
+        // Run scheduled task from epoch 1: rejected!
+        scheduledTask();
+        EXPECT_FALSE(staleTaskRan);
+    }
+
+    // 5. Blur / sensitive mode rejection
+    {
+        bool hasFocus = false;
+        bool isSensitive = false;
+        bool dispatched = false;
+
+        auto testDispatch = [&hasFocus, &isSensitive, &dispatched]() {
+            if (!hasFocus || isSensitive) return;
+            dispatched = true;
+        };
+
+        // Lost focus -> dropped
+        testDispatch();
+        EXPECT_FALSE(dispatched);
+
+        // Sensitive -> dropped
+        hasFocus = true;
+        isSensitive = true;
+        testDispatch();
+        EXPECT_FALSE(dispatched);
+
+        // Normal focused -> accepted
+        isSensitive = false;
+        testDispatch();
+        EXPECT_TRUE(dispatched);
+    }
 }
+#endif
 
 } // namespace

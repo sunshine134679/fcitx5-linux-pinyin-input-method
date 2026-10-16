@@ -58,6 +58,7 @@ public:
     std::size_t queuedEventsCount() const;
     void pauseWorkerForTest(bool pause);
     void pauseWorkerAfterReadForTest(bool pause);
+    bool isWorkerWaitingAfterReadForTest() const;
     void setOnReadyCallback(std::function<void()> callback);
 
 private:
@@ -102,6 +103,7 @@ private:
     std::condition_variable resumeWorkerCv_;
     bool workerPaused_ = false;
     bool workerPausedAfterRead_ = false;
+    bool workerWaitingAfterRead_ = false;
     std::function<void()> onReadyCallback_;
     std::deque<Event> events_;
     std::vector<Event> processingEvents_;

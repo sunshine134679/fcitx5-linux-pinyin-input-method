@@ -181,6 +181,7 @@ TEST_F(ArchitectureWriterRegression, FirstCommitAfterClearDuringRebase) {
     const auto initialRevision = writer.resetRevision();
 
     // External clear occurs
+    writer.pauseWorkerForTest(true);
     {
         LearningStore externalStore(dbPath());
         ASSERT_TRUE(externalStore.open());
@@ -204,6 +205,9 @@ TEST_F(ArchitectureWriterRegression, FirstCommitAfterClearDuringRebase) {
     commitShanghai.timestampMs = 2000;
 
     EXPECT_TRUE(writer.enqueueCommit(commitShanghai));
+
+    // Resume worker to complete rebase
+    writer.pauseWorkerForTest(false);
 
     // Finish rebase and persistence
     EXPECT_TRUE(writer.flush());
@@ -293,22 +297,77 @@ TEST_F(ArchitectureWriterRegression, NewEpochSuppressionNotExposedWhileLoading) 
     EXPECT_TRUE(foundRestored);
 }
 
-TEST_F(ArchitectureWriterRegression, ClearThenStorageFailureBoundedQueue) {
+TEST_F(ArchitectureWriterRegression, QueueCapacityEnforcedDuringReloadingAndStorageFailure) {
     LearningWriter writer(dbPath());
 
-    EXPECT_TRUE(writer.enqueueSelection("基础词", "jichuci", "", "", 1000));
-    EXPECT_TRUE(writer.flush());
-    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("基础词", "jichuci"));
+    // --- Part A: Reloading queue bound to 100, exactly 100 latest items preserved in DB ---
+    writer.pauseWorkerForTest(true);
+    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
 
-    // External clear
     {
         LearningStore externalStore(dbPath());
         ASSERT_TRUE(externalStore.open());
         ASSERT_TRUE(externalStore.clear());
         externalStore.close();
     }
+    ASSERT_TRUE(writer.reloadIfChanged());
+    ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
 
-    // Induce deterministic storage failure by injecting an abort trigger on insert
+    // Enqueue 150 items under Reloading
+    for (int i = 0; i < 150; ++i) {
+        CommitEvent event;
+        event.text = "上海" + std::to_string(i);
+        event.fullPinyin = "shanghai";
+        event.role = CommitCandidateRole::Chinese;
+        event.candidateIndex = 1;
+        event.isDeviation = true;
+        event.timestampMs = 2000 + i;
+        writer.enqueueCommit(event);
+        EXPECT_LE(writer.queuedEventsCount(), 100u);
+    }
+    EXPECT_LE(writer.queuedEventsCount(), 100u);
+
+    // Resume worker and persist
+    writer.pauseWorkerForTest(false);
+    EXPECT_TRUE(writer.flush());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+
+    // Independently inspect SQLite database
+    {
+        sqlite3 *db = nullptr;
+        ASSERT_EQ(sqlite3_open(dbPath().c_str(), &db), SQLITE_OK);
+        sqlite3_stmt *stmt = nullptr;
+        ASSERT_EQ(sqlite3_prepare_v2(db, "SELECT count(*) FROM learning_entries;", -1, &stmt, nullptr), SQLITE_OK);
+        ASSERT_EQ(sqlite3_step(stmt), SQLITE_ROW);
+        const int totalCount = sqlite3_column_int(stmt, 0);
+        sqlite3_finalize(stmt);
+        EXPECT_EQ(totalCount, 100);
+
+        // Earliest 50 dropped: "上海0".."上海49"
+        for (int i = 0; i < 50; ++i) {
+            std::string phrase = "上海" + std::to_string(i);
+            sqlite3_stmt *check = nullptr;
+            ASSERT_EQ(sqlite3_prepare_v2(db, "SELECT count(*) FROM learning_entries WHERE phrase = ?;", -1, &check, nullptr), SQLITE_OK);
+            sqlite3_bind_text(check, 1, phrase.c_str(), -1, SQLITE_TRANSIENT);
+            ASSERT_EQ(sqlite3_step(check), SQLITE_ROW);
+            EXPECT_EQ(sqlite3_column_int(check, 0), 0) << "Expected " << phrase << " to be dropped";
+            sqlite3_finalize(check);
+        }
+
+        // Latest 100 preserved: "上海50".."上海149"
+        for (int i = 50; i < 150; ++i) {
+            std::string phrase = "上海" + std::to_string(i);
+            sqlite3_stmt *check = nullptr;
+            ASSERT_EQ(sqlite3_prepare_v2(db, "SELECT frequency FROM learning_entries WHERE phrase = ?;", -1, &check, nullptr), SQLITE_OK);
+            ASSERT_EQ(sqlite3_bind_text(check, 1, phrase.c_str(), -1, SQLITE_TRANSIENT), SQLITE_OK);
+            ASSERT_EQ(sqlite3_step(check), SQLITE_ROW) << "Expected " << phrase << " to be present";
+            EXPECT_EQ(sqlite3_column_int(check, 0), 1);
+            sqlite3_finalize(check);
+        }
+        sqlite3_close(db);
+    }
+
+    // --- Part B: Storage failure boundedness ---
     sqlite3 *faultInjector = nullptr;
     ASSERT_EQ(sqlite3_open(dbPath().c_str(), &faultInjector), SQLITE_OK);
     const char *trigger =
@@ -318,24 +377,20 @@ TEST_F(ArchitectureWriterRegression, ClearThenStorageFailureBoundedQueue) {
     ASSERT_EQ(sqlite3_exec(faultInjector, trigger, nullptr, nullptr, &err), SQLITE_OK);
     sqlite3_free(err);
 
-    struct FaultGuard {
-        sqlite3 *db;
-        ~FaultGuard() {
-            if (db) {
-                sqlite3_exec(db, "DROP TRIGGER IF EXISTS fail_storage_write;", nullptr, nullptr, nullptr);
-                sqlite3_close(db);
-            }
-        }
-    } faultGuard{faultInjector};
-
     for (int i = 0; i < 150; ++i) {
-        writer.enqueueSelection("词" + std::to_string(i), "ci", "", "", 2000 + i);
+        writer.enqueueSelection("故障词" + std::to_string(i), "ci", "", "", 4000 + i);
     }
 
     // Flush will attempt to persist, fail due to trigger, and return false
     EXPECT_FALSE(writer.flush());
     EXPECT_LE(writer.queuedEventsCount(), 100u);
     EXPECT_GT(writer.queuedEventsCount(), 0u);
+
+    // Drop trigger, persistence recovers
+    sqlite3_exec(faultInjector, "DROP TRIGGER IF EXISTS fail_storage_write;", nullptr, nullptr, nullptr);
+    sqlite3_close(faultInjector);
+
+    EXPECT_TRUE(writer.flush());
 }
 
 TEST_F(ArchitectureWriterRegression, EnableLearningDoesNotConstructWriterOnInputThread) {
@@ -368,66 +423,136 @@ TEST_F(ArchitectureWriterRegression, EnableLearningDoesNotConstructWriterOnInput
     EXPECT_NE(shared->learning, nullptr);
 }
 
-TEST_F(ArchitectureWriterRegression, ReloadingQueueBoundedImmediatelyTo100) {
-    LearningWriter writer(dbPath());
-    writer.pauseWorkerForTest(true);
-    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
+TEST_F(ArchitectureWriterRegression, CommitRoleMatrixParityBetweenNormalAndReloading) {
+    auto runRoleMatrixTest = [&](bool underReloading) {
+        auto testDbPath = root_ / (underReloading ? "matrix_reloading.sqlite3" : "matrix_normal.sqlite3");
+        LearningWriter writer(testDbPath);
 
-    {
-        LearningStore externalStore(dbPath());
-        ASSERT_TRUE(externalStore.open());
-        ASSERT_TRUE(externalStore.clear());
-        externalStore.close();
-    }
-    ASSERT_TRUE(writer.reloadIfChanged());
-    ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+        if (underReloading) {
+            writer.pauseWorkerForTest(true);
+            {
+                LearningStore externalStore(testDbPath);
+                ASSERT_TRUE(externalStore.open());
+                ASSERT_TRUE(externalStore.clear());
+                externalStore.close();
+            }
+            ASSERT_TRUE(writer.reloadIfChanged());
+            ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+        } else {
+            ASSERT_EQ(writer.epochViewState(), EpochViewState::Ready);
+        }
 
-    for (int i = 0; i < 150; ++i) {
-        CommitEvent event;
-        event.text = "上海" + std::to_string(i);
-        event.fullPinyin = "shanghai";
-        event.role = CommitCandidateRole::Chinese;
-        event.candidateIndex = 1;
-        event.isDeviation = true;
-        event.timestampMs = 2000 + i;
-        writer.enqueueCommit(event);
-        EXPECT_LE(writer.queuedEventsCount(), 100u);
-    }
-    EXPECT_LE(writer.queuedEventsCount(), 100u);
+        // 1. Chinese deviation -> Record
+        CommitEvent evChiDev;
+        evChiDev.text = "上海";
+        evChiDev.fullPinyin = "shanghai";
+        evChiDev.role = CommitCandidateRole::Chinese;
+        evChiDev.candidateIndex = 1;
+        evChiDev.isDeviation = true;
+        evChiDev.timestampMs = 1001;
+        EXPECT_TRUE(writer.enqueueCommit(evChiDev));
+
+        // 2. Chinese core default without history ("是" / "shi") -> Skip
+        CommitEvent evChiDef;
+        evChiDef.text = "是";
+        evChiDef.fullPinyin = "shi";
+        evChiDef.role = CommitCandidateRole::Chinese;
+        evChiDef.candidateIndex = 0;
+        evChiDef.isDeviation = false;
+        evChiDef.isPartial = false;
+        evChiDef.timestampMs = 1002;
+        EXPECT_TRUE(writer.enqueueCommit(evChiDef));
+
+        // 3. English word -> Record
+        CommitEvent evEng;
+        evEng.text = "hello";
+        evEng.fullPinyin = "hello";
+        evEng.role = CommitCandidateRole::English;
+        evEng.candidateIndex = 1;
+        evEng.isDeviation = true;
+        evEng.timestampMs = 1003;
+        EXPECT_TRUE(writer.enqueueCommit(evEng));
+
+        // 4. Raw English -> Record
+        CommitEvent evRawEng;
+        evRawEng.text = "code";
+        evRawEng.fullPinyin = "code";
+        evRawEng.role = CommitCandidateRole::Raw;
+        evRawEng.candidateIndex = 1;
+        evRawEng.isDeviation = true;
+        evRawEng.timestampMs = 1004;
+        EXPECT_TRUE(writer.enqueueCommit(evRawEng));
+
+        // 5. Raw Pinyin sequence (not English) -> Skip
+        CommitEvent evRawPin;
+        evRawPin.text = "jianpan";
+        evRawPin.fullPinyin = "jianpan";
+        evRawPin.role = CommitCandidateRole::Raw;
+        evRawPin.candidateIndex = 1;
+        evRawPin.isDeviation = true;
+        evRawPin.timestampMs = 1005;
+        EXPECT_TRUE(writer.enqueueCommit(evRawPin));
+
+        // 6. Command -> Skip
+        CommitEvent evCmd;
+        evCmd.text = "clear";
+        evCmd.fullPinyin = "clear";
+        evCmd.role = CommitCandidateRole::Command;
+        evCmd.candidateIndex = 1;
+        evCmd.isDeviation = true;
+        evCmd.timestampMs = 1006;
+        EXPECT_TRUE(writer.enqueueCommit(evCmd));
+
+        if (underReloading) {
+            writer.pauseWorkerForTest(false);
+        }
+        EXPECT_TRUE(writer.flush());
+        EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+
+        // Verify in-memory snapshot parity
+        auto snap = writer.snapshot();
+        ASSERT_NE(snap, nullptr);
+        EXPECT_TRUE(snap->hasPositiveFrequency("上海", "shanghai"));
+        EXPECT_FALSE(snap->hasPositiveFrequency("是", "shi"));
+        EXPECT_TRUE(snap->hasPositiveFrequency("hello", "hello"));
+        EXPECT_TRUE(snap->hasPositiveFrequency("code", "code"));
+        EXPECT_FALSE(snap->hasPositiveFrequency("jianpan", "jianpan"));
+        EXPECT_FALSE(snap->hasPositiveFrequency("clear", "clear"));
+
+        // Verify independent database parity
+        sqlite3 *db = nullptr;
+        ASSERT_EQ(sqlite3_open(testDbPath.c_str(), &db), SQLITE_OK);
+
+        auto checkDb = [&](const std::string &phrase, bool shouldExist) {
+            sqlite3_stmt *stmt = nullptr;
+            ASSERT_EQ(sqlite3_prepare_v2(db, "SELECT count(*), frequency FROM learning_entries WHERE phrase = ?;", -1, &stmt, nullptr), SQLITE_OK);
+            sqlite3_bind_text(stmt, 1, phrase.c_str(), -1, SQLITE_TRANSIENT);
+            ASSERT_EQ(sqlite3_step(stmt), SQLITE_ROW);
+            if (shouldExist) {
+                EXPECT_EQ(sqlite3_column_int(stmt, 0), 1) << "Phrase " << phrase << " expected in DB";
+                EXPECT_EQ(sqlite3_column_int(stmt, 1), 1);
+            } else {
+                EXPECT_EQ(sqlite3_column_int(stmt, 0), 0) << "Phrase " << phrase << " should NOT be in DB";
+            }
+            sqlite3_finalize(stmt);
+        };
+
+        checkDb("上海", true);
+        checkDb("是", false);
+        checkDb("hello", true);
+        checkDb("code", true);
+        checkDb("jianpan", false);
+        checkDb("clear", false);
+
+        sqlite3_close(db);
+    };
+
+    // Test both Normal and Reloading - verify 100% parity
+    runRoleMatrixTest(/*underReloading=*/false);
+    runRoleMatrixTest(/*underReloading=*/true);
 }
 
-TEST_F(ArchitectureWriterRegression, ReloadingPreservesEnglishAndRawEventsAccordingToPolicy) {
-    LearningWriter writer(dbPath());
-    writer.pauseWorkerForTest(true);
-    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
-
-    {
-        LearningStore externalStore(dbPath());
-        ASSERT_TRUE(externalStore.open());
-        ASSERT_TRUE(externalStore.clear());
-        externalStore.close();
-    }
-    ASSERT_TRUE(writer.reloadIfChanged());
-    ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
-
-    CommitEvent englishEvent;
-    englishEvent.text = "hello";
-    englishEvent.fullPinyin = "hello";
-    englishEvent.role = CommitCandidateRole::English;
-    englishEvent.candidateIndex = 1;
-    englishEvent.isDeviation = true;
-    englishEvent.timestampMs = 2000;
-    writer.enqueueCommit(englishEvent);
-
-    EXPECT_GT(writer.queuedEventsCount(), 0u);
-
-    writer.pauseWorkerForTest(false);
-    EXPECT_TRUE(writer.flush());
-    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
-    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("hello", "hello"));
-}
-
-TEST_F(ArchitectureWriterRegression, ReloadingReadFailureDoesNotAuthorizeReadyAndRecovers) {
+TEST_F(ArchitectureWriterRegression, ReloadingReadFailureRetainsPendingCommitsForSubsequentRecovery) {
     LearningWriter writer(dbPath());
     writer.pauseWorkerForTest(true);
     struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
@@ -468,6 +593,23 @@ TEST_F(ArchitectureWriterRegression, ReloadingReadFailureDoesNotAuthorizeReadyAn
     EXPECT_TRUE(writer.flush());
     EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
     EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("上海", "shanghai"));
+
+    // Independent database check: verify exact frequency == 1 and count == 1
+    sqlite3 *verifyDb = nullptr;
+    ASSERT_EQ(sqlite3_open(dbPath().c_str(), &verifyDb), SQLITE_OK);
+    sqlite3_stmt *stmt = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(verifyDb, "SELECT count(*), frequency FROM learning_entries WHERE phrase = '上海';", -1, &stmt, nullptr), SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(stmt), SQLITE_ROW);
+    EXPECT_EQ(sqlite3_column_int(stmt, 0), 1);
+    EXPECT_EQ(sqlite3_column_int(stmt, 1), 1);
+    sqlite3_finalize(stmt);
+
+    sqlite3_stmt *totalStmt = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(verifyDb, "SELECT count(*) FROM learning_entries;", -1, &totalStmt, nullptr), SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(totalStmt), SQLITE_ROW);
+    EXPECT_EQ(sqlite3_column_int(totalStmt, 0), 1);
+    sqlite3_finalize(totalStmt);
+    sqlite3_close(verifyDb);
 }
 
 TEST_F(ArchitectureWriterRegression, SecondClearDuringWorkerRebaseRejectsStaleResult) {
@@ -484,11 +626,17 @@ TEST_F(ArchitectureWriterRegression, SecondClearDuringWorkerRebaseRejectsStaleRe
         externalStore.close();
     }
 
-    writer.pauseWorkerForTest(true);
-    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
+    writer.pauseWorkerAfterReadForTest(true);
+    struct ResumeAfterRead { LearningWriter &w; ~ResumeAfterRead() { w.pauseWorkerAfterReadForTest(false); } } resume{writer};
 
     ASSERT_TRUE(writer.reloadIfChanged());
     const auto epoch1 = writer.resetRevision();
+
+    // Ensure worker has read epoch 1 and is waiting at the after-read synchronization barrier
+    for (int i = 0; i < 500 && !writer.isWorkerWaitingAfterReadForTest(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(writer.isWorkerWaitingAfterReadForTest());
 
     // Now do a SECOND clear on external store
     {
@@ -512,7 +660,7 @@ TEST_F(ArchitectureWriterRegression, SecondClearDuringWorkerRebaseRejectsStaleRe
     fact2.timestampMs = 3000;
     writer.enqueueCommit(fact2);
 
-    writer.pauseWorkerForTest(false);
+    writer.pauseWorkerAfterReadForTest(false);
     EXPECT_TRUE(writer.flush());
 
     EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
@@ -522,7 +670,7 @@ TEST_F(ArchitectureWriterRegression, SecondClearDuringWorkerRebaseRejectsStaleRe
     EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("广州", "guangzhou"));
 }
 
-TEST_F(ArchitectureWriterRegression, PermanentReadFailureFlushAndDestructionBounded) {
+TEST_F(ArchitectureWriterRegression, PermanentReadFailureFlushesCleanlyWithoutDeadlockOrFakeReady) {
     auto tempPath = dbPath();
     {
         std::ofstream corrupt(tempPath);
@@ -545,4 +693,60 @@ TEST_F(ArchitectureWriterRegression, PermanentReadFailureFlushAndDestructionBoun
     EXPECT_LT(elapsed.count(), 1000);
 }
 
+TEST_F(ArchitectureWriterRegression, RevisionAtomicPublicationWithWorkerRebase) {
+    LearningWriter writer(dbPath());
+    std::atomic<bool> stop{false};
+    std::atomic<std::int64_t> maxObservedRevision{0};
+    std::atomic<std::size_t> readsDone{0};
+
+    // 4 concurrent reader threads querying resetRevision(), snapshot(), and epochViewState()
+    std::vector<std::thread> readers;
+    for (int i = 0; i < 4; ++i) {
+        readers.emplace_back([&] {
+            std::int64_t lastRev = 0;
+            while (!stop.load(std::memory_order_relaxed)) {
+                const auto rev = writer.resetRevision();
+                EXPECT_GE(rev, lastRev);
+                lastRev = rev;
+
+                auto snap = writer.snapshot();
+                ASSERT_NE(snap, nullptr);
+                const auto state = writer.epochViewState();
+                (void)state;
+
+                auto currentMax = maxObservedRevision.load(std::memory_order_relaxed);
+                while (rev > currentMax &&
+                       !maxObservedRevision.compare_exchange_weak(currentMax, rev, std::memory_order_relaxed)) {}
+
+                readsDone.fetch_add(1, std::memory_order_relaxed);
+                std::this_thread::yield();
+            }
+        });
+    }
+
+    // Repeated writer rebase cycles with external clear
+    for (int cycle = 0; cycle < 8; ++cycle) {
+        writer.enqueueSelection("词_" + std::to_string(cycle), "ci", "", "", 1000 + cycle);
+        {
+            LearningStore externalStore(dbPath());
+            if (externalStore.open()) {
+                externalStore.clear();
+                externalStore.close();
+            }
+        }
+        writer.reloadIfChanged();
+        writer.flush();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    stop.store(true, std::memory_order_relaxed);
+    for (auto &r : readers) {
+        r.join();
+    }
+
+    EXPECT_GT(readsDone.load(), 100u);
+    EXPECT_GT(maxObservedRevision.load(), 0u);
+}
+
 } // namespace
+

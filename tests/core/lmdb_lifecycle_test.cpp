@@ -345,7 +345,8 @@ TEST_F(ArchitectureLmdbRegression, ConcurrentRoAndRwInitialization) {
 // 6. MapFullTriggersRealMapResize (T11-A12):
 // Verifies that when inserting enough data to exceed the initial 64 KiB LMDB map size,
 // the batch write catches MDB_MAP_FULL, dynamically resizes the map (at least doubling it),
-// and completes all writes without data loss or crash.
+// and completes all writes without data loss, deadlocks, or dangling pointers, even while
+// concurrent readers and transient open/close sessions are actively running.
 TEST_F(ArchitectureLmdbRegression, MapFullTriggersRealMapResize) {
     const auto dbPath = path();
 
@@ -370,7 +371,40 @@ TEST_F(ArchitectureLmdbRegression, MapFullTriggersRealMapResize) {
         events.push_back(std::move(event));
     }
 
+    std::atomic<bool> stopConcurrent{false};
+    std::atomic<std::size_t> readsCompleted{0};
+
+    // Concurrent reader thread: repeatedly queries the shared LMDB database while resize occurs
+    std::thread readerThread([&]() {
+        PersonalEngine reader;
+        if (reader.OpenLmdb(dbPath, /*read_only=*/true)) {
+            while (!stopConcurrent.load(std::memory_order_relaxed)) {
+                auto res = reader.QueryLmdbCandidates("ciyu_0");
+                auto pre = reader.QueryLmdbPrefixCandidates("ciyu_");
+                readsCompleted.fetch_add(1, std::memory_order_relaxed);
+                std::this_thread::yield();
+            }
+            reader.CloseLmdb();
+        }
+    });
+
+    // Concurrent transient thread: rapidly opens and closes secondary engine on same dbPath
+    std::thread transientThread([&]() {
+        for (int i = 0; i < 15 && !stopConcurrent.load(std::memory_order_relaxed); ++i) {
+            PersonalEngine transient;
+            if (transient.OpenLmdb(dbPath, /*read_only=*/false)) {
+                transient.QueryLmdbCandidates("ciyu_0");
+                transient.CloseLmdb();
+            }
+            std::this_thread::yield();
+        }
+    });
+
     ASSERT_TRUE(engine.RecordLearningBatch(events));
+
+    stopConcurrent.store(true, std::memory_order_relaxed);
+    readerThread.join();
+    transientThread.join();
 
     const size_t newMapSize = engine.LmdbMapSize();
     EXPECT_GT(newMapSize, initialMapSize);

@@ -609,10 +609,12 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (page_.preedit.empty()) {
             return false;
         }
-        const bool hasRealCandidate = !page_.items.empty() &&
-            page_.cursor < page_.items.size() &&
-            page_.items[page_.cursor].source != core::CandidateSource::None;
-        if (hasRealCandidate) {
+        const bool hasNoneCandidate = !page_.items.empty() &&
+            page_.items[0].source == core::CandidateSource::None;
+        if (hasNoneCandidate) {
+            return false;
+        }
+        if (!page_.items.empty()) {
             if (!commitCurrent()) {
                 return false;
             }
@@ -932,11 +934,13 @@ bool ModernIMEController::commitPunctuation(char ascii) {
     }
     finalizeRecentCommitDeletion();
     if (!page_.preedit.empty()) {
-        const bool hasRealCandidate = !page_.items.empty() &&
-            page_.cursor < page_.items.size() &&
-            page_.items[page_.cursor].source != core::CandidateSource::None;
-        const bool committed = hasRealCandidate ? commitCurrent()
-                                                : commitRawPreedit();
+        const bool hasNoneCandidate = !page_.items.empty() &&
+            page_.items[0].source == core::CandidateSource::None;
+        if (hasNoneCandidate) {
+            return false;
+        }
+        const bool committed = !page_.items.empty() ? commitCurrent()
+                                                    : commitRawPreedit();
         if (!committed) {
             return false;
         }

@@ -332,6 +332,17 @@ private:
     std::uint64_t settingsGeneration_ = 0;
 };
 
+class ModernIMEInputMethod;
+
+struct ReadyNotificationEndpoint {
+    std::mutex mutex;
+    bool active = true;
+    fcitx::EventDispatcher *dispatcher = nullptr;
+    ModernIMEInputMethod *owner = nullptr;
+    fcitx::Instance *instance = nullptr;
+    std::uint64_t notificationGeneration = 0;
+};
+
 class ModernIMEInputMethod final : public fcitx::InputMethodEngine {
 public:
     explicit ModernIMEInputMethod(fcitx::AddonManager *manager);
@@ -348,8 +359,9 @@ public:
     void reset(const fcitx::InputMethodEntry &entry,
                fcitx::InputContextEvent &event) override;
 
-private:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
+
+private:
     void pollClipboard();
     void pollFileChanges();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -375,6 +387,8 @@ private:
     std::uint64_t settingsGeneration_ = 0;
     core::ModernIMESettings settings_;
     KeyBindings keyBindings_;
+    fcitx::EventDispatcher dispatcher_;
+    std::shared_ptr<ReadyNotificationEndpoint> readyEndpoint_;
     FcitxEngineResources resources_;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::future<
@@ -382,8 +396,6 @@ private:
         pinyinResourcesFuture_;
     bool pinyinResourcesResolved_ = false;
 #endif
-    fcitx::EventDispatcher dispatcher_;
-    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };
 

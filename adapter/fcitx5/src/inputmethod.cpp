@@ -450,6 +450,11 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
         FCITX_ERROR() << "Failed to load ModernIME clipboard history: "
                       << historyError;
     }
+    readyEndpoint_ = std::make_shared<ReadyNotificationEndpoint>();
+    readyEndpoint_->dispatcher = &dispatcher_;
+    readyEndpoint_->owner = this;
+    readyEndpoint_->instance = instance_;
+    readyEndpoint_->active = true;
     if (instance_ != nullptr) {
         dispatcher_.attach(&instance_->eventLoop());
         instance_->inputContextManager().registerProperty(
@@ -505,7 +510,19 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
 }
 
 ModernIMEInputMethod::~ModernIMEInputMethod() {
-    *alive_ = false;
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    if (resources_.pinyin) {
+        resources_.pinyin->setOnReadyCallback(nullptr);
+    }
+#endif
+    if (readyEndpoint_) {
+        std::lock_guard lock(readyEndpoint_->mutex);
+        readyEndpoint_->active = false;
+        readyEndpoint_->dispatcher = nullptr;
+        readyEndpoint_->owner = nullptr;
+        readyEndpoint_->instance = nullptr;
+        ++readyEndpoint_->notificationGeneration;
+    }
     dispatcher_.detach();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // 后台线程只持有 promise/paths/options 的值拷贝，不引用 this；
@@ -793,18 +810,40 @@ void ModernIMEInputMethod::ensurePinyinResources() {
     try {
         resources_.pinyin = pinyinResourcesFuture_.get();
         if (resources_.pinyin) {
-            auto alive = alive_;
-            resources_.pinyin->setOnReadyCallback([this, alive]() {
-                dispatcher_.schedule([this, alive]() {
-                    if (!*alive || instance_ == nullptr) {
+            auto endpoint = readyEndpoint_;
+            resources_.pinyin->setOnReadyCallback([endpoint]() {
+                std::uint64_t currentGeneration = 0;
+                fcitx::EventDispatcher *dispatcher = nullptr;
+                {
+                    std::lock_guard lock(endpoint->mutex);
+                    if (!endpoint->active || endpoint->dispatcher == nullptr || endpoint->owner == nullptr) {
                         return;
                     }
-                    auto *ic = instance_->inputContextManager().mostRecentInputContext();
-                    if (ic == nullptr || instance_->inputMethod(ic) != "modernime") {
+                    dispatcher = endpoint->dispatcher;
+                    currentGeneration = ++endpoint->notificationGeneration;
+                }
+                dispatcher->schedule([endpoint, currentGeneration]() {
+                    std::lock_guard lock(endpoint->mutex);
+                    if (!endpoint->active || endpoint->owner == nullptr || endpoint->instance == nullptr) {
                         return;
                     }
-                    auto *contextState = state(ic);
-                    if (contextState != nullptr) {
+                    if (currentGeneration != endpoint->notificationGeneration) {
+                        return;
+                    }
+                    auto *owner = endpoint->owner;
+                    auto *instance = endpoint->instance;
+                    auto *ic = instance->inputContextManager().mostRecentInputContext();
+                    if (ic == nullptr || !ic->hasFocus() || instance->inputMethod(ic) != "modernime") {
+                        return;
+                    }
+                    const bool isSensitive =
+                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
+                    if (isSensitive) {
+                        return;
+                    }
+                    auto *contextState = owner->state(ic);
+                    if (contextState != nullptr && contextState->controller().active()) {
                         if (!contextState->controller().page().preedit.empty()) {
                             contextState->controller().refreshPage();
                         }
@@ -933,6 +972,10 @@ void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
                                       fcitx::InputContextEvent &event) {
     shiftPressed_ = false;
     otherKeyPressedWhileShift_ = false;
+    if (readyEndpoint_) {
+        std::lock_guard lock(readyEndpoint_->mutex);
+        ++readyEndpoint_->notificationGeneration;
+    }
     reset(entry, event);
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().setActive(false);
@@ -943,6 +986,10 @@ void ModernIMEInputMethod::reset(const fcitx::InputMethodEntry &,
                                  fcitx::InputContextEvent &event) {
     shiftPressed_ = false;
     otherKeyPressedWhileShift_ = false;
+    if (readyEndpoint_) {
+        std::lock_guard lock(readyEndpoint_->mutex);
+        ++readyEndpoint_->notificationGeneration;
+    }
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().reset();
     }
