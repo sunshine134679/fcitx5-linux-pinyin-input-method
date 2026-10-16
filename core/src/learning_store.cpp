@@ -46,27 +46,6 @@ bool shouldUseLmdb(const std::filesystem::path &path) {
 
 } // namespace
 
-std::string detail::canonicalEnglishSelectionWord(std::string_view phrase,
-                                                  std::string_view pinyin) {
-    if (phrase.empty() || phrase.size() > 64) {
-        return {};
-    }
-    std::string lower;
-    lower.reserve(phrase.size());
-    bool has_alpha = false;
-    for (const unsigned char c : phrase) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
-            has_alpha = true;
-            lower.push_back(static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c));
-        } else if (c == '_' || c == '-') {
-            lower.push_back(static_cast<char>(c));
-        } else {
-            return {};
-        }
-    }
-    return has_alpha && normalizePinyin(pinyin) == lower ? lower : std::string{};
-}
-
 LearningStore::LearningStore(std::filesystem::path path)
     : path_(std::move(path)),
       useLmdb_(shouldUseLmdb(path_)) {}
@@ -362,48 +341,32 @@ bool LearningStore::recordSelection(
     std::string_view phrase, std::string_view pinyin,
     std::string_view contextBefore, std::string_view contextAfter,
     std::int64_t nowMs) {
-    if (useLmdb_) {
-        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
-            return false;
-        }
-        return lmdbEngine_->RecordUsage(pinyin, phrase, 1.0f, contextBefore,
-                                        contextAfter, nowMs);
-    }
-    if (!applySelection(phrase, pinyin, contextBefore, contextAfter, nowMs)) {
-        return false;
-    }
-    return pruneContextVariants() && pruneTotalEntries();
+    LearningEvent event;
+    event.kind = LearningEvent::Kind::Selection;
+    event.phrase = std::string(phrase);
+    event.pinyin = std::string(pinyin);
+    event.contextBefore = std::string(contextBefore);
+    event.contextAfter = std::string(contextAfter);
+    event.nowMs = nowMs;
+    return recordBatch({event});
 }
 
 bool LearningStore::recordCommit(const CommitEvent &event) {
-    if (event.role == CommitCandidateRole::Command) {
-        return true;
-    }
-    // Protection 1: Raw pinyin sequence (e.g. "jianpan", "nihao") committed via Enter
-    // must NEVER be learned as an English word into user history.
-    if (event.role == CommitCandidateRole::Raw) {
-        if (PinyinMatchPolicy::isValidPinyinSequence(event.text) &&
-            !EnglishDictionary::isEnglishWord(event.text)) {
-            return true;
-        }
-    }
-
     const auto pinyinKey = event.fullPinyin.empty() ? event.text : event.fullPinyin;
-
-    // Protection 2: Deviation-Only Learning (WeChat Input Method paradigm)
-    // When selecting default Rank 0 Chinese core candidate (e.g. "是", "这个", "的", "你", "好")
-    // without surrounding context, do not increment unconditioned global frequency to keep LM priors clean and intact.
-    if (event.role == CommitCandidateRole::Chinese &&
-        event.candidateIndex == 0 &&
-        !event.isDeviation &&
-        !event.isPartial &&
-        event.contextBefore.empty() &&
-        event.contextAfter.empty() &&
-        PinyinMatchPolicy::isCoreChineseWord(event.text, pinyinKey)) {
-        const auto snap = snapshot();
-        if (snap == nullptr || !snap->hasPositiveFrequency(event.text, pinyinKey)) {
-            return true;
+    bool hasPositive = false;
+    if (useLmdb_) {
+        if (lmdbEngine_ != nullptr && lmdbEngine_->IsLmdbOpen()) {
+            hasPositive = lmdbEngine_->HasPositiveFrequency(pinyinKey, event.text);
         }
+    } else {
+        const auto snap = snapshot();
+        if (snap != nullptr) {
+            hasPositive = snap->hasPositiveFrequency(event.text, pinyinKey);
+        }
+    }
+    const auto decision = decideCommitLearning(event, hasPositive);
+    if (decision != CommitLearningDecision::Record) {
+        return true;
     }
 
     return recordSelection(event.text, pinyinKey, event.contextBefore,
@@ -438,16 +401,11 @@ bool LearningStore::applyNegativeFeedback(std::string_view phrase,
 
 bool LearningStore::recordNegativeFeedback(std::string_view phrase,
                                            std::string_view pinyin) {
-    if (useLmdb_) {
-        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
-            return false;
-        }
-        return lmdbEngine_->RecordNegativeFeedback(pinyin, phrase);
-    }
-    if (!applyNegativeFeedback(phrase, pinyin)) {
-        return false;
-    }
-    return pruneTotalEntries();
+    LearningEvent event;
+    event.kind = LearningEvent::Kind::NegativeFeedback;
+    event.phrase = std::string(phrase);
+    event.pinyin = std::string(pinyin);
+    return recordBatch({event});
 }
 
 bool LearningStore::applySuppression(std::string_view phrase,
@@ -478,16 +436,11 @@ bool LearningStore::applySuppression(std::string_view phrase,
 
 bool LearningStore::recordSuppression(std::string_view phrase,
                                       std::string_view pinyin) {
-    if (useLmdb_) {
-        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
-            return false;
-        }
-        return lmdbEngine_->RecordSuppression(pinyin, phrase);
-    }
-    if (!applySuppression(phrase, pinyin)) {
-        return false;
-    }
-    return pruneTotalEntries();
+    LearningEvent event;
+    event.kind = LearningEvent::Kind::Suppression;
+    event.phrase = std::string(phrase);
+    event.pinyin = std::string(pinyin);
+    return recordBatch({event});
 }
 
 bool LearningStore::pruneContextVariants() const {
@@ -577,10 +530,15 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
             return false;
         }
     }
+    if (faultInjection_ == FaultInjection::FailBeforeCommit) {
+        execute("ROLLBACK;");
+        return false;
+    }
     // Keep housekeeping in the same transaction as the events. Otherwise a
     // pruning failure can be reported after COMMIT, and LearningWriter's safe
     // retry would apply already-committed selections a second time.
-    if (!pruneContextVariants() || !pruneTotalEntries()) {
+    if (faultInjection_ == FaultInjection::FailDuringPrune ||
+        !pruneContextVariants() || !pruneTotalEntries()) {
         execute("ROLLBACK;");
         return false;
     }

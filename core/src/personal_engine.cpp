@@ -1,5 +1,5 @@
 #include "modernime/core/personal_engine.h"
-#include "modernime/core/learning_store.h"
+#include "modernime/core/learning_policy.h"
 #include "lmdb_environment.h"
 #include "personal_engine_state.h"
 
@@ -534,6 +534,30 @@ bool PersonalEngine::RecordSuppression(std::string_view pinyin_key,
         Prune();
     }
     return true;
+}
+
+bool PersonalEngine::HasPositiveFrequency(std::string_view pinyin_key,
+                                          std::string_view text) const {
+    if (pinyin_key.empty() || text.empty()) {
+        return false;
+    }
+    const std::string norm_key = NormalizePinyinKey(pinyin_key);
+    auto it = db_.find(norm_key);
+    if (it == db_.end()) {
+        return false;
+    }
+    bool any_positive = false;
+    for (const auto &v : it->second) {
+        if (v.text == text) {
+            if (v.meta.suppressed != 0) {
+                return false;
+            }
+            if (v.meta.hit_count > 0) {
+                any_positive = true;
+            }
+        }
+    }
+    return any_positive;
 }
 
 float PersonalEngine::MatchContextAffinity(
@@ -1221,7 +1245,7 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                 }
                 changed_keys.insert(key);
                 if (event.kind == LearningEvent::Kind::Selection) {
-                    const auto word = detail::canonicalEnglishSelectionWord(
+                    const auto word = canonicalEnglishSelectionWord(
                         event.phrase, event.pinyin);
                     for (size_t length = 1; length <= word.size(); ++length) {
                         const auto prefix = word.substr(0, length);
@@ -1303,7 +1327,7 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
             bool ok = false;
             switch (event.kind) {
             case LearningEvent::Kind::Selection: {
-                const auto word = detail::canonicalEnglishSelectionWord(
+                const auto word = canonicalEnglishSelectionWord(
                     event.phrase, event.pinyin);
                 if (!word.empty()) {
                     for (auto &[key, variants] : staged.db) {

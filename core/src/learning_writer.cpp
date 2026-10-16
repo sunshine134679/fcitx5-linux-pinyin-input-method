@@ -1,6 +1,7 @@
 #include "modernime/core/learning_writer.h"
 
 #include "modernime/core/english_dictionary.h"
+#include "modernime/core/learning_policy.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/pinyin_match.h"
 
@@ -68,38 +69,17 @@ bool LearningWriter::enqueueSelectionLocked(
 }
 
 bool LearningWriter::enqueueCommit(const CommitEvent &event) {
-    if (event.role == CommitCandidateRole::Command) {
-        return true;
-    }
-    // Protection 1: Raw pinyin sequence (e.g. "jianpan", "nihao") committed via Enter
-    // must NEVER be learned as an English word into user history.
-    if (event.role == CommitCandidateRole::Raw) {
-        if (PinyinMatchPolicy::isValidPinyinSequence(event.text) &&
-            !EnglishDictionary::isEnglishWord(event.text)) {
-            return true;
-        }
-    }
-
     const auto pinyinKey = event.fullPinyin.empty() ? event.text : event.fullPinyin;
 
     refreshBeforeEnqueue();
     std::lock_guard lock(mutex_);
 
-    // Protection 2: Deviation-Only Learning (WeChat Input Method paradigm)
-    // When selecting default Rank 0 Chinese core candidate (e.g. "是", "这个", "的", "你", "好")
-    // without surrounding context, do not increment unconditioned global frequency to keep LM priors clean and intact.
-    if (event.role == CommitCandidateRole::Chinese &&
-        event.candidateIndex == 0 &&
-        !event.isDeviation &&
-        !event.isPartial &&
-        event.contextBefore.empty() &&
-        event.contextAfter.empty() &&
-        PinyinMatchPolicy::isCoreChineseWord(event.text, pinyinKey)) {
-        if (!snapshot_->hasPositiveFrequency(event.text, pinyinKey)) {
-            // Skipped successfully without error; returning true maintains compatibility
-            // with callers that check whether the commit was handled.
-            return true;
-        }
+    const bool hasPositive = snapshot_->hasPositiveFrequency(event.text, pinyinKey);
+    const auto decision = decideCommitLearning(event, hasPositive);
+    if (decision != CommitLearningDecision::Record) {
+        // Skipped successfully without error; returning true maintains compatibility
+        // with callers that check whether the commit was handled.
+        return true;
     }
 
     return enqueueSelectionLocked(event.text, pinyinKey, event.contextBefore,

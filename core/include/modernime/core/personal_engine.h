@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modernime/core/learning_event.h"
 #include "modernime/core/learning_snapshot.h"
 
 #include <chrono>
@@ -24,8 +25,6 @@ namespace modernime::core {
 namespace detail {
 class LmdbEnvironment;
 }
-
-struct LearningEvent;
 
 // 词条元数据结构体（常驻内存 / LMDB 二进制零拷贝序列化存储）
 #pragma pack(push, 1)
@@ -125,6 +124,10 @@ public:
                                 std::string_view text);
     bool RecordSuppression(std::string_view pinyin_key,
                            std::string_view text);
+
+    // 检查词条是否有正频次且未被屏蔽
+    bool HasPositiveFrequency(std::string_view pinyin_key,
+                              std::string_view text) const;
 
     // 精确查询候选词，并根据用户习惯与上下文进行动态排序
     std::vector<PersonalCandidate> QueryCandidates(

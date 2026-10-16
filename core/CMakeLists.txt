@@ -16,6 +16,7 @@ add_library(modernime_core STATIC
     src/settings.cpp
     src/english_definition_dictionary.cpp
     src/phrase_formation.cpp
+    src/learning_policy.cpp
 )
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig QUIET)

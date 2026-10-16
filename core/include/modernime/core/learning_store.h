@@ -1,6 +1,8 @@
 #pragma once
 
 #include "modernime/core/commit_event.h"
+#include "modernime/core/learning_event.h"
+#include "modernime/core/learning_policy.h"
 #include "modernime/core/learning_snapshot.h"
 
 #include <cstdint>
@@ -17,22 +19,11 @@ namespace modernime::core {
 
 namespace detail {
 // Returns the lowercase ASCII word only for an explicit full-word selection.
-std::string canonicalEnglishSelectionWord(std::string_view phrase,
-                                          std::string_view pinyin);
+inline std::string canonicalEnglishSelectionWord(std::string_view phrase,
+                                                 std::string_view pinyin) {
+    return ::modernime::core::canonicalEnglishSelectionWord(phrase, pinyin);
+}
 } // namespace detail
-
-struct LearningEvent final {
-    enum class Kind { Selection, NegativeFeedback, Suppression };
-
-    Kind kind = Kind::Selection;
-    std::string phrase;
-    std::string pinyin;
-    std::string contextBefore;
-    std::string contextAfter;
-    std::int64_t nowMs = 0;
-    // Queued events from before a settings clear must not recreate deleted rows.
-    std::optional<std::int64_t> resetRevision = std::nullopt;
-};
 
 struct LearningStoreState final {
     std::shared_ptr<const LearningSnapshot> snapshot;
@@ -78,6 +69,13 @@ public:
     std::optional<LearningStoreState> readState() const;
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;
 
+    enum class FaultInjection {
+        None,
+        FailBeforeCommit,
+        FailDuringPrune
+    };
+    void setFaultInjection(FaultInjection fi) noexcept { faultInjection_ = fi; }
+
 private:
     bool execute(const char *sql) const;
     bool ensureSuppressionColumn() const;
@@ -96,6 +94,7 @@ private:
     std::unique_ptr<PersonalEngine> lmdbEngine_;
     bool useLmdb_ = false;
     std::size_t totalEntryLimit_ = kMaxLearningEntries;
+    FaultInjection faultInjection_ = FaultInjection::None;
 };
 
 } // namespace modernime::core
