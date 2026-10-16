@@ -1,5 +1,6 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
+#include "modernime/pinyin/candidate_composition.h"
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/candidate_prefixes.h"
@@ -752,43 +753,6 @@ std::string prefixInput(std::string_view rawInput, std::size_t consumedBytes) {
     return prefix;
 }
 
-bool hasInvalidInternalPinyinSegment(std::string_view segmentedInput) {
-    if (segmentedInput.empty()) {
-        return false;
-    }
-    std::size_t start = 0;
-    while (start < segmentedInput.size()) {
-        const auto pos = segmentedInput.find('\'', start);
-        if (pos == std::string_view::npos) {
-            break;
-        }
-        const auto segment = segmentedInput.substr(start, pos - start);
-        start = pos + 1;
-        if (segment.empty()) {
-            continue;
-        }
-        const bool hasVowel =
-            std::any_of(segment.begin(), segment.end(), [](char c) {
-                return c == 'a' || c == 'e' || c == 'i' || c == 'o' ||
-                       c == 'u' || c == 'v';
-            });
-        if (!hasVowel) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::size_t utf8CodePointCount(std::string_view text) {
-    std::size_t count = 0;
-    for (const unsigned char character : text) {
-        if ((character & 0xc0U) != 0x80U) {
-            ++count;
-        }
-    }
-    return count;
-}
-
 // Check if input substring matches a standard pinyin syllable with typo tolerance.
 // Returns the number of characters consumed from input; 0 if no match.
 std::size_t matchTypoSyllable(std::string_view input, std::string_view syllable) {
@@ -884,56 +848,6 @@ bool coversPinyinInput(std::string_view userInput,
         return false;
     }
     return inputOffset == input.size() && consumedFullSyllable;
-}
-
-std::size_t pinyinSyllableCount(std::string_view fullPinyin) {
-    std::string_view trimmed = fullPinyin;
-    while (!trimmed.empty() && trimmed.back() == '\'') {
-        trimmed.remove_suffix(1);
-    }
-    if (trimmed.empty()) {
-        return 0;
-    }
-    return static_cast<std::size_t>(
-               std::count(trimmed.begin(), trimmed.end(), '\'')) +
-           1;
-}
-
-// Preserve the strongest exact conversion at index zero. If LibIME's native
-// order ranks a fuzzy full conversion ahead of that exact conversion, place
-// the fuzzy item second so low-value exact homophone variants follow it. Move
-// the complete CandidateItem so selection metadata remains intact.
-void interleaveHigherNativeRankFuzzyCandidate(
-    std::string_view rawInput,
-    std::vector<core::CandidateItem> &fullCandidates) {
-    if (fullCandidates.size() < 2 ||
-        core::PinyinMatchPolicy::priority(
-            rawInput, fullCandidates.front().fullPinyin) != 2) {
-        return;
-    }
-
-    // Only allow fuzzy candidate interleaving for multi-syllable input (>= 2 syllables).
-    // Single-syllable inputs (e.g. cang, cao, cai, bin) must strictly preserve exact homophone matches,
-    // and never interleave fuzzy homophones (e.g. chang/常, chao/超, chai/柴, bing/并) into rank 1.
-    if (pinyinSyllableCount(fullCandidates.front().fullPinyin) <= 1) {
-        return;
-    }
-
-    const auto fuzzy = std::find_if(
-        std::next(fullCandidates.begin()), fullCandidates.end(),
-        [&rawInput, &fullCandidates](const auto &candidate) {
-            return core::PinyinMatchPolicy::priority(
-                       rawInput, candidate.fullPinyin) == 0 &&
-                   candidate.sourceIndex < fullCandidates.front().sourceIndex;
-        });
-    if (fuzzy == fullCandidates.end()) {
-        return;
-    }
-
-    auto promoted = std::move(*fuzzy);
-    fullCandidates.erase(fuzzy);
-    fullCandidates.insert(std::next(fullCandidates.begin()),
-                          std::move(promoted));
 }
 
 struct PreeditAlignment final {
@@ -2073,68 +1987,26 @@ private:
             }
         }
 
-        interleaveHigherNativeRankFuzzyCandidate(rawInput, fullItems);
-        const auto *bestFullSentence =
-            fullItems.empty() ? nullptr : &fullItems.front();
-        const auto prefixEvidence = bestFullSentence != nullptr
-            ? buildPrefixEvidence(*bestFullSentence, prefixEnds, rawInput,
-                                  partialPool, learning.get(), requestNowMs, &recentChoices_)
-            : std::vector<core::CandidateItem>{};
-        page_.items = mixCandidateItems(fullItems, partialPool,
-                                        bestFullSentence, prefixEnds, rawInput,
-                                        &prefixEvidence);
-
-        const auto macroCandidates =
-            generateMacroCandidates(rawInput, canonicalInput);
-        if (!macroCandidates.empty()) {
-            std::size_t insertPos = (page_.items.empty() || rawInput.front() == 'v') ? 0 : 1;
-            for (const auto &macroText : macroCandidates) {
-                if (std::any_of(page_.items.begin(), page_.items.end(),
-                                [&](const auto &existing) { return existing.text == macroText; })) {
-                    continue;
-                }
-                core::CandidateItem item;
-                item.text = macroText;
-                item.fullPinyin = std::string(rawInput);
-                item.source = core::CandidateSource::Engine;
-                item.commitRole = core::CommitCandidateRole::Chinese;
-                item.origins = {item.source};
-                item.sourceIndex = std::numeric_limits<std::size_t>::max();
-                item.consumedInputBytes = rawInput.size();
-                if (insertPos < page_.items.size()) {
-                    page_.items.insert(page_.items.begin() + insertPos, std::move(item));
-                } else {
-                    page_.items.push_back(std::move(item));
-                }
-                ++insertPos;
-            }
-        }
-
         const bool isInitialConsonant = (rawInput == "sh" || rawInput == "ch" || rawInput == "zh");
         const bool isConsonantAbbreviation =
-            rawInput.size() >= 2 && !page_.items.empty() &&
+            rawInput.size() >= 2 && !fullItems.empty() &&
             std::all_of(rawInput.begin(), rawInput.end(), [](char c) {
                 return c >= 'a' && c <= 'z' &&
                        c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' && c != 'v' && c != 'y';
             }) &&
             (rawInput.size() == 2 ||
              core::PinyinMatchPolicy::abbreviationKey(
-                 page_.items.front().fullPinyin) == rawInput ||
+                 fullItems.front().fullPinyin) == rawInput ||
              core::PinyinMatchPolicy::initialsMatch(
-                 rawInput, page_.items.front().fullPinyin));
+                 rawInput, fullItems.front().fullPinyin));
         const bool isEnglish =
             !isInitialConsonant && !isConsonantAbbreviation &&
             core::EnglishDictionary::isEnglishWord(rawInput);
 
         const bool hasExactFullPinyinMatch = std::any_of(
-            page_.items.begin(), page_.items.end(),
+            fullItems.begin(), fullItems.end(),
             [&rawInput](const auto &item) {
                 return item.source != core::CandidateSource::Raw &&
-                       // Older LibIME can decode an internal bare initial as
-                       // a syllable (gara -> ga'r'a). Removing apostrophes
-                       // alone makes that look exact, but it must not veto
-                       // English completion. Trusted abbreviations retain
-                       // their separate eligibility check below.
                        !hasInvalidInternalPinyinSegment(item.fullPinyin) &&
                        (core::PinyinMatchPolicy::exactInputMatch(
                             rawInput, item.fullPinyin) ||
@@ -2143,7 +2015,7 @@ private:
             });
 
         const bool hasTrustedShortAbbreviation =
-            std::any_of(page_.items.begin(), page_.items.end(),
+            std::any_of(fullItems.begin(), fullItems.end(),
                         [&rawInput](const auto &item) {
                             return item.source != core::CandidateSource::Raw &&
                                    core::PinyinMatchPolicy::
@@ -2153,14 +2025,11 @@ private:
                         });
 
         bool isTopChineseLexical = false;
-        if (!page_.items.empty()) {
-            const auto &topChinese = page_.items.front();
-            if (topChinese.source == core::CandidateSource::UserDictionary) {
-                isTopChineseLexical = true;
-            } else if (topChinese.isLexical) {
-                isTopChineseLexical = true;
-            } else if (utf8CodePointCount(topChinese.text) == 1 &&
-                       rawInput.size() <= 3) {
+        if (!fullItems.empty()) {
+            const auto &topChinese = fullItems.front();
+            if (topChinese.source == core::CandidateSource::UserDictionary ||
+                topChinese.isLexical ||
+                (utf8CodePointCount(topChinese.text) == 1 && rawInput.size() <= 3)) {
                 isTopChineseLexical = true;
             } else {
                 try {
@@ -2185,7 +2054,7 @@ private:
         }
 
         const bool hasHighConfidenceChinese =
-            !page_.items.empty() &&
+            !fullItems.empty() &&
             (hasTrustedShortAbbreviation || isConsonantAbbreviation ||
              (hasExactFullPinyinMatch && isTopChineseLexical));
 
@@ -2222,207 +2091,79 @@ private:
             }
         }
 
-        const bool isEnglishSuppressed = isSuppressed(rawInput, rawInput);
-
-        bool preferEnglishOverChinese = false;
-        if (page_.items.empty()) {
-            preferEnglishOverChinese = true;
-        } else if (hasHighConfidenceChinese) {
-            preferEnglishOverChinese = false;
-        } else if (!predictedWords.empty() && !hasExactFullPinyinMatch) {
-            preferEnglishOverChinese = true;
-        } else if (isEnglish && !isEnglishSuppressed) {
-            if (!hasExactFullPinyinMatch) {
-                preferEnglishOverChinese = true;
-            } else if (!isTopChineseLexical) {
-                const double chineseLearningBoost =
-                    (page_.items.front().learningBoost > 0.0)
-                        ? page_.items.front().learningBoost
-                        : (learning != nullptr
-                               ? learning->boostAt(page_.items.front().text,
-                                                   page_.items.front().fullPinyin,
-                                                   nowMilliseconds())
-                               : 0.0);
-                if (chineseLearningBoost < 2.5) {
-                    preferEnglishOverChinese = true;
-                }
-            }
-        }
-
-        core::CandidateItem rawCandidate;
-        rawCandidate.text = rawInput;
-        rawCandidate.fullPinyin = std::string(rawInput);
-        rawCandidate.source = core::CandidateSource::Raw;
-        rawCandidate.commitRole = core::CommitCandidateRole::Raw;
-        rawCandidate.origins = {rawCandidate.source};
-        rawCandidate.consumedInputBytes = rawInput.size();
-
-        page_.items.erase(
-            std::remove_if(page_.items.begin(), page_.items.end(),
-                           [](const auto &item) {
-                                return item.source == core::CandidateSource::Raw;
-                           }),
-            page_.items.end());
-
-        char triggerChar = 'v';
-        if (clipboardTrigger_.size() == 3 && clipboardTrigger_[1] == '+') {
-            triggerChar = static_cast<char>(std::tolower(static_cast<unsigned char>(clipboardTrigger_[0])));
-        }
-        const bool isSingleTriggerChar =
-            rawInput.size() == 1 &&
-            std::tolower(static_cast<unsigned char>(rawInput.front())) == triggerChar;
-
-        if (isSingleTriggerChar && rawInput == "v") {
-            page_.items.clear();
-            core::CandidateItem rawItem;
-            rawItem.text = "v";
-            rawItem.fullPinyin = "v";
-            rawItem.source = core::CandidateSource::Raw;
-            rawItem.commitRole = core::CommitCandidateRole::Raw;
-            rawItem.origins = {rawItem.source};
-            rawItem.consumedInputBytes = 1;
-            page_.items.push_back(std::move(rawItem));
-
-            if (clipboardEnabled_) {
-                core::CandidateItem cmdCandidate;
-                cmdCandidate.text = "剪贴板 (" + clipboardTrigger_ + ")";
-                cmdCandidate.fullPinyin = "v";
-                cmdCandidate.source = core::CandidateSource::Command;
-                cmdCandidate.commitRole = core::CommitCandidateRole::Command;
-                cmdCandidate.origins = {cmdCandidate.source};
-                cmdCandidate.consumedInputBytes = 1;
-                page_.items.push_back(std::move(cmdCandidate));
-            }
-            page_.preedit = "v";
-        } else if (!macroCandidates.empty() && rawInput.front() == 'v') {
-            page_.items.push_back(std::move(rawCandidate));
-            page_.preedit = std::string(rawInput);
-        } else if (preferEnglishOverChinese) {
-            if (!predictedWords.empty()) {
-                core::CandidateItem predictedCandidate;
-                predictedCandidate.text = std::string(predictedWords.front());
-                predictedCandidate.fullPinyin = predictedCandidate.text;
-                predictedCandidate.source = core::CandidateSource::Raw;
-                predictedCandidate.commitRole = core::CommitCandidateRole::English;
-                predictedCandidate.origins = {predictedCandidate.source};
-                predictedCandidate.consumedInputBytes = rawInput.size();
-
-                page_.items.insert(page_.items.begin(), std::move(rawCandidate));
-                page_.items.insert(page_.items.begin(), std::move(predictedCandidate));
-            } else {
-                page_.items.insert(page_.items.begin(), std::move(rawCandidate));
-            }
-            page_.preedit = std::string(rawInput);
-        } else {
-            if (!predictedWords.empty()) {
-                core::CandidateItem predictedCandidate;
-                predictedCandidate.text = std::string(predictedWords.front());
-                predictedCandidate.fullPinyin = predictedCandidate.text;
-                predictedCandidate.source = core::CandidateSource::Raw;
-                predictedCandidate.commitRole = core::CommitCandidateRole::English;
-                predictedCandidate.origins = {predictedCandidate.source};
-                predictedCandidate.consumedInputBytes = rawInput.size();
-
-                const auto insertPos =
-                    page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
-                page_.items.insert(insertPos, std::move(predictedCandidate));
-            }
-
-            if (isEnglish || !predictedWords.empty()) {
-                bool isSingleSyllable = false;
-                if (!page_.items.empty()) {
-                    isSingleSyllable = pinyinSyllableCount(page_.items.front().fullPinyin) <= 1;
-                }
-                const bool isDualAttributeExemption = (rawInput == "can");
-                if (isSingleSyllable && !isDualAttributeExemption) {
-                    page_.items.push_back(std::move(rawCandidate));
-                } else {
-                    const auto insertPos =
-                        page_.items.empty() ? page_.items.begin() : std::next(page_.items.begin());
-                    page_.items.insert(insertPos, std::move(rawCandidate));
-                }
-            } else {
-                page_.items.push_back(std::move(rawCandidate));
-            }
-            page_.preedit = segmentedInput;
-        }
-
-        // Cover generated macros, raw/English candidates and future sources as
-        // well as the native pipeline. Commands are actions, not learned words.
-        page_.items.erase(
-            std::remove_if(page_.items.begin(), page_.items.end(),
-                           [&](const auto &item) {
-                               return item.source != core::CandidateSource::Command &&
-                                      isSuppressed(item.text, item.fullPinyin);
-                           }),
-            page_.items.end());
-
-        if (englishDefinitionEnabled_ && !page_.items.empty() && shared_) {
-            auto &top = page_.items.front();
-            if (top.source == core::CandidateSource::Raw &&
-                top.text.size() >= 4 &&
-                core::EnglishDictionary::isEnglishWord(top.text)) {
+        std::optional<std::string> englishDef;
+        if (englishDefinitionEnabled_ && shared_) {
+            if (rawInput.size() >= 4 && core::EnglishDictionary::isEnglishWord(rawInput)) {
                 auto *dict = shared_->ensureEnglishDefinitionDictionary();
                 if (dict != nullptr) {
-                    const auto rawDef = dict->lookup(top.text);
+                    const auto rawDef = dict->lookup(rawInput);
                     if (!rawDef.empty()) {
                         auto cleaned = core::EnglishDefinitionDictionary::cleanDefinition(rawDef, 12);
                         if (!cleaned.empty()) {
-                            top.annotation = std::move(cleaned);
+                            englishDef = std::move(cleaned);
                         }
                     }
                 }
             }
         }
 
-        std::unordered_set<core::CandidateIdentity> seenCandidateIdentities;
-        std::vector<core::CandidateItem> deduplicated;
-        deduplicated.reserve(page_.items.size());
-        for (auto &item : page_.items) {
-            if (item.source == core::CandidateSource::Command) {
-                deduplicated.push_back(std::move(item));
-                continue;
-            }
-            const auto id = core::candidateIdentity(item, page_);
-            if (seenCandidateIdentities.insert(id).second) {
-                deduplicated.push_back(std::move(item));
-            } else {
-                for (auto &existing : deduplicated) {
-                    if (core::candidateIdentity(existing, page_) == id) {
-                        for (auto src : item.origins) {
-                            if (std::find(existing.origins.begin(), existing.origins.end(), src) == existing.origins.end()) {
-                                existing.origins.push_back(src);
-                            }
-                        }
-                        if (std::find(existing.origins.begin(), existing.origins.end(), item.source) == existing.origins.end()) {
-                            existing.origins.push_back(item.source);
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        page_.items = std::move(deduplicated);
+        const auto *bestFullSentence =
+            fullItems.empty() ? nullptr : &fullItems.front();
+        auto prefixEvidence = bestFullSentence != nullptr
+            ? buildPrefixEvidence(*bestFullSentence, prefixEnds, rawInput,
+                                  partialPool, learning.get(), requestNowMs, &recentChoices_)
+            : std::vector<core::CandidateItem>{};
 
-        // Ambiguity annotation: when multiple items share the same display text
-        std::unordered_map<std::string, std::size_t> textCounts;
-        for (const auto &item : page_.items) {
-            if (item.source != core::CandidateSource::Command) {
-                ++textCounts[item.text];
-            }
-        }
-        for (auto &item : page_.items) {
-            if (item.source == core::CandidateSource::Command) {
-                continue;
-            }
-            if (textCounts[item.text] > 1 && item.annotation.empty()) {
-                if (item.consumedInputBytes > 0 && item.consumedInputBytes < rawInput.size()) {
-                    item.annotation = std::string(rawInput.substr(item.consumedInputBytes));
-                } else if (!item.fullPinyin.empty()) {
-                    item.annotation = item.fullPinyin;
+        CandidateCompositionInput compInput;
+        compInput.rawInput = rawInput;
+        compInput.canonicalInput = canonicalInput;
+        compInput.segmentedInput = segmentedInput;
+        compInput.fullCandidates = std::move(fullItems);
+        compInput.partialCandidates = std::move(partialPool);
+        compInput.prefixEnds = prefixEnds;
+        compInput.prefixEvidence = std::move(prefixEvidence);
+        compInput.macroCandidates = generateMacroCandidates(rawInput, canonicalInput);
+        compInput.englishPredictions = std::move(predictedWords);
+        compInput.isEnglishWord = isEnglish;
+        compInput.hasPinyinCoverage = hasPinyinCoverage;
+        compInput.hasInvalidInternalPinyinSegment = hasInvalidInternalPinyinSegment(segmentedInput);
+        compInput.clipboardEnabled = clipboardEnabled_;
+        compInput.clipboardTrigger = clipboardTrigger_;
+        compInput.englishDefinition = std::move(englishDef);
+        compInput.topChineseLearningBoost =
+            (!compInput.fullCandidates.empty() && compInput.fullCandidates.front().learningBoost > 0.0)
+                ? compInput.fullCandidates.front().learningBoost
+                : (learning != nullptr && !compInput.fullCandidates.empty()
+                       ? learning->boostAt(compInput.fullCandidates.front().text,
+                                           compInput.fullCandidates.front().fullPinyin,
+                                           nowMilliseconds())
+                       : 0.0);
+        compInput.isSuppressed = isSuppressed;
+        compInput.isLexicalWord = [this](std::string_view text, std::string_view pinyin) {
+            try {
+                std::string cleanPinyin(pinyin);
+                while (!cleanPinyin.empty() && cleanPinyin.back() == '\'') {
+                    cleanPinyin.pop_back();
                 }
+                if (cleanPinyin.empty()) return false;
+                const auto encoded = libime::PinyinEncoder::encodeFullPinyin(cleanPinyin);
+                bool matched = false;
+                ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
+                    if (hanzi == text) {
+                        matched = true;
+                        return false;
+                    }
+                    return true;
+                });
+                return matched;
+            } catch (const std::exception &) {
+                return false;
             }
-        }
+        };
+
+        auto compResult = composeCandidates(compInput);
+        page_.items = std::move(compResult.items);
+        page_.preedit = std::move(compResult.preedit);
     }
 
     std::shared_ptr<SharedResources> shared_;
