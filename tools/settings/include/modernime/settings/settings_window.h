@@ -24,6 +24,7 @@ public:
     void showLearningPage();
     void showDictionaryPage();
     void showStatusPage();
+    void showUpdatesPage();
     void presentError(std::string_view message);
 
 private:

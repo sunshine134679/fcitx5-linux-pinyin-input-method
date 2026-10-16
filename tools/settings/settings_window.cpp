@@ -42,6 +42,10 @@ void SettingsWindow::showStatusPage() {
     shell_->show(SettingsPageId::Diagnostics);
 }
 
+void SettingsWindow::showUpdatesPage() {
+    shell_->show(SettingsPageId::Updates);
+}
+
 void SettingsWindow::presentError(std::string_view message) {
     shell_->presentError(message);
 }

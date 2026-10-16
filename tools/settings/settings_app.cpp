@@ -39,6 +39,8 @@ void activate(GtkApplication *application, gpointer data) {
     } else if (state->initialPage == "diagnostics" ||
                state->initialPage == "status") {
         state->window->showStatusPage();
+    } else if (state->initialPage == "updates") {
+        state->window->showUpdatesPage();
     }
 }
 
@@ -81,6 +83,8 @@ int main(int argc, char **argv) {
             targetPage = "input";
         } else if (arg == "--diagnostics") {
             targetPage = "diagnostics";
+        } else if (arg == "--updates" || arg == "-u") {
+            targetPage = "updates";
         } else {
             filteredArgs.push_back(argv[i]);
         }
