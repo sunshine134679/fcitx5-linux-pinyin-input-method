@@ -95,27 +95,6 @@ std::string resolveSourceUrl(std::string_view source) {
     return "https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/";
 }
 
-std::string cleanSourceDisplayText(std::string_view source, std::string_view channel) {
-    if (source.empty()) {
-        return "系统已配置软件源";
-    }
-    auto pos = source.find("http://");
-    if (pos == std::string_view::npos) {
-        pos = source.find("https://");
-    }
-    if (pos != std::string_view::npos) {
-        auto end = source.find_first_of(" \t\r\n", pos);
-        std::string url = (end == std::string_view::npos)
-                              ? std::string(source.substr(pos))
-                              : std::string(source.substr(pos, end - pos));
-        if (!channel.empty() && channel != "unknown") {
-            return url + " (" + std::string(channel) + ")";
-        }
-        return url;
-    }
-    return std::string(source);
-}
-
 } // namespace
 
 class UpdatesPage::Impl final {
@@ -283,27 +262,18 @@ private:
         gtk_widget_set_valign(sourceTitle, GTK_ALIGN_CENTER);
         gtk_grid_attach(GTK_GRID(grid), sourceTitle, 0, 2, 1, 1);
 
-        auto *sourceBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-        gtk_widget_set_hexpand(sourceBox, TRUE);
-        gtk_widget_set_halign(sourceBox, GTK_ALIGN_FILL);
-
-        sourceLabel = wrappedLabel("检测中…", true);
-        setTarget(sourceLabel, "updates-source");
-        addStyleClass(sourceLabel, "modernime-code-block");
-        gtk_widget_set_valign(sourceLabel, GTK_ALIGN_CENTER);
-        gtk_box_pack_start(GTK_BOX(sourceBox), sourceLabel, TRUE, TRUE, 0);
-
         sourceJumpButton = gtk_button_new_with_label("一键跳转 ↗");
         setTarget(sourceJumpButton, "updates-source-jump");
-        setAccessibleWidgetText(sourceJumpButton, "一键跳转", "在默认浏览器中打开软件源页面");
+        setAccessibleWidgetText(sourceJumpButton, "软件源一键跳转", "在默认浏览器中打开官方软件源页面");
+        gtk_widget_set_tooltip_text(sourceJumpButton, "在默认浏览器中打开官方软件源页面");
+        gtk_widget_set_halign(sourceJumpButton, GTK_ALIGN_START);
         gtk_widget_set_valign(sourceJumpButton, GTK_ALIGN_CENTER);
-        gtk_box_pack_start(GTK_BOX(sourceBox), sourceJumpButton, FALSE, FALSE, 0);
 
         g_signal_connect_data(sourceJumpButton, "clicked", G_CALLBACK(onJumpSourceClicked),
                              new SharedLifetime(state), destroySignalState,
                              static_cast<GConnectFlags>(0));
 
-        gtk_grid_attach(GTK_GRID(grid), sourceBox, 1, 2, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), sourceJumpButton, 1, 2, 1, 1);
 
         gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
     }
@@ -497,9 +467,6 @@ private:
         }
         gtk_label_set_text(GTK_LABEL(channelLabel), channelText.c_str());
 
-        const std::string cleanSource = cleanSourceDisplayText(status.packageSource, status.installChannel);
-        gtk_label_set_text(GTK_LABEL(sourceLabel), cleanSource.c_str());
-
         std::string candDisplay;
         if (status.updateAvailable) {
             candDisplay = status.candidateVersion;
@@ -558,7 +525,6 @@ private:
     GtkWidget *page = nullptr;
     GtkWidget *currentVersionLabel = nullptr;
     GtkWidget *channelLabel = nullptr;
-    GtkWidget *sourceLabel = nullptr;
     GtkWidget *sourceJumpButton = nullptr;
     GtkWidget *candidateVersionLabel = nullptr;
     GtkWidget *changelogLabel = nullptr;
