@@ -46,6 +46,7 @@ public:
     // Returns true only when a settings clear was observed and applied.
     bool reloadIfChanged();
     std::shared_ptr<const LearningSnapshot> snapshot() const;
+    std::int64_t resetRevision() const;
 
 private:
     enum class EventKind { Selection, NegativeFeedback, Suppression };

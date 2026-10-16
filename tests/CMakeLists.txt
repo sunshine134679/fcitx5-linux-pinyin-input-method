@@ -536,6 +536,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             core/learning_order_test.cpp
             core/candidate_identity_regression_test.cpp
             core/pinyin_composition_trace_test.cpp
+            core/pinyin_resource_coordination_test.cpp
             adapter/candidate_selection_test.cpp
             ../adapter/fcitx5/src/engine.cpp
         )

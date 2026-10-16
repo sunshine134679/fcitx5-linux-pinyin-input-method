@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/pinyin_shared_resources.h"
 
 #include "modernime/pinyin/candidate_composition.h"
 #include "modernime/pinyin/candidate_mixer.h"
@@ -495,209 +496,6 @@ namespace modernime::pinyin {
 
 namespace {
 
-std::filesystem::path defaultLearningPath() {
-    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
-    const auto *dataHome = std::getenv("XDG_DATA_HOME");
-    const auto *home = std::getenv("HOME");
-    return core::SettingsPaths::fromEnvironment(
-               xdgConfigHome == nullptr ? std::string_view{}
-                                        : std::string_view(xdgConfigHome),
-               dataHome == nullptr ? std::string_view{}
-                                   : std::string_view(dataHome),
-               home == nullptr ? std::string_view{}
-                               : std::string_view(home))
-        .learningStore;
-}
-
-std::filesystem::path defaultUserDictionaryPath() {
-    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
-    const auto *dataHome = std::getenv("XDG_DATA_HOME");
-    const auto *home = std::getenv("HOME");
-    return core::SettingsPaths::fromEnvironment(
-               xdgConfigHome == nullptr ? std::string_view{}
-                                        : std::string_view(xdgConfigHome),
-               dataHome == nullptr ? std::string_view{}
-                                   : std::string_view(dataHome),
-               home == nullptr ? std::string_view{}
-                               : std::string_view(home))
-        .userDictionary;
-}
-
-bool isRegularFile(const std::filesystem::path &path) {
-    if (path.empty()) {
-        return false;
-    }
-    std::error_code error;
-    return std::filesystem::is_regular_file(path, error) && !error;
-}
-
-void appendDataDirectoryCandidates(
-    std::vector<std::filesystem::path> &candidates, std::string_view filename) {
-    const auto *environment = std::getenv("XDG_DATA_DIRS");
-    const std::string_view directories =
-        environment != nullptr && *environment != '\0'
-            ? std::string_view(environment)
-            : std::string_view("/usr/local/share:/usr/share");
-    std::size_t start = 0;
-    while (start <= directories.size()) {
-        const auto end = directories.find(':', start);
-        const auto directory = directories.substr(start, end - start);
-        const std::filesystem::path path(directory);
-        if (path.is_absolute()) {
-            candidates.emplace_back(path / "modernime" / "pinyin" / filename);
-        }
-        if (end == std::string_view::npos) {
-            break;
-        }
-        start = end + 1;
-    }
-}
-
-std::filesystem::path extensionDictionaryPath(
-    std::string_view configuredPath) {
-    if (!configuredPath.empty()) {
-        return std::filesystem::path(configuredPath);
-    }
-
-    std::vector<std::filesystem::path> candidates;
-    if (const auto *environment = std::getenv(
-            "MODERNIME_PINYIN_KNOWLEDGE_DICTIONARY");
-        environment != nullptr && *environment != '\0') {
-        candidates.emplace_back(environment);
-    }
-
-    const auto *dataHome = std::getenv("XDG_DATA_HOME");
-    if (dataHome != nullptr && *dataHome != '\0') {
-        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime" /
-                                "pinyin" / "modernime-knowledge.dict");
-    } else if (const auto *home = std::getenv("HOME"); home != nullptr &&
-               *home != '\0') {
-        candidates.emplace_back(std::filesystem::path(home) / ".local" /
-                                "share" / "modernime" / "pinyin" /
-                                "modernime-knowledge.dict");
-    }
-
-    appendDataDirectoryCandidates(candidates, "modernime-knowledge.dict");
-
-#ifdef MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY
-    candidates.emplace_back(MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY);
-#endif
-#ifdef MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY
-    candidates.emplace_back(MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY);
-#endif
-    candidates.emplace_back(
-        "/usr/share/modernime/pinyin/modernime-knowledge.dict");
-
-    for (const auto &candidate : candidates) {
-        if (isRegularFile(candidate)) {
-            return candidate;
-        }
-    }
-    return {};
-}
-
-std::filesystem::path hotwordDictionaryPath(std::string_view configuredPath) {
-    if (!configuredPath.empty()) {
-        return std::filesystem::path(configuredPath);
-    }
-
-    std::vector<std::filesystem::path> candidates;
-    if (const auto *environment = std::getenv(
-            "MODERNIME_PINYIN_HOTWORDS_DICTIONARY");
-        environment != nullptr && *environment != '\0') {
-        candidates.emplace_back(environment);
-    }
-
-    const auto *dataHome = std::getenv("XDG_DATA_HOME");
-    if (dataHome != nullptr && *dataHome != '\0') {
-        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime" /
-                                "pinyin" / "modernime-hotwords.dict");
-    } else if (const auto *home = std::getenv("HOME"); home != nullptr &&
-               *home != '\0') {
-        candidates.emplace_back(std::filesystem::path(home) / ".local" /
-                                "share" / "modernime" / "pinyin" /
-                                "modernime-hotwords.dict");
-    }
-
-    appendDataDirectoryCandidates(candidates, "modernime-hotwords.dict");
-
-#ifdef MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY
-    candidates.emplace_back(MODERNIME_PINYIN_HOTWORDS_INSTALL_BINARY);
-#endif
-#ifdef MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY
-    candidates.emplace_back(MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY);
-#endif
-    candidates.emplace_back(
-        "/usr/share/modernime/pinyin/modernime-hotwords.dict");
-
-    for (const auto &candidate : candidates) {
-        if (isRegularFile(candidate)) {
-            return candidate;
-        }
-    }
-    return {};
-}
-
-std::filesystem::path englishDefinitionDictionaryPath(
-    std::string_view configuredPath) {
-    if (!configuredPath.empty()) {
-        return std::filesystem::path(configuredPath);
-    }
-
-    std::vector<std::filesystem::path> candidates;
-    if (const auto *environment = std::getenv(
-            "MODERNIME_ENGLISH_DEFINITION_DICTIONARY");
-        environment != nullptr && *environment != '\0') {
-        candidates.emplace_back(environment);
-    }
-
-    const auto *dataHome = std::getenv("XDG_DATA_HOME");
-    if (dataHome != nullptr && *dataHome != '\0') {
-        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime" /
-                                "pinyin" / "modernime-english-dict.bin");
-    } else if (const auto *home = std::getenv("HOME"); home != nullptr &&
-               *home != '\0') {
-        candidates.emplace_back(std::filesystem::path(home) / ".local" /
-                                "share" / "modernime" / "pinyin" /
-                                "modernime-english-dict.bin");
-    }
-
-    appendDataDirectoryCandidates(candidates, "modernime-english-dict.bin");
-
-#ifdef MODERNIME_ENGLISH_DICT_INSTALL_BINARY
-    candidates.emplace_back(MODERNIME_ENGLISH_DICT_INSTALL_BINARY);
-#endif
-#ifdef MODERNIME_ENGLISH_DICT_SOURCE_BINARY
-    candidates.emplace_back(MODERNIME_ENGLISH_DICT_SOURCE_BINARY);
-#endif
-    candidates.emplace_back(
-        "/usr/share/modernime/pinyin/modernime-english-dict.bin");
-
-    for (const auto &candidate : candidates) {
-        if (isRegularFile(candidate)) {
-            return candidate;
-        }
-    }
-    return {};
-}
-
-void loadExtensionDictionary(libime::PinyinDictionary &dictionary,
-                             const std::filesystem::path &path) {
-    if (!isRegularFile(path)) {
-        return;
-    }
-
-    const auto index = dictionary.dictSize();
-    dictionary.addEmptyDict();
-    try {
-        dictionary.load(index, path.c_str(), libime::PinyinDictFormat::Binary);
-    } catch (...) {
-        // An optional data package must never prevent the system dictionary
-        // and user dictionary from starting.
-        dictionary.clear(index);
-    }
-}
-
 std::int64_t nowMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch())
@@ -1034,247 +832,50 @@ std::string automaticallySegmentedPreedit(
 
 } // namespace
 
-std::string defaultDictionaryPath() {
-    if (const auto *env = std::getenv("MODERNIME_PINYIN_DICT");
-        env != nullptr && *env != '\0') {
-        return env;
-    }
-    if (const auto *env = std::getenv("LIBIME_PINYIN_DICT");
-        env != nullptr && *env != '\0') {
-        return env;
-    }
-
-    static const char *const kCandidates[] = {
-        "/usr/share/libime/sc.dict",
-        "/usr/lib64/libime/sc.dict",
-        "/usr/lib/x86_64-linux-gnu/libime/sc.dict",
-        "/usr/lib/aarch64-linux-gnu/libime/sc.dict",
-        "/usr/lib/riscv64-linux-gnu/libime/sc.dict",
-        "/usr/lib/loongarch64-linux-gnu/libime/sc.dict",
-        "/usr/lib/libime/sc.dict",
-        "/usr/local/share/libime/sc.dict",
-        "/usr/local/lib64/libime/sc.dict",
-        "/usr/local/lib/libime/sc.dict",
-    };
-
-    for (const char *candidate : kCandidates) {
-        if (isRegularFile(candidate)) {
-            return candidate;
-        }
-    }
-    return "/usr/share/libime/sc.dict";
-}
-
-std::string defaultLanguageModelPath() {
-    if (const auto *env = std::getenv("MODERNIME_PINYIN_LM");
-        env != nullptr && *env != '\0') {
-        return env;
-    }
-    if (const auto *env = std::getenv("LIBIME_PINYIN_LM");
-        env != nullptr && *env != '\0') {
-        return env;
-    }
-
-    static const char *const kCandidates[] = {
-        "/usr/lib64/libime/zh_CN.lm",
-        "/usr/lib/x86_64-linux-gnu/libime/zh_CN.lm",
-        "/usr/lib/aarch64-linux-gnu/libime/zh_CN.lm",
-        "/usr/lib/riscv64-linux-gnu/libime/zh_CN.lm",
-        "/usr/lib/loongarch64-linux-gnu/libime/zh_CN.lm",
-        "/usr/share/libime/zh_CN.lm",
-        "/usr/lib/libime/zh_CN.lm",
-        "/usr/local/lib64/libime/zh_CN.lm",
-        "/usr/local/lib/libime/zh_CN.lm",
-        "/usr/local/share/libime/zh_CN.lm",
-    };
-
-    for (const char *candidate : kCandidates) {
-        if (isRegularFile(candidate)) {
-            return candidate;
-        }
-    }
-
-    std::error_code ec;
-    if (std::filesystem::is_directory("/usr/lib64", ec)) {
-        return "/usr/lib64/libime/zh_CN.lm";
-    }
-    return "/usr/lib/x86_64-linux-gnu/libime/zh_CN.lm";
-}
-
-class PinyinCandidateProvider::SharedResources final {
-public:
-    std::unique_ptr<libime::PinyinIME> ime;
-    std::unique_ptr<core::LearningWriter> learning;
-    UserDictionary userDictionary;
-    std::filesystem::path userDictionaryPath;
-    std::filesystem::path learningStorePath;
-    core::EnglishDefinitionDictionary englishDefinitionDict;
-    std::filesystem::path englishDefinitionDictPath;
-    std::shared_ptr<core::PhraseFormationStats> phraseStats =
-        std::make_shared<core::PhraseFormationStats>();
-
-    // Read-only fallback for providers created with learning disabled. Loaded
-    // during shared-resource initialization, not on each keystroke.
-    std::unique_ptr<core::LearningStore> visibilityReader;
-    std::shared_ptr<const core::LearningSnapshot> visibilitySnapshot;
-    std::int64_t visibilityRevision = 0;
-
-    bool reloadVisibility() {
-        if (visibilityReader == nullptr) {
-            visibilityReader = std::make_unique<core::LearningStore>(learningStorePath);
-            if (!visibilityReader->openReadOnly()) {
-                visibilityReader.reset();
-                return false;
-            }
-        }
-        const auto state = visibilityReader->readState();
-        if (!state) return false;
-        visibilitySnapshot = state->snapshot;
-        visibilityRevision = state->resetRevision;
-        return true;
-    }
-
-    std::shared_ptr<const core::LearningSnapshot> visibleLearning() const {
-        return learning != nullptr ? learning->snapshot() : visibilitySnapshot;
-    }
-
-    core::LearningWriter *ensureLearningWriter() {
-        if (learning == nullptr && !learningStorePath.empty()) {
-            learning =
-                std::make_unique<core::LearningWriter>(learningStorePath);
-        }
-        return learning.get();
-    }
-
-    core::EnglishDefinitionDictionary *ensureEnglishDefinitionDictionary() {
-        if (!englishDefinitionDict.isLoaded() && !englishDefinitionDictPath.empty()) {
-            englishDefinitionDict.load(englishDefinitionDictPath);
-        }
-        return englishDefinitionDict.isLoaded() ? &englishDefinitionDict : nullptr;
-    }
-
-    // Re-reads the user dictionary file and swaps the libime dictionary
-    // layer, so settings-client edits apply without restarting fcitx5.
-    bool reloadUserDictionary() {
-        auto updated = UserDictionary::loadText(userDictionaryPath);
-        ime->dict()->clear(1);
-        updated.addTo(*ime->dict(), 1);
-        userDictionary = std::move(updated);
-        return true;
-    }
-
-    bool reloadLearningStore() {
-        if (phraseStats != nullptr) {
-            phraseStats->clear();
-        }
-        if (learning != nullptr) {
-            return learning->reload();
-        }
-        return reloadVisibility();
-    }
-};
-
 std::shared_ptr<PinyinCandidateProvider::SharedResources>
 PinyinCandidateProvider::createSharedResources(
     const PinyinDataPaths &paths, const PinyinProviderOptions &options) {
-    auto resources = std::make_shared<SharedResources>();
-    resources->userDictionaryPath =
-        paths.userDictionary.empty()
-            ? defaultUserDictionaryPath()
-            : std::filesystem::path(paths.userDictionary);
-    resources->userDictionary =
-        UserDictionary::loadText(resources->userDictionaryPath);
-    resources->learningStorePath =
-        paths.learningStore.empty()
-            ? defaultLearningPath()
-            : std::filesystem::path(paths.learningStore);
-    resources->englishDefinitionDictPath =
-        englishDefinitionDictionaryPath(paths.englishDefinitionDictionary);
-
-    auto dictionary = std::make_unique<libime::PinyinDictionary>();
-    if (!paths.dictionary.empty()) {
-        if (isRegularFile(paths.dictionary)) {
-            dictionary->load(0, paths.dictionary.c_str(),
-                             libime::PinyinDictFormat::Binary);
-        } else {
-            std::cerr << "ModernIME 警告: 拼音系统词典文件不存在: '"
-                      << paths.dictionary
-                      << "'，拼音基础候选将无法生成！请检查 libime 安装或 PinyinDataPaths 配置。"
-                      << std::endl;
-        }
-    }
-    resources->userDictionary.addTo(*dictionary, 1);
-    loadExtensionDictionary(
-        *dictionary,
-        extensionDictionaryPath(paths.extensionDictionary));
-    // 热词表加载在知识库之后的下一层（当前为 layer 3）；正 cost 让
-    // 简拼命中的热词越过系统词典组合，排在候选列表前列。
-    loadExtensionDictionary(
-        *dictionary, hotwordDictionaryPath(paths.hotwordDictionary));
-
-    std::unique_ptr<libime::UserLanguageModel> model;
-    if (!paths.languageModel.empty() && isRegularFile(paths.languageModel)) {
-        model = std::make_unique<libime::UserLanguageModel>(
-            paths.languageModel.c_str());
-    } else {
-        if (!paths.languageModel.empty()) {
-            std::cerr << "ModernIME 警告: 拼音语言模型文件不存在: '"
-                      << paths.languageModel
-                      << "'，已降级为空语言模型，整句预测与候选词排序将受严重影响！请检查 libime 安装或 PinyinDataPaths 配置。"
-                      << std::endl;
-        }
-        model = std::make_unique<libime::UserLanguageModel>();
-    }
-
-    resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
-                                                         std::move(model));
-    resources->ime->setFuzzyFlags(getDefaultFuzzyFlags());
-    resources->ime->setNBest(32);
-    // 在后台预热线程中一体化加载学习写入器，首键打字时直接读取内存快照，
-    // 避免首键触发数十毫秒的 SQLite 磁盘打开与全表反序列化。
-    if (options.learningEnabled) {
-        resources->ensureLearningWriter();
-    } else {
-        resources->reloadVisibility();
-    }
-    return resources;
+    auto base = PinyinSharedResources::create(paths, options);
+    return std::static_pointer_cast<SharedResources>(base);
 }
 
 bool PinyinCandidateProvider::reloadUserDictionary(
     std::shared_ptr<SharedResources> &resources) {
+    return reloadUserDictionaryDetailed(resources).changed;
+}
+
+ResourceChange PinyinCandidateProvider::reloadUserDictionaryDetailed(
+    std::shared_ptr<SharedResources> &resources) {
     if (resources == nullptr) {
-        return false;
+        return {};
     }
     return resources->reloadUserDictionary();
 }
 
 bool PinyinCandidateProvider::reloadLearningStore(
     std::shared_ptr<SharedResources> &resources) {
+    return reloadLearningStoreDetailed(resources).changed;
+}
+
+ResourceChange PinyinCandidateProvider::reloadLearningStoreDetailed(
+    std::shared_ptr<SharedResources> &resources) {
     if (resources == nullptr) {
-        return false;
+        return {};
     }
     return resources->reloadLearningStore();
 }
 
 bool PinyinCandidateProvider::refreshLearningStore(
     std::shared_ptr<SharedResources> &resources) {
-    if (resources != nullptr && resources->learning != nullptr) {
-        if (resources->learning->reloadIfChanged()) {
-            if (resources->phraseStats != nullptr) {
-                resources->phraseStats->clear();
-            }
-            return true;
-        }
-    }    if (resources != nullptr && resources->learning == nullptr &&
-        resources->visibilityReader != nullptr) {
-        const auto revision = resources->visibilityReader->resetRevision();
-        if (revision && *revision != resources->visibilityRevision && resources->reloadVisibility()) {
-            if (resources->phraseStats != nullptr) resources->phraseStats->clear();
-            return true;
-        }
-    }
+    return refreshLearningStoreDetailed(resources).changed;
+}
 
-    return false;
+ResourceChange PinyinCandidateProvider::refreshLearningStoreDetailed(
+    std::shared_ptr<SharedResources> &resources) {
+    if (resources == nullptr) {
+        return {};
+    }
+    return resources->refreshLearningStore();
 }
 
 class PinyinCandidateProvider::Impl final {
@@ -1290,7 +891,9 @@ public:
           learningEnabled_(options.learningEnabled),
           englishDefinitionEnabled_(options.englishDefinitionEnabled),
           clipboardEnabled_(options.clipboardEnabled),
-          clipboardTrigger_(options.clipboardTrigger) {
+          clipboardTrigger_(options.clipboardTrigger),
+          observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
+          observedLearningRevision_(shared_ ? shared_->learningRevision() : 0) {
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         refresh();
     }
@@ -1372,6 +975,54 @@ public:
         }
     }
 
+    bool checkResourceChanges() {
+        if (!shared_) {
+            return false;
+        }
+        bool changed = false;
+        const auto curDictGen = shared_->dictionaryGeneration();
+        if (curDictGen != observedDictionaryGeneration_) {
+            observedDictionaryGeneration_ = curDictGen;
+            changed = true;
+        }
+        const auto curLearnRev = shared_->learningRevision();
+        if (curLearnRev != observedLearningRevision_) {
+            observedLearningRevision_ = curLearnRev;
+            recentChoices_.clear();
+            phraseTracker_.resetCommitHistory();
+            fallbackContextBefore_.clear();
+            changed = true;
+        }
+        return changed;
+    }
+
+    core::CommitEvent makeCommitEvent(
+        std::string_view text,
+        std::string_view fullPinyin,
+        std::string_view rawKeystrokes,
+        core::CommitCandidateRole role,
+        std::size_t consumedInputBytes,
+        bool isPartial,
+        bool isDeviation,
+        std::size_t candidateIndex = 0,
+        std::int64_t timestampMs = 0,
+        std::string_view contextBefore = {},
+        std::string_view contextAfter = {}) const {
+        core::CommitEvent event;
+        event.text = std::string(text);
+        event.fullPinyin = std::string(fullPinyin);
+        event.rawKeystrokes = std::string(rawKeystrokes);
+        event.role = role;
+        event.consumedInputBytes = consumedInputBytes;
+        event.isPartial = isPartial;
+        event.isDeviation = isDeviation;
+        event.candidateIndex = candidateIndex;
+        event.contextBefore = std::string(contextBefore);
+        event.contextAfter = std::string(contextAfter);
+        event.timestampMs = timestampMs > 0 ? timestampMs : nowMilliseconds();
+        return event;
+    }
+
     std::optional<core::CandidateSelectionOutcome> selectConfirmed(
         const core::CandidateSelectionRequest &request,
         std::uint64_t providerGeneration) {
@@ -1406,27 +1057,20 @@ public:
         const auto rawInput = context->userInput();
         const bool partialSelection = candidate.consumedInputBytes > 0 &&
                                       candidate.consumedInputBytes < rawInput.size();
+        const auto consumedBytes = candidate.consumedInputBytes > 0
+                                       ? candidate.consumedInputBytes
+                                       : rawInput.size();
+        const auto fullPinyin = candidate.fullPinyin.empty()
+                                    ? (partialSelection
+                                           ? std::string(rawInput.substr(0, consumedBytes))
+                                           : std::string(rawInput))
+                                    : candidate.fullPinyin;
 
-        core::CommitEvent event;
-        event.text = candidate.text;
-        event.isPartial = partialSelection;
-        event.consumedInputBytes = candidate.consumedInputBytes > 0 ? candidate.consumedInputBytes : rawInput.size();
-        if (candidate.fullPinyin.empty()) {
-            event.fullPinyin = partialSelection
-                ? std::string(rawInput.substr(0, event.consumedInputBytes))
-                : std::string(rawInput);
-        } else {
-            event.fullPinyin = candidate.fullPinyin;
-        }
-        event.rawKeystrokes = std::string(rawInput.substr(0, event.consumedInputBytes));
-        event.contextBefore = contextBefore_;
-        event.contextAfter = contextAfter_;
-        event.timestampMs = nowMilliseconds();
-        event.candidateIndex = request.globalIndex;
-        if (request.globalIndex > 0) {
-            event.isDeviation = true;
-        }
-        event.role = expectedId.role;
+        auto event = makeCommitEvent(
+            candidate.text, fullPinyin, rawInput.substr(0, consumedBytes),
+            expectedId.role, consumedBytes, partialSelection,
+            request.globalIndex > 0, request.globalIndex, 0,
+            contextBefore_, contextAfter_);
 
         if (!learningEnabled_) {
             onCommitEvent(event);
@@ -1439,29 +1083,21 @@ public:
                 candidate.text, event.fullPinyin, rawInput, event.consumedInputBytes);
             onCommitEvent(event);
             if (formedIntra.has_value()) {
-                core::CommitEvent phraseEvent;
-                phraseEvent.text = formedIntra->text;
-                phraseEvent.fullPinyin = formedIntra->fullPinyin;
-                phraseEvent.rawKeystrokes = formedIntra->rawKeystrokes;
-                phraseEvent.role = core::CommitCandidateRole::Chinese;
-                phraseEvent.isPartial = false;
-                phraseEvent.consumedInputBytes = formedIntra->rawKeystrokes.size();
-                phraseEvent.timestampMs = event.timestampMs;
-                phraseEvent.isDeviation = true;
+                auto phraseEvent = makeCommitEvent(
+                    formedIntra->text, formedIntra->fullPinyin,
+                    formedIntra->rawKeystrokes, core::CommitCandidateRole::Chinese,
+                    formedIntra->rawKeystrokes.size(), false, true, 0,
+                    event.timestampMs, "", "");
                 onCommitEvent(phraseEvent);
                 phraseTracker_.resetCommitHistory();
             } else {
                 auto formedInter = phraseTracker_.recordCommit(event);
                 for (const auto &fp : formedInter) {
-                    core::CommitEvent phraseEvent;
-                    phraseEvent.text = fp.text;
-                    phraseEvent.fullPinyin = fp.fullPinyin;
-                    phraseEvent.rawKeystrokes = fp.rawKeystrokes;
-                    phraseEvent.role = core::CommitCandidateRole::Chinese;
-                    phraseEvent.isPartial = false;
-                    phraseEvent.consumedInputBytes = fp.rawKeystrokes.size();
-                    phraseEvent.timestampMs = event.timestampMs;
-                    phraseEvent.isDeviation = true;
+                    auto phraseEvent = makeCommitEvent(
+                        fp.text, fp.fullPinyin, fp.rawKeystrokes,
+                        core::CommitCandidateRole::Chinese,
+                        fp.rawKeystrokes.size(), false, true, 0,
+                        event.timestampMs, "", "");
                     if (fp.isInitialFormation) {
                         for (int i = 0; i < fp.repetitionCount; ++i) {
                             onCommitEvent(phraseEvent);
@@ -1506,25 +1142,8 @@ public:
             outcome.remainingInput = context->userInput();
             return outcome;
         }
-        if (candidate.source == core::CandidateSource::Learned ||
-            candidate.source == core::CandidateSource::UserDictionary ||
-            !candidate.consumedInputBytes ||
-            candidate.consumedInputBytes >= rawInput.size()) {
-            context->clear();
-            refresh();
-            outcome.action = core::SelectionAction::CommitText;
-            outcome.remainingInput = context->userInput();
-            return outcome;
-        }
-        try {
-            if (page_.items[request.globalIndex].sourceIndex < context->candidates().size()) {
-                context->select(page_.items[request.globalIndex].sourceIndex);
-            } else {
-                context->clear();
-            }
-        } catch (const std::exception &) {
-            context->clear();
-        }
+
+        context->clear();
         refresh();
         outcome.action = core::SelectionAction::CommitText;
         outcome.remainingInput = context->userInput();
@@ -1621,17 +1240,10 @@ public:
         }
 
         const auto rawInput = context->userInput();
-        core::CommitEvent event;
-        event.text = chosenChar;
-        event.fullPinyin = chosenSyllable;
-        event.rawKeystrokes = chosenSyllable;
-        event.role = core::CommitCandidateRole::Chinese;
-        event.isPartial = false;
-        event.consumedInputBytes = rawInput.size();
-        event.contextBefore = contextBefore_;
-        event.contextAfter = contextAfter_;
-        event.timestampMs = nowMilliseconds();
-        event.isDeviation = true;
+        auto event = makeCommitEvent(
+            chosenChar, chosenSyllable, chosenSyllable,
+            core::CommitCandidateRole::Chinese, rawInput.size(),
+            false, true, 0, 0, contextBefore_, contextAfter_);
 
         phraseTracker_.cancelComposition();
         core::CommitEvent genericEvent = event;
@@ -1856,6 +1468,13 @@ private:
     }
 
     void refresh() {
+        if (checkResourceChanges()) {
+            const auto currentInput = context->userInput();
+            if (!currentInput.empty()) {
+                context->clear();
+                context->type(currentInput);
+            }
+        }
         std::vector<std::string> previousOrder;
         previousOrder.reserve(page_.items.size());
         for (const auto &item : page_.items) {
@@ -2181,6 +1800,8 @@ private:
     std::string fallbackContextBefore_;
     std::unordered_set<std::string> suppressedLearned_;
     std::uint64_t generation = 0;
+    std::uint64_t observedDictionaryGeneration_ = 0;
+    std::int64_t observedLearningRevision_ = 0;
 };
 
 PinyinCandidateProvider::PinyinCandidateProvider(PinyinDataPaths paths,

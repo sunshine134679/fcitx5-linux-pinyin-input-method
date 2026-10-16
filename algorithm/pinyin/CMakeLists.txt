@@ -9,6 +9,7 @@ add_library(modernime_pinyin STATIC
     src/candidate_features.cpp
     src/candidate_pipeline.cpp
     src/pinyin_candidate_provider.cpp
+    src/pinyin_shared_resources.cpp
     src/user_dictionary.cpp
 )
 target_include_directories(modernime_pinyin

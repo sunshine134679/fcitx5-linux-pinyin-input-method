@@ -149,6 +149,11 @@ std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
     return snapshot_;
 }
 
+std::int64_t LearningWriter::resetRevision() const {
+    std::lock_guard lock(mutex_);
+    return resetRevision_;
+}
+
 bool LearningWriter::reload() {
     flush();
     std::lock_guard storeLock(storeMutex_);

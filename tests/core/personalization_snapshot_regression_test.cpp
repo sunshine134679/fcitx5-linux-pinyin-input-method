@@ -58,7 +58,11 @@ TEST(PersonalizationSnapshotRegression, FullCapacityInsertionEvictsLocallyAndKee
         slowestMs = std::max(slowestMs, std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - start).count());
     }
+#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+    EXPECT_LT(slowestMs, 150.0) << "capacity eviction must not rebuild 200k entries (tsan)";
+#else
     EXPECT_LT(slowestMs, 30.0) << "capacity eviction must not rebuild 200k entries";
+#endif
     EXPECT_EQ(current->entries().size(), kMaxLearningEntries);
     EXPECT_EQ(original->entries().size(), kMaxLearningEntries);
     EXPECT_FALSE(original->hasPositiveFrequency("新词0", "xin'ci"));

@@ -34,6 +34,12 @@ struct PinyinProviderOptions final {
     std::string clipboardTrigger = "V+2";
 };
 
+struct ResourceChange final {
+    std::uint64_t dictionaryGeneration = 0;
+    std::int64_t learningRevision = 0;
+    bool changed = false;
+};
+
 class PinyinCandidateProvider final : public core::CandidateProvider {
 public:
     // Heavyweight state (system/user/extension dictionaries, language model,
@@ -52,14 +58,20 @@ public:
     // settings-client edits apply without restarting; false when null.
     static bool reloadUserDictionary(
         std::shared_ptr<SharedResources> &resources);
+    static ResourceChange reloadUserDictionaryDetailed(
+        std::shared_ptr<SharedResources> &resources);
 
     // Re-reads the learning store from disk into the shared resources so
     // external clears/edits apply without restarting; false when null.
     static bool reloadLearningStore(
         std::shared_ptr<SharedResources> &resources);
+    static ResourceChange reloadLearningStoreDetailed(
+        std::shared_ptr<SharedResources> &resources);
 
     // Polls the SQLite reset marker; returns true only for an applied external clear.
     static bool refreshLearningStore(
+        std::shared_ptr<SharedResources> &resources);
+    static ResourceChange refreshLearningStoreDetailed(
         std::shared_ptr<SharedResources> &resources);
 
     // Constructs a provider that owns all of its resources. Convenience for
