@@ -293,4 +293,95 @@ TEST_F(ArchitectureLmdbRegression, LastOwnerClosesOnce) {
     EXPECT_FALSE(engine3.IsLmdbOpen());
 }
 
+// 5. ConcurrentRoAndRwInitialization (T11-A11):
+// Multiple threads concurrently open the same LMDB database where some threads request
+// read-only and others request read-write. Neither crashes, deadlocks, nor receives an
+// invalid read-only environment when writable was requested.
+TEST_F(ArchitectureLmdbRegression, ConcurrentRoAndRwInitialization) {
+    const auto dbPath = path();
+    {
+        PersonalEngine seed;
+        ASSERT_TRUE(seed.OpenLmdb(dbPath, /*read_only=*/false));
+        ASSERT_TRUE(seed.RecordUsage("seed", "种子"));
+        seed.CloseLmdb();
+    }
+
+    constexpr int kIterations = 15;
+    for (int iter = 0; iter < kIterations; ++iter) {
+        std::atomic<bool> start{false};
+        std::atomic<bool> ro_ok{false};
+        std::atomic<bool> rw_ok{false};
+        const std::string word = "word_" + std::to_string(iter);
+
+        std::thread t_ro([&]() {
+            while (!start.load(std::memory_order_acquire)) {}
+            PersonalEngine roEngine;
+            if (roEngine.OpenLmdb(dbPath, /*read_only=*/true)) {
+                auto cands = roEngine.QueryLmdbCandidates("seed");
+                ro_ok.store(!cands.empty(), std::memory_order_release);
+                roEngine.CloseLmdb();
+            }
+        });
+
+        std::thread t_rw([&]() {
+            while (!start.load(std::memory_order_acquire)) {}
+            PersonalEngine rwEngine;
+            if (rwEngine.OpenLmdb(dbPath, /*read_only=*/false)) {
+                bool wrote = rwEngine.RecordUsage("test", word);
+                rw_ok.store(wrote, std::memory_order_release);
+                rwEngine.CloseLmdb();
+            }
+        });
+
+        start.store(true, std::memory_order_release);
+        t_ro.join();
+        t_rw.join();
+
+        EXPECT_TRUE(ro_ok.load(std::memory_order_acquire));
+        EXPECT_TRUE(rw_ok.load(std::memory_order_acquire));
+    }
+}
+
+// 6. MapFullTriggersRealMapResize (T11-A12):
+// Verifies that when inserting enough data to exceed the initial 64 KiB LMDB map size,
+// the batch write catches MDB_MAP_FULL, dynamically resizes the map (at least doubling it),
+// and completes all writes without data loss or crash.
+TEST_F(ArchitectureLmdbRegression, MapFullTriggersRealMapResize) {
+    const auto dbPath = path();
+
+    modernime::core::EngineConfig cfg;
+    cfg.initial_lmdb_map_size = 64 * 1024;
+    PersonalEngine engine(cfg);
+    ASSERT_TRUE(engine.OpenLmdb(dbPath, /*read_only=*/false));
+    const size_t initialMapSize = engine.LmdbMapSize();
+    EXPECT_EQ(initialMapSize, 65536u);
+
+    // Insert 600 unique records with context to exceed initial 64 KiB
+    std::vector<LearningEvent> events;
+    events.reserve(600);
+    for (int i = 0; i < 600; ++i) {
+        LearningEvent event;
+        event.kind = LearningEvent::Kind::Selection;
+        event.phrase = "词语_" + std::to_string(i) + "_具有长上下文长文本内容用于填充页面空间";
+        event.pinyin = "ciyu_" + std::to_string(i);
+        event.contextBefore = "前置上下文_" + std::to_string(i);
+        event.contextAfter = "后置上下文_" + std::to_string(i);
+        event.nowMs = 1000000 + i;
+        events.push_back(std::move(event));
+    }
+
+    ASSERT_TRUE(engine.RecordLearningBatch(events));
+
+    const size_t newMapSize = engine.LmdbMapSize();
+    EXPECT_GT(newMapSize, initialMapSize);
+    EXPECT_GE(newMapSize, 131072u);
+
+    // Verify candidates are retrievable
+    auto queryResult = engine.QueryLmdbCandidates("ciyu_100");
+    ASSERT_FALSE(queryResult.empty());
+    EXPECT_EQ(queryResult[0].text, "词语_100_具有长上下文长文本内容用于填充页面空间");
+
+    engine.CloseLmdb();
+}
+
 } // namespace

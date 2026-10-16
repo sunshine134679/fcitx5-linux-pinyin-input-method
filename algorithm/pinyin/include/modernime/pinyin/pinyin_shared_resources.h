@@ -41,15 +41,20 @@ public:
     ResourceChange refreshLearningStore();
 
     std::shared_ptr<const core::LearningSnapshot> visibleLearning() const;
-    core::LearningWriter *ensureLearningWriter();
+    core::LearningWriter *ensureLearningWriter(bool synchronousInitialLoad = true);
     core::EnglishDefinitionDictionary *ensureEnglishDefinitionDictionary();
     bool reloadVisibility();
 
     core::EpochViewState epochViewState() const;
     void prepareLearningWriterAsync();
+    void setOnReadyCallback(std::function<void()> callback);
 
-    std::uint64_t dictionaryGeneration() const noexcept { return dictionaryGeneration_; }
-    std::int64_t learningRevision() const noexcept { return learningRevision_; }
+    std::uint64_t dictionaryGeneration() const noexcept {
+        return dictionaryGeneration_.load(std::memory_order_acquire);
+    }
+    std::int64_t learningRevision() const noexcept {
+        return learningRevision_.load(std::memory_order_acquire);
+    }
 
     std::unique_ptr<libime::PinyinIME> ime;
     std::unique_ptr<core::LearningWriter> learning;
@@ -66,10 +71,10 @@ public:
     std::int64_t visibilityRevision = 0;
 
 private:
-    std::uint64_t dictionaryGeneration_ = 1;
-    std::int64_t learningRevision_ = 0;
+    std::atomic<std::uint64_t> dictionaryGeneration_{1};
+    std::atomic<std::int64_t> learningRevision_{0};
+    std::function<void()> onReadyCallback_;
     mutable std::recursive_mutex resourceMutex_;
-    std::thread writerInitThread_;
     bool preparingWriter_ = false;
 };
 

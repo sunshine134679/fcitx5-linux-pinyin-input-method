@@ -47,7 +47,9 @@ public:
     LmdbEnvironment &operator=(const LmdbEnvironment &) = delete;
 
     bool initialize(size_t initial_map_size);
+    bool initializeLocked(size_t initial_map_size);
     bool upgradeToWritable(size_t initial_map_size);
+    bool upgradeToWritableLocked(size_t initial_map_size);
     bool ensureMapCapacity(size_t required_extra_bytes);
     void close() noexcept;
 };

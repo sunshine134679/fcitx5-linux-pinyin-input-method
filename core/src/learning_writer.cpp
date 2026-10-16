@@ -11,20 +11,32 @@
 
 namespace modernime::core {
 
-LearningWriter::LearningWriter(std::filesystem::path path)
+LearningWriter::LearningWriter(std::filesystem::path path, bool synchronousInitialLoad)
     : store_(std::make_unique<LearningStore>(path)),
       observerStore_(std::make_unique<LearningStore>(std::move(path))),
       snapshot_(std::make_shared<const LearningSnapshot>()) {
-    storageAvailable_ = store_->open();
-    if (storageAvailable_) {
-        const auto loaded = store_->readState();
-        if (loaded.has_value()) {
-            snapshot_ = loaded->snapshot;
-            resetRevision_ = loaded->resetRevision;
+    if (synchronousInitialLoad) {
+        storageAvailable_ = store_->open();
+        if (storageAvailable_) {
+            const auto loaded = store_->readState();
+            if (loaded.has_value()) {
+                snapshot_ = loaded->snapshot;
+                resetRevision_ = loaded->resetRevision;
+                viewState_ = EpochViewState::Ready;
+            } else {
+                storageAvailable_ = false;
+                viewState_ = EpochViewState::Reloading;
+                retryExhausted_ = true;
+                store_->close();
+            }
         } else {
-            storageAvailable_ = false;
-            store_->close();
+            viewState_ = EpochViewState::Reloading;
+            retryExhausted_ = true;
         }
+    } else {
+        viewState_ = EpochViewState::Reloading;
+        retryExhausted_ = false;
+        automaticRetryCyclesRemaining_ = 1;
     }
     observerStore_->openReadOnly();
     worker_ = std::thread(&LearningWriter::run, this);
@@ -39,6 +51,7 @@ LearningWriter::~LearningWriter() {
         std::lock_guard lock(mutex_);
         stopping_ = true;
         workerPaused_ = false;
+        workerPausedAfterRead_ = false;
     }
     resumeWorkerCv_.notify_all();
     wakeup_.notify_one();
@@ -82,9 +95,12 @@ bool LearningWriter::enqueueCommit(const CommitEvent &event) {
     std::lock_guard lock(mutex_);
 
     if (viewState_ == EpochViewState::Reloading) {
-        // Sensitive or disabled facts must not be enqueued
-        if (event.role == CommitCandidateRole::Raw ||
-            event.role == CommitCandidateRole::English) {
+        if (event.role == CommitCandidateRole::Command) {
+            return true;
+        }
+        if (event.role == CommitCandidateRole::Raw &&
+            PinyinMatchPolicy::isValidPinyinSequence(event.text) &&
+            !EnglishDictionary::isEnglishWord(event.text)) {
             return true;
         }
         Event e;
@@ -148,7 +164,7 @@ bool LearningWriter::enqueueForPersistence(Event event) {
     }
     event.resetRevision = resetRevision_;
     events_.push_back(std::move(event));
-    if (!durablyAvailable) {
+    if (!durablyAvailable || viewState_ == EpochViewState::Reloading) {
         while (events_.size() > kMaxQueuedEvents) {
             events_.pop_front();
         }
@@ -171,9 +187,9 @@ bool LearningWriter::flush() {
     }
     drained_.wait(lock, [this] {
         return !processing_ && (events_.empty() || retryExhausted_) &&
-               viewState_ == EpochViewState::Ready;
+               (viewState_ == EpochViewState::Ready || retryExhausted_);
     });
-    return storageAvailable_ && events_.empty();
+    return storageAvailable_ && events_.empty() && viewState_ == EpochViewState::Ready;
 }
 
 std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
@@ -206,6 +222,30 @@ void LearningWriter::pauseWorkerForTest(bool pause) {
     }
 }
 
+void LearningWriter::pauseWorkerAfterReadForTest(bool pause) {
+    {
+        std::lock_guard lock(mutex_);
+        workerPausedAfterRead_ = pause;
+    }
+    if (!pause) {
+        resumeWorkerCv_.notify_all();
+    }
+}
+
+void LearningWriter::setOnReadyCallback(std::function<void()> callback) {
+    std::function<void()> invokeImmediately;
+    {
+        std::lock_guard lock(mutex_);
+        onReadyCallback_ = std::move(callback);
+        if (viewState_ == EpochViewState::Ready && onReadyCallback_) {
+            invokeImmediately = onReadyCallback_;
+        }
+    }
+    if (invokeImmediately) {
+        invokeImmediately();
+    }
+}
+
 bool LearningWriter::reload() {
     flush();
     std::lock_guard storeLock(storeMutex_);
@@ -217,14 +257,21 @@ bool LearningWriter::reload() {
     if (!loaded.has_value()) {
         return false;
     }
-    std::lock_guard lock(mutex_);
-    rebaseSnapshot(*loaded, true);
-    storageAvailable_ = true;
-    // A refreshed store starts a new bounded retry cycle. Otherwise a queue
-    // exhausted before the clear would also leave new selections sleeping.
-    retryExhausted_ = false;
-    automaticRetryCyclesRemaining_ = 1;
-    wakeup_.notify_one();
+    std::function<void()> onReady;
+    {
+        std::lock_guard lock(mutex_);
+        rebaseSnapshot(*loaded, true);
+        storageAvailable_ = true;
+        // A refreshed store starts a new bounded retry cycle. Otherwise a queue
+        // exhausted before the clear would also leave new selections sleeping.
+        retryExhausted_ = false;
+        automaticRetryCyclesRemaining_ = 1;
+        onReady = onReadyCallback_;
+        wakeup_.notify_one();
+    }
+    if (onReady) {
+        onReady();
+    }
     return true;
 }
 
@@ -241,6 +288,7 @@ bool LearningWriter::reloadIfChanged() {
         }
         resetRevision_ = *revision;
         viewState_ = EpochViewState::Reloading;
+        storageAvailable_ = true;
         retiredSnapshots_.push_back(std::move(snapshot_));
         snapshot_ = std::make_shared<const LearningSnapshot>();
         ++snapshotVersion_;
@@ -250,8 +298,8 @@ bool LearningWriter::reloadIfChanged() {
         retryExhausted_ = false;
         automaticRetryCyclesRemaining_ = 1;
         wakeup_.notify_one();
-        return true;
     }
+    return true;
 }
 
 void LearningWriter::refreshBeforeEnqueue() {
@@ -394,8 +442,7 @@ void LearningWriter::run() {
                 return stopping_ || (!events_.empty() && !retryExhausted_) ||
                        (viewState_ == EpochViewState::Reloading && !retryExhausted_);
             });
-            if (stopping_ && (events_.empty() || retryExhausted_) &&
-                viewState_ != EpochViewState::Reloading) {
+            if (stopping_ && (events_.empty() || retryExhausted_)) {
                 return;
             }
             reloading = (viewState_ == EpochViewState::Reloading);
@@ -425,7 +472,15 @@ void LearningWriter::run() {
                     freshState = store_->readState();
                 }
             }
+            {
+                std::unique_lock lock(mutex_);
+                resumeWorkerCv_.wait(lock, [this] { return !workerPausedAfterRead_ || stopping_; });
+            }
+            if (stopping_) {
+                return;
+            }
 
+            std::function<void()> onReady;
             std::shared_ptr<const LearningSnapshot> retiredSnapshot;
             {
                 std::lock_guard lock(mutex_);
@@ -438,13 +493,10 @@ void LearningWriter::run() {
                 if (!freshState.has_value()) {
                     storageAvailable_ = false;
                     retryExhausted_ = true;
-                    viewState_ = EpochViewState::Ready;
-                    retiredSnapshot = std::move(snapshot_);
-                    snapshot_ = std::make_shared<const LearningSnapshot>();
-                    ++snapshotVersion_;
-                    std::erase_if(events_, [](const Event &e) {
-                        return e.kind == EventKind::PendingCommit;
-                    });
+                } else if (freshState->resetRevision < resetRevision_) {
+                    retryExhausted_ = false;
+                    automaticRetryCyclesRemaining_ = 1;
+                    wakeup_.notify_one();
                 } else {
                     storageAvailable_ = true;
                     retryExhausted_ = false;
@@ -484,8 +536,12 @@ void LearningWriter::run() {
                     snapshot_ = std::move(freshSnapshot);
                     ++snapshotVersion_;
                     viewState_ = EpochViewState::Ready;
+                    onReady = onReadyCallback_;
                 }
                 drained_.notify_all();
+            }
+            if (onReady) {
+                onReady();
             }
             continue;
         }

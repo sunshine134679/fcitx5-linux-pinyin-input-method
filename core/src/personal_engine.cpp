@@ -834,14 +834,14 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbCandidates(
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr) {
+    if (!active_env_handle) {
         return QueryCandidates(pinyin_key, surrounding_context);
     }
     std::shared_lock env_lock(active_env_handle->lifecycle_gate);
     MDB_env *active_env = active_env_handle->env;
     MDB_dbi active_words_dbi = active_env_handle->words_dbi;
     if (active_env == nullptr) {
-        return {};
+        return QueryCandidates(pinyin_key, surrounding_context);
     }
     std::vector<PersonalCandidate> results;
     const std::string norm_key = NormalizePinyinKey(pinyin_key);
@@ -964,14 +964,14 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbPrefixCandidates(
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr) {
+    if (!active_env_handle) {
         return QueryPrefixCandidates(pinyin_prefix, surrounding_context, limit);
     }
     std::shared_lock env_lock(active_env_handle->lifecycle_gate);
     MDB_env *active_env = active_env_handle->env;
     MDB_dbi active_words_dbi = active_env_handle->words_dbi;
     if (active_env == nullptr) {
-        return {};
+        return QueryPrefixCandidates(pinyin_prefix, surrounding_context, limit);
     }
     std::vector<PersonalCandidate> results;
     if (pinyin_prefix.empty() || limit == 0) {
@@ -1112,11 +1112,15 @@ bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
 
     auto handle = detail::LmdbRegistry::instance().getOrCreate(
         lmdb_path, read_only, config_.initial_lmdb_map_size);
-    if (!handle || handle->env == nullptr) {
+    if (!handle) {
         return false;
     }
 
     {
+        std::shared_lock env_lock(handle->lifecycle_gate);
+        if (handle->env == nullptr) {
+            return false;
+        }
         std::lock_guard lock(lmdb_mutex_);
         lmdb_env_ = handle;
         env_ = handle->env;
@@ -1199,7 +1203,7 @@ size_t PersonalEngine::LmdbMapSize() const noexcept {
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr) {
+    if (!active_env_handle) {
         return 0;
     }
     std::shared_lock env_lock(active_env_handle->lifecycle_gate);
@@ -1214,7 +1218,7 @@ size_t PersonalEngine::LmdbMapSize() const noexcept {
 }
 
 bool PersonalEngine::EnsureMapCapacityLocked(size_t required_extra_bytes) {
-    if (!lmdb_env_ || lmdb_env_->env == nullptr || lmdb_read_only_) {
+    if (!lmdb_env_ || lmdb_read_only_) {
         return false;
     }
     return lmdb_env_->ensureMapCapacity(required_extra_bytes);
@@ -1228,7 +1232,7 @@ bool PersonalEngine::EnsureMapCapacity(size_t required_extra_bytes) {
         active_env_handle = lmdb_env_;
         read_only = lmdb_read_only_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr || read_only) {
+    if (!active_env_handle || read_only) {
         return false;
     }
     return active_env_handle->ensureMapCapacity(required_extra_bytes);
@@ -1286,7 +1290,7 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
         active_env_handle = lmdb_env_;
         read_only = lmdb_read_only_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr || read_only) {
+    if (!active_env_handle || read_only) {
         return false;
     }
 
@@ -1581,7 +1585,7 @@ bool PersonalEngine::FlushToLmdb() {
         active_env_handle = lmdb_env_;
         read_only = lmdb_read_only_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr || read_only || simulate_write_failure_) {
+    if (!active_env_handle || read_only || simulate_write_failure_) {
         return false;
     }
     for (int attempt = 0; attempt < 5; ++attempt) {
@@ -1651,7 +1655,7 @@ bool PersonalEngine::ReadLearningState(std::vector<LearningEntry> &entries,
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr) {
+    if (!active_env_handle) {
         return false;
     }
     std::shared_lock env_lock(active_env_handle->lifecycle_gate);
@@ -1713,7 +1717,7 @@ bool PersonalEngine::ReloadFromLmdb() {
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr) {
+    if (!active_env_handle) {
         return false;
     }
     std::shared_lock env_lock(active_env_handle->lifecycle_gate);
@@ -1800,7 +1804,7 @@ bool PersonalEngine::BackupLmdbTo(const std::filesystem::path &backup_path) cons
         active_env_handle = lmdb_env_;
         current_path = lmdb_path_;
     }
-    if (!active_env_handle || active_env_handle->env == nullptr || backup_path.empty() || backup_path == current_path) {
+    if (!active_env_handle || backup_path.empty() || backup_path == current_path) {
         return false;
     }
     std::shared_lock env_lock(active_env_handle->lifecycle_gate);
@@ -1834,7 +1838,7 @@ bool PersonalEngine::Clear() {
         active_env_handle = lmdb_env_;
         read_only = lmdb_read_only_;
     }
-    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+    if (active_env_handle != nullptr) {
         if (read_only) {
             return false;
         }
@@ -1904,7 +1908,7 @@ int64_t PersonalEngine::ResetRevision() const {
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+    if (active_env_handle != nullptr) {
         std::shared_lock env_lock(active_env_handle->lifecycle_gate);
         MDB_env *active_env = active_env_handle->env;
         const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
@@ -1928,7 +1932,7 @@ int PersonalEngine::SchemaVersion() const {
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+    if (active_env_handle != nullptr) {
         std::shared_lock env_lock(active_env_handle->lifecycle_gate);
         MDB_env *active_env = active_env_handle->env;
         const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
@@ -1952,7 +1956,7 @@ bool PersonalEngine::IsMigratedFromSqlite() const {
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
     }
-    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+    if (active_env_handle != nullptr) {
         std::shared_lock env_lock(active_env_handle->lifecycle_gate);
         MDB_env *active_env = active_env_handle->env;
         const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;

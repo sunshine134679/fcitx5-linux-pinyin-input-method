@@ -251,6 +251,43 @@
 
 ---
 
+### 特性 14：LMDB 共享门、EpochViewState 异步加载、有界队列与确定性学习排序（2026-10-16，T11 架构整改）
+
+- **背景与根因定位**：
+  1. **LMDB 资源竞争与读写泄漏**：多线程并发访问 `PersonalEngine` LMDB 数据库时，首次初始化与只读升级为可写环境缺乏原子性保护，可能导致环境双重初始化或只读引用泄漏。
+  2. **Reloading 加载状态与 UI 卡顿**：词库重载或清空时，旧代码直接在输入处理主线程同步反序列化全量词库（耗时数十毫秒），导致首按键卡顿；重载中未对活动 Controller 进行就绪通知，候选列表只能懒观察。
+  3. **暂存队列无界与事实丢失风险**：在重载或读故障期间，如果用户持续打字，暂存队列无界增长；旧重载逻辑在 readState 失败时错误标记 Ready 或丢弃有效事实。
+  4. **回车裸串与中英判定一致性**：重载状态与正常状态下的提交决策策略存在分支分歧，导致部分合法拼音串或英文词处理不一致。
+
+- **算法与架构核心设计**：
+  1. **LMDB 生命周期门（Lifecycle Gate）与原子初始化**：
+     - 在 `LmdbRegistry::getOrCreate` 中使用 `std::unique_lock` 对 `lifecycle_gate` 进行原子判定与初始/升级（`initializeLocked` / `upgradeToWritableLocked`），彻底消除双重初始化与引用泄漏；
+     - `PersonalEngine::OpenLmdb` 在读锁保护下安全复制环境句柄。
+  2. **EpochViewState 状态机与 Fcitx5 事件循环主动通知**：
+     - `LearningWriter` 明确划分为 `Ready` 与 `Reloading` 状态；
+     - 初始加载与重载在后台 Worker 线程完成，输入主线程首键打字直接读取内存快照，保持亚毫秒响应；
+     - `PinyinSharedResources` 通过 `setOnReadyCallback` 与 `ModernIMEInputMethod` 的 `EventDispatcher` 绑定，在 Worker 线程重载完成后，自动向 Fcitx5 事件循环调度主线程刷新，无需用户输入即可自动恢复真实候选页；支持失焦、析构及多代 clear 的安全作废。
+  3. **有界队列与优雅失败恢复**：
+     - `enqueueForPersistence` 在重载或存储不可用时，严格将暂存队列限制在 $\le 100$ 条，优先保留最新用户事实；
+     - 读失败保持 `Reloading` 状态，不假装就绪，保留 `PendingCommit` 供后续恢复，彻底阻断旧代数据覆盖。
+  4. **统一提交决策与候选安全授权**：
+     - `enqueueCommit` 在 `Reloading` 下与正常状态对齐：保留合法的 Raw 拼音串与英文词，仅跳过 Command，严格防范拼音污染英文预测；
+     - 占位候选 `CandidateSource::None`（"正在更新候选"）全面拒绝选择、取字、删除与负反馈，回车按原文预编辑上屏。
+
+- **打字体验变化**：
+  - 词库在后台重载或清空时，输入法完全不卡顿，首按键即时响应；
+  - 重载完成后，当前编辑区候选栏自动无感刷新为最新计算结果，光标与输入保持完好；
+  - 无论在正常打字还是后台重载状态下，回车拼音串、英文输入、生僻词删除与纠错行为完全一致；
+  - 高并发与大词库（200,000 条）下打字体验流畅，无崩溃、无死锁、无竞态。
+
+- **回归验证**：
+  - `modernime_personal_engine_gtest`：125/125 项单元与并发测试全部通过（含 `ArchitectureWriterRegression`, `ArchitectureLmdbRegression`, `ArchitectureSelectionRegression` 等）；
+  - `modernime_personal_engine_benchmark`（Release）：50k 召回 P99=154us，200k 召回 P99=280us，更新召回 P99=647us/1380us，并发 P99=2426us，最大延迟 18.25ms，全部远优于门限（<1ms, <5ms, <30ms）；
+  - TSAN 运行时检查：125/125 测试在 ThreadSanitizer 下运行通过，0 数据竞争；
+  - 全量 CTest 67 项通过，`verify_fresh_clone.sh` 100% 通过。
+
+---
+
 ## 三、用户体验不可退化不变量矩阵 (The "Never-Break" Matrix)
 
 每一次算法变更，都**必须**在单元测试或端到端验证中确认以下“不可破坏行为”：
@@ -285,6 +322,7 @@
 | **26** | `shi`、`zhege`、`de` | 导入包含高频次选的外部词库 | 首选稳居「**是**」、「**这个**」、「**的**」 | 被畸形频次的「试」、「这歌」、「地」等篡夺首位 | `pinyin_daily_simulation_test` (Scene 9) |
 | **27** | 14 组高频词 1,000 轮连续输入 | 14,000 次候选评估 + 周期性偶选干扰 | 1,000 轮全周期零篡位（**100% 稳居首选**） | 出现任何单次偶选篡位或首选下沉 | `pinyin_daily_simulation_test` (Scene 9) |
 | **28** | 回车上屏拼音串（如 `jianpan`）后输入前缀 `jianp`；日常空格输入首选核心词 | 外部干扰 / 快速打字 | `jianp` 首选必须稳居「**键盘**」；核心词空格上屏不污染先验 | 拼音被误学为英文并篡位抢占；核心词被次选或自造词挤掉 | `modernime_english_arbitration_tests`、`modernime_pinyin_daily_simulation_tests` |
+| **29** | 词库后台重载（Reloading）、二次 Clear、读写故障或多线程 LMDB 扩容 | 词库生命周期重载与高并发 | 暂存队列严格 $\le 100$ 条；None 占位候选全动作拒绝；重载完成自动异步通知 UI 恢复；LMDB 首次 RO/RW 初始化无死锁与泄露 | 暂存队列无限膨胀；选词越权进入占位符；UI 永久停留在更新占位；LMDB 多线程双初始化或读写死锁 | `ArchitectureWriterRegression`、`ArchitectureLmdbRegression`、`ArchitectureSelectionRegression` |
 
 
 

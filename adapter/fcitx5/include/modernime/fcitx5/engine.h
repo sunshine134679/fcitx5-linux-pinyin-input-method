@@ -175,10 +175,10 @@ public:
 
     bool active() const { return options_.inputEnabled && active_; }
     const core::CandidatePage &page() const { return page_; }
+    void refreshPage();
 
 private:
     void clearComposition();
-    void refreshPage();
     bool commitCurrent();
     bool commitRawPreedit(std::string_view suffix = {});
     bool commitPunctuation(char ascii);

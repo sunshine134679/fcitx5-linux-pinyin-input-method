@@ -1,5 +1,6 @@
 #include "modernime/pinyin/candidate_composition.h"
 
+#include "modernime/core/english_dictionary.h"
 #include "modernime/core/pinyin_match.h"
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/candidate_prefixes.h"
@@ -349,13 +350,23 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     }
 
     // Stage 5: English definition annotation lookup
-    if (input.englishDefinition.has_value() && !mixed.empty()) {
+    if (!mixed.empty()) {
         auto &top = mixed.front();
         if (top.source == core::CandidateSource::Raw &&
-            top.text.size() >= 4 && input.isEnglishWord) {
-            top.annotation = *input.englishDefinition;
-            recordMove(top.source, CompositionStage::EnglishDefinitionAnnotation, 0,
-                       MoveReason::InitialPlacement);
+            top.text.size() >= 4 &&
+            core::EnglishDictionary::isEnglishWord(top.text)) {
+            if (input.resolveEnglishDefinition) {
+                auto def = input.resolveEnglishDefinition(top.text);
+                if (!def.empty()) {
+                    top.annotation = std::move(def);
+                    recordMove(top.source, CompositionStage::EnglishDefinitionAnnotation, 0,
+                               MoveReason::InitialPlacement);
+                }
+            } else if (input.englishDefinition.has_value() && input.isEnglishWord) {
+                top.annotation = *input.englishDefinition;
+                recordMove(top.source, CompositionStage::EnglishDefinitionAnnotation, 0,
+                           MoveReason::InitialPlacement);
+            }
         }
     }
 

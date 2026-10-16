@@ -1035,6 +1035,12 @@ public:
         if (providerGeneration != page_.generation) {
             return std::nullopt;
         }
+        if (checkResourceChanges()) {
+            return std::nullopt;
+        }
+        if (shared_ && shared_->epochViewState() == core::EpochViewState::Reloading) {
+            return std::nullopt;
+        }
         if (request.globalIndex >= page_.items.size()) {
             return std::nullopt;
         }
@@ -1172,6 +1178,12 @@ public:
 
     bool extractCharacter(std::size_t index, bool firstChar,
                           std::string *committedText) {
+        if (checkResourceChanges()) {
+            return false;
+        }
+        if (shared_ && shared_->epochViewState() == core::EpochViewState::Reloading) {
+            return false;
+        }
         if (index >= page_.items.size()) {
             return false;
         }
@@ -1273,11 +1285,18 @@ public:
     }
 
     bool remove(std::size_t index) {
+        if (checkResourceChanges()) {
+            return false;
+        }
+        if (shared_ && shared_->epochViewState() == core::EpochViewState::Reloading) {
+            return false;
+        }
         if (index >= page_.items.size()) {
             return false;
         }
         const auto candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::EnglishDefinition ||
+        if (candidate.source == core::CandidateSource::None ||
+            candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Command) {
             return false;
         }
@@ -1463,13 +1482,21 @@ public:
         return page_;
     }
 
+    std::shared_ptr<SharedResources> sharedResources() const { return shared_; }
+
+    void setOnReadyCallback(std::function<void()> callback) {
+        if (shared_) {
+            shared_->setOnReadyCallback(std::move(callback));
+        }
+    }
+
 private:
     libime::PinyinIME &ime() { return *shared_->ime; }
     core::LearningWriter *learningWriter() {
         if (!learningEnabled_) {
             return nullptr;
         }
-        return shared_->ensureLearningWriter();
+        return shared_->ensureLearningWriter(false);
     }
     UserDictionary &userDictionary() { return shared_->userDictionary; }
     const std::filesystem::path &userDictionaryPath() const {
@@ -1737,22 +1764,6 @@ private:
             }
         }
 
-        std::optional<std::string> englishDef;
-        if (englishDefinitionEnabled_ && shared_) {
-            if (rawInput.size() >= 4 && core::EnglishDictionary::isEnglishWord(rawInput)) {
-                auto *dict = shared_->ensureEnglishDefinitionDictionary();
-                if (dict != nullptr) {
-                    const auto rawDef = dict->lookup(rawInput);
-                    if (!rawDef.empty()) {
-                        auto cleaned = core::EnglishDefinitionDictionary::cleanDefinition(rawDef, 12);
-                        if (!cleaned.empty()) {
-                            englishDef = std::move(cleaned);
-                        }
-                    }
-                }
-            }
-        }
-
         const auto *bestFullSentence =
             fullItems.empty() ? nullptr : &fullItems.front();
         auto prefixEvidence = bestFullSentence != nullptr
@@ -1775,7 +1786,22 @@ private:
         compInput.hasInvalidInternalPinyinSegment = hasInvalidInternalPinyinSegment(segmentedInput);
         compInput.clipboardEnabled = clipboardEnabled_;
         compInput.clipboardTrigger = clipboardTrigger_;
-        compInput.englishDefinition = std::move(englishDef);
+        if (englishDefinitionEnabled_ && shared_) {
+            compInput.resolveEnglishDefinition = [this](std::string_view word) -> std::string {
+                if (!englishDefinitionEnabled_ || !shared_ || word.size() < 4) {
+                    return {};
+                }
+                auto *dict = shared_->ensureEnglishDefinitionDictionary();
+                if (dict == nullptr) {
+                    return {};
+                }
+                const auto rawDef = dict->lookup(word);
+                if (rawDef.empty()) {
+                    return {};
+                }
+                return core::EnglishDefinitionDictionary::cleanDefinition(rawDef, 12);
+            };
+        }
         compInput.topChineseLearningBoost =
             (!compInput.fullCandidates.empty() && compInput.fullCandidates.front().learningBoost > 0.0)
                 ? compInput.fullCandidates.front().learningBoost
@@ -1921,6 +1947,15 @@ void PinyinCandidateProvider::setClipboardEnabled(bool enabled) {
 
 void PinyinCandidateProvider::setClipboardTrigger(std::string trigger) {
     impl_->setClipboardTrigger(std::move(trigger));
+}
+
+std::shared_ptr<PinyinCandidateProvider::SharedResources>
+PinyinCandidateProvider::sharedResources() const {
+    return impl_->sharedResources();
+}
+
+void PinyinCandidateProvider::setOnReadyCallback(std::function<void()> callback) {
+    impl_->setOnReadyCallback(std::move(callback));
 }
 
 } // namespace modernime::pinyin

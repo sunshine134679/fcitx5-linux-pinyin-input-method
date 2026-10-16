@@ -139,6 +139,10 @@ void LmdbEnvironment::close() noexcept {
 
 bool LmdbEnvironment::initialize(size_t initial_map_size) {
     std::unique_lock lock(lifecycle_gate);
+    return initializeLocked(initial_map_size);
+}
+
+bool LmdbEnvironment::initializeLocked(size_t initial_map_size) {
     if (env != nullptr) {
         return true;
     }
@@ -198,6 +202,10 @@ bool LmdbEnvironment::initialize(size_t initial_map_size) {
 
 bool LmdbEnvironment::upgradeToWritable(size_t initial_map_size) {
     std::unique_lock lock(lifecycle_gate);
+    return upgradeToWritableLocked(initial_map_size);
+}
+
+bool LmdbEnvironment::upgradeToWritableLocked(size_t initial_map_size) {
     if (!read_only && env != nullptr) {
         return true;
     }
@@ -289,17 +297,14 @@ std::shared_ptr<LmdbEnvironment> LmdbRegistry::getOrCreate(
     }
 
     bool ok = true;
-    bool need_init = false;
-    bool need_upgrade = false;
     {
-        std::shared_lock env_lock(handle->lifecycle_gate);
-        need_init = (handle->env == nullptr);
-        need_upgrade = (handle->read_only && !read_only);
-    }
-    if (need_init) {
-        ok = handle->initialize(initial_map_size);
-    } else if (need_upgrade) {
-        ok = handle->upgradeToWritable(initial_map_size);
+        std::unique_lock env_lock(handle->lifecycle_gate);
+        if (handle->env == nullptr) {
+            ok = handle->initializeLocked(initial_map_size);
+        }
+        if (ok && handle->read_only && !read_only) {
+            ok = handle->upgradeToWritableLocked(initial_map_size);
+        }
     }
     if (!ok) {
         unregister(path_key, handle.get());

@@ -203,5 +203,46 @@ TEST_F(ArchitectureResourceCoordinationTest, ReadOnlyVisibilityDoesNotCreateData
     EXPECT_FALSE(std::filesystem::exists(nonExistentDb));
 }
 
+// 6. Reloading state rejects selection, extraction, and removal
+TEST_F(ArchitectureResourceCoordinationTest, ReloadingStateRejectsSelectionExtractionRemoval) {
+    PinyinProviderOptions options;
+    options.learningEnabled = true;
+    auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
+    ASSERT_NE(shared, nullptr);
+
+    auto *writer = shared->ensureLearningWriter();
+    ASSERT_NE(writer, nullptr);
+
+    {
+        core::LearningStore externalStore(paths.learningStore);
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+    writer->pauseWorkerForTest(true);
+    writer->pauseWorkerAfterReadForTest(true);
+    EXPECT_TRUE(writer->reloadIfChanged());
+    EXPECT_EQ(shared->epochViewState(), core::EpochViewState::Reloading);
+
+    PinyinCandidateProvider provider(shared, options);
+    ASSERT_TRUE(provider.append("ceshi"));
+    const auto &page = provider.page();
+    ASSERT_FALSE(page.items.empty());
+    EXPECT_EQ(page.items[0].source, core::CandidateSource::None);
+
+    core::CandidateSelectionRequest req;
+    req.displayGeneration = page.generation;
+    req.globalIndex = 0;
+    req.expected = core::candidateIdentity(page.items[0], page);
+
+    EXPECT_FALSE(provider.selectConfirmed(req, page.generation).has_value());
+    EXPECT_FALSE(provider.extractCharacter(0, true));
+    EXPECT_FALSE(provider.remove(0));
+
+    writer->pauseWorkerForTest(false);
+    writer->pauseWorkerAfterReadForTest(false);
+    writer->flush();
+}
+
 } // namespace
 } // namespace modernime::pinyin

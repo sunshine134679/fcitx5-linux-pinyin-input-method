@@ -10,6 +10,7 @@
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx-utils/event.h>
+#include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/handlertable.h>
 #include <fcitx/inputcontextproperty.h>
 #include <fcitx/inputmethodengine.h>
@@ -381,6 +382,8 @@ private:
         pinyinResourcesFuture_;
     bool pinyinResourcesResolved_ = false;
 #endif
+    fcitx::EventDispatcher dispatcher_;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
 };
 

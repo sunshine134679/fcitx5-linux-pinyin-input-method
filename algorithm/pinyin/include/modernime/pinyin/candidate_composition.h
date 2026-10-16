@@ -68,6 +68,7 @@ struct CandidateCompositionInput {
     double topChineseLearningBoost = 0.0;
 
     std::optional<std::string> englishDefinition;
+    std::function<std::string(std::string_view word)> resolveEnglishDefinition;
 
     std::function<bool(std::string_view text, std::string_view pinyin)> isSuppressed;
     std::function<bool(std::string_view text, std::string_view pinyin)> isLexicalWord;

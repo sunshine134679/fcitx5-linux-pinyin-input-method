@@ -3,6 +3,7 @@
 #include "modernime/core/candidate_provider.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -112,6 +113,9 @@ public:
     void setEnglishDefinitionEnabled(bool enabled);
     void setClipboardEnabled(bool enabled);
     void setClipboardTrigger(std::string trigger);
+
+    std::shared_ptr<SharedResources> sharedResources() const;
+    void setOnReadyCallback(std::function<void()> callback);
 
 private:
     class Impl;

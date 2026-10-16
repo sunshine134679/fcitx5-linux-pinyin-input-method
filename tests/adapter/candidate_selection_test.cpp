@@ -33,12 +33,14 @@ struct TestEngineHost final : modernime::fcitx5::EngineHost {
 
 modernime::core::CandidateItem makeItem(
     std::string text, std::string pinyin = {}, std::size_t consumed = 0,
-    modernime::core::CommitCandidateRole role = modernime::core::CommitCandidateRole::Chinese) {
+    modernime::core::CommitCandidateRole role = modernime::core::CommitCandidateRole::Chinese,
+    modernime::core::CandidateSource source = modernime::core::CandidateSource::Engine) {
     modernime::core::CandidateItem item;
     item.text = std::move(text);
     item.fullPinyin = std::move(pinyin);
     item.consumedInputBytes = consumed;
     item.commitRole = role;
+    item.source = source;
     return item;
 }
 
@@ -115,6 +117,9 @@ struct TestCandidateProvider final : modernime::core::CandidateProvider {
         if (request.globalIndex >= currentPage.items.size()) {
             return std::nullopt;
         }
+        if (currentPage.items[request.globalIndex].source == modernime::core::CandidateSource::None) {
+            return std::nullopt;
+        }
         const auto id = modernime::core::candidateIdentity(
             currentPage.items[request.globalIndex], currentPage);
         if (!(id == request.expected)) {
@@ -133,9 +138,24 @@ struct TestCandidateProvider final : modernime::core::CandidateProvider {
         return outcome;
     }
 
+    bool remove(std::size_t index) override {
+        if (index >= currentPage.items.size()) {
+            return false;
+        }
+        if (currentPage.items[index].source == modernime::core::CandidateSource::None) {
+            return false;
+        }
+        currentPage.items.erase(currentPage.items.begin() + index);
+        currentPage.generation++;
+        return true;
+    }
+
     bool extractCharacter(std::size_t index, bool firstChar,
                           std::string *outText) override {
         if (index >= currentPage.items.size()) {
+            return false;
+        }
+        if (currentPage.items[index].source == modernime::core::CandidateSource::None) {
             return false;
         }
         const auto &text = currentPage.items[index].text;
@@ -422,6 +442,164 @@ TEST(ArchitectureSelectionRegression, ResetDoesNotReuseGeneration) {
     controller.reset();
     const auto gen3 = controller.displayGeneration();
     EXPECT_GT(gen3, gen2);
+}
+
+TEST(ArchitectureSelectionRegression, T11_A05_StalePageRejectsSelectionExtractionRemoval) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    provider.currentPage.rawInput = "nihao";
+    provider.currentPage.preedit = "nihao";
+    provider.currentPage.generation = 1;
+    provider.currentPage.items = {
+        makeItem("你好", "ni'hao", 5),
+        makeItem("拟好", "ni'hao", 5)
+    };
+
+    controller.handle({modernime::fcitx5::KeyKind::Character, 'n', 0});
+    ASSERT_EQ(controller.page().items.size(), 2u);
+
+    modernime::core::CandidateSelectionRequest req;
+    req.sessionId = controller.sessionId();
+    req.displayGeneration = controller.displayGeneration();
+    req.globalIndex = 0;
+    req.expected = modernime::core::candidateIdentity(controller.page().items[0], controller.page());
+
+    provider.currentPage.generation = 2;
+    provider.currentPage.items = {
+        makeItem("喜欢", "xi'huan", 6),
+        makeItem("西瓜", "xi'gua", 5)
+    };
+
+    EXPECT_FALSE(controller.select(req));
+    EXPECT_TRUE(host.committedTexts.empty());
+    EXPECT_EQ(provider.selectCount, 0);
+
+    EXPECT_FALSE(controller.select(0));
+    EXPECT_TRUE(host.committedTexts.empty());
+    EXPECT_EQ(provider.selectCount, 0);
+    EXPECT_EQ(provider.commitEventCount, 0);
+}
+
+TEST(ArchitectureSelectionRegression, T11_A06_NoneSourceFullActionRejection) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    provider.currentPage.rawInput = "test";
+    provider.currentPage.preedit = "test";
+    provider.currentPage.generation = 1;
+    modernime::core::CandidateItem noneItem = makeItem(
+        "...", {}, 0, modernime::core::CommitCandidateRole::Chinese,
+        modernime::core::CandidateSource::None);
+    provider.currentPage.items = { noneItem };
+
+    for (char c : std::string_view("test")) {
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    }
+    ASSERT_EQ(controller.page().items.size(), 1u);
+    EXPECT_EQ(controller.page().items[0].source, modernime::core::CandidateSource::None);
+
+    // 1. Direct index select rejected
+    EXPECT_FALSE(controller.select(0));
+    EXPECT_TRUE(host.committedTexts.empty());
+
+    // 2. Space key rejected (does not commit None placeholder)
+    EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Space}));
+    EXPECT_TRUE(host.committedTexts.empty());
+
+    // 3. Digit selection rejected
+    EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '1'}));
+    EXPECT_TRUE(host.committedTexts.empty());
+
+    // 4. Character extraction rejected
+    EXPECT_FALSE(controller.extractCharacter(true));
+    EXPECT_FALSE(controller.extractCharacter(false));
+    EXPECT_TRUE(host.committedTexts.empty());
+
+    // 5. Remove current rejected
+    EXPECT_FALSE(controller.removeCurrent());
+    EXPECT_TRUE(host.committedTexts.empty());
+
+    // 6. Punctuation commits raw preedit + punctuation, NEVER the None placeholder
+    EXPECT_TRUE(controller.handle({modernime::fcitx5::KeyKind::Punctuation, ','}));
+    ASSERT_GE(host.committedTexts.size(), 2u);
+    EXPECT_EQ(host.committedTexts[0], "test");
+    EXPECT_EQ(host.committedTexts[1], ",");
+
+    // 7. Enter commits raw preedit (contract preserved)
+    host.committedTexts.clear();
+    controller.reset();
+    provider.currentPage.rawInput = "hello";
+    provider.currentPage.preedit = "hello";
+    provider.currentPage.generation = 2;
+    provider.currentPage.items = { noneItem };
+    for (char c : std::string_view("hello")) {
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    }
+    EXPECT_TRUE(controller.handle({modernime::fcitx5::KeyKind::Enter}));
+    ASSERT_EQ(host.committedTexts.size(), 1u);
+    EXPECT_EQ(host.committedTexts[0], "hello");
+}
+
+TEST(ArchitectureSelectionRegression, T11_A07_ReadyNotificationRefreshesController) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    provider.currentPage.rawInput = "zhong";
+    provider.currentPage.preedit = "zhong";
+    provider.currentPage.generation = 1;
+    provider.currentPage.items = { makeItem("中", "zhong", 5) };
+    controller.handle({modernime::fcitx5::KeyKind::Character, 'z', 0});
+
+    const auto initialGen = controller.displayGeneration();
+    const auto preedit = controller.page().preedit;
+
+    provider.currentPage.generation = 2;
+    provider.currentPage.items = {
+        makeItem("中国", "zhong'guo", 5),
+        makeItem("中", "zhong", 5)
+    };
+
+    controller.refreshPage();
+
+    EXPECT_GT(controller.displayGeneration(), initialGen);
+    EXPECT_EQ(controller.page().preedit, preedit);
+    ASSERT_EQ(controller.page().items.size(), 2u);
+    EXPECT_EQ(controller.page().items[0].text, "中国");
+}
+
+TEST(ArchitectureSelectionRegression, T11_A08_ReadyNotificationSafeAgainstDestroyBlurAndClear) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    const auto oldGen = controller.displayGeneration();
+    controller.reset();
+    EXPECT_GT(controller.displayGeneration(), oldGen);
+
+    modernime::core::CandidateSelectionRequest oldReq;
+    oldReq.sessionId = controller.sessionId();
+    oldReq.displayGeneration = oldGen;
+    oldReq.globalIndex = 0;
+    EXPECT_FALSE(controller.select(oldReq));
+
+    modernime::fcitx5::ModernIMEController otherController(host, &provider);
+    EXPECT_NE(otherController.sessionId(), controller.sessionId());
+
+    controller.setActive(false);
+    EXPECT_FALSE(controller.handle({modernime::fcitx5::KeyKind::Space}));
+    EXPECT_FALSE(controller.select(0));
+
+    controller.setActive(true);
+    controller.setSensitive(true);
+    EXPECT_TRUE(controller.isSensitive());
 }
 
 } // namespace

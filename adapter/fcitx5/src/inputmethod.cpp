@@ -1,5 +1,9 @@
 #include "modernime/fcitx5/fcitx_engine.h"
 
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+#include "modernime/pinyin/pinyin_shared_resources.h"
+#endif
+
 #include <fcitx/addoninstance.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/candidatelist.h>
@@ -447,6 +451,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
                       << historyError;
     }
     if (instance_ != nullptr) {
+        dispatcher_.attach(&instance_->eventLoop());
         instance_->inputContextManager().registerProperty(
             std::string(statePropertyName), &stateFactory_);
         surroundingWatcher_ = instance_->watchEvent(
@@ -500,6 +505,8 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
 }
 
 ModernIMEInputMethod::~ModernIMEInputMethod() {
+    *alive_ = false;
+    dispatcher_.detach();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // 后台线程只持有 promise/paths/options 的值拷贝，不引用 this；
     // 这里等待加载结果落地，避免析构先于 set_value 完成。
@@ -785,6 +792,26 @@ void ModernIMEInputMethod::ensurePinyinResources() {
     pinyinResourcesResolved_ = true;
     try {
         resources_.pinyin = pinyinResourcesFuture_.get();
+        if (resources_.pinyin) {
+            auto alive = alive_;
+            resources_.pinyin->setOnReadyCallback([this, alive]() {
+                dispatcher_.schedule([this, alive]() {
+                    if (!*alive || instance_ == nullptr) {
+                        return;
+                    }
+                    auto *ic = instance_->inputContextManager().mostRecentInputContext();
+                    if (ic == nullptr || instance_->inputMethod(ic) != "modernime") {
+                        return;
+                    }
+                    auto *contextState = state(ic);
+                    if (contextState != nullptr) {
+                        if (!contextState->controller().page().preedit.empty()) {
+                            contextState->controller().refreshPage();
+                        }
+                    }
+                });
+            });
+        }
     } catch (const std::exception &error) {
         FCITX_ERROR() << "ModernIME background dictionary load failed: "
                       << error.what();

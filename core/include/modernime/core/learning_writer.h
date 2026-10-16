@@ -3,11 +3,13 @@
 #include "modernime/core/commit_event.h"
 #include "modernime/core/learning_snapshot.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -27,7 +29,7 @@ struct LearningStoreState;
 
 class LearningWriter final {
 public:
-    explicit LearningWriter(std::filesystem::path path);
+    explicit LearningWriter(std::filesystem::path path, bool synchronousInitialLoad = true);
     ~LearningWriter();
 
     LearningWriter(const LearningWriter &) = delete;
@@ -55,6 +57,8 @@ public:
     EpochViewState epochViewState() const;
     std::size_t queuedEventsCount() const;
     void pauseWorkerForTest(bool pause);
+    void pauseWorkerAfterReadForTest(bool pause);
+    void setOnReadyCallback(std::function<void()> callback);
 
 private:
     enum class EventKind { Selection, NegativeFeedback, Suppression, PendingCommit };
@@ -97,6 +101,8 @@ private:
     std::condition_variable drained_;
     std::condition_variable resumeWorkerCv_;
     bool workerPaused_ = false;
+    bool workerPausedAfterRead_ = false;
+    std::function<void()> onReadyCallback_;
     std::deque<Event> events_;
     std::vector<Event> processingEvents_;
     std::int64_t resetRevision_ = 0;

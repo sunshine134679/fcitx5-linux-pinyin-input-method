@@ -368,4 +368,181 @@ TEST_F(ArchitectureWriterRegression, EnableLearningDoesNotConstructWriterOnInput
     EXPECT_NE(shared->learning, nullptr);
 }
 
+TEST_F(ArchitectureWriterRegression, ReloadingQueueBoundedImmediatelyTo100) {
+    LearningWriter writer(dbPath());
+    writer.pauseWorkerForTest(true);
+    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
+
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+    ASSERT_TRUE(writer.reloadIfChanged());
+    ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+
+    for (int i = 0; i < 150; ++i) {
+        CommitEvent event;
+        event.text = "上海" + std::to_string(i);
+        event.fullPinyin = "shanghai";
+        event.role = CommitCandidateRole::Chinese;
+        event.candidateIndex = 1;
+        event.isDeviation = true;
+        event.timestampMs = 2000 + i;
+        writer.enqueueCommit(event);
+        EXPECT_LE(writer.queuedEventsCount(), 100u);
+    }
+    EXPECT_LE(writer.queuedEventsCount(), 100u);
+}
+
+TEST_F(ArchitectureWriterRegression, ReloadingPreservesEnglishAndRawEventsAccordingToPolicy) {
+    LearningWriter writer(dbPath());
+    writer.pauseWorkerForTest(true);
+    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
+
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+    ASSERT_TRUE(writer.reloadIfChanged());
+    ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+
+    CommitEvent englishEvent;
+    englishEvent.text = "hello";
+    englishEvent.fullPinyin = "hello";
+    englishEvent.role = CommitCandidateRole::English;
+    englishEvent.candidateIndex = 1;
+    englishEvent.isDeviation = true;
+    englishEvent.timestampMs = 2000;
+    writer.enqueueCommit(englishEvent);
+
+    EXPECT_GT(writer.queuedEventsCount(), 0u);
+
+    writer.pauseWorkerForTest(false);
+    EXPECT_TRUE(writer.flush());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("hello", "hello"));
+}
+
+TEST_F(ArchitectureWriterRegression, ReloadingReadFailureDoesNotAuthorizeReadyAndRecovers) {
+    LearningWriter writer(dbPath());
+    writer.pauseWorkerForTest(true);
+    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
+
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+    ASSERT_TRUE(writer.reloadIfChanged());
+    ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+
+    CommitEvent fact;
+    fact.text = "上海";
+    fact.fullPinyin = "shanghai";
+    fact.role = CommitCandidateRole::Chinese;
+    fact.candidateIndex = 1;
+    fact.isDeviation = true;
+    fact.timestampMs = 2000;
+    writer.enqueueCommit(fact);
+
+    sqlite3 *db = nullptr;
+    ASSERT_EQ(sqlite3_open(dbPath().c_str(), &db), SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(db, "ALTER TABLE learning_entries RENAME COLUMN suppressed TO unavailable;", nullptr, nullptr, nullptr), SQLITE_OK);
+
+    writer.pauseWorkerForTest(false);
+    EXPECT_FALSE(writer.flush());
+
+    // CRITICAL: read failure must NOT enter Ready! Must NOT clear PendingCommit!
+    EXPECT_NE(writer.epochViewState(), EpochViewState::Ready);
+    EXPECT_GT(writer.queuedEventsCount(), 0u);
+
+    ASSERT_EQ(sqlite3_exec(db, "ALTER TABLE learning_entries RENAME COLUMN unavailable TO suppressed;", nullptr, nullptr, nullptr), SQLITE_OK);
+    sqlite3_close(db);
+
+    EXPECT_TRUE(writer.reloadIfChanged() || writer.flush());
+    EXPECT_TRUE(writer.flush());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("上海", "shanghai"));
+}
+
+TEST_F(ArchitectureWriterRegression, SecondClearDuringWorkerRebaseRejectsStaleResult) {
+    LearningWriter writer(dbPath());
+    EXPECT_TRUE(writer.enqueueSelection("北京", "beijing", "", "", 1000));
+    EXPECT_TRUE(writer.flush());
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("北京", "beijing"));
+
+    // First clear
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+
+    writer.pauseWorkerForTest(true);
+    struct Resume { LearningWriter &w; ~Resume() { w.pauseWorkerForTest(false); } } resume{writer};
+
+    ASSERT_TRUE(writer.reloadIfChanged());
+    const auto epoch1 = writer.resetRevision();
+
+    // Now do a SECOND clear on external store
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+
+    // Input thread observes second clear and enqueues epoch 2 commit
+    ASSERT_TRUE(writer.reloadIfChanged());
+    const auto epoch2 = writer.resetRevision();
+    EXPECT_GT(epoch2, epoch1);
+
+    CommitEvent fact2;
+    fact2.text = "广州";
+    fact2.fullPinyin = "guangzhou";
+    fact2.role = CommitCandidateRole::Chinese;
+    fact2.candidateIndex = 1;
+    fact2.isDeviation = true;
+    fact2.timestampMs = 3000;
+    writer.enqueueCommit(fact2);
+
+    writer.pauseWorkerForTest(false);
+    EXPECT_TRUE(writer.flush());
+
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+    EXPECT_GE(writer.resetRevision(), epoch2);
+
+    EXPECT_FALSE(writer.snapshot()->hasPositiveFrequency("北京", "beijing"));
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("广州", "guangzhou"));
+}
+
+TEST_F(ArchitectureWriterRegression, PermanentReadFailureFlushAndDestructionBounded) {
+    auto tempPath = dbPath();
+    {
+        std::ofstream corrupt(tempPath);
+        corrupt << "corrupted sqlite database content";
+    }
+    const auto start = std::chrono::steady_clock::now();
+    {
+        LearningWriter writer(tempPath);
+        CommitEvent fact;
+        fact.text = "测试";
+        fact.fullPinyin = "ceshi";
+        fact.role = CommitCandidateRole::Chinese;
+        writer.enqueueCommit(fact);
+
+        EXPECT_FALSE(writer.flush());
+        EXPECT_NE(writer.epochViewState(), EpochViewState::Ready);
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+    EXPECT_LT(elapsed.count(), 1000);
+}
+
 } // namespace

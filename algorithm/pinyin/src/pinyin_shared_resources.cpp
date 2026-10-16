@@ -307,11 +307,7 @@ std::string defaultLanguageModelPath() {
 }
 
 PinyinSharedResources::PinyinSharedResources() = default;
-PinyinSharedResources::~PinyinSharedResources() {
-    if (writerInitThread_.joinable()) {
-        writerInitThread_.join();
-    }
-}
+PinyinSharedResources::~PinyinSharedResources() = default;
 
 std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
     const PinyinDataPaths &paths, const PinyinProviderOptions &options) {
@@ -376,9 +372,10 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
         resources->reloadVisibility();
     }
 
-    resources->dictionaryGeneration_ = 1;
-    resources->learningRevision_ =
-        resources->learning != nullptr ? resources->learning->resetRevision() : resources->visibilityRevision;
+    resources->dictionaryGeneration_.store(1, std::memory_order_release);
+    resources->learningRevision_.store(
+        resources->learning != nullptr ? resources->learning->resetRevision() : resources->visibilityRevision,
+        std::memory_order_release);
 
     return resources;
 }
@@ -392,7 +389,8 @@ ResourceChange PinyinSharedResources::reloadUserDictionary() {
     }
     userDictionary = std::move(updated);
     ++dictionaryGeneration_;
-    return ResourceChange{dictionaryGeneration_, learningRevision_, true};
+    return ResourceChange{dictionaryGeneration_.load(std::memory_order_acquire),
+                          learningRevision_.load(std::memory_order_acquire), true};
 }
 
 ResourceChange PinyinSharedResources::reloadLearningStore() {
@@ -404,15 +402,16 @@ ResourceChange PinyinSharedResources::reloadLearningStore() {
     if (learning != nullptr) {
         changed = learning->reload();
         if (changed) {
-            learningRevision_ = learning->resetRevision();
+            learningRevision_.store(learning->resetRevision(), std::memory_order_release);
         }
     } else {
         changed = reloadVisibility();
         if (changed) {
-            learningRevision_ = visibilityRevision;
+            learningRevision_.store(visibilityRevision, std::memory_order_release);
         }
     }
-    return ResourceChange{dictionaryGeneration_, learningRevision_, changed};
+    return ResourceChange{dictionaryGeneration_.load(std::memory_order_acquire),
+                          learningRevision_.load(std::memory_order_acquire), changed};
 }
 
 ResourceChange PinyinSharedResources::refreshLearningStore() {
@@ -422,10 +421,12 @@ ResourceChange PinyinSharedResources::refreshLearningStore() {
             if (phraseStats != nullptr) {
                 phraseStats->clear();
             }
-            learningRevision_ = learning->resetRevision();
-            return ResourceChange{dictionaryGeneration_, learningRevision_, true};
+            learningRevision_.store(learning->resetRevision(), std::memory_order_release);
+            return ResourceChange{dictionaryGeneration_.load(std::memory_order_acquire),
+                                  learningRevision_.load(std::memory_order_acquire), true};
         }
-        return ResourceChange{dictionaryGeneration_, learningRevision_, false};
+        return ResourceChange{dictionaryGeneration_.load(std::memory_order_acquire),
+                              learningRevision_.load(std::memory_order_acquire), false};
     }
     if (visibilityReader != nullptr) {
         const auto revision = visibilityReader->resetRevision();
@@ -433,11 +434,13 @@ ResourceChange PinyinSharedResources::refreshLearningStore() {
             if (phraseStats != nullptr) {
                 phraseStats->clear();
             }
-            learningRevision_ = visibilityRevision;
-            return ResourceChange{dictionaryGeneration_, learningRevision_, true};
+            learningRevision_.store(visibilityRevision, std::memory_order_release);
+            return ResourceChange{dictionaryGeneration_.load(std::memory_order_acquire),
+                                  learningRevision_.load(std::memory_order_acquire), true};
         }
     }
-    return ResourceChange{dictionaryGeneration_, learningRevision_, false};
+    return ResourceChange{dictionaryGeneration_.load(std::memory_order_acquire),
+                          learningRevision_.load(std::memory_order_acquire), false};
 }
 
 std::shared_ptr<const core::LearningSnapshot> PinyinSharedResources::visibleLearning() const {
@@ -445,21 +448,14 @@ std::shared_ptr<const core::LearningSnapshot> PinyinSharedResources::visibleLear
     return learning != nullptr ? learning->snapshot() : visibilitySnapshot;
 }
 
-core::LearningWriter *PinyinSharedResources::ensureLearningWriter() {
-    std::thread toJoin;
-    {
-        std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
-        if (writerInitThread_.joinable()) {
-            toJoin = std::move(writerInitThread_);
-        }
-    }
-    if (toJoin.joinable()) {
-        toJoin.join();
-    }
+core::LearningWriter *PinyinSharedResources::ensureLearningWriter(bool synchronousInitialLoad) {
     std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
     if (learning == nullptr && !learningStorePath.empty()) {
-        learning = std::make_unique<core::LearningWriter>(learningStorePath);
-        learningRevision_ = learning->resetRevision();
+        learning = std::make_unique<core::LearningWriter>(learningStorePath, synchronousInitialLoad);
+        if (onReadyCallback_) {
+            learning->setOnReadyCallback(onReadyCallback_);
+        }
+        learningRevision_.store(learning->resetRevision(), std::memory_order_release);
     }
     return learning.get();
 }
@@ -473,27 +469,14 @@ core::EpochViewState PinyinSharedResources::epochViewState() const {
 }
 
 void PinyinSharedResources::prepareLearningWriterAsync() {
-    std::thread toJoin;
-    {
-        std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
-        if (learning != nullptr || learningStorePath.empty() || preparingWriter_) {
-            return;
-        }
-        preparingWriter_ = true;
-        if (writerInitThread_.joinable()) {
-            toJoin = std::move(writerInitThread_);
-        }
-        writerInitThread_ = std::thread([this, path = learningStorePath]() {
-            auto writer = std::make_unique<core::LearningWriter>(path);
-            const auto rev = writer->resetRevision();
-            std::lock_guard<std::recursive_mutex> writerLock(resourceMutex_);
-            learning = std::move(writer);
-            learningRevision_ = rev;
-            preparingWriter_ = false;
-        });
-    }
-    if (toJoin.joinable()) {
-        toJoin.join();
+    ensureLearningWriter(/*synchronousInitialLoad=*/false);
+}
+
+void PinyinSharedResources::setOnReadyCallback(std::function<void()> callback) {
+    std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
+    onReadyCallback_ = std::move(callback);
+    if (learning != nullptr) {
+        learning->setOnReadyCallback(onReadyCallback_);
     }
 }
 

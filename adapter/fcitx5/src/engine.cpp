@@ -580,7 +580,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return commitRawPreedit();
     case KeyKind::Space:
         return page_.items.empty() ? commitRawPreedit(" ") : commitCurrent();
-    case KeyKind::Punctuation:
+    case KeyKind::Punctuation: {
         if (!compositionInput_.empty() && compositionInput_.front() == 'v' &&
             event.character == '.' && compositionInput_.find('.') == std::string::npos) {
             std::string nextInput = compositionInput_;
@@ -609,7 +609,10 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (page_.preedit.empty()) {
             return false;
         }
-        if (!page_.items.empty()) {
+        const bool hasRealCandidate = !page_.items.empty() &&
+            page_.cursor < page_.items.size() &&
+            page_.items[page_.cursor].source != core::CandidateSource::None;
+        if (hasRealCandidate) {
             if (!commitCurrent()) {
                 return false;
             }
@@ -618,6 +621,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         }
         host_.commit(std::string_view(&event.character, 1));
         return true;
+    }
     case KeyKind::Digit: {
         char triggerChar = 'v';
         char triggerDigit = '2';
@@ -769,6 +773,9 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
     if (request.globalIndex >= page_.items.size()) {
         return false;
     }
+    if (page_.items[request.globalIndex].source == core::CandidateSource::None) {
+        return false;
+    }
     const auto currentId = core::candidateIdentity(page_.items[request.globalIndex], page_);
     if (!(currentId == request.expected)) {
         return false;
@@ -841,6 +848,9 @@ bool ModernIMEController::select(std::size_t index) {
     if (!active() || index >= page_.items.size()) {
         return false;
     }
+    if (page_.items[index].source == core::CandidateSource::None) {
+        return false;
+    }
     core::CandidateSelectionRequest req;
     req.sessionId = sessionId_;
     req.displayGeneration = displayGeneration_;
@@ -852,6 +862,10 @@ bool ModernIMEController::select(std::size_t index) {
 bool ModernIMEController::extractCharacter(bool firstChar) {
     finalizeRecentCommitDeletion();
     if (!active() || clipboardMode_ || page_.items.empty() || provider_ == nullptr) {
+        return false;
+    }
+    if (page_.cursor >= page_.items.size() ||
+        page_.items[page_.cursor].source == core::CandidateSource::None) {
         return false;
     }
     const auto candidateIndex = page_.cursor;
@@ -868,6 +882,10 @@ bool ModernIMEController::extractCharacter(bool firstChar) {
 bool ModernIMEController::removeCurrent() {
     if (!active() || clipboardMode_ || page_.items.empty() ||
         provider_ == nullptr) {
+        return false;
+    }
+    if (page_.cursor >= page_.items.size() ||
+        page_.items[page_.cursor].source == core::CandidateSource::None) {
         return false;
     }
     if (!provider_->remove(page_.cursor)) {
@@ -914,8 +932,11 @@ bool ModernIMEController::commitPunctuation(char ascii) {
     }
     finalizeRecentCommitDeletion();
     if (!page_.preedit.empty()) {
-        const bool committed = !page_.items.empty() ? commitCurrent()
-                                                    : commitRawPreedit();
+        const bool hasRealCandidate = !page_.items.empty() &&
+            page_.cursor < page_.items.size() &&
+            page_.items[page_.cursor].source != core::CandidateSource::None;
+        const bool committed = hasRealCandidate ? commitCurrent()
+                                                : commitRawPreedit();
         if (!committed) {
             return false;
         }
@@ -1231,6 +1252,9 @@ bool ModernIMEController::openClipboard() {
 
 bool ModernIMEController::commitCurrent() {
     if (page_.items.empty() || page_.cursor >= page_.items.size()) {
+        return false;
+    }
+    if (page_.items[page_.cursor].source == core::CandidateSource::None) {
         return false;
     }
     return select(page_.cursor);
