@@ -84,6 +84,9 @@ std::optional<core::CandidateItem> derivedPrefix(
     result.text = *text;
     result.fullPinyin = *fullPinyin;
     result.consumedInputBytes = syllablePrefixEnds[syllableCount - 1];
+    result.source = core::CandidateSource::Engine;
+    result.commitRole = core::CommitCandidateRole::Chinese;
+    result.origins = {result.source};
     // The parent supplies segmentation, never the prefix's personal evidence.
     for (const auto &candidate : partialCandidates) {
         if (candidate.text == result.text &&
@@ -96,6 +99,9 @@ std::optional<core::CandidateItem> derivedPrefix(
         result.learningBoost = learning->boostAt(result.text, result.fullPinyin, nowMs);
         if (learning->hasPositiveFrequency(result.text, result.fullPinyin)) {
             result.source = core::CandidateSource::Learned;
+            if (std::find(result.origins.begin(), result.origins.end(), core::CandidateSource::Learned) == result.origins.end()) {
+                result.origins.push_back(core::CandidateSource::Learned);
+            }
         }
     }
     return result;

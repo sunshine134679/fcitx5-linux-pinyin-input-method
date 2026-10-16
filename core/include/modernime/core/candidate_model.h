@@ -39,6 +39,7 @@ struct CandidateItem final {
     bool isLexical = false;
     double recentChoiceBonus = 0.0;
     std::optional<CommitCandidateRole> commitRole;
+    std::vector<CandidateSource> origins = {};
 };
 
 struct CandidateIdentity {
@@ -47,6 +48,7 @@ struct CandidateIdentity {
     CommitCandidateRole role = CommitCandidateRole::Chinese;
     std::size_t consumedInputBytes = 0;
     bool operator==(const CandidateIdentity &) const = default;
+    auto operator<=>(const CandidateIdentity &) const = default;
 };
 
 struct CandidateSelectionRequest {
@@ -95,6 +97,22 @@ struct CandidatePage final {
 };
 
 CandidateIdentity candidateIdentity(const CandidateItem &item,
+                                    std::size_t defaultConsumedBytes);
+
+CandidateIdentity candidateIdentity(const CandidateItem &item,
                                     const CandidatePage &page);
 
 } // namespace modernime::core
+
+namespace std {
+template <>
+struct hash<modernime::core::CandidateIdentity> {
+    std::size_t operator()(const modernime::core::CandidateIdentity &id) const noexcept {
+        std::size_t h = std::hash<std::string>{}(id.text);
+        h ^= std::hash<std::string>{}(id.fullPinyin) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<int>{}(static_cast<int>(id.role)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<std::size_t>{}(id.consumedInputBytes) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+} // namespace std

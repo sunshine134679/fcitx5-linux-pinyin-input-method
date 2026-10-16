@@ -534,6 +534,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             core/learning_semantics_test.cpp
             core/personal_engine_file_test.cpp
             core/learning_order_test.cpp
+            core/candidate_identity_regression_test.cpp
             adapter/candidate_selection_test.cpp
             ../adapter/fcitx5/src/engine.cpp
         )

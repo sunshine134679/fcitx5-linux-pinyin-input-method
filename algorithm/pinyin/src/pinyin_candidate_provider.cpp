@@ -2044,6 +2044,13 @@ private:
                               ? core::CandidateSource::UserDictionary
                               : (isLearned ? core::CandidateSource::Learned
                                            : core::CandidateSource::Engine);
+            item.commitRole = isManual
+                                  ? core::CommitCandidateRole::UserDictionary
+                                  : core::CommitCandidateRole::Chinese;
+            item.origins = {item.source};
+            if (isLearned && item.source != core::CandidateSource::Engine) {
+                item.origins.push_back(core::CandidateSource::Engine);
+            }
             if (isManual) {
                 ++manualCount;
             }
@@ -2090,6 +2097,8 @@ private:
                 item.text = macroText;
                 item.fullPinyin = std::string(rawInput);
                 item.source = core::CandidateSource::Engine;
+                item.commitRole = core::CommitCandidateRole::Chinese;
+                item.origins = {item.source};
                 item.sourceIndex = std::numeric_limits<std::size_t>::max();
                 item.consumedInputBytes = rawInput.size();
                 if (insertPos < page_.items.size()) {
@@ -2244,6 +2253,8 @@ private:
         rawCandidate.text = rawInput;
         rawCandidate.fullPinyin = std::string(rawInput);
         rawCandidate.source = core::CandidateSource::Raw;
+        rawCandidate.commitRole = core::CommitCandidateRole::Raw;
+        rawCandidate.origins = {rawCandidate.source};
         rawCandidate.consumedInputBytes = rawInput.size();
 
         page_.items.erase(
@@ -2267,6 +2278,8 @@ private:
             rawItem.text = "v";
             rawItem.fullPinyin = "v";
             rawItem.source = core::CandidateSource::Raw;
+            rawItem.commitRole = core::CommitCandidateRole::Raw;
+            rawItem.origins = {rawItem.source};
             rawItem.consumedInputBytes = 1;
             page_.items.push_back(std::move(rawItem));
 
@@ -2275,6 +2288,8 @@ private:
                 cmdCandidate.text = "剪贴板 (" + clipboardTrigger_ + ")";
                 cmdCandidate.fullPinyin = "v";
                 cmdCandidate.source = core::CandidateSource::Command;
+                cmdCandidate.commitRole = core::CommitCandidateRole::Command;
+                cmdCandidate.origins = {cmdCandidate.source};
                 cmdCandidate.consumedInputBytes = 1;
                 page_.items.push_back(std::move(cmdCandidate));
             }
@@ -2288,6 +2303,8 @@ private:
                 predictedCandidate.text = std::string(predictedWords.front());
                 predictedCandidate.fullPinyin = predictedCandidate.text;
                 predictedCandidate.source = core::CandidateSource::Raw;
+                predictedCandidate.commitRole = core::CommitCandidateRole::English;
+                predictedCandidate.origins = {predictedCandidate.source};
                 predictedCandidate.consumedInputBytes = rawInput.size();
 
                 page_.items.insert(page_.items.begin(), std::move(rawCandidate));
@@ -2302,6 +2319,8 @@ private:
                 predictedCandidate.text = std::string(predictedWords.front());
                 predictedCandidate.fullPinyin = predictedCandidate.text;
                 predictedCandidate.source = core::CandidateSource::Raw;
+                predictedCandidate.commitRole = core::CommitCandidateRole::English;
+                predictedCandidate.origins = {predictedCandidate.source};
                 predictedCandidate.consumedInputBytes = rawInput.size();
 
                 const auto insertPos =
@@ -2356,16 +2375,54 @@ private:
             }
         }
 
-        std::unordered_set<std::string> seenCandidateTexts;
-        page_.items.erase(
-            std::remove_if(page_.items.begin(), page_.items.end(),
-                           [&seenCandidateTexts](const auto &item) {
-                               if (item.source == core::CandidateSource::Command) {
-                                   return false;
-                               }
-                               return !seenCandidateTexts.insert(item.text).second;
-                           }),
-            page_.items.end());
+        std::unordered_set<core::CandidateIdentity> seenCandidateIdentities;
+        std::vector<core::CandidateItem> deduplicated;
+        deduplicated.reserve(page_.items.size());
+        for (auto &item : page_.items) {
+            if (item.source == core::CandidateSource::Command) {
+                deduplicated.push_back(std::move(item));
+                continue;
+            }
+            const auto id = core::candidateIdentity(item, page_);
+            if (seenCandidateIdentities.insert(id).second) {
+                deduplicated.push_back(std::move(item));
+            } else {
+                for (auto &existing : deduplicated) {
+                    if (core::candidateIdentity(existing, page_) == id) {
+                        for (auto src : item.origins) {
+                            if (std::find(existing.origins.begin(), existing.origins.end(), src) == existing.origins.end()) {
+                                existing.origins.push_back(src);
+                            }
+                        }
+                        if (std::find(existing.origins.begin(), existing.origins.end(), item.source) == existing.origins.end()) {
+                            existing.origins.push_back(item.source);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        page_.items = std::move(deduplicated);
+
+        // Ambiguity annotation: when multiple items share the same display text
+        std::unordered_map<std::string, std::size_t> textCounts;
+        for (const auto &item : page_.items) {
+            if (item.source != core::CandidateSource::Command) {
+                ++textCounts[item.text];
+            }
+        }
+        for (auto &item : page_.items) {
+            if (item.source == core::CandidateSource::Command) {
+                continue;
+            }
+            if (textCounts[item.text] > 1 && item.annotation.empty()) {
+                if (item.consumedInputBytes > 0 && item.consumedInputBytes < rawInput.size()) {
+                    item.annotation = std::string(rawInput.substr(item.consumedInputBytes));
+                } else if (!item.fullPinyin.empty()) {
+                    item.annotation = item.fullPinyin;
+                }
+            }
+        }
     }
 
     std::shared_ptr<SharedResources> shared_;

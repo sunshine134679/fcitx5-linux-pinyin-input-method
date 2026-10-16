@@ -13,7 +13,7 @@ std::string candidateOrderKey(std::string_view text,
 }
 
 CandidateIdentity candidateIdentity(const CandidateItem &item,
-                                    const CandidatePage &page) {
+                                    std::size_t defaultConsumedBytes) {
     CandidateIdentity id;
     id.text = item.text;
     id.fullPinyin = item.fullPinyin;
@@ -41,9 +41,14 @@ CandidateIdentity candidateIdentity(const CandidateItem &item,
         }
     }
     id.consumedInputBytes = (item.consumedInputBytes == 0)
-                                ? page.rawInput.size()
+                                ? defaultConsumedBytes
                                 : item.consumedInputBytes;
     return id;
+}
+
+CandidateIdentity candidateIdentity(const CandidateItem &item,
+                                    const CandidatePage &page) {
+    return candidateIdentity(item, page.rawInput.size());
 }
 
 bool CandidatePage::select(std::size_t index) {
