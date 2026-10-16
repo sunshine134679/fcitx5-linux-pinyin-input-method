@@ -29,7 +29,8 @@ struct LearningStoreState;
 
 class LearningWriter final {
 public:
-    explicit LearningWriter(std::filesystem::path path, bool synchronousInitialLoad = true);
+    explicit LearningWriter(std::filesystem::path path, bool synchronousInitialLoad = true,
+                            std::size_t totalEntryLimit = 0);
     ~LearningWriter();
 
     LearningWriter(const LearningWriter &) = delete;
@@ -59,7 +60,6 @@ public:
     void pauseWorkerForTest(bool pause);
     void pauseWorkerAfterReadForTest(bool pause);
     bool isWorkerWaitingAfterReadForTest() const;
-    void setTotalEntryLimit(std::size_t limit);
     void setOnReadyCallback(std::function<void()> callback);
 
 private:

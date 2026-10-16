@@ -588,10 +588,17 @@ if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
     )
     target_link_libraries(modernime_personal_engine_benchmark PRIVATE
         modernime_core
-        modernime_pinyin
         ${BENCHMARK_LIBRARY}
         Threads::Threads
     )
+    if(MODERNIME_BUILD_LIBIME_PINYIN)
+        target_link_libraries(modernime_personal_engine_benchmark PRIVATE
+            modernime_pinyin
+        )
+        target_compile_definitions(modernime_personal_engine_benchmark PRIVATE
+            MODERNIME_HAS_PINYIN_PROVIDER=1
+        )
+    endif()
     set_target_properties(modernime_personal_engine_benchmark PROPERTIES
         BUILD_RPATH "${BENCHMARK_LIB_DIR}"
         INSTALL_RPATH "${BENCHMARK_LIB_DIR}"

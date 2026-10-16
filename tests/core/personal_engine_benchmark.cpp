@@ -3,8 +3,10 @@
 #include "modernime/core/learning_store.h"
 #include "modernime/core/learning_writer.h"
 #include "modernime/core/personal_engine.h"
+#if defined(MODERNIME_HAS_PINYIN_PROVIDER) && MODERNIME_HAS_PINYIN_PROVIDER
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
+#endif
 #include <sqlite3.h>
 #include <unistd.h>
 
@@ -513,8 +515,7 @@ void verifyLmdbConcurrentPruningLatency() {
     populateLmdbDatabase(path, 50000);
 
     {
-        modernime::core::LearningWriter writer(path);
-        writer.setTotalEntryLimit(50000); // Enforce 50,000 capacity and 40,000 prune target
+        modernime::core::LearningWriter writer(path, true, 50000); // Enforce 50,000 capacity limit
         std::atomic<bool> stopPrune{false};
         std::thread pruner([&]() {
             int pruneWordIdx = 0;
@@ -674,6 +675,7 @@ void verifyStartupInitialCommitAndNextKeyLatency(std::size_t count) {
     sqlite3_close(connection);
 
     {
+#if defined(MODERNIME_HAS_PINYIN_PROVIDER) && MODERNIME_HAS_PINYIN_PROVIDER
         modernime::pinyin::PinyinDataPaths paths;
         paths.learningStore = path.string();
 
@@ -741,6 +743,57 @@ void verifyStartupInitialCommitAndNextKeyLatency(std::size_t count) {
                       << " ms, avg=" << avg
                       << " ms, max=" << loadDurations.back() << " ms\n";
         }
+#else
+        // Core-only profile fallback without LibIME pinyin
+        modernime::core::LearningWriter writer(path, false);
+        modernime::core::CommitEvent event;
+        event.text = "hello";
+        event.fullPinyin = "hello";
+        event.role = modernime::core::CommitCandidateRole::Raw;
+        event.candidateIndex = 0;
+        event.isDeviation = false;
+        event.timestampMs = 1700000001000LL;
+
+        const auto start_commit = std::chrono::steady_clock::now();
+        if (!writer.enqueueCommit(event)) std::exit(EXIT_FAILURE);
+        const double first_commit_us = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - start_commit).count();
+
+        const auto start_next = std::chrono::steady_clock::now();
+        event.timestampMs = 1700000001001LL;
+        if (!writer.enqueueCommit(event)) std::exit(EXIT_FAILURE);
+        const double next_key_us = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - start_next).count();
+
+        const auto start_load = std::chrono::steady_clock::now();
+        if (!writer.flush()) std::exit(EXIT_FAILURE);
+        const double load_duration_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start_load).count();
+
+        std::cout << "  [Core-only] Startup initial commit " << count << " entries: first commit latency="
+                  << first_commit_us << " us, next key latency=" << next_key_us
+                  << " us, background load duration=" << load_duration_ms << " ms\n";
+
+        if (count == 200000) {
+            std::vector<double> loadDurations;
+            loadDurations.reserve(10);
+            for (int iter = 0; iter < 10; ++iter) {
+                const auto t0 = std::chrono::steady_clock::now();
+                modernime::core::LearningWriter freshWriter(path, false);
+                if (!freshWriter.flush()) std::exit(EXIT_FAILURE);
+                const double ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t0).count();
+                loadDurations.push_back(ms);
+            }
+            std::sort(loadDurations.begin(), loadDurations.end());
+            double sum = std::accumulate(loadDurations.begin(), loadDurations.end(), 0.0);
+            double avg = sum / static_cast<double>(loadDurations.size());
+            std::cout << "  200k background load 10 iterations: min=" << loadDurations.front()
+                      << " ms, median=" << loadDurations[loadDurations.size() / 2]
+                      << " ms, avg=" << avg
+                      << " ms, max=" << loadDurations.back() << " ms\n";
+        }
+#endif
 
 #ifdef NDEBUG
         if (first_commit_us >= 5000.0 || next_key_us >= 5000.0) {

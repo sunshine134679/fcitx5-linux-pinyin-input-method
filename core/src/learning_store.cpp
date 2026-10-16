@@ -55,8 +55,7 @@ LearningStore::~LearningStore() { close(); }
 void LearningStore::setTotalEntryLimit(std::size_t limit) {
     totalEntryLimit_ = limit == 0 ? kMaxLearningEntries : limit;
     if (lmdbEngine_ != nullptr) {
-        const auto pruneTarget = (totalEntryLimit_ * 4) / 5;
-        lmdbEngine_->SetMaxCapacity(totalEntryLimit_, pruneTarget);
+        lmdbEngine_->SetMaxCapacity(totalEntryLimit_, totalEntryLimit_);
     }
 }
 
@@ -70,7 +69,7 @@ bool LearningStore::open() {
         }
         EngineConfig cfg;
         cfg.max_dict_capacity = totalEntryLimit_;
-        cfg.prune_target_size = (totalEntryLimit_ * 4) / 5;
+        cfg.prune_target_size = totalEntryLimit_;
         lmdbEngine_ = std::make_unique<PersonalEngine>(cfg);
         if (!lmdbEngine_->OpenLmdb(path_, false)) {
             lmdbEngine_.reset();

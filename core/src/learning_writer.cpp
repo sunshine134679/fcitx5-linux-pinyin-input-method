@@ -11,10 +11,16 @@
 
 namespace modernime::core {
 
-LearningWriter::LearningWriter(std::filesystem::path path, bool synchronousInitialLoad)
+LearningWriter::LearningWriter(std::filesystem::path path, bool synchronousInitialLoad,
+                               std::size_t totalEntryLimit)
     : store_(std::make_unique<LearningStore>(path)),
       observerStore_(std::make_unique<LearningStore>(std::move(path))),
+      totalEntryLimit_(totalEntryLimit),
       snapshot_(std::make_shared<const LearningSnapshot>()) {
+    if (totalEntryLimit_ > 0) {
+        store_->setTotalEntryLimit(totalEntryLimit_);
+        observerStore_->setTotalEntryLimit(totalEntryLimit_);
+    }
     if (synchronousInitialLoad) {
         storageAvailable_ = store_->open();
         if (storageAvailable_) {
@@ -219,14 +225,6 @@ std::size_t LearningWriter::queuedEventsCount() const {
     return events_.size();
 }
 
-void LearningWriter::setTotalEntryLimit(std::size_t limit) {
-    std::lock_guard lock(mutex_);
-    totalEntryLimit_ = limit;
-    if (store_ != nullptr) {
-        store_->setTotalEntryLimit(limit);
-    }
-}
-
 void LearningWriter::pauseWorkerForTest(bool pause) {
     {
         std::lock_guard lock(mutex_);
@@ -428,9 +426,6 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events) {
         if (!store_->open()) {
             store_->close();
             continue;
-        }
-        if (totalEntryLimit_ > 0) {
-            store_->setTotalEntryLimit(totalEntryLimit_);
         }
         if (store_->recordBatch(storeEvents)) {
             return true;

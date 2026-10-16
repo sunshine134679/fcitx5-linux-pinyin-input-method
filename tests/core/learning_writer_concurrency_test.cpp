@@ -973,5 +973,44 @@ TEST_F(ArchitectureWriterRegression, ExternalClearAfterWorkerReadRejectsStalePub
     runTest(lmdbPath());
 }
 
+TEST_F(ArchitectureWriterRegression, ImmutableCapacityConfiguredAtConstructionIsRaceFreeUnderConcurrency) {
+    auto runTest = [&](const std::filesystem::path &path) {
+        constexpr std::size_t kLimit = 50;
+        LearningWriter writer(path, false, kLimit);
+
+        std::atomic<std::size_t> enqueuedCount{0};
+
+        std::vector<std::thread> workers;
+        workers.reserve(4);
+        for (int t = 0; t < 4; ++t) {
+            workers.emplace_back([&, t]() {
+                for (int i = 0; i < 50; ++i) {
+                    const auto id = t * 100 + i;
+                    writer.enqueueSelection("词_" + std::to_string(id), "ci", "", "", 1000 + id);
+                    enqueuedCount.fetch_add(1, std::memory_order_relaxed);
+                    std::this_thread::yield();
+                }
+            });
+        }
+
+        for (auto &w : workers) {
+            w.join();
+        }
+
+        EXPECT_TRUE(writer.flush());
+        EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+
+        // Verify independent store: retained entries <= kLimit
+        LearningStore store(path);
+        ASSERT_TRUE(store.openReadOnly());
+        auto state = store.readState();
+        ASSERT_TRUE(state.has_value() && state->snapshot != nullptr);
+        EXPECT_LE(state->snapshot->entries().size(), kLimit);
+    };
+
+    runTest(dbPath());
+    runTest(lmdbPath());
+}
+
 } // namespace
 

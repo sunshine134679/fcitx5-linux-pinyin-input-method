@@ -2,6 +2,7 @@
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/learning_writer.h"
+#include "modernime/core/personal_engine.h"
 #include "modernime/core/phrase_formation.h"
 
 #include <sqlite3.h>
@@ -1519,6 +1520,61 @@ void testContextBoostPenalizedByNegativeFeedback() {
     const auto after = s.contextBoost("绍", "shao", "王", "");
     assertTrue(after == 0.0, "repeated negative feedback attenuates context boost to 0");
 }
+
+void testLearningStoreSmallCapacityBoundaryRetainsLimitExactForSqliteAndLmdb() {
+    for (const auto &backendName : {"sqlite", "lmdb"}) {
+        const std::string filename = std::string("capacity-bound.") + (std::string(backendName) == "lmdb" ? "lmdb" : "sqlite3");
+        const auto path = testPath(filename);
+        modernime::core::LearningStore store(path);
+        store.setTotalEntryLimit(5);
+        assertTrue(store.open(), "capacity store opens");
+        for (int i = 0; i < 8; ++i) {
+            assertTrue(store.recordSelection("词" + std::to_string(i), "ci", {}, {}, 1000 + i),
+                       "entry records successfully");
+            auto state = store.readState();
+            assertTrue(state.has_value() && state->snapshot != nullptr, "state valid");
+            const std::size_t expected = std::min(i + 1, 5);
+            assertTrue(state->snapshot->entries().size() == expected,
+                       "snapshot retains exactly expected capacity");
+            if (store.personalEngine() != nullptr) {
+                assertTrue(store.personalEngine()->GetTotalEntries() == expected,
+                           "physical LMDB count retains exactly expected capacity");
+            }
+        }
+        // Test reopening preserves exact capacity
+        store.close();
+        modernime::core::LearningStore reopened(path);
+        reopened.setTotalEntryLimit(5);
+        assertTrue(reopened.openReadOnly(), "reopened read-only");
+        auto reopenedState = reopened.readState();
+        assertTrue(reopenedState.has_value() && reopenedState->snapshot != nullptr, "reopened state valid");
+        assertTrue(reopenedState->snapshot->entries().size() == 5, "reopened snapshot retains 5");
+        reopened.close();
+
+        std::error_code error;
+        std::filesystem::remove(path, error);
+        std::filesystem::remove(path.string() + "-wal", error);
+        std::filesystem::remove(path.string() + "-shm", error);
+        std::filesystem::remove(path.string() + "-lock", error);
+    }
+}
+
+void testPersonalEngineStandaloneRetainsCustomPruneTarget() {
+    modernime::core::EngineConfig cfg;
+    cfg.max_dict_capacity = 5;
+    cfg.prune_target_size = 4; // Explicit standalone PersonalEngine prune target
+    modernime::core::PersonalEngine engine(cfg);
+    uint32_t ts = 1700000000U;
+    engine.SetClock([ts]() { return ts; });
+    for (int i = 0; i < 5; ++i) {
+        engine.RecordUsage("!u!term" + std::to_string(i), "词" + std::to_string(i), 1.0f);
+    }
+    assertTrue(engine.GetTotalEntries() == 5, "5 entries loaded before prune");
+    // Trigger prune by adding 6th entry
+    engine.RecordUsage("!u!term5", "词5", 1.0f);
+    // Standalone PersonalEngine prunes down to prune_target_size (4)
+    assertTrue(engine.GetTotalEntries() == 4, "standalone PersonalEngine prunes to custom prune_target_size (4)");
+}
 } // namespace
 
 int main() {
@@ -1572,5 +1628,7 @@ int main() {
     testLmdbKeyNormalizationNoDuplicateCount();
     testPrefixRecallTopKByLearningBoost();
     testContextBoostPenalizedByNegativeFeedback();
+    testLearningStoreSmallCapacityBoundaryRetainsLimitExactForSqliteAndLmdb();
+    testPersonalEngineStandaloneRetainsCustomPruneTarget();
     return EXIT_SUCCESS;
 }
