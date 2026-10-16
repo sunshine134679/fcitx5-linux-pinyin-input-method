@@ -93,7 +93,10 @@ public:
                                  core::CandidateProvider *provider = nullptr,
                                  ControllerOptions options = {});
 
+    ~ModernIMEController();
+
     bool handle(const KeyEvent &event);
+    bool select(const core::CandidateSelectionRequest &request);
     bool select(std::size_t index);
     bool extractCharacter(bool firstChar);
     bool removeCurrent();
@@ -103,6 +106,11 @@ public:
     void setActive(bool active);
     void setSensitive(bool sensitive);
     bool isSensitive() const { return sensitive_; }
+
+    std::weak_ptr<core::SelectionEndpoint> endpoint() const noexcept;
+    std::uint64_t sessionId() const noexcept { return sessionId_; }
+    std::uint64_t displayGeneration() const noexcept { return displayGeneration_; }
+    std::uint64_t layoutGeneration() const noexcept { return layoutGeneration_; }
 
     std::size_t currentPageIndex() const {
         if (page_.items.empty() || page_.pageBoundaries.empty()) {
@@ -119,28 +127,10 @@ public:
         return page_.pageBoundaries.size() - 1;
     }
     std::size_t pageSize() const;
-    void setPageBoundaries(std::vector<core::PageBoundary> boundaries) {
-        if (!boundaries.empty()) {
-            std::size_t expectedBegin = 0;
-            for (const auto &boundary : boundaries) {
-                if (boundary.begin != expectedBegin ||
-                    boundary.begin >= boundary.end ||
-                    boundary.end > page_.items.size()) {
-                    page_.pageBoundaries.clear();
-                    return;
-                }
-                expectedBegin = boundary.end;
-            }
-            if (expectedBegin != page_.items.size()) {
-                page_.pageBoundaries.clear();
-                return;
-            }
-        }
-        page_.pageBoundaries = std::move(boundaries);
-        if (!page_.items.empty()) {
-            page_.cursor = std::min(page_.cursor, page_.items.size() - 1);
-        }
-    }
+    bool setPageBoundaries(std::uint64_t displayGeneration,
+                           std::uint64_t layoutGeneration,
+                           std::vector<core::PageBoundary> boundaries);
+    void setPageBoundaries(std::vector<core::PageBoundary> boundaries);
     bool moveCursor(std::ptrdiff_t delta) {
         if (page_.items.empty() || delta == 0) {
             return false;
@@ -237,6 +227,12 @@ private:
     std::size_t compositionCursor_ = 0;
     std::vector<std::string> clipboardEntries_;
     RecentCommit recentCommit_;
+    std::uint64_t sessionId_ = 0;
+    std::uint64_t displayGeneration_ = 1;
+    std::uint64_t layoutGeneration_ = 1;
+    std::uint64_t providerGeneration_ = 0;
+    class ControllerEndpoint;
+    std::shared_ptr<ControllerEndpoint> endpoint_;
     bool sensitive_ = false;
 };
 

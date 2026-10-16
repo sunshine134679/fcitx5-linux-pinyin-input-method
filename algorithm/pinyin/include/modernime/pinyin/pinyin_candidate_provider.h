@@ -76,6 +76,9 @@ public:
     bool eraseLast() override;
     bool replaceInput(std::string_view input) override;
     bool select(std::size_t index) override;
+    std::optional<core::CandidateSelectionOutcome> selectConfirmed(
+        const core::CandidateSelectionRequest &request,
+        std::uint64_t providerGeneration) override;
     bool extractCharacter(std::size_t index, bool firstChar,
                           std::string *outText = nullptr) override;
     bool remove(std::size_t index) override;
@@ -89,6 +92,7 @@ public:
     bool flush();
 
     void setContext(std::string_view before, std::string_view after);
+    void applyOptions(const PinyinProviderOptions &options);
     // Runtime toggles for settings hot-reload; learning writer is created
     // lazily on first use after being enabled.
     void setLearningEnabled(bool enabled);

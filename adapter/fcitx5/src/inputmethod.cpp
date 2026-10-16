@@ -299,15 +299,25 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
         return;
     }
 
-    auto candidates = std::make_unique<FcitxCandidateList>(controller_);
+    auto candidates = std::make_unique<FcitxCandidateList>(
+        controller_ ? controller_->endpoint() : std::weak_ptr<core::SelectionEndpoint>{},
+        controller_ ? controller_->displayGeneration() : page.displayGeneration,
+        controller_ ? controller_->layoutGeneration() : 1);
     const bool clipboard = page.mode == core::CandidatePageMode::Clipboard;
     candidates->setLayoutHint(clipboard ? fcitx::CandidateLayoutHint::Vertical
                                         : fcitx::CandidateLayoutHint::Horizontal);
     candidates->setCursorIncludeUnselected(true);
     for (std::size_t index = 0; index < page.items.size(); ++index) {
-        candidates->append<FcitxCandidateWord>(page.items[index].text,
-                                               controller_, index,
-                                               page.items[index].annotation);
+        core::CandidateSelectionRequest req;
+        req.sessionId = page.sessionId;
+        req.displayGeneration = page.displayGeneration;
+        req.globalIndex = index;
+        req.expected = core::candidateIdentity(page.items[index], page);
+        candidates->append<FcitxCandidateWord>(
+            page.items[index].text,
+            controller_ ? controller_->endpoint() : std::weak_ptr<core::SelectionEndpoint>{},
+            std::move(req),
+            page.items[index].annotation);
     }
     // Fcitx5's size() is page-local, so clamp against the full published list
     // before selecting the requested page.
@@ -365,12 +375,12 @@ void FcitxInputContextState::applySettings(
     controller().setOptions(controllerOptions(settings));
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     if (provider_ != nullptr) {
-        // setOptions applies learning flags through the controller's sensitive
-        // context gate. Do not bypass it while hot-reloading other preferences.
-        provider_->setEnglishDefinitionEnabled(
-            settings.englishDefinitionEnabled);
-        provider_->setClipboardEnabled(settings.clipboardEnabled);
-        provider_->setClipboardTrigger(settings.clipboardTrigger);
+        auto opts = pinyinOptions(settings);
+        if (controller().isSensitive()) {
+            opts.learningEnabled = false;
+            opts.contextLearningEnabled = false;
+        }
+        provider_->applyOptions(opts);
     }
 #else
     (void)settings;

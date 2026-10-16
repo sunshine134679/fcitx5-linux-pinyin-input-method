@@ -4,9 +4,11 @@
 #include "modernime/core/punctuation.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -92,10 +94,82 @@ std::size_t displayedPreeditCursor(std::string_view displayed,
 
 } // namespace
 
+namespace {
+std::atomic<std::uint64_t> gNextSessionId{1};
+} // namespace
+
+class ModernIMEController::ControllerEndpoint final : public core::SelectionEndpoint {
+public:
+    explicit ControllerEndpoint(ModernIMEController *controller)
+        : controller_(controller) {}
+
+    void detach() noexcept {
+        controller_ = nullptr;
+    }
+
+    bool select(const core::CandidateSelectionRequest &request) override {
+        if (!controller_) {
+            return false;
+        }
+        return controller_->select(request);
+    }
+
+    bool setPageBoundaries(std::uint64_t displayGeneration,
+                           std::uint64_t layoutGeneration,
+                           std::vector<core::PageBoundary> boundaries) override {
+        if (!controller_) {
+            return false;
+        }
+        return controller_->setPageBoundaries(displayGeneration, layoutGeneration,
+                                              std::move(boundaries));
+    }
+
+    bool moveCursor(std::ptrdiff_t delta) override {
+        if (!controller_) {
+            return false;
+        }
+        return controller_->moveCursor(delta);
+    }
+
+    bool movePage(std::ptrdiff_t delta) override {
+        if (!controller_) {
+            return false;
+        }
+        return controller_->movePage(delta);
+    }
+
+    std::size_t currentPageIndex() const override {
+        if (!controller_) {
+            return 0;
+        }
+        return controller_->currentPageIndex();
+    }
+
+private:
+    ModernIMEController *controller_ = nullptr;
+};
+
 ModernIMEController::ModernIMEController(EngineHost &host,
                                          core::CandidateProvider *provider,
                                          ControllerOptions options)
-    : host_(host), provider_(provider), options_(options) {}
+    : host_(host),
+      provider_(provider),
+      options_(options),
+      sessionId_(gNextSessionId.fetch_add(1, std::memory_order_relaxed)),
+      displayGeneration_(1),
+      layoutGeneration_(1),
+      providerGeneration_(0),
+      endpoint_(std::make_shared<ControllerEndpoint>(this)) {}
+
+ModernIMEController::~ModernIMEController() {
+    if (endpoint_) {
+        endpoint_->detach();
+    }
+}
+
+std::weak_ptr<core::SelectionEndpoint> ModernIMEController::endpoint() const noexcept {
+    return endpoint_;
+}
 
 void ModernIMEController::initRecentCommit(
     const core::CandidateItem &candidate, const std::string &basePrefix,
@@ -333,6 +407,10 @@ void ModernIMEController::setContext(std::string before, std::string after,
     contextAvailability_ = availability;
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
+    }
+    if (!page_.items.empty()) {
+        displayGeneration_++;
+        page_.displayGeneration = displayGeneration_;
     }
 }
 
@@ -648,6 +726,9 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         }
         return movePage(1);
     case KeyKind::OpenClipboard:
+        if (!options_.clipboardEnabled) {
+            return false;
+        }
         return openClipboard();
     case KeyKind::CommitFirstCharacter:
         if (options_.characterExtractionEnabled && extractCharacter(true)) {
@@ -677,58 +758,95 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     return false;
 }
 
-bool ModernIMEController::select(std::size_t index) {
-    if (!active() || index >= page_.items.size()) {
+bool ModernIMEController::select(const core::CandidateSelectionRequest &request) {
+    if (!active()) {
         return false;
     }
+    if (request.sessionId != sessionId_ ||
+        request.displayGeneration != displayGeneration_) {
+        return false;
+    }
+    if (request.globalIndex >= page_.items.size()) {
+        return false;
+    }
+    const auto currentId = core::candidateIdentity(page_.items[request.globalIndex], page_);
+    if (!(currentId == request.expected)) {
+        return false;
+    }
+
     if (clipboardMode_) {
-        if (page_.items[index].source == core::CandidateSource::Command) {
+        if (page_.items[request.globalIndex].source == core::CandidateSource::Command) {
             clearComposition();
             return true;
         }
-        const auto text = page_.items[index].text;
+        const auto text = page_.items[request.globalIndex].text;
         host_.commit(text);
         clearComposition();
         return true;
     }
+
     if (provider_) {
-        const auto candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::Command) {
-            provider_->select(index);
-            return openClipboard();
-        }
-        const auto text = candidate.text;
         const auto basePrefix = contextBefore_;
-        const bool partialSelection = candidate.consumedInputBytes > 0 &&
-                                      candidate.consumedInputBytes <
-                                          page_.rawInput.size();
-        if (!provider_->select(index)) {
+        auto outcome = provider_->selectConfirmed(request, providerGeneration_);
+        if (!outcome.has_value()) {
             return false;
         }
+        if (outcome->action == core::SelectionAction::OpenClipboard) {
+            if (!options_.clipboardEnabled) {
+                return false;
+            }
+            return openClipboard();
+        }
+        if (outcome->action == core::SelectionAction::NoCommit) {
+            return true;
+        }
+
+        const auto text = outcome->selected.text;
         host_.commit(text);
         appendFallbackContext(text);
-        if (partialSelection && !provider_->page().rawInput.empty()) {
+
+        if (!outcome->remainingInput.empty()) {
             publishProviderPage(true);
             return true;
         }
+
         if (!sensitive_ && options_.learningEnabled &&
-            candidate.source != core::CandidateSource::Command &&
-            candidate.source != core::CandidateSource::EnglishDefinition &&
-            candidate.source != core::CandidateSource::Raw &&
-            !candidate.text.empty()) {
-            initRecentCommit(candidate, basePrefix, contextAfter_);
+            outcome->selected.role != core::CommitCandidateRole::Command &&
+            outcome->selected.role != core::CommitCandidateRole::English &&
+            outcome->selected.role != core::CommitCandidateRole::Raw &&
+            !outcome->selected.text.empty()) {
+            initRecentCommit(page_.items[request.globalIndex], basePrefix, contextAfter_);
         } else {
             finalizeRecentCommitDeletion();
         }
         clearComposition();
         return true;
     }
-    if (page_.items[index].source == core::CandidateSource::Command) {
+
+    if (page_.items[request.globalIndex].source == core::CandidateSource::Command) {
+        if (!options_.clipboardEnabled) {
+            return false;
+        }
         clearComposition();
         return openClipboard();
     }
-    page_.cursor = index;
-    return commitCurrent();
+    page_.cursor = request.globalIndex;
+    const auto text = page_.items[request.globalIndex].text;
+    host_.commit(text);
+    clearComposition();
+    return true;
+}
+
+bool ModernIMEController::select(std::size_t index) {
+    if (!active() || index >= page_.items.size()) {
+        return false;
+    }
+    core::CandidateSelectionRequest req;
+    req.sessionId = sessionId_;
+    req.displayGeneration = displayGeneration_;
+    req.globalIndex = index;
+    req.expected = core::candidateIdentity(page_.items[index], page_);
+    return select(req);
 }
 
 bool ModernIMEController::extractCharacter(bool firstChar) {
@@ -859,13 +977,17 @@ void ModernIMEController::clearComposition() {
         provider_->reset();
         publishProviderPage();
     } else {
+        displayGeneration_++;
         input_.clear();
         page_.clear();
+        page_.sessionId = sessionId_;
+        page_.displayGeneration = displayGeneration_;
         host_.publishPage(page_);
     }
 }
 
 void ModernIMEController::reset() {
+    displayGeneration_++;
     recentCommit_.valid = false;
     contextAvailability_ = ContextAvailability::Unavailable;
     fallbackContextBefore_.clear();
@@ -882,6 +1004,7 @@ void ModernIMEController::setSensitive(bool sensitive) {
         return;
     }
     sensitive_ = sensitive;
+    displayGeneration_++;
     if (sensitive_) {
         recentCommit_.valid = false;
         contextAvailability_ = ContextAvailability::Invalidated;
@@ -897,10 +1020,14 @@ void ModernIMEController::setSensitive(bool sensitive) {
         provider_->setLearningEnabled(options_.learningEnabled);
         provider_->setContextLearningEnabled(options_.contextLearningEnabled);
     }
+    if (provider_ != nullptr && !page_.items.empty()) {
+        publishProviderPage();
+    }
 }
 
 void ModernIMEController::setOptions(ControllerOptions options) {
     options_ = options;
+    displayGeneration_++;
     if (!options_.learningEnabled) { recentCommit_.valid = false; }
     if (provider_ != nullptr && !sensitive_) {
         provider_->setLearningEnabled(options_.learningEnabled);
@@ -908,6 +1035,8 @@ void ModernIMEController::setOptions(ControllerOptions options) {
     }
     if (!options_.inputEnabled) {
         reset();
+    } else if (provider_ != nullptr && !page_.items.empty()) {
+        publishProviderPage();
     }
 }
 
@@ -952,8 +1081,50 @@ void ModernIMEController::ensurePageBoundaries() {
     }
 }
 
+bool ModernIMEController::setPageBoundaries(std::uint64_t displayGeneration,
+                                           std::uint64_t layoutGeneration,
+                                           std::vector<core::PageBoundary> boundaries) {
+    if (displayGeneration != displayGeneration_) {
+        return false;
+    }
+    if (layoutGeneration < layoutGeneration_) {
+        return false;
+    }
+    const auto total = page_.items.size();
+    if (boundaries.empty()) {
+        if (total != 0) {
+            return false;
+        }
+    } else {
+        std::size_t expected = 0;
+        for (const auto &b : boundaries) {
+            if (b.begin != expected || b.begin >= b.end || b.end > total) {
+                return false;
+            }
+            expected = b.end;
+        }
+        if (expected != total) {
+            return false;
+        }
+    }
+    layoutGeneration_ = layoutGeneration;
+    page_.pageBoundaries = std::move(boundaries);
+    if (!page_.items.empty()) {
+        page_.cursor = std::min(page_.cursor, page_.items.size() - 1);
+    }
+    return true;
+}
+
+void ModernIMEController::setPageBoundaries(std::vector<core::PageBoundary> boundaries) {
+    setPageBoundaries(displayGeneration_, layoutGeneration_, std::move(boundaries));
+}
+
 void ModernIMEController::publishProviderPage(bool adoptRemainingComposition) {
+    displayGeneration_++;
     page_ = provider_->page();
+    page_.sessionId = sessionId_;
+    page_.displayGeneration = displayGeneration_;
+    providerGeneration_ = page_.generation;
     if (adoptRemainingComposition && !page_.rawInput.empty()) {
         compositionInput_ = page_.rawInput;
         compositionCursor_ = compositionInput_.size();
@@ -971,14 +1142,24 @@ void ModernIMEController::refreshPage() {
         publishProviderPage();
         return;
     }
+    displayGeneration_++;
     page_.clear();
+    page_.sessionId = sessionId_;
+    page_.displayGeneration = displayGeneration_;
     page_.preedit = input_.text();
     page_.generation = input_.generation();
+    providerGeneration_ = page_.generation;
     updatePreeditCursor();
     // 无 provider 的降级路径（正常安装不会出现）：唯一候选就是原始
     // 输入本身，保持行为可预期，不再注入开发期示例候选。
     if (!input_.text().empty()) {
-        page_.items.push_back({input_.text(), input_.text(), 0});
+        core::CandidateItem item;
+        item.text = input_.text();
+        item.fullPinyin = input_.text();
+        item.consumedInputBytes = input_.text().size();
+        item.source = core::CandidateSource::Raw;
+        item.commitRole = core::CommitCandidateRole::Raw;
+        page_.items.push_back(std::move(item));
     }
     ensurePageBoundaries();
     host_.publishPage(page_);
@@ -1006,7 +1187,7 @@ void ModernIMEController::updatePreeditCursor() {
 }
 
 bool ModernIMEController::openClipboard() {
-    if (!active()) {
+    if (!active() || !options_.clipboardEnabled) {
         return false;
     }
 
@@ -1015,7 +1196,10 @@ bool ModernIMEController::openClipboard() {
     } else {
         input_.clear();
     }
+    displayGeneration_++;
     page_.clear();
+    page_.sessionId = sessionId_;
+    page_.displayGeneration = displayGeneration_;
     page_.mode = core::CandidatePageMode::Clipboard;
     compositionInput_.clear();
     compositionCursor_ = 0;
@@ -1025,10 +1209,15 @@ bool ModernIMEController::openClipboard() {
         core::CandidateItem emptyItem;
         emptyItem.text = "(剪贴板为空)";
         emptyItem.source = core::CandidateSource::Command;
+        emptyItem.commitRole = core::CommitCandidateRole::Command;
         page_.items.push_back(std::move(emptyItem));
     } else {
         for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {
-            page_.items.push_back({clipboardEntries_[index], {}, index});
+            core::CandidateItem item;
+            item.text = clipboardEntries_[index];
+            item.consumedInputBytes = index;
+            item.commitRole = core::CommitCandidateRole::Chinese;
+            page_.items.push_back(std::move(item));
         }
     }
     for (std::size_t begin = 0; begin < page_.items.size();
@@ -1044,13 +1233,7 @@ bool ModernIMEController::commitCurrent() {
     if (page_.items.empty() || page_.cursor >= page_.items.size()) {
         return false;
     }
-    if (clipboardMode_ || provider_ != nullptr) {
-        return select(page_.cursor);
-    }
-    const auto text = page_.items[page_.cursor].text;
-    host_.commit(text);
-    clearComposition();
-    return true;
+    return select(page_.cursor);
 }
 
 } // namespace modernime::fcitx5

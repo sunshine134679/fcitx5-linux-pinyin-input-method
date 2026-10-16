@@ -4,6 +4,7 @@
 #include "modernime/core/commit_event.h"
 
 #include <cstddef>
+#include <optional>
 #include <string_view>
 
 namespace modernime::core {
@@ -19,6 +20,30 @@ public:
         return input.empty() || append(input);
     }
     virtual bool select(std::size_t index) = 0;
+    virtual std::optional<CandidateSelectionOutcome> selectConfirmed(
+        const CandidateSelectionRequest &request,
+        std::uint64_t providerGeneration) {
+        if (providerGeneration != page().generation) {
+            return std::nullopt;
+        }
+        if (request.globalIndex >= page().items.size()) {
+            return std::nullopt;
+        }
+        const auto id = candidateIdentity(page().items[request.globalIndex], page());
+        if (!(id == request.expected)) {
+            return std::nullopt;
+        }
+        if (!select(request.globalIndex)) {
+            return std::nullopt;
+        }
+        CandidateSelectionOutcome outcome;
+        outcome.selected = id;
+        outcome.action = (id.role == CommitCandidateRole::Command)
+            ? SelectionAction::OpenClipboard
+            : SelectionAction::CommitText;
+        outcome.remainingInput = page().rawInput;
+        return outcome;
+    }
     virtual bool extractCharacter(std::size_t, bool, std::string * = nullptr) {
         return false;
     }

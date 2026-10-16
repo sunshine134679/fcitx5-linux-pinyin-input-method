@@ -12,6 +12,40 @@ std::string candidateOrderKey(std::string_view text,
     return key;
 }
 
+CandidateIdentity candidateIdentity(const CandidateItem &item,
+                                    const CandidatePage &page) {
+    CandidateIdentity id;
+    id.text = item.text;
+    id.fullPinyin = item.fullPinyin;
+    if (item.commitRole.has_value()) {
+        id.role = *item.commitRole;
+    } else {
+        switch (item.source) {
+            case CandidateSource::Command:
+                id.role = CommitCandidateRole::Command;
+                break;
+            case CandidateSource::Raw:
+                id.role = CommitCandidateRole::Raw;
+                break;
+            case CandidateSource::EnglishDefinition:
+                id.role = CommitCandidateRole::English;
+                break;
+            case CandidateSource::UserDictionary:
+                id.role = CommitCandidateRole::UserDictionary;
+                break;
+            case CandidateSource::Engine:
+            case CandidateSource::Learned:
+            default:
+                id.role = CommitCandidateRole::Chinese;
+                break;
+        }
+    }
+    id.consumedInputBytes = (item.consumedInputBytes == 0)
+                                ? page.rawInput.size()
+                                : item.consumedInputBytes;
+    return id;
+}
+
 bool CandidatePage::select(std::size_t index) {
     if (index >= items.size()) {
         return false;
@@ -28,6 +62,8 @@ void CandidatePage::clear() {
     pageBoundaries.clear();
     cursor = 0;
     generation = 0;
+    sessionId = 0;
+    displayGeneration = 0;
     mode = CandidatePageMode::Pinyin;
 }
 

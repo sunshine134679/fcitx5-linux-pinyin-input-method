@@ -531,6 +531,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             core/candidate_ranking_regression_test.cpp
             core/learning_writer_concurrency_test.cpp
             core/lmdb_lifecycle_test.cpp
+            adapter/candidate_selection_test.cpp
             ../adapter/fcitx5/src/engine.cpp
         )
         target_include_directories(modernime_personal_engine_gtest PRIVATE
@@ -544,6 +545,10 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             ${GTEST_LIBRARY}
             Threads::Threads
         )
+        if(MODERNIME_BUILD_FCITX5)
+            target_link_libraries(modernime_personal_engine_gtest PRIVATE Fcitx5::Core Fcitx5::Utils)
+            target_compile_definitions(modernime_personal_engine_gtest PRIVATE MODERNIME_HAS_FCITX5=1)
+        endif()
         add_test(NAME modernime_personal_engine_gtest
             COMMAND modernime_personal_engine_gtest
         )

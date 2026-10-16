@@ -1458,18 +1458,35 @@ public:
         }
     }
 
-    bool select(std::size_t index) {
-        if (index >= page_.items.size()) {
-            return false;
+    std::optional<core::CandidateSelectionOutcome> selectConfirmed(
+        const core::CandidateSelectionRequest &request,
+        std::uint64_t providerGeneration) {
+        if (providerGeneration != page_.generation) {
+            return std::nullopt;
         }
-        const auto &candidate = page_.items[index];
+        if (request.globalIndex >= page_.items.size()) {
+            return std::nullopt;
+        }
+        const auto expectedId = core::candidateIdentity(page_.items[request.globalIndex], page_);
+        if (!(expectedId == request.expected)) {
+            return std::nullopt;
+        }
+
+        const auto &candidate = page_.items[request.globalIndex];
+        core::CandidateSelectionOutcome outcome;
+        outcome.selected = expectedId;
+
         if (candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Command) {
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
             context->clear();
             refresh();
-            return true;
+            outcome.action = (candidate.source == core::CandidateSource::Command)
+                ? core::SelectionAction::OpenClipboard
+                : core::SelectionAction::CommitText;
+            outcome.remainingInput = context->userInput();
+            return outcome;
         }
 
         const auto rawInput = context->userInput();
@@ -1491,24 +1508,11 @@ public:
         event.contextBefore = contextBefore_;
         event.contextAfter = contextAfter_;
         event.timestampMs = nowMilliseconds();
-        event.candidateIndex = index;
-        if (index > 0) {
+        event.candidateIndex = request.globalIndex;
+        if (request.globalIndex > 0) {
             event.isDeviation = true;
         }
-        if (candidate.source == core::CandidateSource::UserDictionary) {
-            event.role = core::CommitCandidateRole::UserDictionary;
-        } else if (candidate.source == core::CandidateSource::Raw &&
-                   candidate.text != rawInput) {
-            // Completion consumes only the typed prefix, but learns the whole
-            // English word. Literal raw commits retain their original identity.
-            event.role = core::CommitCandidateRole::English;
-        } else if (candidate.source == core::CandidateSource::Raw) {
-            event.role = core::CommitCandidateRole::Raw;
-        } else if (core::EnglishDictionary::isEnglishWord(candidate.text)) {
-            event.role = core::CommitCandidateRole::English;
-        } else {
-            event.role = core::CommitCandidateRole::Chinese;
-        }
+        event.role = expectedId.role;
 
         if (!learningEnabled_) {
             onCommitEvent(event);
@@ -1562,7 +1566,9 @@ public:
             contextBefore_.clear();
             context->clear();
             refresh();
-            return true;
+            outcome.action = core::SelectionAction::CommitText;
+            outcome.remainingInput = context->userInput();
+            return outcome;
         }
         if (learningEnabled_ && (event.role == core::CommitCandidateRole::Chinese ||
                                  event.role == core::CommitCandidateRole::UserDictionary)) {
@@ -1579,10 +1585,12 @@ public:
                 context->clear();
                 context->type(rawInput);
                 refresh();
-                return false;
+                return std::nullopt;
             }
             refresh();
-            return true;
+            outcome.action = core::SelectionAction::CommitText;
+            outcome.remainingInput = context->userInput();
+            return outcome;
         }
         if (candidate.source == core::CandidateSource::Learned ||
             candidate.source == core::CandidateSource::UserDictionary ||
@@ -1590,11 +1598,13 @@ public:
             candidate.consumedInputBytes >= rawInput.size()) {
             context->clear();
             refresh();
-            return true;
+            outcome.action = core::SelectionAction::CommitText;
+            outcome.remainingInput = context->userInput();
+            return outcome;
         }
         try {
-            if (page_.items[index].sourceIndex < context->candidates().size()) {
-                context->select(page_.items[index].sourceIndex);
+            if (page_.items[request.globalIndex].sourceIndex < context->candidates().size()) {
+                context->select(page_.items[request.globalIndex].sourceIndex);
             } else {
                 context->clear();
             }
@@ -1602,7 +1612,20 @@ public:
             context->clear();
         }
         refresh();
-        return true;
+        outcome.action = core::SelectionAction::CommitText;
+        outcome.remainingInput = context->userInput();
+        return outcome;
+    }
+
+    bool select(std::size_t index) {
+        if (index >= page_.items.size()) {
+            return false;
+        }
+        core::CandidateSelectionRequest req;
+        req.displayGeneration = page_.generation;
+        req.globalIndex = index;
+        req.expected = core::candidateIdentity(page_.items[index], page_);
+        return selectConfirmed(req, page_.generation).has_value();
     }
 
     bool extractCharacter(std::size_t index, bool firstChar,
@@ -1870,6 +1893,27 @@ public:
     void setClipboardTrigger(std::string trigger) {
         if (clipboardTrigger_ != trigger) {
             clipboardTrigger_ = std::move(trigger);
+            refresh();
+        }
+    }
+
+    void applyOptions(const PinyinProviderOptions &opts) {
+        bool needRefresh = false;
+        if (englishDefinitionEnabled_ != opts.englishDefinitionEnabled) {
+            englishDefinitionEnabled_ = opts.englishDefinitionEnabled;
+            needRefresh = true;
+        }
+        if (clipboardEnabled_ != opts.clipboardEnabled) {
+            clipboardEnabled_ = opts.clipboardEnabled;
+            needRefresh = true;
+        }
+        if (clipboardTrigger_ != opts.clipboardTrigger) {
+            clipboardTrigger_ = opts.clipboardTrigger;
+            needRefresh = true;
+        }
+        setLearningEnabled(opts.learningEnabled);
+        setContextLearningEnabled(opts.contextLearningEnabled);
+        if (needRefresh) {
             refresh();
         }
     }
@@ -2365,6 +2409,12 @@ bool PinyinCandidateProvider::select(std::size_t index) {
     return impl_->select(index);
 }
 
+std::optional<core::CandidateSelectionOutcome> PinyinCandidateProvider::selectConfirmed(
+    const core::CandidateSelectionRequest &request,
+    std::uint64_t providerGeneration) {
+    return impl_->selectConfirmed(request, providerGeneration);
+}
+
 bool PinyinCandidateProvider::extractCharacter(std::size_t index, bool firstChar,
                                                std::string *outText) {
     return impl_->extractCharacter(index, firstChar, outText);
@@ -2400,6 +2450,10 @@ const core::CandidatePage &PinyinCandidateProvider::page() const {
 void PinyinCandidateProvider::setContext(std::string_view before,
                                          std::string_view after) {
     impl_->setContext(before, after);
+}
+
+void PinyinCandidateProvider::applyOptions(const PinyinProviderOptions &options) {
+    impl_->applyOptions(options);
 }
 
 void PinyinCandidateProvider::setLearningEnabled(bool enabled) {

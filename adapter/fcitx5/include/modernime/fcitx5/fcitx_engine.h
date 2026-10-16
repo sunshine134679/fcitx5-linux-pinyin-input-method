@@ -53,22 +53,43 @@ bool clipboardTriggerFire(std::string_view preedit, const fcitx::Key &key,
 // mouse selection therefore share the controller's global candidate model.
 class FcitxCandidateWord final : public fcitx::CandidateWord {
 public:
+    FcitxCandidateWord(std::string text,
+                       std::weak_ptr<core::SelectionEndpoint> endpoint,
+                       core::CandidateSelectionRequest request,
+                       std::string annotation = {})
+        : CandidateWord(fcitx::Text(std::move(text))),
+          endpoint_(std::move(endpoint)),
+          request_(std::move(request)),
+          annotation_(std::move(annotation)) {}
+
     FcitxCandidateWord(std::string text, ModernIMEController *controller,
                        std::size_t index, std::string annotation = {})
-        : CandidateWord(fcitx::Text(std::move(text))), controller_(controller),
-          index_(index), annotation_(std::move(annotation)) {}
+        : CandidateWord(fcitx::Text(std::move(text))),
+          endpoint_(controller ? controller->endpoint() : std::weak_ptr<core::SelectionEndpoint>{}),
+          annotation_(std::move(annotation)) {
+        if (controller != nullptr) {
+            request_.sessionId = controller->sessionId();
+            request_.displayGeneration = controller->displayGeneration();
+            request_.globalIndex = index;
+            if (index < controller->page().items.size()) {
+                request_.expected = core::candidateIdentity(controller->page().items[index],
+                                                            controller->page());
+            }
+        }
+    }
 
     void select(fcitx::InputContext *) const override {
-        if (controller_ != nullptr) {
-            controller_->select(index_);
+        if (auto ep = endpoint_.lock()) {
+            ep->select(request_);
         }
     }
 
     const std::string &annotation() const noexcept { return annotation_; }
+    const core::CandidateSelectionRequest &request() const noexcept { return request_; }
 
 private:
-    ModernIMEController *controller_;
-    std::size_t index_;
+    std::weak_ptr<core::SelectionEndpoint> endpoint_;
+    core::CandidateSelectionRequest request_;
     std::string annotation_;
 };
 
@@ -78,8 +99,17 @@ private:
 // padding or hiding candidates.
 class FcitxCandidateList final : public fcitx::CommonCandidateList {
 public:
+    FcitxCandidateList(std::weak_ptr<core::SelectionEndpoint> endpoint,
+                       std::uint64_t displayGeneration = 0,
+                       std::uint64_t layoutGeneration = 0)
+        : endpoint_(std::move(endpoint)),
+          displayGeneration_(displayGeneration),
+          layoutGeneration_(layoutGeneration) {}
+
     explicit FcitxCandidateList(ModernIMEController *controller)
-        : controller_(controller) {}
+        : endpoint_(controller ? controller->endpoint() : std::weak_ptr<core::SelectionEndpoint>{}),
+          displayGeneration_(controller ? controller->displayGeneration() : 0),
+          layoutGeneration_(controller ? controller->layoutGeneration() : 0) {}
 
     void setPageBoundaries(std::vector<core::PageBoundary> boundaries,
                            bool notifyController = true) {
@@ -92,9 +122,10 @@ public:
             boundaries.push_back({0, total});
         }
         boundaries_ = std::move(boundaries);
-        if (notifyController && controller_ != nullptr &&
-            explicitBoundaries) {
-            controller_->setPageBoundaries(boundaries_);
+        if (notifyController && explicitBoundaries) {
+            if (auto ep = endpoint_.lock()) {
+                ep->setPageBoundaries(displayGeneration_, layoutGeneration_, boundaries_);
+            }
         }
     }
 
@@ -143,9 +174,8 @@ public:
     }
     void prev() override {
         if (hasPrev()) {
-            if (controller_ != nullptr) {
-                auto *controller = controller_;
-                controller->movePage(-1);
+            if (auto ep = endpoint_.lock()) {
+                ep->movePage(-1);
                 return;
             }
             setGlobalCursorIndex(static_cast<int>(
@@ -156,9 +186,8 @@ public:
     void next() override {
         if (hasNext()) {
             usedNextBefore_ = true;
-            if (controller_ != nullptr) {
-                auto *controller = controller_;
-                controller->movePage(1);
+            if (auto ep = endpoint_.lock()) {
+                ep->movePage(1);
                 return;
             }
             setGlobalCursorIndex(static_cast<int>(
@@ -188,12 +217,11 @@ public:
             return;
         }
         page = std::clamp(page, 0, totalPages() - 1);
-        if (controller_ != nullptr) {
-            auto *controller = controller_;
+        if (auto ep = endpoint_.lock()) {
+            const auto current = ep->currentPageIndex();
             const auto delta = static_cast<std::ptrdiff_t>(page) -
-                               static_cast<std::ptrdiff_t>(
-                                   controller->currentPageIndex());
-            controller->movePage(delta);
+                               static_cast<std::ptrdiff_t>(current);
+            ep->movePage(delta);
             return;
         }
         setGlobalCursorIndex(
@@ -203,9 +231,8 @@ public:
     void prevCandidate() override {
         const auto global = globalCursorIndex();
         if (global > 0) {
-            if (controller_ != nullptr) {
-                auto *controller = controller_;
-                controller->moveCursor(-1);
+            if (auto ep = endpoint_.lock()) {
+                ep->moveCursor(-1);
                 return;
             }
             setGlobalCursorIndex(global - 1);
@@ -214,9 +241,8 @@ public:
     void nextCandidate() override {
         const auto global = globalCursorIndex();
         if (global >= 0 && global + 1 < totalSize()) {
-            if (controller_ != nullptr) {
-                auto *controller = controller_;
-                controller->moveCursor(1);
+            if (auto ep = endpoint_.lock()) {
+                ep->moveCursor(1);
                 return;
             }
             setGlobalCursorIndex(global + 1);
@@ -247,7 +273,9 @@ private:
         return boundaries_[static_cast<std::size_t>(currentPage())];
     }
 
-    ModernIMEController *controller_ = nullptr;
+    std::weak_ptr<core::SelectionEndpoint> endpoint_;
+    std::uint64_t displayGeneration_ = 0;
+    std::uint64_t layoutGeneration_ = 0;
     std::vector<core::PageBoundary> boundaries_;
     bool usedNextBefore_ = false;
 };
