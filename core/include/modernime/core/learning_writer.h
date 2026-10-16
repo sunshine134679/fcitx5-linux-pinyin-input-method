@@ -61,6 +61,10 @@ private:
     };
 
     bool enqueueForPersistence(Event event);
+    bool enqueueSelectionLocked(std::string_view phrase, std::string_view pinyin,
+                                std::string_view contextBefore,
+                                std::string_view contextAfter,
+                                std::int64_t nowMs);
     bool persistBatch(const std::vector<Event> &events);
     void run();
     void rebaseSnapshot(const LearningStoreState &state, bool includeProcessing);

@@ -51,6 +51,13 @@ bool LearningWriter::enqueueSelection(
     std::int64_t nowMs) {
     refreshBeforeEnqueue();
     std::lock_guard lock(mutex_);
+    return enqueueSelectionLocked(phrase, pinyin, contextBefore, contextAfter, nowMs);
+}
+
+bool LearningWriter::enqueueSelectionLocked(
+    std::string_view phrase, std::string_view pinyin,
+    std::string_view contextBefore, std::string_view contextAfter,
+    std::int64_t nowMs) {
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSelection(phrase, pinyin, contextBefore, contextAfter, nowMs);
     snapshot_ = std::move(next);
@@ -75,6 +82,9 @@ bool LearningWriter::enqueueCommit(const CommitEvent &event) {
 
     const auto pinyinKey = event.fullPinyin.empty() ? event.text : event.fullPinyin;
 
+    refreshBeforeEnqueue();
+    std::lock_guard lock(mutex_);
+
     // Protection 2: Deviation-Only Learning (WeChat Input Method paradigm)
     // When selecting default Rank 0 Chinese core candidate (e.g. "是", "这个", "的", "你", "好")
     // without surrounding context, do not increment unconditioned global frequency to keep LM priors clean and intact.
@@ -86,12 +96,14 @@ bool LearningWriter::enqueueCommit(const CommitEvent &event) {
         event.contextAfter.empty() &&
         PinyinMatchPolicy::isCoreChineseWord(event.text, pinyinKey)) {
         if (!snapshot_->hasPositiveFrequency(event.text, pinyinKey)) {
+            // Skipped successfully without error; returning true maintains compatibility
+            // with callers that check whether the commit was handled.
             return true;
         }
     }
 
-    return enqueueSelection(event.text, pinyinKey, event.contextBefore,
-                            event.contextAfter, event.timestampMs);
+    return enqueueSelectionLocked(event.text, pinyinKey, event.contextBefore,
+                                  event.contextAfter, event.timestampMs);
 }
 
 bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
@@ -260,6 +272,16 @@ void LearningWriter::rebaseSnapshot(const LearningStoreState &state,
     if (state.resetRevision < resetRevision_) {
         return;
     }
+    if (state.resetRevision > resetRevision_) {
+        std::erase_if(events_, [rev = state.resetRevision](const Event &event) {
+            return event.resetRevision < rev;
+        });
+        if (includeProcessing) {
+            std::erase_if(processingEvents_, [rev = state.resetRevision](const Event &event) {
+                return event.resetRevision < rev;
+            });
+        }
+    }
     auto next = std::make_shared<LearningSnapshot>(*state.snapshot);
     const auto apply = [&](const auto &events) {
         for (const auto &event : events) {
@@ -386,6 +408,9 @@ void LearningWriter::run() {
                     // A previously unseen clear takes precedence even when
                     // input arrived during preparation. Every queued event
                     // still has the older generation and must be discarded.
+                    std::erase_if(events_, [rev = freshState->resetRevision](const Event &event) {
+                        return event.resetRevision < rev;
+                    });
                     retiredSnapshot = std::move(snapshot_);
                     snapshot_ = freshState->snapshot;
                     resetRevision_ = freshState->resetRevision;
