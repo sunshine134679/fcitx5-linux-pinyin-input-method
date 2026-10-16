@@ -893,7 +893,8 @@ public:
           clipboardEnabled_(options.clipboardEnabled),
           clipboardTrigger_(options.clipboardTrigger),
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
-          observedLearningRevision_(shared_ ? shared_->learningRevision() : 0) {
+          observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
+          observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         refresh();
     }
@@ -993,6 +994,11 @@ public:
             fallbackContextBefore_.clear();
             changed = true;
         }
+        const auto curViewState = shared_->epochViewState();
+        if (curViewState != observedEpochViewState_) {
+            observedEpochViewState_ = curViewState;
+            changed = true;
+        }
         return changed;
     }
 
@@ -1038,6 +1044,9 @@ public:
         }
 
         const auto &candidate = page_.items[request.globalIndex];
+        if (candidate.source == core::CandidateSource::None) {
+            return std::nullopt;
+        }
         core::CandidateSelectionOutcome outcome;
         outcome.selected = expectedId;
 
@@ -1167,7 +1176,8 @@ public:
             return false;
         }
         const auto &candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::Command ||
+        if (candidate.source == core::CandidateSource::None ||
+            candidate.source == core::CandidateSource::Command ||
             candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Raw) {
             return false;
@@ -1390,6 +1400,8 @@ public:
             fallbackContextBefore_.clear();
             contextBefore_.clear();
             contextAfter_.clear();
+        } else if (shared_) {
+            shared_->prepareLearningWriterAsync();
         }
     }
 
@@ -1444,7 +1456,12 @@ public:
         }
     }
 
-    const core::CandidatePage &page() const { return page_; }
+    const core::CandidatePage &page() const {
+        if (const_cast<Impl *>(this)->checkResourceChanges()) {
+            const_cast<Impl *>(this)->refresh();
+        }
+        return page_;
+    }
 
 private:
     libime::PinyinIME &ime() { return *shared_->ime; }
@@ -1488,6 +1505,16 @@ private:
         ++generation;
         page_.generation = generation;
         if (rawInput.empty()) {
+            return;
+        }
+
+        if (shared_ && shared_->epochViewState() == core::EpochViewState::Reloading) {
+            core::CandidateItem item;
+            item.text = "正在更新候选";
+            item.source = core::CandidateSource::None;
+            item.fullPinyin = rawInput;
+            item.consumedInputBytes = 0;
+            page_.items.push_back(std::move(item));
             return;
         }
 
@@ -1802,6 +1829,7 @@ private:
     std::uint64_t generation = 0;
     std::uint64_t observedDictionaryGeneration_ = 0;
     std::int64_t observedLearningRevision_ = 0;
+    core::EpochViewState observedEpochViewState_ = core::EpochViewState::Ready;
 };
 
 PinyinCandidateProvider::PinyinCandidateProvider(PinyinDataPaths paths,

@@ -4,6 +4,7 @@
 #include "personal_engine_state.h"
 
 #include <lmdb.h>
+#include <shared_mutex>
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -828,14 +829,17 @@ std::vector<PersonalCandidate> PersonalEngine::QueryPrefixCandidates(
 std::vector<PersonalCandidate> PersonalEngine::QueryLmdbCandidates(
     std::string_view pinyin_key,
     std::string_view surrounding_context) const {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
-        lock.unlock();
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr) {
         return QueryCandidates(pinyin_key, surrounding_context);
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
-    MDB_env *active_env = lmdb_env_->env;
-    MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
+    std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+    MDB_env *active_env = active_env_handle->env;
+    MDB_dbi active_words_dbi = active_env_handle->words_dbi;
     if (active_env == nullptr) {
         return {};
     }
@@ -955,14 +959,17 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbPrefixCandidates(
     std::string_view pinyin_prefix,
     std::string_view surrounding_context,
     size_t limit) const {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
-        lock.unlock();
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr) {
         return QueryPrefixCandidates(pinyin_prefix, surrounding_context, limit);
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
-    MDB_env *active_env = lmdb_env_->env;
-    MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
+    std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+    MDB_env *active_env = active_env_handle->env;
+    MDB_dbi active_words_dbi = active_env_handle->words_dbi;
     if (active_env == nullptr) {
         return {};
     }
@@ -1123,19 +1130,21 @@ bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
     auto prior_compact = std::move(compact_index_);
     const size_t prior_total = total_entries_;
 
-    if (!ReloadFromLmdb()) {
-        db_ = std::move(prior_db);
-        compact_index_ = std::move(prior_compact);
-        total_entries_ = prior_total;
-        CloseLmdb();
-        return false;
-    }
+    if (!read_only) {
+        if (!ReloadFromLmdb()) {
+            db_ = std::move(prior_db);
+            compact_index_ = std::move(prior_compact);
+            total_entries_ = prior_total;
+            CloseLmdb();
+            return false;
+        }
 
-    if (!read_only && total_entries_ == 0 && prior_total > 0) {
-        db_ = std::move(prior_db);
-        compact_index_ = std::move(prior_compact);
-        total_entries_ = prior_total;
-        FlushToLmdb();
+        if (total_entries_ == 0 && prior_total > 0) {
+            db_ = std::move(prior_db);
+            compact_index_ = std::move(prior_compact);
+            total_entries_ = prior_total;
+            FlushToLmdb();
+        }
     }
 
     // 若首次创建且同目录下存在旧版 learning.sqlite3，自动无损迁移
@@ -1185,13 +1194,20 @@ void PersonalEngine::CloseLmdb() noexcept {
 }
 
 size_t PersonalEngine::LmdbMapSize() const noexcept {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr) {
         return 0;
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
+    std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+    if (active_env_handle->env == nullptr) {
+        return 0;
+    }
     MDB_envinfo info{};
-    if (mdb_env_info(lmdb_env_->env, &info) != MDB_SUCCESS) {
+    if (mdb_env_info(active_env_handle->env, &info) != MDB_SUCCESS) {
         return 0;
     }
     return info.me_mapsize;
@@ -1201,13 +1217,21 @@ bool PersonalEngine::EnsureMapCapacityLocked(size_t required_extra_bytes) {
     if (!lmdb_env_ || lmdb_env_->env == nullptr || lmdb_read_only_) {
         return false;
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
     return lmdb_env_->ensureMapCapacity(required_extra_bytes);
 }
 
 bool PersonalEngine::EnsureMapCapacity(size_t required_extra_bytes) {
-    std::unique_lock lock(lmdb_mutex_);
-    return EnsureMapCapacityLocked(required_extra_bytes);
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    bool read_only = false;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+        read_only = lmdb_read_only_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr || read_only) {
+        return false;
+    }
+    return active_env_handle->ensureMapCapacity(required_extra_bytes);
 }
 
 void PersonalEngine::PruneContextVariants() {
@@ -1252,19 +1276,30 @@ void PersonalEngine::PruneContextVariants() {
 
 bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &events,
                                           float initial_weight) {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr || lmdb_read_only_ ||
-        simulate_write_failure_ || (!events.empty() && sensitive_context_)) {
+    if (simulate_write_failure_ || (!events.empty() && sensitive_context_)) {
         return false;
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
-    MDB_env *active_env = lmdb_env_->env;
-    const MDB_dbi words = lmdb_env_->words_dbi;
-    const MDB_dbi meta = lmdb_env_->meta_dbi;
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    bool read_only = false;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+        read_only = lmdb_read_only_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr || read_only) {
+        return false;
+    }
 
     // Stage only affected keys on normal writes. Full reads are needed only for
     // external changes, opening an old database, or global capacity pruning.
     for (int attempt = 0; attempt < 5; ++attempt) {
+        std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+        MDB_env *active_env = active_env_handle->env;
+        const MDB_dbi words = active_env_handle->words_dbi;
+        const MDB_dbi meta = active_env_handle->meta_dbi;
+        if (active_env == nullptr) {
+            return false;
+        }
         MDB_txn *txn = nullptr;
         int rc = mdb_txn_begin(active_env, nullptr, 0, &txn);
         if (rc != MDB_SUCCESS) {
@@ -1506,7 +1541,8 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
             mdb_txn_abort(txn);
         }
         if (rc == MDB_MAP_FULL) {
-            if (!EnsureMapCapacityLocked(staged.total_entries * 128 + 65536)) {
+            env_lock.unlock();
+            if (!active_env_handle->ensureMapCapacity(staged.total_entries * 128 + 65536)) {
                 return false;
             }
             continue; // Nothing from the aborted batch reached disk or memory.
@@ -1514,39 +1550,48 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
         if (rc != MDB_SUCCESS) {
             return false;
         }
-        if (full_state) {
-            db_ = std::move(staged.db);
-            compact_index_ = std::move(staged.compact_index);
-        } else {
-            for (const auto &key : changed_keys) {
-                const auto found = staged.db.find(key);
-                if (found != staged.db.end() && !found->second.empty()) {
-                    db_[key] = std::move(found->second);
-                    RebuildCompactIndex(key);
+        {
+            std::lock_guard lock(lmdb_mutex_);
+            if (full_state) {
+                db_ = std::move(staged.db);
+                compact_index_ = std::move(staged.compact_index);
+            } else {
+                for (const auto &key : changed_keys) {
+                    const auto found = staged.db.find(key);
+                    if (found != staged.db.end() && !found->second.empty()) {
+                        db_[key] = std::move(found->second);
+                        RebuildCompactIndex(key);
+                    }
                 }
             }
+            total_entries_ = new_total;
+            reset_revision_ = *revision;
+            last_lmdb_txn_id_ = txn_id;
         }
-        total_entries_ = new_total;
-        reset_revision_ = *revision;
-        last_lmdb_txn_id_ = txn_id;
         return true;
     }
     return false;
 }
 
 bool PersonalEngine::FlushToLmdb() {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr || lmdb_read_only_ || simulate_write_failure_) {
-        return false;
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    bool read_only = false;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+        read_only = lmdb_read_only_;
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
-    MDB_env *active_env = lmdb_env_->env;
-    const MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
-    const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
-    if (active_env == nullptr) {
+    if (!active_env_handle || active_env_handle->env == nullptr || read_only || simulate_write_failure_) {
         return false;
     }
     for (int attempt = 0; attempt < 5; ++attempt) {
+        std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+        MDB_env *active_env = active_env_handle->env;
+        const MDB_dbi active_words_dbi = active_env_handle->words_dbi;
+        const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
+        if (active_env == nullptr) {
+            return false;
+        }
         MDB_txn *txn = nullptr;
         if (mdb_txn_begin(active_env, nullptr, 0, &txn) != MDB_SUCCESS) {
             return false;
@@ -1588,7 +1633,8 @@ bool PersonalEngine::FlushToLmdb() {
             return true;
         }
         if (rc == MDB_MAP_FULL) {
-            if (!EnsureMapCapacityLocked(total_entries_ * 128 + 65536)) {
+            env_lock.unlock();
+            if (!active_env_handle->ensureMapCapacity(total_entries_ * 128 + 65536)) {
                 return false;
             }
             continue;
@@ -1600,14 +1646,18 @@ bool PersonalEngine::FlushToLmdb() {
 
 bool PersonalEngine::ReadLearningState(std::vector<LearningEntry> &entries,
                                         int64_t &reset_revision) const {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr) {
         return false;
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
-    MDB_env *active_env = lmdb_env_->env;
-    const MDB_dbi words = lmdb_env_->words_dbi;
-    const MDB_dbi meta = lmdb_env_->meta_dbi;
+    std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+    MDB_env *active_env = active_env_handle->env;
+    const MDB_dbi words = active_env_handle->words_dbi;
+    const MDB_dbi meta = active_env_handle->meta_dbi;
     if (active_env == nullptr) {
         return false;
     }
@@ -1658,14 +1708,18 @@ bool PersonalEngine::ReadLearningState(std::vector<LearningEntry> &entries,
 }
 
 bool PersonalEngine::ReloadFromLmdb() {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr) {
         return false;
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
-    MDB_env *active_env = lmdb_env_->env;
-    const MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
-    const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
+    std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+    MDB_env *active_env = active_env_handle->env;
+    const MDB_dbi active_words_dbi = active_env_handle->words_dbi;
+    const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
     if (active_env == nullptr) {
         return false;
     }
@@ -1674,17 +1728,20 @@ bool PersonalEngine::ReloadFromLmdb() {
         return false;
     }
 
+    int64_t new_reset_revision = reset_revision_;
+    bool new_migrated_from_sqlite = migrated_from_sqlite_;
+    int64_t new_migrated_bin_size = migrated_bin_size_;
     if (const auto rev = getMetaInt64(txn, active_meta_dbi, "reset_revision");
         rev.has_value()) {
-        reset_revision_ = *rev;
+        new_reset_revision = *rev;
     }
     if (const auto mig = getMetaInt64(txn, active_meta_dbi, "migrated_from_sqlite");
         mig.has_value()) {
-        migrated_from_sqlite_ = (*mig != 0);
+        new_migrated_from_sqlite = (*mig != 0);
     }
     if (const auto bsz = getMetaInt64(txn, active_meta_dbi, "migrated_bin_size");
         bsz.has_value()) {
-        migrated_bin_size_ = *bsz;
+        new_migrated_bin_size = *bsz;
     }
 
     MDB_cursor *cursor = nullptr;
@@ -1693,9 +1750,8 @@ bool PersonalEngine::ReloadFromLmdb() {
         return false;
     }
 
-    db_.clear();
-    compact_index_.clear();
-    total_entries_ = 0;
+    decltype(db_) loaded_db;
+    size_t loaded_total = 0;
 
     MDB_val k{};
     MDB_val v{};
@@ -1710,26 +1766,45 @@ bool PersonalEngine::ReloadFromLmdb() {
             variant.context_before = std::string(view.context_before);
             variant.context_after = std::string(view.context_after);
             variant.meta = view.meta;
-            db_[key_str].push_back(std::move(variant));
-            RebuildCompactIndex(key_str);
-            ++total_entries_;
+            loaded_db[key_str].push_back(std::move(variant));
+            ++loaded_total;
         }
         rc = mdb_cursor_get(cursor, &k, &v, MDB_NEXT);
     }
 
-    last_lmdb_txn_id_ = mdb_txn_id(txn);
+    const size_t txn_id = mdb_txn_id(txn);
     mdb_cursor_close(cursor);
     mdb_txn_abort(txn);
+
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        reset_revision_ = new_reset_revision;
+        migrated_from_sqlite_ = new_migrated_from_sqlite;
+        migrated_bin_size_ = new_migrated_bin_size;
+        db_ = std::move(loaded_db);
+        compact_index_.clear();
+        for (const auto &[key_str, _] : db_) {
+            RebuildCompactIndex(key_str);
+        }
+        total_entries_ = loaded_total;
+        last_lmdb_txn_id_ = txn_id;
+    }
     return true;
 }
 
 bool PersonalEngine::BackupLmdbTo(const std::filesystem::path &backup_path) const {
-    std::unique_lock lock(lmdb_mutex_);
-    if (!lmdb_env_ || lmdb_env_->env == nullptr || backup_path.empty() || backup_path == lmdb_path_) {
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    std::filesystem::path current_path;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+        current_path = lmdb_path_;
+    }
+    if (!active_env_handle || active_env_handle->env == nullptr || backup_path.empty() || backup_path == current_path) {
         return false;
     }
-    std::unique_lock env_lock(lmdb_env_->mutex);
-    MDB_env *active_env = lmdb_env_->env;
+    std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+    MDB_env *active_env = active_env_handle->env;
     if (active_env == nullptr) {
         return false;
     }
@@ -1752,16 +1827,25 @@ bool PersonalEngine::Clear() {
     if (simulate_write_failure_) {
         return false;
     }
-    std::unique_lock lock(lmdb_mutex_);
-    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
-        if (lmdb_read_only_) {
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    bool read_only = false;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+        read_only = lmdb_read_only_;
+    }
+    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+        if (read_only) {
             return false;
         }
-        std::unique_lock env_lock(lmdb_env_->mutex);
-        MDB_env *active_env = lmdb_env_->env;
-        const MDB_dbi words = lmdb_env_->words_dbi;
-        const MDB_dbi meta = lmdb_env_->meta_dbi;
         for (int attempt = 0; attempt < 5; ++attempt) {
+            std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+            MDB_env *active_env = active_env_handle->env;
+            const MDB_dbi words = active_env_handle->words_dbi;
+            const MDB_dbi meta = active_env_handle->meta_dbi;
+            if (active_env == nullptr) {
+                return false;
+            }
             MDB_txn *txn = nullptr;
             if (mdb_txn_begin(active_env, nullptr, 0, &txn) != MDB_SUCCESS) {
                 return false;
@@ -1785,7 +1869,8 @@ bool PersonalEngine::Clear() {
                 mdb_txn_abort(txn);
             }
             if (rc == MDB_MAP_FULL) {
-                if (!EnsureMapCapacityLocked(4096)) {
+                env_lock.unlock();
+                if (!active_env_handle->ensureMapCapacity(4096)) {
                     return false;
                 }
                 continue;
@@ -1793,15 +1878,19 @@ bool PersonalEngine::Clear() {
             if (rc != MDB_SUCCESS) {
                 return false;
             }
-            db_.clear();
-            compact_index_.clear();
-            total_entries_ = 0;
-            reset_revision_ = *revision + 1;
-            last_lmdb_txn_id_ = txn_id;
+            {
+                std::lock_guard lock(lmdb_mutex_);
+                db_.clear();
+                compact_index_.clear();
+                total_entries_ = 0;
+                reset_revision_ = *revision + 1;
+                last_lmdb_txn_id_ = txn_id;
+            }
             return true;
         }
         return false;
     }
+    std::lock_guard lock(lmdb_mutex_);
     db_.clear();
     compact_index_.clear();
     total_entries_ = 0;
@@ -1810,17 +1899,23 @@ bool PersonalEngine::Clear() {
 }
 
 int64_t PersonalEngine::ResetRevision() const {
-    std::unique_lock lock(lmdb_mutex_);
-    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
-        std::unique_lock env_lock(lmdb_env_->mutex);
-        MDB_env *active_env = lmdb_env_->env;
-        const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
-        MDB_txn *txn = nullptr;
-        if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
-            const auto rev = getMetaInt64(txn, active_meta_dbi, "reset_revision");
-            mdb_txn_abort(txn);
-            if (rev.has_value()) {
-                return *rev;
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+        std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+        MDB_env *active_env = active_env_handle->env;
+        const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
+        if (active_env != nullptr) {
+            MDB_txn *txn = nullptr;
+            if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
+                const auto rev = getMetaInt64(txn, active_meta_dbi, "reset_revision");
+                mdb_txn_abort(txn);
+                if (rev.has_value()) {
+                    return *rev;
+                }
             }
         }
     }
@@ -1828,17 +1923,23 @@ int64_t PersonalEngine::ResetRevision() const {
 }
 
 int PersonalEngine::SchemaVersion() const {
-    std::unique_lock lock(lmdb_mutex_);
-    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
-        std::unique_lock env_lock(lmdb_env_->mutex);
-        MDB_env *active_env = lmdb_env_->env;
-        const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
-        MDB_txn *txn = nullptr;
-        if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
-            const auto ver = getMetaInt64(txn, active_meta_dbi, "schema_version");
-            mdb_txn_abort(txn);
-            if (ver.has_value()) {
-                return static_cast<int>(*ver);
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+        std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+        MDB_env *active_env = active_env_handle->env;
+        const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
+        if (active_env != nullptr) {
+            MDB_txn *txn = nullptr;
+            if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
+                const auto ver = getMetaInt64(txn, active_meta_dbi, "schema_version");
+                mdb_txn_abort(txn);
+                if (ver.has_value()) {
+                    return static_cast<int>(*ver);
+                }
             }
         }
     }
@@ -1846,17 +1947,23 @@ int PersonalEngine::SchemaVersion() const {
 }
 
 bool PersonalEngine::IsMigratedFromSqlite() const {
-    std::unique_lock lock(lmdb_mutex_);
-    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
-        std::unique_lock env_lock(lmdb_env_->mutex);
-        MDB_env *active_env = lmdb_env_->env;
-        const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
-        MDB_txn *txn = nullptr;
-        if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
-            const auto mig = getMetaInt64(txn, active_meta_dbi, "migrated_from_sqlite");
-            mdb_txn_abort(txn);
-            if (mig.has_value()) {
-                return *mig != 0;
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (active_env_handle != nullptr && active_env_handle->env != nullptr) {
+        std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+        MDB_env *active_env = active_env_handle->env;
+        const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
+        if (active_env != nullptr) {
+            MDB_txn *txn = nullptr;
+            if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
+                const auto mig = getMetaInt64(txn, active_meta_dbi, "migrated_from_sqlite");
+                mdb_txn_abort(txn);
+                if (mig.has_value()) {
+                    return *mig != 0;
+                }
             }
         }
     }

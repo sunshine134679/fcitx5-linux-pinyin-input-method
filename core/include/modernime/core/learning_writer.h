@@ -17,6 +17,11 @@
 
 namespace modernime::core {
 
+enum class EpochViewState {
+    Ready,
+    Reloading,
+};
+
 class LearningStore;
 struct LearningStoreState;
 
@@ -47,9 +52,12 @@ public:
     bool reloadIfChanged();
     std::shared_ptr<const LearningSnapshot> snapshot() const;
     std::int64_t resetRevision() const;
+    EpochViewState epochViewState() const;
+    std::size_t queuedEventsCount() const;
+    void pauseWorkerForTest(bool pause);
 
 private:
-    enum class EventKind { Selection, NegativeFeedback, Suppression };
+    enum class EventKind { Selection, NegativeFeedback, Suppression, PendingCommit };
 
     struct Event final {
         EventKind kind = EventKind::Selection;
@@ -59,6 +67,7 @@ private:
         std::string contextAfter;
         std::int64_t nowMs = 0;
         std::int64_t resetRevision = 0;
+        std::optional<CommitEvent> commitEvent;
     };
 
     bool enqueueForPersistence(Event event);
@@ -86,6 +95,8 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable wakeup_;
     std::condition_variable drained_;
+    std::condition_variable resumeWorkerCv_;
+    bool workerPaused_ = false;
     std::deque<Event> events_;
     std::vector<Event> processingEvents_;
     std::int64_t resetRevision_ = 0;
@@ -93,7 +104,9 @@ private:
     // snapshots handed out by snapshot() stay immutable even if a future
     // caller reads them from another thread.
     std::shared_ptr<const LearningSnapshot> snapshot_;
+    std::vector<std::shared_ptr<const LearningSnapshot>> retiredSnapshots_;
     std::uint64_t snapshotVersion_ = 0;
+    EpochViewState viewState_ = EpochViewState::Ready;
     bool stopping_ = false;
     bool processing_ = false;
     // A failed batch stays queued. flush() explicitly starts the next bounded

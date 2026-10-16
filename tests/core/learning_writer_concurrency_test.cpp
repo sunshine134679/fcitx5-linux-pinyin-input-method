@@ -1,24 +1,35 @@
+#include "modernime/core/candidate_model.h"
 #include "modernime/core/commit_event.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/learning_writer.h"
 #include "modernime/core/pinyin_match.h"
+#include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/pinyin_shared_resources.h"
 
 #include <gtest/gtest.h>
 
+#include <sqlite3.h>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace {
 
+using modernime::core::CandidateSelectionRequest;
+using modernime::core::CandidateSource;
 using modernime::core::CommitCandidateRole;
 using modernime::core::CommitEvent;
+using modernime::core::EpochViewState;
 using modernime::core::LearningStore;
 using modernime::core::LearningWriter;
 using modernime::core::PinyinMatchPolicy;
+using modernime::pinyin::PinyinCandidateProvider;
+using modernime::pinyin::PinyinDataPaths;
+using modernime::pinyin::PinyinProviderOptions;
 
 class ArchitectureWriterRegression : public testing::Test {
 protected:
@@ -159,6 +170,202 @@ TEST_F(ArchitectureWriterRegression, DecisionUsesRefreshedRevision) {
 
     EXPECT_TRUE(writer.flush());
     EXPECT_FALSE(writer.snapshot()->hasPositiveFrequency("是", "shi"));
+}
+
+TEST_F(ArchitectureWriterRegression, FirstCommitAfterClearDuringRebase) {
+    LearningWriter writer(dbPath());
+
+    EXPECT_TRUE(writer.enqueueSelection("北京", "beijing", "", "", 1000));
+    EXPECT_TRUE(writer.flush());
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("北京", "beijing"));
+    const auto initialRevision = writer.resetRevision();
+
+    // External clear occurs
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+
+    // Observing clear bumps revision and enters Reloading
+    EXPECT_TRUE(writer.reloadIfChanged());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+    EXPECT_GT(writer.resetRevision(), initialRevision);
+    const auto newRevision = writer.resetRevision();
+
+    // Commit arrives during rebase (while in Reloading)
+    CommitEvent commitShanghai;
+    commitShanghai.text = "上海";
+    commitShanghai.fullPinyin = "shanghai";
+    commitShanghai.role = CommitCandidateRole::Chinese;
+    commitShanghai.candidateIndex = 1;
+    commitShanghai.isDeviation = true;
+    commitShanghai.timestampMs = 2000;
+
+    EXPECT_TRUE(writer.enqueueCommit(commitShanghai));
+
+    // Finish rebase and persistence
+    EXPECT_TRUE(writer.flush());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+    EXPECT_EQ(writer.resetRevision(), newRevision);
+
+    // Old vocabulary must NOT be resurrected; new event was tagged with new reset revision
+    EXPECT_FALSE(writer.snapshot()->hasPositiveFrequency("北京", "beijing"));
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("上海", "shanghai"));
+}
+
+TEST_F(ArchitectureWriterRegression, NewEpochSuppressionNotExposedWhileLoading) {
+    PinyinDataPaths paths;
+    paths.learningStore = dbPath().string();
+    paths.userDictionary = (root_ / "user.dict").string();
+    {
+        std::ofstream userDict(paths.userDictionary);
+        userDict << "ceshi 测试 100\n";
+    }
+
+    PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
+    ASSERT_NE(shared, nullptr);
+    auto *writer = shared->ensureLearningWriter();
+    ASSERT_NE(writer, nullptr);
+
+    // Suppress "测试"
+    EXPECT_TRUE(writer->enqueueSuppression("测试", "ceshi"));
+    EXPECT_TRUE(writer->flush());
+    EXPECT_TRUE(writer->snapshot()->isSuppressed("测试", "ceshi"));
+
+    PinyinCandidateProvider provider(shared, options);
+    ASSERT_TRUE(provider.append("ceshi"));
+    for (const auto &item : provider.page().items) {
+        EXPECT_NE(item.text, "测试");
+    }
+
+    // External clear occurs
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+
+    // Pause worker to deterministically observe the Reloading transition
+    writer->pauseWorkerForTest(true);
+
+    // Revision bump enters Reloading state
+    EXPECT_TRUE(writer->reloadIfChanged());
+    EXPECT_EQ(writer->epochViewState(), EpochViewState::Reloading);
+
+    // Provider shows "正在更新候选" (CandidateSource::None)
+    const auto &loadingPage = provider.page();
+    ASSERT_EQ(loadingPage.items.size(), 1u);
+    EXPECT_EQ(loadingPage.items[0].text, "正在更新候选");
+    EXPECT_EQ(loadingPage.items[0].source, CandidateSource::None);
+
+    // Candidate selection is rejected during reloading
+    CandidateSelectionRequest req;
+    req.displayGeneration = loadingPage.generation;
+    req.globalIndex = 0;
+    req.expected = modernime::core::candidateIdentity(loadingPage.items[0], loadingPage);
+    const auto outcome = provider.selectConfirmed(req, loadingPage.generation);
+    EXPECT_FALSE(outcome.has_value());
+
+    // Resume worker to allow rebase to finish
+    writer->pauseWorkerForTest(false);
+
+    // Flush writer to complete rebase to Ready
+    EXPECT_TRUE(writer->flush());
+    EXPECT_EQ(writer->epochViewState(), EpochViewState::Ready);
+
+    // Transition restores candidate list, old unverified suppression is gone
+    const auto &readyPage = provider.page();
+    ASSERT_FALSE(readyPage.items.empty());
+    EXPECT_NE(readyPage.items[0].text, "正在更新候选");
+    bool foundRestored = false;
+    for (const auto &item : readyPage.items) {
+        if (item.text == "测试") {
+            foundRestored = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundRestored);
+}
+
+TEST_F(ArchitectureWriterRegression, ClearThenStorageFailureBoundedQueue) {
+    LearningWriter writer(dbPath());
+
+    EXPECT_TRUE(writer.enqueueSelection("基础词", "jichuci", "", "", 1000));
+    EXPECT_TRUE(writer.flush());
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("基础词", "jichuci"));
+
+    // External clear
+    {
+        LearningStore externalStore(dbPath());
+        ASSERT_TRUE(externalStore.open());
+        ASSERT_TRUE(externalStore.clear());
+        externalStore.close();
+    }
+
+    // Induce deterministic storage failure by injecting an abort trigger on insert
+    sqlite3 *faultInjector = nullptr;
+    ASSERT_EQ(sqlite3_open(dbPath().c_str(), &faultInjector), SQLITE_OK);
+    const char *trigger =
+        "CREATE TRIGGER fail_storage_write BEFORE INSERT ON learning_entries "
+        "BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END;";
+    char *err = nullptr;
+    ASSERT_EQ(sqlite3_exec(faultInjector, trigger, nullptr, nullptr, &err), SQLITE_OK);
+    sqlite3_free(err);
+
+    struct FaultGuard {
+        sqlite3 *db;
+        ~FaultGuard() {
+            if (db) {
+                sqlite3_exec(db, "DROP TRIGGER IF EXISTS fail_storage_write;", nullptr, nullptr, nullptr);
+                sqlite3_close(db);
+            }
+        }
+    } faultGuard{faultInjector};
+
+    for (int i = 0; i < 150; ++i) {
+        writer.enqueueSelection("词" + std::to_string(i), "ci", "", "", 2000 + i);
+    }
+
+    // Flush will attempt to persist, fail due to trigger, and return false
+    EXPECT_FALSE(writer.flush());
+    EXPECT_LE(writer.queuedEventsCount(), 100u);
+    EXPECT_GT(writer.queuedEventsCount(), 0u);
+}
+
+TEST_F(ArchitectureWriterRegression, EnableLearningDoesNotConstructWriterOnInputThread) {
+    PinyinDataPaths paths;
+    paths.learningStore = dbPath().string();
+    paths.userDictionary = (root_ / "user.dict").string();
+    {
+        std::ofstream userDict(paths.userDictionary);
+        userDict << "ceshi 测试 100\n";
+    }
+
+    PinyinProviderOptions options;
+    options.learningEnabled = false;
+
+    auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
+    ASSERT_NE(shared, nullptr);
+    EXPECT_EQ(shared->learning, nullptr);
+
+    PinyinCandidateProvider provider(shared, options);
+
+    const auto start = std::chrono::steady_clock::now();
+    provider.setLearningEnabled(true);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - start);
+
+    EXPECT_LT(elapsed.count(), 5000);
+
+    auto *writer = shared->ensureLearningWriter();
+    ASSERT_NE(writer, nullptr);
+    EXPECT_NE(shared->learning, nullptr);
 }
 
 } // namespace

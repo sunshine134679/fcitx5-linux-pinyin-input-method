@@ -13,7 +13,7 @@
 
 namespace modernime::core {
 
-enum class CandidateSource { Engine, UserDictionary, Learned, Raw, EnglishDefinition, Command };
+enum class CandidateSource { Engine, UserDictionary, Learned, Raw, EnglishDefinition, Command, None };
 enum class CandidatePageMode { Pinyin, Clipboard };
 
 struct PageBoundary final {

@@ -38,7 +38,9 @@ LearningWriter::~LearningWriter() {
     {
         std::lock_guard lock(mutex_);
         stopping_ = true;
+        workerPaused_ = false;
     }
+    resumeWorkerCv_.notify_all();
     wakeup_.notify_one();
     if (worker_.joinable()) {
         worker_.join();
@@ -63,9 +65,14 @@ bool LearningWriter::enqueueSelectionLocked(
     next->recordSelection(phrase, pinyin, contextBefore, contextAfter, nowMs);
     snapshot_ = std::move(next);
     ++snapshotVersion_;
-    return enqueueForPersistence(
-        {EventKind::Selection, std::string(phrase), std::string(pinyin),
-         std::string(contextBefore), std::string(contextAfter), nowMs});
+    Event event;
+    event.kind = EventKind::Selection;
+    event.phrase = phrase;
+    event.pinyin = pinyin;
+    event.contextBefore = contextBefore;
+    event.contextAfter = contextAfter;
+    event.nowMs = nowMs;
+    return enqueueForPersistence(std::move(event));
 }
 
 bool LearningWriter::enqueueCommit(const CommitEvent &event) {
@@ -73,6 +80,24 @@ bool LearningWriter::enqueueCommit(const CommitEvent &event) {
 
     refreshBeforeEnqueue();
     std::lock_guard lock(mutex_);
+
+    if (viewState_ == EpochViewState::Reloading) {
+        // Sensitive or disabled facts must not be enqueued
+        if (event.role == CommitCandidateRole::Raw ||
+            event.role == CommitCandidateRole::English) {
+            return true;
+        }
+        Event e;
+        e.kind = EventKind::PendingCommit;
+        e.phrase = event.text;
+        e.pinyin = pinyinKey;
+        e.contextBefore = event.contextBefore;
+        e.contextAfter = event.contextAfter;
+        e.nowMs = event.timestampMs;
+        e.resetRevision = resetRevision_;
+        e.commitEvent = event;
+        return enqueueForPersistence(std::move(e));
+    }
 
     const bool hasPositive = snapshot_->hasPositiveFrequency(event.text, pinyinKey);
     const auto decision = decideCommitLearning(event, hasPositive);
@@ -94,9 +119,11 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
     next->recordNegativeFeedback(phrase, pinyin);
     snapshot_ = std::move(next);
     ++snapshotVersion_;
-    return enqueueForPersistence({EventKind::NegativeFeedback,
-                                  std::string(phrase), std::string(pinyin),
-                                  {}, {}, 0});
+    Event event;
+    event.kind = EventKind::NegativeFeedback;
+    event.phrase = phrase;
+    event.pinyin = pinyin;
+    return enqueueForPersistence(std::move(event));
 }
 
 bool LearningWriter::enqueueSuppression(std::string_view phrase,
@@ -107,8 +134,11 @@ bool LearningWriter::enqueueSuppression(std::string_view phrase,
     next->recordSuppression(phrase, pinyin);
     snapshot_ = std::move(next);
     ++snapshotVersion_;
-    return enqueueForPersistence({EventKind::Suppression, std::string(phrase),
-                                  std::string(pinyin), {}, {}, 0});
+    Event event;
+    event.kind = EventKind::Suppression;
+    event.phrase = phrase;
+    event.pinyin = pinyin;
+    return enqueueForPersistence(std::move(event));
 }
 
 bool LearningWriter::enqueueForPersistence(Event event) {
@@ -133,13 +163,15 @@ bool LearningWriter::enqueueForPersistence(Event event) {
 
 bool LearningWriter::flush() {
     std::unique_lock lock(mutex_);
-    if (!events_.empty() && retryExhausted_ && !processing_) {
+    if ((!events_.empty() || viewState_ == EpochViewState::Reloading) &&
+        retryExhausted_ && !processing_) {
         retryExhausted_ = false;
         automaticRetryCyclesRemaining_ = 1;
         wakeup_.notify_one();
     }
     drained_.wait(lock, [this] {
-        return !processing_ && (events_.empty() || retryExhausted_);
+        return !processing_ && (events_.empty() || retryExhausted_) &&
+               viewState_ == EpochViewState::Ready;
     });
     return storageAvailable_ && events_.empty();
 }
@@ -152,6 +184,26 @@ std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
 std::int64_t LearningWriter::resetRevision() const {
     std::lock_guard lock(mutex_);
     return resetRevision_;
+}
+
+EpochViewState LearningWriter::epochViewState() const {
+    std::lock_guard lock(mutex_);
+    return viewState_;
+}
+
+std::size_t LearningWriter::queuedEventsCount() const {
+    std::lock_guard lock(mutex_);
+    return events_.size();
+}
+
+void LearningWriter::pauseWorkerForTest(bool pause) {
+    {
+        std::lock_guard lock(mutex_);
+        workerPaused_ = pause;
+    }
+    if (!pause) {
+        resumeWorkerCv_.notify_all();
+    }
 }
 
 bool LearningWriter::reload() {
@@ -177,12 +229,6 @@ bool LearningWriter::reload() {
 }
 
 bool LearningWriter::reloadIfChanged() {
-    // Do not wait for the asynchronous writer, or reopen its failed writable
-    // connection, on the Fcitx input event loop.
-    std::unique_lock storeLock(storeMutex_, std::try_to_lock);
-    if (!storeLock.owns_lock()) {
-        return false;
-    }
     std::lock_guard observerLock(observerMutex_);
     if (!observerStore_->openReadOnly()) {
         return false;
@@ -193,18 +239,19 @@ bool LearningWriter::reloadIfChanged() {
         if (!revision.has_value() || *revision <= resetRevision_) {
             return false;
         }
+        resetRevision_ = *revision;
+        viewState_ = EpochViewState::Reloading;
+        retiredSnapshots_.push_back(std::move(snapshot_));
+        snapshot_ = std::make_shared<const LearningSnapshot>();
+        ++snapshotVersion_;
+        std::erase_if(events_, [rev = *revision](const Event &event) {
+            return event.resetRevision < rev;
+        });
+        retryExhausted_ = false;
+        automaticRetryCyclesRemaining_ = 1;
+        wakeup_.notify_one();
+        return true;
     }
-    const auto loaded = observerStore_->readState();
-    if (!loaded.has_value()) {
-        return false;
-    }
-    std::lock_guard lock(mutex_);
-    rebaseSnapshot(*loaded, true);
-    storageAvailable_ = true;
-    retryExhausted_ = false;
-    automaticRetryCyclesRemaining_ = 1;
-    wakeup_.notify_one();
-    return true;
 }
 
 void LearningWriter::refreshBeforeEnqueue() {
@@ -220,15 +267,14 @@ void LearningWriter::refreshBeforeEnqueue() {
         if (!revision.has_value() || *revision <= resetRevision_) {
             return;
         }
-    }
-    const auto loaded = observerStore_->readState();
-    if (!loaded.has_value()) {
-        return;
-    }
-    std::lock_guard lock(mutex_);
-    if (loaded->resetRevision > resetRevision_) {
-        rebaseSnapshot(*loaded, true);
-        storageAvailable_ = true;
+        resetRevision_ = *revision;
+        viewState_ = EpochViewState::Reloading;
+        retiredSnapshots_.push_back(std::move(snapshot_));
+        snapshot_ = std::make_shared<const LearningSnapshot>();
+        ++snapshotVersion_;
+        std::erase_if(events_, [rev = *revision](const Event &event) {
+            return event.resetRevision < rev;
+        });
         retryExhausted_ = false;
         automaticRetryCyclesRemaining_ = 1;
         wakeup_.notify_one();
@@ -246,6 +292,8 @@ void LearningWriter::applyEvent(LearningSnapshot &snapshot, const Event &event) 
         break;
     case EventKind::Suppression:
         snapshot.recordSuppression(event.phrase, event.pinyin);
+        break;
+    case EventKind::PendingCommit:
         break;
     }
 }
@@ -280,6 +328,7 @@ void LearningWriter::rebaseSnapshot(const LearningStoreState &state,
     }
     apply(events_);
     resetRevision_ = state.resetRevision;
+    viewState_ = EpochViewState::Ready;
     snapshot_ = std::move(next);
     ++snapshotVersion_;
 }
@@ -289,6 +338,9 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events) {
     std::vector<LearningEvent> storeEvents;
     storeEvents.reserve(events.size());
     for (const auto &event : events) {
+        if (event.kind == EventKind::PendingCommit) {
+            continue;
+        }
         const auto kind = event.kind == EventKind::Selection
                               ? LearningEvent::Kind::Selection
                               : event.kind == EventKind::NegativeFeedback
@@ -297,6 +349,10 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events) {
         storeEvents.push_back({kind, event.phrase, event.pinyin,
                                event.contextBefore, event.contextAfter,
                                event.nowMs, event.resetRevision});
+    }
+
+    if (storeEvents.empty()) {
+        return true;
     }
 
     for (int attempt = 0; attempt < kMaxAttemptsPerCycle; ++attempt) {
@@ -314,10 +370,16 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events) {
 
 void LearningWriter::run() {
     while (true) {
+        bool reloading = false;
         std::vector<Event> events;
+        std::vector<std::shared_ptr<const LearningSnapshot>> toCleanup;
         {
             std::unique_lock lock(mutex_);
-            if (!stopping_ && retryExhausted_ && !events_.empty() &&
+            if (!retiredSnapshots_.empty()) {
+                toCleanup = std::move(retiredSnapshots_);
+            }
+            if (!stopping_ && retryExhausted_ &&
+                (!events_.empty() || viewState_ == EpochViewState::Reloading) &&
                 automaticRetryCyclesRemaining_ > 0) {
                 wakeup_.wait_for(lock, std::chrono::milliseconds(250),
                                  [this] {
@@ -329,18 +391,103 @@ void LearningWriter::run() {
                 }
             }
             wakeup_.wait(lock, [this] {
-                return stopping_ || (!events_.empty() && !retryExhausted_);
+                return stopping_ || (!events_.empty() && !retryExhausted_) ||
+                       (viewState_ == EpochViewState::Reloading && !retryExhausted_);
             });
-            if (stopping_ && (events_.empty() || retryExhausted_)) {
+            if (stopping_ && (events_.empty() || retryExhausted_) &&
+                viewState_ != EpochViewState::Reloading) {
                 return;
             }
-            events.reserve(events_.size());
-            while (!events_.empty()) {
-                events.push_back(std::move(events_.front()));
-                events_.pop_front();
+            reloading = (viewState_ == EpochViewState::Reloading);
+            if (!reloading) {
+                events.reserve(events_.size());
+                while (!events_.empty()) {
+                    events.push_back(std::move(events_.front()));
+                    events_.pop_front();
+                }
+                processing_ = true;
+                processingEvents_ = events;
             }
-            processing_ = true;
-            processingEvents_ = events;
+        }
+
+        if (reloading) {
+            {
+                std::unique_lock lock(mutex_);
+                resumeWorkerCv_.wait(lock, [this] { return !workerPaused_ || stopping_; });
+            }
+            if (stopping_) {
+                return;
+            }
+            std::optional<LearningStoreState> freshState;
+            {
+                std::lock_guard storeLock(storeMutex_);
+                if (store_->open()) {
+                    freshState = store_->readState();
+                }
+            }
+
+            std::shared_ptr<const LearningSnapshot> retiredSnapshot;
+            {
+                std::lock_guard lock(mutex_);
+                if (!retiredSnapshots_.empty()) {
+                    toCleanup.insert(toCleanup.end(),
+                                     std::make_move_iterator(retiredSnapshots_.begin()),
+                                     std::make_move_iterator(retiredSnapshots_.end()));
+                    retiredSnapshots_.clear();
+                }
+                if (!freshState.has_value()) {
+                    storageAvailable_ = false;
+                    retryExhausted_ = true;
+                    viewState_ = EpochViewState::Ready;
+                    retiredSnapshot = std::move(snapshot_);
+                    snapshot_ = std::make_shared<const LearningSnapshot>();
+                    ++snapshotVersion_;
+                    std::erase_if(events_, [](const Event &e) {
+                        return e.kind == EventKind::PendingCommit;
+                    });
+                } else {
+                    storageAvailable_ = true;
+                    retryExhausted_ = false;
+                    automaticRetryCyclesRemaining_ = 1;
+
+                    auto freshSnapshot = std::make_shared<LearningSnapshot>(*freshState->snapshot);
+                    std::deque<Event> validEvents;
+                    for (auto &event : events_) {
+                        if (event.resetRevision < freshState->resetRevision) {
+                            continue;
+                        }
+                        if (event.kind == EventKind::PendingCommit) {
+                            if (event.commitEvent.has_value()) {
+                                const bool hasPositive =
+                                    freshSnapshot->hasPositiveFrequency(event.commitEvent->text, event.pinyin);
+                                const auto decision = decideCommitLearning(*event.commitEvent, hasPositive);
+                                if (decision == CommitLearningDecision::Record) {
+                                    event.kind = EventKind::Selection;
+                                    event.phrase = event.commitEvent->text;
+                                    freshSnapshot->recordSelection(event.phrase, event.pinyin,
+                                                                   event.contextBefore, event.contextAfter,
+                                                                   event.nowMs);
+                                    validEvents.push_back(std::move(event));
+                                }
+                            }
+                        } else {
+                            applyEvent(*freshSnapshot, event);
+                            validEvents.push_back(std::move(event));
+                        }
+                    }
+                    events_ = std::move(validEvents);
+                    while (events_.size() > kMaxQueuedEvents) {
+                        events_.pop_front();
+                    }
+                    resetRevision_ = freshState->resetRevision;
+                    retiredSnapshot = std::move(snapshot_);
+                    snapshot_ = std::move(freshSnapshot);
+                    ++snapshotVersion_;
+                    viewState_ = EpochViewState::Ready;
+                }
+                drained_.notify_all();
+            }
+            continue;
         }
 
         bool success = false;
@@ -374,6 +521,12 @@ void LearningWriter::run() {
         std::shared_ptr<const LearningSnapshot> retiredSnapshot;
         {
             std::lock_guard lock(mutex_);
+            if (!retiredSnapshots_.empty()) {
+                toCleanup.insert(toCleanup.end(),
+                                 std::make_move_iterator(retiredSnapshots_.begin()),
+                                 std::make_move_iterator(retiredSnapshots_.end()));
+                retiredSnapshots_.clear();
+            }
             if (!success) {
                 events_.insert(events_.begin(),
                                std::make_move_iterator(events.begin()),
@@ -401,6 +554,7 @@ void LearningWriter::run() {
                     resetRevision_ = freshState->resetRevision;
                     ++snapshotVersion_;
                 } else if (freshState && prepared &&
+                           viewState_ == EpochViewState::Ready &&
                            freshState->resetRevision == resetRevision_ &&
                            capturedVersion == snapshotVersion_) {
                     retiredSnapshot = std::move(snapshot_);

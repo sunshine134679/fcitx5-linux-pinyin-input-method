@@ -11,6 +11,10 @@
 #include <fstream>
 #include <unistd.h>
 
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
 namespace {
 using namespace modernime::core;
 std::vector<LearningEntry> largeVocabulary(int count = 50000) {

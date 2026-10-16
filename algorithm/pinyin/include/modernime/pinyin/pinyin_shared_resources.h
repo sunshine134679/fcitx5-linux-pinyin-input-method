@@ -45,6 +45,9 @@ public:
     core::EnglishDefinitionDictionary *ensureEnglishDefinitionDictionary();
     bool reloadVisibility();
 
+    core::EpochViewState epochViewState() const;
+    void prepareLearningWriterAsync();
+
     std::uint64_t dictionaryGeneration() const noexcept { return dictionaryGeneration_; }
     std::int64_t learningRevision() const noexcept { return learningRevision_; }
 
@@ -66,6 +69,8 @@ private:
     std::uint64_t dictionaryGeneration_ = 1;
     std::int64_t learningRevision_ = 0;
     mutable std::recursive_mutex resourceMutex_;
+    std::thread writerInitThread_;
+    bool preparingWriter_ = false;
 };
 
 class PinyinCandidateProvider::SharedResources final : public PinyinSharedResources {

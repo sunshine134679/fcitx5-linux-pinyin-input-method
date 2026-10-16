@@ -128,6 +128,7 @@ LmdbEnvironment::~LmdbEnvironment() {
 }
 
 void LmdbEnvironment::close() noexcept {
+    std::unique_lock lock(lifecycle_gate);
     if (env != nullptr) {
         mdb_env_close(env);
         env = nullptr;
@@ -137,6 +138,10 @@ void LmdbEnvironment::close() noexcept {
 }
 
 bool LmdbEnvironment::initialize(size_t initial_map_size) {
+    std::unique_lock lock(lifecycle_gate);
+    if (env != nullptr) {
+        return true;
+    }
     MDB_env *new_env = nullptr;
     if (mdb_env_create(&new_env) != MDB_SUCCESS) {
         return false;
@@ -192,10 +197,16 @@ bool LmdbEnvironment::initialize(size_t initial_map_size) {
 }
 
 bool LmdbEnvironment::upgradeToWritable(size_t initial_map_size) {
+    std::unique_lock lock(lifecycle_gate);
     if (!read_only && env != nullptr) {
         return true;
     }
-    close();
+    if (env != nullptr) {
+        mdb_env_close(env);
+        env = nullptr;
+        words_dbi = 0;
+        meta_dbi = 0;
+    }
 
     MDB_env *upgraded_env = nullptr;
     if (mdb_env_create(&upgraded_env) != MDB_SUCCESS ||
@@ -237,6 +248,7 @@ bool LmdbEnvironment::upgradeToWritable(size_t initial_map_size) {
 }
 
 bool LmdbEnvironment::ensureMapCapacity(size_t required_extra_bytes) {
+    std::unique_lock lock(lifecycle_gate);
     if (env == nullptr || read_only) {
         return false;
     }
@@ -277,13 +289,17 @@ std::shared_ptr<LmdbEnvironment> LmdbRegistry::getOrCreate(
     }
 
     bool ok = true;
+    bool need_init = false;
+    bool need_upgrade = false;
     {
-        std::lock_guard env_lock(handle->mutex);
-        if (handle->env == nullptr) {
-            ok = handle->initialize(initial_map_size);
-        } else if (handle->read_only && !read_only) {
-            ok = handle->upgradeToWritable(initial_map_size);
-        }
+        std::shared_lock env_lock(handle->lifecycle_gate);
+        need_init = (handle->env == nullptr);
+        need_upgrade = (handle->read_only && !read_only);
+    }
+    if (need_init) {
+        ok = handle->initialize(initial_map_size);
+    } else if (need_upgrade) {
+        ok = handle->upgradeToWritable(initial_map_size);
     }
     if (!ok) {
         unregister(path_key, handle.get());

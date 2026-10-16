@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -31,7 +32,7 @@ std::vector<char> packLmdbValue(const WordMeta &meta,
 
 class LmdbEnvironment final : public std::enable_shared_from_this<LmdbEnvironment> {
 public:
-    mutable std::recursive_mutex mutex;
+    mutable std::shared_mutex lifecycle_gate;
     MDB_env *env = nullptr;
     MDB_dbi words_dbi = 0;
     MDB_dbi meta_dbi = 0;

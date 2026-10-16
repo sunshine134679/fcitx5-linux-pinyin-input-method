@@ -307,7 +307,11 @@ std::string defaultLanguageModelPath() {
 }
 
 PinyinSharedResources::PinyinSharedResources() = default;
-PinyinSharedResources::~PinyinSharedResources() = default;
+PinyinSharedResources::~PinyinSharedResources() {
+    if (writerInitThread_.joinable()) {
+        writerInitThread_.join();
+    }
+}
 
 std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
     const PinyinDataPaths &paths, const PinyinProviderOptions &options) {
@@ -442,12 +446,55 @@ std::shared_ptr<const core::LearningSnapshot> PinyinSharedResources::visibleLear
 }
 
 core::LearningWriter *PinyinSharedResources::ensureLearningWriter() {
+    std::thread toJoin;
+    {
+        std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
+        if (writerInitThread_.joinable()) {
+            toJoin = std::move(writerInitThread_);
+        }
+    }
+    if (toJoin.joinable()) {
+        toJoin.join();
+    }
     std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
     if (learning == nullptr && !learningStorePath.empty()) {
         learning = std::make_unique<core::LearningWriter>(learningStorePath);
         learningRevision_ = learning->resetRevision();
     }
     return learning.get();
+}
+
+core::EpochViewState PinyinSharedResources::epochViewState() const {
+    std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
+    if (learning != nullptr) {
+        return learning->epochViewState();
+    }
+    return core::EpochViewState::Ready;
+}
+
+void PinyinSharedResources::prepareLearningWriterAsync() {
+    std::thread toJoin;
+    {
+        std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
+        if (learning != nullptr || learningStorePath.empty() || preparingWriter_) {
+            return;
+        }
+        preparingWriter_ = true;
+        if (writerInitThread_.joinable()) {
+            toJoin = std::move(writerInitThread_);
+        }
+        writerInitThread_ = std::thread([this, path = learningStorePath]() {
+            auto writer = std::make_unique<core::LearningWriter>(path);
+            const auto rev = writer->resetRevision();
+            std::lock_guard<std::recursive_mutex> writerLock(resourceMutex_);
+            learning = std::move(writer);
+            learningRevision_ = rev;
+            preparingWriter_ = false;
+        });
+    }
+    if (toJoin.joinable()) {
+        toJoin.join();
+    }
 }
 
 core::EnglishDefinitionDictionary *PinyinSharedResources::ensureEnglishDefinitionDictionary() {

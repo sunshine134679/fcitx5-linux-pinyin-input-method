@@ -398,7 +398,7 @@ void verifyBusyWriterLatency() {
         std::sort(samples.begin(), samples.end());
         const double p99 = samples[126];
         std::cout << "  Busy SQLite writer 50000 entries: enqueue+next recall P99=" << p99
-                  << " us; 128 events persisted exactly once\n";
+                  << " us; 128 events persisted exactly once" << std::endl;
         if (p99 >= 5000) {
             std::cerr << "Busy writer input-side P99 exceeded 5ms gate!\n";
             std::exit(EXIT_FAILURE);
@@ -414,7 +414,7 @@ void verifyBusyWriterLatency() {
         if (!writer.flush()) std::exit(EXIT_FAILURE);
         std::sort(samples.begin(), samples.end());
         std::cout << "  Concurrent SQLite writer 50000 entries: enqueue+next recall P99="
-                  << samples[1013] << " us, maximum=" << samples.back() << " us\n";
+                  << samples[1013] << " us, maximum=" << samples.back() << " us" << std::endl;
         if (samples[1013] >= 5000 || samples.back() >= 30000) {
             std::cerr << "Background rebase blocked input beyond P99 5ms / maximum 30ms gate!\n";
             std::exit(EXIT_FAILURE);
@@ -422,6 +422,186 @@ void verifyBusyWriterLatency() {
     }
     sqlite3_close(connection);
     std::filesystem::remove_all(pattern);
+}
+
+void populateLmdbDatabase(const std::filesystem::path &path, std::size_t count) {
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path.string() + "-lock", ec);
+
+    EngineConfig cfg;
+    cfg.max_dict_capacity = count + 10000;
+    cfg.prune_target_size = count;
+    cfg.initial_lmdb_map_size = 64ULL * 1024ULL * 1024ULL;
+    auto engine = std::make_unique<PersonalEngine>(cfg);
+    uint32_t fixed_now = 1700000000U;
+    engine->SetClock([fixed_now]() { return fixed_now; });
+
+    engine->RecordUsage("!u!nihao", "你好", 1.0f);
+    for (std::size_t i = 1; i < count; ++i) {
+        std::string word = "term";
+        auto value = i;
+        for (int n = 0; n < 5; ++n) { word += char('a' + value % 26); value /= 26; }
+        engine->RecordUsage("!u!" + word, word, 1.0f);
+    }
+    engine->OpenLmdb(path);
+    engine->FlushToLmdb();
+    engine->CloseLmdb();
+}
+
+void verifyLmdbWriterLatency(std::size_t count) {
+    auto pattern = (std::filesystem::temp_directory_path() / ("modernime-lmdb-bench-" + std::to_string(count) + "-XXXXXX")).string();
+    if (!mkdtemp(pattern.data())) std::exit(EXIT_FAILURE);
+    const auto path = std::filesystem::path(pattern) / "learning.lmdb";
+    populateLmdbDatabase(path, count);
+
+    {
+        modernime::core::LearningWriter writer(path);
+        std::vector<double> samples;
+        samples.reserve(1024);
+        modernime::core::CommitEvent event;
+        event.text = "你好";
+        event.fullPinyin = "nihao";
+        event.role = modernime::core::CommitCandidateRole::Chinese;
+        event.candidateIndex = 1;
+        event.isDeviation = true;
+
+        for (int i = 0; i < 1024; ++i) {
+            event.timestampMs = 1700000000000LL + i;
+            const auto start = std::chrono::steady_clock::now();
+            writer.enqueueCommit(event);
+            benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", event.timestampMs));
+            samples.push_back(std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count());
+        }
+        if (!writer.flush()) std::exit(EXIT_FAILURE);
+        std::sort(samples.begin(), samples.end());
+        const double p99 = samples[1013];
+        const double max_val = samples.back();
+        std::cout << "  LMDB writer " << count << " entries: enqueue+commit policy+publish+recall P99="
+                  << p99 << " us, maximum=" << max_val << " us\n";
+        if (p99 >= 5000 || max_val >= 30000) {
+            std::cerr << "LMDB writer " << count << " latency exceeded P99 5ms / max 30ms gate!\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(pattern, ec);
+}
+
+void verifyLmdbConcurrentPruningLatency() {
+    auto pattern = (std::filesystem::temp_directory_path() / "modernime-lmdb-prune-XXXXXX").string();
+    if (!mkdtemp(pattern.data())) std::exit(EXIT_FAILURE);
+    const auto path = std::filesystem::path(pattern) / "learning.lmdb";
+    populateLmdbDatabase(path, 50000);
+
+    {
+        modernime::core::LearningWriter writer(path);
+        std::atomic<bool> stopPrune{false};
+        std::thread pruner([&]() {
+            int pruneWordIdx = 0;
+            while (!stopPrune.load(std::memory_order_relaxed)) {
+                ++pruneWordIdx;
+                writer.enqueueSelection("新词_" + std::to_string(pruneWordIdx), "xinci", {}, {}, 1700000005000LL + pruneWordIdx);
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            }
+        });
+
+        std::vector<double> samples;
+        samples.reserve(1024);
+        modernime::core::CommitEvent event;
+        event.text = "你好";
+        event.fullPinyin = "nihao";
+        event.role = modernime::core::CommitCandidateRole::Chinese;
+        event.candidateIndex = 1;
+        event.isDeviation = true;
+
+        for (int i = 0; i < 1024; ++i) {
+            event.timestampMs = 1700000001000LL + i;
+            const auto start = std::chrono::steady_clock::now();
+            writer.enqueueCommit(event);
+            benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", event.timestampMs));
+            samples.push_back(std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count());
+        }
+        stopPrune.store(true, std::memory_order_relaxed);
+        pruner.join();
+        if (!writer.flush()) std::exit(EXIT_FAILURE);
+
+        std::sort(samples.begin(), samples.end());
+        const double p99 = samples[1013];
+        const double max_val = samples.back();
+        std::cout << "  LMDB concurrent write/pruning: enqueue+next recall P99="
+                  << p99 << " us, maximum=" << max_val << " us\n";
+        if (p99 >= 5000 || max_val >= 30000) {
+            std::cerr << "LMDB concurrent pruning exceeded P99 5ms / max 30ms gate!\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(pattern, ec);
+}
+
+void verifyLmdbFirstObserverLatency() {
+    auto pattern = (std::filesystem::temp_directory_path() / "modernime-lmdb-obs-XXXXXX").string();
+    if (!mkdtemp(pattern.data())) std::exit(EXIT_FAILURE);
+    const auto path = std::filesystem::path(pattern) / "learning.lmdb";
+    populateLmdbDatabase(path, 50000);
+
+    const auto start = std::chrono::steady_clock::now();
+    modernime::core::LearningStore observer(path);
+    if (!observer.openReadOnly()) std::exit(EXIT_FAILURE);
+    const auto rev = observer.resetRevision();
+    const double latency_us = std::chrono::duration<double, std::micro>(
+        std::chrono::steady_clock::now() - start).count();
+    if (!rev.has_value()) std::exit(EXIT_FAILURE);
+    std::cout << "  LMDB first observer: latency=" << latency_us << " us\n";
+    if (latency_us >= 5000.0) {
+        std::cerr << "LMDB first observer latency exceeded 5ms gate!\n";
+        std::exit(EXIT_FAILURE);
+    }
+    observer.close();
+    std::error_code ec;
+    std::filesystem::remove_all(pattern, ec);
+}
+
+void verifyLmdbFirstKeyAfterClearLatency() {
+    auto pattern = (std::filesystem::temp_directory_path() / "modernime-lmdb-clr-XXXXXX").string();
+    if (!mkdtemp(pattern.data())) std::exit(EXIT_FAILURE);
+    const auto path = std::filesystem::path(pattern) / "learning.lmdb";
+    populateLmdbDatabase(path, 50000);
+
+    modernime::core::LearningWriter writer(path);
+    // External clear
+    {
+        modernime::core::LearningStore clearStore(path);
+        if (!clearStore.open()) std::exit(EXIT_FAILURE);
+        if (!clearStore.clear()) std::exit(EXIT_FAILURE);
+        clearStore.close();
+    }
+
+    modernime::core::CommitEvent event;
+    event.text = "你好";
+    event.fullPinyin = "nihao";
+    event.role = modernime::core::CommitCandidateRole::Chinese;
+    event.candidateIndex = 1;
+    event.isDeviation = true;
+    event.timestampMs = 1700000002000LL;
+
+    const auto start = std::chrono::steady_clock::now();
+    writer.enqueueCommit(event);
+    benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", event.timestampMs));
+    const double latency_us = std::chrono::duration<double, std::micro>(
+        std::chrono::steady_clock::now() - start).count();
+
+    std::cout << "  LMDB first key after clear: latency=" << latency_us << " us\n";
+    if (!writer.flush()) std::exit(EXIT_FAILURE);
+    if (latency_us >= 5000.0) {
+        std::cerr << "LMDB first key after clear exceeded 5ms gate!\n";
+        std::exit(EXIT_FAILURE);
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(pattern, ec);
 }
 
 void runPercentileAndMemoryVerification() {
@@ -521,6 +701,11 @@ int main(int argc, char **argv) {
     verifyPublishedSnapshotLatency(50000);
     verifyPublishedSnapshotLatency(200000);
     verifyBusyWriterLatency();
+    verifyLmdbWriterLatency(50000);
+    verifyLmdbWriterLatency(200000);
+    verifyLmdbConcurrentPruningLatency();
+    verifyLmdbFirstObserverLatency();
+    verifyLmdbFirstKeyAfterClearLatency();
     ::benchmark::Initialize(&argc, argv);
     if (::benchmark::ReportUnrecognizedArguments(argc, argv)) {
         return 1;
