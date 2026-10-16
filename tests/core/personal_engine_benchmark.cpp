@@ -24,9 +24,19 @@
 #include <numeric>
 #include <string>
 #include <unordered_map>
-#include <vector>
+#if defined(__unix__) || defined(__linux__)
+#include <sys/wait.h>
+#endif
+
+#if (defined(MODERNIME_PERFORMANCE_GATE_ACTIVE) && MODERNIME_PERFORMANCE_GATE_ACTIVE) || (defined(NDEBUG) && !defined(__DEBUG__))
+#define MODERNIME_ENFORCE_LATENCY_GATES 1
+#else
+#define MODERNIME_ENFORCE_LATENCY_GATES 0
+#endif
 
 namespace {
+
+static std::string g_injected_gate_failure;
 
 using modernime::core::CandidateRanker;
 using modernime::core::CandidateScore;
@@ -327,7 +337,7 @@ std::vector<modernime::core::LearningEntry> snapshotVocabulary(std::size_t count
 void verifyPublishedSnapshotLatency(std::size_t count) {
     auto snapshot = std::make_shared<modernime::core::LearningSnapshot>(snapshotVocabulary(count));
     std::int64_t timestamp = 1700000000000LL;
-    const auto publication = measurePercentiles(1000, [&] {
+    auto publication = measurePercentiles(1000, [&] {
         auto next = std::make_shared<modernime::core::LearningSnapshot>(*snapshot);
         next->recordSelection("你好", "nihao", {}, {}, ++timestamp);
         auto recalled = next->recallCandidates("nihao", timestamp);
@@ -362,7 +372,10 @@ void verifyPublishedSnapshotLatency(std::size_t count) {
               << " us, negative+recall P99=" << negative.p99_us
               << " us, suppression+recall P99=" << suppression.p99_us
               << " us, new word+recall P99=" << insertion.p99_us << " us\n";
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+    if (g_injected_gate_failure == "published_snapshot") {
+        publication.p99_us = 99999.0;
+    }
     if (recall.p99_us >= 1000 || publication.p99_us >= 5000 ||
         negative.p99_us >= 5000 || suppression.p99_us >= 5000 || insertion.p99_us >= 5000) {
         std::cerr << "Published snapshot latency exceeded recall 1ms / publication 5ms gate!\n";
@@ -409,10 +422,13 @@ void verifyBusyWriterLatency() {
         const auto *entry = writer.snapshot()->entry("你好", "nihao", {}, {});
         if (!entry || entry->frequency != 129) std::exit(EXIT_FAILURE);
         std::sort(samples.begin(), samples.end());
-        const double p99 = samples[126];
+        double p99 = samples[126];
         std::cout << "  Busy SQLite writer 50000 entries: enqueue+next recall P99=" << p99
                   << " us; 128 events persisted exactly once" << std::endl;
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+        if (g_injected_gate_failure == "busy_writer") {
+            p99 = 99999.0;
+        }
         if (p99 >= 5000) {
             std::cerr << "Busy writer input-side P99 exceeded 5ms gate!\n";
             std::exit(EXIT_FAILURE);
@@ -430,7 +446,10 @@ void verifyBusyWriterLatency() {
         std::sort(samples.begin(), samples.end());
         std::cout << "  Concurrent SQLite writer 50000 entries: enqueue+next recall P99="
                   << samples[1013] << " us, maximum=" << samples.back() << " us" << std::endl;
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+        if (g_injected_gate_failure == "concurrent_sqlite") {
+            samples.back() = 35000.0;
+        }
         if (samples[1013] >= 5000 || samples.back() >= 30000) {
             std::cerr << "Background rebase blocked input beyond P99 5ms / maximum 30ms gate!\n";
             std::exit(EXIT_FAILURE);
@@ -493,11 +512,14 @@ void verifyLmdbWriterLatency(std::size_t count) {
         }
         if (!writer.flush()) std::exit(EXIT_FAILURE);
         std::sort(samples.begin(), samples.end());
-        const double p99 = samples[1013];
+        double p99 = samples[1013];
         const double max_val = samples.back();
         std::cout << "  LMDB writer " << count << " entries: enqueue+commit policy+publish+recall P99="
                   << p99 << " us, maximum=" << max_val << " us\n";
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+        if (g_injected_gate_failure == "lmdb_writer") {
+            p99 = 99999.0;
+        }
         if (p99 >= 5000 || max_val >= 30000) {
             std::cerr << "LMDB writer " << count << " latency exceeded P99 5ms / max 30ms gate!\n";
             std::exit(EXIT_FAILURE);
@@ -549,7 +571,7 @@ void verifyLmdbConcurrentPruningLatency() {
 
         std::sort(samples.begin(), samples.end());
         const double p99 = samples[1013];
-        const double max_val = samples.back();
+        double max_val = samples.back();
         std::cout << "  LMDB concurrent write/pruning: enqueue+next recall P99="
                   << p99 << " us, maximum=" << max_val << " us\n";
 
@@ -570,7 +592,10 @@ void verifyLmdbConcurrentPruningLatency() {
             std::exit(EXIT_FAILURE);
         }
 
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+        if (g_injected_gate_failure == "lmdb_concurrent_pruning") {
+            max_val = 35000.0;
+        }
         if (p99 >= 5000 || max_val >= 30000) {
             std::cerr << "LMDB concurrent pruning exceeded P99 5ms / max 30ms gate!\n";
             std::exit(EXIT_FAILURE);
@@ -591,11 +616,14 @@ void verifyLmdbFirstObserverLatency() {
     modernime::core::LearningStore observer(path);
     if (!observer.openReadOnly()) std::exit(EXIT_FAILURE);
     const auto rev = observer.resetRevision();
-    const double latency_us = std::chrono::duration<double, std::micro>(
+    double latency_us = std::chrono::duration<double, std::micro>(
         std::chrono::steady_clock::now() - start).count();
     if (!rev.has_value()) std::exit(EXIT_FAILURE);
     std::cout << "  LMDB first observer: latency=" << latency_us << " us\n";
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+    if (g_injected_gate_failure == "lmdb_first_observer") {
+        latency_us = 99999.0;
+    }
     if (latency_us >= 5000.0) {
         std::cerr << "LMDB first observer latency exceeded 5ms gate!\n";
         std::exit(EXIT_FAILURE);
@@ -632,12 +660,15 @@ void verifyLmdbFirstKeyAfterClearLatency() {
     const auto start = std::chrono::steady_clock::now();
     writer.enqueueCommit(event);
     benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", event.timestampMs));
-    const double latency_us = std::chrono::duration<double, std::micro>(
+    double latency_us = std::chrono::duration<double, std::micro>(
         std::chrono::steady_clock::now() - start).count();
 
     std::cout << "  LMDB first key after clear: latency=" << latency_us << " us\n";
     if (!writer.flush()) std::exit(EXIT_FAILURE);
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+    if (g_injected_gate_failure == "lmdb_first_key_after_clear") {
+        latency_us = 99999.0;
+    }
     if (latency_us >= 5000.0) {
         std::cerr << "LMDB first key after clear exceeded 5ms gate!\n";
         std::exit(EXIT_FAILURE);
@@ -675,6 +706,8 @@ void verifyStartupInitialCommitAndNextKeyLatency(std::size_t count) {
     sqlite3_close(connection);
 
     {
+        double first_commit_us = 0.0;
+        double next_key_us = 0.0;
 #if defined(MODERNIME_HAS_PINYIN_PROVIDER) && MODERNIME_HAS_PINYIN_PROVIDER
         modernime::pinyin::PinyinDataPaths paths;
         paths.learningStore = path.string();
@@ -701,13 +734,13 @@ void verifyStartupInitialCommitAndNextKeyLatency(std::size_t count) {
 
         const auto start_commit = std::chrono::steady_clock::now();
         if (!writer->enqueueCommit(event)) std::exit(EXIT_FAILURE);
-        const double first_commit_us = std::chrono::duration<double, std::micro>(
+        first_commit_us = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - start_commit).count();
 
         // Next key recall / typing on input thread
         const auto start_next = std::chrono::steady_clock::now();
         if (!provider.append("nihao")) std::exit(EXIT_FAILURE);
-        const double next_key_us = std::chrono::duration<double, std::micro>(
+        next_key_us = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - start_next).count();
 
         const auto start_load = std::chrono::steady_clock::now();
@@ -756,13 +789,13 @@ void verifyStartupInitialCommitAndNextKeyLatency(std::size_t count) {
 
         const auto start_commit = std::chrono::steady_clock::now();
         if (!writer.enqueueCommit(event)) std::exit(EXIT_FAILURE);
-        const double first_commit_us = std::chrono::duration<double, std::micro>(
+        first_commit_us = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - start_commit).count();
 
         const auto start_next = std::chrono::steady_clock::now();
         event.timestampMs = 1700000001001LL;
         if (!writer.enqueueCommit(event)) std::exit(EXIT_FAILURE);
-        const double next_key_us = std::chrono::duration<double, std::micro>(
+        next_key_us = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - start_next).count();
 
         const auto start_load = std::chrono::steady_clock::now();
@@ -795,7 +828,10 @@ void verifyStartupInitialCommitAndNextKeyLatency(std::size_t count) {
         }
 #endif
 
-#ifdef NDEBUG
+#if MODERNIME_ENFORCE_LATENCY_GATES
+        if (g_injected_gate_failure == "startup_initial_commit") {
+            first_commit_us = 99999.0;
+        }
         if (first_commit_us >= 5000.0 || next_key_us >= 5000.0) {
             std::cerr << "Startup initial commit / next key exceeded 5ms gate!\n";
             std::exit(EXIT_FAILURE);
@@ -965,6 +1001,89 @@ void runPercentileAndMemoryVerification() {
 } // namespace
 
 int main(int argc, char **argv) {
+    std::string inject_gate;
+    bool self_test = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg(argv[i]);
+        if (arg.starts_with("--inject_gate_failure=")) {
+            inject_gate = std::string(arg.substr(std::string_view("--inject_gate_failure=").size()));
+        } else if (arg == "--self_test_gate_rejection") {
+            self_test = true;
+        }
+    }
+
+#if defined(__unix__) || defined(__linux__)
+    if (self_test) {
+        std::cout << "Running deterministic self-test of all 8 performance latency gates...\n";
+        const std::vector<std::string> gates = {
+            "published_snapshot",
+            "busy_writer",
+            "concurrent_sqlite",
+            "lmdb_writer",
+            "lmdb_concurrent_pruning",
+            "lmdb_first_observer",
+            "lmdb_first_key_after_clear",
+            "startup_initial_commit"
+        };
+        for (const auto &gate : gates) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                std::string flag = "--inject_gate_failure=" + gate;
+                char *child_argv[] = {argv[0], flag.data(), nullptr};
+                execv(argv[0], child_argv);
+                _exit(127);
+            }
+            int status = 0;
+            waitpid(pid, &status, 0);
+            if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_FAILURE) {
+                std::cout << "  [PASS] Negative test for gate '" << gate
+                          << "' successfully rejected over-threshold sample (exit code "
+                          << WEXITSTATUS(status) << ")\n";
+            } else {
+                std::cerr << "  [FAIL] Gate '" << gate << "' did NOT reject over-threshold sample! "
+                          << "exit status=" << (WIFEXITED(status) ? std::to_string(WEXITSTATUS(status)) : "abnormal") << "\n";
+                return EXIT_FAILURE;
+            }
+        }
+        std::cout << "All 8 performance latency gates verified active and enforcing non-zero rejection on failure.\n";
+        return 0;
+    }
+#endif
+
+    if (!inject_gate.empty()) {
+        g_injected_gate_failure = inject_gate;
+        if (inject_gate == "published_snapshot") {
+            verifyPublishedSnapshotLatency(100);
+            return 0;
+        }
+        if (inject_gate == "busy_writer" || inject_gate == "concurrent_sqlite") {
+            verifyBusyWriterLatency();
+            return 0;
+        }
+        if (inject_gate == "lmdb_writer") {
+            verifyLmdbWriterLatency(100);
+            return 0;
+        }
+        if (inject_gate == "lmdb_concurrent_pruning") {
+            verifyLmdbConcurrentPruningLatency();
+            return 0;
+        }
+        if (inject_gate == "lmdb_first_observer") {
+            verifyLmdbFirstObserverLatency();
+            return 0;
+        }
+        if (inject_gate == "lmdb_first_key_after_clear") {
+            verifyLmdbFirstKeyAfterClearLatency();
+            return 0;
+        }
+        if (inject_gate == "startup_initial_commit") {
+            verifyStartupInitialCommitAndNextKeyLatency(100);
+            return 0;
+        }
+        std::cerr << "Unknown injected gate name: " << inject_gate << "\n";
+        return 2;
+    }
+
     runPercentileAndMemoryVerification();
     verifyPublishedSnapshotLatency(50000);
     verifyPublishedSnapshotLatency(200000);

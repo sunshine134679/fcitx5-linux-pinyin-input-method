@@ -599,6 +599,18 @@ if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
             MODERNIME_HAS_PINYIN_PROVIDER=1
         )
     endif()
+    if(NOT DEFINED MODERNIME_ENABLE_PERFORMANCE_GATE)
+        if(CMAKE_BUILD_TYPE MATCHES "Release|RelWithDebInfo")
+            set(MODERNIME_ENABLE_PERFORMANCE_GATE ON)
+        else()
+            set(MODERNIME_ENABLE_PERFORMANCE_GATE OFF)
+        endif()
+    endif()
+    if(MODERNIME_ENABLE_PERFORMANCE_GATE)
+        target_compile_definitions(modernime_personal_engine_benchmark PRIVATE
+            MODERNIME_PERFORMANCE_GATE_ACTIVE=1
+        )
+    endif()
     set_target_properties(modernime_personal_engine_benchmark PROPERTIES
         BUILD_RPATH "${BENCHMARK_LIB_DIR}"
         INSTALL_RPATH "${BENCHMARK_LIB_DIR}"

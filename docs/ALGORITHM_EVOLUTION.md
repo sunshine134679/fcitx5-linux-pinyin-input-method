@@ -288,6 +288,11 @@
      - **V2 跨线程容量竞争根除**：将 `LearningWriter` 容量参数重构为 Worker 线程启动前不可变参数 `LearningWriter(path, syncLoad, totalEntryLimit)`，移除运行期跨线程写 store 字段入口，彻底根除 TSAN 数据竞争；新增 `ImmutableCapacityConfiguredAtConstructionIsRaceFreeUnderConcurrency` 并发测试并经 TSAN 严格验证；
      - **V3 核心基准解耦可选拼音**：在 `tests/CMakeLists.txt` 中按 `MODERNIME_BUILD_LIBIME_PINYIN` 条件链接与定义，基准源文件条件包含拼音模块并提供核心降级分支（`CommitCandidateRole::Raw`），恢复无拼音依赖的 core-only profile 独立构建与性能测试，同时保留全模块 profile 下的拼音集成性能门禁。
 
+   7. **性能门禁与 NDEBUG 解耦及负向超限有效性验证（第四轮复审终验）**：
+     - **门禁解耦**：解决 `tests/CMakeLists.txt` 中 `-UNDEBUG` 使得 `Release` 编译标志 `-O3 -DNDEBUG ... -UNDEBUG` 取消了 `NDEBUG`，进而导致 `#ifdef NDEBUG` 包裹的 8 项延迟拒绝分支在实际 Release 目标中被编译器预处理剔除的问题。引入独立宏 `MODERNIME_PERFORMANCE_GATE_ACTIVE=1`（`MODERNIME_ENFORCE_LATENCY_GATES`），确保性能门禁与 `NDEBUG` 彻底解耦，同时保留测试断言；
+     - **负向超限拒绝验证**：在同一基准路径下实现确定性超限注入机制（`--inject_gate_failure=<gate>` 与 `--self_test_gate_rejection`），针对快照召回、繁忙 Writer、SQLite 并发写入、LMDB 写入/并发剪枝、首观察者、清空首键及启学首提交共 8 项延迟检查分支进行子进程严格判定，证明超限时 100% 触发非 0 退出（exit code 1），负向日志保存在 `build/t11-fourth-review-evidence/negative-gates-rejection.log`；
+     - **历史超限记录留存与串行静默复测**：坦承并保留历史第 3 轮并发剪枝 max=34.6ms 及清空首键 6.29ms 超限日志（重命名为 `performance-run-3-historical-failure.log`），在消除并行编译/测试干扰的静默环境下串行执行 3 轮完整 Release 性能测试，3 轮退出码均为 0，P99 与 max 严格满足原门限要求（SQLite 并发 max 20.9~28.9ms < 30ms，LMDB 并发剪枝 max 4.5~15.9ms < 30ms）。
+
 - **打字体验变化**：
   - 词库在后台重载或清空时，输入法完全不卡顿，首按键即时响应；
   - 重载完成后，当前编辑区候选栏自动无感刷新为最新计算结果，光标与输入保持完好；
@@ -295,21 +300,26 @@
   - 标点输入在“正在更新候选”占位期间绝对不会误上屏脏拼音；
   - 外部多次清空、重载并发及异步启动场景下，用户提交的事实 100% 准确持久化，历史已清空词条 0 复活；
   - `LearningStore` 门面严格保留用户历史词条至上限，绝不超额删除；
-  - 高并发与大词库（200,000 条）下打字体验流畅，无崩溃、无死锁、无竞态。
+  - 性能门禁真实生效且受负向自检保护，高并发与大词库（200,000 条）下打字体验流畅，无崩溃、无死锁、无竞态。
 
 - **回归验证**：
   - `modernime_personal_engine_gtest`：132/132 项单元与并发测试全部通过（含 `ArchitectureWriterRegression` 15 项、`ArchitectureLmdbRegression` 6 项、`ArchitectureSelectionRegression` 11 项、`ArchitectureResourceCoordinationTest` 8 项等）；
   - `modernime_learning_store_tests`：新增小容量边界与独立引擎剪枝对比测试全量通过；
-  - `modernime_personal_engine_benchmark`（Release，连续 3 轮日志完整存档）：
-    - 50k 召回 P99: 152.90~190.33 us（门限 < 1000 us）；
-    - 200k 召回 P99: 186.90~230.78 us（门限 < 1000 us）；
-    - 更新+召回 P99: 50k 最大 609.96 us，200k 最大 2178.19 us（门限 < 5000 us）；
-    - 并发写与剪枝 P99: 2640.59~3946.21 us（门限 < 5000 us），最大延迟 7.36~34.6 ms；
-    - 启学首提交延迟: 50k 为 8.83~34.06 us，200k 为 9.92~12.10 us（门限 < 5000 us）；
-    - 启学下一键延迟: 50k 为 1442.48~1578.71 us，200k 为 651.35~1227.09 us（门限 < 5000 us）；
-    - 200k 独立后台加载（10 轮循环）：min 352.54 ms, median 362.37 ms, avg 363.71 ms, max 434.06 ms；
+  - `modernime_personal_engine_benchmark`（Release，门禁完全激活，连续 3 轮日志完整存档）：
+    - 50k 内存索引 / LMDB mmap 精确查询 P99: 1.10~1.72 us / 2.12~2.49 us（门限 < 1000 us）；
+    - 50k / 200k 召回 P99: 159.79~181.21 us / 183.40~228.04 us（门限 < 1000 us）；
+    - 更新+召回 P99: 50k 为 474.31~598.19 us，200k 为 1319.32~1476.91 us（门限 < 5000 us）；
+    - 并发 SQLite Writer: P99 为 929.19~1097.49 us（门限 < 5000 us），最大延迟 max 为 20,988.67~28,937.69 us（门限 < 30,000 us）；
+    - LMDB 并发写与剪枝: P99 为 2233.92~2771.59 us（门限 < 5000 us），最大延迟 max 为 4,563.90~15,900.46 us（门限 < 30,000 us；历史并发任务调度抖动超限 max 34.6 ms 已独立归档留存）；
+    - LMDB 首观察者延迟: 1619.23~1787.86 us（门限 < 5000 us）；
+    - LMDB 清空后首键提交: 3098.63~4656.25 us（门限 < 5000 us；历史超限 6291.89 us 已归档留存）；
+    - 启学首提交延迟: 50k 为 11.60~14.28 us，200k 为 10.82~14.11 us（门限 < 5000 us）；
+    - 启学下一键延迟: 50k 为 1420.84~1794.59 us，200k 为 647.24~688.46 us（门限 < 5000 us）；
+    - 200k 独立后台加载（10 轮循环）：min 361.71 ms, avg 381.19~385.98 ms, max 412.64 ms；
     - 真实容量剪枝验证: 50,000 成功剪枝至 40,000（精确淘汰 10,001 条）；
     - 真实 LMDB 扩容验证: 初始 65,536 字节成功动态扩容至 634,880 字节；
+    - 确定性负向超限验证: 8/8 门禁在超时注入时严格触发非 0 退出（exit code 1）；
+    - 连续 3 轮完整 Release 基准实测均以 `EXIT_CODE=0` 成功通过；
   - TSAN 运行时检查：核心并发/生命周期测试（30 项）及学习存储单测在 ThreadSanitizer (`setarch x86_64 -R`) 下 100% 运行通过，0 数据竞争；
   - Core-only profile：`MODERNIME_BUILD_LIBIME_PINYIN=OFF` 独立配置、构建及基准运行 100% 通过；
   - 全量 CTest 68 项测试通过（100% 通过，3 项 GTK 测试在无显示服务环境下正常 Skipped），`verify_fresh_clone.sh` 全流程 100% 通过。
@@ -350,7 +360,7 @@
 | **26** | `shi`、`zhege`、`de` | 导入包含高频次选的外部词库 | 首选稳居「**是**」、「**这个**」、「**的**」 | 被畸形频次的「试」、「这歌」、「地」等篡夺首位 | `pinyin_daily_simulation_test` (Scene 9) |
 | **27** | 14 组高频词 1,000 轮连续输入 | 14,000 次候选评估 + 周期性偶选干扰 | 1,000 轮全周期零篡位（**100% 稳居首选**） | 出现任何单次偶选篡位或首选下沉 | `pinyin_daily_simulation_test` (Scene 9) |
 | **28** | 回车上屏拼音串（如 `jianpan`）后输入前缀 `jianp`；日常空格输入首选核心词 | 外部干扰 / 快速打字 | `jianp` 首选必须稳居「**键盘**」；核心词空格上屏不污染先验 | 拼音被误学为英文并篡位抢占；核心词被次选或自造词挤掉 | `modernime_english_arbitration_tests`、`modernime_pinyin_daily_simulation_tests` |
-| **29** | 词库后台重载（Reloading）、二次 Clear、读写故障、LMDB 扩容或容量边界 | 词库生命周期重载与高并发 | 暂存队列严格 $\le 100$ 条；None 占位候选全动作拒绝；重载中严格轮询磁盘底层世代，杜绝跳过世代观察；就绪发布前过时快照坚决拒收；Ready 通知在途调度等待排空与安全取消；LMDB 首次 RO/RW 初始化无死锁与泄露；LearningStore 门面严格保留至容量上限（无未经授权的多剪）；Writer 容量构造期不可变防数据竞争；核心基准解耦可选拼音支持 core-only profile | 暂存队列无限膨胀；选词越权进入占位符；Reloading 跳过世代观察导致新事实丢失；向 UI 发布过期快照；通知在途调度悬空野指针崩溃；LMDB 多线程双初始化或读写死锁；未授权更改生产剪枝策略多剪历史词条；跨线程直接修改 store 字段竞争；无拼音环境构建失败 | `ArchitectureWriterRegression` (15/15)、`ArchitectureLmdbRegression` (6/6)、`ArchitectureSelectionRegression` (11/11)、`ArchitectureResourceCoordinationTest` (8/8)、`modernime_learning_store_tests` |
+| **29** | 词库后台重载（Reloading）、二次 Clear、读写故障、LMDB 扩容、容量边界或性能门禁 | 词库生命周期重载、高并发与性能验收 | 暂存队列严格 $\le 100$ 条；None 占位候选全动作拒绝；重载中严格轮询磁盘底层世代，杜绝跳过世代观察；就绪发布前过时快照坚决拒收；Ready 通知在途调度等待排空与安全取消；LMDB 首次 RO/RW 初始化无死锁与泄露；LearningStore 门面严格保留至容量上限（无未经授权的多剪）；Writer 容量构造期不可变防数据竞争；核心基准解耦可选拼音支持 core-only profile；性能延迟门禁与 NDEBUG 彻底解耦，确定性负向拒绝有效（8/8 exit code 1），静默串行三轮 P99/max 严格达标 | 暂存队列无限膨胀；选词越权进入占位符；Reloading 跳过世代观察导致新事实丢失；向 UI 发布过期快照；通知在途调度悬空野指针崩溃；LMDB 多线程双初始化或读写死锁；未授权更改生产剪枝策略多剪历史词条；跨线程直接修改 store 字段竞争；无拼音环境构建失败；Release 编译通过后门禁被宏预处理剔除；延迟超限不退出非0；历史超限隐瞒或强行改阈值 | `ArchitectureWriterRegression` (15/15)、`ArchitectureLmdbRegression` (6/6)、`ArchitectureSelectionRegression` (11/11)、`ArchitectureResourceCoordinationTest` (8/8)、`modernime_learning_store_tests`、`modernime_personal_engine_benchmark` |
 
 
 
