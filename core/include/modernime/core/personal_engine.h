@@ -21,6 +21,10 @@ struct MDB_env;
 
 namespace modernime::core {
 
+namespace detail {
+class LmdbEnvironment;
+}
+
 struct LearningEvent;
 
 // 词条元数据结构体（常驻内存 / LMDB 二进制零拷贝序列化存储）
@@ -188,13 +192,6 @@ public:
 
     // 兼容平面二进制文件序列化（支持 PersonalEngine.hpp 原生 14B WordMeta 与扩展格式无损导入）
     bool SaveToFile(const std::string &file_path) const;
-    bool LoadFromFile(const std::string &file_path);
-    bool ImportFromFile(const std::string &file_path, bool merge = true);
-
-    void Prune();
-    size_t GetTotalEntries() const noexcept { return total_entries_; }
-
-private:
     struct StoredVariant {
         std::string text;
         std::string raw_pinyin;
@@ -203,12 +200,21 @@ private:
         WordMeta meta{};
     };
 
+    bool LoadFromFile(const std::string &file_path);
+    bool ImportFromFile(const std::string &file_path, bool merge = true);
+
+    void Prune();
+    size_t GetTotalEntries() const noexcept { return total_entries_; }
+
+private:
+
     float MatchContextAffinity(std::string_view stored_context_before,
                                std::string_view query_context,
                                std::string_view text) const noexcept;
 
     void PruneContextVariants();
     bool EnsureMapCapacity(size_t required_extra_bytes = 0);
+    bool EnsureMapCapacityLocked(size_t required_extra_bytes = 0);
     bool RebuildCompactIndex(std::string_view norm_key);
 
     EngineConfig config_;
@@ -230,6 +236,7 @@ private:
     int64_t migrated_bin_size_ = 0;
 
     // LMDB 句柄
+    std::shared_ptr<detail::LmdbEnvironment> lmdb_env_;
     std::filesystem::path lmdb_path_;
     MDB_env *env_ = nullptr;
     unsigned int words_dbi_ = 0;

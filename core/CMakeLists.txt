@@ -9,6 +9,8 @@ add_library(modernime_core STATIC
     src/learning_store.cpp
     src/learning_writer.cpp
     src/personal_engine.cpp
+    src/lmdb_environment.cpp
+    src/personal_engine_state.cpp
     src/clipboard_history.cpp
     src/persistent_clipboard_history.cpp
     src/settings.cpp

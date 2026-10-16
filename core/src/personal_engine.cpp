@@ -1,5 +1,7 @@
 #include "modernime/core/personal_engine.h"
 #include "modernime/core/learning_store.h"
+#include "lmdb_environment.h"
+#include "personal_engine_state.h"
 
 #include <lmdb.h>
 #include <sqlite3.h>
@@ -86,96 +88,11 @@ bool isControlOrLineBreak(unsigned char c) noexcept {
     return c < 0x20U || c == 0x7FU;
 }
 
-struct UnpackedRecordView {
-    WordMeta meta{};
-    std::string_view text;
-    std::string_view context_before;
-    std::string_view context_after;
-    bool valid = false;
-};
-
-UnpackedRecordView unpackLmdbValue(const MDB_val &val) noexcept {
-    UnpackedRecordView result;
-    if (val.mv_data == nullptr || val.mv_size < sizeof(WordMeta)) {
-        return result;
-    }
-    std::memcpy(&result.meta, val.mv_data, sizeof(WordMeta));
-    const std::size_t total_needed =
-        sizeof(WordMeta) +
-        static_cast<std::size_t>(result.meta.text_bytes_len) +
-        static_cast<std::size_t>(result.meta.context_before_len) +
-        static_cast<std::size_t>(result.meta.context_after_len);
-    if (val.mv_size < total_needed) {
-        return result;
-    }
-    const auto *base = static_cast<const char *>(val.mv_data) + sizeof(WordMeta);
-    result.text = std::string_view(base, result.meta.text_bytes_len);
-    base += result.meta.text_bytes_len;
-    result.context_before =
-        std::string_view(base, result.meta.context_before_len);
-    base += result.meta.context_before_len;
-    result.context_after =
-        std::string_view(base, result.meta.context_after_len);
-    result.valid = true;
-    return result;
-}
-
-// LMDB MDB_DUPSORT 自定义比较器：
-// 按 (text, context_before, context_after) 字典序比较。
-// 同一拼音键下的相同 (词条, 前后文) 在更新频次或时间戳时长度不变且比较结果为 0，
-// 从而使 mdb_put 直接在 B+Tree 叶节点原地覆盖旧值，避免产生重复记录。
-int compareLmdbWordRecord(const MDB_val *a, const MDB_val *b) noexcept {
-    const auto va = unpackLmdbValue(*a);
-    const auto vb = unpackLmdbValue(*b);
-    if (!va.valid || !vb.valid) {
-        const std::size_t min_len = std::min(a->mv_size, b->mv_size);
-        const int cmp = std::memcmp(a->mv_data, b->mv_data, min_len);
-        if (cmp != 0) {
-            return cmp;
-        }
-        return (a->mv_size < b->mv_size) ? -1 : (a->mv_size > b->mv_size ? 1 : 0);
-    }
-    if (const int cmp = va.text.compare(vb.text); cmp != 0) {
-        return cmp;
-    }
-    if (const int cmp = va.context_before.compare(vb.context_before); cmp != 0) {
-        return cmp;
-    }
-    return va.context_after.compare(vb.context_after);
-}
-
-std::vector<char> packLmdbValue(const WordMeta &meta,
-                                std::string_view text,
-                                std::string_view context_before,
-                                std::string_view context_after) {
-    WordMeta header = meta;
-    header.text_bytes_len = static_cast<uint16_t>(
-        std::min<std::size_t>(text.size(), std::numeric_limits<uint16_t>::max()));
-    header.context_before_len = static_cast<uint16_t>(
-        std::min<std::size_t>(context_before.size(), std::numeric_limits<uint16_t>::max()));
-    header.context_after_len = static_cast<uint16_t>(
-        std::min<std::size_t>(context_after.size(), std::numeric_limits<uint16_t>::max()));
-
-    const std::size_t total_size =
-        sizeof(WordMeta) + header.text_bytes_len +
-        header.context_before_len + header.context_after_len;
-    std::vector<char> buffer(total_size);
-    char *ptr = buffer.data();
-    std::memcpy(ptr, &header, sizeof(WordMeta));
-    ptr += sizeof(WordMeta);
-    if (header.text_bytes_len > 0) {
-        std::memcpy(ptr, text.data(), header.text_bytes_len);
-        ptr += header.text_bytes_len;
-    }
-    if (header.context_before_len > 0) {
-        std::memcpy(ptr, context_before.data(), header.context_before_len);
-        ptr += header.context_before_len;
-    }
-    if (header.context_after_len > 0) {
-        std::memcpy(ptr, context_after.data(), header.context_after_len);
-    }
-    return buffer;
-}
+using detail::UnpackedRecordView;
+using detail::unpackLmdbValue;
+using detail::compareLmdbWordRecord;
+using detail::packLmdbValue;
+using detail::normalizePathKey;
 
 bool putMetaInt64(MDB_txn *txn, MDB_dbi meta_dbi, const char *key_name, int64_t value) {
     MDB_val k{std::strlen(key_name), const_cast<char *>(key_name)};
@@ -192,61 +109,6 @@ std::optional<int64_t> getMetaInt64(MDB_txn *txn, MDB_dbi meta_dbi, const char *
     int64_t out = 0;
     std::memcpy(&out, v.mv_data, sizeof(int64_t));
     return out;
-}
-
-// 进程内 LMDB 环境共享表：
-// LMDB 规范要求同一进程内对同一数据库文件只能打开单个 MDB_env 句柄（否则关闭任一句柄会释放全进程 POSIX 文件锁，
-// 且多句柄并发扩容/读写会导致 mmap 悬挂指针）。
-struct SharedLmdbHandle {
-    std::recursive_mutex mutex;
-    MDB_env *env = nullptr;
-    MDB_dbi words_dbi = 0;
-    MDB_dbi meta_dbi = 0;
-    bool read_only = false;
-    std::string path_key;
-
-    ~SharedLmdbHandle() {
-        if (env != nullptr) {
-            mdb_env_close(env);
-            env = nullptr;
-        }
-    }
-};
-
-std::mutex &lmdbRegistryMutex() {
-    static std::mutex m;
-    return m;
-}
-
-std::unordered_map<std::string, std::weak_ptr<SharedLmdbHandle>> &
-lmdbRegistryByPath() {
-    static std::unordered_map<std::string, std::weak_ptr<SharedLmdbHandle>> reg;
-    return reg;
-}
-
-std::unordered_map<const PersonalEngine *, std::shared_ptr<SharedLmdbHandle>> &
-lmdbHandlesByEngine() {
-    static std::unordered_map<const PersonalEngine *,
-                              std::shared_ptr<SharedLmdbHandle>>
-        handles;
-    return handles;
-}
-
-std::shared_ptr<SharedLmdbHandle>
-getEngineSharedHandle(const PersonalEngine *engine) {
-    std::lock_guard lock(lmdbRegistryMutex());
-    auto &handles = lmdbHandlesByEngine();
-    auto it = handles.find(engine);
-    return it != handles.end() ? it->second : nullptr;
-}
-
-std::string normalizePathKey(const std::filesystem::path &p) {
-    std::error_code ec;
-    auto canon = std::filesystem::weakly_canonical(p, ec);
-    if (!ec && !canon.empty()) {
-        return canon.string();
-    }
-    return p.lexically_normal().string();
 }
 
 } // namespace
@@ -914,18 +776,14 @@ std::vector<PersonalCandidate> PersonalEngine::QueryPrefixCandidates(
 std::vector<PersonalCandidate> PersonalEngine::QueryLmdbCandidates(
     std::string_view pinyin_key,
     std::string_view surrounding_context) const {
-    if (env_ == nullptr) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
+        lock.unlock();
         return QueryCandidates(pinyin_key, surrounding_context);
     }
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-    }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    MDB_dbi active_words_dbi =
-        shared_handle != nullptr ? shared_handle->words_dbi : words_dbi_;
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    MDB_env *active_env = lmdb_env_->env;
+    MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
     if (active_env == nullptr) {
         return {};
     }
@@ -1031,18 +889,14 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbPrefixCandidates(
     std::string_view pinyin_prefix,
     std::string_view surrounding_context,
     size_t limit) const {
-    if (env_ == nullptr) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
+        lock.unlock();
         return QueryPrefixCandidates(pinyin_prefix, surrounding_context, limit);
     }
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-    }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    MDB_dbi active_words_dbi =
-        shared_handle != nullptr ? shared_handle->words_dbi : words_dbi_;
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    MDB_env *active_env = lmdb_env_->env;
+    MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
     if (active_env == nullptr) {
         return {};
     }
@@ -1145,9 +999,12 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbPrefixCandidates(
 
 bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
                               bool read_only) {
-    std::unique_lock lock(lmdb_mutex_);
-    if (env_ != nullptr) {
-        return true;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        if (lmdb_env_ != nullptr && lmdb_path_ == lmdb_path &&
+            (!read_only || lmdb_read_only_ == read_only)) {
+            return true;
+        }
     }
     if (lmdb_path.empty()) {
         return false;
@@ -1166,147 +1023,21 @@ bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
         }
     }
 
-    const std::string path_key = normalizePathKey(lmdb_path);
-    std::shared_ptr<SharedLmdbHandle> shared_handle;
-    {
-        std::lock_guard reg_lock(lmdbRegistryMutex());
-        auto &reg = lmdbRegistryByPath();
-        if (auto it = reg.find(path_key); it != reg.end()) {
-            shared_handle = it->second.lock();
-        }
-        if (shared_handle != nullptr) {
-            std::lock_guard h_lock(shared_handle->mutex);
-            if (shared_handle->read_only && !read_only) {
-                if (shared_handle->env != nullptr) {
-                    mdb_env_close(shared_handle->env);
-                    shared_handle->env = nullptr;
-                }
-                MDB_env *upgraded_env = nullptr;
-                if (mdb_env_create(&upgraded_env) != MDB_SUCCESS ||
-                    mdb_env_set_maxdbs(upgraded_env, 4) != MDB_SUCCESS ||
-                    mdb_env_set_mapsize(
-                        upgraded_env,
-                        std::max<size_t>(64 * 1024, config_.initial_lmdb_map_size)) !=
-                        MDB_SUCCESS ||
-                    mdb_env_open(upgraded_env, lmdb_path.c_str(),
-                                 MDB_NOSUBDIR | MDB_NOTLS, 0644) != MDB_SUCCESS) {
-                    if (upgraded_env != nullptr) {
-                        mdb_env_close(upgraded_env);
-                    }
-                    return false;
-                }
-                MDB_txn *txn = nullptr;
-                MDB_dbi words_dbi = 0;
-                MDB_dbi meta_dbi = 0;
-                if (mdb_txn_begin(upgraded_env, nullptr, 0, &txn) != MDB_SUCCESS ||
-                    mdb_dbi_open(txn, "words", MDB_CREATE | MDB_DUPSORT, &words_dbi) !=
-                        MDB_SUCCESS ||
-                    mdb_set_dupsort(txn, words_dbi, &compareLmdbWordRecord) !=
-                        MDB_SUCCESS ||
-                    mdb_dbi_open(txn, "meta", MDB_CREATE, &meta_dbi) != MDB_SUCCESS) {
-                    if (txn != nullptr) {
-                        mdb_txn_abort(txn);
-                    }
-                    mdb_env_close(upgraded_env);
-                    return false;
-                }
-                if (!getMetaInt64(txn, meta_dbi, "schema_version").has_value()) {
-                    putMetaInt64(txn, meta_dbi, "schema_version", kLmdbSchemaVersion);
-                }
-                if (!getMetaInt64(txn, meta_dbi, "reset_revision").has_value()) {
-                    putMetaInt64(txn, meta_dbi, "reset_revision", 0);
-                }
-                if (mdb_txn_commit(txn) != MDB_SUCCESS) {
-                    mdb_env_close(upgraded_env);
-                    return false;
-                }
-                shared_handle->env = upgraded_env;
-                shared_handle->words_dbi = words_dbi;
-                shared_handle->meta_dbi = meta_dbi;
-                shared_handle->read_only = false;
-            }
-            lmdbHandlesByEngine()[this] = shared_handle;
-            env_ = shared_handle->env;
-            words_dbi_ = shared_handle->words_dbi;
-            meta_dbi_ = shared_handle->meta_dbi;
-            lmdb_path_ = lmdb_path;
-            lmdb_read_only_ = read_only;
-        } else {
-            MDB_env *env = nullptr;
-            if (mdb_env_create(&env) != MDB_SUCCESS) {
-                return false;
-            }
-            if (mdb_env_set_maxdbs(env, 4) != MDB_SUCCESS ||
-                mdb_env_set_mapsize(
-                    env,
-                    std::max<size_t>(64 * 1024, config_.initial_lmdb_map_size)) !=
-                    MDB_SUCCESS) {
-                mdb_env_close(env);
-                return false;
-            }
-
-            unsigned int flags = MDB_NOSUBDIR | MDB_NOTLS;
-            if (read_only) {
-                flags |= MDB_RDONLY;
-            }
-            if (mdb_env_open(env, lmdb_path.c_str(), flags, 0644) != MDB_SUCCESS) {
-                mdb_env_close(env);
-                return false;
-            }
-
-            MDB_txn *txn = nullptr;
-            if (mdb_txn_begin(env, nullptr, read_only ? MDB_RDONLY : 0, &txn) !=
-                MDB_SUCCESS) {
-                mdb_env_close(env);
-                return false;
-            }
-
-            const unsigned int words_flags =
-                read_only ? MDB_DUPSORT : (MDB_CREATE | MDB_DUPSORT);
-            const unsigned int meta_flags = read_only ? 0 : MDB_CREATE;
-            MDB_dbi words_dbi = 0;
-            MDB_dbi meta_dbi = 0;
-            if (mdb_dbi_open(txn, "words", words_flags, &words_dbi) != MDB_SUCCESS ||
-                mdb_set_dupsort(txn, words_dbi, &compareLmdbWordRecord) !=
-                    MDB_SUCCESS ||
-                mdb_dbi_open(txn, "meta", meta_flags, &meta_dbi) != MDB_SUCCESS) {
-                mdb_txn_abort(txn);
-                mdb_env_close(env);
-                return false;
-            }
-
-            if (!read_only) {
-                if (!getMetaInt64(txn, meta_dbi, "schema_version").has_value()) {
-                    putMetaInt64(txn, meta_dbi, "schema_version", kLmdbSchemaVersion);
-                }
-                if (!getMetaInt64(txn, meta_dbi, "reset_revision").has_value()) {
-                    putMetaInt64(txn, meta_dbi, "reset_revision", 0);
-                }
-                if (mdb_txn_commit(txn) != MDB_SUCCESS) {
-                    mdb_env_close(env);
-                    return false;
-                }
-            } else {
-                mdb_txn_abort(txn);
-            }
-
-            shared_handle = std::make_shared<SharedLmdbHandle>();
-            shared_handle->env = env;
-            shared_handle->words_dbi = words_dbi;
-            shared_handle->meta_dbi = meta_dbi;
-            shared_handle->read_only = read_only;
-            shared_handle->path_key = path_key;
-            reg[path_key] = shared_handle;
-            lmdbHandlesByEngine()[this] = shared_handle;
-
-            env_ = env;
-            words_dbi_ = words_dbi;
-            meta_dbi_ = meta_dbi;
-            lmdb_path_ = lmdb_path;
-            lmdb_read_only_ = read_only;
-        }
+    auto handle = detail::LmdbRegistry::instance().getOrCreate(
+        lmdb_path, read_only, config_.initial_lmdb_map_size);
+    if (!handle || handle->env == nullptr) {
+        return false;
     }
-    lock.unlock();
+
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        lmdb_env_ = handle;
+        env_ = handle->env;
+        words_dbi_ = handle->words_dbi;
+        meta_dbi_ = handle->meta_dbi;
+        lmdb_path_ = lmdb_path;
+        lmdb_read_only_ = handle->read_only;
+    }
 
     auto prior_db = std::move(db_);
     auto prior_compact = std::move(compact_index_);
@@ -1362,50 +1093,41 @@ bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
 }
 
 void PersonalEngine::CloseLmdb() noexcept {
-    std::lock_guard lock(lmdb_mutex_);
-    env_ = nullptr;
-    words_dbi_ = 0;
-    meta_dbi_ = 0;
-    std::lock_guard reg_lock(lmdbRegistryMutex());
-    lmdbHandlesByEngine().erase(this);
+    std::shared_ptr<detail::LmdbEnvironment> env_to_release;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        env_to_release = std::move(lmdb_env_);
+        env_ = nullptr;
+        words_dbi_ = 0;
+        meta_dbi_ = 0;
+        lmdb_path_.clear();
+    }
 }
 
 size_t PersonalEngine::LmdbMapSize() const noexcept {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-    }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    if (active_env == nullptr) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
         return 0;
     }
+    std::unique_lock env_lock(lmdb_env_->mutex);
     MDB_envinfo info{};
-    if (mdb_env_info(active_env, &info) != MDB_SUCCESS) {
+    if (mdb_env_info(lmdb_env_->env, &info) != MDB_SUCCESS) {
         return 0;
     }
     return info.me_mapsize;
 }
 
+bool PersonalEngine::EnsureMapCapacityLocked(size_t required_extra_bytes) {
+    if (!lmdb_env_ || lmdb_env_->env == nullptr || lmdb_read_only_) {
+        return false;
+    }
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    return lmdb_env_->ensureMapCapacity(required_extra_bytes);
+}
+
 bool PersonalEngine::EnsureMapCapacity(size_t required_extra_bytes) {
-    const auto shared_handle = getEngineSharedHandle(this);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    if (active_env == nullptr || lmdb_read_only_) {
-        return false;
-    }
-    MDB_envinfo info{};
-    if (mdb_env_info(active_env, &info) != MDB_SUCCESS) {
-        return false;
-    }
-    size_t next_size = std::max<size_t>(info.me_mapsize * 2, 128 * 1024);
-    if (required_extra_bytes > 0 &&
-        info.me_mapsize + required_extra_bytes * 4 > next_size) {
-        next_size = info.me_mapsize + required_extra_bytes * 4;
-    }
-    // 4 KiB 页对齐
-    next_size = (next_size + 4095ULL) & ~4095ULL;
-    return mdb_env_set_mapsize(active_env, next_size) == MDB_SUCCESS;
+    std::unique_lock lock(lmdb_mutex_);
+    return EnsureMapCapacityLocked(required_extra_bytes);
 }
 
 void PersonalEngine::PruneContextVariants() {
@@ -1450,19 +1172,15 @@ void PersonalEngine::PruneContextVariants() {
 
 bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &events,
                                           float initial_weight) {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-    }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    const MDB_dbi words = shared_handle != nullptr ? shared_handle->words_dbi : words_dbi_;
-    const MDB_dbi meta = shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
-    if (active_env == nullptr || lmdb_read_only_ || simulate_write_failure_ ||
-        (!events.empty() && sensitive_context_)) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr || lmdb_read_only_ ||
+        simulate_write_failure_ || (!events.empty() && sensitive_context_)) {
         return false;
     }
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    MDB_env *active_env = lmdb_env_->env;
+    const MDB_dbi words = lmdb_env_->words_dbi;
+    const MDB_dbi meta = lmdb_env_->meta_dbi;
 
     // Stage only affected keys on normal writes. Full reads are needed only for
     // external changes, opening an old database, or global capacity pruning.
@@ -1519,13 +1237,13 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
 
         auto staging_config = config_;
         staging_config.max_dict_capacity = std::numeric_limits<size_t>::max();
-        PersonalEngine staged(staging_config);
-        staged.clock_fn_ = clock_fn_;
-        staged.manual_clock_offset_ = manual_clock_offset_;
-        staged.active_context_ = active_context_;
-        staged.reset_revision_ = *revision;
+        detail::PersonalEngineState staged;
+        staged.config = staging_config;
+        staged.manual_clock_offset = manual_clock_offset_;
+        staged.active_context = active_context_;
+        staged.reset_revision = *revision;
 
-        auto load_records = [&](PersonalEngine &destination, bool all) {
+        auto load_records = [&](detail::PersonalEngineState &destination, bool all) {
             MDB_cursor *cursor = nullptr;
             int status = mdb_cursor_open(txn, words, &cursor);
             if (status != MDB_SUCCESS) {
@@ -1543,9 +1261,9 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                 variant.context_before = std::string(view.context_before);
                 variant.context_after = std::string(view.context_after);
                 variant.meta = view.meta;
-                destination.db_[key_string].push_back(std::move(variant));
-                destination.RebuildCompactIndex(key_string);
-                ++destination.total_entries_;
+                destination.db[key_string].push_back(std::move(variant));
+                destination.rebuildCompactIndex(key_string);
+                ++destination.total_entries;
             };
             MDB_val key{}, value{};
             if (all) {
@@ -1576,8 +1294,8 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
             return false;
         }
         // Keep originals for exact deletion of evicted duplicate values.
-        auto originals = staged.db_;
-        const size_t original_entries = staged.total_entries_;
+        auto originals = staged.db;
+        const size_t original_entries = staged.total_entries;
         for (const auto &event : events) {
             if (event.resetRevision && *event.resetRevision != *revision) {
                 continue;
@@ -1588,7 +1306,7 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                 const auto word = detail::canonicalEnglishSelectionWord(
                     event.phrase, event.pinyin);
                 if (!word.empty()) {
-                    for (auto &[key, variants] : staged.db_) {
+                    for (auto &[key, variants] : staged.db) {
                         const auto alias = CompactPinyin(key);
                         if (alias.empty() || !word.starts_with(alias)) {
                             continue;
@@ -1601,16 +1319,22 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                         }
                     }
                 }
-                ok = staged.RecordUsage(event.pinyin, event.phrase, initial_weight,
-                                         event.contextBefore, event.contextAfter,
-                                         event.nowMs);
+                const uint32_t now_sec = event.nowMs > 0
+                    ? static_cast<uint32_t>(std::max<int64_t>(1, event.nowMs / 1000))
+                    : NowSeconds();
+                const int64_t now_ms = event.nowMs > 0
+                    ? event.nowMs
+                    : static_cast<int64_t>(now_sec) * 1000LL;
+                ok = staged.recordUsage(event.pinyin, event.phrase, initial_weight,
+                                        event.contextBefore, event.contextAfter,
+                                        now_sec, now_ms);
                 break;
             }
             case LearningEvent::Kind::NegativeFeedback:
-                ok = staged.RecordNegativeFeedback(event.pinyin, event.phrase);
+                ok = staged.recordNegativeFeedback(event.pinyin, event.phrase);
                 break;
             case LearningEvent::Kind::Suppression:
-                ok = staged.RecordSuppression(event.pinyin, event.phrase);
+                ok = staged.recordSuppression(event.pinyin, event.phrase);
                 break;
             }
             if (!ok) {
@@ -1618,35 +1342,39 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                 return false;
             }
         }
-        staged.PruneContextVariants();
+        staged.pruneContextVariants();
         MDB_stat stats{};
         rc = mdb_stat(txn, words, &stats);
-        size_t new_total = stats.ms_entries - original_entries + staged.total_entries_;
+        size_t new_total = stats.ms_entries - original_entries + staged.total_entries;
         bool replace_all = false;
         if (rc == MDB_SUCCESS && new_total > config_.max_dict_capacity) {
             if (!full_state) {
-                PersonalEngine full(staging_config);
+                detail::PersonalEngineState full;
+                full.config = staging_config;
+                full.manual_clock_offset = manual_clock_offset_;
+                full.active_context = active_context_;
+                full.reset_revision = *revision;
                 rc = load_records(full, true);
                 if (rc == MDB_SUCCESS) {
                     for (const auto &key : changed_keys) {
-                        full.db_[key] = std::move(staged.db_[key]);
+                        full.db[key] = std::move(staged.db[key]);
                     }
-                    staged.db_ = std::move(full.db_);
-                    staged.compact_index_ = std::move(full.compact_index_);
-                    staged.total_entries_ = new_total;
+                    staged.db = std::move(full.db);
+                    staged.compact_index = std::move(full.compact_index);
+                    staged.total_entries = new_total;
                     full_state = true;
                 }
             }
             if (rc == MDB_SUCCESS) {
-                staged.Prune();
-                new_total = staged.total_entries_;
+                staged.prune(NowSeconds());
+                new_total = staged.total_entries;
                 replace_all = true;
                 rc = mdb_drop(txn, words, 0);
             }
         }
         if (!replace_all && rc == MDB_SUCCESS) {
             for (const auto &[key_string, before] : originals) {
-                const auto &after = staged.db_[key_string];
+                const auto &after = staged.db[key_string];
                 MDB_val key{key_string.size(), const_cast<char *>(key_string.data())};
                 for (const auto &old : before) {
                     const bool retained = std::any_of(after.begin(), after.end(),
@@ -1671,7 +1399,7 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
             }
         }
         if (rc == MDB_SUCCESS) {
-            for (const auto &[key_string, variants] : staged.db_) {
+            for (const auto &[key_string, variants] : staged.db) {
                 // An external change requires a fresh memory image, but only
                 // affected keys need writing unless a global prune ran.
                 if (!replace_all && !changed_keys.contains(key_string)) {
@@ -1698,7 +1426,7 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
             mdb_txn_abort(txn);
         }
         if (rc == MDB_MAP_FULL) {
-            if (!EnsureMapCapacity(staged.total_entries_ * 128 + 65536)) {
+            if (!EnsureMapCapacityLocked(staged.total_entries * 128 + 65536)) {
                 return false;
             }
             continue; // Nothing from the aborted batch reached disk or memory.
@@ -1707,12 +1435,12 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
             return false;
         }
         if (full_state) {
-            db_ = std::move(staged.db_);
-            compact_index_ = std::move(staged.compact_index_);
+            db_ = std::move(staged.db);
+            compact_index_ = std::move(staged.compact_index);
         } else {
             for (const auto &key : changed_keys) {
-                const auto found = staged.db_.find(key);
-                if (found != staged.db_.end() && !found->second.empty()) {
+                const auto found = staged.db.find(key);
+                if (found != staged.db.end() && !found->second.empty()) {
                     db_[key] = std::move(found->second);
                     RebuildCompactIndex(key);
                 }
@@ -1727,18 +1455,15 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
 }
 
 bool PersonalEngine::FlushToLmdb() {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr || lmdb_read_only_ || simulate_write_failure_) {
+        return false;
     }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    MDB_dbi active_words_dbi =
-        shared_handle != nullptr ? shared_handle->words_dbi : words_dbi_;
-    MDB_dbi active_meta_dbi =
-        shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
-    if (active_env == nullptr || lmdb_read_only_ || simulate_write_failure_) {
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    MDB_env *active_env = lmdb_env_->env;
+    const MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
+    const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
+    if (active_env == nullptr) {
         return false;
     }
     for (int attempt = 0; attempt < 5; ++attempt) {
@@ -1783,7 +1508,7 @@ bool PersonalEngine::FlushToLmdb() {
             return true;
         }
         if (rc == MDB_MAP_FULL) {
-            if (!EnsureMapCapacity(total_entries_ * 128 + 65536)) {
+            if (!EnsureMapCapacityLocked(total_entries_ * 128 + 65536)) {
                 return false;
             }
             continue;
@@ -1795,15 +1520,14 @@ bool PersonalEngine::FlushToLmdb() {
 
 bool PersonalEngine::ReadLearningState(std::vector<LearningEntry> &entries,
                                         int64_t &reset_revision) const {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
+        return false;
     }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    const MDB_dbi words = shared_handle != nullptr ? shared_handle->words_dbi : words_dbi_;
-    const MDB_dbi meta = shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    MDB_env *active_env = lmdb_env_->env;
+    const MDB_dbi words = lmdb_env_->words_dbi;
+    const MDB_dbi meta = lmdb_env_->meta_dbi;
     if (active_env == nullptr) {
         return false;
     }
@@ -1854,17 +1578,14 @@ bool PersonalEngine::ReadLearningState(std::vector<LearningEntry> &entries,
 }
 
 bool PersonalEngine::ReloadFromLmdb() {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr) {
+        return false;
     }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    MDB_dbi active_words_dbi =
-        shared_handle != nullptr ? shared_handle->words_dbi : words_dbi_;
-    MDB_dbi active_meta_dbi =
-        shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    MDB_env *active_env = lmdb_env_->env;
+    const MDB_dbi active_words_dbi = lmdb_env_->words_dbi;
+    const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
     if (active_env == nullptr) {
         return false;
     }
@@ -1923,14 +1644,13 @@ bool PersonalEngine::ReloadFromLmdb() {
 }
 
 bool PersonalEngine::BackupLmdbTo(const std::filesystem::path &backup_path) const {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
+    std::unique_lock lock(lmdb_mutex_);
+    if (!lmdb_env_ || lmdb_env_->env == nullptr || backup_path.empty() || backup_path == lmdb_path_) {
+        return false;
     }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    if (active_env == nullptr || backup_path.empty() || backup_path == lmdb_path_) {
+    std::unique_lock env_lock(lmdb_env_->mutex);
+    MDB_env *active_env = lmdb_env_->env;
+    if (active_env == nullptr) {
         return false;
     }
     std::error_code ec;
@@ -1952,19 +1672,15 @@ bool PersonalEngine::Clear() {
     if (simulate_write_failure_) {
         return false;
     }
-    if (env_ != nullptr) {
-        const auto shared_handle = getEngineSharedHandle(this);
-        std::unique_lock<std::recursive_mutex> shared_lock;
-        if (shared_handle != nullptr) {
-            shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-        }
-        std::lock_guard lock(lmdb_mutex_);
-        MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-        const MDB_dbi words = shared_handle != nullptr ? shared_handle->words_dbi : words_dbi_;
-        const MDB_dbi meta = shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
-        if (active_env == nullptr || lmdb_read_only_) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
+        if (lmdb_read_only_) {
             return false;
         }
+        std::unique_lock env_lock(lmdb_env_->mutex);
+        MDB_env *active_env = lmdb_env_->env;
+        const MDB_dbi words = lmdb_env_->words_dbi;
+        const MDB_dbi meta = lmdb_env_->meta_dbi;
         for (int attempt = 0; attempt < 5; ++attempt) {
             MDB_txn *txn = nullptr;
             if (mdb_txn_begin(active_env, nullptr, 0, &txn) != MDB_SUCCESS) {
@@ -1989,7 +1705,7 @@ bool PersonalEngine::Clear() {
                 mdb_txn_abort(txn);
             }
             if (rc == MDB_MAP_FULL) {
-                if (!EnsureMapCapacity(4096)) {
+                if (!EnsureMapCapacityLocked(4096)) {
                     return false;
                 }
                 continue;
@@ -2014,16 +1730,11 @@ bool PersonalEngine::Clear() {
 }
 
 int64_t PersonalEngine::ResetRevision() const {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-    }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    MDB_dbi active_meta_dbi =
-        shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
-    if (active_env != nullptr) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
+        std::unique_lock env_lock(lmdb_env_->mutex);
+        MDB_env *active_env = lmdb_env_->env;
+        const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
         MDB_txn *txn = nullptr;
         if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
             const auto rev = getMetaInt64(txn, active_meta_dbi, "reset_revision");
@@ -2037,16 +1748,11 @@ int64_t PersonalEngine::ResetRevision() const {
 }
 
 int PersonalEngine::SchemaVersion() const {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-    }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    MDB_dbi active_meta_dbi =
-        shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
-    if (active_env != nullptr) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
+        std::unique_lock env_lock(lmdb_env_->mutex);
+        MDB_env *active_env = lmdb_env_->env;
+        const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
         MDB_txn *txn = nullptr;
         if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
             const auto ver = getMetaInt64(txn, active_meta_dbi, "schema_version");
@@ -2060,16 +1766,11 @@ int PersonalEngine::SchemaVersion() const {
 }
 
 bool PersonalEngine::IsMigratedFromSqlite() const {
-    const auto shared_handle = getEngineSharedHandle(this);
-    std::unique_lock<std::recursive_mutex> shared_lock;
-    if (shared_handle != nullptr) {
-        shared_lock = std::unique_lock<std::recursive_mutex>(shared_handle->mutex);
-    }
-    std::lock_guard lock(lmdb_mutex_);
-    MDB_env *active_env = shared_handle != nullptr ? shared_handle->env : env_;
-    MDB_dbi active_meta_dbi =
-        shared_handle != nullptr ? shared_handle->meta_dbi : meta_dbi_;
-    if (active_env != nullptr) {
+    std::unique_lock lock(lmdb_mutex_);
+    if (lmdb_env_ != nullptr && lmdb_env_->env != nullptr) {
+        std::unique_lock env_lock(lmdb_env_->mutex);
+        MDB_env *active_env = lmdb_env_->env;
+        const MDB_dbi active_meta_dbi = lmdb_env_->meta_dbi;
         MDB_txn *txn = nullptr;
         if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
             const auto mig = getMetaInt64(txn, active_meta_dbi, "migrated_from_sqlite");
