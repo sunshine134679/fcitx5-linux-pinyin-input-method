@@ -37,11 +37,6 @@ namespace {
 constexpr guint kQueryTimeoutMs = 5000;
 constexpr guint kPackageOperationTimeoutMs = 300000;
 
-enum class TrackedPackageOpKind {
-    None,
-    RefreshCache,
-    SystemUpgrade,
-};
 
 struct CommandOutput final {
     bool started = false;
@@ -77,19 +72,7 @@ struct SubprocessState final {
     }
 };
 
-struct ActivePackageTracker final {
-    std::mutex mutex;
-    std::condition_variable cv;
-    bool active = false;
-    std::optional<RuntimeResult> completedResult;
-    std::string lastStdout;
-    std::string lastStderr;
-};
 
-ActivePackageTracker &packageTracker() {
-    static auto *tracker = new ActivePackageTracker();
-    return *tracker;
-}
 
 int createUnlinkedTempFd() {
     const char *tmpDir = g_get_tmp_dir();
@@ -288,19 +271,10 @@ gboolean onCommandTimeout(gpointer userData) {
 }
 
 void startBackgroundPackageTracking(std::shared_ptr<SubprocessState> state,
-                                    TrackedPackageOpKind opKind,
+                                    std::uint64_t operationId,
+                                    PackageOperationKind opKind,
                                     std::string fallbackCmd) {
-    auto &tracker = packageTracker();
-    {
-        std::unique_lock<std::mutex> lock(tracker.mutex);
-        tracker.cv.wait(lock, [&tracker]() { return !tracker.active; });
-        tracker.active = true;
-        tracker.completedResult.reset();
-        tracker.lastStdout.clear();
-        tracker.lastStderr.clear();
-    }
-
-    std::thread([state = std::move(state), opKind,
+    std::thread([state = std::move(state), operationId, opKind,
                  fallbackCmd = std::move(fallbackCmd)]() {
         g_main_context_push_thread_default(state->context);
         if (!state->finished) {
@@ -313,12 +287,14 @@ void startBackgroundPackageTracking(std::shared_ptr<SubprocessState> state,
         if (state->err.empty()) {
             state->err = readAllFromFd(state->stderrFd);
         }
-        const bool exitedZero = g_subprocess_get_if_exited(state->proc) &&
+
+        const bool ifExited = g_subprocess_get_if_exited(state->proc);
+        const bool exitedZero = ifExited &&
                                 (g_subprocess_get_exit_status(state->proc) == 0);
 
         RuntimeResult finalRes;
         finalRes.success = exitedZero;
-        if (opKind == TrackedPackageOpKind::SystemUpgrade) {
+        if (opKind == PackageOperationKind::SystemUpgrade) {
             finalRes.message =
                 exitedZero
                     ? "后台系统包管理器升级已完成，请点击“重新加载 ModernIME”使其生效。"
@@ -338,15 +314,14 @@ void startBackgroundPackageTracking(std::shared_ptr<SubprocessState> state,
         g_main_context_unref(state->context);
         g_object_unref(state->proc);
 
-        auto &trk = packageTracker();
-        {
-            std::lock_guard<std::mutex> guard(trk.mutex);
-            trk.lastStdout = std::move(state->out);
-            trk.lastStderr = std::move(state->err);
-            trk.completedResult = std::move(finalRes);
-            trk.active = false;
+        if (!ifExited) {
+            advancePackageOperation(operationId,
+                                    PackageOperationPhase::Continuing,
+                                    PackageOperationPhase::Uncertain);
+            return;
         }
-        trk.cv.notify_all();
+
+        finishPackageOperation(operationId, finalRes, std::move(state->out), std::move(state->err));
     }).detach();
 }
 
@@ -354,7 +329,8 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
                             const Environment &environment,
                             guint timeoutMs = kQueryTimeoutMs,
                             bool forceKillOnTimeout = true,
-                            TrackedPackageOpKind opKind = TrackedPackageOpKind::None,
+                            std::optional<std::uint64_t> operationId = std::nullopt,
+                            std::optional<PackageOperationKind> opKind = std::nullopt,
                             std::string fallbackCmd = {}) {
     CommandOutput result;
     if (argv.empty()) {
@@ -380,6 +356,7 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
         if (childStderrFd >= 0) {
             ::close(childStderrFd);
         }
+        result.stderrText = "无法创建临时描述符重定向子进程输出";
         return result;
     }
 
@@ -427,6 +404,12 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
         return result;
     }
 
+    if (operationId.has_value()) {
+        advancePackageOperation(*operationId,
+                                PackageOperationPhase::Starting,
+                                PackageOperationPhase::Running);
+    }
+
     result.started = true;
     GMainContext *context = g_main_context_new();
     g_main_context_push_thread_default(context);
@@ -460,7 +443,12 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
         if (forceKillOnTimeout && result.stillRunningOnTimeout) {
             g_subprocess_force_exit(proc);
         } else if (!forceKillOnTimeout && result.stillRunningOnTimeout && !state->finished) {
-            startBackgroundPackageTracking(state, opKind, std::move(fallbackCmd));
+            if (operationId.has_value() && opKind.has_value()) {
+                advancePackageOperation(*operationId,
+                                        PackageOperationPhase::Running,
+                                        PackageOperationPhase::Continuing);
+                startBackgroundPackageTracking(state, *operationId, *opKind, std::move(fallbackCmd));
+            }
             return result;
         }
     }
@@ -474,9 +462,18 @@ CommandOutput runSubprocess(const std::vector<std::string> &argv,
     }
     result.stdoutText = std::move(state->out);
     result.stderrText = std::move(state->err);
-    if (state->finished && !state->timedOut && g_subprocess_get_if_exited(proc)) {
+    const bool ifExited = g_subprocess_get_if_exited(proc);
+    if (state->finished && !state->timedOut && ifExited) {
         result.exitStatus = g_subprocess_get_exit_status(proc);
         result.exitedZero = (result.exitStatus == 0);
+    } else if (!ifExited && !result.timedOut) {
+        result.exitStatus = -1;
+        result.exitedZero = false;
+        if (operationId.has_value()) {
+            advancePackageOperation(*operationId,
+                                    PackageOperationPhase::Running,
+                                    PackageOperationPhase::Uncertain);
+        }
     }
 
     g_object_unref(cancellable);
@@ -1067,15 +1064,21 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
 
 RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
                                                     const Environment &environment) {
-    if (hasActivePackageOperation()) {
+    auto opId = tryBeginPackageOperation(PackageOperationKind::RefreshCache);
+    if (!opId.has_value()) {
+        if (hasActivePackageOperation()) {
+            return {false,
+                    "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
+        }
         return {false,
-                "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
+                "包操作结果队列已满（最多保留8项未消费结果），请先消费已有结果。"};
     }
     if (isPackageManagerLocked()) {
-        return {false,
+        RuntimeResult res{false,
                 "系统包管理器正忙（检测到锁占用，可能有其他包管理进程或自动更新正在运行），请等待其结束后重试。"};
+        finishPackageOperation(*opId, res);
+        return res;
     }
-    takeCompletedPackageOperationResult();
 
     PackageManagerKind manager = status.manager;
     if (manager == PackageManagerKind::Unknown) {
@@ -1092,29 +1095,35 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
 
     const auto pkexecBin = findExecutableInPath("pkexec", environment);
     if (pkexecBin.empty()) {
-        return {false,
+        RuntimeResult res{false,
                 "未检测到系统认证组件 pkexec，请在终端执行 " + fallbackCmd +
                     " 刷新软件源缓存后再点击“检查更新”。"};
+        finishPackageOperation(*opId, res, {}, {}, false);
+        return res;
     }
 
     std::vector<std::string> argv;
     if (manager == PackageManagerKind::Dnf) {
         const auto dnfBin = findExecutableInPath("dnf", environment);
         if (dnfBin.empty()) {
-            return {false, "未找到 dnf 包管理器，请手动执行：" + fallbackCmd};
+            RuntimeResult res{false, "未找到 dnf 包管理器，请手动执行：" + fallbackCmd};
+            finishPackageOperation(*opId, res, {}, {}, false);
+            return res;
         }
         argv = {pkexecBin.string(), dnfBin.string(), "makecache"};
     } else {
         const auto aptGetBin = findExecutableInPath("apt-get", environment);
         if (aptGetBin.empty()) {
-            return {false, "未找到 apt-get 包管理器，请手动执行：" + fallbackCmd};
+            RuntimeResult res{false, "未找到 apt-get 包管理器，请手动执行：" + fallbackCmd};
+            finishPackageOperation(*opId, res, {}, {}, false);
+            return res;
         }
         argv = {pkexecBin.string(), aptGetBin.string(), "update"};
     }
 
     const guint opTimeoutMs = resolvePackageOperationTimeoutMs(environment);
     const auto out = runSubprocess(argv, environment, opTimeoutMs, false,
-                                   TrackedPackageOpKind::RefreshCache, fallbackCmd);
+                                   opId, PackageOperationKind::RefreshCache, fallbackCmd);
     if (!out.started || !out.exitedZero) {
         if (out.timedOut) {
             const std::string procHint =
@@ -1125,54 +1134,81 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
                         "刷新软件源缓存等待超时（检测到包管理器子进程仍在运行或等待锁，为保护系统状态未强制终止进程；后台将继续读取输出并跟踪该进程直至结束，期间已锁定重复操作）。可在终端通过 " +
                             procHint + " 检查进程状态，或待其完成后执行：" + fallbackCmd};
             }
-            return {false,
+            RuntimeResult res{false,
                     "刷新软件源缓存操作超时（子进程已退出，未检测到后台仍在运行的包管理器进程），请在终端手动执行：" +
                         fallbackCmd};
+            finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
+            return res;
         }
-        return {false, packageOperationFailureMessage(out, "刷新软件源缓存", fallbackCmd)};
+        if (currentPackageOperationPhase() == PackageOperationPhase::Uncertain) {
+            return {false,
+                    "刷新软件源缓存子进程异常中断（状态无法确定），为避免损坏系统包管理器未自动释放操作锁。请在终端检查进程状态后手动恢复并执行：" +
+                        fallbackCmd};
+        }
+        RuntimeResult res{false, packageOperationFailureMessage(out, "刷新软件源缓存", fallbackCmd)};
+        finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
+        return res;
     }
-    return {true, "已刷新系统软件源缓存，正在重新检查可用版本…"};
+    RuntimeResult res{true, "已刷新系统软件源缓存，正在重新检查可用版本…"};
+    finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
+    return res;
 }
 
 RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
                                                  const Environment &environment) {
-    if (hasActivePackageOperation()) {
+    auto opId = tryBeginPackageOperation(PackageOperationKind::SystemUpgrade);
+    if (!opId.has_value()) {
+        if (hasActivePackageOperation()) {
+            return {false,
+                    "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
+        }
         return {false,
-                "检测到后台仍有未完成的系统包管理器事务正在运行，请等待其结束后再试。"};
+                "包操作结果队列已满（最多保留8项未消费结果），请先消费已有结果。"};
     }
     if (isPackageManagerLocked()) {
-        return {false,
+        RuntimeResult res{false,
                 "系统包管理器正忙（检测到锁占用，可能有其他包管理进程或自动更新正在运行），请等待其结束后重试。"};
+        finishPackageOperation(*opId, res, {}, {}, false);
+        return res;
     }
-    takeCompletedPackageOperationResult();
     if (!status.updateAvailable) {
-        return {false, "当前没有可安装的更新版本。"};
+        RuntimeResult res{false, "当前没有可安装的更新版本。"};
+        finishPackageOperation(*opId, res, {}, {}, false);
+        return res;
     }
     if (status.installChannel == "script") {
-        return {
+        RuntimeResult res{
             false,
             "当前为脚本安装渠道 (channel=script)，请复制升级命令在终端运行 modernime-migrate-channel 迁移至系统软件源。"};
+        finishPackageOperation(*opId, res, {}, {}, false);
+        return res;
     }
 
     const auto pkexecBin = findExecutableInPath("pkexec", environment);
     if (pkexecBin.empty()) {
-        return {false,
+        RuntimeResult res{false,
                 "未检测到系统认证组件 pkexec，请复制升级命令在终端执行：" +
                     status.upgradeCommand};
+        finishPackageOperation(*opId, res, {}, {}, false);
+        return res;
     }
 
     std::vector<std::string> argv;
     if (status.manager == PackageManagerKind::Dnf) {
         const auto dnfBin = findExecutableInPath("dnf", environment);
         if (dnfBin.empty()) {
-            return {false, "未找到 dnf 包管理器，请手动执行：" + status.upgradeCommand};
+            RuntimeResult res{false, "未找到 dnf 包管理器，请手动执行：" + status.upgradeCommand};
+            finishPackageOperation(*opId, res, {}, {}, false);
+            return res;
         }
         argv = {pkexecBin.string(), dnfBin.string(), "upgrade", "-y", "modernime"};
     } else {
         const auto aptGetBin = findExecutableInPath("apt-get", environment);
         if (aptGetBin.empty()) {
-            return {false,
+            RuntimeResult res{false,
                     "未找到 apt-get 包管理器，请手动执行：" + status.upgradeCommand};
+            finishPackageOperation(*opId, res, {}, {}, false);
+            return res;
         }
         argv = {pkexecBin.string(), aptGetBin.string(), "install",
                 "--only-upgrade", "-y", "modernime"};
@@ -1181,7 +1217,7 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
     const guint opTimeoutMs = resolvePackageOperationTimeoutMs(environment);
     const auto out =
         runSubprocess(argv, environment, opTimeoutMs, false,
-                      TrackedPackageOpKind::SystemUpgrade, status.upgradeCommand);
+                      opId, PackageOperationKind::SystemUpgrade, status.upgradeCommand);
     if (!out.started || !out.exitedZero) {
         if (out.timedOut) {
             if (status.manager == PackageManagerKind::Dnf) {
@@ -1190,52 +1226,88 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
                             "系统包管理器升级等待超时（检测到 dnf/rpm 子进程仍在运行或等待锁，为避免中断升级事务未强制终止进程；后台将继续读取输出并跟踪该进程直至结束，期间已锁定重复升级触发）。请在终端通过 ps aux | grep -E 'dnf|rpm' 检查进度；待后台事务完成后再重新检查，或手动执行：" +
                                 status.upgradeCommand};
                 }
-                return {false,
+                RuntimeResult res{false,
                         "系统包管理器升级操作超时（子进程已退出，未检测到后台仍在运行的 dnf/rpm 进程）。请在终端检查状态后手动执行：" +
                             status.upgradeCommand};
+                finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
+                return res;
             }
             if (out.stillRunningOnTimeout) {
                 return {false,
                         "系统包管理器升级等待超时（检测到 apt/dpkg 子进程仍在运行或等待锁，为避免中断升级事务未强制终止进程；后台将继续读取输出并跟踪该进程直至结束，期间已锁定重复升级触发）。请勿强行终止，可在终端通过 ps aux | grep -E 'apt|dpkg' 查看进度；若事务异常中断，请执行 sudo dpkg --configure -a && sudo apt-get install -f 恢复后再运行：" +
                             status.upgradeCommand};
             }
-            return {false,
+            RuntimeResult res{false,
                     "系统包管理器升级操作超时（子进程已退出，未检测到后台仍在运行的 apt/dpkg 进程）。若此前包状态未完成配置，请先执行 sudo dpkg --configure -a && sudo apt-get install -f 恢复，随后在终端运行：" +
                         status.upgradeCommand};
+            finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
+            return res;
         }
-        return {false, packageOperationFailureMessage(out, "系统包管理器升级",
+        if (currentPackageOperationPhase() == PackageOperationPhase::Uncertain) {
+            return {false,
+                    "系统包管理器升级子进程异常中断（状态无法确定），为保护系统未自动释放操作锁。请在终端检查包状态（如 dpkg --audit 等）后手动恢复。"};
+        }
+        RuntimeResult res{false, packageOperationFailureMessage(out, "系统包管理器升级",
                                                      status.upgradeCommand)};
+        finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
+        return res;
     }
-    return {true,
+    RuntimeResult res{true,
             "已通过系统包管理器完成 ModernIME 升级，请点击“重新加载 ModernIME”使其生效。"};
-}
-
-bool UpdateController::hasActivePackageOperation() {
-    auto &tracker = packageTracker();
-    std::lock_guard<std::mutex> lock(tracker.mutex);
-    return tracker.active;
-}
-
-bool UpdateController::waitForActivePackageOperation(unsigned int timeoutMs) {
-    auto &tracker = packageTracker();
-    std::unique_lock<std::mutex> lock(tracker.mutex);
-    return tracker.cv.wait_for(
-        lock, std::chrono::milliseconds(timeoutMs),
-        [&tracker]() { return !tracker.active; });
-}
-
-std::optional<RuntimeResult> UpdateController::takeCompletedPackageOperationResult() {
-    auto &tracker = packageTracker();
-    std::lock_guard<std::mutex> lock(tracker.mutex);
-    auto res = std::move(tracker.completedResult);
-    tracker.completedResult.reset();
+    finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
     return res;
 }
 
+bool UpdateController::hasActivePackageOperation() {
+    return modernime::settings::hasActivePackageOperation();
+}
+
+bool UpdateController::waitForActivePackageOperation(unsigned int timeoutMs) {
+    return modernime::settings::waitForActivePackageOperation(timeoutMs);
+}
+
+std::optional<RuntimeResult> UpdateController::takeCompletedPackageOperationResult(
+    std::optional<std::uint64_t> id) {
+    return modernime::settings::takeCompletedPackageOperationResult(id);
+}
+
 std::string UpdateController::lastCompletedPackageOperationStdout() {
-    auto &tracker = packageTracker();
-    std::lock_guard<std::mutex> lock(tracker.mutex);
-    return tracker.lastStdout;
+    return modernime::settings::lastCompletedPackageOperationStdout();
+}
+
+std::optional<std::uint64_t> UpdateController::tryBeginPackageOperation(PackageOperationKind kind) {
+    return modernime::settings::tryBeginPackageOperation(kind);
+}
+
+bool UpdateController::advancePackageOperation(std::uint64_t id,
+                                               PackageOperationPhase expected,
+                                               PackageOperationPhase next) {
+    return modernime::settings::advancePackageOperation(id, expected, next);
+}
+
+bool UpdateController::finishPackageOperation(std::uint64_t id,
+                                              const RuntimeResult &result,
+                                              std::string stdoutText,
+                                              std::string stderrText,
+                                              bool recordUnconsumed) {
+    return modernime::settings::finishPackageOperation(
+        id, result, std::move(stdoutText), std::move(stderrText), recordUnconsumed);
+}
+
+PackageOperationPhase UpdateController::currentPackageOperationPhase() {
+    return modernime::settings::currentPackageOperationPhase();
+}
+
+std::optional<std::uint64_t> UpdateController::currentPackageOperationId() {
+    return modernime::settings::currentPackageOperationId();
+}
+
+std::size_t UpdateController::unconsumedPackageOperationCount() {
+    return modernime::settings::unconsumedPackageOperationCount();
+}
+
+void UpdateController::resetPackageOperationStateForTesting() {
+    modernime::settings::resetPackageOperationStateForTesting();
 }
 
 } // namespace modernime::settings

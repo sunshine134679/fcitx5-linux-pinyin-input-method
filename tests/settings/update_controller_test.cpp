@@ -734,6 +734,296 @@ int main(int argc, char **argv) {
     assert(!UpdateController::isPackageManagerLocked()); // Unlocked returns false
     ::unsetenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
 
+    // 9. T12 Required Test 1: NormalWaitRejectsConcurrentOperation
+    // Fake pkexec blocks on a barrier during normal wait (before timeout).
+    // Verify that concurrent refresh or upgrade requests are rejected, and exactly 1 spawn occurs.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+        const auto spawnCountFile = tempRoot / "t12-spawn-count.txt";
+        const auto barrierStart = tempRoot / "t12-barrier-start.txt";
+        const auto barrierRelease = tempRoot / "t12-barrier-release.txt";
+        std::filesystem::remove(spawnCountFile);
+        std::filesystem::remove(barrierStart);
+        std::filesystem::remove(barrierRelease);
+
+        writeExecutable(
+            aptBinDir / "pkexec",
+            "#!/bin/sh\n"
+            "printf 'spawn\\n' >> \"" + spawnCountFile.string() + "\"\n"
+            "touch \"" + barrierStart.string() + "\"\n"
+            "while [ ! -f \"" + barrierRelease.string() + "\" ]; do\n"
+            "  sleep 0.05\n"
+            "done\n"
+            "exit 0\n");
+
+        std::thread worker([&]() {
+            const auto res = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+            assert(res.success);
+        });
+
+        // Wait until fake pkexec has spawned and reached the barrier
+        while (!std::filesystem::exists(barrierStart)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        // At this moment, worker is inside normal wait (g_main_loop_run)
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
+        const auto activeId = UpdateController::currentPackageOperationId();
+        assert(activeId.has_value() && *activeId > 0);
+
+        // Concurrent refresh MUST be rejected immediately
+        const auto dupRefresh = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+        assert(!dupRefresh.success);
+        assert(dupRefresh.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        // Concurrent upgrade MUST also be rejected immediately
+        const auto dupUpgrade = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+        assert(!dupUpgrade.success);
+        assert(dupUpgrade.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        // Release the barrier
+        writeTextFile(barrierRelease, "release\n");
+        worker.join();
+
+        // Must be back to Idle
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+
+        // Check spawn count: MUST be exactly 1
+        std::ifstream spawnIn(spawnCountFile);
+        int spawnCount = 0;
+        std::string line;
+        while (std::getline(spawnIn, line)) {
+            if (!line.empty()) {
+                ++spawnCount;
+            }
+        }
+        assert(spawnCount == 1);
+    }
+
+    // 10. T12 Required Test 2: AuthenticationFailureReleasesSlot
+    // Auth failure (exit 127) or spawn failure releases slot with matching ID; subsequent operations can run.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+
+        // 10a. Authentication failure (exit 127)
+        writeExecutable(
+            aptBinDir / "pkexec",
+            "#!/bin/sh\n"
+            "printf 'Error executing command as another user: Not authorized\\n' >&2\n"
+            "exit 127\n");
+
+        const auto authFailRes = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+        assert(!authFailRes.success);
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+
+        // 10b. Spawn failure (invalid interpreter)
+        writeExecutable(
+            aptBinDir / "pkexec",
+            "#!/nonexistent/modernime_bad_interpreter_for_t12\n");
+
+        const auto spawnFailRes = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+        assert(!spawnFailRes.success);
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+
+        // 10c. Subsequent operation can succeed
+        writeExecutable(
+            aptBinDir / "pkexec",
+            "#!/bin/sh\n"
+            "exit 0\n");
+
+        const auto successRes = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+        assert(successRes.success);
+        assert(!UpdateController::hasActivePackageOperation());
+    }
+
+    // 11. T12 Required Test 3: CompletionConsumedOnce
+    // Completed result binds to operationId and is consumed only once; new operations do not overwrite unread results.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+
+        const auto id1 = UpdateController::tryBeginPackageOperation(PackageOperationKind::RefreshCache);
+        assert(id1.has_value());
+        assert(UpdateController::advancePackageOperation(*id1, PackageOperationPhase::Starting, PackageOperationPhase::Running));
+        assert(UpdateController::advancePackageOperation(*id1, PackageOperationPhase::Running, PackageOperationPhase::Continuing));
+        assert(UpdateController::finishPackageOperation(*id1, RuntimeResult{true, "Op1-Refresh-Success"}, "out1", "err1", true));
+
+        // Start operation 2 without consuming operation 1's result
+        const auto id2 = UpdateController::tryBeginPackageOperation(PackageOperationKind::SystemUpgrade);
+        assert(id2.has_value());
+        assert(*id2 != *id1);
+        assert(UpdateController::advancePackageOperation(*id2, PackageOperationPhase::Starting, PackageOperationPhase::Running));
+        assert(UpdateController::finishPackageOperation(*id2, RuntimeResult{false, "Op2-Upgrade-Failed"}, "out2", "err2", true));
+
+        assert(UpdateController::unconsumedPackageOperationCount() == 2);
+
+        // Consume id1 by ID
+        const auto res1 = UpdateController::takeCompletedPackageOperationResult(*id1);
+        assert(res1.has_value());
+        assert(res1->success);
+        assert(res1->message == "Op1-Refresh-Success");
+
+        // Try consuming id1 again: must return nullopt (consumed once)
+        const auto res1Again = UpdateController::takeCompletedPackageOperationResult(*id1);
+        assert(!res1Again.has_value());
+
+        // id2 is still preserved and unconsumed
+        assert(UpdateController::unconsumedPackageOperationCount() == 1);
+        const auto res2 = UpdateController::takeCompletedPackageOperationResult(*id2);
+        assert(res2.has_value());
+        assert(!res2->success);
+        assert(res2->message == "Op2-Upgrade-Failed");
+
+        // Now queue is empty
+        assert(UpdateController::unconsumedPackageOperationCount() == 0);
+        assert(!UpdateController::takeCompletedPackageOperationResult().has_value());
+    }
+
+    // 12. T12 Required Test 4: OldCompletionCannotFinishNewOperation
+    // Attempting to finish or advance with an old operationId cannot release or modify a newer active operation.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+
+        const auto idOld = UpdateController::tryBeginPackageOperation(PackageOperationKind::RefreshCache);
+        assert(idOld.has_value());
+        assert(UpdateController::finishPackageOperation(*idOld, RuntimeResult{true, "Old-Completed"}, {}, {}, false));
+        assert(!UpdateController::hasActivePackageOperation());
+
+        // Begin new operation
+        const auto idNew = UpdateController::tryBeginPackageOperation(PackageOperationKind::SystemUpgrade);
+        assert(idNew.has_value());
+        assert(*idNew != *idOld);
+        assert(UpdateController::advancePackageOperation(*idNew, PackageOperationPhase::Starting, PackageOperationPhase::Running));
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationId() == idNew);
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
+
+        // Attempting to finish using idOld MUST fail and NOT affect idNew
+        assert(!UpdateController::finishPackageOperation(*idOld, RuntimeResult{false, "Malicious-Old-Finish"}, {}, {}, true));
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationId() == idNew);
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
+
+        // Attempting to advance using idOld MUST also fail
+        assert(!UpdateController::advancePackageOperation(*idOld, PackageOperationPhase::Running, PackageOperationPhase::Completed));
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationId() == idNew);
+
+        // Finish idNew properly
+        assert(UpdateController::finishPackageOperation(*idNew, RuntimeResult{true, "New-Completed"}, {}, {}, false));
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+    }
+
+    // 13. T12 Required Test 5: UnconsumedResultsHaveBound
+    // Up to 8 unconsumed results are retained; 9th begin is rejected and preserves existing results.
+    // Consuming 1 result allows beginning again.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+
+        for (int i = 1; i <= 8; ++i) {
+            const auto id = UpdateController::tryBeginPackageOperation(PackageOperationKind::RefreshCache);
+            assert(id.has_value());
+            assert(UpdateController::finishPackageOperation(
+                *id, RuntimeResult{true, "Unconsumed-Result-" + std::to_string(i)}, {}, {}, true));
+        }
+        assert(UpdateController::unconsumedPackageOperationCount() == 8);
+
+        // 9th begin MUST be rejected
+        const auto id9 = UpdateController::tryBeginPackageOperation(PackageOperationKind::SystemUpgrade);
+        assert(!id9.has_value());
+
+        // refreshPackageCache and runSystemUpgrade also report bounded queue rejection
+        const auto fullRej = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+        assert(!fullRej.success);
+        assert(fullRej.message.find("队列已满") != std::string::npos);
+
+        // All 8 results must still be preserved
+        assert(UpdateController::unconsumedPackageOperationCount() == 8);
+
+        // Consume 1 result (FIFO)
+        const auto popped1 = UpdateController::takeCompletedPackageOperationResult();
+        assert(popped1.has_value());
+        assert(popped1->message == "Unconsumed-Result-1");
+        assert(UpdateController::unconsumedPackageOperationCount() == 7);
+
+        // Now begin SUCCEEDS
+        const auto id9Retry = UpdateController::tryBeginPackageOperation(PackageOperationKind::SystemUpgrade);
+        assert(id9Retry.has_value());
+        assert(UpdateController::finishPackageOperation(
+            *id9Retry, RuntimeResult{true, "Unconsumed-Result-9"}, {}, {}, true));
+        assert(UpdateController::unconsumedPackageOperationCount() == 8);
+
+        // Drain the remaining results in FIFO order
+        for (int i = 2; i <= 9; ++i) {
+            const auto item = UpdateController::takeCompletedPackageOperationResult();
+            assert(item.has_value());
+            assert(item->message == "Unconsumed-Result-" + std::to_string(i));
+        }
+        assert(UpdateController::unconsumedPackageOperationCount() == 0);
+    }
+
+    // 14. T12 Required Test 6: PageOpenCloseAndStatusTransitions
+    // Page close/reopen does not release active operation.
+    // Timeout transitions Running -> Continuing and keeps slot occupied.
+    // Uncertain transitions keep slot occupied, preventing duplicate upgrades/retries until verified.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+
+        const auto id = UpdateController::tryBeginPackageOperation(PackageOperationKind::SystemUpgrade);
+        assert(id.has_value());
+        assert(UpdateController::advancePackageOperation(*id, PackageOperationPhase::Starting, PackageOperationPhase::Running));
+
+        // Simulated page close/destruction: local scope ends
+        {
+            struct MockPageLifetime {
+                bool closed = false;
+                ~MockPageLifetime() { closed = true; }
+            } mockPage;
+            (void)mockPage;
+        }
+
+        // Active operation is NOT released by page closing
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationId() == id);
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
+
+        // Timeout transition: Running -> Continuing
+        assert(UpdateController::advancePackageOperation(*id, PackageOperationPhase::Running, PackageOperationPhase::Continuing));
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Continuing);
+
+        // Duplicate operations are blocked while in Continuing
+        assert(!UpdateController::tryBeginPackageOperation(PackageOperationKind::RefreshCache).has_value());
+        const auto dupInContinuing = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+        assert(!dupInContinuing.success);
+        assert(dupInContinuing.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        // Indeterminate/unknown result transitions Continuing -> Uncertain
+        assert(UpdateController::advancePackageOperation(*id, PackageOperationPhase::Continuing, PackageOperationPhase::Uncertain));
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Uncertain);
+
+        // While Uncertain, operations remain blocked (no auto-retry, no duplicate upgrade)
+        assert(!UpdateController::tryBeginPackageOperation(PackageOperationKind::SystemUpgrade).has_value());
+        const auto dupInUncertain = UpdateController::runSystemUpgrade(aptStatus, aptEnv);
+        assert(!dupInUncertain.success);
+        assert(dupInUncertain.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        // Uncertain does NOT automatically release or complete
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Uncertain);
+
+        // Only explicit verification/finish releases Uncertain
+        assert(UpdateController::finishPackageOperation(
+            *id, RuntimeResult{false, "Manual administrative intervention required"}, {}, {}, false));
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+    }
+
     std::filesystem::remove_all(tempRoot);
     return 0;
 }

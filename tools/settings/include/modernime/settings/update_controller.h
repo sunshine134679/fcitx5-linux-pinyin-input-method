@@ -1,7 +1,9 @@
 #pragma once
 
+#include "modernime/settings/package_operation_state.h"
 #include "modernime/settings/runtime_controller.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -52,9 +54,30 @@ public:
 
     static bool waitForActivePackageOperation(unsigned int timeoutMs = 5000);
 
-    static std::optional<RuntimeResult> takeCompletedPackageOperationResult();
+    static std::optional<RuntimeResult> takeCompletedPackageOperationResult(
+        std::optional<std::uint64_t> id = std::nullopt);
 
     static std::string lastCompletedPackageOperationStdout();
+
+    static std::optional<std::uint64_t> tryBeginPackageOperation(PackageOperationKind kind);
+
+    static bool advancePackageOperation(std::uint64_t id,
+                                         PackageOperationPhase expected,
+                                         PackageOperationPhase next);
+
+    static bool finishPackageOperation(std::uint64_t id,
+                                       const RuntimeResult &result,
+                                       std::string stdoutText = {},
+                                       std::string stderrText = {},
+                                       bool recordUnconsumed = true);
+
+    static PackageOperationPhase currentPackageOperationPhase();
+
+    static std::optional<std::uint64_t> currentPackageOperationId();
+
+    static std::size_t unconsumedPackageOperationCount();
+
+    static void resetPackageOperationStateForTesting();
 };
 
 } // namespace modernime::settings

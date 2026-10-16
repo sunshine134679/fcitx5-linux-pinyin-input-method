@@ -16,6 +16,7 @@ add_executable(modernime-settings
     dictionary_pronunciation.cpp
     settings_model.cpp
     runtime_controller.cpp
+    package_operation_state.cpp
     update_controller.cpp
     clipboard_history_model.cpp
     overview_model.cpp

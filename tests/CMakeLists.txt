@@ -246,6 +246,7 @@ if(MODERNIME_BUILD_SETTINGS)
         ../tools/settings/dictionary_pronunciation.cpp
         ../tools/settings/settings_model.cpp
         ../tools/settings/runtime_controller.cpp
+        ../tools/settings/package_operation_state.cpp
         ../tools/settings/update_controller.cpp
         ../tools/settings/clipboard_history_model.cpp
         ../tools/settings/overview_model.cpp
@@ -317,6 +318,7 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_update_controller_tests
         settings/update_controller_test.cpp
+        ../tools/settings/package_operation_state.cpp
         ../tools/settings/update_controller.cpp
     )
     target_include_directories(modernime_update_controller_tests PRIVATE
