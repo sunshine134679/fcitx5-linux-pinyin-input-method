@@ -2074,10 +2074,16 @@ bool PersonalEngine::SaveToFile(const std::string &file_path) const {
 }
 
 bool PersonalEngine::LoadFromFile(const std::string &file_path) {
-    return ImportFromFile(file_path, /*merge=*/false);
+    return ReadPersonalFile(file_path, PersonalFileIntent::RestoreTrusted, /*merge=*/false);
 }
 
 bool PersonalEngine::ImportFromFile(const std::string &file_path, bool merge) {
+    return ReadPersonalFile(file_path, PersonalFileIntent::ImportExternal, merge);
+}
+
+bool PersonalEngine::ReadPersonalFile(const std::string &file_path,
+                                      PersonalFileIntent intent,
+                                      bool merge) {
     if (simulate_write_failure_) {
         return false;
     }
@@ -2202,13 +2208,15 @@ bool PersonalEngine::ImportFromFile(const std::string &file_path, bool merge) {
                             static_cast<int64_t>(meta.last_used_timestamp) * 1000LL;
                     }
                 }
-                constexpr uint32_t kMaxImportedHitCount = 20;
-                constexpr uint32_t kMaxImportedSingleCharHitCount = 3;
-                const auto codepoint_count = countUtf8Codepoints(text);
-                if (codepoint_count == 1) {
-                    meta.hit_count = std::min(meta.hit_count, kMaxImportedSingleCharHitCount);
-                } else {
-                    meta.hit_count = std::min(meta.hit_count, kMaxImportedHitCount);
+                if (intent == PersonalFileIntent::ImportExternal) {
+                    constexpr uint32_t kMaxImportedHitCount = 20;
+                    constexpr uint32_t kMaxImportedSingleCharHitCount = 3;
+                    const auto codepoint_count = countUtf8Codepoints(text);
+                    if (codepoint_count == 1) {
+                        meta.hit_count = std::min(meta.hit_count, kMaxImportedSingleCharHitCount);
+                    } else {
+                        meta.hit_count = std::min(meta.hit_count, kMaxImportedHitCount);
+                    }
                 }
                 StoredVariant v;
                 v.text = std::move(text);
@@ -2226,6 +2234,10 @@ bool PersonalEngine::ImportFromFile(const std::string &file_path, bool merge) {
     if (!try_parse(/*legacy_14b=*/false) && !try_parse(/*legacy_14b=*/true)) {
         return false;
     }
+
+    auto backup_db = db_;
+    auto backup_compact = compact_index_;
+    auto backup_total = total_entries_;
 
     if (!merge) {
         db_.clear();
@@ -2270,7 +2282,12 @@ bool PersonalEngine::ImportFromFile(const std::string &file_path, bool merge) {
     }
 
     if (env_ != nullptr && !lmdb_read_only_) {
-        return FlushToLmdb();
+        if (!FlushToLmdb()) {
+            db_ = std::move(backup_db);
+            compact_index_ = std::move(backup_compact);
+            total_entries_ = backup_total;
+            return false;
+        }
     }
     return true;
 }

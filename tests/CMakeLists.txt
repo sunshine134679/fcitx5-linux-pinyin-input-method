@@ -532,6 +532,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             core/learning_writer_concurrency_test.cpp
             core/lmdb_lifecycle_test.cpp
             core/learning_semantics_test.cpp
+            core/personal_engine_file_test.cpp
             adapter/candidate_selection_test.cpp
             ../adapter/fcitx5/src/engine.cpp
         )

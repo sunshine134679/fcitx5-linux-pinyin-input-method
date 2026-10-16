@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/learning_event.h"
+#include "modernime/core/learning_policy.h"
 #include "modernime/core/learning_snapshot.h"
 
 #include <chrono>
@@ -205,6 +206,9 @@ public:
 
     bool LoadFromFile(const std::string &file_path);
     bool ImportFromFile(const std::string &file_path, bool merge = true);
+    bool ReadPersonalFile(const std::string &file_path,
+                          PersonalFileIntent intent,
+                          bool merge = false);
 
     void Prune();
     size_t GetTotalEntries() const noexcept { return total_entries_; }
