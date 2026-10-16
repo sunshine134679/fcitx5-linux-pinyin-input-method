@@ -588,6 +588,7 @@ if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
     )
     target_link_libraries(modernime_personal_engine_benchmark PRIVATE
         modernime_core
+        modernime_pinyin
         ${BENCHMARK_LIBRARY}
         Threads::Threads
     )

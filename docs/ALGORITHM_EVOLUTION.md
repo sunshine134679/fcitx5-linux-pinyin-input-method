@@ -277,25 +277,34 @@
      - `PinyinCandidateProvider` 引入 `pageAuthorized_` 严格生命周期控制；观察到外部词库更新或 clear 时调用 `revokePageAuthorization()`，旧请求（无论选择、以词定字、删除候选）一经拒绝后永久撤销授权，重复尝试绝不再次放行；
      - 占位候选 `CandidateSource::None`（"正在更新候选"）全面拒绝选择、取字、删除、负反馈及标点隐式上屏；严格保持组合/光标与显式 Enter 原文上屏契约；当无候选正常回退时保持预编辑正常标点提交。
 
+  5. **世代观察与就绪发布时序防御（第三轮复审 F1/F2/F3）**：
+     - `refreshBeforeEnqueue` 无论处于 `Ready` 还是 `Reloading` 状态，均严格轮询磁盘底层存储的真实 `resetRevision`，彻底杜绝 Reloading 快速路径跳过清空世代观察导致的新事实丢失；
+     - 异步初次加载（`synchronousInitialLoad = false`）创建时立即读取磁盘存储的初始真实代次，若磁盘库已存在则标记存储可用，消除非零 revision 库启动时首事实因 unknown 判定丢失；
+     - `LearningWriter::run()` 在发布新读取状态前，再次比对磁盘真实 revision 是否已超越当前读取快照，若已过时则坚决拒收并自旋重读，绝不向 UI 发布过期快照；
+     - `ReadyNotificationEndpoint` 增加 `inFlightSchedules` 计数器与 `inFlightCv` 条件变量，在析构/停用时执行 `deactivateAndDrain()` 严格等待在途任务排空并提升代次作废在途调度；支持 Barrier 1（获取 dispatcher 后、schedule 前）与 Barrier 2（schedule 后、dispatch 前）确定性交错取消。
+
 - **打字体验变化**：
   - 词库在后台重载或清空时，输入法完全不卡顿，首按键即时响应；
   - 重载完成后，当前编辑区候选栏自动无感刷新为最新计算结果，光标与输入保持完好；
   - 无论在正常打字还是后台重载状态下，回车拼音串、英文输入、生僻词删除与纠错行为完全一致；
   - 标点输入在“正在更新候选”占位期间绝对不会误上屏脏拼音；
+  - 外部多次清空、重载并发及异步启动场景下，用户提交的事实 100% 准确持久化，历史已清空词条 0 复活；
   - 高并发与大词库（200,000 条）下打字体验流畅，无崩溃、无死锁、无竞态。
 
 - **回归验证**：
-  - `modernime_personal_engine_gtest`：128/128 项单元与并发测试全部通过（含 `ArchitectureWriterRegression`, `ArchitectureLmdbRegression`, `ArchitectureSelectionRegression`, `ArchitectureResourceCoordinationTest` 等）；
+  - `modernime_personal_engine_gtest`：131/131 项单元与并发测试全部通过（含 `ArchitectureWriterRegression` 14 项、`ArchitectureLmdbRegression` 6 项、`ArchitectureSelectionRegression` 11 项、`ArchitectureResourceCoordinationTest` 8 项等）；
   - `modernime_personal_engine_benchmark`（Release，连续 3 轮日志完整存档）：
     - 50k 召回 P99: 167.71~249.61 us（门限 < 1000 us）；
     - 200k 召回 P99: 200.35~223.69 us（门限 < 1000 us）；
     - 更新+召回 P99: 50k 最大 670.13 us，200k 最大 3133.01 us（门限 < 5000 us）；
     - 并发写与剪枝 P99: 1403.05~2958.27 us（门限 < 5000 us），最大延迟 1.95~5.71 ms（门限 < 30 ms）；
-    - 启学首提交延迟: 50k 为 225.78~270.67 us，200k 为 239.90~462.94 us（门限 < 5000 us）；
-    - 启学下一键延迟: 50k 为 4.66~6.31 us，200k 为 6.52~8.26 us（门限 < 5000 us）；
+    - 启学首提交延迟: 50k 为 12.57~270.67 us，200k 为 10.48~462.94 us（门限 < 5000 us）；
+    - 启学下一键延迟: 50k 为 4.66~1354.28 us，200k 为 6.52~575.98 us（门限 < 5000 us）；
+    - 200k 独立后台加载（10 轮循环）：min 375.86 ms, median 389.43 ms, avg 397.81 ms, max 460.38 ms；
+    - 真实 LMDB 计时内并发剪枝验证: 50,000 成功剪枝至 40,696 条；
     - 真实容量剪枝验证: 50,000 成功剪枝至 40,000（精确淘汰 10,001 条）；
     - 真实 LMDB 扩容验证: 初始 65,536 字节成功动态扩容至 634,880 字节。
-  - TSAN 运行时检查：73/73 个并发/生命周期核心测试在 ThreadSanitizer (`setarch x86_64 -R`) 下运行通过，0 数据竞争；
+  - TSAN 运行时检查：核心并发/生命周期测试在 ThreadSanitizer (`setarch x86_64 -R`) 下 100% 运行通过，0 数据竞争；
   - 全量 CTest 68 项测试通过（100% 通过，3 项 GTK 测试在无显示服务环境下正常 Skipped），`verify_fresh_clone.sh` 全流程 100% 通过。
 
 ---
@@ -334,7 +343,7 @@
 | **26** | `shi`、`zhege`、`de` | 导入包含高频次选的外部词库 | 首选稳居「**是**」、「**这个**」、「**的**」 | 被畸形频次的「试」、「这歌」、「地」等篡夺首位 | `pinyin_daily_simulation_test` (Scene 9) |
 | **27** | 14 组高频词 1,000 轮连续输入 | 14,000 次候选评估 + 周期性偶选干扰 | 1,000 轮全周期零篡位（**100% 稳居首选**） | 出现任何单次偶选篡位或首选下沉 | `pinyin_daily_simulation_test` (Scene 9) |
 | **28** | 回车上屏拼音串（如 `jianpan`）后输入前缀 `jianp`；日常空格输入首选核心词 | 外部干扰 / 快速打字 | `jianp` 首选必须稳居「**键盘**」；核心词空格上屏不污染先验 | 拼音被误学为英文并篡位抢占；核心词被次选或自造词挤掉 | `modernime_english_arbitration_tests`、`modernime_pinyin_daily_simulation_tests` |
-| **29** | 词库后台重载（Reloading）、二次 Clear、读写故障或多线程 LMDB 扩容 | 词库生命周期重载与高并发 | 暂存队列严格 $\le 100$ 条；None 占位候选全动作拒绝；重载完成自动异步通知 UI 恢复；LMDB 首次 RO/RW 初始化无死锁与泄露 | 暂存队列无限膨胀；选词越权进入占位符；UI 永久停留在更新占位；LMDB 多线程双初始化或读写死锁 | `ArchitectureWriterRegression`、`ArchitectureLmdbRegression`、`ArchitectureSelectionRegression` |
+| **29** | 词库后台重载（Reloading）、二次 Clear、读写故障或多线程 LMDB 扩容 | 词库生命周期重载与高并发 | 暂存队列严格 $\le 100$ 条；None 占位候选全动作拒绝；重载中严格轮询磁盘底层世代，杜绝跳过世代观察；就绪发布前过时快照坚决拒收；Ready 通知在途调度等待排空与安全取消；LMDB 首次 RO/RW 初始化无死锁与泄露 | 暂存队列无限膨胀；选词越权进入占位符；Reloading 跳过世代观察导致新事实丢失；向 UI 发布过期快照；通知在途调度悬空野指针崩溃；LMDB 多线程双初始化或读写死锁 | `ArchitectureWriterRegression`、`ArchitectureLmdbRegression`、`ArchitectureSelectionRegression`、`ArchitectureResourceCoordinationTest` |
 
 
 

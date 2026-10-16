@@ -455,6 +455,26 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
     readyEndpoint_->owner = this;
     readyEndpoint_->instance = instance_;
     readyEndpoint_->active = true;
+    readyEndpoint_->onDispatch = [this]() {
+        if (instance_ != nullptr) {
+            auto *ic = instance_->inputContextManager().mostRecentInputContext();
+            if (ic == nullptr || !ic->hasFocus() || instance_->inputMethod(ic) != "modernime") {
+                return;
+            }
+            const bool isSensitive =
+                ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+                ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
+            if (isSensitive) {
+                return;
+            }
+            auto *contextState = state(ic);
+            if (contextState != nullptr && contextState->controller().active()) {
+                if (!contextState->controller().page().preedit.empty()) {
+                    contextState->controller().refreshPage();
+                }
+            }
+        }
+    };
     if (instance_ != nullptr) {
         dispatcher_.attach(&instance_->eventLoop());
         instance_->inputContextManager().registerProperty(
@@ -516,12 +536,7 @@ ModernIMEInputMethod::~ModernIMEInputMethod() {
     }
 #endif
     if (readyEndpoint_) {
-        std::lock_guard lock(readyEndpoint_->mutex);
-        readyEndpoint_->active = false;
-        readyEndpoint_->dispatcher = nullptr;
-        readyEndpoint_->owner = nullptr;
-        readyEndpoint_->instance = nullptr;
-        ++readyEndpoint_->notificationGeneration;
+        readyEndpoint_->deactivateAndDrain();
     }
     dispatcher_.detach();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -812,43 +827,9 @@ void ModernIMEInputMethod::ensurePinyinResources() {
         if (resources_.pinyin) {
             auto endpoint = readyEndpoint_;
             resources_.pinyin->setOnReadyCallback([endpoint]() {
-                std::uint64_t currentGeneration = 0;
-                fcitx::EventDispatcher *dispatcher = nullptr;
-                {
-                    std::lock_guard lock(endpoint->mutex);
-                    if (!endpoint->active || endpoint->dispatcher == nullptr || endpoint->owner == nullptr) {
-                        return;
-                    }
-                    dispatcher = endpoint->dispatcher;
-                    currentGeneration = ++endpoint->notificationGeneration;
+                if (endpoint) {
+                    endpoint->notify();
                 }
-                dispatcher->schedule([endpoint, currentGeneration]() {
-                    std::lock_guard lock(endpoint->mutex);
-                    if (!endpoint->active || endpoint->owner == nullptr || endpoint->instance == nullptr) {
-                        return;
-                    }
-                    if (currentGeneration != endpoint->notificationGeneration) {
-                        return;
-                    }
-                    auto *owner = endpoint->owner;
-                    auto *instance = endpoint->instance;
-                    auto *ic = instance->inputContextManager().mostRecentInputContext();
-                    if (ic == nullptr || !ic->hasFocus() || instance->inputMethod(ic) != "modernime") {
-                        return;
-                    }
-                    const bool isSensitive =
-                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
-                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
-                    if (isSensitive) {
-                        return;
-                    }
-                    auto *contextState = owner->state(ic);
-                    if (contextState != nullptr && contextState->controller().active()) {
-                        if (!contextState->controller().page().preedit.empty()) {
-                            contextState->controller().refreshPage();
-                        }
-                    }
-                });
             });
         }
     } catch (const std::exception &error) {

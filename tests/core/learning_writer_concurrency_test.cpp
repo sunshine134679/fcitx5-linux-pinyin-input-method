@@ -49,6 +49,10 @@ protected:
         return root_ / "learning.sqlite3";
     }
 
+    std::filesystem::path lmdbPath() const {
+        return root_ / "learning.lmdb";
+    }
+
     std::filesystem::path root_;
 };
 
@@ -746,6 +750,227 @@ TEST_F(ArchitectureWriterRegression, RevisionAtomicPublicationWithWorkerRebase) 
 
     EXPECT_GT(readsDone.load(), 100u);
     EXPECT_GT(maxObservedRevision.load(), 0u);
+}
+
+TEST_F(ArchitectureWriterRegression, SecondClearDuringReloadingWithoutManualReloadPreservesNewFact) {
+    auto runTest = [&](const std::filesystem::path &path) {
+        LearningWriter writer(path);
+        EXPECT_TRUE(writer.enqueueSelection("北京", "beijing", "", "", 1000));
+        EXPECT_TRUE(writer.flush());
+        EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("北京", "beijing"));
+
+        // First clear
+        {
+            LearningStore externalStore(path);
+            ASSERT_TRUE(externalStore.open());
+            ASSERT_TRUE(externalStore.clear());
+            externalStore.close();
+        }
+
+        writer.pauseWorkerForTest(true);
+        struct WorkerGuard {
+            LearningWriter &w;
+            ~WorkerGuard() {
+                w.pauseWorkerForTest(false);
+                w.pauseWorkerAfterReadForTest(false);
+            }
+        } guard{writer};
+
+        // Reload puts writer in Reloading state
+        ASSERT_TRUE(writer.reloadIfChanged());
+        ASSERT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+        const auto epoch1 = writer.resetRevision();
+
+        // Second clear occurs externally
+        {
+            LearningStore externalStore(path);
+            ASSERT_TRUE(externalStore.open());
+            ASSERT_TRUE(externalStore.clear());
+            externalStore.close();
+        }
+
+        // Commit on input thread WITHOUT manual reload: Enter Raw English "hello"
+        CommitEvent fact;
+        fact.text = "hello";
+        fact.fullPinyin = "hello";
+        fact.role = CommitCandidateRole::Raw;
+        fact.candidateIndex = 0;
+        fact.isDeviation = true;
+        fact.timestampMs = 3000;
+        EXPECT_TRUE(writer.enqueueCommit(fact));
+
+        // The internal refreshBeforeEnqueue should have observed epoch2 > epoch1
+        EXPECT_GT(writer.resetRevision(), epoch1);
+
+        writer.pauseWorkerForTest(false);
+        EXPECT_TRUE(writer.flush());
+
+        EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+
+        // Snapshot verification: "hello" has positive frequency, "beijing" zero resurrection
+        EXPECT_FALSE(writer.snapshot()->hasPositiveFrequency("北京", "beijing"));
+        EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("hello", "hello"));
+
+        // Direct database verification
+        {
+            LearningStore verifyStore(path);
+            ASSERT_TRUE(verifyStore.openReadOnly());
+            auto state = verifyStore.readState();
+            ASSERT_TRUE(state.has_value());
+            EXPECT_FALSE(state->snapshot->hasPositiveFrequency("北京", "beijing"));
+            EXPECT_TRUE(state->snapshot->hasPositiveFrequency("hello", "hello"));
+            EXPECT_EQ(state->resetRevision, writer.resetRevision());
+            verifyStore.close();
+        }
+    };
+
+    runTest(dbPath());
+    runTest(lmdbPath());
+}
+
+TEST_F(ArchitectureWriterRegression, AsyncStartupInitialCommitWithExistingRevisionPreservesFact) {
+    auto runTest = [&](const std::filesystem::path &path) {
+        // Pre-populate database with non-zero revision (clear twice + baseline words)
+        {
+            LearningStore initStore(path);
+            ASSERT_TRUE(initStore.open());
+            ASSERT_TRUE(initStore.clear());
+            ASSERT_TRUE(initStore.clear());
+            const auto rev = *initStore.resetRevision();
+            std::vector<modernime::core::LearningEvent> batch;
+            for (int i = 0; i < 50; ++i) {
+                modernime::core::LearningEvent e;
+                e.kind = modernime::core::LearningEvent::Kind::Selection;
+                e.phrase = "基线词" + std::to_string(i);
+                e.pinyin = "ci";
+                e.nowMs = 1000;
+                e.resetRevision = rev;
+                batch.push_back(std::move(e));
+            }
+            ASSERT_TRUE(initStore.recordBatch(batch));
+            initStore.close();
+        }
+
+        LearningWriter writer(path, /*synchronousInitialLoad=*/false);
+        writer.pauseWorkerAfterReadForTest(true);
+        struct WorkerGuard {
+            LearningWriter &w;
+            ~WorkerGuard() {
+                w.pauseWorkerAfterReadForTest(false);
+                w.pauseWorkerForTest(false);
+            }
+        } guard{writer};
+
+        // Wait until worker is waiting after read
+        for (int i = 0; i < 2000 && !writer.isWorkerWaitingAfterReadForTest(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_TRUE(writer.isWorkerWaitingAfterReadForTest());
+
+        // Verify initial revision observed from disk (not 0!)
+        EXPECT_GE(writer.resetRevision(), 2);
+
+        // Input thread commits Enter Raw English "hello" while worker holds read state
+        CommitEvent fact;
+        fact.text = "hello";
+        fact.fullPinyin = "hello";
+        fact.role = CommitCandidateRole::Raw;
+        fact.candidateIndex = 0;
+        fact.isDeviation = true;
+        fact.timestampMs = 3000;
+        EXPECT_TRUE(writer.enqueueCommit(fact));
+
+        writer.pauseWorkerAfterReadForTest(false);
+        EXPECT_TRUE(writer.flush());
+
+        EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+        EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("hello", "hello"));
+
+        // Direct store verification: frequency == 1, correct revision
+        {
+            LearningStore verifyStore(path);
+            ASSERT_TRUE(verifyStore.openReadOnly());
+            auto state = verifyStore.readState();
+            ASSERT_TRUE(state.has_value());
+            EXPECT_TRUE(state->snapshot->hasPositiveFrequency("hello", "hello"));
+            EXPECT_EQ(state->resetRevision, writer.resetRevision());
+            verifyStore.close();
+        }
+    };
+
+    runTest(dbPath());
+    runTest(lmdbPath());
+}
+
+TEST_F(ArchitectureWriterRegression, ExternalClearAfterWorkerReadRejectsStalePublication) {
+    auto runTest = [&](const std::filesystem::path &path) {
+        LearningWriter writer(path);
+        struct WorkerGuard {
+            LearningWriter &w;
+            ~WorkerGuard() {
+                w.pauseWorkerAfterReadForTest(false);
+                w.pauseWorkerForTest(false);
+            }
+        } guard{writer};
+
+        std::atomic<bool> stalePublishedAsReady{false};
+        writer.setOnReadyCallback([&]() {
+            if (writer.snapshot() && writer.snapshot()->hasPositiveFrequency("旧代词", "jiudaici")) {
+                stalePublishedAsReady = true;
+            }
+        });
+
+        writer.pauseWorkerAfterReadForTest(true);
+
+        // Clear and record "旧代词"
+        {
+            LearningStore externalStore(path);
+            ASSERT_TRUE(externalStore.open());
+            ASSERT_TRUE(externalStore.clear());
+            ASSERT_TRUE(externalStore.recordSelection("旧代词", "jiudaici", "", "", 1000));
+            externalStore.close();
+        }
+
+        ASSERT_TRUE(writer.reloadIfChanged());
+
+        for (int i = 0; i < 2000 && !writer.isWorkerWaitingAfterReadForTest(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_TRUE(writer.isWorkerWaitingAfterReadForTest());
+
+        // NOW clear externally after worker has already read!
+        {
+            LearningStore externalStore(path);
+            ASSERT_TRUE(externalStore.open());
+            ASSERT_TRUE(externalStore.clear());
+            externalStore.close();
+        }
+
+        // Commit Enter Raw English "hello" without manual reload
+        CommitEvent fact;
+        fact.text = "hello";
+        fact.fullPinyin = "hello";
+        fact.role = CommitCandidateRole::Raw;
+        fact.candidateIndex = 0;
+        fact.isDeviation = true;
+        fact.timestampMs = 3000;
+        writer.enqueueCommit(fact);
+
+        // Unpause worker: worker must detect disk revision advanced past its read state,
+        // reject publishing the stale read state, and re-read.
+        writer.pauseWorkerAfterReadForTest(false);
+        EXPECT_TRUE(writer.flush());
+
+        EXPECT_FALSE(stalePublishedAsReady.load());
+        EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+        EXPECT_FALSE(writer.snapshot()->hasPositiveFrequency("旧代词", "jiudaici"));
+        EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("hello", "hello"));
+
+        writer.setOnReadyCallback(nullptr);
+    };
+
+    runTest(dbPath());
+    runTest(lmdbPath());
 }
 
 } // namespace

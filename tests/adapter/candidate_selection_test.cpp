@@ -617,28 +617,23 @@ TEST(ArchitectureSelectionRegression, T11_A07_ReadyNotificationRefreshesControll
     ASSERT_EQ(controller.page().items.size(), 1u);
     EXPECT_EQ(controller.page().items[0].source, modernime::core::CandidateSource::None);
 
-    // Set up test event dispatcher and ready callback
-    std::vector<std::function<void()>> scheduledTasks;
-    std::mutex taskMutex;
+    // Set up real Fcitx5 event loop and event dispatcher
+    fcitx::EventLoop loop;
+    fcitx::EventDispatcher dispatcher;
+    dispatcher.attach(&loop);
 
     auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
     endpoint->active = true;
-
-    auto readyCallback = [&endpoint, &scheduledTasks, &taskMutex, &controller]() {
-        std::uint64_t currentGen = 0;
-        {
-            std::lock_guard lock(endpoint->mutex);
-            if (!endpoint->active) return;
-            currentGen = ++endpoint->notificationGeneration;
-        }
-        std::lock_guard qLock(taskMutex);
-        scheduledTasks.push_back([endpoint, currentGen, &controller]() {
-            std::lock_guard lock(endpoint->mutex);
-            if (!endpoint->active) return;
-            if (currentGen != endpoint->notificationGeneration) return;
-            controller.refreshPage();
-        });
+    endpoint->dispatcher = &dispatcher;
+    std::atomic<bool> refreshed{false};
+    endpoint->onRefreshCallbackForTest = [&controller, &refreshed]() {
+        controller.refreshPage();
+        refreshed = true;
     };
+
+    std::thread loopThread([&loop]() {
+        loop.exec();
+    });
 
     // When background worker finishes, real candidates become available
     provider.currentPage.generation = 2;
@@ -647,16 +642,24 @@ TEST(ArchitectureSelectionRegression, T11_A07_ReadyNotificationRefreshesControll
         makeItem("中", "zhong", 5)
     };
 
-    // Background worker triggers callback (simulated)
-    std::thread workerThread([readyCallback]() {
-        readyCallback();
+    // Worker thread invokes production endpoint->notify()
+    std::thread workerThread([endpoint]() {
+        endpoint->notify();
     });
     workerThread.join();
 
-    // Verify: without any new keys or manual refresh, event loop dispatches and updates controller
-    ASSERT_EQ(scheduledTasks.size(), 1u);
-    scheduledTasks[0]();
+    for (int i = 0; i < 2000 && !refreshed.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(refreshed.load());
 
+    dispatcher.schedule([&loop]() {
+        loop.exit();
+    });
+    loopThread.join();
+    dispatcher.detach();
+
+    // Verify: without any new keys or manual refresh, event loop dispatched and updated controller
     EXPECT_GT(controller.displayGeneration(), initialGen);
     EXPECT_EQ(controller.page().preedit, preedit);
     ASSERT_EQ(controller.page().items.size(), 2u);
@@ -679,129 +682,150 @@ TEST(ArchitectureSelectionRegression, T11_A08_ReadyNotificationSafeAgainstDestro
     oldReq.globalIndex = 0;
     EXPECT_FALSE(controller.select(oldReq));
 
-    // 2. Destruction before dispatch: scheduled task must safely abort without crash/UAF
-    {
-        std::vector<std::function<void()>> queue;
-        auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
-        endpoint->active = true;
+    fcitx::EventLoop loop;
+    fcitx::EventDispatcher dispatcher;
+    dispatcher.attach(&loop);
 
-        bool taskExecuted = false;
-        // Schedule task into event loop
-        queue.push_back([endpoint, &taskExecuted]() {
-            std::lock_guard lock(endpoint->mutex);
-            if (!endpoint->active) return;
-            taskExecuted = true;
-        });
+    std::thread loopThread([&loop]() {
+        loop.exec();
+    });
 
-        // Simulate plugin destruction before dispatch
-        {
-            std::lock_guard lock(endpoint->mutex);
-            endpoint->active = false;
-            endpoint->dispatcher = nullptr;
-            endpoint->owner = nullptr;
-            endpoint->instance = nullptr;
-            ++endpoint->notificationGeneration;
-        }
-
-        // Run scheduled tasks: must safely drop task
-        for (auto &task : queue) {
-            task();
-        }
-        EXPECT_FALSE(taskExecuted);
-    }
-
-    // 3. Destruction during worker callback invocation (race condition safety)
+    // 2. Cancellation at Barrier 1: after acquiring dispatcher, before schedule()
     {
         auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
         endpoint->active = true;
+        endpoint->dispatcher = &dispatcher;
 
-        std::atomic<bool> workerStarted{false};
-        std::atomic<bool> workerCompleted{false};
-        std::atomic<bool> scheduled{false};
+        std::atomic<bool> workerAtBarrier1{false};
+        std::atomic<bool> mainProceed{false};
 
-        std::thread worker([endpoint, &workerStarted, &workerCompleted, &scheduled]() {
-            workerStarted = true;
-            // Simulate brief delay so main thread can destruct
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            std::lock_guard lock(endpoint->mutex);
-            if (!endpoint->active || endpoint->dispatcher == nullptr) {
-                workerCompleted = true;
-                return;
+        endpoint->onBeforeScheduleForTest = [&workerAtBarrier1, &mainProceed]() {
+            workerAtBarrier1 = true;
+            while (!mainProceed.load()) {
+                std::this_thread::yield();
             }
-            scheduled = true;
-            workerCompleted = true;
+        };
+
+        std::thread worker([endpoint]() {
+            endpoint->notify();
         });
 
-        while (!workerStarted.load()) {
+        // Wait until worker is paused at Barrier 1
+        while (!workerAtBarrier1.load()) {
             std::this_thread::yield();
         }
 
-        // Main thread destructs endpoint
-        {
-            std::lock_guard lock(endpoint->mutex);
-            endpoint->active = false;
-            endpoint->dispatcher = nullptr;
-            endpoint->owner = nullptr;
-        }
+        // Destructor thread calls deactivateAndDrain while worker holds an in-flight schedule
+        std::thread destructorThread([endpoint, &mainProceed]() {
+            mainProceed = true;
+            endpoint->deactivateAndDrain();
+        });
 
         worker.join();
-        EXPECT_TRUE(workerCompleted.load());
-        EXPECT_FALSE(scheduled.load());
+        destructorThread.join();
+
+        EXPECT_TRUE(workerAtBarrier1.load());
+        EXPECT_FALSE(endpoint->active);
+        EXPECT_EQ(endpoint->dispatcher, nullptr);
     }
 
-    // 4. Stale notification generation rejected across second clear / reset
+    // 3. Cancellation at Barrier 2: after schedule(), before dispatch
     {
         auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
         endpoint->active = true;
-        std::uint64_t gen1 = 0;
-        {
-            std::lock_guard lock(endpoint->mutex);
-            gen1 = ++endpoint->notificationGeneration;
-        }
+        endpoint->dispatcher = &dispatcher;
 
-        bool staleTaskRan = false;
-        auto scheduledTask = [endpoint, gen1, &staleTaskRan]() {
-            std::lock_guard lock(endpoint->mutex);
-            if (!endpoint->active) return;
-            if (gen1 != endpoint->notificationGeneration) return;
-            staleTaskRan = true;
+        std::atomic<bool> dispatchBarrierHit{false};
+        std::atomic<bool> refreshRan{false};
+
+        endpoint->onBeforeDispatchForTest = [&endpoint, &dispatchBarrierHit]() {
+            dispatchBarrierHit = true;
+            endpoint->deactivateAndDrain();
+        };
+        endpoint->onRefreshCallbackForTest = [&refreshRan]() {
+            refreshRan = true;
         };
 
-        // Second clear / reset occurs before dispatch
-        {
-            std::lock_guard lock(endpoint->mutex);
-            ++endpoint->notificationGeneration; // epoch 2
+        std::thread worker([endpoint]() {
+            endpoint->notify();
+        });
+        worker.join();
+
+        for (int i = 0; i < 2000 && !dispatchBarrierHit.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
-        // Run scheduled task from epoch 1: rejected!
-        scheduledTask();
-        EXPECT_FALSE(staleTaskRan);
+        EXPECT_TRUE(dispatchBarrierHit.load());
+        EXPECT_FALSE(refreshRan.load());
     }
 
-    // 5. Blur / sensitive mode rejection
+    // 4. Stale generation across second clear / reset
     {
+        auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
+        endpoint->active = true;
+        endpoint->dispatcher = &dispatcher;
+
+        std::atomic<bool> dispatchBarrierHit{false};
+        std::atomic<bool> staleRefreshRan{false};
+
+        endpoint->onBeforeDispatchForTest = [&endpoint, &dispatchBarrierHit]() {
+            dispatchBarrierHit = true;
+            std::lock_guard lock(endpoint->mutex);
+            ++endpoint->notificationGeneration; // Second clear / reset before dispatch
+        };
+        endpoint->onRefreshCallbackForTest = [&staleRefreshRan]() {
+            staleRefreshRan = true;
+        };
+
+        std::thread worker([endpoint]() {
+            endpoint->notify();
+        });
+        worker.join();
+
+        for (int i = 0; i < 2000 && !dispatchBarrierHit.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        EXPECT_TRUE(dispatchBarrierHit.load());
+        EXPECT_FALSE(staleRefreshRan.load());
+    }
+
+    dispatcher.schedule([&loop]() {
+        loop.exit();
+    });
+    loopThread.join();
+    dispatcher.detach();
+
+    // 5. Lost focus and sensitive mode filtering
+    {
+        auto endpoint = std::make_shared<modernime::fcitx5::ReadyNotificationEndpoint>();
+        endpoint->active = true;
+        endpoint->dispatcher = &dispatcher;
+
         bool hasFocus = false;
         bool isSensitive = false;
         bool dispatched = false;
 
-        auto testDispatch = [&hasFocus, &isSensitive, &dispatched]() {
-            if (!hasFocus || isSensitive) return;
+        endpoint->onDispatch = [&hasFocus, &isSensitive, &dispatched]() {
+            if (!hasFocus || isSensitive) {
+                return;
+            }
             dispatched = true;
         };
 
         // Lost focus -> dropped
-        testDispatch();
+        endpoint->dispatchLocked();
         EXPECT_FALSE(dispatched);
 
         // Sensitive -> dropped
         hasFocus = true;
         isSensitive = true;
-        testDispatch();
+        endpoint->dispatchLocked();
         EXPECT_FALSE(dispatched);
 
-        // Normal focused -> accepted
+        // Focused non-sensitive -> dispatched
         isSensitive = false;
-        testDispatch();
+        endpoint->dispatchLocked();
         EXPECT_TRUE(dispatched);
     }
 }

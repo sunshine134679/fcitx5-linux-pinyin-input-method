@@ -37,6 +37,13 @@ LearningWriter::LearningWriter(std::filesystem::path path, bool synchronousIniti
         viewState_ = EpochViewState::Reloading;
         retryExhausted_ = false;
         automaticRetryCyclesRemaining_ = 1;
+        if (observerStore_->openReadOnly()) {
+            const auto rev = observerStore_->resetRevision();
+            if (rev.has_value()) {
+                resetRevision_ = *rev;
+                storageAvailable_ = true;
+            }
+        }
     }
     observerStore_->openReadOnly();
     worker_ = std::thread(&LearningWriter::run, this);
@@ -212,6 +219,14 @@ std::size_t LearningWriter::queuedEventsCount() const {
     return events_.size();
 }
 
+void LearningWriter::setTotalEntryLimit(std::size_t limit) {
+    std::lock_guard lock(mutex_);
+    totalEntryLimit_ = limit;
+    if (store_ != nullptr) {
+        store_->setTotalEntryLimit(limit);
+    }
+}
+
 void LearningWriter::pauseWorkerForTest(bool pause) {
     {
         std::lock_guard lock(mutex_);
@@ -308,13 +323,6 @@ bool LearningWriter::reloadIfChanged() {
 }
 
 void LearningWriter::refreshBeforeEnqueue() {
-    {
-        std::lock_guard lock(mutex_);
-        if (viewState_ == EpochViewState::Reloading) {
-            return;
-        }
-    }
-
     // Read the clear generation before tagging new input. Otherwise the first
     // selection after clear, but before the next timer tick, looks pre-clear.
     std::lock_guard observerLock(observerMutex_);
@@ -329,6 +337,7 @@ void LearningWriter::refreshBeforeEnqueue() {
         }
         resetRevision_ = *revision;
         viewState_ = EpochViewState::Reloading;
+        storageAvailable_ = true;
         retiredSnapshots_.push_back(std::move(snapshot_));
         snapshot_ = std::make_shared<const LearningSnapshot>();
         ++snapshotVersion_;
@@ -420,6 +429,9 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events) {
             store_->close();
             continue;
         }
+        if (totalEntryLimit_ > 0) {
+            store_->setTotalEntryLimit(totalEntryLimit_);
+        }
         if (store_->recordBatch(storeEvents)) {
             return true;
         }
@@ -499,6 +511,14 @@ void LearningWriter::run() {
                 preparedSnapshot = std::make_shared<LearningSnapshot>(*freshState->snapshot);
             }
 
+            std::optional<std::int64_t> currentDiskRevision;
+            {
+                std::lock_guard storeLock(storeMutex_);
+                if (store_->open()) {
+                    currentDiskRevision = store_->resetRevision();
+                }
+            }
+
             std::function<void()> onReady;
             std::shared_ptr<const LearningSnapshot> retiredSnapshot;
             {
@@ -512,7 +532,11 @@ void LearningWriter::run() {
                 if (!freshState.has_value() || preparedSnapshot == nullptr) {
                     storageAvailable_ = false;
                     retryExhausted_ = true;
-                } else if (freshState->resetRevision < resetRevision_) {
+                } else if (freshState->resetRevision < resetRevision_ ||
+                           (currentDiskRevision.has_value() && *currentDiskRevision > freshState->resetRevision)) {
+                    if (currentDiskRevision.has_value() && *currentDiskRevision > resetRevision_) {
+                        resetRevision_ = *currentDiskRevision;
+                    }
                     retryExhausted_ = false;
                     automaticRetryCyclesRemaining_ = 1;
                     wakeup_.notify_one();

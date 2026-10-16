@@ -334,13 +334,80 @@ private:
 
 class ModernIMEInputMethod;
 
-struct ReadyNotificationEndpoint {
+struct ReadyNotificationEndpoint : public std::enable_shared_from_this<ReadyNotificationEndpoint> {
     std::mutex mutex;
+    std::condition_variable inFlightCv;
     bool active = true;
+    int inFlightSchedules = 0;
     fcitx::EventDispatcher *dispatcher = nullptr;
     ModernIMEInputMethod *owner = nullptr;
     fcitx::Instance *instance = nullptr;
+    std::function<void()> onDispatch;
     std::uint64_t notificationGeneration = 0;
+
+    // Test hook barriers for deterministic interleaved lifecycle verification:
+    std::function<void()> onBeforeScheduleForTest;
+    std::function<void()> onBeforeDispatchForTest;
+    std::function<void()> onRefreshCallbackForTest;
+
+    inline void notify() {
+        std::uint64_t currentGeneration = 0;
+        fcitx::EventDispatcher *disp = nullptr;
+        {
+            std::unique_lock lock(mutex);
+            if (!active || dispatcher == nullptr) {
+                return;
+            }
+            ++inFlightSchedules;
+            disp = dispatcher;
+            currentGeneration = ++notificationGeneration;
+        }
+
+        if (onBeforeScheduleForTest) {
+            onBeforeScheduleForTest();
+        }
+
+        {
+            std::unique_lock lock(mutex);
+            if (active && dispatcher == disp && notificationGeneration == currentGeneration) {
+                disp->schedule([self = shared_from_this(), currentGeneration]() {
+                    if (self->onBeforeDispatchForTest) {
+                        self->onBeforeDispatchForTest();
+                    }
+                    std::lock_guard dispatchLock(self->mutex);
+                    if (!self->active) {
+                        return;
+                    }
+                    if (currentGeneration != self->notificationGeneration) {
+                        return;
+                    }
+                    self->dispatchLocked();
+                });
+            }
+            --inFlightSchedules;
+            inFlightCv.notify_all();
+        }
+    }
+
+    inline void deactivateAndDrain() {
+        std::unique_lock lock(mutex);
+        active = false;
+        inFlightCv.wait(lock, [this] { return inFlightSchedules == 0; });
+        dispatcher = nullptr;
+        owner = nullptr;
+        instance = nullptr;
+        onDispatch = nullptr;
+        ++notificationGeneration;
+    }
+
+    inline void dispatchLocked() {
+        if (onDispatch) {
+            onDispatch();
+        }
+        if (onRefreshCallbackForTest) {
+            onRefreshCallbackForTest();
+        }
+    }
 };
 
 class ModernIMEInputMethod final : public fcitx::InputMethodEngine {

@@ -59,6 +59,7 @@ public:
     void pauseWorkerForTest(bool pause);
     void pauseWorkerAfterReadForTest(bool pause);
     bool isWorkerWaitingAfterReadForTest() const;
+    void setTotalEntryLimit(std::size_t limit);
     void setOnReadyCallback(std::function<void()> callback);
 
 private:
@@ -107,6 +108,7 @@ private:
     std::function<void()> onReadyCallback_;
     std::deque<Event> events_;
     std::vector<Event> processingEvents_;
+    std::size_t totalEntryLimit_ = 0;
     std::int64_t resetRevision_ = 0;
     // Copy-on-write: enqueue replaces this pointer with a mutated clone, so
     // snapshots handed out by snapshot() stay immutable even if a future

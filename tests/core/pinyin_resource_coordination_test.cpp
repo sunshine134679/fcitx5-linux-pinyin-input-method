@@ -336,10 +336,12 @@ TEST_F(ArchitectureResourceCoordinationTest, OldPageAuthorizationRevokedPermanen
 
 // 8. T11-A10: Async startup initial commit does not block input thread and persists fact exactly once
 TEST_F(ArchitectureResourceCoordinationTest, T11_A10_AsyncStartupInitialCommitDoesNotBlockInput) {
-    // Populate database with 1000 items to simulate non-trivial dataset
+    // Populate database with 1000 items and multiple clears so revision >= 2
     {
         core::LearningStore initStore(paths.learningStore);
         ASSERT_TRUE(initStore.open());
+        ASSERT_TRUE(initStore.clear());
+        ASSERT_TRUE(initStore.clear());
         for (int i = 0; i < 1000; ++i) {
             initStore.recordSelection("已有词" + std::to_string(i), "ci", "", "", 1000000 + i);
         }
@@ -347,14 +349,19 @@ TEST_F(ArchitectureResourceCoordinationTest, T11_A10_AsyncStartupInitialCommitDo
     }
 
     PinyinProviderOptions options;
-    options.learningEnabled = true;
+    options.learningEnabled = false; // Do NOT construct writer synchronously in create!
     auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
     ASSERT_NE(shared, nullptr);
+    EXPECT_EQ(shared->learning, nullptr); // Truly not yet created
 
-    // Prepare async writer
+    // Start genuinely asynchronous initial load
+    shared->prepareLearningWriterAsync();
     auto *writer = shared->ensureLearningWriter(/*synchronousInitialLoad=*/false);
     ASSERT_NE(writer, nullptr);
+    EXPECT_EQ(shared->epochViewState(), core::EpochViewState::Reloading);
+    EXPECT_GE(writer->resetRevision(), 2); // Initialized with correct disk revision
 
+    options.learningEnabled = true;
     PinyinCandidateProvider provider(shared, options);
 
     // Initial commit on input thread immediately while background load may still be running
@@ -386,11 +393,16 @@ TEST_F(ArchitectureResourceCoordinationTest, T11_A10_AsyncStartupInitialCommitDo
     EXPECT_LT(nextKeyDurationUs, 5000);
 
     // Typing append also does not block
+    const auto t2 = std::chrono::steady_clock::now();
     EXPECT_TRUE(provider.append("ceshi"));
+    const auto appendDurationUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t2).count();
+    EXPECT_LT(appendDurationUs, 5000);
 
     // Wait for background persistence and rebase
     EXPECT_TRUE(writer->flush());
     EXPECT_EQ(shared->epochViewState(), core::EpochViewState::Ready);
+    EXPECT_GE(writer->resetRevision(), 2);
 
     // Verify snapshot has positive frequency for both
     EXPECT_TRUE(writer->snapshot()->hasPositiveFrequency("首提交", "shoutijiao"));
