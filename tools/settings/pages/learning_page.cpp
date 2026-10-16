@@ -14,11 +14,6 @@
 namespace modernime::settings {
 namespace {
 
-void addStyleClass(GtkWidget *widget, std::string_view className) {
-    gtk_style_context_add_class(gtk_widget_get_style_context(widget),
-                                std::string(className).c_str());
-}
-
 void setTarget(GtkWidget *widget, std::string_view target) {
     g_object_set_data_full(G_OBJECT(widget), "modernime-settings-target",
                            g_strdup(std::string(target).c_str()), g_free);
@@ -82,44 +77,19 @@ public:
                                             "根据输入光标前后的上下文语境动态推荐候选词。",
                                             contextLearning),
                            FALSE, FALSE, 0);
-        const auto pathText = "学习数据库：" + path.string();
-        learningPath = gtk_label_new(pathText.c_str());
-        addStyleClass(learningPath, "modernime-path");
-        gtk_widget_set_halign(learningPath, GTK_ALIGN_START);
-        gtk_label_set_selectable(GTK_LABEL(learningPath), TRUE);
-        setAccessibleWidgetText(learningPath, pathText,
-                                "可复制的本地学习数据库路径");
-        gtk_label_set_line_wrap(GTK_LABEL(learningPath), TRUE);
         auto *dataSection = createSectionCard(
             "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
         gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
         learningDataFallback = dataSection;
 
-        const auto backendInfo = DataController::detectActiveLearningBackend(path);
-        const auto backendText = "存储引擎：" + backendInfo.name + " (" + backendInfo.description + ")";
-        backendLabel = gtk_label_new(backendText.c_str());
-        addStyleClass(backendLabel, "modernime-description");
-        gtk_widget_set_halign(backendLabel, GTK_ALIGN_START);
-        gtk_label_set_line_wrap(GTK_LABEL(backendLabel), TRUE);
-
-        learningCount = gtk_label_new("正在读取学习记录…");
-        addStyleClass(learningCount, "modernime-description");
-        gtk_widget_set_halign(learningCount, GTK_ALIGN_START);
-
-        auto *infoBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-        gtk_box_pack_start(GTK_BOX(infoBox), backendLabel, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(infoBox), learningCount, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(infoBox), learningPath, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(dataSection), infoBox, FALSE, FALSE, 0);
-
         clearLearningButton = gtk_button_new_with_label("清空学习记录");
         setTarget(clearLearningButton, "learning-clear");
-        gtk_widget_set_margin_top(clearLearningButton, 12);
+        gtk_widget_set_margin_top(clearLearningButton, 8);
         gtk_widget_set_halign(clearLearningButton, GTK_ALIGN_START);
         gtk_widget_set_tooltip_text(clearLearningButton,
-                                    "备份后清空 ModernIME 的学习排序并递增重置版本");
+                                    "备份后清空本地已记录的学习排序数据");
         setAccessibleWidgetText(clearLearningButton, "清空学习记录",
-                                "先创建并验证备份，递增版本号并清空本地学习排序");
+                                "先创建并验证备份，清空本地学习排序");
         gtk_box_pack_start(GTK_BOX(dataSection), clearLearningButton, FALSE,
                            FALSE, 0);
         g_signal_connect(learningEnabled, "notify::active", G_CALLBACK(onSwitchChanged),
@@ -129,25 +99,25 @@ public:
         g_signal_connect(clearLearningButton, "clicked", G_CALLBACK(onClear),
                          this);
         setSettingsFocusChain(
-            page, {learningEnabled, contextLearning, learningPath,
-                   clearLearningButton});
+            page, {learningEnabled, contextLearning, clearLearningButton});
     }
 
     void refresh(bool shouldNotify) {
         std::string error;
         const auto count = DataController::learningEntryCount(path, &error);
+        const auto backendInfo = DataController::detectActiveLearningBackend(path);
         if (!error.empty()) {
-            gtk_label_set_text(GTK_LABEL(learningCount),
-                               "当前学习记录：读取失败");
+            g_warning("[ModernIME Learning] Storage=%s, path=%s, error=%s",
+                      backendInfo.name.c_str(), path.c_str(), error.c_str());
             gtk_widget_set_sensitive(clearLearningButton, FALSE);
             if (shouldNotify) {
                 notifyMessage(error);
             }
             return;
         }
-        gtk_label_set_text(
-            GTK_LABEL(learningCount),
-            ("当前学习记录：" + std::to_string(count) + " 条").c_str());
+        g_message("[ModernIME Learning] Storage=%s (%s), entries=%zu, path=%s",
+                  backendInfo.name.c_str(), backendInfo.description.c_str(),
+                  count, path.c_str());
         gtk_widget_set_sensitive(clearLearningButton, count != 0);
         if (shouldNotify) {
             notifyMessage("学习记录统计已刷新");
@@ -209,11 +179,10 @@ private:
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
-            "清空后将递增重置版本号 (reset_revision) 并使运行时调频缓存失效。\n"
-            "清空前会自动创建可恢复的时间戳备份，是否确认清空？");
+            "清空前会自动创建可恢复的备份，是否确认清空所有学习记录？");
         setDialogResponseAccessibility(
             GTK_DIALOG(dialog), GTK_RESPONSE_YES, "备份并清空",
-            "创建并验证备份后递增重置版本号并清空本地学习排序");
+            "创建备份并清空本地学习记录");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
                                        "取消", "保留当前学习记录");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -226,8 +195,10 @@ private:
         const auto backup = learningBackupPath(impl->path);
         std::string error;
         if (DataController::backupAndClearLearning(impl->path, backup, &error)) {
-            impl->notifyMessage("学习记录已清空（重置版本号已递增），备份位于 " + backup.string());
+            g_message("[ModernIME Learning] Cleared learning data, backup created at: %s", backup.c_str());
+            impl->notifyMessage("学习记录已清空，备份位于 " + backup.string());
         } else {
+            g_warning("[ModernIME Learning] Failed to clear learning data: %s", error.c_str());
             impl->notifyMessage(error);
         }
         impl->refresh(false);
@@ -251,9 +222,6 @@ private:
     GtkWidget *page = nullptr;
     GtkWidget *learningEnabled = nullptr;
     GtkWidget *contextLearning = nullptr;
-    GtkWidget *learningPath = nullptr;
-    GtkWidget *backendLabel = nullptr;
-    GtkWidget *learningCount = nullptr;
     GtkWidget *clearLearningButton = nullptr;
     GtkWidget *learningDataFallback = nullptr;
     bool refreshing = false;
