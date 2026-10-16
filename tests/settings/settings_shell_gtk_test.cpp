@@ -1,11 +1,14 @@
 #include "modernime/settings/settings_shell.h"
 #include "modernime/settings/settings_widgets.h"
+#include "modernime/settings/pages/updates_page.h"
+#include "modernime/settings/update_controller.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/clipboard_history.h"
 #include "modernime/settings/data_controller.h"
 #include <libime/pinyin/pinyindictionary.h>
 
 #include <gtk/gtk.h>
+#include <sys/stat.h>
 
 #include <cassert>
 #include <chrono>
@@ -879,6 +882,165 @@ int main(int argc, char **argv) {
         assert(gtk_list_box_row_get_index(gtk_list_box_get_selected_row(
                    GTK_LIST_BOX(historyList))) == 0);
 
+    }
+
+    // Real GTK UpdatesPage / SettingsShell Lifecycle During Active Package Operation (R2)
+    {
+        using namespace modernime::settings;
+        UpdateController::resetPackageOperationStateForTesting();
+
+        const auto pkgRoot = root / "pkg_lifecycle";
+        std::filesystem::create_directories(pkgRoot / "bin");
+        const auto spawnCountFile = pkgRoot / "spawn_count.txt";
+        const auto barrierStart = pkgRoot / "barrier_start.txt";
+        const auto barrierRelease = pkgRoot / "barrier_release.txt";
+        std::filesystem::remove(spawnCountFile);
+        std::filesystem::remove(barrierStart);
+        std::filesystem::remove(barrierRelease);
+
+        // Setup fake pkexec and apt-get with bounded watchdog loop (max 5s)
+        {
+            std::ofstream pk(pkgRoot / "bin/pkexec");
+            pk << "#!/bin/sh\n"
+               << "printf 'spawn\\n' >> \"" << spawnCountFile.string() << "\"\n"
+               << "touch \"" << barrierStart.string() << "\"\n"
+               << "count=0\n"
+               << "while [ ! -f \"" << barrierRelease.string() << "\" ]; do\n"
+               << "  sleep 0.05\n"
+               << "  count=$((count + 1))\n"
+               << "  if [ $count -gt 100 ]; then\n"
+               << "    break\n"
+               << "  fi\n"
+               << "done\n"
+               << "exit 0\n";
+            pk.close();
+            chmod((pkgRoot / "bin/pkexec").c_str(), 0755);
+
+            std::ofstream apt(pkgRoot / "bin/apt-get");
+            apt << "#!/bin/sh\nexit 0\n";
+            apt.close();
+            chmod((pkgRoot / "bin/apt-get").c_str(), 0755);
+        }
+
+        UpdateStatus aptStatus;
+        aptStatus.manager = PackageManagerKind::Apt;
+        Environment pkgEnv{{"PATH", (pkgRoot / "bin").string()}};
+
+        std::thread worker([&]() {
+            const auto res = UpdateController::refreshPackageCache(aptStatus, pkgEnv);
+            assert(res.success);
+        });
+
+        // Wait with a bounded timeout (max 3s) for fake pkexec to reach barrier
+        for (int i = 0; i < 300 && !std::filesystem::exists(barrierStart); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        assert(std::filesystem::exists(barrierStart));
+
+        // Package operation is now active and in Running phase
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
+        const auto activeOpId = UpdateController::currentPackageOperationId();
+        assert(activeOpId.has_value() && *activeOpId > 0);
+
+        // 1. Create real UpdatesPage widget under GTK
+        {
+            auto updatesPage = std::make_unique<UpdatesPage>(
+                pkgEnv, [](std::string) {});
+            assert(updatesPage->widget() != nullptr);
+            assert(GTK_IS_WIDGET(updatesPage->widget()));
+            drainEvents();
+
+            // Active operation is preserved while page is active
+            assert(UpdateController::hasActivePackageOperation());
+            assert(UpdateController::currentPackageOperationId() == activeOpId);
+
+            // Destroy UpdatesPage: simulates closing/destroying page
+            updatesPage.reset();
+            drainEvents();
+        }
+
+        // Operation MUST NOT be released by page destruction!
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationId() == activeOpId);
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
+
+        // 2. Re-create real UpdatesPage: simulates reopening page
+        {
+            auto updatesPage2 = std::make_unique<UpdatesPage>(
+                pkgEnv, [](std::string) {});
+            assert(updatesPage2->widget() != nullptr);
+            drainEvents();
+
+            // Operation ID and slot remain identical
+            assert(UpdateController::hasActivePackageOperation());
+            assert(UpdateController::currentPackageOperationId() == activeOpId);
+        }
+
+        // 3. Create SettingsShell, navigate to Updates page, then destroy shell
+        {
+            modernime::settings::SettingsShell shell2(application, paths);
+            shell2.present();
+            drainEvents();
+            shell2.show(modernime::settings::SettingsPageId::Updates);
+            drainEvents();
+            assert(UpdateController::hasActivePackageOperation());
+            assert(UpdateController::currentPackageOperationId() == activeOpId);
+
+            shell2.show(modernime::settings::SettingsPageId::Overview);
+            drainEvents();
+            assert(UpdateController::hasActivePackageOperation());
+            assert(UpdateController::currentPackageOperationId() == activeOpId);
+        }
+        drainEvents();
+
+        // After SettingsShell destruction, operation slot and ID are STILL preserved!
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationId() == activeOpId);
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
+
+        // 4. Concurrent package operations MUST be rejected while active
+        const auto dupRefresh = UpdateController::refreshPackageCache(aptStatus, pkgEnv);
+        assert(!dupRefresh.success);
+        assert(dupRefresh.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        const auto dupUpgrade = UpdateController::runSystemUpgrade(aptStatus, pkgEnv);
+        assert(!dupUpgrade.success);
+        assert(dupUpgrade.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        // Check spawn count: MUST remain exactly 1
+        {
+            std::ifstream spawnIn(spawnCountFile);
+            int spawnCount = 0;
+            std::string line;
+            while (std::getline(spawnIn, line)) {
+                if (!line.empty()) ++spawnCount;
+            }
+            assert(spawnCount == 1);
+        }
+
+        // 5. Release barrier and allow operation to finish normally
+        {
+            std::ofstream rel(barrierRelease);
+            rel << "release\n";
+            rel.close();
+        }
+        worker.join();
+
+        // Must now be back to Idle
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+
+        // Final spawn count check: STILL exactly 1
+        {
+            std::ifstream spawnIn(spawnCountFile);
+            int spawnCount = 0;
+            std::string line;
+            while (std::getline(spawnIn, line)) {
+                if (!line.empty()) ++spawnCount;
+            }
+            assert(spawnCount == 1);
+        }
     }
 
     CloseApplicationProbe closeProbe;

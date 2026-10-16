@@ -1076,7 +1076,7 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
     if (isPackageManagerLocked()) {
         RuntimeResult res{false,
                 "系统包管理器正忙（检测到锁占用，可能有其他包管理进程或自动更新正在运行），请等待其结束后重试。"};
-        finishPackageOperation(*opId, res);
+        finishPackageOperation(*opId, res, {}, {}, false);
         return res;
     }
 

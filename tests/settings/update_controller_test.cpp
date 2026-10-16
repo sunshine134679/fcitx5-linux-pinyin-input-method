@@ -966,10 +966,72 @@ int main(int argc, char **argv) {
         assert(UpdateController::unconsumedPackageOperationCount() == 0);
     }
 
-    // 14. T12 Required Test 6: PageOpenCloseAndStatusTransitions
-    // Page close/reopen does not release active operation.
-    // Timeout transitions Running -> Continuing and keeps slot occupied.
-    // Uncertain transitions keep slot occupied, preventing duplicate upgrades/retries until verified.
+    // 14. T12 Required Test 6: SynchronousLockRejectionDoesNotPolluteUnconsumedQueue (R1 / P1 Regression)
+    // Synchronous lock rejection in refreshPackageCache must NOT enqueue an unconsumed result.
+    // 9+ consecutive lock rejections: each fails, Idle, unconsumed count does not increase, spawnCount == 0.
+    // Pre-existing unconsumed result is preserved with original ID/content and can be consumed once.
+    // After unsetting the lock, next operation succeeds and spawns exactly once.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+
+        // 1. Pre-enqueue 1 genuine unconsumed background completion
+        const auto preId = UpdateController::tryBeginPackageOperation(PackageOperationKind::RefreshCache);
+        assert(preId.has_value());
+        assert(UpdateController::finishPackageOperation(
+            *preId, RuntimeResult{true, "Pre-existing background completion"}, {}, {}, true));
+        assert(UpdateController::unconsumedPackageOperationCount() == 1);
+
+        const auto r1SpawnCountFile = tempRoot / "t12-r1-spawn-count.txt";
+        std::filesystem::remove(r1SpawnCountFile);
+        writeExecutable(
+            aptBinDir / "pkexec",
+            "#!/bin/sh\n"
+            "printf 'spawn\\n' >> \"" + r1SpawnCountFile.string() + "\"\n"
+            "exit 0\n");
+
+        // 2. Set mock lock and invoke refreshPackageCache 9 times
+        ::setenv("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED", "1", 1);
+        for (int i = 1; i <= 9; ++i) {
+            const auto res = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+            assert(!res.success);
+            assert(res.message.find("系统包管理器正忙") != std::string::npos);
+            assert(!UpdateController::hasActivePackageOperation());
+            assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+            assert(UpdateController::unconsumedPackageOperationCount() == 1); // MUST NOT INCREASE
+        }
+        ::unsetenv("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED");
+
+        // Spawn count must be 0
+        assert(!std::filesystem::exists(r1SpawnCountFile) || std::filesystem::file_size(r1SpawnCountFile) == 0);
+
+        // 3. Pre-existing background result remains intact and can be consumed once
+        const auto preRes = UpdateController::takeCompletedPackageOperationResult(*preId);
+        assert(preRes.has_value());
+        assert(preRes->success);
+        assert(preRes->message == "Pre-existing background completion");
+        assert(UpdateController::unconsumedPackageOperationCount() == 0);
+        assert(!UpdateController::takeCompletedPackageOperationResult(*preId).has_value());
+
+        // 4. After unlock, next operation succeeds and spawns exactly once
+        const auto afterUnlock = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+        assert(afterUnlock.success);
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+
+        std::ifstream spawnIn(r1SpawnCountFile);
+        int spawnCount = 0;
+        std::string line;
+        while (std::getline(spawnIn, line)) {
+            if (!line.empty()) {
+                ++spawnCount;
+            }
+        }
+        assert(spawnCount == 1);
+    }
+
+    // 15. T12 Required Test 7: StatusTransitionsUnitContract
+    // Verify pure state-machine transitions: Starting -> Running -> Continuing -> Uncertain -> Completed (via explicit finish).
+    // Operations remain blocked while in Continuing or Uncertain, and Uncertain does not auto-finish.
     {
         UpdateController::resetPackageOperationStateForTesting();
 
@@ -977,16 +1039,7 @@ int main(int argc, char **argv) {
         assert(id.has_value());
         assert(UpdateController::advancePackageOperation(*id, PackageOperationPhase::Starting, PackageOperationPhase::Running));
 
-        // Simulated page close/destruction: local scope ends
-        {
-            struct MockPageLifetime {
-                bool closed = false;
-                ~MockPageLifetime() { closed = true; }
-            } mockPage;
-            (void)mockPage;
-        }
-
-        // Active operation is NOT released by page closing
+        // Active operation is preserved in Running
         assert(UpdateController::hasActivePackageOperation());
         assert(UpdateController::currentPackageOperationId() == id);
         assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Running);
@@ -1020,6 +1073,94 @@ int main(int argc, char **argv) {
         // Only explicit verification/finish releases Uncertain
         assert(UpdateController::finishPackageOperation(
             *id, RuntimeResult{false, "Manual administrative intervention required"}, {}, {}, false));
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+    }
+
+    // 16. T12 Required Test 8: NormalWaitSignalTerminationTransitionsToUncertain
+    // Abnormal child exit (signal interruption) during normal wait enters Uncertain state.
+    // Verifies slot stays active, concurrent operations are blocked, no unconsumed result queued.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+        const auto uncertainDir = tempRoot / "uncertain-normal-wait";
+        std::filesystem::create_directories(uncertainDir);
+        writeExecutable(
+            uncertainDir / "pkexec",
+            "#!/bin/sh\n"
+            "kill -TERM $$\n");
+        writeExecutable(
+            uncertainDir / "apt-get",
+            "#!/bin/sh\nexit 0\n");
+
+        UpdateStatus status;
+        status.manager = PackageManagerKind::Apt;
+        Environment env{{"PATH", uncertainDir.string()}};
+
+        const auto res = UpdateController::refreshPackageCache(status, env);
+        assert(!res.success);
+        assert(res.message.find("异常中断（状态无法确定）") != std::string::npos);
+
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Uncertain);
+        assert(UpdateController::unconsumedPackageOperationCount() == 0);
+        const auto activeId = UpdateController::currentPackageOperationId();
+        assert(activeId.has_value());
+
+        // Concurrent operations are blocked while Uncertain
+        const auto dup = UpdateController::refreshPackageCache(status, env);
+        assert(!dup.success);
+        assert(dup.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        // Only explicit manual finish releases Uncertain slot
+        assert(UpdateController::finishPackageOperation(
+            *activeId, RuntimeResult{false, "Manual recovery"}, {}, {}, false));
+        assert(!UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+    }
+
+    // 17. T12 Required Test 9: TimeoutBackgroundSignalTerminationTransitionsToUncertain
+    // Abnormal child exit (signal interruption) in background tracking after timeout enters Uncertain state.
+    // Verifies background tracker transitions Continuing -> Uncertain, slot stays active, no auto-finish.
+    {
+        UpdateController::resetPackageOperationStateForTesting();
+        const auto uncertainDir = tempRoot / "uncertain-timeout-bg";
+        std::filesystem::create_directories(uncertainDir);
+        writeExecutable(
+            uncertainDir / "pkexec",
+            "#!/bin/sh\n"
+            "sleep 0.15\n"
+            "kill -TERM $$\n");
+        writeExecutable(
+            uncertainDir / "apt-get",
+            "#!/bin/sh\nexit 0\n");
+
+        UpdateStatus status;
+        status.manager = PackageManagerKind::Apt;
+        Environment env{{"PATH", uncertainDir.string()}, {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "30"}};
+
+        const auto res = UpdateController::refreshPackageCache(status, env);
+        assert(!res.success);
+        assert(res.message.find("刷新软件源缓存等待超时") != std::string::npos);
+
+        // Wait with bounded deadline for background thread to detect signal termination and transition to Uncertain
+        for (int i = 0; i < 100 && UpdateController::currentPackageOperationPhase() != PackageOperationPhase::Uncertain; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        assert(UpdateController::hasActivePackageOperation());
+        assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Uncertain);
+        assert(UpdateController::unconsumedPackageOperationCount() == 0);
+        const auto activeId = UpdateController::currentPackageOperationId();
+        assert(activeId.has_value());
+
+        // Concurrent operations are blocked while Uncertain
+        const auto dup = UpdateController::runSystemUpgrade(status, env);
+        assert(!dup.success);
+        assert(dup.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
+
+        // Only explicit manual finish releases Uncertain slot
+        assert(UpdateController::finishPackageOperation(
+            *activeId, RuntimeResult{false, "Manual recovery"}, {}, {}, false));
         assert(!UpdateController::hasActivePackageOperation());
         assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
     }
