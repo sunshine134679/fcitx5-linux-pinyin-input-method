@@ -6,6 +6,11 @@ else()
     add_compile_options(-UNDEBUG)
 endif()
 
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+add_test(NAME modernime_required_tests_contract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/required_tests_contract_test.py"
+)
+
 add_executable(modernime_settings_tests core/settings_test.cpp)
 target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
@@ -495,25 +500,27 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     target_link_libraries(modernime_pinyin_engine_tests PRIVATE modernime_pinyin)
     add_test(NAME modernime_pinyin_engine COMMAND modernime_pinyin_engine_tests)
 
-    find_package(Threads REQUIRED)
-    find_path(GTEST_INCLUDE_DIR
-        NAMES gtest/gtest.h
-        HINTS
-            "$ENV{HOME}/.local/include"
-            "/home/$ENV{USER}/.local/include"
-    )
-    find_library(GTEST_LIBRARY
-        NAMES libgtest.a gtest
-        HINTS
-            "$ENV{HOME}/.local/lib"
-            "/home/$ENV{USER}/.local/lib"
-    )
-    find_library(GTEST_MAIN_LIBRARY
-        NAMES libgtest_main.a gtest_main
-        HINTS
-            "$ENV{HOME}/.local/lib"
-            "/home/$ENV{USER}/.local/lib"
-    )
+    if(NOT MODERNIME_SIMULATE_MISSING_GTEST)
+        find_package(Threads REQUIRED)
+        find_path(GTEST_INCLUDE_DIR
+            NAMES gtest/gtest.h
+            HINTS
+                "$ENV{HOME}/.local/include"
+                "/home/$ENV{USER}/.local/include"
+        )
+        find_library(GTEST_LIBRARY
+            NAMES libgtest.a gtest
+            HINTS
+                "$ENV{HOME}/.local/lib"
+                "/home/$ENV{USER}/.local/lib"
+        )
+        find_library(GTEST_MAIN_LIBRARY
+            NAMES libgtest_main.a gtest_main
+            HINTS
+                "$ENV{HOME}/.local/lib"
+                "/home/$ENV{USER}/.local/lib"
+        )
+    endif()
     if(GTEST_INCLUDE_DIR AND GTEST_LIBRARY AND GTEST_MAIN_LIBRARY)
         add_executable(modernime_personal_engine_gtest
             core/personal_engine_gtest.cpp
@@ -538,22 +545,26 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
         add_test(NAME modernime_personal_engine_gtest
             COMMAND modernime_personal_engine_gtest
         )
+    elseif(MODERNIME_REQUIRE_FULL_TESTS)
+        message(FATAL_ERROR "MODERNIME_REQUIRE_FULL_TESTS=ON requires Google Test (gtest and gtest_main), but it was not found.")
     endif()
 endif()
 
 find_package(Threads REQUIRED)
-find_path(BENCHMARK_INCLUDE_DIR
-    NAMES benchmark/benchmark.h
-    HINTS
-        "$ENV{HOME}/.local/include"
-        "/home/$ENV{USER}/.local/include"
-)
-find_library(BENCHMARK_LIBRARY
-    NAMES benchmark
-    HINTS
-        "$ENV{HOME}/.local/lib"
-        "/home/$ENV{USER}/.local/lib"
-)
+if(NOT MODERNIME_SIMULATE_MISSING_BENCHMARK)
+    find_path(BENCHMARK_INCLUDE_DIR
+        NAMES benchmark/benchmark.h
+        HINTS
+            "$ENV{HOME}/.local/include"
+            "/home/$ENV{USER}/.local/include"
+    )
+    find_library(BENCHMARK_LIBRARY
+        NAMES benchmark
+        HINTS
+            "$ENV{HOME}/.local/lib"
+            "/home/$ENV{USER}/.local/lib"
+    )
+endif()
 if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
     get_filename_component(BENCHMARK_LIB_DIR "${BENCHMARK_LIBRARY}" DIRECTORY)
     add_executable(modernime_personal_engine_benchmark
@@ -579,6 +590,8 @@ if(BENCHMARK_INCLUDE_DIR AND BENCHMARK_LIBRARY)
     set_tests_properties(modernime_personal_engine_benchmark PROPERTIES
         RUN_SERIAL TRUE
     )
+elseif(MODERNIME_REQUIRE_FULL_TESTS)
+    message(FATAL_ERROR "MODERNIME_REQUIRE_FULL_TESTS=ON requires Google Benchmark, but it was not found.")
 endif()
 
 add_executable(modernime_adapter_tests adapter/engine_state_test.cpp)
