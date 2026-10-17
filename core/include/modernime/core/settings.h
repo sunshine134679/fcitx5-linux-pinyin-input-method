@@ -85,12 +85,23 @@ struct SettingsPaths final {
                                          std::string_view home);
 };
 
+enum class SettingsLoadStatus {
+    Success,
+    Missing,
+    IoError
+};
+
 struct SettingsLoadResult final {
     ModernIMESettings settings = defaultSettings();
     std::vector<std::string> diagnostics;
     std::string contentHash;
     std::vector<std::string> rawLines;
     SettingsFileStamp stamp;
+    SettingsLoadStatus status = SettingsLoadStatus::Missing;
+
+    bool isSuccess() const noexcept { return status == SettingsLoadStatus::Success; }
+    bool isMissing() const noexcept { return status == SettingsLoadStatus::Missing; }
+    bool isIoError() const noexcept { return status == SettingsLoadStatus::IoError; }
 };
 
 class SettingsStore final {

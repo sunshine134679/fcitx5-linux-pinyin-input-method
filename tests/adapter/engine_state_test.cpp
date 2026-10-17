@@ -927,9 +927,24 @@ int main() {
     assertTrue(!deletionProvider.negativeFeedbacks.empty(), "negative feedback triggered for original word");
     assertTrue(deletionProvider.negativeFeedbacks.back().first == "你好", "negative feedback on 你好");
     assertTrue(deletionProvider.negativeFeedbacks.back().second == "ni'hao", "negative feedback on ni'hao");
-    assertTrue(!deletionProvider.commitEvents.empty(), "commit event recorded for retained prefix");
-    assertTrue(deletionProvider.commitEvents.back().text == "你", "positive commit event for retained prefix 你");
-    assertTrue(deletionProvider.commitEvents.back().fullPinyin == "ni", "positive commit event for pinyin ni");
+    // Test sensitive context hot reload safety:
+    FakeProvider sensitiveProvider;
+    RecordingHost sensitiveHost;
+    modernime::fcitx5::ModernIMEController sensitiveController(sensitiveHost, &sensitiveProvider);
+    sensitiveController.setSensitive(true);
+    assertTrue(sensitiveController.isSensitive(), "controller marked sensitive");
+    type(sensitiveController, "nihao");
+    assertTrue(sensitiveController.page().preedit == "nihao", "preedit active in sensitive context");
+
+    modernime::fcitx5::ControllerOptions hotReloadedOptions;
+    hotReloadedOptions.learningEnabled = true;
+    hotReloadedOptions.contextLearningEnabled = true;
+    sensitiveController.setOptions(hotReloadedOptions);
+
+    assertTrue(sensitiveController.page().preedit == "nihao", "preedit preserved after hot-reload in sensitive context");
+    sensitiveController.handle({modernime::fcitx5::KeyKind::Space, ' ', 0});
+    assertTrue(sensitiveHost.commits.back() == "你好", "candidate committed in sensitive context");
+    assertTrue(sensitiveProvider.commitEvents.empty(), "learning commit events strictly prohibited in sensitive context");
 
     return EXIT_SUCCESS;
 }

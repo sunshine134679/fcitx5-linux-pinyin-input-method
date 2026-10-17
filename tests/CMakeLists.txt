@@ -16,7 +16,7 @@ target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
 
 add_test(NAME modernime_configuration_contract
-    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_test.sh"
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_test.sh" --build-dir "${CMAKE_BINARY_DIR}"
 )
 
 add_executable(modernime_clipboard_history_tests core/clipboard_history_test.cpp)
