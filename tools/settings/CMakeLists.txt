@@ -62,4 +62,5 @@ install(PROGRAMS
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/desktop/modernime-settings.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/install_state.sh
+              ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/install_lifecycle.sh
         DESTINATION ${CMAKE_INSTALL_DATADIR}/modernime)

@@ -33,6 +33,11 @@ modernime_desktop_argument() {
 
 modernime_write_managed_file() {
     local expected=$1 target=$2 key=$3
+    local managed_state_dir=${4:-"${managed_state_dir:-}"}
+    if [[ -z "$managed_state_dir" ]]; then
+        printf 'Error: managed_state_dir not specified\n' >&2
+        return 1
+    fi
     local baseline="$managed_state_dir/$key.content"
     local recorded_path="$managed_state_dir/$key.path"
     managed_file_written=false
@@ -40,7 +45,7 @@ modernime_write_managed_file() {
         local old_target
         old_target=$(cat "$recorded_path")
         managed_files_preserved=false
-        modernime_remove_managed_file "$old_target" "$key"
+        modernime_remove_managed_file "$old_target" "$key" "$managed_state_dir"
         if [[ "$managed_files_preserved" == true ]]; then
             printf 'Cannot move modified managed file from %s to %s\n' "$old_target" "$target" >&2
             return 0
@@ -67,6 +72,11 @@ modernime_write_managed_file() {
 
 modernime_remove_managed_file() {
     local target=$1 key=$2
+    local managed_state_dir=${3:-"${managed_state_dir:-}"}
+    if [[ -z "$managed_state_dir" ]]; then
+        printf 'Error: managed_state_dir not specified\n' >&2
+        return 1
+    fi
     local baseline="$managed_state_dir/$key.content"
     local recorded_path="$managed_state_dir/$key.path"
     if [[ ! -e "$target" && ! -L "$target" ]]; then
@@ -105,6 +115,11 @@ modernime_strip_profile_block() {
 
 modernime_write_profile_block() {
     local expected=$1 target=$2
+    local managed_state_dir=${3:-"${managed_state_dir:-}"}
+    if [[ -z "$managed_state_dir" ]]; then
+        printf 'Error: managed_state_dir not specified\n' >&2
+        return 1
+    fi
     local baseline="$managed_state_dir/xprofile.content"
     local recorded_path="$managed_state_dir/xprofile.path"
     if [[ -f "$recorded_path" ]] && [[ "$(cat "$recorded_path")" != "$target" ]]; then
@@ -112,7 +127,7 @@ modernime_write_profile_block() {
         local old_target
         old_target=$(cat "$recorded_path")
         managed_files_preserved=false
-        modernime_remove_profile_block "$old_target"
+        modernime_remove_profile_block "$old_target" "$managed_state_dir"
         if [[ "$managed_files_preserved" == true ]]; then
             printf 'Cannot move modified profile block from %s to %s\n' "$old_target" "$target" >&2
             return 0
@@ -154,7 +169,13 @@ modernime_write_profile_block() {
 }
 
 modernime_remove_profile_block() {
-    local target=$1 extracted
+    local target=$1
+    local managed_state_dir=${2:-"${managed_state_dir:-}"}
+    if [[ -z "$managed_state_dir" ]]; then
+        printf 'Error: managed_state_dir not specified\n' >&2
+        return 1
+    fi
+    local extracted
     if [[ ! -e "$target" && ! -L "$target" ]]; then return 0; fi
     if [[ ! -L "$target" && -f "$target" ]] &&
        ! grep -Eq '^# (BEGIN|END) MODERNIME ENV$' "$target"; then

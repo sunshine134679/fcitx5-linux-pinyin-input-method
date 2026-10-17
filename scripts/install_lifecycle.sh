@@ -88,13 +88,12 @@ modernime_deploy_payload() {
             deploy_failed=true
             break
         fi
-
-        if [[ "${MODERNIME_SIMULATE_INSTALL_FAILURE:-0}" == "1" ]]; then
-            printf 'Simulated failure triggered via MODERNIME_SIMULATE_INSTALL_FAILURE=1\n' >&2
-            deploy_failed=true
-            break
-        fi
     done < "$payload_list"
+
+    if [[ "$deploy_failed" != true && "${MODERNIME_SIMULATE_INSTALL_FAILURE:-0}" == "1" ]]; then
+        printf 'Simulated failure triggered via MODERNIME_SIMULATE_INSTALL_FAILURE=1\n' >&2
+        deploy_failed=true
+    fi
 
     if [[ "$deploy_failed" == true ]]; then
         printf '[%s] Deployment failure encountered; executing rollback...\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$log_file"
@@ -161,10 +160,11 @@ modernime_rollback_payload() {
 }
 
 modernime_integrate() {
-    local prefix=${1:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR}
-    local config_home=${2:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR}
-    local desktop_dir=${3:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR}
-    local managed_state_dir=${4:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR}
+    local prefix=${1:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR [DATA_HOME]}
+    local config_home=${2:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR [DATA_HOME]}
+    local desktop_dir=${3:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR [DATA_HOME]}
+    local managed_state_dir=${4:?Usage: modernime_integrate PREFIX CONFIG_HOME DESKTOP_DIR MANAGED_STATE_DIR [DATA_HOME]}
+    local data_home=${5:-"${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}"}
 
     local is_system_prefix=false
     if [[ "$prefix" =~ ^/(usr|opt|etc)(/|$) || -n "${MODERNIME_FORCE_SYSTEM_PREFIX:-}" ]]; then
@@ -225,17 +225,30 @@ modernime_integrate() {
     if [[ "$is_system_prefix" != true ]]; then
         mkdir -p -- "$desktop_dir"
         local desktop_shortcut="$desktop_dir/modernime-settings.desktop"
+        local settings_desktop_exec=""
+        if [[ -n "${MODERNIME_CONFIG_HOME:-}" || -n "${MODERNIME_DATA_HOME:-}" ]]; then
+            settings_desktop_exec="env"
+            if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
+                settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home")"
+            fi
+            if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
+                settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_DATA_HOME=$data_home")"
+            fi
+            settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+        else
+            settings_desktop_exec="$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+        fi
         {
             printf '%s\n' '[Desktop Entry]'
             printf '%s\n' 'Type=Application'
             printf '%s\n' 'Name=ModernIME 设置'
             printf '%s\n' 'Comment=Configure ModernIME input method'
-            printf 'Exec=%s\n' "$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+            printf 'Exec=%s\n' "$settings_desktop_exec"
             printf 'Icon=%s\n' "$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
             printf '%s\n' 'Terminal=false'
             printf '%s\n' 'Categories=Settings;Utility;'
         } > "$desktop_tmp"
-        modernime_write_managed_file "$desktop_tmp" "$desktop_shortcut" desktop
+        modernime_write_managed_file "$desktop_tmp" "$desktop_shortcut" desktop "$managed_state_dir"
         if [[ "$managed_file_written" == true ]]; then
             chmod +x "$desktop_shortcut"
             if command -v gio >/dev/null 2>&1; then
@@ -246,7 +259,7 @@ modernime_integrate() {
         # 2. Update installed desktop entry under share/applications
         local application_desktop="$prefix/share/applications/modernime-settings.desktop"
         if [[ -f "$application_desktop" ]]; then
-            MODERNIME_DESKTOP_EXEC="$(modernime_desktop_argument "$prefix/bin/modernime-settings")" \
+            MODERNIME_DESKTOP_EXEC="$settings_desktop_exec" \
             MODERNIME_DESKTOP_ICON="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")" \
                 awk '/^Exec=/ { print "Exec=" ENVIRON["MODERNIME_DESKTOP_EXEC"]; next } /^Icon=/ { print "Icon=" ENVIRON["MODERNIME_DESKTOP_ICON"]; next } { print }' \
                     "$application_desktop" > "$desktop_tmp"
@@ -260,25 +273,31 @@ modernime_integrate() {
         {
             printf 'FCITX_ADDON_DIRS="%s:%s"\n' "$prefix_addon_dir" "$system_addon_dir"
             printf 'XDG_DATA_DIRS="%s:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix/share"
+            if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
+                printf 'XDG_CONFIG_HOME="%s"\n' "$config_home"
+            fi
+            if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
+                printf 'XDG_DATA_HOME="%s"\n' "$data_home"
+            fi
             printf 'GTK_IM_MODULE=fcitx\n'
             printf 'QT_IM_MODULE=fcitx\n'
             printf 'XMODIFIERS=@im=fcitx\n'
             printf 'SDL_IM_MODULE=fcitx\n'
         } > "$desktop_tmp"
-        modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
+        modernime_write_managed_file "$desktop_tmp" "$environment_file" environment "$managed_state_dir"
 
         # 4. Autostart entry
         local autostart_dir="$config_home/autostart"
         local autostart_file="$autostart_dir/modernime-fcitx5-session.desktop"
         mkdir -p -- "$autostart_dir"
-        local autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") fcitx5 -d -u modernime-ui"
+        local autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d -u modernime-ui"
         {
             printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
             printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
             printf 'Exec=%s\n' "$autostart_exec"
             printf '%s\n' 'Terminal=false' 'X-GNOME-Autostart-enabled=true' 'NoDisplay=true'
         } > "$desktop_tmp"
-        modernime_write_managed_file "$desktop_tmp" "$autostart_file" autostart
+        modernime_write_managed_file "$desktop_tmp" "$autostart_file" autostart "$managed_state_dir"
 
         # 5. Profile block in ~/.xprofile if applicable
         local skip_xprofile=false
@@ -300,7 +319,7 @@ export FCITX_ADDON_DIRS="$prefix_addon_dir:$system_addon_dir"
 export XDG_DATA_DIRS="$prefix/share:\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 # END MODERNIME ENV
 EOF
-            modernime_write_profile_block "$desktop_tmp" "$xprofile_file"
+            modernime_write_profile_block "$desktop_tmp" "$xprofile_file" "$managed_state_dir"
         fi
     fi
 

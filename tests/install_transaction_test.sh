@@ -52,7 +52,8 @@ for arg in "$@"; do
         exit 1
     fi
 done
-if [[ "${TEST_FAILURE:-}" == binary-learning && "${@: -1}" == "$MODERNIME_PREFIX/" ]]; then
+if [[ "${TEST_FAILURE:-}" == binary-learning &&
+      ( "${@: -1}" == "$MODERNIME_PREFIX/" || "${@: -1}" == "$MODERNIME_PREFIX/bin/modernime-settings" ) ]]; then
     /bin/cp "$@"
     python3 "$TEST_LEARNING_WRITER"
     exit 0
