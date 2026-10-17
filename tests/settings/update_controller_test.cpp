@@ -503,7 +503,8 @@ int main(int argc, char **argv) {
     assert(bgDoneRes->success);
     assert(bgDoneRes->message.find("后台系统包管理器升级已完成") != std::string::npos);
 
-    // 7b. Package operation timeout when child main task is already in zombie 'Z' state (stillRunningOnTimeout == false):
+    // 7b. Package operation timeout when child main task is in zombie 'Z' state while secondary thread continues:
+    // Contract (S3.2): Must transition to Continuing and background tracking, NOT incorrectly assume exited on main thread Z.
     const auto selfExe = std::filesystem::canonical("/proc/self/exe");
     writeExecutable(
         aptBinDir / "pkexec",
@@ -513,9 +514,13 @@ int main(int argc, char **argv) {
             "\" --mock-zombie-exit\n");
     const auto exitedTimeoutRes = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
     assert(!exitedTimeoutRes.success);
-    assert(exitedTimeoutRes.message.find("子进程已退出，未检测到后台仍在运行的 apt/dpkg 进程") !=
-           std::string::npos);
+    assert(exitedTimeoutRes.message.find("系统包管理器升级等待超时") != std::string::npos);
+    assert(UpdateController::hasActivePackageOperation());
+    assert(UpdateController::waitForActivePackageOperation(2000));
     assert(!UpdateController::hasActivePackageOperation());
+    auto zBgRes = UpdateController::takeCompletedPackageOperationResult();
+    assert(zBgRes.has_value());
+    assert(zBgRes->success);
 
     // 7c. Process exit while background package operation is still active:
     // - MUST NOT hang in static destruction ([P1] Round 4)

@@ -47,6 +47,8 @@ struct CommandResult {
     bool timedOut = false;
     std::string stdoutText;
     std::string stderrText;
+    std::size_t bufferPeak = 0;
+    std::size_t filePeak = 0;
 };
 
 struct OperationRef {
@@ -54,6 +56,7 @@ struct OperationRef {
     std::string token;
     std::string opDir;
     pid_t collectorPid = 0;
+    bool isOwnedChild = false;
 };
 
 CommandResult runCommand(const CommandSpec &spec);

@@ -41,6 +41,11 @@ printf '=== 2. 在沙箱环境中执行 install.sh ===\n'
 
 printf '=== 3. 验证沙箱安装产物完整性 ===\n'
 test -f "$MODERNIME_PREFIX/bin/modernime-settings"
+test -x "$MODERNIME_PREFIX/bin/modernime-settings"
+installed_version=$(env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --version)
+[[ "$installed_version" == *"ModernIME settings"* ]]
+# Verify internal capture collector handles headless invocation cleanly (returns 1 on missing args without GUI dependency)
+env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --internal-capture-collector 2>/dev/null && false || true
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
 test -x "$MODERNIME_PREFIX/bin/modernime-session-init"

@@ -9,7 +9,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +30,66 @@ namespace {
 
 std::mutex g_opRefsMutex;
 std::map<std::uint64_t, OperationRef> g_activeOpRefs;
+
+struct PendingReap {
+    pid_t pid = 0;
+    std::string opDir;
+};
+
+std::mutex g_reaperMutex;
+std::condition_variable g_reaperCv;
+std::vector<PendingReap> g_pendingReaps;
+std::atomic<bool> g_reaperRunning{false};
+
+void enqueuePendingReap(pid_t pid, const std::string &opDir) {
+    if (pid <= 0) return;
+    std::lock_guard<std::mutex> lock(g_reaperMutex);
+    g_pendingReaps.push_back({pid, opDir});
+    if (!g_reaperRunning.exchange(true)) {
+        std::thread t([]() {
+            while (true) {
+                std::vector<PendingReap> current;
+                {
+                    std::unique_lock<std::mutex> lk(g_reaperMutex);
+                    g_reaperCv.wait_for(lk, std::chrono::milliseconds(30), [&]() {
+                        return !g_pendingReaps.empty();
+                    });
+                    current = g_pendingReaps;
+                }
+
+                if (current.empty()) {
+                    continue;
+                }
+
+                std::vector<pid_t> reapedPids;
+                for (const auto &item : current) {
+                    int st = 0;
+                    pid_t wp = ::waitpid(item.pid, &st, WNOHANG);
+                    if (wp == item.pid || (wp < 0 && errno == ECHILD)) {
+                        reapedPids.push_back(item.pid);
+                        if (!item.opDir.empty()) {
+                            std::error_code ec;
+                            std::filesystem::remove_all(item.opDir, ec);
+                        }
+                    }
+                }
+
+                if (!reapedPids.empty()) {
+                    std::lock_guard<std::mutex> lk(g_reaperMutex);
+                    g_pendingReaps.erase(
+                        std::remove_if(g_pendingReaps.begin(), g_pendingReaps.end(),
+                                       [&](const PendingReap &p) {
+                                           return std::find(reapedPids.begin(), reapedPids.end(), p.pid) != reapedPids.end();
+                                       }),
+                        g_pendingReaps.end());
+                }
+            }
+        });
+        t.detach();
+    } else {
+        g_reaperCv.notify_one();
+    }
+}
 
 std::string toHex(std::string_view s) {
     static const char hexChars[] = "0123456789abcdef";
@@ -101,25 +163,6 @@ bool isPidAlive(pid_t pid) {
     return true;
 }
 
-bool isPidZombie(pid_t pid) {
-    if (pid <= 0) {
-        return false;
-    }
-    if (::kill(pid, 0) != 0) {
-        return false;
-    }
-    std::ifstream statIn("/proc/" + std::to_string(pid) + "/stat");
-    if (statIn) {
-        std::string statLine;
-        std::getline(statIn, statLine);
-        const auto rparen = statLine.rfind(')');
-        if (rparen != std::string::npos && rparen + 2 < statLine.size()) {
-            const char procState = statLine[rparen + 2];
-            return (procState == 'Z');
-        }
-    }
-    return false;
-}
 
 std::string getTempDirectory() {
     const char *tmp = std::getenv("TMPDIR");
@@ -283,7 +326,158 @@ struct ParsedState {
     bool valid = false;
 };
 
-ParsedState parseStateFile(const std::string &path, std::uint64_t expectedOpId, const std::string &expectedToken) {
+enum class JsonTokenType {
+    LeftBrace,
+    RightBrace,
+    Colon,
+    Comma,
+    String,
+    Number,
+    Boolean,
+    End,
+    Error
+};
+
+struct JsonToken {
+    JsonTokenType type = JsonTokenType::Error;
+    std::string stringVal;
+    long long intVal = 0;
+    bool boolVal = false;
+};
+
+class JsonLexer {
+public:
+    explicit JsonLexer(std::string_view input) : m_input(input), m_pos(0) {}
+
+    JsonToken nextToken() {
+        skipWhitespace();
+        if (m_pos >= m_input.size()) {
+            return {JsonTokenType::End, {}, 0, false};
+        }
+
+        const char c = m_input[m_pos];
+        if (c == '{') {
+            ++m_pos;
+            return {JsonTokenType::LeftBrace, {}, 0, false};
+        }
+        if (c == '}') {
+            ++m_pos;
+            return {JsonTokenType::RightBrace, {}, 0, false};
+        }
+        if (c == ':') {
+            ++m_pos;
+            return {JsonTokenType::Colon, {}, 0, false};
+        }
+        if (c == ',') {
+            ++m_pos;
+            return {JsonTokenType::Comma, {}, 0, false};
+        }
+        if (c == '"') {
+            return readString();
+        }
+        if (c == '-' || (c >= '0' && c <= '9')) {
+            return readNumber();
+        }
+        if (c == 't' || c == 'f') {
+            return readBool();
+        }
+
+        return {JsonTokenType::Error, {}, 0, false};
+    }
+
+private:
+    void skipWhitespace() {
+        while (m_pos < m_input.size() && (m_input[m_pos] == ' ' || m_input[m_pos] == '\t' ||
+                                          m_input[m_pos] == '\r' || m_input[m_pos] == '\n')) {
+            ++m_pos;
+        }
+    }
+
+    JsonToken readString() {
+        ++m_pos; // Skip opening quote
+        std::string s;
+        while (m_pos < m_input.size()) {
+            const char c = m_input[m_pos++];
+            if (c == '"') {
+                return {JsonTokenType::String, s, 0, false};
+            }
+            if (c == '\\') {
+                if (m_pos >= m_input.size()) {
+                    return {JsonTokenType::Error, {}, 0, false};
+                }
+                const char esc = m_input[m_pos++];
+                if (esc == '"' || esc == '\\' || esc == '/') s.push_back(esc);
+                else if (esc == 'b') s.push_back('\b');
+                else if (esc == 'f') s.push_back('\f');
+                else if (esc == 'n') s.push_back('\n');
+                else if (esc == 'r') s.push_back('\r');
+                else if (esc == 't') s.push_back('\t');
+                else return {JsonTokenType::Error, {}, 0, false};
+            } else {
+                s.push_back(c);
+            }
+        }
+        return {JsonTokenType::Error, {}, 0, false};
+    }
+
+    JsonToken readNumber() {
+        const size_t start = m_pos;
+        if (m_input[m_pos] == '-') {
+            ++m_pos;
+        }
+        if (m_pos >= m_input.size() || m_input[m_pos] < '0' || m_input[m_pos] > '9') {
+            return {JsonTokenType::Error, {}, 0, false};
+        }
+        while (m_pos < m_input.size() && m_input[m_pos] >= '0' && m_input[m_pos] <= '9') {
+            ++m_pos;
+        }
+        if (m_pos < m_input.size()) {
+            const char nextC = m_input[m_pos];
+            if (nextC != ' ' && nextC != '\t' && nextC != '\r' && nextC != '\n' &&
+                nextC != ',' && nextC != '}') {
+                return {JsonTokenType::Error, {}, 0, false};
+            }
+        }
+        const std::string numStr(m_input.substr(start, m_pos - start));
+        try {
+            const long long val = std::stoll(numStr);
+            return {JsonTokenType::Number, {}, val, false};
+        } catch (...) {
+            return {JsonTokenType::Error, {}, 0, false};
+        }
+    }
+
+    JsonToken readBool() {
+        if (m_input.substr(m_pos).starts_with("true")) {
+            m_pos += 4;
+            if (m_pos < m_input.size()) {
+                const char nextC = m_input[m_pos];
+                if (nextC != ' ' && nextC != '\t' && nextC != '\r' && nextC != '\n' &&
+                    nextC != ',' && nextC != '}') {
+                    return {JsonTokenType::Error, {}, 0, false};
+                }
+            }
+            return {JsonTokenType::Boolean, {}, 0, true};
+        }
+        if (m_input.substr(m_pos).starts_with("false")) {
+            m_pos += 5;
+            if (m_pos < m_input.size()) {
+                const char nextC = m_input[m_pos];
+                if (nextC != ' ' && nextC != '\t' && nextC != '\r' && nextC != '\n' &&
+                    nextC != ',' && nextC != '}') {
+                    return {JsonTokenType::Error, {}, 0, false};
+                }
+            }
+            return {JsonTokenType::Boolean, {}, 0, false};
+        }
+        return {JsonTokenType::Error, {}, 0, false};
+    }
+
+    std::string_view m_input;
+    size_t m_pos = 0;
+};
+
+ParsedState parseStateFile(const std::string &path, std::uint64_t expectedOpId, const std::string &expectedToken, pid_t expectedCollectorPid = 0) {
     ParsedState s;
     std::error_code ec;
     const auto sz = std::filesystem::file_size(path, ec);
@@ -296,107 +490,133 @@ ParsedState parseStateFile(const std::string &path, std::uint64_t expectedOpId, 
         return s;
     }
 
-    auto startPos = content.find_first_not_of(" \t\r\n");
-    auto endPos = content.find_last_not_of(" \t\r\n");
-    if (startPos == std::string::npos || endPos == std::string::npos ||
-        content[startPos] != '{' || content[endPos] != '}') {
+    JsonLexer lexer(content);
+    JsonToken tok = lexer.nextToken();
+    if (tok.type != JsonTokenType::LeftBrace) {
         return s;
     }
 
-    auto extractStr = [&](std::string_view key) -> std::string {
-        const auto pos = content.find("\"" + std::string(key) + "\"");
-        if (pos == std::string::npos) return {};
-        const auto colon = content.find(':', pos);
-        if (colon == std::string::npos) return {};
-        const auto quote1 = content.find('"', colon);
-        if (quote1 == std::string::npos) return {};
-        const auto quote2 = content.find('"', quote1 + 1);
-        if (quote2 == std::string::npos) return {};
-        return content.substr(quote1 + 1, quote2 - quote1 - 1);
+    struct Val {
+        JsonTokenType type;
+        std::string str;
+        long long num = 0;
+        bool b = false;
     };
+    std::map<std::string, Val> entries;
 
-    auto extractInt = [&](std::string_view key, bool &found, long defaultVal = 0) -> long {
-        const auto pos = content.find("\"" + std::string(key) + "\"");
-        if (pos == std::string::npos) {
-            found = false;
-            return defaultVal;
+    bool expectKey = true;
+    while (true) {
+        tok = lexer.nextToken();
+        if (tok.type == JsonTokenType::RightBrace) {
+            if (expectKey && !entries.empty()) {
+                return s;
+            }
+            break;
         }
-        const auto colon = content.find(':', pos);
-        if (colon == std::string::npos) {
-            found = false;
-            return defaultVal;
+        if (!expectKey) {
+            return s;
         }
-        auto start = content.find_first_not_of(" \t\r\n", colon + 1);
-        if (start == std::string::npos) {
-            found = false;
-            return defaultVal;
+        if (tok.type != JsonTokenType::String) {
+            return s;
         }
-        char *endPtr = nullptr;
-        const long val = std::strtol(content.c_str() + start, &endPtr, 10);
-        if (endPtr == content.c_str() + start) {
-            found = false;
-            return defaultVal;
+        const std::string key = tok.stringVal;
+        if (entries.find(key) != entries.end()) {
+            return s; // Duplicate key rejected
         }
-        found = true;
-        return val;
-    };
 
-    auto extractBool = [&](std::string_view key, bool &found) -> bool {
-        const auto pos = content.find("\"" + std::string(key) + "\"");
-        if (pos == std::string::npos) {
-            found = false;
-            return false;
+        tok = lexer.nextToken();
+        if (tok.type != JsonTokenType::Colon) {
+            return s;
         }
-        const auto colon = content.find(':', pos);
-        if (colon == std::string::npos) {
-            found = false;
-            return false;
-        }
-        const auto start = content.find_first_not_of(" \t\r\n", colon + 1);
-        if (start == std::string::npos) {
-            found = false;
-            return false;
-        }
-        if (content.compare(start, 4, "true") == 0) {
-            found = true;
-            return true;
-        }
-        if (content.compare(start, 5, "false") == 0) {
-            found = true;
-            return false;
-        }
-        found = false;
-        return false;
-    };
 
-    bool fOpId = false, fColl = false, fChild = false, fExit = false;
-    bool fOutT = false, fErrT = false, fOutB = false, fErrB = false;
-    bool fBufP = false, fFileP = false;
+        tok = lexer.nextToken();
+        if (tok.type == JsonTokenType::String) {
+            entries[key] = {tok.type, tok.stringVal, 0, false};
+        } else if (tok.type == JsonTokenType::Number) {
+            entries[key] = {tok.type, {}, tok.intVal, false};
+        } else if (tok.type == JsonTokenType::Boolean) {
+            entries[key] = {tok.type, {}, 0, tok.boolVal};
+        } else {
+            return s;
+        }
 
-    s.operationId = static_cast<std::uint64_t>(extractInt("operationId", fOpId));
-    s.token = extractStr("token");
-    s.collectorPid = static_cast<pid_t>(extractInt("collectorPid", fColl));
-    s.childPid = static_cast<pid_t>(extractInt("childPid", fChild));
-    s.stateStr = extractStr("state");
-    s.exitStatus = static_cast<int>(extractInt("exitStatus", fExit, -1));
-    s.stdoutTruncated = extractBool("stdoutTruncated", fOutT);
-    s.stderrTruncated = extractBool("stderrTruncated", fErrT);
-    s.stdoutBytes = static_cast<std::size_t>(extractInt("stdoutBytes", fOutB));
-    s.stderrBytes = static_cast<std::size_t>(extractInt("stderrBytes", fErrB));
-    s.bufferPeak = static_cast<std::size_t>(extractInt("bufferPeak", fBufP));
-    s.filePeak = static_cast<std::size_t>(extractInt("filePeak", fFileP));
+        tok = lexer.nextToken();
+        if (tok.type == JsonTokenType::Comma) {
+            expectKey = true;
+        } else if (tok.type == JsonTokenType::RightBrace) {
+            break;
+        } else {
+            return s;
+        }
+    }
 
-    if (!fOpId || !fExit || !fOutT || !fErrT || !fOutB || !fErrB || !fBufP || !fFileP) {
+    tok = lexer.nextToken();
+    if (tok.type != JsonTokenType::End) {
         return s;
     }
+
+    static const char *const requiredKeys[] = {
+        "operationId", "token", "collectorPid", "childPid", "state", "exitStatus",
+        "stdoutTruncated", "stderrTruncated", "stdoutBytes", "stderrBytes",
+        "bufferPeak", "filePeak"
+    };
+    if (entries.size() != 12) {
+        return s;
+    }
+    for (const char *rk : requiredKeys) {
+        if (entries.find(rk) == entries.end()) {
+            return s;
+        }
+    }
+
+    if (entries["operationId"].type != JsonTokenType::Number || entries["operationId"].num < 0) return s;
+    s.operationId = static_cast<std::uint64_t>(entries["operationId"].num);
+
+    if (entries["token"].type != JsonTokenType::String) return s;
+    s.token = entries["token"].str;
+
+    if (entries["collectorPid"].type != JsonTokenType::Number) return s;
+    s.collectorPid = static_cast<pid_t>(entries["collectorPid"].num);
+
+    if (entries["childPid"].type != JsonTokenType::Number) return s;
+    s.childPid = static_cast<pid_t>(entries["childPid"].num);
+
+    if (entries["state"].type != JsonTokenType::String) return s;
+    s.stateStr = entries["state"].str;
+
+    if (entries["exitStatus"].type != JsonTokenType::Number) return s;
+    s.exitStatus = static_cast<int>(entries["exitStatus"].num);
+
+    if (entries["stdoutTruncated"].type != JsonTokenType::Boolean) return s;
+    s.stdoutTruncated = entries["stdoutTruncated"].b;
+
+    if (entries["stderrTruncated"].type != JsonTokenType::Boolean) return s;
+    s.stderrTruncated = entries["stderrTruncated"].b;
+
+    if (entries["stdoutBytes"].type != JsonTokenType::Number || entries["stdoutBytes"].num < 0) return s;
+    s.stdoutBytes = static_cast<std::size_t>(entries["stdoutBytes"].num);
+
+    if (entries["stderrBytes"].type != JsonTokenType::Number || entries["stderrBytes"].num < 0) return s;
+    s.stderrBytes = static_cast<std::size_t>(entries["stderrBytes"].num);
+
+    if (entries["bufferPeak"].type != JsonTokenType::Number || entries["bufferPeak"].num < 0) return s;
+    s.bufferPeak = static_cast<std::size_t>(entries["bufferPeak"].num);
+
+    if (entries["filePeak"].type != JsonTokenType::Number || entries["filePeak"].num < 0) return s;
+    s.filePeak = static_cast<std::size_t>(entries["filePeak"].num);
+
     if (s.stateStr != "Starting" && s.stateStr != "Running" &&
         s.stateStr != "Exited" && s.stateStr != "Unknown") {
         return s;
     }
+
     if (expectedOpId != 0 && s.operationId != expectedOpId) {
         return s;
     }
     if (!expectedToken.empty() && s.token != expectedToken) {
+        return s;
+    }
+    if (expectedCollectorPid > 0 && s.collectorPid != expectedCollectorPid) {
         return s;
     }
 
@@ -682,6 +902,7 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
     opRef.token = token;
     opRef.opDir = opDir;
     opRef.collectorPid = 0;
+    opRef.isOwnedChild = true;
 
     {
         std::lock_guard<std::mutex> lock(g_opRefsMutex);
@@ -730,12 +951,42 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
         return result;
     }
 
+    int execPipe[2];
+    if (::pipe2(execPipe, O_CLOEXEC) != 0) {
+        ::close(handshakeFds[0]);
+        ::close(handshakeFds[1]);
+        std::error_code ec;
+        std::filesystem::remove_all(opDir, ec);
+        {
+            std::lock_guard<std::mutex> lock(g_opRefsMutex);
+            g_activeOpRefs.erase(spec.operationId);
+        }
+        result.state = CommandState::NotStarted;
+        result.stderrText = "Failed to create exec pipe";
+        return result;
+    }
+
     const std::string settingsExe = resolveSettingsExecutable(spec.environment);
+
+    std::vector<std::string> cArgs = {
+        settingsExe,
+        "--internal-capture-collector",
+        "--op-dir", opDir,
+        "--handshake-fd", std::to_string(handshakeFds[1])
+    };
+    std::vector<char *> cArgv;
+    cArgv.reserve(cArgs.size() + 1);
+    for (const auto &a : cArgs) {
+        cArgv.push_back(const_cast<char *>(a.c_str()));
+    }
+    cArgv.push_back(nullptr);
 
     const pid_t collectorPid = ::fork();
     if (collectorPid < 0) {
         ::close(handshakeFds[0]);
         ::close(handshakeFds[1]);
+        ::close(execPipe[0]);
+        ::close(execPipe[1]);
         std::error_code ec;
         std::filesystem::remove_all(opDir, ec);
         {
@@ -749,33 +1000,46 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
 
     if (collectorPid == 0) {
         ::close(handshakeFds[0]);
+        ::close(execPipe[0]);
         const int flags = ::fcntl(handshakeFds[1], F_GETFD);
         if (flags >= 0) {
             ::fcntl(handshakeFds[1], F_SETFD, flags & ~FD_CLOEXEC);
         }
 
-        std::vector<std::string> cArgs = {
-            settingsExe,
-            "--internal-capture-collector",
-            "--op-dir", opDir,
-            "--handshake-fd", std::to_string(handshakeFds[1])
-        };
-        std::vector<char *> cArgv;
-        cArgv.reserve(cArgs.size() + 1);
-        for (const auto &a : cArgs) {
-            cArgv.push_back(const_cast<char *>(a.c_str()));
-        }
-        cArgv.push_back(nullptr);
-
         ::execvp(cArgv[0], cArgv.data());
+        const int err = errno;
+        ssize_t w = ::write(execPipe[1], &err, sizeof(err));
+        (void)w;
         ::_exit(127);
     }
 
+    ::close(execPipe[1]);
     ::close(handshakeFds[1]);
 
     {
         std::lock_guard<std::mutex> lock(g_opRefsMutex);
         g_activeOpRefs[spec.operationId].collectorPid = collectorPid;
+        g_activeOpRefs[spec.operationId].isOwnedChild = true;
+    }
+
+    int childErrno = 0;
+    const ssize_t nExec = ::read(execPipe[0], &childErrno, sizeof(childErrno));
+    ::close(execPipe[0]);
+
+    if (nExec > 0) {
+        int st = 0;
+        ::waitpid(collectorPid, &st, 0);
+        ::close(handshakeFds[0]);
+        std::error_code ec;
+        std::filesystem::remove_all(opDir, ec);
+        {
+            std::lock_guard<std::mutex> lock(g_opRefsMutex);
+            g_activeOpRefs.erase(spec.operationId);
+        }
+        result.state = CommandState::NotStarted;
+        result.exitStatus = -1;
+        result.stderrText = "Failed to execute collector: " + std::string(std::strerror(childErrno));
+        return result;
     }
 
     const auto startTime = std::chrono::steady_clock::now();
@@ -800,28 +1064,12 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
     if (hPoll <= 0 || hRead != 1) {
         int st = 0;
         pid_t wp = ::waitpid(collectorPid, &st, WNOHANG);
-        if (wp == 0 && hRead == 0) {
-            // Pipe write end closed without sending byte; collector has terminated or closed FD
-            for (int i = 0; i < 20 && wp == 0; ++i) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                wp = ::waitpid(collectorPid, &st, WNOHANG);
-            }
-        }
-        if (wp == collectorPid || !isPidAlive(collectorPid)) {
-            std::error_code ec;
-            std::filesystem::remove_all(opDir, ec);
-            {
-                std::lock_guard<std::mutex> lock(g_opRefsMutex);
-                g_activeOpRefs.erase(spec.operationId);
-            }
-            result.state = CommandState::NotStarted;
-            result.exitStatus = -1;
-            result.stderrText = "Collector process failed to start or handshake";
-            return result;
+        if (wp == 0) {
+            enqueuePendingReap(collectorPid, "");
         }
         result.state = CommandState::Unknown;
         result.exitStatus = -1;
-        result.stderrText = "Handshake timed out while collector process is active";
+        result.stderrText = "Collector process failed or crashed before handshake confirmation";
         return result;
     }
 
@@ -840,7 +1088,12 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
         return result;
     }
 
-    if (handshakeByte == 'U') {
+    if (handshakeByte == 'U' || (handshakeByte != 'R' && handshakeByte != '1')) {
+        int st = 0;
+        pid_t wp = ::waitpid(collectorPid, &st, WNOHANG);
+        if (wp == 0) {
+            enqueuePendingReap(collectorPid, "");
+        }
         result.state = CommandState::Unknown;
         result.exitStatus = -1;
         result.stderrText = "Collector reported uncertain start state";
@@ -852,7 +1105,7 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
 
     while (true) {
         const auto now = std::chrono::steady_clock::now();
-        const ParsedState ps = parseStateFile(statePath, spec.operationId, token);
+        const ParsedState ps = parseStateFile(statePath, spec.operationId, token, collectorPid);
 
         if (ps.valid && ps.operationId == spec.operationId) {
             if (ps.stateStr == "Exited") {
@@ -862,13 +1115,19 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
                 result.stderrTruncated = ps.stderrTruncated;
                 result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
                 result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
-                int st = 0;
-                ::waitpid(collectorPid, &st, 0);
-                std::error_code ec;
-                std::filesystem::remove_all(opDir, ec);
+                result.bufferPeak = ps.bufferPeak;
+                result.filePeak = ps.filePeak;
                 {
                     std::lock_guard<std::mutex> lock(g_opRefsMutex);
                     g_activeOpRefs.erase(spec.operationId);
+                }
+                int st = 0;
+                pid_t wp = ::waitpid(collectorPid, &st, WNOHANG);
+                if (wp == collectorPid) {
+                    std::error_code ec;
+                    std::filesystem::remove_all(opDir, ec);
+                } else {
+                    enqueuePendingReap(collectorPid, opDir);
                 }
                 return result;
             }
@@ -879,14 +1138,19 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
                 result.stderrTruncated = ps.stderrTruncated;
                 result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
                 result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
+                result.bufferPeak = ps.bufferPeak;
+                result.filePeak = ps.filePeak;
                 int st = 0;
-                ::waitpid(collectorPid, &st, WNOHANG);
+                pid_t wp = ::waitpid(collectorPid, &st, WNOHANG);
+                if (wp == 0) {
+                    enqueuePendingReap(collectorPid, "");
+                }
                 return result;
             }
         }
 
         if (!isPidAlive(collectorPid)) {
-            const ParsedState psFinal = parseStateFile(statePath, spec.operationId, token);
+            const ParsedState psFinal = parseStateFile(statePath, spec.operationId, token, collectorPid);
             if (psFinal.valid && psFinal.operationId == spec.operationId && psFinal.stateStr == "Exited") {
                 result.state = CommandState::Exited;
                 result.exitStatus = psFinal.exitStatus;
@@ -894,14 +1158,16 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
                 result.stderrTruncated = psFinal.stderrTruncated;
                 result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
                 result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
-                int st = 0;
-                ::waitpid(collectorPid, &st, 0);
-                std::error_code ec;
-                std::filesystem::remove_all(opDir, ec);
+                result.bufferPeak = psFinal.bufferPeak;
+                result.filePeak = psFinal.filePeak;
                 {
                     std::lock_guard<std::mutex> lock(g_opRefsMutex);
                     g_activeOpRefs.erase(spec.operationId);
                 }
+                int st = 0;
+                ::waitpid(collectorPid, &st, 0);
+                std::error_code ec;
+                std::filesystem::remove_all(opDir, ec);
                 return result;
             }
             int st = 0;
@@ -914,24 +1180,6 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
 
         if (now >= deadline) {
             result.timedOut = true;
-            if (ps.valid && ps.childPid > 0 && isPidZombie(ps.childPid)) {
-                // Child has terminated or is a zombie
-                result.state = CommandState::Exited;
-                result.exitStatus = ps.exitStatus;
-                result.stdoutTruncated = ps.stdoutTruncated;
-                result.stderrTruncated = ps.stderrTruncated;
-                result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
-                result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
-                int st = 0;
-                ::waitpid(collectorPid, &st, 0);
-                std::error_code ec;
-                std::filesystem::remove_all(opDir, ec);
-                {
-                    std::lock_guard<std::mutex> lock(g_opRefsMutex);
-                    g_activeOpRefs.erase(spec.operationId);
-                }
-                return result;
-            }
             if (isPidAlive(collectorPid) || (ps.valid && ps.childPid > 0 && isPidAlive(ps.childPid))) {
                 result.state = CommandState::Continuing;
                 return result;
@@ -994,6 +1242,7 @@ int runCommandCaptureChild(int argc, char **argv) {
     std::uint64_t operationId = 0;
     std::string token;
     std::uint32_t timeoutMs = 5000;
+    (void)timeoutMs;
     std::size_t perStreamBufferBytes = 1048576;
     (void)perStreamBufferBytes;
     std::size_t perStreamResultBytes = 65536;
@@ -1164,20 +1413,12 @@ int runCommandCaptureChild(int argc, char **argv) {
     bool childFinished = false;
     int childStatus = 0;
 
-    const auto collectorStart = std::chrono::steady_clock::now();
-    const auto collectorDeadline = collectorStart + std::chrono::milliseconds(std::max(timeoutMs * 2, 600000u));
-
     while (outOpen || errOpen) {
         if (!childFinished) {
             const pid_t w = ::waitpid(childPid, &childStatus, WNOHANG);
             if (w == childPid) {
                 childFinished = true;
             }
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= collectorDeadline) {
-            break;
         }
 
         struct pollfd pfds[2];
@@ -1213,10 +1454,10 @@ int runCommandCaptureChild(int argc, char **argv) {
                         readThisTurn += static_cast<size_t>(n);
                         stdoutTotalBytes += static_cast<size_t>(n);
                         stdoutTail.append(buf, static_cast<size_t>(n));
+                        bufferPeak = std::max(bufferPeak, stdoutTail.size());
                         if (stdoutTail.size() > perStreamResultBytes) {
                             stdoutTail.erase(0, stdoutTail.size() - perStreamResultBytes);
                         }
-                        bufferPeak = std::max(bufferPeak, stdoutTail.size());
 
                         if (diagOutFd >= 0 && stdoutDiagBytes < perStreamFileBytes) {
                             const size_t toWrite = std::min(static_cast<size_t>(n),
@@ -1247,10 +1488,10 @@ int runCommandCaptureChild(int argc, char **argv) {
                         readThisTurn += static_cast<size_t>(n);
                         stderrTotalBytes += static_cast<size_t>(n);
                         stderrTail.append(buf, static_cast<size_t>(n));
+                        bufferPeak = std::max(bufferPeak, stderrTail.size());
                         if (stderrTail.size() > perStreamResultBytes) {
                             stderrTail.erase(0, stderrTail.size() - perStreamResultBytes);
                         }
-                        bufferPeak = std::max(bufferPeak, stderrTail.size());
 
                         if (diagErrFd >= 0 && stderrDiagBytes < perStreamFileBytes) {
                             const size_t toWrite = std::min(static_cast<size_t>(n),
@@ -1327,7 +1568,7 @@ CommandResult waitForOperation(const OperationRef &ref, unsigned int timeoutMs) 
 
     while (true) {
         const auto now = std::chrono::steady_clock::now();
-        const ParsedState ps = parseStateFile(statePath, ref.operationId, ref.token);
+        const ParsedState ps = parseStateFile(statePath, ref.operationId, ref.token, ref.collectorPid);
 
         if (ps.valid && ps.operationId == ref.operationId) {
             if (ps.stateStr == "Exited") {
@@ -1337,15 +1578,21 @@ CommandResult waitForOperation(const OperationRef &ref, unsigned int timeoutMs) 
                 result.stderrTruncated = ps.stderrTruncated;
                 result.stdoutText = readFileBounded(ref.opDir + "/stdout.tail", 65536);
                 result.stderrText = readFileBounded(ref.opDir + "/stderr.tail", 65536);
-                if (ref.collectorPid > 0) {
-                    int st = 0;
-                    ::waitpid(ref.collectorPid, &st, WNOHANG);
-                }
-                std::error_code ec;
-                std::filesystem::remove_all(ref.opDir, ec);
+                result.bufferPeak = ps.bufferPeak;
+                result.filePeak = ps.filePeak;
                 {
                     std::lock_guard<std::mutex> lock(g_opRefsMutex);
                     g_activeOpRefs.erase(ref.operationId);
+                }
+                if (ref.isOwnedChild && ref.collectorPid > 0) {
+                    int st = 0;
+                    pid_t wp = ::waitpid(ref.collectorPid, &st, WNOHANG);
+                    if (wp == ref.collectorPid) {
+                        std::error_code ec;
+                        std::filesystem::remove_all(ref.opDir, ec);
+                    } else {
+                        enqueuePendingReap(ref.collectorPid, ref.opDir);
+                    }
                 }
                 return result;
             }
@@ -1356,12 +1603,21 @@ CommandResult waitForOperation(const OperationRef &ref, unsigned int timeoutMs) 
                 result.stderrTruncated = ps.stderrTruncated;
                 result.stdoutText = readFileBounded(ref.opDir + "/stdout.tail", 65536);
                 result.stderrText = readFileBounded(ref.opDir + "/stderr.tail", 65536);
+                result.bufferPeak = ps.bufferPeak;
+                result.filePeak = ps.filePeak;
+                if (ref.isOwnedChild && ref.collectorPid > 0) {
+                    int st = 0;
+                    pid_t wp = ::waitpid(ref.collectorPid, &st, WNOHANG);
+                    if (wp == 0) {
+                        enqueuePendingReap(ref.collectorPid, "");
+                    }
+                }
                 return result;
             }
         }
 
         if (ref.collectorPid > 0 && !isPidAlive(ref.collectorPid)) {
-            const ParsedState psFinal = parseStateFile(statePath, ref.operationId, ref.token);
+            const ParsedState psFinal = parseStateFile(statePath, ref.operationId, ref.token, ref.collectorPid);
             if (psFinal.valid && psFinal.operationId == ref.operationId && psFinal.stateStr == "Exited") {
                 result.state = CommandState::Exited;
                 result.exitStatus = psFinal.exitStatus;
@@ -1369,18 +1625,24 @@ CommandResult waitForOperation(const OperationRef &ref, unsigned int timeoutMs) 
                 result.stderrTruncated = psFinal.stderrTruncated;
                 result.stdoutText = readFileBounded(ref.opDir + "/stdout.tail", 65536);
                 result.stderrText = readFileBounded(ref.opDir + "/stderr.tail", 65536);
-                int st = 0;
-                ::waitpid(ref.collectorPid, &st, 0);
-                std::error_code ec;
-                std::filesystem::remove_all(ref.opDir, ec);
+                result.bufferPeak = psFinal.bufferPeak;
+                result.filePeak = psFinal.filePeak;
                 {
                     std::lock_guard<std::mutex> lock(g_opRefsMutex);
                     g_activeOpRefs.erase(ref.operationId);
                 }
+                if (ref.isOwnedChild) {
+                    int st = 0;
+                    ::waitpid(ref.collectorPid, &st, 0);
+                    std::error_code ec;
+                    std::filesystem::remove_all(ref.opDir, ec);
+                }
                 return result;
             }
-            int st = 0;
-            ::waitpid(ref.collectorPid, &st, 0);
+            if (ref.isOwnedChild) {
+                int st = 0;
+                ::waitpid(ref.collectorPid, &st, 0);
+            }
             result.state = CommandState::Unknown;
             result.exitStatus = -1;
             result.stderrText = "Collector process exited without producing valid Exited state";

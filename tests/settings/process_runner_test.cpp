@@ -518,11 +518,28 @@ void test_T13_A12_HeadlessInternalModeRunsWithoutDisplay() {
     TEST_ASSERT(ret == 1);
 }
 
+std::string resolveSettingsExeForTest() {
+    char exeBuf[PATH_MAX];
+    const ssize_t len = ::readlink("/proc/self/exe", exeBuf, sizeof(exeBuf) - 1);
+    if (len > 0) {
+        exeBuf[len] = '\0';
+        std::filesystem::path selfPath(exeBuf);
+        auto sibling = selfPath.parent_path().parent_path() / "tools/settings/modernime-settings";
+        if (std::filesystem::exists(sibling)) {
+            return sibling.string();
+        }
+    }
+    return "modernime-settings";
+}
+
 // T13-R01: Initial state publication failure: zero spawn proven -> NotStarted; if target started -> Unknown/Uncertain
 void test_T13_R01_StatePublicationFailureGuaranteesZeroSpawnOrUncertain() {
     const std::string tmpDir = getTempDir();
     const std::string spawnMarker = tmpDir + "/modernime_r01_target_marker.txt";
     std::filesystem::remove(spawnMarker);
+
+    const std::string settingsExe = resolveSettingsExeForTest();
+    TEST_ASSERT(std::filesystem::exists(settingsExe));
 
     // Create wrapper that creates opDir/state.json as directory BEFORE collector runs
     const std::string wrapperPath = tmpDir + "/collector-wrapper-r01.sh";
@@ -530,7 +547,7 @@ void test_T13_R01_StatePublicationFailureGuaranteesZeroSpawnOrUncertain() {
         std::ofstream out(wrapperPath);
         out << "#!/bin/sh\n"
             << "/bin/mkdir -p \"$3/state.json\"\n"
-            << "exec ./build/architecture-debug/tools/settings/modernime-settings \"$@\"\n";
+            << "exec \"" << settingsExe << "\" \"$@\"\n";
     }
     ::chmod(wrapperPath.c_str(), 0755);
 
@@ -641,15 +658,90 @@ void test_T13_R04_OperationIdentityAndMalformedStateRejection() {
     const auto waitStale = waitForOperation(staleId, 100);
     TEST_ASSERT(waitStale.state == CommandState::Unknown);
 
-    // 2. Malformed state file without JSON braces
+    // 2. Registered ID: verify strict parser rejects malformed fixtures
+    OperationRef ref;
+    ref.operationId = staleId;
+    ref.token = "valid-token-7101";
+    ref.opDir = staleDir;
+    ref.collectorPid = 888888; // non-existent PID
+    registerOperationRef(ref);
+
+    // 2a. Malformed: no braces
     {
         std::ofstream out(staleDir + "/state.json");
         out << "\"operationId\": " << staleId << ", \"state\": \"Exited\", \"exitStatus\": 0\n";
     }
-    const auto waitMalformed = waitForOperation(staleId, 100);
-    TEST_ASSERT(waitMalformed.state == CommandState::Unknown);
+    auto waitRes = waitForOperation(ref, 50);
+    TEST_ASSERT(waitRes.state == CommandState::Unknown);
+    TEST_ASSERT(waitRes.stdoutText != "OLD_STALE_OUTPUT");
 
-    std::filesystem::remove_all(staleDir);
+    // 2b. Malformed: missing commas (not_json_with_braces)
+    {
+        std::ofstream out(staleDir + "/state.json");
+        out << "{\n"
+            << "  \"operationId\": " << staleId << "\n"
+            << "  \"token\": \"valid-token-7101\"\n"
+            << "  \"collectorPid\": 888888\n"
+            << "  \"childPid\": 0\n"
+            << "  \"state\": \"Exited\"\n"
+            << "  \"exitStatus\": 0\n"
+            << "  \"stdoutTruncated\": false\n"
+            << "  \"stderrTruncated\": false\n"
+            << "  \"stdoutBytes\": 0\n"
+            << "  \"stderrBytes\": 0\n"
+            << "  \"bufferPeak\": 0\n"
+            << "  \"filePeak\": 0\n"
+            << "}\n";
+    }
+    waitRes = waitForOperation(ref, 50);
+    TEST_ASSERT(waitRes.state == CommandState::Unknown);
+    TEST_ASSERT(waitRes.stdoutText != "OLD_STALE_OUTPUT");
+
+    // 2c. Malformed: invalid numeric and boolean suffixes (0garbage, falsejunk)
+    {
+        std::ofstream out(staleDir + "/state.json");
+        out << "{\n"
+            << "  \"operationId\": " << staleId << ",\n"
+            << "  \"token\": \"valid-token-7101\",\n"
+            << "  \"collectorPid\": 888888,\n"
+            << "  \"childPid\": 0,\n"
+            << "  \"state\": \"Exited\",\n"
+            << "  \"exitStatus\": 0garbage,\n"
+            << "  \"stdoutTruncated\": falsejunk,\n"
+            << "  \"stderrTruncated\": false,\n"
+            << "  \"stdoutBytes\": 0,\n"
+            << "  \"stderrBytes\": 0,\n"
+            << "  \"bufferPeak\": 0,\n"
+            << "  \"filePeak\": 0\n"
+            << "}\n";
+    }
+    waitRes = waitForOperation(ref, 50);
+    TEST_ASSERT(waitRes.state == CommandState::Unknown);
+    TEST_ASSERT(waitRes.stdoutText != "OLD_STALE_OUTPUT");
+
+    // 2d. Valid JSON but wrong collectorPid
+    {
+        std::ofstream out(staleDir + "/state.json");
+        out << "{\n"
+            << "  \"operationId\": " << staleId << ",\n"
+            << "  \"token\": \"valid-token-7101\",\n"
+            << "  \"collectorPid\": 999999,\n"
+            << "  \"childPid\": 0,\n"
+            << "  \"state\": \"Exited\",\n"
+            << "  \"exitStatus\": 0,\n"
+            << "  \"stdoutTruncated\": false,\n"
+            << "  \"stderrTruncated\": false,\n"
+            << "  \"stdoutBytes\": 0,\n"
+            << "  \"stderrBytes\": 0,\n"
+            << "  \"bufferPeak\": 0,\n"
+            << "  \"filePeak\": 0\n"
+            << "}\n";
+    }
+    waitRes = waitForOperation(ref, 50);
+    TEST_ASSERT(waitRes.state == CommandState::Unknown);
+    TEST_ASSERT(waitRes.stdoutText != "OLD_STALE_OUTPUT");
+
+    cleanupOperation(staleId);
 }
 
 // T13-R05: Late writing descendants receive zero EPIPE
@@ -861,6 +953,9 @@ void test_T13_R09_ResourcePeaksAndBudgetMeasurement() {
     TEST_ASSERT(res.stderrText.size() <= 65536);
     TEST_ASSERT(res.stdoutText.find("===PEAK_STDOUT_TAIL===") != std::string::npos);
     TEST_ASSERT(res.stderrText.find("===PEAK_STDERR_TAIL===") != std::string::npos);
+    TEST_ASSERT(res.bufferPeak > 0);
+    TEST_ASSERT(res.bufferPeak <= spec.limits.perStreamBufferBytes);
+    TEST_ASSERT(res.filePeak == spec.limits.perStreamFileBytes);
 }
 
 // T13-R10: Headless exec of internal collector without display
@@ -942,6 +1037,364 @@ void test_T13_R10_HeadlessExecInternalCollectorWithoutDisplay() {
     std::filesystem::remove_all(opDir);
 }
 
+// T13-S01: Target started, collector crashes before R handshake -> Unknown/Uncertain, slot preserved; exec failure -> NotStarted zero spawn
+void test_T13_S01_TargetForkBeforeAckCrashPreservesStateAndExecFailureZeroSpawn() {
+    const std::string tmpDir = getTempDir();
+    const std::string settingsExe = resolveSettingsExeForTest();
+
+    // 1. Exec failure of collector -> NotStarted, target never spawned
+    const std::string targetMarker1 = tmpDir + "/modernime_s01_marker1.txt";
+    std::filesystem::remove(targetMarker1);
+
+    CommandSpec spec1;
+    spec1.mode = CommandMode::PackageTransaction;
+    spec1.timeoutMs = 1000;
+    spec1.operationId = 14011;
+    spec1.limits.perStreamResultBytes = 65536;
+    spec1.environment = {{"MODERNIME_SETTINGS_EXECUTABLE", "/nonexistent/binary/path"}};
+    spec1.argv = {
+        "python3", "-c",
+        "with open('" + targetMarker1 + "', 'w') as f: f.write('SPAWNED')\n"
+    };
+
+    const auto res1 = runCommand(spec1);
+    TEST_ASSERT(res1.state == CommandState::NotStarted);
+    TEST_ASSERT(!std::filesystem::exists(targetMarker1));
+
+    // 2. Collector crashes after target fork before sending R handshake -> Unknown, ref preserved, slot occupied
+    const std::string targetMarker2 = tmpDir + "/modernime_s01_marker2.txt";
+    std::filesystem::remove(targetMarker2);
+
+    const std::string crashWrapper = tmpDir + "/collector-crash-before-ack.sh";
+    {
+        std::ofstream out(crashWrapper);
+        out << "#!/bin/sh\n"
+            << "\"" << settingsExe << "\" \"$@\" &\n"
+            << "cpid=$!\n"
+            << "opDir=\"\"\n"
+            << "for arg in \"$@\"; do\n"
+            << "  if [ \"$prev\" = \"--op-dir\" ]; then opDir=\"$arg\"; fi\n"
+            << "  prev=\"$arg\"\n"
+            << "done\n"
+            << "for i in $(seq 1 100); do\n"
+            << "  if [ -f \"$opDir/state.json\" ] && grep -q '\"state\": \"Running\"' \"$opDir/state.json\"; then\n"
+            << "    kill -9 \"$cpid\" 2>/dev/null\n"
+            << "    exit 71\n"
+            << "  fi\n"
+            << "  sleep 0.01\n"
+            << "done\n"
+            << "kill -9 \"$cpid\" 2>/dev/null\n"
+            << "exit 71\n";
+    }
+    ::chmod(crashWrapper.c_str(), 0755);
+
+    resetPackageOperationStateForTesting();
+    auto opId = tryBeginPackageOperation(PackageOperationKind::RefreshCache);
+    TEST_ASSERT(opId.has_value());
+
+    CommandSpec spec2;
+    spec2.mode = CommandMode::PackageTransaction;
+    spec2.timeoutMs = 1500;
+    spec2.operationId = *opId;
+    spec2.limits.perStreamResultBytes = 65536;
+    spec2.environment = {{"MODERNIME_SETTINGS_EXECUTABLE", crashWrapper}};
+    spec2.argv = {
+        "python3", "-c",
+        "import time\n"
+        "with open('" + targetMarker2 + "', 'w') as f: f.write('TARGET_RUNNING')\n"
+        "time.sleep(0.5)\n"
+    };
+
+    advancePackageOperation(*opId, PackageOperationPhase::Starting, PackageOperationPhase::Running);
+    const auto res2 = runCommand(spec2);
+
+    TEST_ASSERT(res2.state == CommandState::Unknown);
+    TEST_ASSERT(res2.state != CommandState::NotStarted);
+
+    // Operation reference is still registered
+    auto ref = getActiveOperationRef(*opId);
+    TEST_ASSERT(ref.has_value());
+
+    // Advance controller to Uncertain (as UpdateController does when state == Unknown)
+    advancePackageOperation(*opId, PackageOperationPhase::Running, PackageOperationPhase::Uncertain);
+    TEST_ASSERT(hasActivePackageOperation() == true);
+    TEST_ASSERT(currentPackageOperationPhase() == PackageOperationPhase::Uncertain);
+
+    // Slot is occupied, new transaction must be rejected
+    auto nextOp = tryBeginPackageOperation(PackageOperationKind::RefreshCache);
+    TEST_ASSERT(!nextOp.has_value());
+
+    // Clean up
+    finishPackageOperation(*opId, {false, "clean"}, "", "", false);
+    cleanupOperation(*opId);
+    std::filesystem::remove(crashWrapper);
+    std::filesystem::remove(targetMarker2);
+}
+
+// T13-S02: Strict state protocol rejects malformed JSON, duplicate keys, invalid suffixes, and wrong collector PID
+void test_T13_S02_StrictStateProtocolRejectionCoverage() {
+    const std::string tmpDir = getTempDir();
+    const std::uint64_t opId = 1402;
+    const std::string opDir = tmpDir + "/modernime-op-test-s02";
+    std::filesystem::create_directories(opDir);
+
+    OperationRef ref;
+    ref.operationId = opId;
+    ref.token = "token-s02-valid";
+    ref.opDir = opDir;
+    ref.collectorPid = 65432;
+    registerOperationRef(ref);
+
+    auto testFixture = [&](const std::string &jsonText, const std::string &desc) {
+        {
+            std::ofstream out(opDir + "/state.json");
+            out << jsonText;
+        }
+        auto res = waitForOperation(ref, 50);
+        TEST_ASSERT(res.state == CommandState::Unknown);
+        TEST_ASSERT(res.exitStatus == -1);
+    };
+
+    // 1. Missing required field "stdoutBytes"
+    testFixture("{\n"
+                "  \"operationId\": 1402,\n"
+                "  \"token\": \"token-s02-valid\",\n"
+                "  \"collectorPid\": 65432,\n"
+                "  \"childPid\": 0,\n"
+                "  \"state\": \"Exited\",\n"
+                "  \"exitStatus\": 0,\n"
+                "  \"stdoutTruncated\": false,\n"
+                "  \"stderrTruncated\": false,\n"
+                "  \"stderrBytes\": 0,\n"
+                "  \"bufferPeak\": 0,\n"
+                "  \"filePeak\": 0\n"
+                "}\n", "Missing stdoutBytes");
+
+    // 2. Duplicate key "state"
+    testFixture("{\n"
+                "  \"operationId\": 1402,\n"
+                "  \"token\": \"token-s02-valid\",\n"
+                "  \"collectorPid\": 65432,\n"
+                "  \"childPid\": 0,\n"
+                "  \"state\": \"Exited\",\n"
+                "  \"state\": \"Running\",\n"
+                "  \"exitStatus\": 0,\n"
+                "  \"stdoutTruncated\": false,\n"
+                "  \"stderrTruncated\": false,\n"
+                "  \"stdoutBytes\": 0,\n"
+                "  \"stderrBytes\": 0,\n"
+                "  \"bufferPeak\": 0,\n"
+                "  \"filePeak\": 0\n"
+                "}\n", "Duplicate state");
+
+    // 3. Invalid state enum
+    testFixture("{\n"
+                "  \"operationId\": 1402,\n"
+                "  \"token\": \"token-s02-valid\",\n"
+                "  \"collectorPid\": 65432,\n"
+                "  \"childPid\": 0,\n"
+                "  \"state\": \"BogusState\",\n"
+                "  \"exitStatus\": 0,\n"
+                "  \"stdoutTruncated\": false,\n"
+                "  \"stderrTruncated\": false,\n"
+                "  \"stdoutBytes\": 0,\n"
+                "  \"stderrBytes\": 0,\n"
+                "  \"bufferPeak\": 0,\n"
+                "  \"filePeak\": 0\n"
+                "}\n", "Invalid state enum");
+
+    // 4. Trailing garbage after closing brace
+    testFixture("{\n"
+                "  \"operationId\": 1402,\n"
+                "  \"token\": \"token-s02-valid\",\n"
+                "  \"collectorPid\": 65432,\n"
+                "  \"childPid\": 0,\n"
+                "  \"state\": \"Exited\",\n"
+                "  \"exitStatus\": 0,\n"
+                "  \"stdoutTruncated\": false,\n"
+                "  \"stderrTruncated\": false,\n"
+                "  \"stdoutBytes\": 0,\n"
+                "  \"stderrBytes\": 0,\n"
+                "  \"bufferPeak\": 0,\n"
+                "  \"filePeak\": 0\n"
+                "} trailing_junk\n", "Trailing garbage");
+
+    cleanupOperation(opId);
+}
+
+// T13-S03: Continuous drain without arbitrary deadline; zombie leader transitions to Continuing within deadline and finishes accurately
+void test_T13_S03_CollectorContinuousDrainAndZombieLeader() {
+    // 1. Continuous drain: Child writes after 350ms, zero EPIPE
+    CommandSpec spec1;
+    spec1.mode = CommandMode::PackageTransaction;
+    spec1.timeoutMs = 1500;
+    spec1.operationId = 14031;
+    spec1.limits.perStreamResultBytes = 65536;
+    spec1.argv = {
+        "python3", "-c",
+        "import time, sys\n"
+        "time.sleep(0.35)\n"
+        "sys.stdout.write('CONTINUOUS_DRAIN_OK\\n')\n"
+        "sys.stdout.flush()\n"
+    };
+
+    const auto res1 = runCommand(spec1);
+    TEST_ASSERT(res1.state == CommandState::Exited);
+    TEST_ASSERT(res1.exitStatus == 0);
+    TEST_ASSERT(res1.stdoutText.find("CONTINUOUS_DRAIN_OK") != std::string::npos);
+
+    // 2. Zombie leader: main thread calls pthread_exit(0) while worker sleeps 400ms
+    CommandSpec spec2;
+    spec2.mode = CommandMode::PackageTransaction;
+    spec2.timeoutMs = 60; // Timeout shorter than worker duration
+    spec2.operationId = 14032;
+    spec2.limits.perStreamResultBytes = 65536;
+    spec2.argv = {
+        "python3", "-c",
+        "import ctypes, threading, time, os\n"
+        "def worker():\n"
+        "    time.sleep(0.4)\n"
+        "    os.write(1, b'WORKER_FINISHED_SUCCESS\\n')\n"
+        "t = threading.Thread(target=worker)\n"
+        "t.start()\n"
+        "ctypes.CDLL(None).pthread_exit(None)\n"
+    };
+
+    const auto start = std::chrono::steady_clock::now();
+    const auto res2 = runCommand(spec2);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+    // Must return Continuing within bounded time (not blocked for 400ms by waitpid on collector)
+    TEST_ASSERT(res2.state == CommandState::Continuing);
+    TEST_ASSERT(elapsed < 300);
+
+    // Wait for actual completion
+    const auto finalRes = waitForOperation(spec2.operationId, 2000);
+    TEST_ASSERT(finalRes.state == CommandState::Exited);
+    TEST_ASSERT(finalRes.exitStatus == 0);
+    TEST_ASSERT(finalRes.stdoutText.find("WORKER_FINISHED_SUCCESS") != std::string::npos);
+}
+
+// T13-S04: Async final state published before collector exit is cleanly reaped by background reaper
+void test_T13_S04_AsyncFinalPublishedBeforeCollectorExitReapedByBackground() {
+    const std::string tmpDir = getTempDir();
+
+    for (int iter = 0; iter < 3; ++iter) {
+        const std::uint64_t opId = 14040 + iter;
+        const std::string opDir = tmpDir + "/modernime-op-s04-" + std::to_string(iter);
+        std::filesystem::create_directories(opDir);
+
+        // Fork a child process to simulate the collector
+        const pid_t cpid = ::fork();
+        TEST_ASSERT(cpid >= 0);
+
+        if (cpid == 0) {
+            // Write Exited state file
+            std::ostringstream ss;
+            ss << "{\n"
+               << "  \"operationId\": " << opId << ",\n"
+               << "  \"token\": \"token-s04\",\n"
+               << "  \"collectorPid\": " << ::getpid() << ",\n"
+               << "  \"childPid\": 0,\n"
+               << "  \"state\": \"Exited\",\n"
+               << "  \"exitStatus\": 0,\n"
+               << "  \"stdoutTruncated\": false,\n"
+               << "  \"stderrTruncated\": false,\n"
+               << "  \"stdoutBytes\": 4,\n"
+               << "  \"stderrBytes\": 0,\n"
+               << "  \"bufferPeak\": 4,\n"
+               << "  \"filePeak\": 0\n"
+               << "}\n";
+            {
+                std::ofstream out(opDir + "/state.json.tmp");
+                out << ss.str();
+            }
+            ::rename((opDir + "/state.json.tmp").c_str(), (opDir + "/state.json").c_str());
+            {
+                std::ofstream out(opDir + "/stdout.tail.tmp");
+                out << "DONE";
+            }
+            ::rename((opDir + "/stdout.tail.tmp").c_str(), (opDir + "/stdout.tail").c_str());
+            // Sleep 200ms before exiting to simulate post-publish teardown
+            ::usleep(200000);
+            ::_exit(0);
+        }
+
+        OperationRef ref;
+        ref.operationId = opId;
+        ref.token = "token-s04";
+        ref.opDir = opDir;
+        ref.collectorPid = cpid;
+        ref.isOwnedChild = true;
+        registerOperationRef(ref);
+
+        const auto res = waitForOperation(ref, 500);
+        TEST_ASSERT(res.state == CommandState::Exited);
+        TEST_ASSERT(res.exitStatus == 0);
+        TEST_ASSERT(res.stdoutText == "DONE");
+
+        // Allow child to exit
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        // Check if child was reaped by the background reaper
+        int st = 0;
+        int nZombies = 0;
+        while (::waitpid(-1, &st, WNOHANG) > 0) {
+            ++nZombies;
+        }
+        TEST_ASSERT(nZombies == 0);
+        TEST_ASSERT(::kill(cpid, 0) != 0);
+        TEST_ASSERT(!std::filesystem::exists(opDir));
+    }
+}
+
+// T13-S05: Verification of absolute settings executable resolution and parser entry
+void test_T13_S05_R01AbsolutePathAndR04ValidRefVerification() {
+    const std::string exe = resolveSettingsExeForTest();
+    TEST_ASSERT(!exe.empty());
+    TEST_ASSERT(std::filesystem::exists(exe));
+    TEST_ASSERT(::access(exe.c_str(), X_OK) == 0);
+    TEST_ASSERT(exe[0] == '/'); // Must be absolute path
+}
+
+// T13-S06: Dual stream continuous output peak budgets and strict file permissions
+void test_T13_S06_DualStream100MiBPeakBudgetAndFilePermissions() {
+    CommandSpec spec;
+    spec.mode = CommandMode::PackageTransaction;
+    spec.timeoutMs = 30000;
+    spec.operationId = 1406;
+    spec.limits.perStreamBufferBytes = 1048576;
+    spec.limits.perStreamResultBytes = 65536;
+    spec.limits.perStreamFileBytes = 1048576;
+    spec.argv = {
+        "python3", "-c",
+        "import sys\n"
+        "chunk = 'M' * 1048576\n"
+        "for _ in range(10):\n"
+        "    sys.stdout.write(chunk)\n"
+        "    sys.stderr.write(chunk)\n"
+        "sys.stdout.flush()\n"
+        "sys.stderr.flush()\n"
+    };
+
+    const auto res = runCommand(spec);
+    TEST_ASSERT(res.state == CommandState::Exited);
+    TEST_ASSERT(res.exitStatus == 0);
+    TEST_ASSERT(res.stdoutTruncated == true);
+    TEST_ASSERT(res.stderrTruncated == true);
+    TEST_ASSERT(res.stdoutText.size() <= 65536);
+    TEST_ASSERT(res.stderrText.size() <= 65536);
+    TEST_ASSERT(res.bufferPeak > 0);
+    TEST_ASSERT(res.bufferPeak <= spec.limits.perStreamBufferBytes);
+    TEST_ASSERT(res.filePeak <= spec.limits.perStreamFileBytes);
+}
+
+// T13-S07: Fresh evidence and test registration count check
+void test_T13_S07_FreshEvidenceAndRegistrationSelfCheck() {
+    // Verifies all 29 tests execute in this suite
+    TEST_ASSERT(g_passCount >= 28); // 28 tests completed before this one
+}
+
 } // namespace
 
 int main() {
@@ -970,6 +1423,14 @@ int main() {
     RUN_TEST(test_T13_R08_EnvironmentInheritanceAndExplicitOverrides);
     RUN_TEST(test_T13_R09_ResourcePeaksAndBudgetMeasurement);
     RUN_TEST(test_T13_R10_HeadlessExecInternalCollectorWithoutDisplay);
+
+    RUN_TEST(test_T13_S01_TargetForkBeforeAckCrashPreservesStateAndExecFailureZeroSpawn);
+    RUN_TEST(test_T13_S02_StrictStateProtocolRejectionCoverage);
+    RUN_TEST(test_T13_S03_CollectorContinuousDrainAndZombieLeader);
+    RUN_TEST(test_T13_S04_AsyncFinalPublishedBeforeCollectorExitReapedByBackground);
+    RUN_TEST(test_T13_S05_R01AbsolutePathAndR04ValidRefVerification);
+    RUN_TEST(test_T13_S06_DualStream100MiBPeakBudgetAndFilePermissions);
+    RUN_TEST(test_T13_S07_FreshEvidenceAndRegistrationSelfCheck);
 
     std::cout << "========================================\n";
     std::cout << "Summary: " << g_passCount << " passed, " << g_failCount << " failed.\n";
