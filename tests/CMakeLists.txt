@@ -247,6 +247,8 @@ if(MODERNIME_BUILD_SETTINGS)
         ../tools/settings/settings_model.cpp
         ../tools/settings/runtime_controller.cpp
         ../tools/settings/package_operation_state.cpp
+        ../tools/settings/process_runner.cpp
+        ../tools/settings/package_policy.cpp
         ../tools/settings/update_controller.cpp
         ../tools/settings/clipboard_history_model.cpp
         ../tools/settings/overview_model.cpp
@@ -319,6 +321,8 @@ if(MODERNIME_BUILD_SETTINGS)
     add_executable(modernime_update_controller_tests
         settings/update_controller_test.cpp
         ../tools/settings/package_operation_state.cpp
+        ../tools/settings/process_runner.cpp
+        ../tools/settings/package_policy.cpp
         ../tools/settings/update_controller.cpp
     )
     target_include_directories(modernime_update_controller_tests PRIVATE
@@ -332,6 +336,25 @@ if(MODERNIME_BUILD_SETTINGS)
         MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
     )
     add_test(NAME modernime_update_controller COMMAND modernime_update_controller_tests)
+
+    add_executable(modernime_process_runner_tests
+        settings/process_runner_test.cpp
+        ../tools/settings/package_operation_state.cpp
+        ../tools/settings/process_runner.cpp
+        ../tools/settings/package_policy.cpp
+        ../tools/settings/update_controller.cpp
+    )
+    target_include_directories(modernime_process_runner_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    )
+    target_link_libraries(modernime_process_runner_tests PRIVATE
+        PkgConfig::GTK3
+    )
+    target_compile_definitions(modernime_process_runner_tests PRIVATE
+        MODERNIME_VERSION="${PROJECT_VERSION}"
+        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+    )
+    add_test(NAME modernime_process_runner COMMAND modernime_process_runner_tests)
 
     add_executable(modernime_settings_widgets_contract_tests
         settings/settings_widgets_contract_test.cpp

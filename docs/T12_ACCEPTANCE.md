@@ -135,6 +135,9 @@ ctest --test-dir build/architecture-release --output-on-failure \
 - 失败测试数：0
 - 跳过测试数：0
 
+> [!NOTE]
+> 澄清说明：T12 验收归档证明了性能门禁在 Release 下生效并具备严格负向拒绝机制。基准测试通过仅证明生产性能指标受控，不能替代全量功能回归；全量功能测试与新增进程采集/包政策契约在 T13 阶段进行全量跑通与双向证据归档。
+
 证据文件：`build/t12-evidence/g3/release-ctest.log`、`build/t12-evidence/g3/release-ctest-junit.xml`。
 
 ### 4.4 G3 Release 性能门禁与负向拒绝自检

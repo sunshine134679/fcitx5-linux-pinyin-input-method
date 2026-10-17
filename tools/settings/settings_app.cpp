@@ -1,4 +1,5 @@
 #include "modernime/settings/settings_window.h"
+#include "modernime/settings/detail/process_runner.h"
 
 #include <gtk/gtk.h>
 
@@ -59,6 +60,10 @@ modernime::core::SettingsPaths settingsPaths() {
 } // namespace
 
 int main(int argc, char **argv) {
+    if (argc >= 2 && std::string_view(argv[1]) == "--internal-capture-collector") {
+        return modernime::settings::detail::runCommandCaptureChild(argc, argv);
+    }
+
     if (argc == 2 && std::string_view(argv[1]) == "--version") {
         std::cout << "ModernIME settings " << MODERNIME_VERSION << '\n';
         return EXIT_SUCCESS;

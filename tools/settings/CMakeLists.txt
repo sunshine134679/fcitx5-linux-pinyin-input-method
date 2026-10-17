@@ -17,6 +17,8 @@ add_executable(modernime-settings
     settings_model.cpp
     runtime_controller.cpp
     package_operation_state.cpp
+    process_runner.cpp
+    package_policy.cpp
     update_controller.cpp
     clipboard_history_model.cpp
     overview_model.cpp
