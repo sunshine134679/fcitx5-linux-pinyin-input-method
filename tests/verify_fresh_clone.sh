@@ -44,8 +44,72 @@ test -f "$MODERNIME_PREFIX/bin/modernime-settings"
 test -x "$MODERNIME_PREFIX/bin/modernime-settings"
 installed_version=$(env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --version)
 [[ "$installed_version" == *"ModernIME settings"* ]]
-# Verify internal capture collector handles headless invocation cleanly (returns 1 on missing args without GUI dependency)
-env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --internal-capture-collector 2>/dev/null && false || true
+# Verify internal capture collector handles missing args by exiting non-zero safely
+if env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --internal-capture-collector 2>/dev/null; then
+    echo "ERROR: Expected non-zero exit when internal capture collector is invoked without args" >&2
+    exit 1
+fi
+
+# Execute a synthetic task with installed binary in headless environment and verify full result
+t4_opdir=$(mktemp -d "$test_root/modernime-install-collector-XXXXXX")
+chmod 0700 "$t4_opdir"
+t4_spec="$t4_opdir/spec.dat"
+cat << 'EOF' > "$t4_spec"
+operationId=98765
+token=install-token-98765
+timeoutMs=5000
+mode=1
+perStreamBufferBytes=1048576
+perStreamResultBytes=65536
+perStreamFileBytes=1048576
+argc=3
+argv=/usr/bin/python3
+argv=-c
+argv=import sys; sys.stdout.write("INSTALL_COLLECTOR_STDOUT_OK\n"); sys.stderr.write("INSTALL_COLLECTOR_STDERR_OK\n")
+envc=0
+EOF
+chmod 0600 "$t4_spec"
+
+t4_pipe="$t4_opdir/handshake.fifo"
+mkfifo "$t4_pipe"
+exec 3<>"$t4_pipe"
+env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" \
+    --internal-capture-collector \
+    --op-dir "$t4_opdir" \
+    --handshake-fd 3 &
+t4_pid=$!
+
+if ! read -r -n 1 -t 5 t4_hs <&3; then
+    kill -9 "$t4_pid" 2>/dev/null || true
+    echo "ERROR: Handshake read timed out" >&2
+    exit 1
+fi
+exec 3>&-
+exec 3<&-
+
+if [[ "$t4_hs" != "R" && "$t4_hs" != "1" ]]; then
+    kill -9 "$t4_pid" 2>/dev/null || true
+    echo "ERROR: Unexpected handshake byte: $t4_hs" >&2
+    exit 1
+fi
+
+wait "$t4_pid"
+t4_status=$?
+if [[ "$t4_status" -ne 0 ]]; then
+    echo "ERROR: Collector process exited with non-zero: $t4_status" >&2
+    exit 1
+fi
+
+test -f "$t4_opdir/state.json"
+test -f "$t4_opdir/stdout.tail"
+test -f "$t4_opdir/stderr.tail"
+grep -q '"state": "Exited"' "$t4_opdir/state.json"
+grep -q '"exitStatus": 0' "$t4_opdir/state.json"
+grep -q '"operationId": 98765' "$t4_opdir/state.json"
+grep -q '"token": "install-token-98765"' "$t4_opdir/state.json"
+grep -q "INSTALL_COLLECTOR_STDOUT_OK" "$t4_opdir/stdout.tail"
+grep -q "INSTALL_COLLECTOR_STDERR_OK" "$t4_opdir/stderr.tail"
+rm -rf -- "$t4_opdir"
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
 test -x "$MODERNIME_PREFIX/bin/modernime-session-init"

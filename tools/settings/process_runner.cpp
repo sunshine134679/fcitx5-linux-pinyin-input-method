@@ -39,21 +39,62 @@ struct PendingReap {
 std::mutex g_reaperMutex;
 std::condition_variable g_reaperCv;
 std::vector<PendingReap> g_pendingReaps;
-std::atomic<bool> g_reaperRunning{false};
+std::uint64_t g_reaperEnqueueSeq = 0;
+std::atomic<bool> g_reaperStop{false};
+std::thread g_reaperThread;
+} // namespace
+
+void shutdownBackgroundReaper() {
+    {
+        std::lock_guard<std::mutex> lk(g_reaperMutex);
+        if (!g_reaperThread.joinable()) {
+            return;
+        }
+        g_reaperStop.store(true);
+        g_reaperCv.notify_all();
+    }
+    if (g_reaperThread.joinable()) {
+        g_reaperThread.join();
+    }
+}
+
+namespace {
+struct ReaperCleaner {
+    ~ReaperCleaner() {
+        shutdownBackgroundReaper();
+    }
+};
+static ReaperCleaner g_reaperCleaner;
 
 void enqueuePendingReap(pid_t pid, const std::string &opDir) {
     if (pid <= 0) return;
     std::lock_guard<std::mutex> lock(g_reaperMutex);
+    if (g_reaperStop.load()) return;
     g_pendingReaps.push_back({pid, opDir});
-    if (!g_reaperRunning.exchange(true)) {
-        std::thread t([]() {
+    ++g_reaperEnqueueSeq;
+    if (!g_reaperThread.joinable()) {
+        g_reaperThread = std::thread([]() {
+            std::uint64_t lastSeq = 0;
             while (true) {
                 std::vector<PendingReap> current;
                 {
                     std::unique_lock<std::mutex> lk(g_reaperMutex);
-                    g_reaperCv.wait_for(lk, std::chrono::milliseconds(30), [&]() {
-                        return !g_pendingReaps.empty();
-                    });
+                    if (g_reaperStop.load()) {
+                        break;
+                    }
+                    if (g_pendingReaps.empty()) {
+                        g_reaperCv.wait(lk, [&]() {
+                            return g_reaperStop.load() || !g_pendingReaps.empty();
+                        });
+                    } else {
+                        g_reaperCv.wait_for(lk, std::chrono::milliseconds(50), [&]() {
+                            return g_reaperStop.load() || (g_reaperEnqueueSeq != lastSeq);
+                        });
+                    }
+                    if (g_reaperStop.load()) {
+                        break;
+                    }
+                    lastSeq = g_reaperEnqueueSeq;
                     current = g_pendingReaps;
                 }
 
@@ -85,9 +126,8 @@ void enqueuePendingReap(pid_t pid, const std::string &opDir) {
                 }
             }
         });
-        t.detach();
     } else {
-        g_reaperCv.notify_one();
+        g_reaperCv.notify_all();
     }
 }
 
@@ -569,23 +609,39 @@ ParsedState parseStateFile(const std::string &path, std::uint64_t expectedOpId, 
         }
     }
 
-    if (entries["operationId"].type != JsonTokenType::Number || entries["operationId"].num < 0) return s;
+    if (entries["operationId"].type != JsonTokenType::Number || entries["operationId"].num <= 0) return s;
     s.operationId = static_cast<std::uint64_t>(entries["operationId"].num);
 
     if (entries["token"].type != JsonTokenType::String) return s;
     s.token = entries["token"].str;
 
     if (entries["collectorPid"].type != JsonTokenType::Number) return s;
-    s.collectorPid = static_cast<pid_t>(entries["collectorPid"].num);
+    const long long cPid = entries["collectorPid"].num;
+    if (cPid <= 0 || cPid > 4194304LL) return s;
+    s.collectorPid = static_cast<pid_t>(cPid);
 
     if (entries["childPid"].type != JsonTokenType::Number) return s;
-    s.childPid = static_cast<pid_t>(entries["childPid"].num);
+    const long long chPid = entries["childPid"].num;
+    if (chPid < 0 || chPid > 4194304LL) return s;
+    s.childPid = static_cast<pid_t>(chPid);
 
     if (entries["state"].type != JsonTokenType::String) return s;
     s.stateStr = entries["state"].str;
+    if (s.stateStr != "Starting" && s.stateStr != "Running" &&
+        s.stateStr != "Exited" && s.stateStr != "Unknown") {
+        return s;
+    }
 
     if (entries["exitStatus"].type != JsonTokenType::Number) return s;
-    s.exitStatus = static_cast<int>(entries["exitStatus"].num);
+    const long long rawExit = entries["exitStatus"].num;
+    if (s.stateStr == "Exited") {
+        if (rawExit < 0 || rawExit > 255) return s;
+    } else if (s.stateStr == "Running" || s.stateStr == "Starting") {
+        if (rawExit != -1) return s;
+    } else if (s.stateStr == "Unknown") {
+        if (rawExit < -1 || rawExit > 255) return s;
+    }
+    s.exitStatus = static_cast<int>(rawExit);
 
     if (entries["stdoutTruncated"].type != JsonTokenType::Boolean) return s;
     s.stdoutTruncated = entries["stdoutTruncated"].b;
@@ -593,22 +649,25 @@ ParsedState parseStateFile(const std::string &path, std::uint64_t expectedOpId, 
     if (entries["stderrTruncated"].type != JsonTokenType::Boolean) return s;
     s.stderrTruncated = entries["stderrTruncated"].b;
 
-    if (entries["stdoutBytes"].type != JsonTokenType::Number || entries["stdoutBytes"].num < 0) return s;
-    s.stdoutBytes = static_cast<std::size_t>(entries["stdoutBytes"].num);
+    if (entries["stdoutBytes"].type != JsonTokenType::Number) return s;
+    const long long soBytes = entries["stdoutBytes"].num;
+    if (soBytes < 0 || soBytes > 1073741824LL) return s;
+    s.stdoutBytes = static_cast<std::size_t>(soBytes);
 
-    if (entries["stderrBytes"].type != JsonTokenType::Number || entries["stderrBytes"].num < 0) return s;
-    s.stderrBytes = static_cast<std::size_t>(entries["stderrBytes"].num);
+    if (entries["stderrBytes"].type != JsonTokenType::Number) return s;
+    const long long seBytes = entries["stderrBytes"].num;
+    if (seBytes < 0 || seBytes > 1073741824LL) return s;
+    s.stderrBytes = static_cast<std::size_t>(seBytes);
 
-    if (entries["bufferPeak"].type != JsonTokenType::Number || entries["bufferPeak"].num < 0) return s;
-    s.bufferPeak = static_cast<std::size_t>(entries["bufferPeak"].num);
+    if (entries["bufferPeak"].type != JsonTokenType::Number) return s;
+    const long long bPeak = entries["bufferPeak"].num;
+    if (bPeak < 0 || bPeak > 1073741824LL) return s;
+    s.bufferPeak = static_cast<std::size_t>(bPeak);
 
-    if (entries["filePeak"].type != JsonTokenType::Number || entries["filePeak"].num < 0) return s;
-    s.filePeak = static_cast<std::size_t>(entries["filePeak"].num);
-
-    if (s.stateStr != "Starting" && s.stateStr != "Running" &&
-        s.stateStr != "Exited" && s.stateStr != "Unknown") {
-        return s;
-    }
+    if (entries["filePeak"].type != JsonTokenType::Number) return s;
+    const long long fPeak = entries["filePeak"].num;
+    if (fPeak < 0 || fPeak > 1073741824LL) return s;
+    s.filePeak = static_cast<std::size_t>(fPeak);
 
     if (expectedOpId != 0 && s.operationId != expectedOpId) {
         return s;
@@ -1022,14 +1081,107 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
         g_activeOpRefs[spec.operationId].isOwnedChild = true;
     }
 
-    int childErrno = 0;
-    const ssize_t nExec = ::read(execPipe[0], &childErrno, sizeof(childErrno));
-    ::close(execPipe[0]);
+    auto setNonBlocking = [](int fd) {
+        int flags = ::fcntl(fd, F_GETFL, 0);
+        if (flags >= 0) {
+            ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+    };
+    setNonBlocking(execPipe[0]);
+    setNonBlocking(handshakeFds[0]);
 
-    if (nExec > 0) {
+    const auto startTime = std::chrono::steady_clock::now();
+    const auto deadline = startTime + std::chrono::milliseconds(spec.timeoutMs);
+
+    int childErrno = 0;
+    std::size_t execBytesRead = 0;
+    char *errnoBuf = reinterpret_cast<char *>(&childErrno);
+    bool execPipeClosed = false;
+
+    char handshakeByte = 0;
+    bool handshakeReceived = false;
+
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        const int waitMs = std::max(0, static_cast<int>(remaining));
+
+        struct pollfd pfds[2];
+        nfds_t nfds = 0;
+        int execIdx = -1;
+        int hsIdx = -1;
+
+        if (!execPipeClosed && execBytesRead < sizeof(childErrno)) {
+            execIdx = static_cast<int>(nfds++);
+            pfds[execIdx].fd = execPipe[0];
+            pfds[execIdx].events = POLLIN;
+            pfds[execIdx].revents = 0;
+        }
+        if (!handshakeReceived) {
+            hsIdx = static_cast<int>(nfds++);
+            pfds[hsIdx].fd = handshakeFds[0];
+            pfds[hsIdx].events = POLLIN;
+            pfds[hsIdx].revents = 0;
+        }
+
+        if (nfds == 0) {
+            break;
+        }
+
+        int pRet = ::poll(pfds, nfds, waitMs);
+        if (pRet < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (pRet == 0) {
+            break; // Deadline expired
+        }
+
+        if (execIdx >= 0 && (pfds[execIdx].revents & (POLLIN | POLLHUP | POLLERR))) {
+            while (execBytesRead < sizeof(childErrno)) {
+                ssize_t n = ::read(execPipe[0], errnoBuf + execBytesRead,
+                                   sizeof(childErrno) - execBytesRead);
+                if (n > 0) {
+                    execBytesRead += static_cast<std::size_t>(n);
+                } else if (n == 0) {
+                    execPipeClosed = true;
+                    break;
+                } else {
+                    if (errno == EINTR) continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    execPipeClosed = true;
+                    break;
+                }
+            }
+            if (execBytesRead == sizeof(childErrno)) {
+                break;
+            }
+        }
+
+        if (hsIdx >= 0 && (pfds[hsIdx].revents & (POLLIN | POLLHUP | POLLERR))) {
+            ssize_t n = ::read(handshakeFds[0], &handshakeByte, 1);
+            if (n > 0) {
+                handshakeReceived = true;
+                break;
+            } else if (n == 0) {
+                break;
+            } else {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // Non-blocking would block, keep waiting
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    ::close(execPipe[0]);
+    ::close(handshakeFds[0]);
+
+    if (execBytesRead == sizeof(childErrno) && childErrno != 0) {
         int st = 0;
         ::waitpid(collectorPid, &st, 0);
-        ::close(handshakeFds[0]);
         std::error_code ec;
         std::filesystem::remove_all(opDir, ec);
         {
@@ -1042,38 +1194,7 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
         return result;
     }
 
-    const auto startTime = std::chrono::steady_clock::now();
-    const auto deadline = startTime + std::chrono::milliseconds(spec.timeoutMs);
-
-    struct pollfd hPfd;
-    hPfd.fd = handshakeFds[0];
-    hPfd.events = POLLIN;
-    hPfd.revents = 0;
-
-    const auto hRemaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
-    const int hWaitMs = std::max(0, static_cast<int>(hRemaining));
-    const int hPoll = ::poll(&hPfd, 1, hWaitMs);
-
-    char handshakeByte = 0;
-    ssize_t hRead = -1;
-    if (hPoll > 0 && (hPfd.revents & (POLLIN | POLLHUP | POLLERR))) {
-        hRead = ::read(handshakeFds[0], &handshakeByte, 1);
-    }
-    ::close(handshakeFds[0]);
-
-    if (hPoll <= 0 || hRead != 1) {
-        int st = 0;
-        pid_t wp = ::waitpid(collectorPid, &st, WNOHANG);
-        if (wp == 0) {
-            enqueuePendingReap(collectorPid, "");
-        }
-        result.state = CommandState::Unknown;
-        result.exitStatus = -1;
-        result.stderrText = "Collector process failed or crashed before handshake confirmation";
-        return result;
-    }
-
-    if (handshakeByte == 'N') {
+    if (handshakeReceived && handshakeByte == 'N') {
         int st = 0;
         ::waitpid(collectorPid, &st, 0);
         std::error_code ec;
@@ -1088,7 +1209,7 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
         return result;
     }
 
-    if (handshakeByte == 'U' || (handshakeByte != 'R' && handshakeByte != '1')) {
+    if (!handshakeReceived || (handshakeByte != 'R' && handshakeByte != '1')) {
         int st = 0;
         pid_t wp = ::waitpid(collectorPid, &st, WNOHANG);
         if (wp == 0) {
@@ -1096,7 +1217,7 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
         }
         result.state = CommandState::Unknown;
         result.exitStatus = -1;
-        result.stderrText = "Collector reported uncertain start state";
+        result.stderrText = "Collector process failed or crashed before handshake confirmation";
         return result;
     }
 

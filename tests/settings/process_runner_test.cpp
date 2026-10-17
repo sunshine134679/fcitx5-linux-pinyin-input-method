@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -1391,8 +1392,242 @@ void test_T13_S06_DualStream100MiBPeakBudgetAndFilePermissions() {
 
 // T13-S07: Fresh evidence and test registration count check
 void test_T13_S07_FreshEvidenceAndRegistrationSelfCheck() {
-    // Verifies all 29 tests execute in this suite
-    TEST_ASSERT(g_passCount >= 28); // 28 tests completed before this one
+    TEST_ASSERT(g_passCount >= 28);
+}
+
+// T13-T01: Background reaper low CPU, bounded polling rate, zero zombies, and clean shutdown
+void test_T13_T01_ReaperLowCpuAndSafeShutdown() {
+    const std::string tmpDir = getTempDir();
+    const std::uint64_t opId = 1501;
+    const std::string opDir = tmpDir + "/modernime-op-t01";
+    std::filesystem::create_directories(opDir);
+
+    const pid_t cpid = ::fork();
+    TEST_ASSERT(cpid >= 0);
+
+    if (cpid == 0) {
+        // Write Exited state file
+        std::ofstream out(opDir + "/state.json");
+        out << "{\n"
+            << "  \"operationId\": " << opId << ",\n"
+            << "  \"token\": \"token-t01\",\n"
+            << "  \"collectorPid\": " << ::getpid() << ",\n"
+            << "  \"childPid\": 0,\n"
+            << "  \"state\": \"Exited\",\n"
+            << "  \"exitStatus\": 0,\n"
+            << "  \"stdoutTruncated\": false,\n"
+            << "  \"stderrTruncated\": false,\n"
+            << "  \"stdoutBytes\": 4,\n"
+            << "  \"stderrBytes\": 0,\n"
+            << "  \"bufferPeak\": 4,\n"
+            << "  \"filePeak\": 0\n"
+            << "}\n";
+        out.close();
+        {
+            std::ofstream tail(opDir + "/stdout.tail");
+            tail << "T01";
+        }
+        // Sleep 700ms before exit to simulate pause after publishing final state
+        ::usleep(700000);
+        ::_exit(0);
+    }
+
+    OperationRef ref;
+    ref.operationId = opId;
+    ref.token = "token-t01";
+    ref.opDir = opDir;
+    ref.collectorPid = cpid;
+    ref.isOwnedChild = true;
+    registerOperationRef(ref);
+
+    struct rusage ruBefore{};
+    ::getrusage(RUSAGE_SELF, &ruBefore);
+
+    const auto res = waitForOperation(ref, 500);
+    TEST_ASSERT(res.state == CommandState::Exited);
+    TEST_ASSERT(res.exitStatus == 0);
+    TEST_ASSERT(res.stdoutText == "T01");
+
+    // Sleep 800ms while child finishes sleeping and exits
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+
+    struct rusage ruAfter{};
+    ::getrusage(RUSAGE_SELF, &ruAfter);
+
+    const long long cpuUs = (ruAfter.ru_utime.tv_sec - ruBefore.ru_utime.tv_sec) * 1000000LL +
+                            (ruAfter.ru_utime.tv_usec - ruBefore.ru_utime.tv_usec) +
+                            (ruAfter.ru_stime.tv_sec - ruBefore.ru_stime.tv_sec) * 1000000LL +
+                            (ruAfter.ru_stime.tv_usec - ruBefore.ru_stime.tv_usec);
+
+    // Bounded CPU usage: should be well under 100ms (100000us), definitely not ~700ms busy loop
+    TEST_ASSERT(cpuUs < 100000LL);
+
+    // Verify child was reaped by background reaper
+    int st = 0;
+    int nZombies = 0;
+    while (::waitpid(-1, &st, WNOHANG) > 0) {
+        ++nZombies;
+    }
+    TEST_ASSERT(nZombies == 0);
+    TEST_ASSERT(::kill(cpid, 0) != 0);
+
+    // Test safe shutdown of reaper
+    shutdownBackgroundReaper();
+}
+
+// T13-T02: Single deadline for pre-exec delay and handshake; strict zero-spawn proof
+void test_T13_T02_PreExecDeadlineBoundedAndStrictZeroSpawn() {
+    const std::string tmpDir = getTempDir();
+    const std::string settingsExe = resolveSettingsExeForTest();
+
+    // 1. Pre-exec delay: child delays before exec/handshake, timeout is 80ms
+    const std::string delayWrapper = tmpDir + "/pre-exec-delay-wrapper.sh";
+    {
+        std::ofstream out(delayWrapper);
+        out << "#!/bin/sh\n"
+            << "sleep 0.35\n"
+            << "exec \"" << settingsExe << "\" \"$@\"\n";
+    }
+    ::chmod(delayWrapper.c_str(), 0755);
+
+    CommandSpec spec1;
+    spec1.mode = CommandMode::PackageTransaction;
+    spec1.timeoutMs = 80;
+    spec1.operationId = 15021;
+    spec1.limits.perStreamResultBytes = 65536;
+    spec1.environment = {{"MODERNIME_SETTINGS_EXECUTABLE", delayWrapper}};
+    spec1.argv = {"/bin/true"};
+
+    const auto start1 = std::chrono::steady_clock::now();
+    const auto res1 = runCommand(spec1);
+    const auto elapsed1 = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start1).count();
+
+    // Must return Unknown (not NotStarted, because zero-spawn was NOT proven)
+    TEST_ASSERT(res1.state == CommandState::Unknown);
+    // Bounded by deadline: elapsed should be close to 80ms (definitely < 250ms)
+    TEST_ASSERT(elapsed1 < 250);
+
+    // Ref must be preserved in activeOpRefs
+    auto ref1 = getActiveOperationRef(spec1.operationId);
+    TEST_ASSERT(ref1.has_value());
+    cleanupOperation(spec1.operationId);
+    std::filesystem::remove(delayWrapper);
+
+    // 2. Strict zero spawn on exec failure: nonexistent executable returns NotStarted immediately
+    CommandSpec spec2;
+    spec2.mode = CommandMode::PackageTransaction;
+    spec2.timeoutMs = 2000;
+    spec2.operationId = 15022;
+    spec2.limits.perStreamResultBytes = 65536;
+    spec2.environment = {{"MODERNIME_SETTINGS_EXECUTABLE", "/nonexistent/binary/for/test"}};
+    spec2.argv = {"/bin/true"};
+
+    const auto start2 = std::chrono::steady_clock::now();
+    const auto res2 = runCommand(spec2);
+    const auto elapsed2 = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start2).count();
+
+    TEST_ASSERT(res2.state == CommandState::NotStarted);
+    TEST_ASSERT(elapsed2 < 100);
+}
+
+// T13-T03: Numeric range and protocol validation before narrowing
+void test_T13_T03_NumericRangeAndProtocolValidation() {
+    const std::string tmpDir = getTempDir();
+    const std::uint64_t opId = 1503;
+    const std::string opDir = tmpDir + "/modernime-op-t03";
+    std::filesystem::create_directories(opDir);
+
+    OperationRef ref;
+    ref.operationId = opId;
+    ref.token = "token-t03";
+    ref.opDir = opDir;
+    ref.collectorPid = 12345;
+    registerOperationRef(ref);
+
+    auto testState = [&](long long cPid, long long chPid, const std::string &st, long long exitVal, bool expectedValid) {
+        std::ofstream out(opDir + "/state.json");
+        out << "{\n"
+            << "  \"operationId\": " << opId << ",\n"
+            << "  \"token\": \"token-t03\",\n"
+            << "  \"collectorPid\": " << cPid << ",\n"
+            << "  \"childPid\": " << chPid << ",\n"
+            << "  \"state\": \"" << st << "\",\n"
+            << "  \"exitStatus\": " << exitVal << ",\n"
+            << "  \"stdoutTruncated\": false,\n"
+            << "  \"stderrTruncated\": false,\n"
+            << "  \"stdoutBytes\": 0,\n"
+            << "  \"stderrBytes\": 0,\n"
+            << "  \"bufferPeak\": 0,\n"
+            << "  \"filePeak\": 0\n"
+            << "}\n";
+        out.close();
+
+        const auto res = waitForOperation(ref, 20);
+        if (expectedValid) {
+            TEST_ASSERT(res.state == CommandState::Exited);
+            TEST_ASSERT(res.exitStatus == static_cast<int>(exitVal));
+        } else {
+            TEST_ASSERT(res.state != CommandState::Exited);
+            TEST_ASSERT(res.exitStatus == -1);
+        }
+    };
+
+    // 1. exitStatus = 4294967296 (2^32) with state "Exited" -> must be rejected (not 0)
+    testState(12345, 0, "Exited", 4294967296LL, false);
+
+    // 2. collectorPid = 12345 + 4294967296 (2^32 overflow) -> must be rejected
+    testState(12345LL + 4294967296LL, 0, "Exited", 0, false);
+
+    // 3. exitStatus negative (-10) with state "Exited" -> must be rejected
+    testState(12345, 0, "Exited", -10, false);
+
+    // 4. exitStatus > 255 (256) with state "Exited" -> must be rejected
+    testState(12345, 0, "Exited", 256, false);
+
+    // 5. exitStatus != -1 (e.g. 0) with state "Running" -> must be rejected
+    testState(12345, 0, "Running", 0, false);
+
+    // 6. collectorPid <= 0 -> must be rejected
+    testState(0, 0, "Exited", 0, false);
+    testState(-1, 0, "Exited", 0, false);
+
+    // 7. collectorPid > 4194304 -> must be rejected
+    testState(5000000, 0, "Exited", 0, false);
+
+    // 8. childPid < 0 or > 4194304 -> must be rejected
+    testState(12345, -5, "Exited", 0, false);
+    testState(12345, 5000000, "Exited", 0, false);
+
+    // 9. Valid state with exitStatus 0 and 1 -> must succeed
+    testState(12345, 0, "Exited", 0, true);
+    testState(12345, 0, "Exited", 1, true);
+
+    cleanupOperation(opId);
+    std::filesystem::remove_all(opDir);
+}
+
+// T13-T04: Installed binary headless invocation regression
+void test_T13_T04_InstalledBinaryHeadlessInvocationRegression() {
+    const std::string exe = resolveSettingsExeForTest();
+    TEST_ASSERT(!exe.empty());
+    TEST_ASSERT(std::filesystem::exists(exe));
+
+    // 1. Invocation without display and missing args must exit non-zero safely
+    const std::string cmd1 = "env -u DISPLAY -u WAYLAND_DISPLAY \"" + exe + "\" --internal-capture-collector 2>/dev/null";
+    const int ret1 = std::system(cmd1.c_str());
+    TEST_ASSERT(WIFEXITED(ret1) && WEXITSTATUS(ret1) != 0);
+
+    // 2. Invocation with --version must output version and exit 0
+    const std::string cmd2 = "env -u DISPLAY -u WAYLAND_DISPLAY \"" + exe + "\" --version >/dev/null 2>&1";
+    const int ret2 = std::system(cmd2.c_str());
+    TEST_ASSERT(WIFEXITED(ret2) && WEXITSTATUS(ret2) == 0);
+}
+
+// T13-T05: Test suite self-check
+void test_T13_T05_TestSuiteSelfCheckT13() {
+    TEST_ASSERT(g_passCount >= 33);
 }
 
 } // namespace
@@ -1431,6 +1666,12 @@ int main() {
     RUN_TEST(test_T13_S05_R01AbsolutePathAndR04ValidRefVerification);
     RUN_TEST(test_T13_S06_DualStream100MiBPeakBudgetAndFilePermissions);
     RUN_TEST(test_T13_S07_FreshEvidenceAndRegistrationSelfCheck);
+
+    RUN_TEST(test_T13_T01_ReaperLowCpuAndSafeShutdown);
+    RUN_TEST(test_T13_T02_PreExecDeadlineBoundedAndStrictZeroSpawn);
+    RUN_TEST(test_T13_T03_NumericRangeAndProtocolValidation);
+    RUN_TEST(test_T13_T04_InstalledBinaryHeadlessInvocationRegression);
+    RUN_TEST(test_T13_T05_TestSuiteSelfCheckT13);
 
     std::cout << "========================================\n";
     std::cout << "Summary: " << g_passCount << " passed, " << g_failCount << " failed.\n";

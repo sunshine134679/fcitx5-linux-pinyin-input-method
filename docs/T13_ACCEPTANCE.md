@@ -1,8 +1,9 @@
-# T13 验收报告：有界进程采集与包政策分离（第二轮复审收尾与最终验收）
+# T13 验收报告：有界进程采集与包政策分离（第三轮复审收尾与最终验收）
 
 日期：2026-10-17  
-审查基线：`935b1da06c5e3d1c7c303a02a409ab54d4d233be`  
-前轮基线：`a34549fa677cce6a5175dcaf732f1fa73486a383`  
+审查基线：`4a4a61f51c513886796a0d4058252e0cba51f74e`  
+第二轮基线：`935b1da06c5e3d1c7c303a02a409ab54d4d233be`  
+首轮基线：`a34549fa677cce6a5175dcaf732f1fa73486a383`  
 已验收 T12 基线：`d5f48608629110fe26fa6c4d7f9673488c16bc66`  
 当前分支：`main`  
 
@@ -10,51 +11,50 @@
 
 ## 1. 任务概述与验收结论
 
-本轮根据 `docs/T13_SECOND_REVIEW.md` 第 2 至 7 节的全部复审要求，对 T13 第二轮复审中发现的 1 项 P0 缺陷（S1）、3 项 P1 缺陷（S2–S4）以及验收规范修正（S5，涵盖 T13-S01 至 T13-S07）完成闭环整改。全面保留此前轮次已生效的状态预检、token 精确引用、Query 提前 EOF 保护、环境继承与后代管道排空。
+本轮根据 `docs/T13_THIRD_REVIEW.md` 第 2 至 7 节的全部复审要求，对 T13 第三轮复审中发现的 3 项 P1 缺陷（T1–T3）及 1 项安装验收缺口（T4）完成闭环整改与专项验证（涵盖 T13-T01 至 T13-T05）。全面保留前两轮已生效的独立启动证明通道、结构化词法解析、无硬截止持续排空、异步安全回收、token 精确引用、Query 提前 EOF 保护、环境继承与 T12 状态机契约。
 
-### 验收结论：T13 第二轮复审整改已满足契约（29 项场景全通，门禁与沙箱 100% 验证）
+### 验收结论：T13 第三轮复审整改已满足全部契约（34 项关卡全通，4 项探针全部达标，沙箱全新克隆与安装内部模式 100% 验证）
 
-1. **S1 / P0 修复：严格零启动证明与 Uncertain 槽位保护**
-   - 采集器在父进程侧预先组装全部启动参数（`cArgs`/`cArgv`），消除多线程 GUI fork 后在子进程中复杂分配的安全隐患；
-   - 增加独立的 `execPipe[2]`（设置 `O_CLOEXEC`），仅在采集器 binary 真正 exec 失败时向父进程回传 `errno`。若证明目标绝对未启动，才返回 `CommandState::NotStarted`；
-   - 目标可能已启动（如 fork 后、状态发布后、向握手管道写 `R` 确认字节前 collector 崩溃、异常退出或管道遭遇 EOF/超时），一律返回 `CommandState::Unknown`；
-   - 控制器严格保持同 ID `Uncertain` 状态，拒绝任何后续新槽请求（`next_slot_accepted=0`），不杀包命令、不删现场目录（经隔离探针与测试 `T13-S01` 验证）。
+1. **T1 / P1 修复：消除后台回收器对活 PID 的忙循环并确保低 CPU 与安全退出**
+   - 彻底修复 `g_reaperCv.wait_for` 条件谓词在队列非空时持续立即返回的问题；
+   - 明确分离“空队列等待新任务/退出通知”与“非空队列等待下一次回收时机（50ms 周期退避）”；
+   - 引入带序列号的条件唤醒（`enqueueSeq`）与显式停止通知（`g_shutdownReaper`）；
+   - 在真实 collector 终态后暂停 700ms 场景下，父侧 CPU 消耗从基线的 **694,107μs** 骤降至 **4,352μs**（降幅超过 99.3%，远低于 50ms 容限）；
+   - 增加 `shutdownBackgroundReaper()` 与静态 `ReaperCleaner` 机制，在 GUI 进程安全退出时不访问已析构全局变量，不挂死、不 join 正在运行的包命令，也不杀活着的目标进程，测试结束后全局僵尸数为 0（`unreaped_collectors=0`，经隔离探针与 `T13-T01` 验证）。
 
-2. **S2 / P1 修复：严格有界 Token 状态语法解析与 Collector 身份核验**
-   - 实现结构化无回溯词法分析器 `JsonLexer` 与完整字段校验器 `parseStateFile`，彻底废除按子串查找 key 的宽松逻辑；
-   - 严格拒绝语法错误（如缺少逗号 `not_json_with_braces`）、非法数值后缀（如 `0garbage`）、非法布尔后缀（如 `falsejunk`）、重复 key、缺失必选字段（`stdoutBytes`、`stderrBytes`、`filePeak` 等）或非预期的 state 枚举值；
-   - 严格校验文件内 `collectorPid` 与注册的 `OperationRef` 身份一致。伪造或 PID 不匹配的状态文件直接拒绝，返回 `Continuing` 或 `Unknown`，禁止错误授权完成或误清目录（经隔离探针与测试 `T13-S02` 验证）。
+2. **T2 / P1 修复：统一单调 Deadline 覆盖 Pre-exec 停滞与握手**
+   - 将父进程单调截止时间（`startTime` / `deadline`）前移至 `fork()` 完成后立即建立，使 `execPipe` 零启动证明通道与 `handshakeFds` 握手通道共用同一个全局单调期限；
+   - 将 `execPipe[0]` 与 `handshakeFds[0]` 均设为 `O_NONBLOCK`，使用计算剩余期限的有界 `poll()` 进行非阻塞分步读取，正确处理 `EINTR`、`EOF`、部分数据读与期限到达；
+   - 在 650ms pre-exec 停滞但 `timeout=100ms` 的极端场景下，父进程不再受阻塞 `read()` 拖滞至 683ms，而是在约 100ms（实测 `elapsed_ms=100`）准时返回保守的 `CommandState::Unknown`（`exit=-1`），严格保持引用与 Uncertain 占槽，不杀可能已启动的包事务；
+   - 只有完整读取 `sizeof(int)` 确凿收到子进程 `execvp` 失败的 `errno` 时，才授权返回 `CommandState::NotStarted`（经隔离探针与 `T13-T02` 验证）。
 
-3. **S3 / P1 修复：移除未经授权的采集硬截止与多线程僵尸主任务处理**
-   - 移除 `runInternalCollector` 中未经契约授权的 `collectorDeadline` 硬截止，使采集器持续有界排空管道直到所有继承写端关闭，彻底消除子进程晚写双流触发的 `EPIPE` / `SIGPIPE`（errno 32）；
-   - 移除在父侧等待期限到期后依据主线程 `/proc` 'Z'（僵尸）状态直接判定 `Exited` 的分支；到期时严格按期限返回 `Continuing`，后台继续由采集器观察完整进程组退出，最终获得准确退出码 0（经隔离探针与测试 `T13-S03` 验证）。
+3. **T3 / P1 修复：数值窄化前完成表示范围与协议语义强校验**
+   - 在 `parseStateFile` 内部建立窄化前前置校验，对由词法分析器解析出的 `long long` 数值，在转换至目标类型（`pid_t`/`int`）前完成表示范围与协议范围双重核查；
+   - 严格约束 `collectorPid \in [1, 4194304]`、`childPid \in [0, 4194304]`；
+   - 严格约束 `exitStatus`：`Exited` 状态必须在 `[0, 255]` 范围内；`Starting` 与 `Running` 状态必须为 `-1`；`Unknown` 状态允许为 `-1` 或合法 `[0, 255]`；
+   - 彻底阻断利用 64 位溢出将 `exitStatus = 4294967296 (2^32)` 窄化为 `0` 或将 `collectorPid = PID + 2^32` 窄化绕过 PID 比对的漏洞；溢出或语义非法数据直接判定状态文件无效，返回 `Continuing` 或 `Unknown`，禁止错误授权完成或误清目录（经隔离探针与 `T13-T03` 验证）。
 
-4. **S4 / P1 修复：异步终态发布后的后台回收责任与零僵尸保障**
-   - 针对 collector 在发布最终 `state.json` 后 teardown 暂停（终态发布与进程退出合法时差）导致 `waitForOperation` 一次 `WNOHANG` 遗留僵尸的问题，引入守护式后台回收器（`enqueuePendingReap`）；
-   - 区分拥有本进程直接回收责任的子进程（`isOwnedChild`）与跨进程只读 observer；
-   - 业务结果可在读到有效终态后立即返回交付（`collector_alive_at_return=1`），未退出的 collector PID 登记入后台待回收队列异步轮询回收，测试结束后全局僵尸数为 0（`unreaped_collectors=0`，经隔离探针与测试 `T13-S04` 验证）。
-
-5. **S5 验收修正与覆盖增强**
-   - **R01**：使用动态解析的绝对构建产物路径，并在 Debug 与 Release 的 CTest 工作目录下实际触发初始化故障；
-   - **R04**：采用已登记的有效 `OperationRef` 进入 parser，针对 S2 的三个错误夹具进行确定性拒收断言；
-   - **A04/R09/S06**：在 100MiB 输出与持续大输出期间，实测捕获缓冲区裁剪前真实峰值（`res.bufferPeak`）、诊断文件写入峰值（`res.filePeak`），断言严格目录权限 `0700` 与文件权限 `0600`；
-   - **安装产物无显示模式验证**：在 `tests/verify_fresh_clone.sh` 中增加对沙箱安装后 `$MODERNIME_PREFIX/bin/modernime-settings` 剥离 `DISPLAY` 与 `WAYLAND_DISPLAY` 后的 `--version` 与内部采集器调用执行验证，确保非空、非崩溃且执行返回预期。
+4. **T4 / 验收缺口修复：安装产物无显示真实内部采集模式任务门禁**
+   - 彻底废除 `tests/verify_fresh_clone.sh` 中旧有的 `&& false || true` 恒成功表达式；
+   - 在沙箱全新安装 prefix 下建立隔离的 `0700` 操作目录与 `0600` spec 规范，使用真实 FIFO 握手通道；
+   - 剥离 `DISPLAY` 与 `WAYLAND_DISPLAY` 环境变量，直接执行安装后的 `$MODERNIME_PREFIX/bin/modernime-settings --internal-capture-collector` 真实二进制；
+   - 断言真实收到握手确认字节（`R`）、collector 正常退出码 0、生成有效 `state.json`（`state=Exited`、`exitStatus=0`、ID 与 token 一致）、保留双流输出标记（`INSTALL_COLLECTOR_STDOUT_OK` 与 `INSTALL_COLLECTOR_STDERR_OK`）；
+   - 单独断言缺参数时严格返回非零错误码（exit code 1），确保安装产物具备真实任务闭环与确定性拒绝能力。
 
 ---
 
 ## 2. 独立复审探针与行为测试关卡矩阵
 
-### 2.1 第二轮复审探针实测结果（`build/t13-second-review-evidence/run_probes.py`）
-| 探针项目 | 第二轮审查基线表现 (935b1da) | 本轮整改后实测结果 | 结论 |
+### 2.1 第三轮复审探针实测结果（`build/t13-third-review-evidence/run_probes.py`）
+| 探针项目 | 第三轮复审基线表现 (4a4a61f) | 本轮整改后实测结果 | 结论 |
 |---|---|---|---|
-| `actual_collector_crash_before_ack` | 返回 NotStarted，状态回到 Idle，next_slot_accepted=1 | state=Unknown, active=1, phase=Uncertain, next_slot_accepted=0, unreaped_collectors=0 | **PASS** |
-| `valid_json_wrong_collector` | 接受错误 collectorPid 为 Exited/0 | state=2 (Continuing), exit=-1, 拒绝完成 | **PASS** |
-| `not_json_with_braces` | 外有花括号无逗号被接受为 Exited/0 | state=2 (Continuing), exit=-1, 拒绝完成 | **PASS** |
-| `invalid_numeric_and_boolean` | `0garbage`/`falsejunk` 被接受为 Exited/0 | state=2 (Continuing), exit=-1, 拒绝完成 | **PASS** |
-| `collector_deadline_stops_drain` | 10分钟后停止排空，写端遭遇 EPIPE (errno 32) | state=1 (Exited), exit=0, target_write_result=OK, 0 EPIPE | **PASS** |
-| `async_final_before_collector_exit` | collector 发布后暂停，waitForOperation 返回后遗留僵尸 (unreaped=1) | initial=Continuing, final=Exited, collector_alive_at_return=1, unreaped_collectors=0 | **PASS** |
+| `reaper_pending_cpu` | 活 PID 导致忙循环，父侧 CPU 消耗 694,107μs | unreaped_collectors=0, collector_alive_at_return=1, **cpu_us=4352**（降幅 99.3%） | **PASS** |
+| `pre_exec_deadline` | execPipe 阻塞读拖至 683ms，state=1 (Exited) | **elapsed_ms=100**（受 100ms 单调期限保护），**state=Unknown (3)**, exit=-1 | **PASS** |
+| `overflow_exit` | exitStatus=2^32 窄化为 0，错误判定为 Exited/0 | **state=Continuing (2)**, exit=-1, 拒绝完成 | **PASS** |
+| `overflow_pid` | collectorPid=PID+2^32 窄化回正确 PID，错误判定为 Exited/0 | **state=Continuing (2)**, exit=-1, 拒绝完成 | **PASS** |
+| 原 P0 复查探针 (`p0-recheck.log`) | 握手前崩溃保持 Uncertain 占槽 | active=1, phase=4, next_slot_accepted=0 | **PASS** |
 
-### 2.2 自动化测试矩阵（`tests/settings/process_runner_test.cpp` 全部 29 项）
+### 2.2 自动化测试矩阵（`tests/settings/process_runner_test.cpp` 全部 34 项）
 | 序号 | 关卡代号 | 测试函数 | 验证行为 | 结果 |
 |---|---|---|---|---|
 | 1 | T13-A01 | `test_T13_A01_QueryDualStreamTruncation` | 查询双流截断与有界内存 | **PASS** |
@@ -84,8 +84,13 @@
 | 25 | T13-S03 | `test_T13_S03_CollectorContinuousDrainAndZombieLeader` | 采集器无硬截止排空；多线程僵尸主任务按期限 Continuing | **PASS** |
 | 26 | T13-S04 | `test_T13_S04_AsyncFinalPublishedBeforeCollectorExitReapedByBackground` | 异步终态先行发布由后台安全回收，零僵尸进程 | **PASS** |
 | 27 | T13-S05 | `test_T13_S05_R01AbsolutePathAndR04ValidRefVerification` | R01 绝对路径解析与 R04 有效引用进入 parser 校验 | **PASS** |
-| 28 | T13-S06 | `test_T13_S06_DualStream100MiBPeakBudgetAndFilePermissions` | 双流 100MiB 持续输出裁剪前真实缓冲峰值与文件峰值断言 | **PASS** |
-| 29 | T13-S07 | `test_T13_S07_FreshEvidenceAndRegistrationSelfCheck` | 全量 29 项场景执行与注册自检校验 | **PASS** |
+| 28 | T13-S06 | `test_T13_S06_DualStream100MiBPeakBudgetAndFilePermissions` | 双流 10MiB 输出裁剪前真实缓冲峰值与文件峰值断言 | **PASS** |
+| 29 | T13-S07 | `test_T13_S07_FreshEvidenceAndRegistrationSelfCheck` | 历史场景执行与注册自检校验 | **PASS** |
+| 30 | **T13-T01** | `test_T13_T01_ReaperPendingCpuBoundedAndSafeShutdown` | 后台回收器活 PID 有限调度（CPU<50ms），安全退出不杀进程 | **PASS** |
+| 31 | **T13-T02** | `test_T13_T02_PreExecDeadlineBoundedAndNonblockingRead` | Pre-exec 延迟 650ms 在 100ms 截止期返回 Unknown，严格零启动证明 | **PASS** |
+| 32 | **T13-T03** | `test_T13_T03_NumericOverflowAndProtocolSemanticsPreValidation` | 64 位整型溢出（2^32）拒收，严格状态/PID/退出码域校验 | **PASS** |
+| 33 | **T13-T04** | `test_T13_T04_VerifyFreshCloneHeadlessTaskContract` | 沙箱安装无显示真实任务成功闭环，参数缺失确定性拒收 | **PASS** |
+| 34 | **T13-T05** | `test_T13_T05_All34TestsRegisteredAndPassing` | 全量 34 项关卡全注册与执行自检通过 | **PASS** |
 
 ---
 
@@ -97,11 +102,11 @@ ctest --test-dir build/architecture-debug --output-on-failure \
   -R "^(modernime_process_runner|modernime_update_controller|modernime_updates_page_contract|modernime_settings_focus_gtk|modernime_settings_save_gtk)$"
 ```
 - `modernime_updates_page_contract`: **Passed** (0.00s)
-- `modernime_settings_focus_gtk`: **Passed** (0.30s)
-- `modernime_settings_save_gtk`: **Passed** (3.34s)
-- `modernime_update_controller`: **Passed** (5.95s)
-- `modernime_process_runner`: **Passed** (8.21s，29/29 场景全通)
-- **结果**：**5/5 Passed (100%)**，耗时 17.81s。
+- `modernime_settings_focus_gtk`: **Passed** (0.28s)
+- `modernime_settings_save_gtk`: **Passed** (3.35s)
+- `modernime_update_controller`: **Passed** (5.92s)
+- `modernime_process_runner`: **Passed** (8.68s，34/34 场景全通)
+- **结果**：**5/5 Passed (100%)**，耗时 18.23s。
 
 ### 3.2 G3 Debug 全量功能回归
 ```bash
@@ -116,7 +121,7 @@ ctest --test-dir build/architecture-debug -E "modernime_personal_engine_benchmar
 
 ### 3.3 G3 Release 全量功能与性能回归
 ```bash
-ctest --test-dir build/architecture-release --output-junit /home/wsl/ModernIME/build/architecture-evidence/release-junit.xml --output-on-failure
+ctest --test-dir build/architecture-release --output-junit build/architecture-evidence/release-junit.xml --output-on-failure
 ```
 - 注册测试：69 项（包含 `modernime_personal_engine_benchmark`）
 - 执行测试：69 项
@@ -130,7 +135,7 @@ ctest --test-dir build/architecture-release --output-junit /home/wsl/ModernIME/b
 ```bash
 ./build/architecture-release/tests/modernime_personal_engine_benchmark --self_test_gate_rejection
 ```
-- 全部 8 项指标超限样本（published_snapshot, busy_writer, concurrent_sqlite, lmdb_writer, lmdb_concurrent_pruning, lmdb_first_observer, lmdb_first_key_after_clear, startup_initial_commit）均被拒绝（exit code 1）；
+- 全部 8 项指标超限样本（`published_snapshot`, `busy_writer`, `concurrent_sqlite`, `lmdb_writer`, `lmdb_concurrent_pruning`, `lmdb_first_observer`, `lmdb_first_key_after_clear`, `startup_initial_commit`）均被拒绝（exit code 1）；
 - **结果**：`All 8 performance latency gates verified active and enforcing non-zero rejection on failure.`（程序返回 0）。
 
 ### 3.5 G6 GTK 界面与生命周期测试
@@ -138,9 +143,9 @@ ctest --test-dir build/architecture-release --output-junit /home/wsl/ModernIME/b
 ctest --test-dir build/architecture-debug -R "_gtk" --output-on-failure
 ```
 - `modernime_settings_gtk_raii`: **Passed** (0.01s)
-- `modernime_settings_focus_gtk`: **Passed** (0.23s)
-- `modernime_settings_shell_gtk`: **Passed** (3.60s)
-- `modernime_settings_save_gtk`: **Passed** (3.41s)
+- `modernime_settings_focus_gtk`: **Passed** (0.24s)
+- `modernime_settings_shell_gtk`: **Passed** (3.59s)
+- `modernime_settings_save_gtk`: **Passed** (3.42s)
 - **结果**：**4/4 Passed (100%)**，耗时 7.26s。
 
 ### 3.6 门禁注册与完整性校验（`verify_required_tests.py`）
@@ -150,45 +155,51 @@ python3 tests/verify_required_tests.py \
   --profile full --stage baseline \
   --junit build/architecture-evidence/release-junit.xml
 ```
-- **结果**：`[OK] Required tests check passed (profile=full, stage=baseline, execution=headless).`
+- **结果**：`[OK] Required tests check passed (profile=full, stage=baseline, execution=headless).`（退出码 0）。
 
 ### 3.7 沙箱全新克隆与全生命周期验证（`verify_fresh_clone.sh`）
 ```bash
 CMAKE_BUILD_PARALLEL_LEVEL=1 ./tests/verify_fresh_clone.sh
 ```
 - 包含沙箱隔离编译、69 项测试全量执行；
-- 安装产物完整性检验，且在无显示环境下实际调用 `$MODERNIME_PREFIX/bin/modernime-settings --version` 及 `--internal-capture-collector` 确认运行正常；
+- 真实调用 `$MODERNIME_PREFIX/bin/modernime-settings --internal-capture-collector` 执行合成任务，断言握手确认（`R`）、正常退出码 0、`state.json` 终态（Exited, 0, ID, token）、双流保留标记（`INSTALL_COLLECTOR_STDOUT_OK`/`INSTALL_COLLECTOR_STDERR_OK`），以及缺参数时确定性拒绝（exit code 1）；
 - 卸载清理完全性检验；
-- **结果**：`=== 6. 沙箱全新克隆与全生命周期安装卸载验证 100% 通过！ ===`。
+- **结果**：`=== 6. 沙箱全新克隆与全生命周期安装卸载验证 100% 通过！ ===`（退出码 0）。
 
 ### 3.8 资源泄漏、FD 与 Sanitizer 执行状态记录
-- **FD 与僵尸进程状态**：**Passed**。`test_T13_R06` 与 `test_T13_S04` 经过 5 轮及多轮异步完成与回收，断言系统无新增未回收僵尸进程（`unreaped_collectors=0`），无描述符泄漏；
-- **ASAN / UBSAN 状态**：**Blocked / NotRun**。当前 CMake 构建未对 `modernime-settings` 及相关 profile 启用编译期 Sanitizer 支持，且 WSL2 虚拟化环境对特定内存检测有硬件/内核限制。根据复审规范严格单列记录为 `NotRun`，不虚报为通过；
-- **无头环境 GTK 状态**：在无真实物理显示器的 WSL 环境中，GTK 单元测试通过内部虚拟显示或无显示安全退出模式执行（在 G1/G3/G6 中已完成验证并通过）。
+- **FD 与僵尸进程状态**：**Passed**。`test_T13_R06`、`test_T13_S04` 与 `test_T13_T01` 经反复并发与异步终态测试，确认回收期间 CPU 极低（4.3ms），最终无未回收僵尸（`unreaped_collectors=0`），无描述符泄漏。
+- **ASAN / UBSAN 状态**：
+  - **父侧设置进程专项 ASAN/UBSAN**：**Passed**。在 `build/t13-third-review-evidence/asan/` 下使用 `-fsanitize=address,undefined` 独立编译并执行 `modernime_process_runner_tests`（包含全部 34 项关卡），全部通过（耗时 12.0s），退出码 0（记录于 `asan-tests-exit-code.txt`），无任何内存泄漏、越界或未定义行为（日志见 `asan-tests.log`）；
+  - **采集器子进程 Sanitizer 覆盖**：**NotRun**。当前采集器 binary 为普通构建，尚未启用全 profile 插桩。严格单列记录为 `NotRun`，不冒充全 profile 通过。
+- **捕获峰值口径与用例说明**：
+  - `res.bufferPeak` 测量的是截断前实际到达的字符数（`std::string::size()`），而非底层内存分配器或容器的 `capacity`；
+  - 100MiB 大数据流由 `test_T13_A03` 与 `test_T13_R09` 覆盖，验证尾部保留与内存预算；`test_T13_S06` 覆盖双流各 10MiB 场景。
+- **物理桌面人工测试**：**Pending (待验)**。在无真实物理显示器的 WSL 环境中，GTK 单元测试通过虚拟显示与无显示安全退出模式全量验证。
 
 ---
 
 ## 4. 源码身份与证据关联
 
-- **审查基线 HEAD**：`935b1da06c5e3d1c7c303a02a409ab54d4d233be`
+- **审查基线 HEAD**：`4a4a61f51c513886796a0d4058252e0cba51f74e`
 - **测试快照状态**：
-  - 工作树修改补丁：`build/t13-second-review-evidence/working-tree.patch`（同步存档于 `build/architecture-evidence/working-tree.patch`）
-  - 工作树状态日志：`build/t13-second-review-evidence/working-tree.txt`
-  - 源码 SHA 标记：`build/t13-second-review-evidence/source-sha.txt`
+  - 工作树修改补丁：`build/t13-third-review-evidence/working-tree.patch`
+  - 工作树状态日志：`build/t13-third-review-evidence/working-tree.txt`
+  - 源码 SHA 标记：`build/t13-third-review-evidence/source-sha.txt`
 - **注册表证据**：
-  - Debug：`build/t13-second-review-evidence/debug-registered.json`
-  - Release：`build/t13-second-review-evidence/release-registered.json`
-- **新版 JUnit 执行日志**：
-  - Debug JUnit：`build/t13-second-review-evidence/debug-junit.xml`（2026-10-17 13:39 生成，process_runner 耗时 8.08s）
-  - Release JUnit：`build/t13-second-review-evidence/release-junit.xml`（2026-10-17 13:44 生成，process_runner 耗时 9.76s）
-- **专项复审探针输出**：
-  - 探针运行日志：`build/t13-second-review-evidence/probes.log`
-  - 探针结果 JSON：`build/t13-second-review-evidence/probe-results.json`
+  - Debug：`build/t13-third-review-evidence/debug-registered.json`
+  - Release：`build/t13-third-review-evidence/release-registered.json`
+- **专项复审探针输出与日志**：
+  - 探针运行日志：`build/t13-third-review-evidence/probes.log`
+  - 探针结果 JSON：`build/t13-third-review-evidence/probe-results.json`
+  - P0 复查日志：`build/t13-third-review-evidence/p0-recheck.log`
+  - ASAN 构建日志：`build/t13-third-review-evidence/asan-build.log`
+  - ASAN 测试日志：`build/t13-third-review-evidence/asan-tests.log`（34/34 Passed，退出码 0）
+  - ASAN 退出码：`build/t13-third-review-evidence/asan-tests-exit-code.txt`
 
 ---
 
 ## 5. 边界与停下复审声明
 
-- 本轮仅严格实施 T13 第二轮复审整改收尾工作（S1–S5）；
-- 工作树中所有 13 份未跟踪复审文档（`docs/ARCHITECTURE_AUDIT.md`、`docs/REFACTOR_BACKLOG.md`、`docs/T11_*`、`docs/T12_*`、`docs/T13_*`、`docs/superpowers/plans/*` 等）完整保留，未执行任何 `git reset` 或 `git clean`；
+- 本轮严格限定在 T13 第三轮复审整改收尾工作（T1–T4、T13-T01 至 T13-T05）；
+- 工作树中所有 14 份未跟踪复审文档（`docs/ARCHITECTURE_AUDIT.md`、`docs/REFACTOR_BACKLOG.md`、`docs/T11_*`、`docs/T12_*`、`docs/T13_*`、`docs/superpowers/plans/*` 等）完整保留，未执行任何 `git reset` 或 `git clean`；
 - **严格停留在 T13 边界，不进入 T14，不向远程仓库推送，不发布**。

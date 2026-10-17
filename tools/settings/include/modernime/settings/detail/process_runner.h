@@ -66,5 +66,6 @@ CommandResult waitForOperation(const OperationRef &ref, unsigned int timeoutMs =
 std::optional<OperationRef> getActiveOperationRef(std::uint64_t operationId);
 void registerOperationRef(const OperationRef &ref);
 void cleanupOperation(std::uint64_t operationId);
+void shutdownBackgroundReaper();
 
 } // namespace modernime::settings::detail
