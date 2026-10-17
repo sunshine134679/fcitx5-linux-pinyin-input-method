@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <optional>
+
 namespace modernime::settings::detail {
 
 enum class CommandMode {
@@ -47,8 +49,19 @@ struct CommandResult {
     std::string stderrText;
 };
 
+struct OperationRef {
+    std::uint64_t operationId = 0;
+    std::string token;
+    std::string opDir;
+    pid_t collectorPid = 0;
+};
+
 CommandResult runCommand(const CommandSpec &spec);
 int runCommandCaptureChild(int argc, char **argv);
 CommandResult waitForOperation(std::uint64_t operationId, unsigned int timeoutMs = 300000);
+CommandResult waitForOperation(const OperationRef &ref, unsigned int timeoutMs = 300000);
+std::optional<OperationRef> getActiveOperationRef(std::uint64_t operationId);
+void registerOperationRef(const OperationRef &ref);
+void cleanupOperation(std::uint64_t operationId);
 
 } // namespace modernime::settings::detail

@@ -13,17 +13,21 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <thread>
+
+extern char **environ;
 
 namespace modernime::settings::detail {
 namespace {
 
-std::mutex g_opDirsMutex;
-std::map<std::uint64_t, std::string> g_activeOpDirs;
+std::mutex g_opRefsMutex;
+std::map<std::uint64_t, OperationRef> g_activeOpRefs;
 
 std::string toHex(std::string_view s) {
     static const char hexChars[] = "0123456789abcdef";
@@ -51,6 +55,30 @@ std::string fromHex(std::string_view hex) {
     return out;
 }
 
+std::string generateRandomToken() {
+    static const char hexChars[] = "0123456789abcdef";
+    std::string token;
+    token.reserve(16);
+    int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        unsigned char buf[8];
+        const ssize_t n = ::read(fd, buf, sizeof(buf));
+        ::close(fd);
+        if (n == sizeof(buf)) {
+            for (int i = 0; i < 8; ++i) {
+                token.push_back(hexChars[(buf[i] >> 4) & 0x0f]);
+                token.push_back(hexChars[buf[i] & 0x0f]);
+            }
+            return token;
+        }
+    }
+    std::mt19937_64 rng(std::chrono::system_clock::now().time_since_epoch().count());
+    const uint64_t v = rng();
+    std::ostringstream ss;
+    ss << std::hex << std::setfill('0') << std::setw(16) << v;
+    return ss.str();
+}
+
 bool isPidAlive(pid_t pid) {
     if (pid <= 0) {
         return false;
@@ -71,6 +99,26 @@ bool isPidAlive(pid_t pid) {
         }
     }
     return true;
+}
+
+bool isPidZombie(pid_t pid) {
+    if (pid <= 0) {
+        return false;
+    }
+    if (::kill(pid, 0) != 0) {
+        return false;
+    }
+    std::ifstream statIn("/proc/" + std::to_string(pid) + "/stat");
+    if (statIn) {
+        std::string statLine;
+        std::getline(statIn, statLine);
+        const auto rparen = statLine.rfind(')');
+        if (rparen != std::string::npos && rparen + 2 < statLine.size()) {
+            const char procState = statLine[rparen + 2];
+            return (procState == 'Z');
+        }
+    }
+    return false;
 }
 
 std::string getTempDirectory() {
@@ -163,8 +211,65 @@ std::string readFileBounded(const std::string &path, std::size_t maxBytes) {
     return content;
 }
 
+struct PreparedEnvironment {
+    std::vector<std::string> envStrings;
+    std::vector<char *> envp;
+};
+
+PreparedEnvironment prepareEnvironment(const Environment &overrides) {
+    PreparedEnvironment prep;
+    std::map<std::string, std::string> envMap;
+
+    if (environ != nullptr) {
+        for (char **e = environ; *e != nullptr; ++e) {
+            const std::string_view entry(*e);
+            const auto eq = entry.find('=');
+            if (eq != std::string_view::npos) {
+                envMap[std::string(entry.substr(0, eq))] = std::string(entry.substr(eq + 1));
+            }
+        }
+    }
+
+    for (const auto &[k, v] : overrides) {
+        if (k == "PATH") {
+            if (v.empty()) {
+                envMap["PATH"] = "/usr/bin:/bin";
+            } else {
+                auto it = envMap.find("PATH");
+                if (it != envMap.end() && !it->second.empty()) {
+                    envMap["PATH"] = v + ":" + it->second;
+                } else {
+                    envMap["PATH"] = v + ":/usr/bin:/bin";
+                }
+            }
+        } else {
+            envMap[k] = v;
+        }
+    }
+
+    if (envMap.find("PATH") == envMap.end() || envMap["PATH"].empty()) {
+        envMap["PATH"] = "/usr/bin:/bin";
+    }
+
+    envMap["LC_ALL"] = "C";
+    envMap["LANG"] = "C";
+
+    prep.envStrings.reserve(envMap.size());
+    for (const auto &[k, v] : envMap) {
+        prep.envStrings.push_back(k + "=" + v);
+    }
+    prep.envp.reserve(prep.envStrings.size() + 1);
+    for (auto &s : prep.envStrings) {
+        prep.envp.push_back(s.data());
+    }
+    prep.envp.push_back(nullptr);
+
+    return prep;
+}
+
 struct ParsedState {
     std::uint64_t operationId = 0;
+    std::string token;
     pid_t collectorPid = 0;
     pid_t childPid = 0;
     std::string stateStr;
@@ -178,10 +283,23 @@ struct ParsedState {
     bool valid = false;
 };
 
-ParsedState parseStateFile(const std::string &path) {
+ParsedState parseStateFile(const std::string &path, std::uint64_t expectedOpId, const std::string &expectedToken) {
     ParsedState s;
+    std::error_code ec;
+    const auto sz = std::filesystem::file_size(path, ec);
+    if (ec || sz == 0 || sz > 4096) {
+        return s;
+    }
+
     const std::string content = readFileBounded(path, 4096);
     if (content.empty()) {
+        return s;
+    }
+
+    auto startPos = content.find_first_not_of(" \t\r\n");
+    auto endPos = content.find_last_not_of(" \t\r\n");
+    if (startPos == std::string::npos || endPos == std::string::npos ||
+        content[startPos] != '{' || content[endPos] != '}') {
         return s;
     }
 
@@ -197,40 +315,92 @@ ParsedState parseStateFile(const std::string &path) {
         return content.substr(quote1 + 1, quote2 - quote1 - 1);
     };
 
-    auto extractInt = [&](std::string_view key, long defaultVal = 0) -> long {
+    auto extractInt = [&](std::string_view key, bool &found, long defaultVal = 0) -> long {
         const auto pos = content.find("\"" + std::string(key) + "\"");
-        if (pos == std::string::npos) return defaultVal;
+        if (pos == std::string::npos) {
+            found = false;
+            return defaultVal;
+        }
         const auto colon = content.find(':', pos);
-        if (colon == std::string::npos) return defaultVal;
+        if (colon == std::string::npos) {
+            found = false;
+            return defaultVal;
+        }
         auto start = content.find_first_not_of(" \t\r\n", colon + 1);
-        if (start == std::string::npos) return defaultVal;
+        if (start == std::string::npos) {
+            found = false;
+            return defaultVal;
+        }
         char *endPtr = nullptr;
         const long val = std::strtol(content.c_str() + start, &endPtr, 10);
+        if (endPtr == content.c_str() + start) {
+            found = false;
+            return defaultVal;
+        }
+        found = true;
         return val;
     };
 
-    auto extractBool = [&](std::string_view key) -> bool {
+    auto extractBool = [&](std::string_view key, bool &found) -> bool {
         const auto pos = content.find("\"" + std::string(key) + "\"");
-        if (pos == std::string::npos) return false;
+        if (pos == std::string::npos) {
+            found = false;
+            return false;
+        }
         const auto colon = content.find(':', pos);
-        if (colon == std::string::npos) return false;
+        if (colon == std::string::npos) {
+            found = false;
+            return false;
+        }
         const auto start = content.find_first_not_of(" \t\r\n", colon + 1);
-        if (start == std::string::npos) return false;
-        return content.substr(start, 4) == "true";
+        if (start == std::string::npos) {
+            found = false;
+            return false;
+        }
+        if (content.compare(start, 4, "true") == 0) {
+            found = true;
+            return true;
+        }
+        if (content.compare(start, 5, "false") == 0) {
+            found = true;
+            return false;
+        }
+        found = false;
+        return false;
     };
 
-    s.operationId = static_cast<std::uint64_t>(extractInt("operationId"));
-    s.collectorPid = static_cast<pid_t>(extractInt("collectorPid"));
-    s.childPid = static_cast<pid_t>(extractInt("childPid"));
+    bool fOpId = false, fColl = false, fChild = false, fExit = false;
+    bool fOutT = false, fErrT = false, fOutB = false, fErrB = false;
+    bool fBufP = false, fFileP = false;
+
+    s.operationId = static_cast<std::uint64_t>(extractInt("operationId", fOpId));
+    s.token = extractStr("token");
+    s.collectorPid = static_cast<pid_t>(extractInt("collectorPid", fColl));
+    s.childPid = static_cast<pid_t>(extractInt("childPid", fChild));
     s.stateStr = extractStr("state");
-    s.exitStatus = static_cast<int>(extractInt("exitStatus", -1));
-    s.stdoutTruncated = extractBool("stdoutTruncated");
-    s.stderrTruncated = extractBool("stderrTruncated");
-    s.stdoutBytes = static_cast<std::size_t>(extractInt("stdoutBytes"));
-    s.stderrBytes = static_cast<std::size_t>(extractInt("stderrBytes"));
-    s.bufferPeak = static_cast<std::size_t>(extractInt("bufferPeak"));
-    s.filePeak = static_cast<std::size_t>(extractInt("filePeak"));
-    s.valid = !s.stateStr.empty() && s.operationId != 0;
+    s.exitStatus = static_cast<int>(extractInt("exitStatus", fExit, -1));
+    s.stdoutTruncated = extractBool("stdoutTruncated", fOutT);
+    s.stderrTruncated = extractBool("stderrTruncated", fErrT);
+    s.stdoutBytes = static_cast<std::size_t>(extractInt("stdoutBytes", fOutB));
+    s.stderrBytes = static_cast<std::size_t>(extractInt("stderrBytes", fErrB));
+    s.bufferPeak = static_cast<std::size_t>(extractInt("bufferPeak", fBufP));
+    s.filePeak = static_cast<std::size_t>(extractInt("filePeak", fFileP));
+
+    if (!fOpId || !fExit || !fOutT || !fErrT || !fOutB || !fErrB || !fBufP || !fFileP) {
+        return s;
+    }
+    if (s.stateStr != "Starting" && s.stateStr != "Running" &&
+        s.stateStr != "Exited" && s.stateStr != "Unknown") {
+        return s;
+    }
+    if (expectedOpId != 0 && s.operationId != expectedOpId) {
+        return s;
+    }
+    if (!expectedToken.empty() && s.token != expectedToken) {
+        return s;
+    }
+
+    s.valid = true;
     return s;
 }
 
@@ -258,6 +428,14 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
         return result;
     }
 
+    PreparedEnvironment prepEnv = prepareEnvironment(spec.environment);
+    std::vector<char *> argvPtrs;
+    argvPtrs.reserve(spec.argv.size() + 1);
+    for (const auto &arg : spec.argv) {
+        argvPtrs.push_back(const_cast<char *>(arg.c_str()));
+    }
+    argvPtrs.push_back(nullptr);
+
     const pid_t pid = ::fork();
     if (pid < 0) {
         ::close(outPipe[0]);
@@ -270,7 +448,6 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
     }
 
     if (pid == 0) {
-        // Child
         ::dup2(outPipe[1], STDOUT_FILENO);
         ::dup2(errPipe[1], STDERR_FILENO);
         ::close(outPipe[0]);
@@ -283,44 +460,12 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
         const int fErr = ::fcntl(STDERR_FILENO, F_GETFL);
         if (fErr >= 0) ::fcntl(STDERR_FILENO, F_SETFL, fErr & ~O_NONBLOCK);
 
-        std::vector<std::string> envStrings;
-        envStrings.push_back("LC_ALL=C");
-        envStrings.push_back("LANG=C");
-        bool pathFound = false;
-        for (const auto &[k, v] : spec.environment) {
-            if (k == "PATH") {
-                pathFound = true;
-                envStrings.push_back(v.empty() ? "PATH=/usr/bin:/bin" : ("PATH=" + v + ":/usr/bin:/bin"));
-            } else {
-                envStrings.push_back(k + "=" + v);
-            }
-        }
-        if (!pathFound) {
-            const char *origPath = std::getenv("PATH");
-            envStrings.push_back(std::string("PATH=") + (origPath != nullptr ? origPath : "/usr/bin:/bin"));
-        }
-
-        std::vector<char *> envp;
-        envp.reserve(envStrings.size() + 1);
-        for (auto &s : envStrings) {
-            envp.push_back(s.data());
-        }
-        envp.push_back(nullptr);
-
-        std::vector<char *> argvPtrs;
-        argvPtrs.reserve(spec.argv.size() + 1);
-        for (const auto &arg : spec.argv) {
-            argvPtrs.push_back(const_cast<char *>(arg.c_str()));
-        }
-        argvPtrs.push_back(nullptr);
-
-        ::execvpe(argvPtrs[0], argvPtrs.data(), envp.data());
+        ::execvpe(argvPtrs[0], argvPtrs.data(), prepEnv.envp.data());
         const int err = errno;
         ::dprintf(STDERR_FILENO, "Failed to execute %s: %s\n", argvPtrs[0], std::strerror(err));
         ::_exit(127);
     }
 
-    // Parent
     ::close(outPipe[1]);
     ::close(errPipe[1]);
 
@@ -341,11 +486,10 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
 
     char discardBuf[4096];
 
-    while (outOpen || errOpen) {
+    while (outOpen || errOpen || !leaderExited) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
             result.timedOut = true;
-            // Timeout reached! Kill query child leader.
             if (!leaderExited) {
                 ::kill(pid, SIGKILL);
                 ::waitpid(pid, &childStatus, 0);
@@ -354,12 +498,19 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
             break;
         }
 
-        // Check if leader exited
         if (!leaderExited) {
             const pid_t w = ::waitpid(pid, &childStatus, WNOHANG);
             if (w == pid) {
                 leaderExited = true;
             }
+        }
+
+        if (!outOpen && !errOpen) {
+            if (!leaderExited) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            break;
         }
 
         struct pollfd fds[2];
@@ -382,15 +533,23 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
             ++nfds;
         }
 
-        const int pollTimeout = leaderExited ? 50 : 100;
-        const int pRet = ::poll(fds, nfds, pollTimeout);
+        int pollTimeout = leaderExited ? 50 : 100;
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        if (remaining > 0 && remaining < pollTimeout) {
+            pollTimeout = static_cast<int>(remaining);
+        }
+
+        const int pRet = (nfds > 0) ? ::poll(fds, nfds, pollTimeout) : 0;
 
         if (pRet > 0) {
             if (outIdx >= 0 && (fds[outIdx].revents & (POLLIN | POLLHUP | POLLERR))) {
-                while (true) {
+                size_t readChunk = 0;
+                while (readChunk < 65536) {
                     char buf[4096];
-                    const ssize_t n = ::read(outPipe[0], buf, sizeof(buf));
+                    const size_t toRead = std::min(sizeof(buf), 65536 - readChunk);
+                    const ssize_t n = ::read(outPipe[0], buf, toRead);
                     if (n > 0) {
+                        readChunk += static_cast<size_t>(n);
                         stdoutTotal += static_cast<size_t>(n);
                         if (stdoutTotal > maxBuffer) {
                             result.stdoutTruncated = true;
@@ -411,10 +570,13 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
                 }
             }
             if (errIdx >= 0 && (fds[errIdx].revents & (POLLIN | POLLHUP | POLLERR))) {
-                while (true) {
+                size_t readChunk = 0;
+                while (readChunk < 65536) {
                     char buf[4096];
-                    const ssize_t n = ::read(errPipe[0], buf, sizeof(buf));
+                    const size_t toRead = std::min(sizeof(buf), 65536 - readChunk);
+                    const ssize_t n = ::read(errPipe[0], buf, toRead);
                     if (n > 0) {
+                        readChunk += static_cast<size_t>(n);
                         stderrTotal += static_cast<size_t>(n);
                         if (stderrTotal > maxBuffer) {
                             result.stderrTruncated = true;
@@ -436,9 +598,7 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
             }
         }
 
-        // T13-A02: If leader already exited, drain with short deadline, don't wait for descendant FDs!
         if (leaderExited) {
-            // Drain non-blocking one more time
             while (outOpen) {
                 const ssize_t n = ::read(outPipe[0], discardBuf, sizeof(discardBuf));
                 if (n > 0) {
@@ -463,7 +623,7 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
                     break;
                 }
             }
-            break; // Stop waiting! Descendants will not hang Query!
+            break;
         }
     }
 
@@ -471,15 +631,16 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
     ::close(errPipe[0]);
 
     if (!leaderExited) {
-        int w = ::waitpid(pid, &childStatus, WNOHANG);
-        if (w == 0) {
-            for (int i = 0; i < 50; ++i) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                w = ::waitpid(pid, &childStatus, WNOHANG);
-                if (w == pid) break;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const pid_t w = ::waitpid(pid, &childStatus, WNOHANG);
+            if (w == pid) {
+                leaderExited = true;
+                break;
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        if (w != pid) {
+        if (!leaderExited) {
+            result.timedOut = true;
             ::kill(pid, SIGKILL);
             ::waitpid(pid, &childStatus, 0);
             result.exitStatus = -1;
@@ -507,11 +668,8 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
     }
 
     const std::string tmpDir = getTempDirectory();
-    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::system_clock::now().time_since_epoch())
-                           .count();
-    const std::string opDir = tmpDir + "/modernime-op-" + std::to_string(spec.operationId) +
-                              "-" + std::to_string(nowMs) + "-" + std::to_string(::getpid());
+    const std::string token = generateRandomToken();
+    const std::string opDir = tmpDir + "/modernime-op-" + std::to_string(spec.operationId) + "-" + token;
 
     if (::mkdir(opDir.c_str(), 0700) != 0) {
         result.state = CommandState::NotStarted;
@@ -519,14 +677,20 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
         return result;
     }
 
+    OperationRef opRef;
+    opRef.operationId = spec.operationId;
+    opRef.token = token;
+    opRef.opDir = opDir;
+    opRef.collectorPid = 0;
+
     {
-        std::lock_guard<std::mutex> lock(g_opDirsMutex);
-        g_activeOpDirs[spec.operationId] = opDir;
+        std::lock_guard<std::mutex> lock(g_opRefsMutex);
+        g_activeOpRefs[spec.operationId] = opRef;
     }
 
-    // Write spec.dat (0600)
     std::ostringstream ss;
     ss << "operationId=" << spec.operationId << "\n";
+    ss << "token=" << token << "\n";
     ss << "timeoutMs=" << spec.timeoutMs << "\n";
     ss << "mode=" << static_cast<int>(spec.mode) << "\n";
     ss << "perStreamBufferBytes=" << spec.limits.perStreamBufferBytes << "\n";
@@ -542,6 +706,12 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
     }
 
     if (!writeAtomically(opDir + "/spec.dat", ss.str(), 0600)) {
+        std::error_code ec;
+        std::filesystem::remove_all(opDir, ec);
+        {
+            std::lock_guard<std::mutex> lock(g_opRefsMutex);
+            g_activeOpRefs.erase(spec.operationId);
+        }
         result.state = CommandState::NotStarted;
         result.stderrText = "Failed to write operation spec file";
         return result;
@@ -549,6 +719,12 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
 
     int handshakeFds[2];
     if (::pipe2(handshakeFds, O_CLOEXEC) != 0) {
+        std::error_code ec;
+        std::filesystem::remove_all(opDir, ec);
+        {
+            std::lock_guard<std::mutex> lock(g_opRefsMutex);
+            g_activeOpRefs.erase(spec.operationId);
+        }
         result.state = CommandState::NotStarted;
         result.stderrText = "Failed to create handshake pipe";
         return result;
@@ -560,15 +736,19 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
     if (collectorPid < 0) {
         ::close(handshakeFds[0]);
         ::close(handshakeFds[1]);
+        std::error_code ec;
+        std::filesystem::remove_all(opDir, ec);
+        {
+            std::lock_guard<std::mutex> lock(g_opRefsMutex);
+            g_activeOpRefs.erase(spec.operationId);
+        }
         result.state = CommandState::NotStarted;
         result.stderrText = "Failed to fork collector process";
         return result;
     }
 
     if (collectorPid == 0) {
-        // Collector child
         ::close(handshakeFds[0]);
-        // Remove CLOEXEC from handshake write fd so it is inherited across exec
         const int flags = ::fcntl(handshakeFds[1], F_GETFD);
         if (flags >= 0) {
             ::fcntl(handshakeFds[1], F_SETFD, flags & ~FD_CLOEXEC);
@@ -593,58 +773,139 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
 
     ::close(handshakeFds[1]);
 
-    // Read handshake byte
+    {
+        std::lock_guard<std::mutex> lock(g_opRefsMutex);
+        g_activeOpRefs[spec.operationId].collectorPid = collectorPid;
+    }
+
+    const auto startTime = std::chrono::steady_clock::now();
+    const auto deadline = startTime + std::chrono::milliseconds(spec.timeoutMs);
+
+    struct pollfd hPfd;
+    hPfd.fd = handshakeFds[0];
+    hPfd.events = POLLIN;
+    hPfd.revents = 0;
+
+    const auto hRemaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+    const int hWaitMs = std::max(0, static_cast<int>(hRemaining));
+    const int hPoll = ::poll(&hPfd, 1, hWaitMs);
+
     char handshakeByte = 0;
-    const ssize_t hRead = ::read(handshakeFds[0], &handshakeByte, 1);
+    ssize_t hRead = -1;
+    if (hPoll > 0 && (hPfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+        hRead = ::read(handshakeFds[0], &handshakeByte, 1);
+    }
     ::close(handshakeFds[0]);
 
-    if (hRead != 1 || handshakeByte != '1') {
-        // T13-A07: Collector start failure -> 0 spawn of real command!
-        result.state = CommandState::NotStarted;
-        result.exitStatus = -1;
-        result.stderrText = "Collector process failed to start or handshake";
-        // Reap collector if needed
+    if (hPoll <= 0 || hRead != 1) {
         int st = 0;
-        ::waitpid(collectorPid, &st, WNOHANG);
+        pid_t wp = ::waitpid(collectorPid, &st, WNOHANG);
+        if (wp == 0 && hRead == 0) {
+            // Pipe write end closed without sending byte; collector has terminated or closed FD
+            for (int i = 0; i < 20 && wp == 0; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                wp = ::waitpid(collectorPid, &st, WNOHANG);
+            }
+        }
+        if (wp == collectorPid || !isPidAlive(collectorPid)) {
+            std::error_code ec;
+            std::filesystem::remove_all(opDir, ec);
+            {
+                std::lock_guard<std::mutex> lock(g_opRefsMutex);
+                g_activeOpRefs.erase(spec.operationId);
+            }
+            result.state = CommandState::NotStarted;
+            result.exitStatus = -1;
+            result.stderrText = "Collector process failed to start or handshake";
+            return result;
+        }
+        result.state = CommandState::Unknown;
+        result.exitStatus = -1;
+        result.stderrText = "Handshake timed out while collector process is active";
         return result;
     }
 
-    // Wait loop up to spec.timeoutMs
-    const auto startTime = std::chrono::steady_clock::now();
-    const auto deadline = startTime + std::chrono::milliseconds(spec.timeoutMs);
+    if (handshakeByte == 'N') {
+        int st = 0;
+        ::waitpid(collectorPid, &st, 0);
+        std::error_code ec;
+        std::filesystem::remove_all(opDir, ec);
+        {
+            std::lock_guard<std::mutex> lock(g_opRefsMutex);
+            g_activeOpRefs.erase(spec.operationId);
+        }
+        result.state = CommandState::NotStarted;
+        result.exitStatus = -1;
+        result.stderrText = "Target process was not started";
+        return result;
+    }
+
+    if (handshakeByte == 'U') {
+        result.state = CommandState::Unknown;
+        result.exitStatus = -1;
+        result.stderrText = "Collector reported uncertain start state";
+        return result;
+    }
+
+    // handshakeByte == 'R' or '1'
     const std::string statePath = opDir + "/state.json";
 
     while (true) {
         const auto now = std::chrono::steady_clock::now();
-        const ParsedState ps = parseStateFile(statePath);
+        const ParsedState ps = parseStateFile(statePath, spec.operationId, token);
 
         if (ps.valid && ps.operationId == spec.operationId) {
-            if (ps.stateStr == "Exited" || ps.stateStr == "Unknown") {
-                result.state = (ps.stateStr == "Exited") ? CommandState::Exited : CommandState::Unknown;
+            if (ps.stateStr == "Exited") {
+                result.state = CommandState::Exited;
                 result.exitStatus = ps.exitStatus;
                 result.stdoutTruncated = ps.stdoutTruncated;
                 result.stderrTruncated = ps.stderrTruncated;
                 result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
                 result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
+                int st = 0;
+                ::waitpid(collectorPid, &st, 0);
+                std::error_code ec;
+                std::filesystem::remove_all(opDir, ec);
+                {
+                    std::lock_guard<std::mutex> lock(g_opRefsMutex);
+                    g_activeOpRefs.erase(spec.operationId);
+                }
+                return result;
+            }
+            if (ps.stateStr == "Unknown") {
+                result.state = CommandState::Unknown;
+                result.exitStatus = ps.exitStatus;
+                result.stdoutTruncated = ps.stdoutTruncated;
+                result.stderrTruncated = ps.stderrTruncated;
+                result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
+                result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
+                int st = 0;
+                ::waitpid(collectorPid, &st, WNOHANG);
                 return result;
             }
         }
 
-        // Check if collector is still alive
         if (!isPidAlive(collectorPid)) {
-            // Re-check state once more in case it just exited
-            const ParsedState psFinal = parseStateFile(statePath);
-            if (psFinal.valid && psFinal.operationId == spec.operationId &&
-                (psFinal.stateStr == "Exited" || psFinal.stateStr == "Unknown")) {
-                result.state = (psFinal.stateStr == "Exited") ? CommandState::Exited : CommandState::Unknown;
+            const ParsedState psFinal = parseStateFile(statePath, spec.operationId, token);
+            if (psFinal.valid && psFinal.operationId == spec.operationId && psFinal.stateStr == "Exited") {
+                result.state = CommandState::Exited;
                 result.exitStatus = psFinal.exitStatus;
                 result.stdoutTruncated = psFinal.stdoutTruncated;
                 result.stderrTruncated = psFinal.stderrTruncated;
                 result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
                 result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
+                int st = 0;
+                ::waitpid(collectorPid, &st, 0);
+                std::error_code ec;
+                std::filesystem::remove_all(opDir, ec);
+                {
+                    std::lock_guard<std::mutex> lock(g_opRefsMutex);
+                    g_activeOpRefs.erase(spec.operationId);
+                }
                 return result;
             }
-            // T13-A08: Collector exited abnormally / corrupted -> Unknown!
+            int st = 0;
+            ::waitpid(collectorPid, &st, 0);
             result.state = CommandState::Unknown;
             result.exitStatus = -1;
             result.stderrText = "Collector terminated abnormally or status unreadable";
@@ -653,19 +914,33 @@ CommandResult runPackageTransactionCommand(const CommandSpec &spec) {
 
         if (now >= deadline) {
             result.timedOut = true;
-            const bool childAlive = (ps.childPid > 0 && isPidAlive(ps.childPid));
-            if (childAlive) {
-                // T13-A05: Timeout -> Continuing! Do NOT kill collector or child!
+            if (ps.valid && ps.childPid > 0 && isPidZombie(ps.childPid)) {
+                // Child has terminated or is a zombie
+                result.state = CommandState::Exited;
+                result.exitStatus = ps.exitStatus;
+                result.stdoutTruncated = ps.stdoutTruncated;
+                result.stderrTruncated = ps.stderrTruncated;
+                result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
+                result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
+                int st = 0;
+                ::waitpid(collectorPid, &st, 0);
+                std::error_code ec;
+                std::filesystem::remove_all(opDir, ec);
+                {
+                    std::lock_guard<std::mutex> lock(g_opRefsMutex);
+                    g_activeOpRefs.erase(spec.operationId);
+                }
+                return result;
+            }
+            if (isPidAlive(collectorPid) || (ps.valid && ps.childPid > 0 && isPidAlive(ps.childPid))) {
                 result.state = CommandState::Continuing;
                 return result;
             }
-            // Child is already gone or zombie!
-            result.state = CommandState::Exited;
-            result.exitStatus = ps.exitStatus;
-            result.stdoutTruncated = ps.stdoutTruncated;
-            result.stderrTruncated = ps.stderrTruncated;
-            result.stdoutText = readFileBounded(opDir + "/stdout.tail", spec.limits.perStreamResultBytes);
-            result.stderrText = readFileBounded(opDir + "/stderr.tail", spec.limits.perStreamResultBytes);
+            int st = 0;
+            ::waitpid(collectorPid, &st, 0);
+            result.state = CommandState::Unknown;
+            result.exitStatus = -1;
+            result.stderrText = "Process timed out without valid Exited state";
             return result;
         }
 
@@ -683,7 +958,6 @@ CommandResult runCommand(const CommandSpec &spec) {
 }
 
 int runCommandCaptureChild(int argc, char **argv) {
-    // Detach from parent session and ignore SIGPIPE
     ::setsid();
     ::signal(SIGPIPE, SIG_IGN);
 
@@ -701,7 +975,7 @@ int runCommandCaptureChild(int argc, char **argv) {
 
     if (opDir.empty() || handshakeFd < 0) {
         if (handshakeFd >= 0) {
-            const char errByte = '0';
+            const char errByte = 'N';
             (void)::write(handshakeFd, &errByte, 1);
             ::close(handshakeFd);
         }
@@ -711,14 +985,17 @@ int runCommandCaptureChild(int argc, char **argv) {
     const std::string specPath = opDir + "/spec.dat";
     std::ifstream in(specPath);
     if (!in) {
-        const char errByte = '0';
+        const char errByte = 'N';
         (void)::write(handshakeFd, &errByte, 1);
         ::close(handshakeFd);
         return 1;
     }
 
     std::uint64_t operationId = 0;
+    std::string token;
+    std::uint32_t timeoutMs = 5000;
     std::size_t perStreamBufferBytes = 1048576;
+    (void)perStreamBufferBytes;
     std::size_t perStreamResultBytes = 65536;
     std::size_t perStreamFileBytes = 1048576;
     std::vector<std::string> childArgv;
@@ -728,9 +1005,12 @@ int runCommandCaptureChild(int argc, char **argv) {
     while (std::getline(in, line)) {
         if (line.starts_with("operationId=")) {
             operationId = std::stoull(line.substr(12));
+        } else if (line.starts_with("token=")) {
+            token = line.substr(6);
+        } else if (line.starts_with("timeoutMs=")) {
+            timeoutMs = static_cast<std::uint32_t>(std::stoul(line.substr(10)));
         } else if (line.starts_with("perStreamBufferBytes=")) {
             perStreamBufferBytes = std::stoul(line.substr(21));
-            (void)perStreamBufferBytes;
         } else if (line.starts_with("perStreamResultBytes=")) {
             perStreamResultBytes = std::stoul(line.substr(21));
         } else if (line.starts_with("perStreamFileBytes=")) {
@@ -753,13 +1033,35 @@ int runCommandCaptureChild(int argc, char **argv) {
     }
 
     if (childArgv.empty() || operationId == 0) {
-        const char errByte = '0';
+        const char errByte = 'N';
         (void)::write(handshakeFd, &errByte, 1);
         ::close(handshakeFd);
         return 1;
     }
 
-    // Open diagnostic files (0600)
+    std::ostringstream initSs;
+    initSs << "{\n"
+           << "  \"operationId\": " << operationId << ",\n"
+           << "  \"token\": \"" << token << "\",\n"
+           << "  \"collectorPid\": " << ::getpid() << ",\n"
+           << "  \"childPid\": 0,\n"
+           << "  \"state\": \"Starting\",\n"
+           << "  \"exitStatus\": -1,\n"
+           << "  \"stdoutTruncated\": false,\n"
+           << "  \"stderrTruncated\": false,\n"
+           << "  \"stdoutBytes\": 0,\n"
+           << "  \"stderrBytes\": 0,\n"
+           << "  \"bufferPeak\": 0,\n"
+           << "  \"filePeak\": 0\n"
+           << "}\n";
+
+    if (!writeAtomically(opDir + "/state.json", initSs.str(), 0600)) {
+        const char errByte = 'N';
+        (void)::write(handshakeFd, &errByte, 1);
+        ::close(handshakeFd);
+        return 1;
+    }
+
     const int diagOutFd = ::open((opDir + "/stdout.diag").c_str(),
                                  O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     const int diagErrFd = ::open((opDir + "/stderr.diag").c_str(),
@@ -768,7 +1070,7 @@ int runCommandCaptureChild(int argc, char **argv) {
     int outPipe[2];
     int errPipe[2];
     if (::pipe2(outPipe, O_CLOEXEC | O_NONBLOCK) != 0 || ::pipe2(errPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
-        const char errByte = '0';
+        const char errByte = 'N';
         (void)::write(handshakeFd, &errByte, 1);
         ::close(handshakeFd);
         if (diagOutFd >= 0) ::close(diagOutFd);
@@ -776,9 +1078,17 @@ int runCommandCaptureChild(int argc, char **argv) {
         return 1;
     }
 
+    PreparedEnvironment prepEnv = prepareEnvironment(childEnv);
+    std::vector<char *> childArgvPtrs;
+    childArgvPtrs.reserve(childArgv.size() + 1);
+    for (const auto &arg : childArgv) {
+        childArgvPtrs.push_back(const_cast<char *>(arg.c_str()));
+    }
+    childArgvPtrs.push_back(nullptr);
+
     const pid_t childPid = ::fork();
     if (childPid < 0) {
-        const char errByte = '0';
+        const char errByte = 'N';
         (void)::write(handshakeFd, &errByte, 1);
         ::close(handshakeFd);
         ::close(outPipe[0]);
@@ -791,7 +1101,6 @@ int runCommandCaptureChild(int argc, char **argv) {
     }
 
     if (childPid == 0) {
-        // In real target command process
         ::dup2(outPipe[1], STDOUT_FILENO);
         ::dup2(errPipe[1], STDERR_FILENO);
         ::close(outPipe[0]);
@@ -806,70 +1115,41 @@ int runCommandCaptureChild(int argc, char **argv) {
         if (diagErrFd >= 0) ::close(diagErrFd);
         ::close(handshakeFd);
 
-        std::vector<std::string> envStrings;
-        envStrings.push_back("LC_ALL=C");
-        envStrings.push_back("LANG=C");
-        bool pathFound = false;
-        for (const auto &[k, v] : childEnv) {
-            if (k == "PATH") {
-                pathFound = true;
-                envStrings.push_back(v.empty() ? "PATH=/usr/bin:/bin" : ("PATH=" + v + ":/usr/bin:/bin"));
-            } else {
-                envStrings.push_back(k + "=" + v);
-            }
-        }
-        if (!pathFound) {
-            const char *origPath = std::getenv("PATH");
-            envStrings.push_back(std::string("PATH=") + (origPath != nullptr ? origPath : "/usr/bin:/bin"));
-        }
-
-        std::vector<char *> envp;
-        envp.reserve(envStrings.size() + 1);
-        for (auto &s : envStrings) {
-            envp.push_back(s.data());
-        }
-        envp.push_back(nullptr);
-
-        std::vector<char *> argvPtrs;
-        argvPtrs.reserve(childArgv.size() + 1);
-        for (const auto &arg : childArgv) {
-            argvPtrs.push_back(const_cast<char *>(arg.c_str()));
-        }
-        argvPtrs.push_back(nullptr);
-
-        ::execvpe(argvPtrs[0], argvPtrs.data(), envp.data());
+        ::execvpe(childArgvPtrs[0], childArgvPtrs.data(), prepEnv.envp.data());
         const int err = errno;
-        ::dprintf(STDERR_FILENO, "Failed to execute child process \"%s\": %s\n", argvPtrs[0], std::strerror(err));
+        ::dprintf(STDERR_FILENO, "Failed to execute child process \"%s\": %s\n", childArgvPtrs[0], std::strerror(err));
         ::_exit(127);
     }
 
     ::close(outPipe[1]);
     ::close(errPipe[1]);
 
-    // Target command spawn succeeded!
-    // Write initial state.json (mode 0600)
-    std::ostringstream initSs;
-    initSs << "{\n"
-           << "  \"operationId\": " << operationId << ",\n"
-           << "  \"collectorPid\": " << ::getpid() << ",\n"
-           << "  \"childPid\": " << childPid << ",\n"
-           << "  \"state\": \"Running\",\n"
-           << "  \"exitStatus\": -1,\n"
-           << "  \"stdoutTruncated\": false,\n"
-           << "  \"stderrTruncated\": false,\n"
-           << "  \"stdoutBytes\": 0,\n"
-           << "  \"stderrBytes\": 0,\n"
-           << "  \"bufferPeak\": 0,\n"
-           << "  \"filePeak\": 0\n"
-           << "}\n";
-    writeAtomically(opDir + "/state.json", initSs.str(), 0600);
+    std::ostringstream runSs;
+    runSs << "{\n"
+          << "  \"operationId\": " << operationId << ",\n"
+          << "  \"token\": \"" << token << "\",\n"
+          << "  \"collectorPid\": " << ::getpid() << ",\n"
+          << "  \"childPid\": " << childPid << ",\n"
+          << "  \"state\": \"Running\",\n"
+          << "  \"exitStatus\": -1,\n"
+          << "  \"stdoutTruncated\": false,\n"
+          << "  \"stderrTruncated\": false,\n"
+          << "  \"stdoutBytes\": 0,\n"
+          << "  \"stderrBytes\": 0,\n"
+          << "  \"bufferPeak\": 0,\n"
+          << "  \"filePeak\": 0\n"
+          << "}\n";
 
-    // Write handshake success byte and close handshake fd
-    const char okByte = '1';
-    (void)::write(handshakeFd, &okByte, 1);
-    ::close(handshakeFd);
+    if (!writeAtomically(opDir + "/state.json", runSs.str(), 0600)) {
+        const char errByte = 'U';
+        (void)::write(handshakeFd, &errByte, 1);
+        ::close(handshakeFd);
+    } else {
+        const char okByte = 'R';
+        (void)::write(handshakeFd, &okByte, 1);
+        ::close(handshakeFd);
+    }
 
-    // Event loop continuously draining stdout and stderr pipes
     std::string stdoutTail;
     std::string stderrTail;
     std::size_t stdoutTotalBytes = 0;
@@ -884,12 +1164,20 @@ int runCommandCaptureChild(int argc, char **argv) {
     bool childFinished = false;
     int childStatus = 0;
 
+    const auto collectorStart = std::chrono::steady_clock::now();
+    const auto collectorDeadline = collectorStart + std::chrono::milliseconds(std::max(timeoutMs * 2, 600000u));
+
     while (outOpen || errOpen) {
         if (!childFinished) {
             const pid_t w = ::waitpid(childPid, &childStatus, WNOHANG);
             if (w == childPid) {
                 childFinished = true;
             }
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= collectorDeadline) {
+            break;
         }
 
         struct pollfd pfds[2];
@@ -912,14 +1200,17 @@ int runCommandCaptureChild(int argc, char **argv) {
             ++nfds;
         }
 
-        const int pollRet = ::poll(pfds, nfds, childFinished ? 50 : 200);
+        const int pollRet = (nfds > 0) ? ::poll(pfds, nfds, childFinished ? 50 : 100) : 0;
 
         if (pollRet > 0) {
             if (outIdx >= 0 && (pfds[outIdx].revents & (POLLIN | POLLHUP | POLLERR))) {
-                while (true) {
+                size_t readThisTurn = 0;
+                while (readThisTurn < 65536) {
                     char buf[8192];
-                    const ssize_t n = ::read(outPipe[0], buf, sizeof(buf));
+                    const size_t toRead = std::min(sizeof(buf), 65536 - readThisTurn);
+                    const ssize_t n = ::read(outPipe[0], buf, toRead);
                     if (n > 0) {
+                        readThisTurn += static_cast<size_t>(n);
                         stdoutTotalBytes += static_cast<size_t>(n);
                         stdoutTail.append(buf, static_cast<size_t>(n));
                         if (stdoutTail.size() > perStreamResultBytes) {
@@ -947,10 +1238,13 @@ int runCommandCaptureChild(int argc, char **argv) {
             }
 
             if (errIdx >= 0 && (pfds[errIdx].revents & (POLLIN | POLLHUP | POLLERR))) {
-                while (true) {
+                size_t readThisTurn = 0;
+                while (readThisTurn < 65536) {
                     char buf[8192];
-                    const ssize_t n = ::read(errPipe[0], buf, sizeof(buf));
+                    const size_t toRead = std::min(sizeof(buf), 65536 - readThisTurn);
+                    const ssize_t n = ::read(errPipe[0], buf, toRead);
                     if (n > 0) {
+                        readThisTurn += static_cast<size_t>(n);
                         stderrTotalBytes += static_cast<size_t>(n);
                         stderrTail.append(buf, static_cast<size_t>(n));
                         if (stderrTail.size() > perStreamResultBytes) {
@@ -977,52 +1271,6 @@ int runCommandCaptureChild(int argc, char **argv) {
                 }
             }
         }
-
-        if (childFinished) {
-            // Drain remaining and close
-            char flushBuf[8192];
-            while (outOpen) {
-                const ssize_t n = ::read(outPipe[0], flushBuf, sizeof(flushBuf));
-                if (n > 0) {
-                    stdoutTotalBytes += static_cast<size_t>(n);
-                    stdoutTail.append(flushBuf, static_cast<size_t>(n));
-                    if (stdoutTail.size() > perStreamResultBytes) {
-                        stdoutTail.erase(0, stdoutTail.size() - perStreamResultBytes);
-                    }
-                    bufferPeak = std::max(bufferPeak, stdoutTail.size());
-                    if (diagOutFd >= 0 && stdoutDiagBytes < perStreamFileBytes) {
-                        const size_t toWrite = std::min(static_cast<size_t>(n),
-                                                       perStreamFileBytes - stdoutDiagBytes);
-                        (void)::write(diagOutFd, flushBuf, toWrite);
-                        stdoutDiagBytes += toWrite;
-                        filePeak = std::max(filePeak, stdoutDiagBytes);
-                    }
-                } else {
-                    break;
-                }
-            }
-            while (errOpen) {
-                const ssize_t n = ::read(errPipe[0], flushBuf, sizeof(flushBuf));
-                if (n > 0) {
-                    stderrTotalBytes += static_cast<size_t>(n);
-                    stderrTail.append(flushBuf, static_cast<size_t>(n));
-                    if (stderrTail.size() > perStreamResultBytes) {
-                        stderrTail.erase(0, stderrTail.size() - perStreamResultBytes);
-                    }
-                    bufferPeak = std::max(bufferPeak, stderrTail.size());
-                    if (diagErrFd >= 0 && stderrDiagBytes < perStreamFileBytes) {
-                        const size_t toWrite = std::min(static_cast<size_t>(n),
-                                                       perStreamFileBytes - stderrDiagBytes);
-                        (void)::write(diagErrFd, flushBuf, toWrite);
-                        stderrDiagBytes += toWrite;
-                        filePeak = std::max(filePeak, stderrDiagBytes);
-                    }
-                } else {
-                    break;
-                }
-            }
-            break;
-        }
     }
 
     ::close(outPipe[0]);
@@ -1043,10 +1291,10 @@ int runCommandCaptureChild(int argc, char **argv) {
     writeAtomically(opDir + "/stdout.tail", stdoutTail, 0600);
     writeAtomically(opDir + "/stderr.tail", stderrTail, 0600);
 
-    // Final state.json (mode 0600, <= 4 KiB)
     std::ostringstream finalSs;
     finalSs << "{\n"
             << "  \"operationId\": " << operationId << ",\n"
+            << "  \"token\": \"" << token << "\",\n"
             << "  \"collectorPid\": " << ::getpid() << ",\n"
             << "  \"childPid\": " << childPid << ",\n"
             << "  \"state\": \"" << finalState << "\",\n"
@@ -1063,79 +1311,76 @@ int runCommandCaptureChild(int argc, char **argv) {
     return 0;
 }
 
-CommandResult waitForOperation(std::uint64_t operationId, unsigned int timeoutMs) {
+CommandResult waitForOperation(const OperationRef &ref, unsigned int timeoutMs) {
     CommandResult result;
-    result.operationId = operationId;
+    result.operationId = ref.operationId;
 
-    std::string opDir;
-    {
-        std::lock_guard<std::mutex> lock(g_opDirsMutex);
-        auto it = g_activeOpDirs.find(operationId);
-        if (it != g_activeOpDirs.end()) {
-            opDir = it->second;
-        }
-    }
-
-    if (opDir.empty()) {
-        const std::string tmpDir = getTempDirectory();
-        std::error_code ec;
-        std::filesystem::path latestPath;
-        std::filesystem::file_time_type latestTime;
-        for (const auto &entry : std::filesystem::directory_iterator(tmpDir, ec)) {
-            if (entry.is_directory(ec)) {
-                const std::string name = entry.path().filename().string();
-                if (name.starts_with("modernime-op-" + std::to_string(operationId) + "-")) {
-                    const auto mtime = entry.last_write_time(ec);
-                    if (latestPath.empty() || mtime > latestTime) {
-                        latestPath = entry.path();
-                        latestTime = mtime;
-                    }
-                }
-            }
-        }
-        if (!latestPath.empty()) {
-            opDir = latestPath.string();
-        }
-    }
-
-    if (opDir.empty()) {
+    if (ref.opDir.empty()) {
         result.state = CommandState::Unknown;
-        result.stderrText = "Operation directory not found for ID " + std::to_string(operationId);
+        result.stderrText = "Invalid operation directory";
         return result;
     }
 
     const auto startTime = std::chrono::steady_clock::now();
     const auto deadline = startTime + std::chrono::milliseconds(timeoutMs);
-    const std::string statePath = opDir + "/state.json";
+    const std::string statePath = ref.opDir + "/state.json";
 
     while (true) {
         const auto now = std::chrono::steady_clock::now();
-        const ParsedState ps = parseStateFile(statePath);
+        const ParsedState ps = parseStateFile(statePath, ref.operationId, ref.token);
 
-        if (ps.valid && ps.operationId == operationId) {
-            if (ps.stateStr == "Exited" || ps.stateStr == "Unknown") {
-                result.state = (ps.stateStr == "Exited") ? CommandState::Exited : CommandState::Unknown;
+        if (ps.valid && ps.operationId == ref.operationId) {
+            if (ps.stateStr == "Exited") {
+                result.state = CommandState::Exited;
                 result.exitStatus = ps.exitStatus;
                 result.stdoutTruncated = ps.stdoutTruncated;
                 result.stderrTruncated = ps.stderrTruncated;
-                result.stdoutText = readFileBounded(opDir + "/stdout.tail", 65536);
-                result.stderrText = readFileBounded(opDir + "/stderr.tail", 65536);
+                result.stdoutText = readFileBounded(ref.opDir + "/stdout.tail", 65536);
+                result.stderrText = readFileBounded(ref.opDir + "/stderr.tail", 65536);
+                if (ref.collectorPid > 0) {
+                    int st = 0;
+                    ::waitpid(ref.collectorPid, &st, WNOHANG);
+                }
+                std::error_code ec;
+                std::filesystem::remove_all(ref.opDir, ec);
+                {
+                    std::lock_guard<std::mutex> lock(g_opRefsMutex);
+                    g_activeOpRefs.erase(ref.operationId);
+                }
+                return result;
+            }
+            if (ps.stateStr == "Unknown") {
+                result.state = CommandState::Unknown;
+                result.exitStatus = ps.exitStatus;
+                result.stdoutTruncated = ps.stdoutTruncated;
+                result.stderrTruncated = ps.stderrTruncated;
+                result.stdoutText = readFileBounded(ref.opDir + "/stdout.tail", 65536);
+                result.stderrText = readFileBounded(ref.opDir + "/stderr.tail", 65536);
                 return result;
             }
         }
 
-        if (ps.collectorPid > 0 && !isPidAlive(ps.collectorPid)) {
-            const ParsedState psFinal = parseStateFile(statePath);
-            if (psFinal.valid && psFinal.operationId == operationId &&
-                (psFinal.stateStr == "Exited" || psFinal.stateStr == "Unknown")) {
-                result.state = (psFinal.stateStr == "Exited") ? CommandState::Exited : CommandState::Unknown;
+        if (ref.collectorPid > 0 && !isPidAlive(ref.collectorPid)) {
+            const ParsedState psFinal = parseStateFile(statePath, ref.operationId, ref.token);
+            if (psFinal.valid && psFinal.operationId == ref.operationId && psFinal.stateStr == "Exited") {
+                result.state = CommandState::Exited;
                 result.exitStatus = psFinal.exitStatus;
                 result.stdoutTruncated = psFinal.stdoutTruncated;
                 result.stderrTruncated = psFinal.stderrTruncated;
-                result.stdoutText = readFileBounded(opDir + "/stdout.tail", 65536);
-                result.stderrText = readFileBounded(opDir + "/stderr.tail", 65536);
+                result.stdoutText = readFileBounded(ref.opDir + "/stdout.tail", 65536);
+                result.stderrText = readFileBounded(ref.opDir + "/stderr.tail", 65536);
+                int st = 0;
+                ::waitpid(ref.collectorPid, &st, 0);
+                std::error_code ec;
+                std::filesystem::remove_all(ref.opDir, ec);
+                {
+                    std::lock_guard<std::mutex> lock(g_opRefsMutex);
+                    g_activeOpRefs.erase(ref.operationId);
+                }
                 return result;
             }
+            int st = 0;
+            ::waitpid(ref.collectorPid, &st, 0);
             result.state = CommandState::Unknown;
             result.exitStatus = -1;
             result.stderrText = "Collector process exited without producing valid Exited state";
@@ -1148,6 +1393,59 @@ CommandResult waitForOperation(std::uint64_t operationId, unsigned int timeoutMs
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
+CommandResult waitForOperation(std::uint64_t operationId, unsigned int timeoutMs) {
+    OperationRef ref;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(g_opRefsMutex);
+        auto it = g_activeOpRefs.find(operationId);
+        if (it != g_activeOpRefs.end()) {
+            ref = it->second;
+            found = true;
+        }
+    }
+
+    if (!found) {
+        CommandResult result;
+        result.operationId = operationId;
+        result.state = CommandState::Unknown;
+        result.stderrText = "Operation directory not found or not registered for ID " + std::to_string(operationId);
+        return result;
+    }
+
+    return waitForOperation(ref, timeoutMs);
+}
+
+std::optional<OperationRef> getActiveOperationRef(std::uint64_t operationId) {
+    std::lock_guard<std::mutex> lock(g_opRefsMutex);
+    auto it = g_activeOpRefs.find(operationId);
+    if (it != g_activeOpRefs.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+void registerOperationRef(const OperationRef &ref) {
+    std::lock_guard<std::mutex> lock(g_opRefsMutex);
+    g_activeOpRefs[ref.operationId] = ref;
+}
+
+void cleanupOperation(std::uint64_t operationId) {
+    std::error_code ec;
+    std::string opDir;
+    {
+        std::lock_guard<std::mutex> lock(g_opRefsMutex);
+        auto it = g_activeOpRefs.find(operationId);
+        if (it != g_activeOpRefs.end()) {
+            opDir = it->second.opDir;
+            g_activeOpRefs.erase(it);
+        }
+    }
+    if (!opDir.empty()) {
+        std::filesystem::remove_all(opDir, ec);
     }
 }
 

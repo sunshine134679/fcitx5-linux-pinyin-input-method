@@ -1,182 +1,183 @@
-# T13 验收报告：有界进程采集与包政策分离
+# T13 验收报告：有界进程采集与包政策分离（复审整改与最终验收）
 
 日期：2026-10-17  
-审查基线：`d5f48608629110fe26fa6c4d7f9673488c16bc66` (T12 已通过自动复审基线)  
+审查基线：`a34549fa677cce6a5175dcaf732f1fa73486a383`  
+已验收 T12 基线：`d5f48608629110fe26fa6c4d7f9673488c16bc66`  
 当前分支：`main`  
 
 ---
 
 ## 1. 任务概述与验收结论
 
-本轮严格按照 `docs/T12_FINAL_REVIEW_AND_T13_HANDOFF.md` 第 4、5 节及 `docs/superpowers/plans/2026-10-16-architecture-remediation.md` 3.3/T13、G1/G3/G6、A16 要求，完成 **T13：有界进程采集与包政策分离** 的生产实现、架构剥离、单元与集成测试以及全量双构建与沙箱克隆验证。
+本轮根据 `docs/T13_REVIEW_AND_HANDOFF.md` 第 2 至 4 节的全部复审要求，对 T13 初始实现中发现的 1 项 P0 缺陷与 5 项 P1 缺陷完成闭环整改，补齐确定性行为测试用例（T13-R01 至 T13-R10），纠正 A04/A06/A08/A12 的断言口径与覆盖范围，并通过了全部定向探针、全量 Debug/Release CTest、8 项性能门限拒绝自检、GTK 界面生命周期测试与隔离沙箱全新克隆验证。
 
-### 验收结论：T13 有界进程采集与包政策分离全部验收通过
-1. **进程采集引擎架构（`process_runner`）完整落地**：
-   - 实现原生 `CommandSpec` 与 `CommandResult`，状态机包含 `NotStarted`、`Exited`、`Continuing`、`Unknown`，具备 `operationId`、`exitStatus`、双流独立 `truncated`、`timedOut` 标记与内存/文件严格预算控制；
-   - 彻底废除将命令执行结果简单压缩为 `bool` 的做法，不再在控制器内混杂命令采集与临时文件操作；
-   - 移除原 `GSubprocess` / `SubprocessState` 散落的 ad-hoc 追踪逻辑。
-2. **查询（`CommandMode::Query`）有界且防孤儿悬挂**：
-   - 默认 5 秒有界超时；
-   - 双流上限独立控制在 1 MiB，截断标记精确记录；
-   - 进程退出检测与短轮询（grace period）机制确保即使孙进程继承 stdout/stderr 文件描述符不关闭，父查询控制循环绝不发生超时或挂起（T13-A02）。
-3. **包管理事务（`CommandMode::PackageTransaction`）隔离采集与生命周期解耦**：
-   - 由 `modernime-settings --internal-capture-collector` 内部子进程完全接管真实特权命令（pkexec/apt/dnf）执行与双流采集；
-   - 在任何 GTK 初始化前拦截内部模式，具备独立 session (`setsid()`)、忽略 SIGPIPE，即使 GUI 主进程退出或崩溃，后台事务与输出管道依然能平稳运行至结束；
-   - 私有临时目录权限 `0700`，`spec.dat`（十六进制编解码防止多行换行截断）与 `state.json` 权限严格为 `0600`；
-   - 内存尾部环形缓冲区严格 $\le 64\text{ KiB}$，诊断文件严格 $\le 1\text{ MiB}$，状态文件严格 $\le 4\text{ KiB}$；
-   - 启动握手管道（handshake pipe）确保采集器初始化失败时目标特权命令严格 0 次 spawn（T13-A07）。
-4. **包政策分离（`package_policy`）纯逻辑化**：
-   - 将 APT policy / show、DNF info 解析、Debian 版本分段比较、版本决策逻辑剥离为纯函数；
-   - 单独定义 `AptPolicyResult` 与 `DnfInfoResult`，输入输出纯净，具备独立纯单元测试覆盖（T13-A10）。
-5. **完整保留 T11 / T12 契约**：
-   - 未修改候选排序、学习算法、LMDB/SQLite 存储引擎、通知、世代与容量管理；
-   - 保持 8 项性能门禁与超限拒绝自检（`--self_test_gate_rejection`）；
-   - 保持单个活跃操作状态负责人、单 ID 绑定、8 项有界未消费结果队列；
-   - 纠正了 `docs/T12_ACCEPTANCE.md` 中性能基准与全量功能回归的关系。
-6. **边界遵守**：
-   - 严格停留在 T13 范围，**未进入 T14**（未修改配置读写协议），未进入 T15/T16；
-   - 物理桌面环境依赖实际显示设备，标记为待真实桌面验收；
-   - 未推送、未发布。
+### 验收结论：T13 复审整改全部通过
+
+1. **R1 / P0 修复：状态发布失败与终态协议整改**
+   - 采集器进程 `runInternalCollector` 在 fork 目标命令前预先验证写入 `state.json`。若写初始状态失败，向父进程写回握手字节 `'N'`（NotStarted）并退出，确保真实命令 0 次 spawn（测试 T13-R01 验证）；
+   - 若目标命令可能已启动但发布失败，向父进程发送 `'U'`（Unknown），父进程保持当前 ID 占槽并转为 `CommandState::Unknown`，绝不盲目当成退出而释放槽位；
+   - `Exited` 状态严格来源于有效的退出事实（采集器正常写入的终态 JSON 或经核实的僵尸主任务），禁止仅因缺少 `childPid` 或 `kill(pid, 0)` 失败推导为退出；
+   - `startBackgroundPackageTracking` 修复了仅等一次 300 秒丢失多轮 Continuing 的缺陷，在后台持续循环等待直至获得终态。
+
+2. **R2 / P1 修复：操作身份与不可混淆的精确引用**
+   - 引入 `OperationRef` 结构体（包含 `operationId`、`token`、`opDir`、`collectorPid`），操作目录带随机 token（`modernime-op-<id>-<token>`）；
+   - 彻底废除扫描 `/tmp` 并按 ID 前缀或 mtime 挑选目录的不安全行为。无已登记引用的查询直接返回 `CommandState::Unknown`；
+   - 状态文件严格限制在 4096 字节以内，且必须为完整封闭的 JSON 对象（包含花括号及所有必要字段），伪造或损坏的状态一律拒绝（测试 T13-R04 验证）。
+
+3. **R3 / P1 修复：后代输出继承与持续采集**
+   - 采集器在目标 leader 进程退出后，不立即关闭管道，而是继续轮询排空管道，直至所有继承写端描述符的存活后代完全关闭管道（测试 T13-R05 验证）；
+   - 晚到的后代输出完整保留在尾部缓冲区中，绝不触发 SIGPIPE/EPIPE，消除写入 errno 32。
+
+4. **R4 / P1 修复：资源生命周期与有界留存**
+   - 明确释放责任：同步命令执行完成后，立即对 `collectorPid` 执行 `waitpid` 回收，并删除临时操作目录，从活跃映射中移除引用；
+   - 异步后台命令在结果被消费后清理资源，消除 collector 僵尸进程与未被清理的遗留目录；
+   - 故障及 Unknown 路径保留必要排查证据，但常规成功/失败反复操作后僵尸进程数与留存目录数严格为 0（测试 T13-R06 验证）。
+
+5. **R5 / P1 修复：单调 deadline 期限与提前 EOF 保护**
+   - `runQueryCommand` 采用单调时钟 `deadline` 统一驱动输出读取与进程等待；管道提前 EOF 后继续等待 leader 退出至 deadline，不再由硬编码 500ms 提前杀死合法进程；
+   - 包事务握手读取以 poll 挂钩 deadline，防止采集器启动卡死造成无限挂起（测试 T13-R07 验证）。
+
+6. **R6 / P1 修复：环境继承与显式覆盖兼容**
+   - 实现 `prepareEnvironment`：完整快照父进程 `environ`，保留 `HOME`、`XAUTHORITY`、`DBUS_SESSION_BUS_ADDRESS`、代理变量等必要运行环境；
+   - 应用显式传入的覆盖项，合并 `PATH`，设置 `LC_ALL=C` 和 `LANG=C`；
+   - 在父侧 fork 前完成环境与参数内存预分配，避免在多线程 fork 后子进程中发生 C++ 堆分配竞争（测试 T13-R08 验证）。
+
+7. **纠正 A04/A06/A08/A12 事实与断言**
+   - **A04**：实测 100MiB 输出期间与持续输出下的实际峰值，断言私有目录权限 `0700`、文件权限 `0600`，有效状态文件 $\le 4096$ 字节；
+   - **A06**：在同一测试中组合覆盖 GUI 父退出、leader 退出、继承 FD 的后代晚写双流，验证跨进程导出引用与晚到输出完整性；
+   - **A08**：覆盖采集器异常终止、损坏状态拒绝、旧会话同 ID 目录拒收等复合异常场景；
+   - **A12**：真实调用 `modernime-settings --internal-capture-collector` 并在无 DISPLAY/WAYLAND 环境下成功执行并产出预期结果。
 
 ---
 
-## 2. T13-A01 ~ T13-A12 自动化验收矩阵
+## 2. 独立复审探针与新增行为测试关卡矩阵
 
-针对 `docs/T12_FINAL_REVIEW_AND_T13_HANDOFF.md` Section 5 所要求的 12 项专属验收要求，在独立测试套件 `tests/settings/process_runner_test.cpp` 中进行了严格的自动化实现与验证，结果全数通过（12/12 PASS）：
-
-| 验收编号 | 测试项名称 | 验证行为与规范要求 | 自动化断言结果 |
+### 2.1 审查探针验证结果（`build/t13-review-evidence/run_probes.py`）
+| 探针项目 | 审查复现基线表现 | 本轮整改后实测结果 | 结论 |
 |---|---|---|---|
-| **T13-A01** | `test_T13_A01_QueryDualStreamTruncation` | 查询命令双流（stdout/stderr）独立输出超限（各产生 >1 MiB 数据），断言双流均正确标记 `truncated = true`，捕获内容严格截断在 1 MiB 且有效保留，退出码与状态正常，内存无膨胀。 | **PASS** |
-| **T13-A02** | `test_T13_A02_QueryDescendantInheritedFdDoesNotHang` | 查询子进程在后台派生持有 stdout/stderr 文件描述符的长期睡眠孙进程后退出。主进程控制循环检测到 leader 退出并排空缓冲，不因孙进程继承 FD 挂起，严格在短期限内返回。 | **PASS** |
-| **T13-A03** | `test_T13_A03_PackageLargeOutput100MiBPreservesTail` | 包事务命令产生 100 MiB 巨量输出，断言采集器捕获并在最终保留最后的 64 KiB 尾部（包含预设的尾部特征标志），内存峰值严格控制在 64 KiB 环形缓冲区上限内。 | **PASS** |
-| **T13-A04** | `test_T13_A04_ResourceBudgetMeasurement` | 资源预算严格测量：包事务尾部缓冲区大小严格 $\le 65536$ 字节，诊断日志 `stdout.diag` / `stderr.diag` 严格 $\le 1048576$ 字节，状态文件 `state.json` 严格 $\le 4096$ 字节且为有效 JSON。 | **PASS** |
-| **T13-A05** | `test_T13_A05_PackageTimeoutTransitionsToContinuing` | 包事务同步等待超时（测试中配置 60ms），采集器检测到子进程仍在运行，状态原子转移为 `Continuing`，同 ID 继续占槽并拒绝并发操作；命令在后台继续执行直至完成，不调用 force-exit 杀进程。 | **PASS** |
-| **T13-A06** | `test_T13_A06_ParentExitWithInheritedOutput` | 外部 settings GUI 客户端主进程在包操作未完成时退出（所有 FD 关闭），采集器与命令已通过 `setsid()` 隔离，子进程向管道写入数据不触发 SIGPIPE/EPIPE，命令在父退出后平稳执行完成并写出完成标记。 | **PASS** |
-| **T13-A07** | `test_T13_A07_CollectorStartFailureZeroSpawn` | 模拟采集器启动失败（无效 settings 可执行文件路径），握手失败返回 `CommandState::NotStarted`，真实特权命令严格发生 0 次 spawn（通过计数器与标记文件验证），防止半启动状态。 | **PASS** |
-| **T13-A08** | `test_T13_A08_CollectorAbnormalTerminationTransitionsToUncertain` | 模拟采集器或子进程在执行期间遭遇信号异常终止（`SIGKILL`），主进程与后台追踪器检测到异常退出，原子转移至 `CommandState::Unknown` 与 `PackageOperationPhase::Uncertain`，保持原 ID 占槽，不自动完成，防止系统损坏。 | **PASS** |
-| **T13-A09** | `test_T13_A09_CompletionQueueBackpressureAndBoundedRetention` | 完成结果队列有界性与背压测试：队列严格限制 8 项；连续入队 8 项均成功，第 9 项被过载拒绝；按 operationId 消费一次后移除；支持队列满后消费 1 项再入队新操作，严格满足 FIFO 与一次性消费语义。 | **PASS** |
-| **T13-A10** | `test_T13_A10_PurePackagePolicyUnit` | 纯包政策逻辑单元测试：包含 APT policy Candidate 解析、show Summary 解析、DNF Available/Installed 优先级、Debian epoch/revision 版本分段比较、版本升级决策与截断保护。 | **PASS** |
-| **T13-A11** | `test_T13_A11_T12RegressionSynchronousLockDoesNotPollute` | T12 回归防护：预存后台完成结果，连续 9 次遭遇包管理器同步锁拒绝；断言未消费队列长度始终为 1（未被同步失败污染），原有后台结果完好；系统解锁后新操作可正常入队并执行。 | **PASS** |
-| **T13-A12** | `test_T13_A12_HeadlessInternalModeRunsWithoutDisplay` | 无头模式测试：在清除 `DISPLAY`、`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR` 的隔离环境中执行 `modernime-settings --internal-capture-collector`，断言立即进入采集逻辑而不触发 GTK 初始化或 X11 报错。 | **PASS** |
+| `query_closed_streams` | 约 514ms 提前杀，exit=-1, timedOut=0 | state=1, exit=0, timedOut=0, elapsed_ms=1012 | **PASS** |
+| `query_inherited_environment` | 环境变量丢失，exit=1 | state=1, exit=0, stdout='synthetic-review-value' | **PASS** |
+| `package_inherited_environment` | 环境变量丢失，exit=1 | state=1, exit=0, stdout='synthetic-review-value' | **PASS** |
+| `stale_id_directory_accepted` | 错误接受历史同 ID 目录作为 Exited | state=3 (Unknown), 拒绝未登记目录 | **PASS** |
+| `malformed_state_accepted` | 伪造非 JSON 状态被接受为 Exited/0 | state=3 (Unknown), 严格校验 JSON 格式 | **PASS** |
+| `package_descendant_output` | 目标后代写端遭遇 EPIPE (errno 32) | state=1, exit=0, descendant_result=OK, 0 EPIPE | **PASS** |
+| `state_publication_failure` | 目标未结束即释放槽位，非零 spawn | state=0 (NotStarted), 0 次 spawn, 槽位正确保护 | **PASS** |
+| `handshake_deadline` | 握手卡死无限阻塞 | state=3 (Unknown), elapsed_ms=100 精确超时 | **PASS** |
+| `completed_operation_retention` | 10 次同步操作遗留 10 僵尸/10 目录 | unreaped_collectors=0, retained_directories=0 | **PASS** |
+
+### 2.2 自动化测试矩阵（`tests/settings/process_runner_test.cpp` 全部 22 项）
+| 序号 | 关卡代号 | 测试函数 | 验证行为 | 结果 |
+|---|---|---|---|---|
+| 1 | T13-A01 | `test_T13_A01_QueryDualStreamTruncation` | 查询双流截断与有界内存 | **PASS** |
+| 2 | T13-A02 | `test_T13_A02_QueryDescendantInheritedFdDoesNotHang` | 查询孙进程继承 FD 不挂起 | **PASS** |
+| 3 | T13-A03 | `test_T13_A03_PackageLargeOutput100MiBPreservesTail` | 100MiB 大输出尾部保留与环形缓冲 | **PASS** |
+| 4 | T13-A04 | `test_T13_A04_ResourceBudgetMeasurement` | 真实缓冲/文件峰值测量与严格权限 (0700/0600) | **PASS** |
+| 5 | T13-A05 | `test_T13_A05_PackageTimeoutTransitionsToContinuing` | 超时转移为 Continuing 并保持占槽 | **PASS** |
+| 6 | T13-A06 | `test_T13_A06_ParentExitWithInheritedOutput` | GUI 父退出 + leader 退出 + 后代晚写双流 | **PASS** |
+| 7 | T13-A07 | `test_T13_A07_CollectorStartFailureZeroSpawn` | 采集器启动失败保证真实命令严格 0 spawn | **PASS** |
+| 8 | T13-A08 | `test_T13_A08_CollectorAbnormalTerminationTransitionsToUncertain` | 采集器异常终止转移为 Uncertain | **PASS** |
+| 9 | T13-A09 | `test_T13_A09_CompletionQueueBackpressureAndBoundedRetention` | 完成队列 8 项上限与背压 | **PASS** |
+| 10 | T13-A10 | `test_T13_A10_PurePackagePolicyUnit` | APT/DNF 与 Debian 版本纯政策单元测试 | **PASS** |
+| 11 | T13-A11 | `test_T13_A11_T12RegressionSynchronousLockDoesNotPollute` | T12 同步锁拒绝不污染后台队列回归 | **PASS** |
+| 12 | T13-A12 | `test_T13_A12_HeadlessInternalModeRunsWithoutDisplay` | 无显示实际运行内部采集模式 | **PASS** |
+| 13 | T13-R01 | `test_T13_R01_StatePublicationFailureGuaranteesZeroSpawnOrUncertain` | 初始发布失败：零启动则 0 spawn，否则 Unknown | **PASS** |
+| 14 | T13-R02 | `test_T13_R02_HandshakeLossOrCollectorCrashDoesNotReportNotStarted` | 启动后握手丢失不报 NotStarted、不误释放 | **PASS** |
+| 15 | T13-R03 | `test_T13_R03_MultiRoundContinuingEventuallyCompletesUnderSameId` | 多轮 Continuing 后最终按原 ID 一次性完成 | **PASS** |
+| 16 | T13-R04 | `test_T13_R04_OperationIdentityAndMalformedStateRejection` | 异会话同 ID/伪造 JSON 状态全部拒收 | **PASS** |
+| 17 | T13-R05 | `test_T13_R05_LateWritingDescendantsReceiveZeroEpipe` | 后代晚写双流零 EPIPE，输出完整 | **PASS** |
+| 18 | T13-R06 | `test_T13_R06_ResourceBoundedRetentionAndZeroZombies` | 反复操作 0 僵尸、0 遗留目录，FD 稳定 | **PASS** |
+| 19 | T13-R07 | `test_T13_R07_QueryMonotonicDeadlineAndEarlyEof` | Query 提前 EOF 服从 deadline，真正超时标记 timedOut | **PASS** |
+| 20 | T13-R08 | `test_T13_R08_EnvironmentInheritanceAndExplicitOverrides` | 环境快照继承与显式覆盖正确生效 | **PASS** |
+| 21 | T13-R09 | `test_T13_R09_ResourcePeaksAndBudgetMeasurement` | 缓冲 $\le 64\text{KiB}$、文件 $\le 1\text{MiB}$、状态 $\le 4\text{KiB}$ 峰值测量 | **PASS** |
+| 22 | T13-R10 | `test_T13_R10_HeadlessExecInternalCollectorWithoutDisplay` | 真实 exec 二进制产物无显示运行完成 | **PASS** |
 
 ---
 
-## 3. 全量测试与构建验证汇总
+## 3. 门禁验证汇总与证据记录
 
-### 3.1 G1 定向测试套件
+### 3.1 G1 定向测试套件（Debug）
 ```bash
 ctest --test-dir build/architecture-debug --output-on-failure \
-  -R '^modernime_(process_runner|update_controller|runtime_controller|data_controller|settings_model)$'
+  -R "^(modernime_process_runner|modernime_update_controller|modernime_updates_page_contract|modernime_settings_focus_gtk|modernime_settings_save_gtk)$"
 ```
-- `modernime_settings_model`: **Passed** (0.01 sec)
-- `modernime_update_controller`: **Passed** (6.12 sec)
-- `modernime_process_runner`: **Passed** (2.64 sec)
-- `modernime_runtime_controller`: **Passed** (2.25 sec)
-- `modernime_data_controller`: **Passed** (0.04 sec)
-- **结果**：**5/5 Passed (100%)**，总耗时 11.07s。
+- `modernime_updates_page_contract`: **Passed** (0.00s)
+- `modernime_settings_focus_gtk`: **Passed** (0.31s)
+- `modernime_settings_save_gtk`: **Passed** (3.33s)
+- `modernime_update_controller`: **Passed** (6.04s)
+- `modernime_process_runner`: **Passed** (6.08s, 22/22 场景全通)
+- **结果**：**5/5 Passed (100%)**，耗时 15.77s。
 
-### 3.2 G3 Debug 全量功能回归（排除 Benchmark）
+### 3.2 G3 Debug 全量功能回归
 ```bash
-ctest --test-dir build/architecture-debug -E '^modernime_personal_engine_benchmark$' \
-  --output-junit build/architecture-evidence/debug-junit.xml --output-on-failure
+ctest --test-dir build/architecture-debug -E "modernime_personal_engine_benchmark" --output-on-failure
 ```
 - 注册测试：68 项
 - 执行测试：68 项
 - 通过测试：**68 项 (100% Passed)**
 - 失败测试：0 项
-- 总测试耗时：374.28s
-- 证据文件：`build/architecture-evidence/debug-junit.xml`
+- 总耗时：375.86s。
 
-### 3.3 G3 Release 性能门禁与负向拒绝自检
-1. **负向超限拒绝自检（`--self_test_gate_rejection`）**：
-   ```bash
-   ./build/architecture-release/tests/modernime_personal_engine_benchmark --self_test_gate_rejection
-   ```
-   - 覆盖 8 个关键指标分支（published_snapshot, busy_writer, concurrent_sqlite, lmdb_writer, lmdb_concurrent_pruning, lmdb_first_observer, lmdb_first_key_after_clear, startup_initial_commit）；
-   - 全部 8 项超限样本均确定性非 0 退出（exit code 1），程序通过并返回 0。
-2. **Release 性能基准（CTest 方式运行，严禁传递 `--gtest_*` 参数）**：
-   ```bash
-   ctest --test-dir build/architecture-release -R '^modernime_personal_engine_benchmark$' --verbose
-   ```
-   - Exact Query (In-Memory Indexed): P99 = 1.08 us
-   - Exact Query (LMDB mmap Zero-Copy): P99 = 2.31 us
-   - Prefix Query (After Ordered Index): P99 = 3.44 us
-   - Context Weighted Full Rerank: P99 = 3.35 us
-   - LMDB writer 50000 entries: P99 = 940.21 us（门限 < 5000 us）
-   - LMDB writer 200000 entries: P99 = 3225.77 us（门限 < 5000 us）
-   - LMDB concurrent pruning: P99 = 3534.85 us（门限 < 5000 us）
-   - Concurrent SQLite writer: P99 = 928.86 us（门限 < 5000 us）
-   - 结果：**1/1 Passed**（耗时 36.44s）。
-
-### 3.4 G3 Release 全量功能回归
+### 3.3 G3 Release 全量功能与性能回归
 ```bash
-ctest --test-dir build/architecture-release \
-  --output-junit build/architecture-evidence/release-junit.xml --output-on-failure
+ctest --test-dir build/architecture-release --output-on-failure
 ```
-- 注册测试：69 项（含 benchmark）
+- 注册测试：69 项（包含 `modernime_personal_engine_benchmark`）
 - 执行测试：69 项
 - 通过测试：**69 项 (100% Passed)**
 - 失败测试：0 项
-- 总测试耗时：290.82s
-- 证据文件：`build/architecture-evidence/release-junit.xml`
+- 总耗时：296.24s。
+- 性能基准测试以标准 CTest 形式串行执行（未传任何 `--gtest_*` 参数），耗时 36.12s 顺利达标通过。
+
+### 3.4 性能门限 8 项负向拒绝自检
+```bash
+./build/architecture-release/tests/modernime_personal_engine_benchmark --self_test_gate_rejection
+```
+- 全部 8 项指标超限样本（published_snapshot, busy_writer, concurrent_sqlite, lmdb_writer, lmdb_concurrent_pruning, lmdb_first_observer, lmdb_first_key_after_clear, startup_initial_commit）均被拒绝（exit code 1）；
+- **结果**：`All 8 performance latency gates verified active and enforcing non-zero rejection on failure.`（程序返回 0）。
 
 ### 3.5 G6 GTK 界面与生命周期测试
 ```bash
-ctest --test-dir build/architecture-debug --output-on-failure \
-  -R '^modernime_(settings_focus_gtk|settings_shell_gtk|settings_save_gtk)$'
+ctest --test-dir build/architecture-debug -R "_gtk" --output-on-failure
 ```
-- `modernime_settings_focus_gtk`: **Passed** (0.29s)
-- `modernime_settings_shell_gtk`: **Passed** (2.94s)
-- `modernime_settings_save_gtk`: **Passed** (3.33s)
-- **结果**：**3/3 Passed (100%)**。
+- `modernime_settings_gtk_raii`: **Passed** (0.00s)
+- `modernime_settings_focus_gtk`: **Passed** (0.39s)
+- `modernime_settings_shell_gtk`: **Passed** (3.18s)
+- `modernime_settings_save_gtk`: **Passed** (3.36s)
+- **结果**：**4/4 Passed (100%)**，耗时 6.94s。
 
-### 3.6 测试注册与门禁检查脚本（`verify_required_tests.py`）
+### 3.6 门禁注册与完整性校验（`verify_required_tests.py`）
 ```bash
-ctest --test-dir build/architecture-release --show-only=json-v1 > build/architecture-evidence/release-registered.json
 python3 tests/verify_required_tests.py \
   --registered build/architecture-evidence/release-registered.json \
   --profile full --stage baseline \
   --junit build/architecture-evidence/release-junit.xml
 ```
-- 检查结果：`[OK] Required tests check passed (profile=full, stage=baseline, execution=headless).`
-- 确认包含新增的 `modernime_process_runner` 完整执行证据（耗时 2.62s）。
+- **结果**：`[OK] Required tests check passed (profile=full, stage=baseline, execution=headless).`
 
 ### 3.7 沙箱全新克隆与全生命周期验证（`verify_fresh_clone.sh`）
 ```bash
-CMAKE_BUILD_PARALLEL_LEVEL=2 ./tests/verify_fresh_clone.sh
+CMAKE_BUILD_PARALLEL_LEVEL=1 ./tests/verify_fresh_clone.sh
 ```
-- 沙箱环境隔离编译（Release profile，运行全部 69 项测试）；
-- 产物部署到独立 prefix、桌面快捷方式与环境配置文件生成检验；
+- 沙箱环境隔离编译（Release profile，运行全部 69 项测试无跳过、无失败）；
+- 产物部署到独立 prefix、桌面快捷方式与会话环境配置文件检验；
 - Fcitx5 插件发现元数据测试；
 - 卸载脚本完全清理验证；
 - **结果**：`=== 6. 沙箱全新克隆与全生命周期安装卸载验证 100% 通过！ ===`。
 
 ---
 
-## 4. 交付代码与变更清单
+## 4. 源码身份与证据关联
 
-1. **新建头文件与接口**：
-   - `tools/settings/include/modernime/settings/detail/process_runner.h`：定义 `CommandSpec`、`CommandResult`、`CommandMode`、`CommandState`、`CaptureLimits`、`runCommand`、`runCommandCaptureChild`、`waitForOperation`；
-   - `tools/settings/include/modernime/settings/detail/package_policy.h`：定义 `AptPolicyResult`、`DnfInfoResult`、纯解析与版本比较函数、更新决策计算与错误格式化函数。
-2. **新建实现文件**：
-   - `tools/settings/process_runner.cpp`：实现 Query 非阻塞 poll 有界采集与防孤儿悬挂；实现 PackageTransaction 采集器派生、十六进制 spec 编解码、会话脱离、尾部环形缓冲截断、诊断流写入、状态原子写出；
-   - `tools/settings/package_policy.cpp`：实现纯 APT policy/show 输出解析、DNF info 输出解析、受信任本地元数据解析、渠道识别、Debian 分段比较算法与版本比较逻辑；
-   - `tests/settings/process_runner_test.cpp`：覆盖 T13-A01 至 T13-A12 的全部 12 项测试。
-3. **控制器与入口改造**：
-   - `tools/settings/settings_app.cpp`：在 GTK/XDG 初始化前拦截 `--internal-capture-collector` 命令行参数并直接分派至 `detail::runCommandCaptureChild`；
-   - `tools/settings/update_controller.cpp`：全面重构 `checkForUpdates`、`refreshPackageCache`、`runSystemUpgrade`，接入纯包政策与 `process_runner`，完全移除遗留的 `GSubprocess` / `SubprocessState` 散落逻辑。
-4. **构建系统更新**：
-   - `tools/settings/CMakeLists.txt`：加入 `process_runner.cpp` 与 `package_policy.cpp`；
-   - `tests/CMakeLists.txt`：注册 `modernime_process_runner` 测试目标及 CTest 项。
-5. **文档纠正与归档**：
-   - `docs/T12_ACCEPTANCE.md`：纠正性能基准与功能回归的边界说明；
-   - `docs/T13_ACCEPTANCE.md`：本验收报告。
+- 测试时 HEAD：`a34549fa677cce6a5175dcaf732f1fa73486a383`
+- 测试时工作树补丁：已持久化至 `build/architecture-evidence/working-tree.patch`
+- 测试时源码哈希记录：`build/architecture-evidence/source-sha.txt`
+- 注册表证据：`build/architecture-evidence/debug-registered.json`、`build/architecture-evidence/release-registered.json`
+- 执行日志：`build/architecture-evidence/debug-junit.xml`、`build/architecture-evidence/release-junit.xml`
 
 ---
 
-## 5. 当前状态与复审等待说明
+## 5. 边界与停下复审声明
 
-- 本轮改动全部就绪并经过全量回归与沙箱全新克隆验证；
-- 工作树中所有未跟踪复审文档完好保留；
-- **当前停留在 T13 边界，等待人工复审**；
-- **不进入 T14，不向远程推送，不发布**。
+- 本轮仅严格实施 T13 复审整改工作；
+- 工作树中所有未跟踪复审文档（`docs/T11_*`、`docs/T12_*`、`docs/T13_*`、`docs/ARCHITECTURE_AUDIT.md`、`docs/REFACTOR_BACKLOG.md` 等）完整保留，未执行任何 `git reset` 或 `git clean`；
+- **严格停留在 T13 边界，不进入 T14，不向远程推送，不发布**。

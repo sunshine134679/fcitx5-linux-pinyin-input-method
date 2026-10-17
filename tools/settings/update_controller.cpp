@@ -181,7 +181,14 @@ void startBackgroundPackageTracking(std::uint64_t operationId,
                                     PackageOperationKind opKind,
                                     std::string fallbackCmd) {
     std::thread([operationId, opKind, fallbackCmd = std::move(fallbackCmd)]() {
-        const auto out = detail::waitForOperation(operationId, 300000);
+        detail::CommandResult out;
+        while (true) {
+            out = detail::waitForOperation(operationId, 300000);
+            if (out.state == detail::CommandState::Continuing) {
+                continue;
+            }
+            break;
+        }
         if (out.state == detail::CommandState::Exited) {
             const bool exitedZero = (out.exitStatus == 0);
             RuntimeResult finalRes;
