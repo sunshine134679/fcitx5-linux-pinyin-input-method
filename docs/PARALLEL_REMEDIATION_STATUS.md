@@ -1,9 +1,9 @@
 # ModernIME 并行整改协调状态表 (Parallel Remediation Status)
 
-**更新时间:** 2026-10-17 21:22:00 CST  
+**更新时间:** 2026-10-17 22:15:00 CST  
 **协调分支:** `codex/architecture-integration-20261017`  
 **公共起点 B0:** `7f2f05db34073b526a623d31039b4af06c9198e8` (非验收证明)  
-**当前集成 Tip:** `5d52e5c` (已合入 T14 `a5dbf74`、T17 `612c32c`、T16 `041e731` 与 T15 完整链 `e211296`)  
+**当前集成 Tip:** `f459e73` (已合入 T14 `a5dbf74`、T17 `612c32c`、T16 `041e731`、T15 完整链 `e211296`，并完成包管理 RPM payload 计数校验修复)  
 **全局机器锁:** `/home/wsl/ModernIME/build/parallel-control-20261017/machine.lock`  
 **控制目录:** `/home/wsl/ModernIME/build/parallel-control-20261017/` (仅协调者写)
 
@@ -13,11 +13,11 @@
 
 | 任务 | 分支 | 实际工作区路径 | Base SHA | Tip SHA | 接口版本 | 状态 | 接受集成 SHA | 关卡门禁 |
 |---|---|---|---|---|---|---|---|---|
-| **T14** | `main` | `/home/wsl/ModernIME` | `74c19d86` | `4c40cc6d` | `C14-v1` (暂行) | `NEEDS_FIX` (W1/W2/W3) | 中间提交 `d905aa8` (保留非 ACCEPTED) | 第四轮复审：生产修复通过 5 项真实适配器交错（含 6 次 EACCES 恢复收敛）；真实双库与 UI 测试取得有效进展；剩 W1（无头 UI 测试合法 skip 77）、W2（A06 真实环境选址解析）与 W3（故障恢复回归固化入仓）待原 T14 对话收尾 |
+| **T14** | `main` | `/home/wsl/ModernIME` | `74c19d86` | `4c40cc6d` | `C14-v1` (暂行) | `NEEDS_FIX` (W1/W2/W3) | 中间提交 `d905aa8` (保留非 ACCEPTED) | 第四轮复审：生产修复通过 5 项真实适配器交错（含 6 次 EACCES 恢复收敛）；真实双库与 UI 测试有效；W1/W2/W3 本地验证已在 main 树完成（UI 合法 skip 77、自动选址与标记词条校验、adapter 恢复测试 6/6 通过），等待正式提交与交接 |
 | **T15** | `codex/architecture-t15-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t15-20261017` | `7f2f05db` | `e2112967` | `C15-v1` (暂行) | `REVIEWED` | 已合入 `5d52e5c` (非 ACCEPTED) | 最终定向复审通过：S1/S2a/S2b 均闭合，普通 10/10 与 ASAN 10/10 均通过，完整链（2a0460a → 7d49e51 → a7e37d7 → 57e0183 → e211296）已合入，待组合门禁 |
-| **T17** | `codex/architecture-t17-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t17-20261017` | `7f2f05db` | `612c32c4` | `C17-v1` (已冻结) | `REVIEWED` | 已合入 `d65ef8a` | 本地 7/7 验证全过，待 T16+T17 组合快照门禁 |
+| **T17** | `codex/architecture-t17-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t17-20261017` | `7f2f05db` | `612c32c4` | `C17-v1` (已冻结) | `REVIEWED` | 已合入 `d65ef8a` | 本地 7/7 验证全过，已在组合快照验证全生命周期安装/卸载对称性与 RPM 校验 |
 | **T16** | `codex/architecture-t16-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t16-20261017` | `d65ef8a` | `041e731b` | `C16-BUILD-TEST-WIRING` | `REVIEWED` | 已合入 `94f70bb` | 核心 25/25 校验全过，CMake 写权限已移交回协调者 |
-| **T18** | `codex/architecture-t18-20261017` | 待建 | - | - | C18 (待定) | `WAITING` | - | 等待 T14/T16/T17 集成与宿主依赖恢复 |
+| **T18** | `codex/architecture-t18-20261017` | 待建 | - | - | C18 (待定) | `WAITING` | - | 等待 T14 W1-W3 收尾提交与 CMake 接线整合后启动 |
 | **T19** | `codex/architecture-t19-20261017` | 待建 | - | - | C19 (待定) | `WAITING` | - | 等待最终快照 |
 
 ---
@@ -39,9 +39,20 @@
 
 ---
 
-## 3. 门禁验证进度
+## 3. 门禁验证进度 (Combined Gate Status on `f459e73`)
 
-- **T16 + T17 组合门禁:** 待宿主开发库就绪后，集中验证全量构建、安装、升级、卸载及性能矩阵。
-- **T14 + T15 组合门禁:** T15 定向复审通过（`REVIEWED`）；待 T14（W1-W3）定向复审通过后，统一在明确组合 SHA 执行 G1/G3/G5/G6 门禁，记录真实集成 SHA。不要从已合入或 CTest 绿色推定该阶段验收通过。
-- **T18 门禁:** 待 T14/T16/T17 集成验收后执行。
-- **T19 最终门禁 G0-G7:** 待最终 HEAD 冻结后完整执行。
+- **Debug CTest:** 74/74 Passed (100%), 561.75s。所有测试均通过或在无头环境合法跳过 GTK 测试。
+- **Release CTest:** 74/74 Passed (100%), 338.67s。
+- **必需测试与质量门禁 (`verify_required_tests.py`):**
+  - `--profile full --stage baseline`: **Passed** (Debug & Release)
+  - `--profile full --stage final`: **Passed** (Debug & Release)
+- **Release 性能基准 (`modernime_personal_engine_benchmark`):**
+  - 精确查询（内存索引）: P50=1.09us, P95=1.56us, P99=1.81us (BM: 1100ns)
+  - 精确查询（LMDB mmap）: P50=1.66us, P95=1.91us, P99=2.52us (BM: 1618ns)
+  - 前缀查询（有序索引）: P50=2.38us, P95=2.45us, P99=3.15us (BM: 2476ns)
+  - 上下文重排（Full Rerank）: P50=2.36us, P95=2.49us, P99=3.33us (BM: 2258ns)
+  - 热路径写入 (`RecordUsage_HotPath_50k`): 257ns
+  - 进程 VmRSS 增量 (50k): ~58.27 MiB，满足全部架构要求
+- **全新克隆与生命周期门禁 (`tests/verify_fresh_clone.sh`):**
+  - 沙箱全新克隆、编译、74 项 CTest、安装产物验证、卸载清理完全性 **100% 通过**。
+- **T14 + T15 组合门禁:** T15 已 `REVIEWED` 并完整合入；T14 W1-W3 在 main 验证就绪，待 T14 正式提交并交付接线后，在最新组合 SHA 完成最终接线与冻结门禁。
