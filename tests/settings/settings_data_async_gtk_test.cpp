@@ -87,11 +87,12 @@ void pumpEventsUntil(const std::function<bool()> &condition,
                      std::chrono::milliseconds timeout = std::chrono::seconds(15)) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     do {
-        while (g_main_context_iteration(nullptr, FALSE)) {}
         if (condition()) {
             return;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!g_main_context_iteration(nullptr, FALSE)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
     } while (std::chrono::steady_clock::now() < deadline);
 }
 
@@ -421,12 +422,14 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     // Part 2: Verify window destruction while slow production saveDictionary is in-flight (0 UAF)
     std::atomic<bool> slowSaveEntered{false};
     std::atomic<bool> releaseSlowSave{false};
+    std::atomic<bool> slowSaveFinished{false};
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
         if (op == "saveDictionary") {
             slowSaveEntered = true;
             while (!releaseSlowSave.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
+            slowSaveFinished = true;
         }
     });
 
@@ -486,11 +489,9 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     // Release worker thread
     releaseSlowSave = true;
 
-    // Drain events - must not crash or trigger ASAN UAF
-    for (int i = 0; i < 30; ++i) {
-        drainEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    pumpEventsUntil([&] { return slowSaveFinished.load(); }, std::chrono::seconds(5));
+    assert(slowSaveFinished.load());
+    drainEvents();
 
     modernime::settings::DataController::setIoHookForTesting(nullptr);
     std::cout << "[Test] testDictionaryPageAsyncIoAndSlowIoSafety PASSED!" << std::endl;
@@ -510,12 +511,14 @@ void testSafeWindowClosingUnderSlowIo(const std::filesystem::path &tempDir) {
 
     std::atomic<bool> loadPaused{false};
     std::atomic<bool> releaseLoadPause{false};
+    std::atomic<bool> loadFinished{false};
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
         if (op == "loadDictionary") {
             loadPaused = true;
             while (!releaseLoadPause.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
+            loadFinished = true;
         }
     });
 
@@ -534,11 +537,9 @@ void testSafeWindowClosingUnderSlowIo(const std::filesystem::path &tempDir) {
     // Release worker thread
     releaseLoadPause = true;
 
-    // Drain events - must not crash or trigger ASAN use-after-free
-    for (int i = 0; i < 50; ++i) {
-        drainEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    pumpEventsUntil([&] { return loadFinished.load(); }, std::chrono::seconds(5));
+    assert(loadFinished.load());
+    drainEvents();
 
     modernime::settings::DataController::setIoHookForTesting(nullptr);
     std::cout << "[Test] testSafeWindowClosingUnderSlowIo PASSED!" << std::endl;
@@ -633,21 +634,34 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
 
     // Multi-round rapid search with actual in-flight batch interruption:
     // GtkSearchEntry has a 150ms timeout debounce.
+    const int totalPin = static_cast<int>(modernime::settings::DataController::filterDictionary(allEntries, "pin").size());
+    assert(totalPin == 4000);
+    const int totalXue = static_cast<int>(modernime::settings::DataController::filterDictionary(allEntries, "xue").size());
+    assert(totalXue == 4000);
+
     // Round 1: set text "pin" -> wait for search-changed to fire and idle batch render to start (> 0 rows)
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "pin");
     pumpEventsUntil([&] {
         return observedSearchSignals >= 1 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
     }, std::chrono::seconds(5));
     assert(observedSearchSignals >= 1);
+    const int round1Rows = gtk_tree_model_iter_n_children(model, nullptr);
+    std::cout << "  round1_before_interrupt_rows=" << round1Rows
+              << " expected_total=" << totalPin << std::endl;
+    assert(round1Rows > 0 && round1Rows < totalPin);
 
-    // While "pin" is rendering in batches, interrupt it with round 2!
+    // While "pin" is actively rendering in batches (only partial rows rendered), interrupt it with round 2!
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "xue");
     pumpEventsUntil([&] {
         return observedSearchSignals >= 2 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
     }, std::chrono::seconds(5));
     assert(observedSearchSignals >= 2);
+    const int round2Rows = gtk_tree_model_iter_n_children(model, nullptr);
+    std::cout << "  round2_before_interrupt_rows=" << round2Rows
+              << " expected_total=" << totalXue << std::endl;
+    assert(round2Rows > 0 && round2Rows < totalXue);
 
-    // Now interrupt round 2 with final query "zhong"
+    // Now interrupt round 2 in-flight with final query "zhong"
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "zhong");
     pumpEventsUntil([&] {
         return observedSearchSignals >= 3;
@@ -732,13 +746,15 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     std::atomic<bool> armCountHook{false};
     std::atomic<bool> countHookEntered{false};
     std::atomic<bool> releaseCountHook{false};
+    std::atomic<bool> refresh1Finished{false};
 
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
-        if (op == "learningEntryCount" && armCountHook.exchange(false)) {
+        if (op == "learningEntryCount:afterCount" && armCountHook.exchange(false)) {
             countHookEntered = true;
             while (!releaseCountHook.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
+            refresh1Finished = true;
         }
     });
 
@@ -757,17 +773,18 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     pumpEventsUntil([&] { return gtk_widget_get_sensitive(clearBtnA); }, std::chrono::seconds(5));
     assert(gtk_widget_get_sensitive(clearBtnA));
 
-    // Arm hook to pause the next refresh during learningEntryCount
+    // Arm hook to pause refresh #1 AFTER reading count == 1
     armCountHook = true;
     countHookEntered = false;
     releaseCountHook = false;
+    refresh1Finished = false;
 
-    // Request refresh #1 (will read count=1, then pause in worker)
+    // Request refresh #1 (reads count=1, then pauses in afterCount hook)
     pageA->refresh(false);
     pumpEventsUntil([&] { return countHookEntered.load(); }, std::chrono::seconds(5));
     assert(countHookEntered.load());
 
-    // While refresh #1 is paused, clear all entries from DB
+    // While refresh #1 is paused (having already read count=1), clear all entries from DB
     {
         sqlite3 *db = nullptr;
         assert(sqlite3_open(dbPathA.c_str(), &db) == SQLITE_OK);
@@ -775,7 +792,7 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
         sqlite3_close(db);
     }
 
-    // Request refresh #2 (will read count=0)
+    // Request refresh #2 (reads count=0 and applies to UI)
     const int notifiesBefore = notifyCountA;
     pageA->refresh(true);
     pumpEventsUntil([&] {
@@ -785,12 +802,11 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     // Confirm that refresh #2 completed and button is now disabled (count == 0)
     assert(!gtk_widget_get_sensitive(clearBtnA));
 
-    // Now release refresh #1's worker thread
+    // Now release refresh #1's worker thread (which carries old result count=1)
     releaseCountHook = true;
-    for (int i = 0; i < 30; ++i) {
-        drainEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    pumpEventsUntil([&] { return refresh1Finished.load(); }, std::chrono::seconds(5));
+    assert(refresh1Finished.load());
+    drainEvents();
 
     // Refresh #1 has older generation: must be discarded and MUST NOT re-enable the button!
     assert(!gtk_widget_get_sensitive(clearBtnA));
@@ -814,6 +830,8 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     std::atomic<bool> backupHookEntered{false};
     std::atomic<bool> releaseBackupHook{false};
     std::atomic<int> backupCallCount{0};
+    std::atomic<bool> refreshBFinished{false};
+    std::atomic<bool> backupFinished{false};
 
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
         if (op == "learningEntryCount" && armCountHook.exchange(false)) {
@@ -821,6 +839,7 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
             while (!releaseCountHook.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
+            refreshBFinished = true;
         } else if (op == "backupAndClearLearning") {
             ++backupCallCount;
             if (armBackupHook.exchange(false)) {
@@ -828,6 +847,7 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
                 while (!releaseBackupHook.load()) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 }
+                backupFinished = true;
             }
         }
     });
@@ -849,6 +869,7 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     armCountHook = true;
     countHookEntered = false;
     releaseCountHook = false;
+    refreshBFinished = false;
     pageB->refresh(false);
     pumpEventsUntil([&] { return countHookEntered.load(); }, std::chrono::seconds(5));
     assert(countHookEntered.load());
@@ -857,6 +878,7 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     armBackupHook = true;
     backupHookEntered = false;
     releaseBackupHook = false;
+    backupFinished = false;
     clickWithConfirmation(clearBtnB);
 
     // Wait until backup worker is paused inside backupAndClearLearning
@@ -869,10 +891,9 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
 
     // Now release the pending refresh
     releaseCountHook = true;
-    for (int i = 0; i < 30; ++i) {
-        drainEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    pumpEventsUntil([&] { return refreshBFinished.load(); }, std::chrono::seconds(5));
+    assert(refreshBFinished.load());
+    drainEvents();
 
     // Refresh completing during clear MUST NOT re-enable the clear button!
     assert(!gtk_widget_get_sensitive(clearBtnB));
@@ -884,7 +905,9 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
 
     // Release the backup worker
     releaseBackupHook = true;
-    pumpEventsUntil([&] { return notifyCountB > 0; }, std::chrono::seconds(5));
+    pumpEventsUntil([&] { return backupFinished.load() && notifyCountB > 0; }, std::chrono::seconds(5));
+    assert(backupFinished.load());
+    drainEvents();
 
     // Verify DB was cleared and final unified refresh completed
     assert(!gtk_widget_get_sensitive(clearBtnB));
@@ -950,12 +973,14 @@ void testLearningPageAsyncAndSlowIo(const std::filesystem::path &tempDir) {
     // 2. Hook and test safe window closing during in-flight learningEntryCount
     std::atomic<bool> countHookPaused{false};
     std::atomic<bool> releaseCountPause{false};
+    std::atomic<bool> countHookCompleted{false};
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
         if (op == "learningEntryCount") {
             countHookPaused = true;
             while (!releaseCountPause.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
+            countHookCompleted = true;
         }
     });
 
@@ -970,14 +995,55 @@ void testLearningPageAsyncAndSlowIo(const std::filesystem::path &tempDir) {
     // Release worker
     releaseCountPause = true;
 
-    // Drain events - ensures DiagnosticsLifetime deactivated safely without UAF
-    for (int i = 0; i < 30; ++i) {
-        drainEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    pumpEventsUntil([&] { return countHookCompleted.load(); }, std::chrono::seconds(5));
+    assert(countHookCompleted.load());
+    drainEvents();
 
     modernime::settings::DataController::setIoHookForTesting(nullptr);
     std::cout << "[Test] testLearningPageAsyncAndSlowIo PASSED!" << std::endl;
+}
+
+// 10. Test IoHook thread safety and concurrent reset during in-flight worker execution (S1 Regression)
+void testIoHookLifetimeAndConcurrentReset(const std::filesystem::path &tempDir) {
+    std::cout << "[Test] Running testIoHookLifetimeAndConcurrentReset..." << std::endl;
+    const auto dictPath = tempDir / "hook_lifetime_test.txt";
+    {
+        std::ofstream out(dictPath);
+        out << "nihao\t你好\t1.0\n";
+    }
+
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    std::atomic<bool> hookCompleted{false};
+
+    modernime::settings::DataController::setIoHookForTesting(
+        [payload = std::make_shared<int>(42), &entered, &release, &hookCompleted](std::string_view) {
+            entered = true;
+            while (!release.load()) {
+                std::this_thread::yield();
+            }
+            volatile int observed = *payload;
+            assert(observed == 42);
+            hookCompleted = true;
+        });
+
+    std::thread worker([&] {
+        modernime::settings::DataController::loadDictionary(dictPath);
+    });
+
+    while (!entered.load()) {
+        std::this_thread::yield();
+    }
+
+    // Concurrent reset: while worker is blocked inside the hook, main thread resets the hook!
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+
+    // Release worker
+    release = true;
+    worker.join();
+
+    assert(hookCompleted.load());
+    std::cout << "[Test] testIoHookLifetimeAndConcurrentReset PASSED!" << std::endl;
 }
 
 } // namespace
@@ -1002,6 +1068,7 @@ int main(int argc, char **argv) {
         testContinuousSearch(tempDir);
         testLearningPageStaleRefreshAndClearReentry(tempDir);
         testLearningPageAsyncAndSlowIo(tempDir);
+        testIoHookLifetimeAndConcurrentReset(tempDir);
         std::cout << "\nALL MODERNIME SETTINGS DATA ASYNC GTK TESTS PASSED!\n" << std::endl;
     } catch (const std::exception &e) {
         std::cerr << "FATAL TEST EXCEPTION: " << e.what() << std::endl;

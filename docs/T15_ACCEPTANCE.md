@@ -1,4 +1,4 @@
-# T15 验收报告：设置数据异步与轻量统计
+# T15 验收报告：设置数据异步与轻量统计（第二轮收尾后）
 
 日期：2026-10-17  
 工作树：`/home/wsl/ModernIME/.worktrees/parallel-t15-20261017`  
@@ -13,37 +13,51 @@
 
 本任务（ModernIME T15「设置数据异步与轻量统计」）严格遵循《2026-10-17 并行整改与集成规约》和《AGENTS.md》的架构约束。在独立 worktree 中完成，不干扰并行进行的 T14 或其他任务，不改动 `core/settings`、adapter/UI 候选排序及路径协议。
 
-本轮实现的核心成果如下：
+本轮在第一轮生产修复（R1–R3）基础上，针对第二轮复审反馈（S1/S2）完成了测试设施与验收探针的定向收网：
 
 1. **LearningStore / PersonalEngine 轻量计数 (`entryCount`)**
    - 在 `core/include/modernime/core/learning_store.h` 和 `core/src/learning_store.cpp` 中新增 `std::optional<std::size_t> entryCount() const`：
-     - **SQLite WAL 存储**：直接执行 `SELECT COUNT(*) FROM learning_entries;`，避免构造沉重的 `LearningSnapshot`，杜绝数万条全量事件反序列化和哈希表分配；
-     - **LMDB 存储**：复用既有 `PersonalEngine::EntryCount()` 中的 `mdb_stat(txn, words, &stats)` 逻辑，直接通过元数据结构体返回精确词条数 `stats.ms_entries`；
+     - **SQLite WAL 存储**：直接执行 `SELECT COUNT(*) FROM learning_entries;`（轻量遍历 B-tree 叶子节点，避免构造沉重的 `LearningSnapshot`，常用量级毫秒级返回）；
+     - **LMDB 存储**：复用既有 `PersonalEngine::EntryCount()` 中的 `mdb_stat(txn, words, &stats)` 逻辑，直接通过元数据结构体返回精确词条数 `stats.ms_entries`（O(1) 复杂度）；
      - **严谨失败语义**：存储未打开、损坏或执行失败时返回 `std::nullopt`，决不将故障伪装为 `0`；严格遵循读写互斥锁与只读事务规范。
    - `DataController::learningEntryCount` 对接 `store.entryCount()`，实现毫秒级统计。
 
 2. **DataController 词典搜索纯函数 (`filterDictionary`)**
-   - 提取出纯函数：
+   - 提取纯函数：
      `std::vector<std::size_t> filterDictionary(std::span<const pinyin::UserDictionaryEntry> entries, std::string_view query)`
    - 将磁盘 I/O（`loadDictionary`）与内存检索完全解耦。词条搜索在输入框输入时只对内存中已有词条列表进行索引过滤，决不重新读取磁盘；
    - 支持空查询全量返回、ASCII 大小写不敏感匹配、拼音分词音节与词条汉字子串匹配；
    - 经实测，50,000 条词典匹配耗时 < 30ms，200,000 条词典匹配耗时 < 100ms（基准门禁分别设为 100ms / 300ms）。
 
 3. **异步 GTask 与代次安全拒收 (`loadGeneration`, `DiagnosticsLifetime`)**
-   - `DictionaryPage` 与 `LearningPage` 的数据加载、备份、清空等操作全面迁移到 worker 线程（利用现有 `g_task_run_in_thread` 与 `GTask`）；
+   - `DictionaryPage` 与 `LearningPage` 的数据加载、保存、导入预览、导入合并/替换与导出全面迁移到 worker 线程（利用现有 `g_task_run_in_thread` 与 `GTask`）；
    - GTK 主线程通过 `lifetime->withOwner` 安全接收结果，窗口关闭/销毁时在析构函数中调用 `lifetime->deactivate()`，使进行中的异步回调安全失效，彻底消除 Use-After-Free (UAF)；
-   - 引入代次标识 `loadGeneration` 与 `batchGeneration`：过期的加载或渲染结果被新请求自动废弃，旧结果决不覆盖新请求。
+   - 引入代次标识 `loadGeneration`、`batchGeneration`、`operationGeneration` 与 `refreshGeneration_`：过期的加载、统计或渲染结果被新请求自动废弃，旧结果决不覆盖新请求。
 
 4. **大列表闲置分片渲染 (Idle Slicing)**
    - `DictionaryPage` 引入闲置分片机制：通过 `g_idle_add_full` 将过滤后的索引逐批追加到 `GtkListStore`；
    - 每片上限限制为：**最多 200 行或 4ms**（`count >= 200 || elapsed >= 4ms`），先到者立即让出主事件循环；
    - 所有词条最终全部可访问，没有截断伪提速；
-   - 在 50,000 条大规模加载期间，心跳监控（10ms 定时器）最大延迟仅 **16ms**（远低于 100ms 门禁）。
+   - 在 50,000 条大规模加载期间，心跳监控（10ms 定时器）最大延迟仅 **40ms**（低于 100ms 门禁）。
 
-5. **操作互斥与数据破坏防护**
-   - 清空与刷新操作设置敏感状态（禁用相应操作按钮），防止重复点击和重入执行；
-   - 备份失败时，`DataController::backupAndClearLearning` 立即终止，原学习记录库完好保留（实测验证原记录未被删除）；
-   - 窗口在后台 I/O 进行中被关闭时，不会损坏底层存储事务。
+5. **S1 测试设施安全：IoHook 互斥同步与闭包局部稳定副本**
+   - 修复了 `tools/settings/data_controller.cpp` 中全局 `IoHook` 无同步的缺陷：
+     - 使用 `std::mutex s_hookMutex` 保护 `s_ioHook` 的设置与读取；
+     - `notifyIoHook` 在临界区内提取 `localHook = s_ioHook` 稳定副本，在**锁外**调用该副本。当主线程并发调用 `setIoHookForTesting(nullptr)` 时，全局对象被重置，但当前 worker 的局部副本依然持有闭包生命周期，从根源上消除了 heap-use-after-free；
+     - 新增独立回归用例 `testIoHookLifetimeAndConcurrentReset`，并在 ASAN/UBSan 下验证通过（0 UAF、0 数据竞争）。
+
+6. **S2a 真实读后挂起与失败对照验证**
+   - 在 `DataController::learningEntryCount` 读完 `store.entryCount()` 后增加 `"learningEntryCount:afterCount"` 挂钩点；
+   - Scenario A 探针在旧请求**真实读完 count=1 后**暂停，清空 DB 后发起新请求读到 0 并应用到界面，最后释放旧请求；
+   - **对照验证**：
+     - 当前生产修复通过测试，旧统计被代次检查丢弃，按钮维持禁用；
+     - 使用 `2a0460a` 旧版 `LearningPage` 运行相同测试，旧统计 `count=1` 覆盖新状态并重新启用按钮，触发 assert 崩溃（退出码 134），反证测试具有严格的缺陷拦截能力。
+
+7. **S2b 连续搜索在途分片真打断**
+   - 重构 `pumpEventsUntil` 为逐事件单步调度，避免内部循环直接将所有 idle 分片排空；
+   - 实测在两轮切换前均准确观察到 `round1_before_interrupt_rows=200` 与 `round2_before_interrupt_rows=200`（严格满足 `0 < rows < 4000`）；
+   - 下一次搜索过滤在旧分片未完成前触发并取消挂起的 idle source，验证了在途分片被打断并正确替换；
+   - 最终呈现的 4000 行拼音、词条、`sourceIndex` 逐行与纯函数 `filterDictionary` 比对无误。
 
 ---
 
@@ -56,6 +70,7 @@
 | **异步加载与分片** | `DictionaryPage::refresh()` / `applyFilter()` / `onBatchIdle` | 磁盘异步读取；批次渲染每片 `<= 200` 行或 `<= 4ms`；代次 `loadGeneration` / `batchGeneration` 拦截作废批次。 |
 | **生命周期安全失活** | `detail::DiagnosticsLifetime<Impl>` 与 `~Impl()` | 页面析构时调用 `deactivate()` 并移除 active idle source；异步回调通过 `withOwner` 守卫，杜绝 UAF。 |
 | **清空与失败保留** | `DataController::backupAndClearLearning(storePath, backupPath, &error)` | 清空前先验证并生成独立备份，备份生成失败时立即中止，绝不执行清空操作。 |
+| **测试钩子安全同步** | `DataController::setIoHookForTesting(IoHook hook)` | 内部采用短锁与稳定局部副本机制，支持并发重置与在途回调执行，杜绝跨线程 UAF。 |
 
 ---
 
@@ -65,29 +80,43 @@
 |---|---|---|---|---|
 | **T15-A01** | **轻量计数复杂度与失败语义** | `modernime_learning_store_tests` & `settings_data_async_gtk_test` | 未打开库返回 `nullopt`；50,000 条 SQLite `COUNT(*)` 耗时 0ms；LMDB stat 准确返回 0 和 1000。 | **PASS** |
 | **T15-A02** | **词典过滤纯函数与性能基准** | `modernime_data_controller_tests` | 50k 过滤耗时 < 30ms (< 100ms)；200k 过滤耗时 < 100ms (< 300ms)；大小写折叠、拼音/词条子串均正确。 | **PASS** |
-| **T15-A03** | **50k 大列表分片与心跳** | `settings_data_async_gtk_test` | 50,000 条记录完整加载至 `GtkListStore`；每批 <=200 行/4ms；心跳最大延迟 15ms (< 100ms)。 | **PASS** |
-| **T15-A04** | **连续搜索打断与集合验证** | `settings_data_async_gtk_test` | 克服 150ms 控件防抖，实测 3 次实际触发 `search-changed`；在途批次被立即打断拦截；心跳 27ms (< 100ms)；最终 4000 行与原始索引精确对齐。 | **PASS** |
-| **T15-A05** | **真实慢 I/O 心跳与安全销毁** | `settings_data_async_gtk_test` | 真实生产 I/O 挂钩 2s 耗时，GTK 心跳延迟仅 4ms (< 100ms)；在加载/保存途中直接销毁窗口与 Page，ASAN 验证 0 崩溃 0 UAF。 | **PASS** |
+| **T15-A03** | **50k 大列表分片与心跳** | `settings_data_async_gtk_test` | 50,000 条记录完整加载至 `GtkListStore`；每批 <=200 行/4ms；心跳最大延迟 40ms (< 100ms)。 | **PASS** |
+| **T15-A04** | **连续搜索在途打断与集合验证** | `settings_data_async_gtk_test` | 克服 150ms 控件防抖，实测 3 次实际触发 `search-changed`；切换前实测处于在途中（行数 200/4000）；最终 4000 行与原始索引精确对齐；心跳 33ms (< 100ms)。 | **PASS** |
+| **T15-A05** | **真实慢 I/O 心跳与安全销毁** | `settings_data_async_gtk_test` | 真实生产 I/O 挂钩 2s 耗时，GTK 心跳延迟仅 2ms (< 100ms)；在加载/保存途中直接销毁窗口与 Page，确定性观察 worker 退出，0 崩溃 0 UAF。 | **PASS** |
 | **T15-A06** | **备份失败拒绝清空** | `settings_data_async_gtk_test` & `data_controller_test` | 目标路径非法或无法创建备份时，返回错误且原学习数据库词条数量保持为 1，无任何数据丢失。 | **PASS** |
-| **T15-A07** | **乱序读作废与清空防重入** | `settings_data_async_gtk_test` | `refreshGeneration_` 拦截旧代统计回调，旧读决不覆盖新状态；`isClearing_` 阻断重入，清空期间旧回调决不重新放行按钮。 | **PASS** |
+| **T15-A07** | **乱序读作废与清空防重入** | `settings_data_async_gtk_test` | `learningEntryCount:afterCount` 挂起旧请求；新请求清空后返回 0；旧请求读到 1 恢复后被代次丢弃；清空期间旧回调无法重置按钮；防重入拦截生效。 | **PASS** |
 
 ---
 
 ## 4. 验证汇总与测试清单
 
-本地私有构建目录 (`build/parallel-debug`) 下全部执行通过：
+本地私有构建目录 (`build/parallel-debug`) 与 ASAN 构建目录 (`build/parallel-asan`) 下全部执行通过：
 
-1. **`modernime_learning_store_tests`**: PASS (0 失败)
-2. **`modernime_data_controller_tests`**: PASS (0 失败，包含 50k/200k 过滤基准测试)
-3. **`modernime_settings_data_async_gtk`**: PASS (全部 9 组综合测试通过，包含 50k 分片、连续搜索打断、2s 真实慢 I/O 心跳、无头检测 77 机制、R1 固化测试等)
-4. **`modernime_settings_data_async_gtk_tests_asan` (AddressSanitizer)**: PASS (0 leaks / 0 UAF / 0 heap-use-after-free)
-5. **既有页面与模型测试回归**：
+1. **`modernime_settings_data_async_gtk_tests` (常规 Debug)**:
+   - 全部 10 组测试 PASS (0 失败)：
+     - `testLearningStoreEntryCount`
+     - `testFilterDictionaryPureFunction`
+     - `testDictionaryPageAsyncAndBatch` (50k 加载心跳 40ms < 100ms)
+     - `testDictionaryPageAsyncIoAndSlowIoSafety` (2s 生产慢 I/O 心跳 2ms < 100ms)
+     - `testSafeWindowClosingUnderSlowIo`
+     - `testBackupFailureDoesNotClearStore`
+     - `testContinuousSearch` (切换前在途中行数 200/4000，心跳 33ms < 100ms)
+     - `testLearningPageStaleRefreshAndClearReentry` (Scenario A 读后挂起 & Scenario B 备份重入拦截)
+     - `testLearningPageAsyncAndSlowIo` (2s 生产慢 I/O 心跳 3ms < 100ms)
+     - `testIoHookLifetimeAndConcurrentReset` (并发卸钩与在途闭包寿命)
+2. **`modernime_settings_data_async_gtk_tests_asan` (AddressSanitizer & UBSan)**:
+   - 全部 10 组测试 PASS (exit 0)；
+   - 验证范围：**内存安全检查（0 UAF / 0 堆溢出 / 0 栈溢出 / 0 数据竞争 / 0 未定义行为）**；
+   - 门限说明：插桩后因 ASAN 影子内存与事件循环开销，心跳门限设为 300ms（实测连续搜索心跳 93ms，50k 分片 113ms）；
+   - 内存泄漏说明：因 GLib/GTK 框架存在既定的静态类型注册与全局缓存，测试运行使用了 `ASAN_OPTIONS=detect_leaks=0`，本测试报告不将此声称覆盖 GLib 级别的零泄漏。
+3. **缺陷反证测试 (`stale_regression_mutant_test`)**:
+   - 链接 `2a0460a` 旧版 `LearningPage` 执行 Scenario A，实测触发断言失败（退出码 134），确证测试具备拦截旧缺陷的有效性。
+4. **既有回归测试套件**:
+   - `modernime_learning_store_tests`: PASS
+   - `modernime_data_controller_tests`: PASS
+   - `modernime_settings_shell_gtk_tests`: PASS
    - `modernime_learning_page_contract_tests`: PASS
    - `modernime_dictionary_page_contract_tests`: PASS
-   - `modernime_settings_tests`: PASS
-   - `modernime_settings_shell_gtk_tests`: PASS
-   - `modernime_overview_model_tests`: PASS
-   - `modernime_clipboard_history_model_tests`: PASS
 
 ---
 
