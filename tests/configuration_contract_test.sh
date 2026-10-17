@@ -109,6 +109,22 @@ for candidate in "$BUILD_DIR/tests/modernime_fcitx5_input_panel_tests" "$BUILD_D
     fi
 done
 
+UI_ADDON_TEST_BIN=""
+for candidate in "$BUILD_DIR/tests/modernime_ui_addon_tests" "$BUILD_DIR/modernime_ui_addon_tests"; do
+    if [[ -x "$candidate" ]]; then
+        UI_ADDON_TEST_BIN="$candidate"
+        break
+    fi
+done
+
+DB_FIXTURE_HELPER_BIN=""
+for candidate in "$BUILD_DIR/tests/modernime_db_fixture_helper" "$BUILD_DIR/modernime_db_fixture_helper"; do
+    if [[ -x "$candidate" ]]; then
+        DB_FIXTURE_HELPER_BIN="$candidate"
+        break
+    fi
+done
+
 if [[ -z "$SETTINGS_TEST_BIN" ]]; then
     echo "ERROR: modernime_settings_tests binary not found in $BUILD_DIR" >&2
     exit 1
@@ -129,10 +145,40 @@ if [[ -z "$RUNTIME_CONTROLLER_TEST_BIN" ]]; then
     exit 1
 fi
 
+if [[ -z "$FAKE_REMOTE_BIN" ]]; then
+    echo "ERROR: modernime_fake_fcitx5_remote binary not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
+if [[ -z "$FAKE_FCITX_BIN" ]]; then
+    echo "ERROR: modernime_fake_fcitx5 binary not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
+if [[ -z "$FCITX5_INPUT_PANEL_TEST_BIN" ]]; then
+    echo "ERROR: modernime_fcitx5_input_panel_tests binary not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
+if [[ -z "$UI_ADDON_TEST_BIN" ]]; then
+    echo "ERROR: modernime_ui_addon_tests binary not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
+if [[ -z "$DB_FIXTURE_HELPER_BIN" ]]; then
+    echo "ERROR: modernime_db_fixture_helper binary not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
 echo "Using modernime_settings_tests:           $SETTINGS_TEST_BIN"
 echo "Using modernime_ui_tests:                 $UI_TEST_BIN"
 echo "Using modernime_adapter_tests:            $ADAPTER_TEST_BIN"
 echo "Using modernime_runtime_controller_tests: $RUNTIME_CONTROLLER_TEST_BIN"
+echo "Using modernime_fake_fcitx5_remote:       $FAKE_REMOTE_BIN"
+echo "Using modernime_fake_fcitx5:              $FAKE_FCITX_BIN"
+echo "Using modernime_fcitx5_input_panel_tests: $FCITX5_INPUT_PANEL_TEST_BIN"
+echo "Using modernime_ui_addon_tests:           $UI_ADDON_TEST_BIN"
+echo "Using modernime_db_fixture_helper:        $DB_FIXTURE_HELPER_BIN"
 
 # Step 1: Run C++ unit test suite covering SettingsFileStamp, SettingsApplicationVersion, and space paths
 echo "--- Running modernime_settings_tests ---"
@@ -150,14 +196,17 @@ echo "--- Running modernime_adapter_tests ---"
 echo "PASS: modernime_adapter_tests passed"
 
 # Step 4: Run C++ runtime controller test suite covering state compatibility and process control
-if [[ -n "$FAKE_REMOTE_BIN" && -n "$FAKE_FCITX_BIN" ]]; then
-    echo "--- Running modernime_runtime_controller_tests ---"
-    "$RUNTIME_CONTROLLER_TEST_BIN" "$FAKE_REMOTE_BIN" "$FAKE_FCITX_BIN"
-    echo "PASS: modernime_runtime_controller_tests passed"
-fi
+echo "--- Running modernime_runtime_controller_tests ---"
+"$RUNTIME_CONTROLLER_TEST_BIN" "$FAKE_REMOTE_BIN" "$FAKE_FCITX_BIN"
+echo "PASS: modernime_runtime_controller_tests passed"
 
-# Step 5: Run comprehensive automated contract matrix via Python
-export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN RUNTIME_CONTROLLER_TEST_BIN FAKE_REMOTE_BIN FAKE_FCITX_BIN FCITX5_INPUT_PANEL_TEST_BIN
+# Step 5: Run C++ UI addon integration test suite covering config reload, layout invalidation, and candidate selection
+echo "--- Running modernime_ui_addon_tests ---"
+"$UI_ADDON_TEST_BIN"
+echo "PASS: modernime_ui_addon_tests passed"
+
+# Step 6: Run comprehensive automated contract matrix via Python
+export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN RUNTIME_CONTROLLER_TEST_BIN FAKE_REMOTE_BIN FAKE_FCITX_BIN FCITX5_INPUT_PANEL_TEST_BIN UI_ADDON_TEST_BIN DB_FIXTURE_HELPER_BIN
 python3 - << 'EOF'
 import os
 import sys
@@ -173,10 +222,12 @@ build_dir = Path(os.environ["BUILD_DIR"])
 settings_test_bin = os.environ["SETTINGS_TEST_BIN"]
 ui_test_bin = os.environ["UI_TEST_BIN"]
 adapter_test_bin = os.environ["ADAPTER_TEST_BIN"]
-runtime_controller_test_bin = os.environ.get("RUNTIME_CONTROLLER_TEST_BIN", "")
-fake_remote_bin = os.environ.get("FAKE_REMOTE_BIN", "")
-fake_fcitx_bin = os.environ.get("FAKE_FCITX_BIN", "")
-fcitx5_input_panel_test_bin = os.environ.get("FCITX5_INPUT_PANEL_TEST_BIN", "")
+runtime_controller_test_bin = os.environ["RUNTIME_CONTROLLER_TEST_BIN"]
+fake_remote_bin = os.environ["FAKE_REMOTE_BIN"]
+fake_fcitx_bin = os.environ["FAKE_FCITX_BIN"]
+fcitx5_input_panel_test_bin = os.environ["FCITX5_INPUT_PANEL_TEST_BIN"]
+ui_addon_test_bin = os.environ["UI_ADDON_TEST_BIN"]
+db_fixture_helper_bin = os.environ["DB_FIXTURE_HELPER_BIN"]
 
 def test_A01_same_mtime_atomic_replacement():
     print("[RUN ] T14-A01 Same-mtime atomic replacement")
@@ -250,96 +301,162 @@ def test_A04_sensitive_context_safety():
     # 4. Restored 3 positive learning assertions for non-sensitive prefix
     res = subprocess.run([adapter_test_bin], capture_output=True, text=True)
     assert res.returncode == 0, f"adapter_test failed: {res.stderr}"
-    if fcitx5_input_panel_test_bin:
-        res_panel = subprocess.run([fcitx5_input_panel_test_bin], capture_output=True, text=True)
-        assert res_panel.returncode == 0, f"fcitx5_input_panel_test failed: {res_panel.stderr}"
+    assert fcitx5_input_panel_test_bin, "fcitx5_input_panel_tests binary is required"
+    res_panel = subprocess.run([fcitx5_input_panel_test_bin], capture_output=True, text=True)
+    assert res_panel.returncode == 0, f"fcitx5_input_panel_test failed: {res_panel.stderr}"
     print("[PASS] T14-A04 Sensitive context hot-reload safety")
 
 def test_A05_font_metrics_layout_invalidation():
     print("[RUN ] T14-A05 Font metrics and page size layout invalidation")
-    # Executes modernime_ui_tests which tests:
-    # 1. hitTestCandidate returns -1 on candidateFontSize mismatch
-    # 2. hitTestCandidate returns -1 on maxCandidates mismatch
-    # 3. hitTestCandidate returns -1 on layoutGeneration mismatch
-    # 4. Remeasure restores candidate hit-testing with fresh layoutGeneration
-    # 5. Candidate semantics and click boundaries preserved
+    # Executes pure layout unit tests
     res = subprocess.run([ui_test_bin], capture_output=True, text=True)
     assert res.returncode == 0, f"ui_test failed: {res.stderr}"
+    # Executes production UI addon integration test
+    assert ui_addon_test_bin, "ui_addon_test_bin is required"
+    res_addon = subprocess.run([ui_addon_test_bin], capture_output=True, text=True)
+    assert res_addon.returncode == 0, f"ui_addon_test failed: {res_addon.stderr}"
     print("[PASS] T14-A05 Font metrics and page size layout invalidation")
 
 def test_A06_path_matrix_spaces_and_database_isolation():
     print("[RUN ] T14-A06 Path matrix with spaces and database isolation")
-    with tempfile.TemporaryDirectory(prefix="modernime path matrix spaces ") as td:
-        root = Path(td)
-        cfg_dir = root / "custom config with space" / "modernime"
-        data_dir = root / "custom data with space" / "modernime"
-        cfg_dir.mkdir(parents=True)
-        data_dir.mkdir(parents=True)
-        
-        # Check host database path
-        real_home = Path(os.environ.get("HOME", "/home/wsl"))
-        host_db = real_home / ".local" / "share" / "modernime" / "learning.sqlite3"
-        host_db_mtime = os.stat(host_db).st_mtime_ns if host_db.exists() else None
-        
-        # Create an isolated SQLite database in sandbox
-        sandbox_db = data_dir / "learning.sqlite3"
-        conn = sqlite3.connect(str(sandbox_db))
-        conn.execute("CREATE TABLE meta (schema_version INTEGER);")
-        conn.execute("INSERT INTO meta VALUES (1);")
-        conn.execute("CREATE TABLE words (pinyin TEXT, word TEXT, count INTEGER);")
-        conn.commit()
-        conn.close()
-        assert sandbox_db.is_file(), "sandbox SQLite db must exist"
+    guard_script = repo_root / "scripts" / "modernime-data-guard"
+    session_init = repo_root / "scripts" / "modernime-session-init"
+    assert db_fixture_helper_bin, "db_fixture_helper_bin is required"
+    
+    # Check host database path to ensure isolation
+    real_home = Path(os.environ.get("HOME", "/home/wsl"))
+    host_db = real_home / ".local" / "share" / "modernime" / "learning.sqlite3"
+    host_db_mtime = os.stat(host_db).st_mtime_ns if host_db.exists() else None
 
-        # Create an isolated LMDB directory in sandbox
-        sandbox_lmdb = data_dir / "history.lmdb"
-        sandbox_lmdb.mkdir(parents=True, exist_ok=True)
-        (sandbox_lmdb / "data.mdb").write_bytes(b"dummy lmdb payload")
-        assert (sandbox_lmdb / "data.mdb").is_file(), "sandbox LMDB file must exist"
+    # Test matrix: (mode_name, root_dir_name, env_fn, expected_dirs_fn)
+    scenarios = [
+        ("spaces", "custom spaces dir with spaces", lambda root: {
+            "HOME": str(root / "home"),
+            "MODERNIME_CONFIG_HOME": str(root / "custom config space"),
+            "MODERNIME_DATA_HOME": str(root / "custom data space"),
+            "MODERNIME_SKIP_FCITX_RESTART": "1",
+        }, lambda root: (root / "custom data space" / "modernime", root / "custom config space" / "modernime")),
         
-        # Run modernime-data-guard verify and backup in paths with spaces
-        guard_script = repo_root / "scripts" / "modernime-data-guard"
-        res_verify = subprocess.run(
-            [sys.executable, str(guard_script), "--verify", "--data-dir", str(data_dir), "--config-dir", str(cfg_dir)],
-            capture_output=True, text=True
-        )
-        assert res_verify.returncode == 0, f"data-guard --verify failed: {res_verify.stderr}"
+        ("home_default", "home_fallback_case", lambda root: {
+            "HOME": str(root / "home"),
+            "XDG_CONFIG_HOME": "",
+            "XDG_DATA_HOME": "",
+            "MODERNIME_CONFIG_HOME": "",
+            "MODERNIME_DATA_HOME": "",
+            "MODERNIME_SKIP_FCITX_RESTART": "1",
+        }, lambda root: (root / "home" / ".local" / "share" / "modernime", root / "home" / ".config" / "modernime")),
         
-        res_backup = subprocess.run(
-            [sys.executable, str(guard_script), "--backup", "--data-dir", str(data_dir), "--config-dir", str(cfg_dir)],
-            capture_output=True, text=True
-        )
-        assert res_backup.returncode == 0, f"data-guard --backup failed: {res_backup.stderr}"
-        assert (data_dir / "backups" / "latest").is_file(), "latest backup pointer must exist"
+        ("xdg_override", "xdg_case", lambda root: {
+            "HOME": str(root / "home"),
+            "XDG_CONFIG_HOME": str(root / "xdg_cfg"),
+            "XDG_DATA_HOME": str(root / "xdg_dat"),
+            "MODERNIME_CONFIG_HOME": "",
+            "MODERNIME_DATA_HOME": "",
+            "MODERNIME_SKIP_FCITX_RESTART": "1",
+        }, lambda root: (root / "xdg_dat" / "modernime", root / "xdg_cfg" / "modernime")),
         
-        # Verify host db was not touched
-        if host_db.exists() and host_db_mtime is not None:
-            assert os.stat(host_db).st_mtime_ns == host_db_mtime, "host db must not be modified!"
+        ("managed_conflict", "managed_conflict_case", lambda root: {
+            "HOME": str(root / "home"),
+            "XDG_CONFIG_HOME": str(root / "xdg_cfg"),
+            "XDG_DATA_HOME": str(root / "xdg_dat"),
+            "MODERNIME_CONFIG_HOME": str(root / "managed_cfg"),
+            "MODERNIME_DATA_HOME": str(root / "managed_dat"),
+            "MODERNIME_SKIP_FCITX_RESTART": "1",
+        }, lambda root: (root / "managed_dat" / "modernime", root / "managed_cfg" / "modernime")),
+    ]
+
+    for mode, dir_name, make_env, get_expected_dirs in scenarios:
+        with tempfile.TemporaryDirectory(prefix=f"modernime-matrix-{mode}-") as td:
+            root = Path(td) / dir_name
+            root.mkdir(parents=True)
+            (root / "home").mkdir(parents=True, exist_ok=True)
             
-        # Verify modernime-session-init path handling
-        session_init = repo_root / "scripts" / "modernime-session-init"
-        env = os.environ.copy()
-        env["MODERNIME_CONFIG_HOME"] = str(cfg_dir.parent)
-        env["MODERNIME_DATA_HOME"] = str(data_dir.parent)
-        env["MODERNIME_SKIP_FCITX_RESTART"] = "1"
-        res_init = subprocess.run(["bash", str(session_init)], env=env, capture_output=True, text=True)
-        assert res_init.returncode == 0, f"session-init failed: {res_init.stderr}"
-        assert (cfg_dir.parent / "environment.d" / "90-modernime.conf").is_file()
-        conf_text = (cfg_dir.parent / "environment.d" / "90-modernime.conf").read_text(encoding="utf-8")
-        assert str(data_dir.parent) in conf_text
-        assert str(cfg_dir.parent) in conf_text
+            env_vars = make_env(root)
+            env = os.environ.copy()
+            for k, v in env_vars.items():
+                if v:
+                    env[k] = v
+                else:
+                    env.pop(k, None)
+            
+            expected_data_dir, expected_cfg_dir = get_expected_dirs(root)
+            expected_data_dir.mkdir(parents=True, exist_ok=True)
+            expected_cfg_dir.mkdir(parents=True, exist_ok=True)
+
+            # 1. Use real production LearningStore to create and write learning.sqlite3
+            sqlite_file = expected_data_dir / "learning.sqlite3"
+            r_sqlite = subprocess.run([db_fixture_helper_bin, str(sqlite_file), "--record", "nihao", "你好"],
+                                      capture_output=True, text=True)
+            assert r_sqlite.returncode == 0, f"[{mode}] failed to create sqlite fixture: {r_sqlite.stderr}"
+            assert sqlite_file.is_file(), f"[{mode}] sqlite db must exist"
+
+            # 2. Use real production LearningStore/PersonalEngine to create and write learning.lmdb
+            lmdb_file = expected_data_dir / "learning.lmdb"
+            r_lmdb = subprocess.run([db_fixture_helper_bin, str(lmdb_file), "--record", "shijie", "世界"],
+                                    capture_output=True, text=True)
+            assert r_lmdb.returncode == 0, f"[{mode}] failed to create lmdb fixture: {r_lmdb.stderr}"
+            assert lmdb_file.is_file(), f"[{mode}] lmdb file must exist"
+
+            # 3. Verify data-guard --verify in resolved environment
+            res_verify = subprocess.run(
+                [sys.executable, str(guard_script), "--verify", "--data-dir", str(expected_data_dir), "--config-dir", str(expected_cfg_dir)],
+                env=env, capture_output=True, text=True
+            )
+            assert res_verify.returncode == 0, f"[{mode}] data-guard --verify failed: {res_verify.stderr}\nstdout: {res_verify.stdout}"
+
+            # 4. Run data-guard --backup in resolved environment
+            res_backup = subprocess.run(
+                [sys.executable, str(guard_script), "--backup", "--data-dir", str(expected_data_dir), "--config-dir", str(expected_cfg_dir)],
+                env=env, capture_output=True, text=True
+            )
+            assert res_backup.returncode == 0, f"[{mode}] data-guard --backup failed: {res_backup.stderr}\nstdout: {res_backup.stdout}"
+            
+            # Check backup content
+            assert (expected_data_dir / "backups" / "latest").is_file(), f"[{mode}] latest backup pointer must exist"
+            latest_target = (expected_data_dir / "backups" / "latest").read_text(encoding="utf-8").strip()
+            latest_dir = Path(latest_target)
+            assert latest_dir.is_dir(), f"[{mode}] latest backup target directory must exist"
+            assert (latest_dir / "learning.sqlite3").is_file(), f"[{mode}] backup must contain learning.sqlite3"
+            assert (latest_dir / "learning.lmdb").is_file(), f"[{mode}] backup must contain learning.lmdb"
+
+            # 5. Verify session-init if managed config is used
+            if env_vars.get("MODERNIME_CONFIG_HOME") and env_vars.get("MODERNIME_DATA_HOME"):
+                res_init = subprocess.run(["bash", str(session_init)], env=env, capture_output=True, text=True)
+                assert res_init.returncode == 0, f"[{mode}] session-init failed: {res_init.stderr}"
+                conf_path = Path(env_vars["MODERNIME_CONFIG_HOME"]) / "environment.d" / "90-modernime.conf"
+                assert conf_path.is_file(), f"[{mode}] 90-modernime.conf must exist"
+                conf_text = conf_path.read_text(encoding="utf-8")
+                assert env_vars["MODERNIME_DATA_HOME"] in conf_text
+                assert env_vars["MODERNIME_CONFIG_HOME"] in conf_text
+
+    # Verify host db was never modified
+    if host_db.exists() and host_db_mtime is not None:
+        assert os.stat(host_db).st_mtime_ns == host_db_mtime, "host db must not be modified!"
+
     print("[PASS] T14-A06 Path matrix with spaces and database isolation")
 
 def test_A07_runtime_state_compatibility():
     print("[RUN ] T14-A07 runtime.state forward/backward compatibility")
-    # Call the real modernime_runtime_controller_tests binary which directly exercises
-    # RuntimeController::probe with unknown fields, missing fields, corrupted numbers,
-    # and validates that service liveness is strictly decoupled from state file diagnostics.
-    if runtime_controller_test_bin and fake_remote_bin and fake_fcitx_bin:
-        res = subprocess.run([runtime_controller_test_bin, fake_remote_bin, fake_fcitx_bin],
-                             capture_output=True, text=True)
-        assert res.returncode == 0, f"runtime_controller_tests failed: {res.stderr}"
+    assert runtime_controller_test_bin, "runtime_controller_tests binary is required"
+    assert fake_remote_bin, "fake_remote_bin is required"
+    assert fake_fcitx_bin, "fake_fcitx_bin is required"
+    res = subprocess.run([runtime_controller_test_bin, fake_remote_bin, fake_fcitx_bin],
+                         capture_output=True, text=True)
+    assert res.returncode == 0, f"runtime_controller_tests failed: {res.stderr}"
     print("[PASS] T14-A07 runtime.state forward/backward compatibility")
+
+def test_missing_fixture_negative_regression():
+    print("[RUN ] T14 Negative fixture check: missing binaries cause non-zero exit")
+    with tempfile.TemporaryDirectory(prefix="modernime-t14-missing-") as td:
+        dummy_build = Path(td) / "build" / "tests"
+        dummy_build.mkdir(parents=True)
+        # Symlink only settings test, omitting fakes and helpers
+        (dummy_build / "modernime_settings_tests").symlink_to(settings_test_bin)
+        r = subprocess.run(["bash", str(repo_root / "tests/configuration_contract_test.sh"),
+                            "--build-dir", str(Path(td) / "build")],
+                           capture_output=True, text=True)
+        assert r.returncode != 0, f"Missing binaries must cause non-zero exit code, got {r.returncode}"
+    print("[PASS] T14 Negative fixture check passed")
 
 test_A01_same_mtime_atomic_replacement()
 test_A02_delete_recreate_observation()
@@ -348,6 +465,7 @@ test_A04_sensitive_context_safety()
 test_A05_font_metrics_layout_invalidation()
 test_A06_path_matrix_spaces_and_database_isolation()
 test_A07_runtime_state_compatibility()
+test_missing_fixture_negative_regression()
 EOF
 
 echo "========================================"

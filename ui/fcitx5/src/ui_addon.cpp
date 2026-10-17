@@ -22,11 +22,15 @@
 
 #include <gtk/gtk.h>
 #if defined(MODERNIME_USE_AYATANA_APPINDICATOR)
+#if __has_include(<libayatana-appindicator/app-indicator.h>)
 #include <libayatana-appindicator/app-indicator.h>
 #define MODERNIME_HAVE_APPINDICATOR 1
+#endif
 #elif defined(MODERNIME_USE_APPINDICATOR)
+#if __has_include(<libappindicator/app-indicator.h>)
 #include <libappindicator/app-indicator.h>
 #define MODERNIME_HAVE_APPINDICATOR 1
+#endif
 #endif
 #include <pango/pango.h>
 
@@ -99,10 +103,21 @@ struct ModernIMEUserInterface::Impl final {
             home == nullptr ? std::string_view{} : std::string_view(home)).settingsFile;
 
         const auto currentStamp = core::SettingsFileStamp::fromPath(path);
-        if (currentStamp != lastSettingsStamp || (loadFailed && retryCount < 5)) {
-            if (loadFailed) {
-                ++retryCount;
+        const bool stampChanged = (currentStamp != lastSettingsStamp);
+        bool shouldRetry = false;
+        if (stampChanged) {
+            shouldRetry = true;
+        } else if (loadFailed) {
+            if (retryCount < 5) {
+                shouldRetry = true;
+            } else if ((retryCount - 5) % 2 == 0) {
+                shouldRetry = true;
             }
+        }
+        if (loadFailed) {
+            ++retryCount;
+        }
+        if (shouldRetry) {
             if (currentStamp.exists) {
                 const auto loadResult = core::SettingsStore::load(path);
                 if (loadResult.isSuccess()) {
@@ -136,6 +151,7 @@ struct ModernIMEUserInterface::Impl final {
                     }
                 } else if (loadResult.isIoError()) {
                     loadFailed = true;
+                    lastSettingsStamp = currentStamp;
                 } else if (loadResult.isMissing()) {
                     lastSettingsStamp = currentStamp;
                     loadFailed = false;
@@ -335,12 +351,14 @@ struct ModernIMEUserInterface::Impl final {
 
 namespace {
 
+#if defined(MODERNIME_HAVE_APPINDICATOR)
 void toggleInputMethod(GtkMenuItem *, gpointer data) {
     if (auto *instance = static_cast<fcitx::Instance *>(data);
         instance != nullptr) {
         instance->toggle();
     }
 }
+#endif
 
 gboolean drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
     static_cast<ModernIMEUserInterface *>(data)->draw(context);
@@ -601,6 +619,7 @@ bool ModernIMEUserInterface::handleButtonPress(double x, double y) {
     if (impl_->suspended) {
         return false;
     }
+    impl_->refreshSettingsIfNeeded();
     auto *inputContext = impl_->currentInputContext;
     if (inputContext == nullptr && impl_->instance != nullptr) {
         inputContext =

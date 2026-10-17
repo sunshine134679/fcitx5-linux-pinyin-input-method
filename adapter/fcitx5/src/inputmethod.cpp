@@ -786,10 +786,23 @@ void ModernIMEInputMethod::pollFileChanges() {
     }
     const auto settingsFile = settingsPaths().settingsFile;
     const auto currentStamp = core::SettingsFileStamp::fromPath(settingsFile);
-    if (currentStamp != settingsStamp_ || (settingsLoadFailed_ && settingsRetryCount_ < 5)) {
-        if (settingsLoadFailed_) {
-            ++settingsRetryCount_;
+    const bool stampChanged = (currentStamp != settingsStamp_);
+    bool shouldRetry = false;
+    if (stampChanged) {
+        shouldRetry = true;
+    } else if (settingsLoadFailed_) {
+        // Immediate retries for first 5 attempts (every 2s poll),
+        // then bounded backoff (every 2nd poll, i.e., every 4s) indefinitely.
+        if (settingsRetryCount_ < 5) {
+            shouldRetry = true;
+        } else if ((settingsRetryCount_ - 5) % 2 == 0) {
+            shouldRetry = true;
         }
+    }
+    if (settingsLoadFailed_) {
+        ++settingsRetryCount_;
+    }
+    if (shouldRetry) {
         if (currentStamp.exists) {
             const auto loadResult = core::SettingsStore::load(settingsFile);
             if (loadResult.isSuccess()) {
@@ -817,6 +830,7 @@ void ModernIMEInputMethod::pollFileChanges() {
                 }
             } else if (loadResult.isIoError()) {
                 settingsLoadFailed_ = true;
+                settingsStamp_ = currentStamp;
                 FCITX_WARN() << "ModernIME failed to read settings from "
                              << settingsFile.string();
             } else if (loadResult.isMissing()) {
