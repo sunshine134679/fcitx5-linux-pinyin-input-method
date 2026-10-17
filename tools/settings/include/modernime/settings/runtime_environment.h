@@ -43,6 +43,16 @@ inline Environment runtimeEnvironment(const std::filesystem::path &prefix,
             environment.emplace_back(name, value);
         }
     }
+    if (const auto *cfg = std::getenv("MODERNIME_CONFIG_HOME"); cfg != nullptr && *cfg != '\0') {
+        environment.emplace_back("XDG_CONFIG_HOME", cfg);
+    } else if (const auto *xdgCfg = std::getenv("XDG_CONFIG_HOME"); xdgCfg != nullptr && *xdgCfg != '\0') {
+        environment.emplace_back("XDG_CONFIG_HOME", xdgCfg);
+    }
+    if (const auto *data = std::getenv("MODERNIME_DATA_HOME"); data != nullptr && *data != '\0') {
+        environment.emplace_back("XDG_DATA_HOME", data);
+    } else if (const auto *xdgData = std::getenv("XDG_DATA_HOME"); xdgData != nullptr && *xdgData != '\0') {
+        environment.emplace_back("XDG_DATA_HOME", xdgData);
+    }
     // Also cover lib64 and distribution multiarch directories after relocation.
     std::string addons = (prefix / "lib/fcitx5").string() + ':' +
                          (prefix / "lib64/fcitx5").string();

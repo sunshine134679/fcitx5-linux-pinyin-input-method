@@ -57,6 +57,7 @@ struct CandidateBarMetrics final {
     double clipboardSubmitIconGap = 0.0;
     double clipboardSeparatorHeight = 0.0;
     std::size_t maxCandidates = 9;
+    std::uint64_t layoutGeneration = 0;
 
     static CandidateBarMetrics reference(double fontSize = 20.0,
                                          std::size_t maxCandidates = 9);
@@ -94,6 +95,8 @@ struct CandidateBarLayout final {
     double clipboardTextPadding = 0.0;
     bool clipboardMode = false;
     double fontSize = 0.0;
+    std::size_t maxCandidates = 0;
+    std::uint64_t layoutGeneration = 0;
     std::vector<Rect> separators;
     std::vector<CandidateGeometry> candidates;
 

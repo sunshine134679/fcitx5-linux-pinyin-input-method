@@ -14,6 +14,7 @@ if [[ -z "$prefix" ]]; then
 fi
 
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
+data_home=${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}
 if [[ -f "$script_dir/install_state.sh" ]]; then
     source "$script_dir/install_state.sh"
 else
@@ -80,6 +81,12 @@ env_tmp=$(mktemp "$environment_dir/.modernime-env.XXXXXX")
 {
     printf 'FCITX_ADDON_DIRS="%s:%s"\n' "$prefix_addon_dir" "$system_addon_dir"
     printf 'XDG_DATA_DIRS="%s/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix"
+    if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
+        printf 'XDG_CONFIG_HOME="%s"\n' "$config_home"
+    fi
+    if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
+        printf 'XDG_DATA_HOME="%s"\n' "$data_home"
+    fi
     printf 'GTK_IM_MODULE=fcitx\n'
     printf 'QT_IM_MODULE=fcitx\n'
     printf 'XMODIFIERS=@im=fcitx\n'
@@ -89,7 +96,7 @@ env_tmp=$(mktemp "$environment_dir/.modernime-env.XXXXXX")
 # 4. Write autostart entry
 mkdir -p "$autostart_dir"
 auto_tmp=$(mktemp "$autostart_dir/.modernime-auto.XXXXXX")
-autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") fcitx5 -d -u modernime-ui"
+autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d -u modernime-ui"
 {
     printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
     printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
@@ -162,7 +169,8 @@ elif [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
     printf 'Notice: No D-Bus session detected; reload skipped.\n'
 else
     fcitx_environment=(env "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
-                       "XDG_DATA_DIRS=$data_directories" "XDG_CONFIG_HOME=$config_home")
+                       "XDG_DATA_DIRS=$data_directories" "XDG_CONFIG_HOME=$config_home"
+                       "XDG_DATA_HOME=$data_home")
     run_remote() {
         "${fcitx_environment[@]}" timeout --kill-after=0.5s 1s fcitx5-remote "$@" 2>/dev/null
     }

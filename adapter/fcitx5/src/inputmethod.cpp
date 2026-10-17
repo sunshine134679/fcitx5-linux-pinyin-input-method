@@ -774,20 +774,39 @@ void ModernIMEInputMethod::pollFileChanges() {
     }
     const auto settingsFile = settingsPaths().settingsFile;
     const auto currentStamp = core::SettingsFileStamp::fromPath(settingsFile);
-    if (currentStamp != settingsStamp_) {
-        settingsStamp_ = currentStamp;
+    if (currentStamp != settingsStamp_ || (settingsLoadFailed_ && settingsRetryCount_ < 5)) {
+        if (settingsLoadFailed_) {
+            ++settingsRetryCount_;
+        }
         if (currentStamp.exists) {
             const auto loadResult = core::SettingsStore::load(settingsFile);
-            if (loadResult.contentHash != appliedVersion_.contentHash) {
-                settings_ = loadResult.settings;
-                keyBindings_ = keyBindings(settings_);
-                ++settingsGeneration_;
-                appliedVersion_ = {loadResult.contentHash, settingsGeneration_};
-                writeRuntimeState(settingsPaths().runtimeState, loadResult.contentHash,
-                                  settingsGeneration_);
-                FCITX_INFO() << "ModernIME settings reloaded from "
+            if (loadResult.isSuccess()) {
+                settingsLoadFailed_ = false;
+                settingsRetryCount_ = 0;
+                settingsStamp_ = loadResult.stamp;
+                if (loadResult.contentHash != appliedVersion_.contentHash) {
+                    settings_ = loadResult.settings;
+                    keyBindings_ = keyBindings(settings_);
+                    ++settingsGeneration_;
+                    appliedVersion_ = {loadResult.contentHash, settingsGeneration_};
+                    writeRuntimeState(settingsPaths().runtimeState, loadResult.contentHash,
+                                      settingsGeneration_);
+                    FCITX_INFO() << "ModernIME settings reloaded from "
+                                 << settingsFile.string();
+                }
+            } else if (loadResult.isIoError()) {
+                settingsLoadFailed_ = true;
+                FCITX_WARN() << "ModernIME failed to read settings from "
                              << settingsFile.string();
+            } else if (loadResult.isMissing()) {
+                settingsStamp_ = currentStamp;
+                settingsLoadFailed_ = false;
+                settingsRetryCount_ = 0;
             }
+        } else {
+            settingsStamp_ = currentStamp;
+            settingsLoadFailed_ = false;
+            settingsRetryCount_ = 0;
         }
     }
     const auto dictionaryFile = settingsPaths().userDictionary;

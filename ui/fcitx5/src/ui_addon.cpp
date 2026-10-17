@@ -80,6 +80,8 @@ struct ModernIMEUserInterface::Impl final {
     std::uint64_t layoutGeneration = 0;
     int currentFontSize = 20;
     int currentPageSize = 9;
+    bool loadFailed = false;
+    int retryCount = 0;
 
     void refreshSettingsIfNeeded(bool force = false) {
         const auto now = std::chrono::steady_clock::now();
@@ -97,32 +99,52 @@ struct ModernIMEUserInterface::Impl final {
             home == nullptr ? std::string_view{} : std::string_view(home)).settingsFile;
 
         const auto currentStamp = core::SettingsFileStamp::fromPath(path);
-        if (currentStamp != lastSettingsStamp) {
-            lastSettingsStamp = currentStamp;
+        if (currentStamp != lastSettingsStamp || (loadFailed && retryCount < 5)) {
+            if (loadFailed) {
+                ++retryCount;
+            }
             if (currentStamp.exists) {
                 const auto loadResult = core::SettingsStore::load(path);
-                if (loadResult.contentHash != lastContentHash) {
-                    lastContentHash = loadResult.contentHash;
-                    const auto &loaded = loadResult.settings;
-                    if (loaded.candidateFontSize != currentFontSize ||
-                        loaded.candidatePageSize != currentPageSize) {
-                        currentFontSize = loaded.candidateFontSize;
-                        currentPageSize = loaded.candidatePageSize;
-                        ++layoutGeneration;
-                        metrics = CandidateBarMetrics::reference(
-                            static_cast<double>(currentFontSize),
-                            static_cast<std::size_t>(currentPageSize));
-                        style.candidateText.size = static_cast<double>(currentFontSize);
-                        style.candidateNumberText.size =
-                            std::max(10.0, static_cast<double>(currentFontSize) - 4.0);
-                        style.preeditText.size =
-                            std::max(12.0, static_cast<double>(currentFontSize) - 2.0);
-                        sharedWidthCache.clear();
-                        lastWindowWidth = -1;
-                        lastWindowHeight = -1;
-                        layout = {};
+                if (loadResult.isSuccess()) {
+                    loadFailed = false;
+                    retryCount = 0;
+                    lastSettingsStamp = loadResult.stamp;
+                    if (loadResult.contentHash != lastContentHash) {
+                        lastContentHash = loadResult.contentHash;
+                        const auto &loaded = loadResult.settings;
+                        if (loaded.candidateFontSize != currentFontSize ||
+                            loaded.candidatePageSize != currentPageSize) {
+                            currentFontSize = loaded.candidateFontSize;
+                            currentPageSize = loaded.candidatePageSize;
+                            ++layoutGeneration;
+                            metrics = CandidateBarMetrics::reference(
+                                static_cast<double>(currentFontSize),
+                                static_cast<std::size_t>(currentPageSize));
+                            metrics.layoutGeneration = layoutGeneration;
+                            metrics.maxCandidates = static_cast<std::size_t>(currentPageSize);
+                            metrics.candidateFontSize = static_cast<double>(currentFontSize);
+                            style.candidateText.size = static_cast<double>(currentFontSize);
+                            style.candidateNumberText.size =
+                                std::max(10.0, static_cast<double>(currentFontSize) - 4.0);
+                            style.preeditText.size =
+                                std::max(12.0, static_cast<double>(currentFontSize) - 2.0);
+                            sharedWidthCache.clear();
+                            lastWindowWidth = -1;
+                            lastWindowHeight = -1;
+                            layout = {};
+                        }
                     }
+                } else if (loadResult.isIoError()) {
+                    loadFailed = true;
+                } else if (loadResult.isMissing()) {
+                    lastSettingsStamp = currentStamp;
+                    loadFailed = false;
+                    retryCount = 0;
                 }
+            } else {
+                lastSettingsStamp = currentStamp;
+                loadFailed = false;
+                retryCount = 0;
             }
         }
     }
