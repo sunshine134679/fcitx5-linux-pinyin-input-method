@@ -27,28 +27,66 @@ jobs:
       - name: Configure and build
         run: |
           cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Debug \
+            -DMODERNIME_REQUIRE_FULL_TESTS=ON \
             -DMODERNIME_BUILD_FCITX5=ON \
             -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
             -DMODERNIME_BUILD_SETTINGS=ON \
+            -DMODERNIME_BUILD_UI_LAYOUT_TESTS=ON \
             -DMODERNIME_BUILD_TESTS=ON
           cmake --build build/ci --parallel $(nproc)
 
       - name: Run headless CTest
         run: |
           unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
-          ctest --test-dir build/ci --output-on-failure -E 'settings_focus_gtk|settings_shell_gtk|^modernime_personal_engine_benchmark$' --parallel $(nproc)
+          ctest --test-dir build/ci --output-on-failure \
+            -E '^modernime_personal_engine_benchmark$' \
+            --output-junit build/ci/debug-junit.xml \
+            --parallel $(nproc)
 
       # Latency budgets describe shipped optimized code. Keep Debug correctness
       # coverage above, and run the same mandatory benchmark in Release mode.
       - name: Run optimized algorithm performance gate
         run: |
           cmake -S . -B build/ci-performance -DCMAKE_BUILD_TYPE=Release \
+            -DMODERNIME_REQUIRE_FULL_TESTS=ON \
             -DMODERNIME_BUILD_FCITX5=ON \
             -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
             -DMODERNIME_BUILD_SETTINGS=ON \
+            -DMODERNIME_BUILD_UI_LAYOUT_TESTS=ON \
             -DMODERNIME_BUILD_TESTS=ON
           cmake --build build/ci-performance --target modernime_personal_engine_benchmark --parallel 2
-          ctest --test-dir build/ci-performance --output-on-failure -R '^modernime_personal_engine_benchmark$'
+          ctest --test-dir build/ci-performance --output-on-failure \
+            -R '^modernime_personal_engine_benchmark$' \
+            --output-junit build/ci-performance/release-junit.xml
+
+      - name: Verify required tests contracts
+        run: |
+          ctest --test-dir build/ci --show-only=json-v1 > build/ci/registered.json
+          python3 tests/verify_required_tests.py \
+            --registered build/ci/registered.json \
+            --profile full \
+            --stage baseline \
+            --junit build/ci/debug-junit.xml \
+            --junit build/ci-performance/release-junit.xml \
+            --execution headless
+
+      - name: Verify core-only build profile
+        run: |
+          cmake -S . -B build/ci-core-only -DCMAKE_BUILD_TYPE=Debug \
+            -DMODERNIME_BUILD_FCITX5=OFF \
+            -DMODERNIME_BUILD_LIBIME_PINYIN=OFF \
+            -DMODERNIME_BUILD_SETTINGS=OFF \
+            -DMODERNIME_BUILD_TOOLS=OFF \
+            -DMODERNIME_BUILD_UI_LAYOUT_TESTS=OFF \
+            -DMODERNIME_BUILD_TESTS=ON
+          cmake --build build/ci-core-only --parallel $(nproc)
+          ctest --test-dir build/ci-core-only --show-only=json-v1 > build/ci-core-only/registered.json
+          ctest --test-dir build/ci-core-only --output-on-failure --output-junit build/ci-core-only/junit.xml --parallel $(nproc)
+          python3 tests/verify_required_tests.py \
+            --registered build/ci-core-only/registered.json \
+            --profile core-only \
+            --stage baseline \
+            --junit build/ci-core-only/junit.xml
 
       - name: Verify DEB packaging
         run: |
