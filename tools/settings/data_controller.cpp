@@ -37,6 +37,14 @@ std::string foldAscii(std::string_view value) {
     return result;
 }
 
+DataController::IoHook s_ioHook;
+
+void notifyIoHook(std::string_view op) {
+    if (s_ioHook) {
+        s_ioHook(op);
+    }
+}
+
 } // namespace
 
 std::vector<std::size_t> DataController::filterDictionary(
@@ -67,12 +75,14 @@ std::vector<std::size_t> DataController::filterDictionary(
 
 std::vector<pinyin::UserDictionaryEntry> DataController::loadDictionary(
     const std::filesystem::path &path) {
+    notifyIoHook("loadDictionary");
     return pinyin::UserDictionary::loadText(path).entries();
 }
 
 DictionaryImportPreview DataController::previewDictionaryImport(
     const std::filesystem::path &path,
     const std::vector<pinyin::UserDictionaryEntry> &currentEntries) {
+    notifyIoHook("previewDictionaryImport");
     DictionaryImportPreview preview;
     if (path.empty()) {
         preview.error = "用户词典导入路径为空";
@@ -278,6 +288,7 @@ bool DataController::saveDictionary(
     const std::filesystem::path &path,
     const std::vector<pinyin::UserDictionaryEntry> &entries,
     std::string *error) {
+    notifyIoHook("saveDictionary");
     const auto setError = [error](std::string message) {
         if (error != nullptr) {
             *error = std::move(message);
@@ -302,6 +313,7 @@ bool DataController::saveDictionary(
 
 std::size_t DataController::learningEntryCount(
     const std::filesystem::path &path, std::string *error) {
+    notifyIoHook("learningEntryCount");
     if (error != nullptr) {
         error->clear();
     }
@@ -352,6 +364,7 @@ LearningBackendInfo DataController::detectActiveLearningBackend(
 bool DataController::backupAndClearLearning(
     const std::filesystem::path &path, const std::filesystem::path &backupPath,
     std::string *error) {
+    notifyIoHook("backupAndClearLearning");
     const auto setError = [error](std::string message) {
         if (error != nullptr) {
             *error = std::move(message);
@@ -392,6 +405,10 @@ bool DataController::backupAndClearLearning(
         error->clear();
     }
     return true;
+}
+
+void DataController::setIoHookForTesting(IoHook hook) {
+    s_ioHook = std::move(hook);
 }
 
 } // namespace modernime::settings

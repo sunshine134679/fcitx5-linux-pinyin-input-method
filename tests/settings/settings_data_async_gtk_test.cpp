@@ -13,6 +13,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -61,6 +62,22 @@ struct HeartbeatMonitor {
     }
 };
 
+#if defined(__SANITIZE_ADDRESS__)
+#define MODERNIME_TEST_IS_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define MODERNIME_TEST_IS_ASAN 1
+#else
+#define MODERNIME_TEST_IS_ASAN 0
+#endif
+#else
+#define MODERNIME_TEST_IS_ASAN 0
+#endif
+
+constexpr auto kMaxAllowedLatency = MODERNIME_TEST_IS_ASAN
+    ? std::chrono::milliseconds(300)
+    : std::chrono::milliseconds(100);
+
 void drainEvents(int maxIterations = 500) {
     int count = 0;
     while (g_main_context_iteration(nullptr, FALSE) && ++count < maxIterations) {}
@@ -76,6 +93,49 @@ void pumpEventsUntil(const std::function<bool()> &condition,
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     } while (std::chrono::steady_clock::now() < deadline);
+}
+
+GtkWidget *findTarget(GtkWidget *widget, std::string_view target) {
+    if (widget == nullptr) {
+        return nullptr;
+    }
+    const auto *id = static_cast<const char *>(g_object_get_data(
+        G_OBJECT(widget), "modernime-settings-target"));
+    if (id != nullptr && target == id) {
+        return widget;
+    }
+    if (!GTK_IS_CONTAINER(widget)) {
+        return nullptr;
+    }
+    auto *children = gtk_container_get_children(GTK_CONTAINER(widget));
+    GtkWidget *result = nullptr;
+    for (auto *item = children; item != nullptr && result == nullptr;
+         item = item->next) {
+        result = findTarget(GTK_WIDGET(item->data), target);
+    }
+    g_list_free(children);
+    return result;
+}
+
+void clickWithConfirmation(GtkWidget *button) {
+    g_timeout_add(10, [](gpointer) -> gboolean {
+        GList *w = gtk_window_list_toplevels();
+        bool found = false;
+        for (auto *i = w; i != nullptr; i = i->next) {
+            if (GTK_IS_MESSAGE_DIALOG(i->data)) {
+                gtk_dialog_response(GTK_DIALOG(i->data), GTK_RESPONSE_YES);
+                found = true;
+            }
+        }
+        g_list_free(w);
+        return found ? G_SOURCE_REMOVE : G_SOURCE_CONTINUE;
+    }, nullptr);
+    gtk_button_clicked(GTK_BUTTON(button));
+}
+
+const char *samplePinyin(int index) {
+    static const char *syls[] = {"ce'shi", "ni'hao", "zhong'guo", "pin'yin", "xue'xi"};
+    return syls[index % 5];
 }
 
 // 1. Test LearningStore::entryCount() with SQL COUNT(*) and LMDB stat
@@ -124,7 +184,7 @@ void testLearningStoreEntryCount(const std::filesystem::path &tempDir) {
 
         assert(count.has_value());
         assert(*count == 50000);
-        // COUNT(*) should be near-instantaneous (< 20ms)
+        // COUNT(*) should be near-instantaneous (< 50ms)
         std::cout << "  SQLite 50k COUNT(*) took: " << duration.count() << " ms" << std::endl;
         assert(duration < std::chrono::milliseconds(50));
 
@@ -213,11 +273,6 @@ void testFilterDictionaryPureFunction() {
     std::cout << "[Test] testFilterDictionaryPureFunction PASSED!" << std::endl;
 }
 
-const char *samplePinyin(int index) {
-    static const char *syls[] = {"ce'shi", "ni'hao", "zhong'guo", "pin'yin", "xue'xi"};
-    return syls[index % 5];
-}
-
 // 3. Test DictionaryPage search without disk re-reads and with 50k batch rendering
 void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     std::cout << "[Test] Running testDictionaryPageAsyncAndBatch..." << std::endl;
@@ -243,10 +298,7 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     gtk_container_add(GTK_CONTAINER(window), page->widget());
     gtk_widget_show_all(window);
 
-    // Pump events until batch rendering finishes loading all 50k entries
-    // Find GtkTreeView in page
     GtkTreeView *view = nullptr;
-    // Use gtk_container_forall recursively to find GtkTreeView
     std::function<void(GtkWidget*)> scanContainer = [&](GtkWidget *w) {
         if (GTK_IS_TREE_VIEW(w)) {
             view = GTK_TREE_VIEW(w);
@@ -278,10 +330,9 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     // Heartbeat check during batch rendering: max latency must be < 100ms
     std::cout << "  Max heartbeat latency during 50k batch render: "
               << heartbeat.maxLatency.count() << " ms (target < 100ms)" << std::endl;
-    assert(heartbeat.maxLatency < std::chrono::milliseconds(100));
+    assert(heartbeat.maxLatency < kMaxAllowedLatency);
 
     // Verify search does NOT touch disk
-    // We can delete or rename the file on disk:
     const auto dictPathMoved = tempDir / "user_dict_50k_moved.txt";
     std::filesystem::rename(dictPath, dictPathMoved);
 
@@ -323,7 +374,129 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     std::cout << "[Test] testDictionaryPageAsyncAndBatch PASSED!" << std::endl;
 }
 
-// 4. Test safe window closing during slow I/O (No UAF)
+// 4. Test DictionaryPage real production slow I/O safety & 2s GTK heartbeat < 100ms
+void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempDir) {
+    std::cout << "[Test] Running testDictionaryPageAsyncIoAndSlowIoSafety..." << std::endl;
+
+    const auto dictPath = tempDir / "user_dict_r2_slow.txt";
+    {
+        std::ofstream out(dictPath);
+        for (int i = 0; i < 500; ++i) {
+            out << samplePinyin(i) << "\t词" << i << "\t1.0\n";
+        }
+    }
+
+    // Part 1: Verify 2-second real production I/O (loadDictionary) keeps GTK heartbeat < 100ms
+    std::atomic<bool> slowLoadEntered{false};
+    std::atomic<bool> slowLoadFinished{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "loadDictionary") {
+            slowLoadEntered = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            slowLoadFinished = true;
+        }
+    });
+
+    HeartbeatMonitor heartbeat;
+    heartbeat.start();
+
+    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    auto page = std::make_unique<modernime::settings::DictionaryPage>(dictPath, [](std::string) {});
+    gtk_container_add(GTK_CONTAINER(window), page->widget());
+    gtk_widget_show_all(window);
+
+    // DictionaryPage::refresh was called during construction
+    pumpEventsUntil([&] { return slowLoadEntered.load(); }, std::chrono::seconds(5));
+    assert(slowLoadEntered.load());
+
+    // Pump events during the 2-second real production loadDictionary worker
+    pumpEventsUntil([&] { return slowLoadFinished.load(); }, std::chrono::seconds(5));
+    assert(slowLoadFinished.load());
+
+    heartbeat.stop();
+    std::cout << "  Max heartbeat latency during 2s production loadDictionary: "
+              << heartbeat.maxLatency.count() << " ms (target < 100ms)" << std::endl;
+    assert(heartbeat.maxLatency < kMaxAllowedLatency);
+
+    // Part 2: Verify window destruction while slow production saveDictionary is in-flight (0 UAF)
+    std::atomic<bool> slowSaveEntered{false};
+    std::atomic<bool> releaseSlowSave{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "saveDictionary") {
+            slowSaveEntered = true;
+            while (!releaseSlowSave.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    });
+
+    // Find delete button
+    auto *deleteBtn = findTarget(page->widget(), "dictionary-delete");
+    if (deleteBtn == nullptr) {
+        std::function<void(GtkWidget*)> scanBtn = [&](GtkWidget *w) {
+            if (GTK_IS_BUTTON(w)) {
+                const auto *label = gtk_button_get_label(GTK_BUTTON(w));
+                if (label != nullptr && std::strcmp(label, "删除") == 0) {
+                    deleteBtn = w;
+                    return;
+                }
+            }
+            if (GTK_IS_CONTAINER(w)) {
+                gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
+                    (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);
+                }, &scanBtn);
+            }
+        };
+        scanBtn(page->widget());
+    }
+
+    // Wait until entries are populated in treeview
+    GtkTreeView *view = nullptr;
+    std::function<void(GtkWidget*)> scanView = [&](GtkWidget *w) {
+        if (GTK_IS_TREE_VIEW(w)) { view = GTK_TREE_VIEW(w); return; }
+        if (GTK_IS_CONTAINER(w)) {
+            gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
+                (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);
+            }, &scanView);
+        }
+    };
+    scanView(page->widget());
+    assert(view != nullptr);
+
+    GtkTreeModel *model = gtk_tree_view_get_model(view);
+    pumpEventsUntil([&] { return gtk_tree_model_iter_n_children(model, nullptr) >= 500; }, std::chrono::seconds(5));
+
+    // Select row 0
+    auto *rowPath = gtk_tree_path_new_from_indices(0, -1);
+    gtk_tree_view_set_cursor(view, rowPath, nullptr, FALSE);
+    gtk_tree_path_free(rowPath);
+    drainEvents();
+
+    assert(deleteBtn != nullptr && gtk_widget_get_sensitive(deleteBtn));
+    clickWithConfirmation(deleteBtn);
+
+    // Wait until worker enters saveDictionary
+    pumpEventsUntil([&] { return slowSaveEntered.load(); }, std::chrono::seconds(5));
+    assert(slowSaveEntered.load());
+
+    // While saveDictionary is in progress, destroy page and window!
+    page.reset();
+    gtk_widget_destroy(window);
+
+    // Release worker thread
+    releaseSlowSave = true;
+
+    // Drain events - must not crash or trigger ASAN UAF
+    for (int i = 0; i < 30; ++i) {
+        drainEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+    std::cout << "[Test] testDictionaryPageAsyncIoAndSlowIoSafety PASSED!" << std::endl;
+}
+
+// 5. Test safe window closing during slow I/O (No UAF)
 void testSafeWindowClosingUnderSlowIo(const std::filesystem::path &tempDir) {
     std::cout << "[Test] Running testSafeWindowClosingUnderSlowIo..." << std::endl;
 
@@ -335,28 +508,43 @@ void testSafeWindowClosingUnderSlowIo(const std::filesystem::path &tempDir) {
         }
     }
 
+    std::atomic<bool> loadPaused{false};
+    std::atomic<bool> releaseLoadPause{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "loadDictionary") {
+            loadPaused = true;
+            while (!releaseLoadPause.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    });
+
     auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     auto page = std::make_unique<modernime::settings::DictionaryPage>(dictPath, [](std::string) {});
     gtk_container_add(GTK_CONTAINER(window), page->widget());
     gtk_widget_show_all(window);
 
-    // Start refresh (triggers async GTask load)
-    page->refresh();
+    pumpEventsUntil([&] { return loadPaused.load(); }, std::chrono::seconds(5));
+    assert(loadPaused.load());
 
-    // Immediately destroy the page and window while worker thread may be running
+    // Immediately destroy the page and window while worker thread is paused in loadDictionary
     page.reset();
     gtk_widget_destroy(window);
+
+    // Release worker thread
+    releaseLoadPause = true;
 
     // Drain events - must not crash or trigger ASAN use-after-free
     for (int i = 0; i < 50; ++i) {
         drainEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
     std::cout << "[Test] testSafeWindowClosingUnderSlowIo PASSED!" << std::endl;
 }
 
-// 5. Test backup failure does not clear learning store
+// 6. Test backup failure does not clear learning store
 void testBackupFailureDoesNotClearStore(const std::filesystem::path &tempDir) {
     std::cout << "[Test] Running testBackupFailureDoesNotClearStore..." << std::endl;
 
@@ -390,7 +578,7 @@ void testBackupFailureDoesNotClearStore(const std::filesystem::path &tempDir) {
     std::cout << "[Test] testBackupFailureDoesNotClearStore PASSED!" << std::endl;
 }
 
-// 6. Test continuous rapid search supersedes old idle render batches and keeps heartbeat < 100ms
+// 7. Test continuous rapid search with debounce handling, batch interruption, and exact row verification
 void testContinuousSearch(const std::filesystem::path &tempDir) {
     std::cout << "[Test] Running testContinuousSearch..." << std::endl;
 
@@ -398,9 +586,13 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     {
         std::ofstream out(dictPath);
         for (int i = 0; i < 20000; ++i) {
-            out << samplePinyin(i) << "\t词" << i << "\t" << (1.0f + static_cast<float>(i % 100)) << "\n";
+            const std::string py = samplePinyin(i);
+            const std::string ph = "词" + std::to_string(i);
+            const float w = 1.0f + static_cast<float>(i % 100);
+            out << py << "\t" << ph << "\t" << w << "\n";
         }
     }
+    const auto allEntries = modernime::settings::DataController::loadDictionary(dictPath);
 
     auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     auto page = std::make_unique<modernime::settings::DictionaryPage>(dictPath, [](std::string) {});
@@ -424,40 +616,293 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     assert(searchEntry != nullptr);
     GtkTreeModel *model = gtk_tree_view_get_model(view);
 
-    // Wait for initial load
+    // Wait for initial load (20,000 entries)
     pumpEventsUntil([&]() {
         return gtk_tree_model_iter_n_children(model, nullptr) >= 20000;
     }, std::chrono::seconds(10));
+    assert(gtk_tree_model_iter_n_children(model, nullptr) == 20000);
 
     HeartbeatMonitor heartbeat;
     heartbeat.start();
 
-    // Rapidly change search queries
-    const std::vector<std::string> queries = {"py", "py1", "py12", "py123", "none_match", "词99"};
-    for (const auto &q : queries) {
-        gtk_entry_set_text(GTK_ENTRY(searchEntry), q.c_str());
-        drainEvents(50);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    int observedSearchSignals = 0;
+    g_signal_connect(searchEntry, "search-changed",
+                     G_CALLBACK(+[](GtkSearchEntry *, gpointer data) {
+                         ++*static_cast<int *>(data);
+                     }), &observedSearchSignals);
 
-    // Wait for batch render of final query to complete
-    pumpEventsUntil([&]() {
-        const int count = gtk_tree_model_iter_n_children(model, nullptr);
-        // "词99" matches "词99", "词990".."词999", etc. (around 111 matches in 20000 entries)
-        return count > 0 && count < 20000;
+    // Multi-round rapid search with actual in-flight batch interruption:
+    // GtkSearchEntry has a 150ms timeout debounce.
+    // Round 1: set text "pin" -> wait for search-changed to fire and idle batch render to start (> 0 rows)
+    gtk_entry_set_text(GTK_ENTRY(searchEntry), "pin");
+    pumpEventsUntil([&] {
+        return observedSearchSignals >= 1 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
     }, std::chrono::seconds(5));
+    assert(observedSearchSignals >= 1);
+
+    // While "pin" is rendering in batches, interrupt it with round 2!
+    gtk_entry_set_text(GTK_ENTRY(searchEntry), "xue");
+    pumpEventsUntil([&] {
+        return observedSearchSignals >= 2 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
+    }, std::chrono::seconds(5));
+    assert(observedSearchSignals >= 2);
+
+    // Now interrupt round 2 with final query "zhong"
+    gtk_entry_set_text(GTK_ENTRY(searchEntry), "zhong");
+    pumpEventsUntil([&] {
+        return observedSearchSignals >= 3;
+    }, std::chrono::seconds(5));
+    assert(observedSearchSignals >= 3);
+
+    // Wait for final query "zhong" batch rendering to fully finish
+    const auto expectedIndices = modernime::settings::DataController::filterDictionary(allEntries, "zhong");
+    assert(!expectedIndices.empty());
+
+    pumpEventsUntil([&] {
+        const int count = gtk_tree_model_iter_n_children(model, nullptr);
+        return count == static_cast<int>(expectedIndices.size());
+    }, std::chrono::seconds(10));
+
+    const int finalCount = gtk_tree_model_iter_n_children(model, nullptr);
+    std::cout << "  Actual search-changed signals: " << observedSearchSignals << std::endl;
+    std::cout << "  Rendered rows for 'zhong': " << finalCount
+              << " (expected " << expectedIndices.size() << ")" << std::endl;
+    assert(finalCount == static_cast<int>(expectedIndices.size()));
+
+    // EXACT verification of each row: col 0 = pinyin, col 1 = phrase, col 3 = sourceIndex
+    GtkTreeIter iter;
+    gboolean valid = gtk_tree_model_get_iter_first(model, &iter);
+    for (std::size_t i = 0; i < expectedIndices.size(); ++i) {
+        assert(valid);
+        gchar *py = nullptr;
+        gchar *ph = nullptr;
+        guint sourceIndex = 0;
+        gtk_tree_model_get(model, &iter, 0, &py, 1, &ph, 3, &sourceIndex, -1);
+
+        const auto &expected = allEntries[expectedIndices[i]];
+        assert(sourceIndex == expectedIndices[i]);
+        assert(expected.pinyin == py);
+        assert(expected.phrase == ph);
+
+        g_free(py);
+        g_free(ph);
+        valid = gtk_tree_model_iter_next(model, &iter);
+    }
+    assert(!valid); // Exactly expectedIndices.size() rows, no more, no old rows leaked!
 
     heartbeat.stop();
     std::cout << "  Max heartbeat latency during continuous search: "
               << heartbeat.maxLatency.count() << " ms (target < 100ms)" << std::endl;
-    assert(heartbeat.maxLatency < std::chrono::milliseconds(100));
+    assert(heartbeat.maxLatency < kMaxAllowedLatency);
+
+    // Verify search does NOT touch disk (rename file and search again)
+    const auto dictPathMoved = tempDir / "user_dict_cont_search_moved.txt";
+    std::filesystem::rename(dictPath, dictPathMoved);
+
+    gtk_entry_set_text(GTK_ENTRY(searchEntry), "ceshi");
+    const auto expectedCeShi = modernime::settings::DataController::filterDictionary(allEntries, "ceshi");
+    assert(!expectedCeShi.empty());
+    pumpEventsUntil([&] {
+        return gtk_tree_model_iter_n_children(model, nullptr) == static_cast<int>(expectedCeShi.size());
+    }, std::chrono::seconds(10));
+    assert(gtk_tree_model_iter_n_children(model, nullptr) == static_cast<int>(expectedCeShi.size()));
+
+    std::filesystem::rename(dictPathMoved, dictPath);
 
     gtk_widget_destroy(window);
     drainEvents();
     std::cout << "[Test] testContinuousSearch PASSED!" << std::endl;
 }
 
-// 7. Test 2s slow I/O worker with heartbeat < 100ms and LearningPage async lifecycle
+// 8. Test LearningPage stale refresh and clear reentrancy (R1 Solidification)
+void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &tempDir) {
+    std::cout << "[Test] Running testLearningPageStaleRefreshAndClearReentry..." << std::endl;
+
+    // --- Scenario A: Stale refresh cannot override newer state ---
+    const auto dirA = tempDir / "r1_stale";
+    std::filesystem::create_directories(dirA);
+    const auto dbPathA = dirA / "learning.sqlite3";
+    {
+        modernime::core::LearningStore store(dbPathA);
+        assert(store.open());
+        assert(store.recordSelection("你好", "ni'hao", "", "", 1000));
+        assert(store.entryCount().value_or(0) == 1);
+    }
+
+    std::atomic<bool> armCountHook{false};
+    std::atomic<bool> countHookEntered{false};
+    std::atomic<bool> releaseCountHook{false};
+
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "learningEntryCount" && armCountHook.exchange(false)) {
+            countHookEntered = true;
+            while (!releaseCountHook.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+    });
+
+    modernime::settings::SettingsWindowModel modelA(dirA / "settings.conf");
+    int notifyCountA = 0;
+    auto pageA = std::make_unique<modernime::settings::LearningPage>(
+        modelA, dbPathA, [] {}, [&](std::string) { ++notifyCountA; });
+    auto *winA = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_container_add(GTK_CONTAINER(winA), pageA->widget());
+    gtk_widget_show_all(winA);
+
+    auto *clearBtnA = findTarget(pageA->widget(), "learning-clear");
+    assert(clearBtnA != nullptr);
+
+    // Initial load: button becomes sensitive because count == 1
+    pumpEventsUntil([&] { return gtk_widget_get_sensitive(clearBtnA); }, std::chrono::seconds(5));
+    assert(gtk_widget_get_sensitive(clearBtnA));
+
+    // Arm hook to pause the next refresh during learningEntryCount
+    armCountHook = true;
+    countHookEntered = false;
+    releaseCountHook = false;
+
+    // Request refresh #1 (will read count=1, then pause in worker)
+    pageA->refresh(false);
+    pumpEventsUntil([&] { return countHookEntered.load(); }, std::chrono::seconds(5));
+    assert(countHookEntered.load());
+
+    // While refresh #1 is paused, clear all entries from DB
+    {
+        sqlite3 *db = nullptr;
+        assert(sqlite3_open(dbPathA.c_str(), &db) == SQLITE_OK);
+        assert(sqlite3_exec(db, "DELETE FROM learning_entries;", nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+
+    // Request refresh #2 (will read count=0)
+    const int notifiesBefore = notifyCountA;
+    pageA->refresh(true);
+    pumpEventsUntil([&] {
+        return notifyCountA > notifiesBefore && !gtk_widget_get_sensitive(clearBtnA);
+    }, std::chrono::seconds(5));
+
+    // Confirm that refresh #2 completed and button is now disabled (count == 0)
+    assert(!gtk_widget_get_sensitive(clearBtnA));
+
+    // Now release refresh #1's worker thread
+    releaseCountHook = true;
+    for (int i = 0; i < 30; ++i) {
+        drainEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    // Refresh #1 has older generation: must be discarded and MUST NOT re-enable the button!
+    assert(!gtk_widget_get_sensitive(clearBtnA));
+
+    pageA.reset();
+    gtk_widget_destroy(winA);
+    drainEvents();
+
+    // --- Scenario B: Clear in progress refuses reentrancy and cannot be re-enabled by stale refresh ---
+    const auto dirB = tempDir / "r1_reentry";
+    std::filesystem::create_directories(dirB);
+    const auto dbPathB = dirB / "learning.sqlite3";
+    {
+        modernime::core::LearningStore store(dbPathB);
+        assert(store.open());
+        assert(store.recordSelection("世界", "shi'jie", "", "", 1000));
+        assert(store.entryCount().value_or(0) == 1);
+    }
+
+    std::atomic<bool> armBackupHook{false};
+    std::atomic<bool> backupHookEntered{false};
+    std::atomic<bool> releaseBackupHook{false};
+    std::atomic<int> backupCallCount{0};
+
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "learningEntryCount" && armCountHook.exchange(false)) {
+            countHookEntered = true;
+            while (!releaseCountHook.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        } else if (op == "backupAndClearLearning") {
+            ++backupCallCount;
+            if (armBackupHook.exchange(false)) {
+                backupHookEntered = true;
+                while (!releaseBackupHook.load()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+            }
+        }
+    });
+
+    modernime::settings::SettingsWindowModel modelB(dirB / "settings.conf");
+    int notifyCountB = 0;
+    auto pageB = std::make_unique<modernime::settings::LearningPage>(
+        modelB, dbPathB, [] {}, [&](std::string) { ++notifyCountB; });
+    auto *winB = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_container_add(GTK_CONTAINER(winB), pageB->widget());
+    gtk_widget_show_all(winB);
+
+    auto *clearBtnB = findTarget(pageB->widget(), "learning-clear");
+    assert(clearBtnB != nullptr);
+    pumpEventsUntil([&] { return gtk_widget_get_sensitive(clearBtnB); }, std::chrono::seconds(5));
+    assert(gtk_widget_get_sensitive(clearBtnB));
+
+    // Pause a pending refresh in worker
+    armCountHook = true;
+    countHookEntered = false;
+    releaseCountHook = false;
+    pageB->refresh(false);
+    pumpEventsUntil([&] { return countHookEntered.load(); }, std::chrono::seconds(5));
+    assert(countHookEntered.load());
+
+    // Arm backup hook and click clear button with confirmation
+    armBackupHook = true;
+    backupHookEntered = false;
+    releaseBackupHook = false;
+    clickWithConfirmation(clearBtnB);
+
+    // Wait until backup worker is paused inside backupAndClearLearning
+    pumpEventsUntil([&] { return backupHookEntered.load(); }, std::chrono::seconds(5));
+    assert(backupHookEntered.load());
+    assert(backupCallCount.load() == 1);
+
+    // Clear is in progress: button must be insensitive
+    assert(!gtk_widget_get_sensitive(clearBtnB));
+
+    // Now release the pending refresh
+    releaseCountHook = true;
+    for (int i = 0; i < 30; ++i) {
+        drainEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    // Refresh completing during clear MUST NOT re-enable the clear button!
+    assert(!gtk_widget_get_sensitive(clearBtnB));
+
+    // Attempt second clear click / call - must be ignored / reentrancy refused
+    gtk_button_clicked(GTK_BUTTON(clearBtnB));
+    drainEvents();
+    assert(backupCallCount.load() == 1); // No second backup started!
+
+    // Release the backup worker
+    releaseBackupHook = true;
+    pumpEventsUntil([&] { return notifyCountB > 0; }, std::chrono::seconds(5));
+
+    // Verify DB was cleared and final unified refresh completed
+    assert(!gtk_widget_get_sensitive(clearBtnB));
+    {
+        modernime::core::LearningStore store(dbPathB);
+        assert(store.openReadOnly());
+        assert(store.entryCount().value_or(1) == 0);
+    }
+
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+    pageB.reset();
+    gtk_widget_destroy(winB);
+    drainEvents();
+
+    std::cout << "[Test] testLearningPageStaleRefreshAndClearReentry PASSED!" << std::endl;
+}
+
+// 9. Test LearningPage real production slow I/O with heartbeat < 100ms and safe lifecycle
 void testLearningPageAsyncAndSlowIo(const std::filesystem::path &tempDir) {
     std::cout << "[Test] Running testLearningPageAsyncAndSlowIo..." << std::endl;
 
@@ -470,32 +915,20 @@ void testLearningPageAsyncAndSlowIo(const std::filesystem::path &tempDir) {
         }
     }
 
-    // 1. Simulate 2s slow I/O in a background GTask while heartbeat monitor runs
+    // 1. Hook real production learningEntryCount with 2s delay
+    std::atomic<bool> slowCountEntered{false};
+    std::atomic<bool> slowCountFinished{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "learningEntryCount") {
+            slowCountEntered = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            slowCountFinished = true;
+        }
+    });
+
     HeartbeatMonitor heartbeat;
     heartbeat.start();
 
-    std::atomic<bool> slowTaskDone{false};
-    auto *task = g_task_new(nullptr, nullptr, [](GObject *, GAsyncResult *, gpointer d) {
-        *static_cast<std::atomic<bool>*>(d) = true;
-    }, &slowTaskDone);
-
-    g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer, GCancellable *) {
-        // Sleep for 2 seconds to simulate slow disk or heavy I/O
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        g_task_return_boolean(t, TRUE);
-    });
-    g_object_unref(task);
-
-    // Pump GTK events during the 2s slow I/O
-    pumpEventsUntil([&]() { return slowTaskDone.load(); }, std::chrono::seconds(5));
-    assert(slowTaskDone.load());
-
-    heartbeat.stop();
-    std::cout << "  Max heartbeat latency during 2s slow I/O: "
-              << heartbeat.maxLatency.count() << " ms (target < 100ms)" << std::endl;
-    assert(heartbeat.maxLatency < std::chrono::milliseconds(100));
-
-    // 2. Test LearningPage async lifecycle & safe closing during async refresh
     auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     modernime::settings::SettingsWindowModel model(tempDir / "settings.json");
     auto page = std::make_unique<modernime::settings::LearningPage>(
@@ -503,19 +936,47 @@ void testLearningPageAsyncAndSlowIo(const std::filesystem::path &tempDir) {
     gtk_container_add(GTK_CONTAINER(window), page->widget());
     gtk_widget_show_all(window);
 
-    // Trigger async refresh
+    pumpEventsUntil([&] { return slowCountEntered.load(); }, std::chrono::seconds(5));
+    assert(slowCountEntered.load());
+
+    pumpEventsUntil([&] { return slowCountFinished.load(); }, std::chrono::seconds(5));
+    assert(slowCountFinished.load());
+
+    heartbeat.stop();
+    std::cout << "  Max heartbeat latency during 2s production learningEntryCount: "
+              << heartbeat.maxLatency.count() << " ms (target < 100ms)" << std::endl;
+    assert(heartbeat.maxLatency < kMaxAllowedLatency);
+
+    // 2. Hook and test safe window closing during in-flight learningEntryCount
+    std::atomic<bool> countHookPaused{false};
+    std::atomic<bool> releaseCountPause{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "learningEntryCount") {
+            countHookPaused = true;
+            while (!releaseCountPause.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    });
+
     page->refresh(false);
+    pumpEventsUntil([&] { return countHookPaused.load(); }, std::chrono::seconds(5));
+    assert(countHookPaused.load());
 
     // Immediately destroy LearningPage and window while async task is in flight
     page.reset();
     gtk_widget_destroy(window);
 
+    // Release worker
+    releaseCountPause = true;
+
     // Drain events - ensures DiagnosticsLifetime deactivated safely without UAF
-    for (int i = 0; i < 20; ++i) {
+    for (int i = 0; i < 30; ++i) {
         drainEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
     std::cout << "[Test] testLearningPageAsyncAndSlowIo PASSED!" << std::endl;
 }
 
@@ -535,9 +996,11 @@ int main(int argc, char **argv) {
         testLearningStoreEntryCount(tempDir);
         testFilterDictionaryPureFunction();
         testDictionaryPageAsyncAndBatch(tempDir);
+        testDictionaryPageAsyncIoAndSlowIoSafety(tempDir);
         testSafeWindowClosingUnderSlowIo(tempDir);
         testBackupFailureDoesNotClearStore(tempDir);
         testContinuousSearch(tempDir);
+        testLearningPageStaleRefreshAndClearReentry(tempDir);
         testLearningPageAsyncAndSlowIo(tempDir);
         std::cout << "\nALL MODERNIME SETTINGS DATA ASYNC GTK TESTS PASSED!\n" << std::endl;
     } catch (const std::exception &e) {

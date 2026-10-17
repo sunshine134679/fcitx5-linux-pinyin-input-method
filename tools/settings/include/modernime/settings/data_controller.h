@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -72,6 +73,9 @@ public:
     static bool backupAndClearLearning(const std::filesystem::path &path,
                                        const std::filesystem::path &backupPath,
                                        std::string *error = nullptr);
+
+    using IoHook = std::function<void(std::string_view op)>;
+    static void setIoHookForTesting(IoHook hook);
 };
 
 } // namespace modernime::settings

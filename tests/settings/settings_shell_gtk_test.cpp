@@ -804,16 +804,28 @@ int main(int argc, char **argv) {
         g_timeout_add(10, inspectDictionaryDialog, &dialogProbe);
         gtk_button_clicked(GTK_BUTTON(add));
         assert(dialogProbe.ran);
-        const auto added = modernime::settings::DataController::loadDictionary(paths.userDictionary);
-        assert(added.size() == 1 && added.front().phrase == "重庆");
-        assert(added.front().pinyin == "chongqing" && added.front().weight == 0.0F);
+        assert(waitUntil([&] {
+            const auto added = modernime::settings::DataController::loadDictionary(paths.userDictionary);
+            return added.size() == 1 && added.front().phrase == "重庆" &&
+                   added.front().pinyin == "chongqing" && added.front().weight == 0.0F;
+        }));
         assert(modernime::settings::DataController::saveDictionary(
             paths.userDictionary, {{"zhongqing", "重庆", 42.125F}}));
         shell.show(modernime::settings::SettingsPageId::Dictionary);
         auto *dictionaryView = findAccessibleWidget(window, GTK_TYPE_TREE_VIEW, "个人词典词条列表");
         assert(dictionaryView != nullptr);
         auto *dictModel = gtk_tree_view_get_model(GTK_TREE_VIEW(dictionaryView));
-        assert(waitUntil([dictModel] { return gtk_tree_model_iter_n_children(dictModel, nullptr) > 0; }));
+        assert(waitUntil([dictModel] {
+            GtkTreeIter iter;
+            if (!gtk_tree_model_get_iter_first(dictModel, &iter)) {
+                return false;
+            }
+            gchar *py = nullptr;
+            gtk_tree_model_get(dictModel, &iter, 0, &py, -1);
+            const bool match = py != nullptr && std::string_view(py) == "zhongqing";
+            g_free(py);
+            return match;
+        }));
         auto *firstWord = gtk_tree_path_new_from_indices(0, -1);
         gtk_tree_view_set_cursor(GTK_TREE_VIEW(dictionaryView), firstWord, nullptr, FALSE);
         gtk_tree_path_free(firstWord);
@@ -824,8 +836,10 @@ int main(int argc, char **argv) {
         g_timeout_add(10, inspectDictionaryDialog, &editProbe);
         gtk_button_clicked(GTK_BUTTON(edit));
         assert(editProbe.ran);
-        const auto edited = modernime::settings::DataController::loadDictionary(paths.userDictionary);
-        assert(edited.size() == 1 && edited.front().pinyin == "zhongqing" && edited.front().weight == 42.125F);
+        assert(waitUntil([&] {
+            const auto edited = modernime::settings::DataController::loadDictionary(paths.userDictionary);
+            return edited.size() == 1 && edited.front().pinyin == "zhongqing" && edited.front().weight == 42.125F;
+        }));
 
         shell.show(modernime::settings::SettingsPageId::Learning);
         auto *clearLearning = findTarget(window, "learning-clear");
