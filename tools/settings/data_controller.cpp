@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 #include <utility>
@@ -37,12 +38,19 @@ std::string foldAscii(std::string_view value) {
     return result;
 }
 
+std::mutex s_hookMutex;
 DataController::IoHook s_ioHook;
 
 void notifyIoHook(std::string_view op) {
-    if (s_ioHook) {
-        s_ioHook(op);
+    DataController::IoHook localHook;
+    {
+        std::lock_guard<std::mutex> lock(s_hookMutex);
+        if (!s_ioHook) {
+            return;
+        }
+        localHook = s_ioHook;
     }
+    localHook(op);
 }
 
 } // namespace
@@ -347,6 +355,7 @@ std::size_t DataController::learningEntryCount(
         }
         return 0;
     }
+    notifyIoHook("learningEntryCount:afterCount");
     return *count;
 }
 
@@ -408,6 +417,7 @@ bool DataController::backupAndClearLearning(
 }
 
 void DataController::setIoHookForTesting(IoHook hook) {
+    std::lock_guard<std::mutex> lock(s_hookMutex);
     s_ioHook = std::move(hook);
 }
 
