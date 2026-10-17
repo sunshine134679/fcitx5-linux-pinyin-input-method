@@ -962,7 +962,9 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     {
         modernime::core::LearningStore store(dbPathB);
         assert(store.openReadOnly());
-        assert(store.entryCount().value_or(1) == 0);
+        const auto count = store.entryCount();
+        assert(count.has_value());
+        assert(*count == 0);
     }
 
     modernime::settings::DataController::setIoHookForTesting(nullptr);

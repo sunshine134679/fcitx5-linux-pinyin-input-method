@@ -306,14 +306,21 @@ int runWorker(const std::string &mode, const std::string &root) {
 
 std::filesystem::path findHooksLibrary(const std::filesystem::path &selfDir) {
     const char *envLib = getenv("MODERNIME_FAULT_HOOKS_LIB");
-    if (envLib != nullptr && std::filesystem::is_regular_file(envLib)) {
-        return envLib;
+    if (envLib != nullptr) {
+        if (std::filesystem::is_regular_file(envLib)) {
+            return std::filesystem::canonical(envLib);
+        }
+        std::cerr << "[ERROR] MODERNIME_FAULT_HOOKS_LIB is set to '" << envLib
+                  << "', but that file does not exist or is not a regular file.\n";
+        return {};
     }
     const std::vector<std::filesystem::path> candidates = {
         selfDir / "config_fault_hooks.so",
+        selfDir / "libconfig_fault_hooks.so",
         selfDir / "tests" / "config_fault_hooks.so",
+        selfDir / "tests" / "libconfig_fault_hooks.so",
         selfDir / ".." / "tests" / "config_fault_hooks.so",
-        "/home/wsl/ModernIME/build/architecture-debug/tests/config_fault_hooks.so",
+        selfDir / ".." / "tests" / "libconfig_fault_hooks.so",
     };
     for (const auto &cand : candidates) {
         if (std::filesystem::is_regular_file(cand)) {

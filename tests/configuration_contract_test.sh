@@ -183,6 +183,25 @@ if [[ -z "$ADAPTER_RECOVERY_TEST_BIN" ]]; then
     exit 1
 fi
 
+CONFIG_FAULT_HOOKS_LIB=""
+for candidate in \
+    "$BUILD_DIR/tests/config_fault_hooks.so" \
+    "$BUILD_DIR/config_fault_hooks.so" \
+    "$BUILD_DIR/tests/libconfig_fault_hooks.so" \
+    "$BUILD_DIR/libconfig_fault_hooks.so"; do
+    if [[ -f "$candidate" ]]; then
+        CONFIG_FAULT_HOOKS_LIB="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$CONFIG_FAULT_HOOKS_LIB" ]]; then
+    echo "ERROR: config_fault_hooks.so library not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
+export MODERNIME_FAULT_HOOKS_LIB="$CONFIG_FAULT_HOOKS_LIB"
+
 echo "Using modernime_settings_tests:           $SETTINGS_TEST_BIN"
 echo "Using modernime_ui_tests:                 $UI_TEST_BIN"
 echo "Using modernime_adapter_tests:            $ADAPTER_TEST_BIN"
@@ -193,6 +212,7 @@ echo "Using modernime_fcitx5_input_panel_tests: $FCITX5_INPUT_PANEL_TEST_BIN"
 echo "Using modernime_ui_addon_tests:           $UI_ADDON_TEST_BIN"
 echo "Using modernime_db_fixture_helper:        $DB_FIXTURE_HELPER_BIN"
 echo "Using modernime_adapter_recovery_tests:   $ADAPTER_RECOVERY_TEST_BIN"
+echo "Using config_fault_hooks library:         $MODERNIME_FAULT_HOOKS_LIB"
 
 # Step 1: Run C++ unit test suite covering SettingsFileStamp, SettingsApplicationVersion, and space paths
 echo "--- Running modernime_settings_tests ---"
@@ -239,7 +259,7 @@ echo "--- Running modernime_adapter_recovery_tests ---"
 echo "PASS: modernime_adapter_recovery_tests passed"
 
 # Step 7: Run comprehensive automated contract matrix via Python
-export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN RUNTIME_CONTROLLER_TEST_BIN FAKE_REMOTE_BIN FAKE_FCITX_BIN FCITX5_INPUT_PANEL_TEST_BIN UI_ADDON_TEST_BIN DB_FIXTURE_HELPER_BIN ADAPTER_RECOVERY_TEST_BIN UI_ADDON_SKIPPED
+export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN RUNTIME_CONTROLLER_TEST_BIN FAKE_REMOTE_BIN FAKE_FCITX_BIN FCITX5_INPUT_PANEL_TEST_BIN UI_ADDON_TEST_BIN DB_FIXTURE_HELPER_BIN ADAPTER_RECOVERY_TEST_BIN MODERNIME_FAULT_HOOKS_LIB UI_ADDON_SKIPPED
 python3 - << 'EOF'
 import os
 import sys
@@ -553,6 +573,14 @@ def test_missing_fixture_negative_regression():
         assert r.returncode != 0, f"Missing binaries must cause non-zero exit code, got {r.returncode}"
     print("[PASS] T14 Negative fixture check passed")
 
+def test_missing_hooks_negative():
+    print("[RUN ] T14 Negative check: nonexistent MODERNIME_FAULT_HOOKS_LIB causes non-zero exit")
+    env = dict(os.environ)
+    env["MODERNIME_FAULT_HOOKS_LIB"] = "/tmp/nonexistent_fault_hooks.so"
+    r = subprocess.run([adapter_recovery_test_bin], env=env, capture_output=True, text=True)
+    assert r.returncode != 0, f"Expected adapter_recovery_test to fail with bad hooks lib, got {r.returncode}"
+    print("[PASS] T14 Negative check passed: invalid MODERNIME_FAULT_HOOKS_LIB rejected")
+
 test_A01_same_mtime_atomic_replacement()
 test_A02_delete_recreate_observation()
 test_A03_external_save_conflict_preservation()
@@ -561,6 +589,7 @@ test_A05_font_metrics_layout_invalidation()
 test_A06_path_matrix_spaces_and_database_isolation()
 test_A07_runtime_state_compatibility()
 test_missing_fixture_negative_regression()
+test_missing_hooks_negative()
 
 if os.environ.get("UI_ADDON_SKIPPED") == "1":
     print("========================================")

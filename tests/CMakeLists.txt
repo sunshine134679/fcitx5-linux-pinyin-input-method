@@ -25,6 +25,9 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     add_test(NAME modernime_configuration_contract
         COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_test.sh" --build-dir "${CMAKE_BINARY_DIR}"
     )
+    set_tests_properties(modernime_configuration_contract PROPERTIES
+        TIMEOUT 180
+    )
 endif()
 
 add_executable(modernime_clipboard_history_tests core/clipboard_history_test.cpp)
@@ -746,6 +749,10 @@ if(MODERNIME_BUILD_FCITX5)
 
     add_library(config_fault_hooks SHARED adapter/config_fault_hooks.c)
     target_link_libraries(config_fault_hooks PRIVATE ${CMAKE_DL_LIBS})
+    set_target_properties(config_fault_hooks PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "config_fault_hooks"
+    )
 
     add_executable(modernime_adapter_recovery_tests
         adapter/adapter_recovery_test.cpp
@@ -766,6 +773,10 @@ if(MODERNIME_BUILD_FCITX5)
     endif()
     add_dependencies(modernime_adapter_recovery_tests config_fault_hooks)
     add_test(NAME modernime_adapter_recovery COMMAND modernime_adapter_recovery_tests)
+    set_tests_properties(modernime_adapter_recovery PROPERTIES
+        ENVIRONMENT "MODERNIME_FAULT_HOOKS_LIB=$<TARGET_FILE:config_fault_hooks>"
+        TIMEOUT 120
+    )
 endif()
 
 if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
