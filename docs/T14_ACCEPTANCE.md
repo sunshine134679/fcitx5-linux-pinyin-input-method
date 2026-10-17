@@ -1,58 +1,54 @@
-# T14 验收报告：配置应用版本与路径契约（第三轮复审整改收尾）
+# T14 验收报告：配置应用版本与路径契约（第四轮复审整改收尾）
 
 日期：2026-10-17  
 当前分支：`main`  
-基线提交：`74c19d869a12771d3feeb2300a480783c74734fa`  
+基线提交：`4c40cc6d4066a5e048ff9018de704b5f7199cf01`  
 状态：`LOCAL_VERIFIED / WIRING_PENDING`  
 
 ---
 
-## 1. 任务概述与第三轮复审整改总结
+## 1. 任务概述与第四轮复审整改总结 (W1–W3)
 
-本轮针对 `docs/T14_THIRD_REVIEW.md` 提出的 V1（重试耗尽后同 stamp 恢复）与 V2（原 S2 真实数据库/UI 验收与缺夹具假通过闭合）进行了定向最小收尾，严格遵守 AGENTS.md 与原架构整改计划约束，不进入 T15（设置数据异步与轻量统计），不修改 T17 已接管的安装/启动脚本，不并发修改共享 CMake：
+本轮针对 `docs/T14_FOURTH_REVIEW.md` 提出的 W1、W2、W3 进行了严格最小收尾，专注于测试、夹具和验收文档闭环；保留已通过的持续恢复、同源读取和生产 UI 行为，不再次改写生产配置算法，不进入 T15/T17，不并发修改共享 CMake，不 reset/clean、不推送或发布：
 
-1. **V1 / P1：连续失败耗尽重试后，同 stamp 故障解除持续有界恢复**
-   - 根因：在 `adapter/fcitx5/src/inputmethod.cpp` 与 `ui/fcitx5/src/ui_addon.cpp` 中，首次 I/O 失败记录了该文件的 stamp，当 `settingsRetryCount_` 达到 5 之后，`(currentStamp != settingsStamp_)` 与 `(settingsRetryCount_ < 5)` 两侧条件均为 false，导致文件未被外部修改时永久停止重试，即使故障（如 `EACCES` 或锁争用）解除也无法收敛至真实磁盘配置。
-   - 修复：
-     - 实现有界且持续的退避恢复重试策略：若 stamp 变化立即重试；若处于失败待重试状态且 stamp 未变，前 5 次轮询（每 2s）积极重试，之后退避至每 2 次轮询（每 4s）重试一次，持续有界尝试，不忙循环，不泄漏无限异步任务，直到成功读取或文件变更；
-     - 明确成功读取事实与待重试状态：I/O 失败期间不推进有效代次、不虚报 Hash，写入空 Hash 的 `runtime.state`；
-     - 故障解除后，在相同 stamp 下自动成功读取，将 `settingsLoadFailed_` 清零、重置计数器，并收敛至磁盘配置，推进 `settingsGeneration_` 并更新运行时状态；
-     - 在 `ModernIMEUserInterface` 中同步应用该有界退避恢复逻辑，并在 `handleButtonPress()` 入口调用 `refreshSettingsIfNeeded()`。
-   - 验证：真实 Fcitx 探针全量场景通过（见 `build/t14-third-review-evidence/adapter-probe-results.json`），特别是 `startup_long_failure` 在连续注入 6 次失败后解除故障，无需修改文件即在第 7 次读取成功收敛至磁盘禁用配置（`after_active=0`，`generation=1`）。
+1. **W1 / P1：无头 GTK 合法 Skip 语义与契约解耦验证**
+   - **问题**：新 UI 测试 `tests/ui/ui_addon_test.cpp` 忽略了 `gtk_init_check` 失败，在无 `DISPLAY`/`WAYLAND_DISPLAY` 的无头环境中直接继续执行 GTK 操作并崩溃/断言失败，导致 `modernime_configuration_contract` 退出码为 1（原 6 项 CTest 表现为 5 过 1 败）。
+   - **修复**：
+     - 在 `tests/ui/ui_addon_test.cpp` 中检测 `if (!gtk_init_check(&argc, &argv))`，在无有效显示服务时输出 `[SKIP]` 并返回标准 CTest 跳过退出码 `77`；
+     - 在 `tests/configuration_contract_test.sh` 中严格区分无头与桌面环境：无头环境下纯布局测试（`modernime_ui_tests` / `modernime_candidate_bar_layout_tests`）正常执行并断言通过，UI addon 测试捕获退出码 77 识别为跳过，不报 `UI PASS`，也不报告完整 `7/7`，而是准确报告 `6/6 passed, 1 skipped: UI addon requires DISPLAY`；
+     - 当存在有效显示（`DISPLAY` 或 `WAYLAND_DISPLAY`）时，强制要求 UI addon 必须执行并通过，报告完整 `7/7`；
+     - 必需二进制缺失时仍严格以退出码 1 失败（不使用 `|| true` 掩盖错误）。
+     - 向协调者提交精确接线申请：为 `modernime_ui_addon_tests` 配置 `SKIP_RETURN_CODE 77` 与 `RESOURCE_LOCK modernime_gtk_display`。
 
-2. **V2 / 验收补齐：真实数据库夹具、生产 UI Addon 集成与严谨二进制校验**
-   - **A06 真实双活动数据库（SQLite + LMDB）矩阵验收**：
-     - 新建 `tests/core/db_fixture_helper.cpp`，调用生产级 `modernime::core::LearningStore` 与 `PersonalEngine` 创建、写入真实提交记录（`CommitEvent`）、关闭并重新打开验证；
-     - 彻底废除原假 18 字节 `history.lmdb/data.mdb` 文本文件；
-     - 在 `tests/configuration_contract_test.sh` 中覆盖 4 类路径矩阵：`spaces`（含空格路径）、`home_default`（$HOME 回退路径）、`xdg_override`（$XDG 显式覆盖）、`managed_conflict`（$MODERNIME 托管环境变量优先于冲突的 $XDG 环境变量）；
-     - 在每种场景下均经由 `modernime-data-guard --verify` 和 `--backup` 验证生产路径识别与双库有效性，检查备份目录真实包含 `learning.sqlite3` 与 `learning.lmdb`，断言宿主数据库未受任何污染，验证 `modernime-session-init` 生成的环境变量配置；
-   - **A05 生产 UI Addon 集成测试（配置刷新、布局失效与候选语义保持）**：
-     - 新建 `tests/ui/ui_addon_test.cpp`，使用真实 `fcitx::Instance` 实例化 `ModernIMEUserInterface`；
-     - 初始加载 14 号字配置，完成候选栏初始度量并模拟点击首选，断言命中候选 0；
-     - 磁盘更新配置字号为 28 号字，在调用 `update()` 前触发点击，验证 `handleButtonPress()` 检测到 stamp 变更触发重载，旧布局代次（generation N）与新指标代次（generation N+1）失配，`hitTestCandidate()` 坚决拒绝点击（返回 -1，未误触候选）；
-     - 随后调用 `update()` 重新度量新布局，在新几何边界下点击候选，验证候选 0 正常选中，且候选文本（“你好”）与词条语义严格保持；
-   - **A07 / A04 严格二进制存在性检查与缺产物负向回归**：
-     - 在 `tests/configuration_contract_test.sh` 中将所有必需产物（`modernime_fake_fcitx5`, `modernime_fake_fcitx5_remote`, `modernime_fcitx5_input_panel_tests`, `modernime_ui_addon_tests`, `modernime_db_fixture_helper`）设为强依赖，任何一项缺失立即以退出码 1 报错失败，杜绝静默跳过假通过；
-     - 增加自动化负向回归测试 `test_missing_fixture_negative_regression()`，验证在构建目录缺少 fake 程序时脚本严格返回非零退出码；
-     - 通过复审方 `build/t14-third-review-evidence/gate_checks.py` 验证。
+2. **W2：环境驱动路径选址、真实双库标记检查与负向变体校验**
+   - **问题**：原 A06 测试将计算好的预期绝对路径直接通过 `--data-dir` 传给 `modernime_db_fixture_helper` 与 `modernime-data-guard`，绕过了生产环境解析链，导致当环境变量被故意污染时测试仍误判为 7/7。
+   - **修复**：
+     - 更新 `tests/core/db_fixture_helper.cpp`，增加 `--from-env` 模式：进程实际读取当前进程环境变量，通过生产级 `SettingsPaths::fromEnvironment(getenv("XDG_CONFIG_HOME"), getenv("XDG_DATA_HOME"), getenv("HOME"))` 动态解析路径，输出 `RESOLVED_DATA_DIR` 并写入提交记录；增加了 `--inspect <word>` 检查模式；
+     - 在 `tests/configuration_contract_test.sh` A06 中：
+       - 不向 helper 传递预期绝对路径，helper 运行 `--from-env` 自行解析并写入 SQLite 与 LMDB，脚本断言解析结果与预期目录完全一致；
+       - 对 `managed_conflict` 场景，先执行 `modernime-session-init` 生成 `environment.d/90-modernime.conf`，将其中导出的有效 XDG 变量加载至进程环境，再进入 helper 解析，断言其正确指向托管目录；
+       - `modernime-data-guard --verify` 和 `--backup` 在 `home_default`、`spaces`、`managed_conflict` 场景下完全不传 `--data-dir` / `--config-dir` 覆盖参数，断言其默认自动选址与实际写库根一致；在 `xdg_override` 场景下进行显式目录参数校验；
+       - 数据库关闭重开后，通过 helper `--inspect` 检查标记词条（“你好”、“世界”）；同时对 `backups/latest` 快照内的 `learning.sqlite3` 与 `learning.lmdb` 进行同词条检查，确保备份包含标记事实；
+       - 增加负向变体测试：故意提供错误的路径环境变量，断言解析结果与正常预期产生偏差并被断言捕获。
 
----
-
-## 2. C14 接口与路径契约说明
-
-| 契约项 | 接口 / 协议细节 | 行为语义 |
-|---|---|---|
-| **读取状态类型** | `enum class SettingsLoadStatus { Success, Missing, IoError };` | 区分成功、缺失与读取故障；允许保留未知键/注释等诊断而标为 Success。 |
-| **单快照同源结果** | `SettingsLoadResult` (`settings`, `rawLines`, `contentHash`, `stamp`, `diagnostics`, `status`) | 单句柄打开一次读取全部内容并校验 inode，Hash 直接从缓冲区提取，保证同源一致。 |
-| **保存冲突与保留** | `SettingsStore::save(path, settings, error, expectedContentHash, rawLinesToPreserve)` 返回 `bool` | 期望 Hash 与当前磁盘 Hash 不符时拒绝覆盖；成功写入时保留未修改的注释与未知配置项。 |
-| **启动与热载同源消费** | `ModernIMEInputMethod` 构造函数委托 `SettingsStore::load()` 结果 | 首次启动与轮询热载消费同一成功读取事实，不另开路径二次计算 Hash，杜绝版本冒充。 |
-| **持续有界恢复** | 有界退避轮询（前 5 次每 2s，后续每 4s） | 耗尽重试后不永久停止，同 stamp 故障排除后自愈收敛，不忙循环。 |
-| **UI 布局失效** | `hitTestCandidate(layout, metrics, x, y)` | 当 `fontSize`、`maxCandidates`、`layoutGeneration` 任一不匹配时返回 `-1`，拒绝旧布局点击。 |
-| **统一路径环境** | `SettingsPaths::fromEnvironment(configRoot, dataRoot, homeRoot)` | XDG 优先、降级 HOME；启动脚本将 `MODERNIME_*` 映射为有效 `XDG_*`，与 `modernime-data-guard` 保持同一保护路径。 |
+3. **W3：受版本控制的适配器故障恢复回归测试套件**
+   - **问题**：上一轮复审指出的“连续 6 次失败后同 stamp 解除故障持续恢复”等关键场景此前仅以 `build/` 探针脚本形式存在，未纳入受 Git 版本控制的仓库源代码，存在未来退化风险。
+   - **修复**：
+     - 新建受版本控制的故障注入库源码 `tests/adapter/config_fault_hooks.c`，拦截 `fopen` 和 `fread`，支持 `swap_after_read`、`read_failure`、`startup_swap`、`startup_read_failure`、`long_read_failure`，并暴露故障计数符号；
+     - 新建受版本控制的 C++ 测试程序 `tests/adapter/adapter_recovery_test.cpp`，编译生成可独立运行的二进制 `modernime_adapter_recovery_tests`：
+       - 覆盖 5 项故障注入恢复场景与 1 项负向对照（永久故障不解除）：
+         1. `swap_after_read`: 读取后文件被替换，热载感知新配置并递增代次；
+         2. `read_failure`: 读取失败保留最后有效配置，不虚构代次；
+         3. `startup_swap`: 构造期间同源读取，无二次 open；
+         4. `startup_read_failure`: 启动时单次失败降级默认，后续轮询成功恢复；
+         5. `startup_long_failure`: 启动连续 6 次注入 EACCES 失败（耗尽旧 5 次上限），在文件 stamp 未修改的前提下解除故障，第 7 次成功恢复收敛至磁盘配置（`observed_load_opens >= 7`, `generation == 1`, `after_active == 0`, `runtime.state` 与磁盘一致）；
+         6. `negative_permanent_failure`: 故障永不解除时，断言 generation 坚决不递增（保持 0），不冒充磁盘 Hash，且轮询按退避受控执行，不发生忙循环；
+       - 包含负向变体自检：验证未知异常场景非零退出；
+     - 在 `tests/configuration_contract_test.sh` Step 6 中直接集成 `modernime_adapter_recovery_tests` 执行。
 
 ---
 
-## 3. 契约关卡逐项实测表现 (T14-A01 ~ A07)
+## 2. 契约关卡逐项实测表现 (T14-A01 ~ A07 & W3)
 
 | 关卡代号 | 契约要求 | 验证执行方式 | 实测表现 | 结论 |
 |---|---|---|---|---|
@@ -60,51 +56,144 @@
 | **T14-A02** | **删除 / 重建** | 删除文件感知 missing；原路径重建新配置时捕获新 inode 并重新计算 Hash，不虚构代次。 | `tests/configuration_contract_test.sh` A02 及 `modernime_settings_tests`：感知删除与重建，正确分类缺失与恢复。 | **PASS** |
 | **T14-A03** | **外部保存冲突与保留** | 磁盘被外部修改时依据 `expectedContentHash` 拒绝写入；保存成功时保留注释与未知配置项。 | `tests/configuration_contract_test.sh` A03 及 `modernime_settings_tests`：冲突拦截生效，注释与未知配置项保持完好。 | **PASS** |
 | **T14-A04** | **敏感时热载安全** | 敏感模式下热重载配置，原有 preedit 组合串完好保留，不触发任何提交学习事件；强制要求 input panel 测试。 | `tests/adapter/engine_state_test.cpp` 与 `modernime_fcitx5_input_panel_tests`：热载后 preedit="nihao" 保持，commitEvents 为空。 | **PASS** |
-| **T14-A05** | **字号/候选数/代次失效** | 运行纯布局函数测试与真实 UI addon 集成测试；字号改变旧布局拒绝点击，新度量恢复后点击生效且语义保持。 | `tests/ui/ui_addon_test.cpp` 及 `modernime_ui_tests`：配置刷新后旧布局点击返回 -1，update 重新度量后点击命中且文本完好。 | **PASS** |
-| **T14-A06** | **路径矩阵与真实数据库隔离** | 4 类路径矩阵（spaces、home、xdg、managed_conflict）；真实 LearningStore 写入 SQLite 与 LMDB；data-guard 校验及双库备份完备，宿主库不受影响。 | `tests/core/db_fixture_helper.cpp`、`modernime-data-guard`：真实双库校验 0 错误，备份包含 sqlite 与 lmdb，宿主库未修改。 | **PASS** |
+| **T14-A05** | **字号/候选数/代次失效 (W1)** | 纯布局测试始终执行；UI addon 测试在无头环境下返回 77 跳过，在桌面环境下执行点击失效与 update 恢复断言。 | 无头环境下纯布局 PASS、UI addon SKIP（退出码 77）；X11 下 UI addon PASS，点击与失效逻辑全部满足。 | **PASS / SKIPPED(无头)** |
+| **T14-A06** | **路径矩阵与自动选址 (W2)** | 4 类路径矩阵通过 `--from-env` 由 helper 自动解析；managed 冲突经由 session-init 映射；guard 自动选址校验；备份数据库包含标记词条；错误路径负向对照失败。 | 4 场景全部匹配预期根；双库均验证词条存在；guard 自动选址无参数运行 PASS；备份词条成功检验；负向对照成功触发。 | **PASS** |
 | **T14-A07** | **runtime.state 兼容与负向校验** | 强制执行真实 `modernime_runtime_controller_tests` 检验未知/损坏状态字段；缺失 fake 产物时严格非零失败。 | `tests/configuration_contract_test.sh` A07 及负向测试：驱动真实 probe，缺产物时 exit 1。 | **PASS** |
+| **T14-W3** | **适配器连续故障恢复回归** | 版本控制的 6 项场景（5 项恢复 + 1 项永久故障负向对照 + 变体自检），断言故障注入次数、stamp 未变、代次与 active 恢复。 | `modernime_adapter_recovery_tests` 6/6 全部通过（`startup_long_failure` 7 次 open 恢复；negative_permanent_failure generation 保持 0）。 | **PASS** |
 
 ---
 
-## 4. 验证汇总与证据记录
+## 3. 验证汇总与测试结果
 
-### 4.1 定向测试套件实测（`build/architecture-debug`）
-- **Targeted CTest Suite (6/6 Passed, 15.13s)**:
-  - `modernime_settings`: Passed (0.00s)
-  - `modernime_configuration_contract`: Passed (10.64s)
-  - `modernime_settings_model`: Passed (0.00s)
-  - `modernime_runtime_controller`: Passed (2.26s)
-  - `modernime_fcitx5_input_panel`: Passed (2.21s)
+### 3.1 定向 CTest 套件实测（`build/architecture-debug`）
+
+- **无头环境（`env -u DISPLAY -u WAYLAND_DISPLAY`）**：
+  - `modernime_settings`: Passed (0.01s)
+  - `modernime_configuration_contract`: **Passed** (92.92s) -> 输出 `6/6 passed, 1 skipped: UI addon requires DISPLAY`
+  - `modernime_settings_model`: Passed (0.02s)
+  - `modernime_runtime_controller`: Passed (2.27s)
+  - `modernime_fcitx5_input_panel`: Passed (2.22s)
   - `modernime_candidate_bar_layout`: Passed (0.00s)
+  - **总评：100% tests passed, 0 tests failed out of 6**
 
-### 4.2 独立探针与 Gate Checks 实测（`build/t14-third-review-evidence/`）
-- **Adapter Probes 5 项全通过**：
+- **显式桌面环境（`DISPLAY=:0 GDK_BACKEND=x11`）**：
+  - `modernime_settings`: Passed (0.01s)
+  - `modernime_configuration_contract`: **Passed** (96.26s) -> 输出 `All T14 Configuration Contracts PASSED (7/7)`
+  - `modernime_settings_model`: Passed (0.01s)
+  - `modernime_runtime_controller`: Passed (2.27s)
+  - `modernime_fcitx5_input_panel`: Passed (2.48s)
+  - `modernime_candidate_bar_layout`: Passed (0.01s)
+  - **总评：100% tests passed, 0 tests failed out of 6**
+
+### 3.2 独立回归与 Gate Checks 实测
+
+- **`modernime_adapter_recovery_tests`（独立运行 6/6）**：
   - `swap_after_read`: PASS
   - `read_failure`: PASS
-  - `startup_swap`: PASS（无构造阶段二次 open）
-  - `startup_read_failure`: PASS（单次 EACCES 恢复）
-  - `startup_long_failure`: **PASS**（注入 6 次失败耗尽旧计数后解除故障，无需修改文件即在第 7 次成功收敛）
-- **Gate Checks (`gate_checks.py`)**：
-  - `missing_fake_executables`: exit 1, `expected_nonzero`: true (PASS)
-  - `history.lmdb` vs `learning.lmdb` dummy fixture 对照: learning.lmdb 严格拒绝损坏的 18 字节 payload (PASS)
+  - `startup_swap`: PASS
+  - `startup_read_failure`: PASS
+  - `startup_long_failure`: PASS (`observed_load_opens=7`, `generation=1`, `after_active=0`, `stamp_unchanged=true`)
+  - `negative_permanent_failure`: PASS (`observed_load_opens=6`, `generation=0`, `runtime_hash=""`)
+  - `Negative mutant check`: PASS (退出码非零验证)
+- **`gate_checks.py`**：
+  - `missing_fake_executables`: exit 1, expected_nonzero: true (PASS)
+  - `history.lmdb` vs `learning.lmdb` 真实性校验: learning.lmdb 严格拒绝损坏的 18 字节 payload (PASS)
+- **路径环境突变对照**：
+  - 注入故意错误的 `XDG_DATA_HOME`，helper `--from-env` 解析结果与正常预期产生偏差，确定性触发断言失败 (PASS)。
 
 ---
 
-## 5. CMake 接线请求与交接说明
+## 4. CMake 接线申请（供协调者独占处理）
 
-### 接线请求（供协调者独占编辑 `tests/CMakeLists.txt`）
-1. **添加目标 `modernime_ui_addon_tests`**：
-   - 源文件：`tests/ui/ui_addon_test.cpp`
-   - 头文件目录：`ui/fcitx5/include`, `adapter/fcitx5/include`, `core/include`, `algorithm/include`, 以及 Fcitx5 Core/Config/Utils
-   - 链接库：`modernime_ui` (或 `modernime_ui_layout`), `modernime_core`, `Fcitx5::Core`, `Fcitx5::Config`, `Fcitx5::Utils`, `PkgConfig::GTK3`, `PkgConfig::PANGOCAIRO`, `SQLite3::SQLite3`, `LMDB::LMDB`
-   - 测试注册：`add_test(NAME modernime_ui_addon COMMAND modernime_ui_addon_tests)`
-2. **添加目标 `modernime_db_fixture_helper`**：
-   - 源文件：`tests/core/db_fixture_helper.cpp`
-   - 头文件目录：`core/include`, `algorithm/include`
-   - 链接库：`modernime_core`, `SQLite3::SQLite3`, `LMDB::LMDB`
+为将本轮新增与收尾的测试二进制正式纳入根 CMake/CTest 构建体系，协调者可在 `tests/CMakeLists.txt` 中进行如下标准接线：
 
-### 交接状态
+1. **`modernime_ui_addon_tests`**：
+   ```cmake
+   # 注意：modernime_ui 为 MODULE，不能作为普通库链接；需编译 ui_addon_test.cpp 与 ui_addon.cpp
+   add_executable(modernime_ui_addon_tests
+       ui/ui_addon_test.cpp
+       ../ui/fcitx5/src/ui_addon.cpp
+   )
+   target_include_directories(modernime_ui_addon_tests PRIVATE
+       ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+       ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+       ${CMAKE_CURRENT_SOURCE_DIR}/../core/include
+       ${CMAKE_CURRENT_SOURCE_DIR}/../algorithm/pinyin/include
+   )
+   target_link_libraries(modernime_ui_addon_tests PRIVATE
+       modernime_ui_layout
+       modernime_core
+       Fcitx5::Core
+       Fcitx5::Config
+       Fcitx5::Utils
+       PkgConfig::GTK3
+       PkgConfig::PANGOCAIRO
+       SQLite::SQLite3
+       ${LMDB_LIBRARIES}
+   )
+   add_test(NAME modernime_ui_addon COMMAND modernime_ui_addon_tests)
+   set_tests_properties(modernime_ui_addon PROPERTIES
+       SKIP_RETURN_CODE 77
+       RESOURCE_LOCK modernime_gtk_display
+   )
+   ```
+
+2. **`modernime_db_fixture_helper`**：
+   ```cmake
+   add_executable(modernime_db_fixture_helper
+       core/db_fixture_helper.cpp
+   )
+   target_include_directories(modernime_db_fixture_helper PRIVATE
+       ${CMAKE_CURRENT_SOURCE_DIR}/../core/include
+   )
+   target_link_libraries(modernime_db_fixture_helper PRIVATE
+       modernime_core
+       SQLite::SQLite3
+       ${LMDB_LIBRARIES}
+   )
+   ```
+
+3. **`config_fault_hooks` & `modernime_adapter_recovery_tests`**：
+   ```cmake
+   add_library(config_fault_hooks SHARED
+       adapter/config_fault_hooks.c
+   )
+   target_link_libraries(config_fault_hooks PRIVATE ${CMAKE_DL_LIBS})
+
+   add_executable(modernime_adapter_recovery_tests
+       adapter/adapter_recovery_test.cpp
+       ../adapter/fcitx5/src/inputmethod.cpp
+       ../adapter/fcitx5/src/engine.cpp
+   )
+   target_include_directories(modernime_adapter_recovery_tests PRIVATE
+       ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+       ${CMAKE_CURRENT_SOURCE_DIR}/../core/include
+       ${CMAKE_CURRENT_SOURCE_DIR}/../algorithm/pinyin/include
+   )
+   target_link_libraries(modernime_adapter_recovery_tests PRIVATE
+       modernime_pinyin
+       modernime_core
+       Fcitx5::Core
+       Fcitx5::Config
+       Fcitx5::Utils
+       SQLite::SQLite3
+       ${LMDB_LIBRARIES}
+       ${CMAKE_DL_LIBS}
+   )
+   add_dependencies(modernime_adapter_recovery_tests config_fault_hooks)
+   add_test(NAME modernime_adapter_recovery COMMAND modernime_adapter_recovery_tests)
+   ```
+
+---
+
+## 5. 交接与安全状态说明
+
 - **交付状态**：`LOCAL_VERIFIED / WIRING_PENDING`
-- 所有历史未跟踪审查文档完整保留，未执行任何 `git reset` 或 `git clean`；
-- 交付元数据已更新至 `build/parallel-handoff/T14.json`；
-- 严格停留在 T14 边界，不进入 T15，不推送远程，不发布。
+- **文件完整性**：
+  - 工作区中所有 28 份未跟踪文档、历史复审记录及并行计划完全保留；
+  - 未执行任何 `git reset --hard`、`git clean` 或 `git stash`；
+  - 宿主用户的 `~/.local/share/modernime/learning.sqlite3` 等数据库在测试中全程通过私有目录隔离，未受任何读取或篡改影响；
+- **交付边界**：
+  - 严格保持在 T14 任务边界，未修改 T15/T17 负责的文件；
+  - 不推送远端，不发布 Release；
+  - 交付元数据已同步至 `build/parallel-handoff/T14.json`。

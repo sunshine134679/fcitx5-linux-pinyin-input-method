@@ -61,8 +61,11 @@ private:
 } // namespace
 
 int main(int argc, char *argv[]) {
-    // Initialize GTK in headless/test mode
-    gtk_init_check(&argc, &argv);
+    // Initialize GTK; if display is unavailable, exit with skip code 77
+    if (!gtk_init_check(&argc, &argv)) {
+        std::cout << "[SKIP] modernime_ui_addon_tests: GTK display unavailable (no DISPLAY or WAYLAND_DISPLAY)\n";
+        return 77;
+    }
 
     char templatePath[] = "/tmp/modernime-ui-addon-test-XXXXXX";
     char *tempDir = mkdtemp(templatePath);

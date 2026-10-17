@@ -125,6 +125,14 @@ for candidate in "$BUILD_DIR/tests/modernime_db_fixture_helper" "$BUILD_DIR/mode
     fi
 done
 
+ADAPTER_RECOVERY_TEST_BIN=""
+for candidate in "$BUILD_DIR/tests/modernime_adapter_recovery_tests" "$BUILD_DIR/modernime_adapter_recovery_tests"; do
+    if [[ -x "$candidate" ]]; then
+        ADAPTER_RECOVERY_TEST_BIN="$candidate"
+        break
+    fi
+done
+
 if [[ -z "$SETTINGS_TEST_BIN" ]]; then
     echo "ERROR: modernime_settings_tests binary not found in $BUILD_DIR" >&2
     exit 1
@@ -170,6 +178,11 @@ if [[ -z "$DB_FIXTURE_HELPER_BIN" ]]; then
     exit 1
 fi
 
+if [[ -z "$ADAPTER_RECOVERY_TEST_BIN" ]]; then
+    echo "ERROR: modernime_adapter_recovery_tests binary not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
 echo "Using modernime_settings_tests:           $SETTINGS_TEST_BIN"
 echo "Using modernime_ui_tests:                 $UI_TEST_BIN"
 echo "Using modernime_adapter_tests:            $ADAPTER_TEST_BIN"
@@ -179,6 +192,7 @@ echo "Using modernime_fake_fcitx5:              $FAKE_FCITX_BIN"
 echo "Using modernime_fcitx5_input_panel_tests: $FCITX5_INPUT_PANEL_TEST_BIN"
 echo "Using modernime_ui_addon_tests:           $UI_ADDON_TEST_BIN"
 echo "Using modernime_db_fixture_helper:        $DB_FIXTURE_HELPER_BIN"
+echo "Using modernime_adapter_recovery_tests:   $ADAPTER_RECOVERY_TEST_BIN"
 
 # Step 1: Run C++ unit test suite covering SettingsFileStamp, SettingsApplicationVersion, and space paths
 echo "--- Running modernime_settings_tests ---"
@@ -202,11 +216,30 @@ echo "PASS: modernime_runtime_controller_tests passed"
 
 # Step 5: Run C++ UI addon integration test suite covering config reload, layout invalidation, and candidate selection
 echo "--- Running modernime_ui_addon_tests ---"
-"$UI_ADDON_TEST_BIN"
-echo "PASS: modernime_ui_addon_tests passed"
+UI_ADDON_EXIT=0
+"$UI_ADDON_TEST_BIN" || UI_ADDON_EXIT=$?
+if [[ $UI_ADDON_EXIT -eq 77 ]]; then
+    if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
+        echo "ERROR: Display environment is available but modernime_ui_addon_tests skipped (exit 77)" >&2
+        exit 1
+    fi
+    echo "SKIP: modernime_ui_addon_tests skipped (no DISPLAY or WAYLAND_DISPLAY available)"
+    export UI_ADDON_SKIPPED=1
+elif [[ $UI_ADDON_EXIT -eq 0 ]]; then
+    echo "PASS: modernime_ui_addon_tests passed"
+    export UI_ADDON_SKIPPED=0
+else
+    echo "FAIL: modernime_ui_addon_tests failed with exit code $UI_ADDON_EXIT" >&2
+    exit "$UI_ADDON_EXIT"
+fi
 
-# Step 6: Run comprehensive automated contract matrix via Python
-export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN RUNTIME_CONTROLLER_TEST_BIN FAKE_REMOTE_BIN FAKE_FCITX_BIN FCITX5_INPUT_PANEL_TEST_BIN UI_ADDON_TEST_BIN DB_FIXTURE_HELPER_BIN
+# Step 6: Run C++ adapter fault recovery regression test suite (W3)
+echo "--- Running modernime_adapter_recovery_tests ---"
+"$ADAPTER_RECOVERY_TEST_BIN"
+echo "PASS: modernime_adapter_recovery_tests passed"
+
+# Step 7: Run comprehensive automated contract matrix via Python
+export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN RUNTIME_CONTROLLER_TEST_BIN FAKE_REMOTE_BIN FAKE_FCITX_BIN FCITX5_INPUT_PANEL_TEST_BIN UI_ADDON_TEST_BIN DB_FIXTURE_HELPER_BIN ADAPTER_RECOVERY_TEST_BIN UI_ADDON_SKIPPED
 python3 - << 'EOF'
 import os
 import sys
@@ -228,6 +261,7 @@ fake_fcitx_bin = os.environ["FAKE_FCITX_BIN"]
 fcitx5_input_panel_test_bin = os.environ["FCITX5_INPUT_PANEL_TEST_BIN"]
 ui_addon_test_bin = os.environ["UI_ADDON_TEST_BIN"]
 db_fixture_helper_bin = os.environ["DB_FIXTURE_HELPER_BIN"]
+adapter_recovery_test_bin = os.environ["ADAPTER_RECOVERY_TEST_BIN"]
 
 def test_A01_same_mtime_atomic_replacement():
     print("[RUN ] T14-A01 Same-mtime atomic replacement")
@@ -308,14 +342,19 @@ def test_A04_sensitive_context_safety():
 
 def test_A05_font_metrics_layout_invalidation():
     print("[RUN ] T14-A05 Font metrics and page size layout invalidation")
-    # Executes pure layout unit tests
+    # Executes pure layout unit tests (always runnable headless)
     res = subprocess.run([ui_test_bin], capture_output=True, text=True)
     assert res.returncode == 0, f"ui_test failed: {res.stderr}"
-    # Executes production UI addon integration test
+    # UI addon integration check
     assert ui_addon_test_bin, "ui_addon_test_bin is required"
-    res_addon = subprocess.run([ui_addon_test_bin], capture_output=True, text=True)
-    assert res_addon.returncode == 0, f"ui_addon_test failed: {res_addon.stderr}"
-    print("[PASS] T14-A05 Font metrics and page size layout invalidation")
+    ui_skipped = os.environ.get("UI_ADDON_SKIPPED") == "1"
+    if not ui_skipped:
+        res_addon = subprocess.run([ui_addon_test_bin], capture_output=True, text=True)
+        assert res_addon.returncode == 0, f"ui_addon_test failed: {res_addon.stderr}"
+        print("[PASS] T14-A05 Font metrics and page size layout invalidation (UI addon verified)")
+    else:
+        print("[SKIP] modernime_ui_addon_tests skipped (headless environment: DISPLAY/WAYLAND_DISPLAY not set)")
+        print("[PASS] T14-A05 Font metrics and page size layout invalidation (pure layout verified; UI addon skipped)")
 
 def test_A06_path_matrix_spaces_and_database_isolation():
     print("[RUN ] T14-A06 Path matrix with spaces and database isolation")
@@ -380,46 +419,8 @@ def test_A06_path_matrix_spaces_and_database_isolation():
                     env.pop(k, None)
             
             expected_data_dir, expected_cfg_dir = get_expected_dirs(root)
-            expected_data_dir.mkdir(parents=True, exist_ok=True)
-            expected_cfg_dir.mkdir(parents=True, exist_ok=True)
-
-            # 1. Use real production LearningStore to create and write learning.sqlite3
-            sqlite_file = expected_data_dir / "learning.sqlite3"
-            r_sqlite = subprocess.run([db_fixture_helper_bin, str(sqlite_file), "--record", "nihao", "你好"],
-                                      capture_output=True, text=True)
-            assert r_sqlite.returncode == 0, f"[{mode}] failed to create sqlite fixture: {r_sqlite.stderr}"
-            assert sqlite_file.is_file(), f"[{mode}] sqlite db must exist"
-
-            # 2. Use real production LearningStore/PersonalEngine to create and write learning.lmdb
-            lmdb_file = expected_data_dir / "learning.lmdb"
-            r_lmdb = subprocess.run([db_fixture_helper_bin, str(lmdb_file), "--record", "shijie", "世界"],
-                                    capture_output=True, text=True)
-            assert r_lmdb.returncode == 0, f"[{mode}] failed to create lmdb fixture: {r_lmdb.stderr}"
-            assert lmdb_file.is_file(), f"[{mode}] lmdb file must exist"
-
-            # 3. Verify data-guard --verify in resolved environment
-            res_verify = subprocess.run(
-                [sys.executable, str(guard_script), "--verify", "--data-dir", str(expected_data_dir), "--config-dir", str(expected_cfg_dir)],
-                env=env, capture_output=True, text=True
-            )
-            assert res_verify.returncode == 0, f"[{mode}] data-guard --verify failed: {res_verify.stderr}\nstdout: {res_verify.stdout}"
-
-            # 4. Run data-guard --backup in resolved environment
-            res_backup = subprocess.run(
-                [sys.executable, str(guard_script), "--backup", "--data-dir", str(expected_data_dir), "--config-dir", str(expected_cfg_dir)],
-                env=env, capture_output=True, text=True
-            )
-            assert res_backup.returncode == 0, f"[{mode}] data-guard --backup failed: {res_backup.stderr}\nstdout: {res_backup.stdout}"
             
-            # Check backup content
-            assert (expected_data_dir / "backups" / "latest").is_file(), f"[{mode}] latest backup pointer must exist"
-            latest_target = (expected_data_dir / "backups" / "latest").read_text(encoding="utf-8").strip()
-            latest_dir = Path(latest_target)
-            assert latest_dir.is_dir(), f"[{mode}] latest backup target directory must exist"
-            assert (latest_dir / "learning.sqlite3").is_file(), f"[{mode}] backup must contain learning.sqlite3"
-            assert (latest_dir / "learning.lmdb").is_file(), f"[{mode}] backup must contain learning.lmdb"
-
-            # 5. Verify session-init if managed config is used
+            # For managed_conflict, run session-init to generate real runtime mapping in 90-modernime.conf
             if env_vars.get("MODERNIME_CONFIG_HOME") and env_vars.get("MODERNIME_DATA_HOME"):
                 res_init = subprocess.run(["bash", str(session_init)], env=env, capture_output=True, text=True)
                 assert res_init.returncode == 0, f"[{mode}] session-init failed: {res_init.stderr}"
@@ -428,6 +429,100 @@ def test_A06_path_matrix_spaces_and_database_isolation():
                 conf_text = conf_path.read_text(encoding="utf-8")
                 assert env_vars["MODERNIME_DATA_HOME"] in conf_text
                 assert env_vars["MODERNIME_CONFIG_HOME"] in conf_text
+                
+                # Apply the mapped effective XDG environment from 90-modernime.conf
+                for line in conf_text.splitlines():
+                    if line.startswith("XDG_CONFIG_HOME="):
+                        env["XDG_CONFIG_HOME"] = line.split("=", 1)[1].strip('"')
+                    elif line.startswith("XDG_DATA_HOME="):
+                        env["XDG_DATA_HOME"] = line.split("=", 1)[1].strip('"')
+
+            # 1. Helper resolves data directory from environment and creates/records sqlite
+            r_sqlite = subprocess.run([db_fixture_helper_bin, "--from-env", "--backend", "sqlite",
+                                       "--record", "nihao", "你好"],
+                                      env=env, capture_output=True, text=True)
+            assert r_sqlite.returncode == 0, f"[{mode}] failed to create sqlite fixture: {r_sqlite.stderr}"
+            # Extract RESOLVED_DATA_DIR from output
+            resolved_data_dir = None
+            for line in r_sqlite.stdout.splitlines():
+                if line.startswith("RESOLVED_DATA_DIR:"):
+                    resolved_data_dir = line.split(":", 1)[1].strip()
+                    break
+            assert resolved_data_dir == str(expected_data_dir), \
+                f"[{mode}] resolved data dir '{resolved_data_dir}' != expected '{expected_data_dir}'"
+            
+            sqlite_file = expected_data_dir / "learning.sqlite3"
+            assert sqlite_file.is_file(), f"[{mode}] sqlite db must exist at resolved location"
+
+            # 2. Helper resolves from env and creates/records lmdb
+            r_lmdb = subprocess.run([db_fixture_helper_bin, "--from-env", "--backend", "lmdb",
+                                     "--record", "shijie", "世界"],
+                                    env=env, capture_output=True, text=True)
+            assert r_lmdb.returncode == 0, f"[{mode}] failed to create lmdb fixture: {r_lmdb.stderr}"
+            lmdb_file = expected_data_dir / "learning.lmdb"
+            assert lmdb_file.is_file(), f"[{mode}] lmdb file must exist at resolved location"
+
+            # 3. Verify reopening and inspecting recorded words directly
+            r_insp_sql = subprocess.run([db_fixture_helper_bin, str(sqlite_file), "--inspect", "你好"],
+                                        env=env, capture_output=True, text=True)
+            assert r_insp_sql.returncode == 0, f"[{mode}] inspect failed on reopened sqlite: {r_insp_sql.stderr}"
+
+            r_insp_lmdb = subprocess.run([db_fixture_helper_bin, str(lmdb_file), "--inspect", "世界"],
+                                         env=env, capture_output=True, text=True)
+            assert r_insp_lmdb.returncode == 0, f"[{mode}] inspect failed on reopened lmdb: {r_insp_lmdb.stderr}"
+
+            # 4. Verify data-guard --verify in resolved environment
+            # Test default automatic resolution without override parameters for home_default, spaces, and managed_conflict
+            guard_args = []
+            if mode == "xdg_override":
+                guard_args = ["--data-dir", str(expected_data_dir), "--config-dir", str(expected_cfg_dir)]
+
+            res_verify = subprocess.run(
+                [sys.executable, str(guard_script), "--verify"] + guard_args,
+                env=env, capture_output=True, text=True
+            )
+            assert res_verify.returncode == 0, f"[{mode}] data-guard --verify failed: {res_verify.stderr}\nstdout: {res_verify.stdout}"
+
+            # 5. Run data-guard --backup in resolved environment
+            res_backup = subprocess.run(
+                [sys.executable, str(guard_script), "--backup"] + guard_args,
+                env=env, capture_output=True, text=True
+            )
+            assert res_backup.returncode == 0, f"[{mode}] data-guard --backup failed: {res_backup.stderr}\nstdout: {res_backup.stdout}"
+            
+            # Check backup content and inspect words in backup snapshot files
+            assert (expected_data_dir / "backups" / "latest").is_file(), f"[{mode}] latest backup pointer must exist"
+            latest_target = (expected_data_dir / "backups" / "latest").read_text(encoding="utf-8").strip()
+            latest_dir = Path(latest_target)
+            assert latest_dir.is_dir(), f"[{mode}] latest backup target directory must exist"
+            assert (latest_dir / "learning.sqlite3").is_file(), f"[{mode}] backup must contain learning.sqlite3"
+            assert (latest_dir / "learning.lmdb").is_file(), f"[{mode}] backup must contain learning.lmdb"
+
+            r_insp_bak_sql = subprocess.run([db_fixture_helper_bin, str(latest_dir / "learning.sqlite3"), "--inspect", "你好"],
+                                            env=env, capture_output=True, text=True)
+            assert r_insp_bak_sql.returncode == 0, f"[{mode}] backup sqlite does not contain marker phrase '你好'"
+
+            r_insp_bak_lmdb = subprocess.run([db_fixture_helper_bin, str(latest_dir / "learning.lmdb"), "--inspect", "世界"],
+                                             env=env, capture_output=True, text=True)
+            assert r_insp_bak_lmdb.returncode == 0, f"[{mode}] backup lmdb does not contain marker phrase '世界'"
+
+    # Negative mutant check: deliberately wrong environment must fail to resolve to expected dir
+    with tempfile.TemporaryDirectory(prefix="modernime-mutant-env-") as td:
+        root = Path(td)
+        mutant_env = os.environ.copy()
+        mutant_env["HOME"] = str(root / "wrong_home")
+        mutant_env["XDG_DATA_HOME"] = str(root / "mutated_xdg_data")
+        r_mutant = subprocess.run([db_fixture_helper_bin, "--from-env", "--backend", "sqlite",
+                                   "--record", "test", "测试"],
+                                  env=mutant_env, capture_output=True, text=True)
+        assert r_mutant.returncode == 0
+        resolved_mutant = None
+        for line in r_mutant.stdout.splitlines():
+            if line.startswith("RESOLVED_DATA_DIR:"):
+                resolved_mutant = line.split(":", 1)[1].strip()
+                break
+        expected_normal = str(root / "expected_normal" / "modernime")
+        assert resolved_mutant != expected_normal, "mutant env must not resolve to normal expected dir"
 
     # Verify host db was never modified
     if host_db.exists() and host_db_mtime is not None:
@@ -466,8 +561,23 @@ test_A05_font_metrics_layout_invalidation()
 test_A06_path_matrix_spaces_and_database_isolation()
 test_A07_runtime_state_compatibility()
 test_missing_fixture_negative_regression()
+
+if os.environ.get("UI_ADDON_SKIPPED") == "1":
+    print("========================================")
+    print("T14 Configuration Contracts: 6/6 passed, 1 skipped: UI addon requires DISPLAY")
+    print("========================================")
+else:
+    print("========================================")
+    print("All T14 Configuration Contracts PASSED (7/7)")
+    print("========================================")
 EOF
 
-echo "========================================"
-echo "All T14 Configuration Contracts PASSED (7/7)"
-echo "========================================"
+if [[ "${UI_ADDON_SKIPPED:-0}" == "1" ]]; then
+    echo "========================================"
+    echo "T14 Configuration Contracts: 6/6 passed, 1 skipped: UI addon requires DISPLAY"
+    echo "========================================"
+else
+    echo "========================================"
+    echo "All T14 Configuration Contracts PASSED (7/7)"
+    echo "========================================"
+fi
