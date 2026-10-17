@@ -11,6 +11,8 @@ import tempfile
 import unittest
 
 from verify_required_tests import (
+    CORE_ONLY_BASELINE_REQUIRED,
+    CORE_ONLY_FINAL_ADDITIONAL,
     FULL_BASELINE_REQUIRED,
     FULL_FINAL_ADDITIONAL,
     HEADLESS_SKIP_WHITELIST,
@@ -222,6 +224,62 @@ class VerifyRequiredTestsContractTest(unittest.TestCase):
             gtest_dir=self.gtest_dir,
         )
         self.assertTrue(ok, f"Expected pass, got: {errors}")
+
+    def test_core_only_registration_and_execution_passes(self):
+        self.create_registered_json(CORE_ONLY_BASELINE_REQUIRED)
+        self.create_junit_xml({t: "passed" for t in CORE_ONLY_BASELINE_REQUIRED})
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="core-only",
+            stage="baseline",
+            junit_paths=[self.junit_xml],
+        )
+        self.assertTrue(ok, f"Expected core-only pass, got: {errors}")
+
+    def test_core_only_registration_fails_under_full_profile(self):
+        # When building core-only, profile=full must reject it
+        self.create_registered_json(CORE_ONLY_BASELINE_REQUIRED)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Missing required tests in registration" in e for e in errors))
+
+    def test_missing_core_test_in_core_only_fails(self):
+        tests = [t for t in CORE_ONLY_BASELINE_REQUIRED if t != "modernime_learning_store"]
+        self.create_registered_json(tests)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="core-only",
+            stage="baseline",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("modernime_learning_store" in e for e in errors))
+
+    def test_core_only_final_stage_requires_additional_tests(self):
+        self.create_registered_json(CORE_ONLY_BASELINE_REQUIRED)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="core-only",
+            stage="final",
+        )
+        self.assertFalse(ok)
+        for additional in CORE_ONLY_FINAL_ADDITIONAL:
+            self.assertTrue(any(additional in e for e in errors), f"Expected error for {additional}")
+
+    def test_core_only_final_stage_passes_when_complete(self):
+        complete = list(CORE_ONLY_BASELINE_REQUIRED) + list(CORE_ONLY_FINAL_ADDITIONAL)
+        self.create_registered_json(complete)
+        self.create_junit_xml({t: "passed" for t in complete})
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="core-only",
+            stage="final",
+            junit_paths=[self.junit_xml],
+        )
+        self.assertTrue(ok, f"Expected pass for complete core-only final, got: {errors}")
 
 
 if __name__ == "__main__":

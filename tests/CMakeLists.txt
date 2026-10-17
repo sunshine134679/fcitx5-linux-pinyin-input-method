@@ -7,6 +7,7 @@ else()
 endif()
 
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME modernime_required_tests_contract
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/required_tests_contract_test.py"
 )
@@ -15,9 +16,11 @@ add_executable(modernime_settings_tests core/settings_test.cpp)
 target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
 
-add_test(NAME modernime_configuration_contract
-    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_test.sh" --build-dir "${CMAKE_BINARY_DIR}"
-)
+if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
+    add_test(NAME modernime_configuration_contract
+        COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_test.sh" --build-dir "${CMAKE_BINARY_DIR}"
+    )
+endif()
 
 add_executable(modernime_clipboard_history_tests core/clipboard_history_test.cpp)
 target_link_libraries(modernime_clipboard_history_tests PRIVATE modernime_core)
@@ -245,42 +248,11 @@ if(MODERNIME_BUILD_SETTINGS)
         SKIP_RETURN_CODE 77
     )
 
-    set(MODERNIME_SETTINGS_SHELL_TEST_SOURCES
-        ../tools/settings/data_controller.cpp
-        ../tools/settings/dictionary_pronunciation.cpp
-        ../tools/settings/settings_model.cpp
-        ../tools/settings/runtime_controller.cpp
-        ../tools/settings/package_operation_state.cpp
-        ../tools/settings/process_runner.cpp
-        ../tools/settings/package_policy.cpp
-        ../tools/settings/update_controller.cpp
-        ../tools/settings/clipboard_history_model.cpp
-        ../tools/settings/overview_model.cpp
-        ../tools/settings/page_registry.cpp
-        ../tools/settings/settings_widgets.cpp
-        ../tools/settings/settings_shell.cpp
-        ../tools/settings/settings_shell_state.cpp
-        ../tools/settings/pages/candidates_page.cpp
-        ../tools/settings/pages/clipboard_page.cpp
-        ../tools/settings/pages/diagnostics_page.cpp
-        ../tools/settings/pages/dictionary_page.cpp
-        ../tools/settings/pages/input_page.cpp
-        ../tools/settings/pages/learning_page.cpp
-        ../tools/settings/pages/overview_page.cpp
-        ../tools/settings/pages/updates_page.cpp
-    )
     add_executable(modernime_settings_shell_gtk_tests
         settings/settings_shell_gtk_test.cpp
-        ${MODERNIME_SETTINGS_SHELL_TEST_SOURCES}
-    )
-    target_include_directories(modernime_settings_shell_gtk_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_settings_shell_gtk_tests PRIVATE
-        modernime_core
-        modernime_pinyin
-        modernime_ui_layout
-        PkgConfig::GTK3
+        modernime_settings_components
     )
     target_compile_definitions(modernime_settings_shell_gtk_tests PRIVATE
         MODERNIME_VERSION="${PROJECT_VERSION}"
@@ -299,13 +271,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_settings_save_gtk_tests
         settings/settings_save_gtk_test.cpp
-        ${MODERNIME_SETTINGS_SHELL_TEST_SOURCES}
-    )
-    target_include_directories(modernime_settings_save_gtk_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_settings_save_gtk_tests PRIVATE
-        modernime_core modernime_pinyin modernime_ui_layout PkgConfig::GTK3
+        modernime_settings_components
     )
     target_compile_definitions(modernime_settings_save_gtk_tests PRIVATE
         MODERNIME_VERSION="${PROJECT_VERSION}"
@@ -316,6 +284,27 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_save_gtk_tests
     )
     set_tests_properties(modernime_settings_save_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 20
+    )
+
+    add_executable(modernime_settings_data_async_gtk_tests
+        settings/settings_data_async_gtk_test.cpp
+    )
+    target_link_libraries(modernime_settings_data_async_gtk_tests PRIVATE
+        modernime_settings_components
+    )
+    target_compile_definitions(modernime_settings_data_async_gtk_tests PRIVATE
+        MODERNIME_VERSION="${PROJECT_VERSION}"
+        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+        MODERNIME_SYSTEM_FCITX5_ADDON_DIR=""
+    )
+    add_test(NAME modernime_settings_data_async_gtk
+        COMMAND modernime_settings_data_async_gtk_tests
+    )
+    set_tests_properties(modernime_settings_data_async_gtk PROPERTIES
         ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
         RESOURCE_LOCK modernime_gtk_display
         SKIP_RETURN_CODE 77
@@ -749,49 +738,50 @@ if(MODERNIME_BUILD_FCITX5)
     )
 endif()
 
-add_executable(modernime_ui_tests ui/candidate_bar_layout_test.cpp)
-target_include_directories(modernime_ui_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
-)
-target_link_libraries(modernime_ui_tests PRIVATE modernime_core)
-target_sources(modernime_ui_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
-)
-add_test(NAME modernime_candidate_bar_layout COMMAND modernime_ui_tests)
+if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
+    add_executable(modernime_ui_tests ui/candidate_bar_layout_test.cpp)
+    target_include_directories(modernime_ui_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+    )
+    target_link_libraries(modernime_ui_tests PRIVATE modernime_core)
+    target_sources(modernime_ui_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
+    )
+    add_test(NAME modernime_candidate_bar_layout COMMAND modernime_ui_tests)
 
-add_executable(modernime_window_anchor_tests ui/window_anchor_test.cpp)
-target_include_directories(modernime_window_anchor_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
-)
-add_test(NAME modernime_window_anchor COMMAND modernime_window_anchor_tests)
+    add_executable(modernime_window_anchor_tests ui/window_anchor_test.cpp)
+    target_include_directories(modernime_window_anchor_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+    )
+    add_test(NAME modernime_window_anchor COMMAND modernime_window_anchor_tests)
 
-add_executable(modernime_status_indicator_tests ui/status_indicator_test.cpp)
-target_include_directories(modernime_status_indicator_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
-)
-add_test(NAME modernime_status_indicator COMMAND modernime_status_indicator_tests)
+    add_executable(modernime_status_indicator_tests ui/status_indicator_test.cpp)
+    target_include_directories(modernime_status_indicator_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+    )
+    add_test(NAME modernime_status_indicator COMMAND modernime_status_indicator_tests)
 
-add_executable(modernime_candidate_bar_renderer_tests ui/candidate_bar_renderer_test.cpp)
-target_include_directories(modernime_candidate_bar_renderer_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
-)
-target_sources(modernime_candidate_bar_renderer_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_renderer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
-)
-target_link_libraries(modernime_candidate_bar_renderer_tests PRIVATE modernime_core)
-add_test(NAME modernime_candidate_bar_renderer COMMAND modernime_candidate_bar_renderer_tests)
+    add_executable(modernime_candidate_bar_renderer_tests ui/candidate_bar_renderer_test.cpp)
+    target_include_directories(modernime_candidate_bar_renderer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+    )
+    target_sources(modernime_candidate_bar_renderer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_renderer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
+    )
+    target_link_libraries(modernime_candidate_bar_renderer_tests PRIVATE modernime_core)
+    add_test(NAME modernime_candidate_bar_renderer COMMAND modernime_candidate_bar_renderer_tests)
 
-add_executable(modernime_cairo_surface_tests ui/cairo_surface_test.cpp)
-target_include_directories(modernime_cairo_surface_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
-)
-target_link_libraries(modernime_cairo_surface_tests PRIVATE modernime_ui_layout)
-add_test(NAME modernime_cairo_surface COMMAND modernime_cairo_surface_tests)
+    add_executable(modernime_cairo_surface_tests ui/cairo_surface_test.cpp)
+    target_include_directories(modernime_cairo_surface_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+    )
+    target_link_libraries(modernime_cairo_surface_tests PRIVATE modernime_ui_layout)
+    add_test(NAME modernime_cairo_surface COMMAND modernime_cairo_surface_tests)
+endif()
 
-find_program(BASH_EXECUTABLE bash)
 if(BASH_EXECUTABLE)
     add_test(NAME modernime_repository_contract
         COMMAND ${BASH_EXECUTABLE}
@@ -824,6 +814,23 @@ if(BASH_EXECUTABLE)
     add_test(NAME modernime_install_transaction
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/install_transaction_test.sh
+    )
+    set_tests_properties(modernime_install_transaction PROPERTIES
+        RESOURCE_LOCK modernime_install_transaction
+    )
+    add_test(NAME modernime_install_rollback_concurrent_writes
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/install_rollback_concurrent_writes_test.sh
+    )
+    set_tests_properties(modernime_install_rollback_concurrent_writes PROPERTIES
+        RESOURCE_LOCK modernime_install_transaction
+    )
+    add_test(NAME modernime_install_lifecycle_prep
+        COMMAND ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/install_lifecycle_prep_test.sh
+    )
+    set_tests_properties(modernime_install_lifecycle_prep PROPERTIES
+        RESOURCE_LOCK modernime_install_transaction
     )
     add_test(NAME modernime_install_channel_collision
         COMMAND ${BASH_EXECUTABLE}

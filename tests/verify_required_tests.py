@@ -58,6 +58,25 @@ STORAGE_TSAN_REQUIRED = [
     "modernime_learning_store",
 ]
 
+CORE_ONLY_BASELINE_REQUIRED = [
+    "modernime_settings",
+    "modernime_clipboard_history",
+    "modernime_persistent_clipboard_history",
+    "modernime_dictionary_prior",
+    "modernime_learning_store",
+    "modernime_input_state",
+    "modernime_english_dictionary",
+    "modernime_english_definition",
+    "modernime_pinyin_match",
+    "modernime_punctuation",
+    "modernime_engine_state",
+    "modernime_personal_engine_benchmark",
+]
+
+CORE_ONLY_FINAL_ADDITIONAL = [
+    "modernime_required_tests_contract",
+]
+
 HEADLESS_SKIP_WHITELIST = {
     "modernime_settings_focus_gtk",
     "modernime_settings_shell_gtk",
@@ -174,6 +193,10 @@ def verify(
             required.extend(FULL_FINAL_ADDITIONAL)
     elif profile == "storage-tsan":
         required = list(STORAGE_TSAN_REQUIRED)
+    elif profile in ("core-only", "core"):
+        required = list(CORE_ONLY_BASELINE_REQUIRED)
+        if stage == "final":
+            required.extend(CORE_ONLY_FINAL_ADDITIONAL)
     else:
         errors.append(f"Unknown profile: {profile}")
         return False, errors
@@ -260,7 +283,10 @@ def main() -> int:
         "--registered", required=True, help="Path to ctest json output (from --show-only=json-v1)"
     )
     parser.add_argument(
-        "--profile", required=True, choices=["full", "storage-tsan"], help="Verification profile"
+        "--profile",
+        required=True,
+        choices=["full", "storage-tsan", "core-only", "core"],
+        help="Verification profile",
     )
     parser.add_argument(
         "--stage", choices=["baseline", "final"], default="baseline", help="Verification stage"
