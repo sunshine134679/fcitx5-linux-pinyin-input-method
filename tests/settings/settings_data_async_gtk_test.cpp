@@ -943,7 +943,17 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
 
     // Release the backup worker
     releaseBackupHook = true;
-    pumpEventsUntil([&] { return backupFinished.load() && notifyCountB > 0; }, std::chrono::seconds(5));
+    pumpEventsUntil([&] {
+        if (!backupFinished.load() || notifyCountB == 0) {
+            return false;
+        }
+        modernime::core::LearningStore store(dbPathB);
+        if (!store.openReadOnly()) {
+            return false;
+        }
+        const auto count = store.entryCount();
+        return count.has_value() && *count == 0;
+    }, std::chrono::seconds(5));
     assert(backupFinished.load());
     drainEvents();
 
