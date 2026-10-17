@@ -25,7 +25,45 @@ std::string keyFor(std::string_view pinyin, std::string_view phrase) {
     return key;
 }
 
+std::string foldAscii(std::string_view value) {
+    std::string result(value);
+    for (auto &character : result) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (byte >= static_cast<unsigned char>('A') &&
+            byte <= static_cast<unsigned char>('Z')) {
+            character = static_cast<char>(byte + ('a' - 'A'));
+        }
+    }
+    return result;
+}
+
 } // namespace
+
+std::vector<std::size_t> DataController::filterDictionary(
+    std::span<const pinyin::UserDictionaryEntry> entries,
+    std::string_view query) {
+    std::vector<std::size_t> indices;
+    if (query.empty()) {
+        indices.resize(entries.size());
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            indices[i] = i;
+        }
+        return indices;
+    }
+
+    const auto foldedQuery = foldAscii(query);
+    indices.reserve(std::min<std::size_t>(entries.size(), 1024));
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto &entry = entries[i];
+        const auto foldedPinyin = foldAscii(entry.pinyin);
+        const auto foldedPhrase = foldAscii(entry.phrase);
+        if (foldedPinyin.find(foldedQuery) != std::string::npos ||
+            foldedPhrase.find(foldedQuery) != std::string::npos) {
+            indices.push_back(i);
+        }
+    }
+    return indices;
+}
 
 std::vector<pinyin::UserDictionaryEntry> DataController::loadDictionary(
     const std::filesystem::path &path) {
@@ -289,15 +327,15 @@ std::size_t DataController::learningEntryCount(
         }
         return 0;
     }
-    const auto snapshot = store.snapshot();
+    const auto count = store.entryCount();
     store.close();
-    if (snapshot == nullptr) {
+    if (!count.has_value()) {
         if (error != nullptr) {
-            *error = "无法读取学习数据库快照";
+            *error = "无法读取学习数据库条目数";
         }
         return 0;
     }
-    return snapshot->entries().size();
+    return *count;
 }
 
 LearningBackendInfo DataController::detectActiveLearningBackend(
@@ -333,12 +371,19 @@ bool DataController::backupAndClearLearning(
         return false;
     }
 
+    const auto expectedCount = store.entryCount();
     core::LearningStore verification(backupPath);
-    if (!verification.openReadOnly() || verification.snapshot() == nullptr) {
+    if (!verification.openReadOnly()) {
         setError("learning backup could not be verified");
         return false;
     }
+    const auto verifiedCount = verification.entryCount();
     verification.close();
+    if (!verifiedCount.has_value() ||
+        (expectedCount.has_value() && *verifiedCount != *expectedCount)) {
+        setError("learning backup could not be verified");
+        return false;
+    }
     if (!store.clear()) {
         setError("unable to clear learning database");
         return false;

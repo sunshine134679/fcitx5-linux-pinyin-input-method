@@ -1575,6 +1575,61 @@ void testPersonalEngineStandaloneRetainsCustomPruneTarget() {
     // Standalone PersonalEngine prunes down to prune_target_size (4)
     assertTrue(engine.GetTotalEntries() == 4, "standalone PersonalEngine prunes to custom prune_target_size (4)");
 }
+
+void testLearningStoreEntryCountLightweightAndFailure() {
+    // 1. Unopened store returns nullopt
+    const auto sqlitePath = testPath("entry-count-test.sqlite3");
+    {
+        modernime::core::LearningStore unopenStore(sqlitePath);
+        assertTrue(!unopenStore.entryCount().has_value(),
+                   "unopened store entryCount returns nullopt");
+    }
+
+    // 2. Open store returns count 0 initially
+    {
+        modernime::core::LearningStore store(sqlitePath);
+        assertTrue(store.open(), "sqlite store opens");
+        auto count = store.entryCount();
+        assertTrue(count.has_value() && *count == 0, "initial entryCount is 0");
+
+        assertTrue(store.recordSelection("词条一", "citiaoyi", {}, {}, 1000), "insert entry 1");
+        assertTrue(store.recordSelection("词条二", "citiaoer", {}, {}, 1001), "insert entry 2");
+        count = store.entryCount();
+        assertTrue(count.has_value() && *count == 2, "entryCount is 2 after insertions");
+
+        assertTrue(store.clear(), "store clears");
+        count = store.entryCount();
+        assertTrue(count.has_value() && *count == 0, "entryCount is 0 after clear");
+
+        store.close();
+        assertTrue(!store.entryCount().has_value(), "closed store entryCount returns nullopt");
+    }
+    std::filesystem::remove(sqlitePath);
+
+    // 3. LMDB backend entry count
+    const auto lmdbPath = testPath("entry-count-test.lmdb");
+    {
+        modernime::core::LearningStore lmdbStore(lmdbPath);
+        assertTrue(!lmdbStore.entryCount().has_value(), "unopened lmdb store returns nullopt");
+        assertTrue(lmdbStore.open(), "lmdb store opens");
+        auto count = lmdbStore.entryCount();
+        assertTrue(count.has_value() && *count == 0, "initial lmdb entryCount is 0");
+
+        assertTrue(lmdbStore.recordSelection("词条一", "citiaoyi", {}, {}, 1000), "insert lmdb entry 1");
+        assertTrue(lmdbStore.recordSelection("词条二", "citiaoer", {}, {}, 1001), "insert lmdb entry 2");
+        count = lmdbStore.entryCount();
+        assertTrue(count.has_value() && *count == 2, "lmdb entryCount is 2 after insertions");
+
+        assertTrue(lmdbStore.clear(), "lmdb store clears");
+        count = lmdbStore.entryCount();
+        assertTrue(count.has_value() && *count == 0, "lmdb entryCount is 0 after clear");
+
+        lmdbStore.close();
+        assertTrue(!lmdbStore.entryCount().has_value(), "closed lmdb store entryCount returns nullopt");
+    }
+    std::filesystem::remove(lmdbPath);
+}
+
 } // namespace
 
 int main() {
@@ -1630,5 +1685,6 @@ int main() {
     testContextBoostPenalizedByNegativeFeedback();
     testLearningStoreSmallCapacityBoundaryRetainsLimitExactForSqliteAndLmdb();
     testPersonalEngineStandaloneRetainsCustomPruneTarget();
+    testLearningStoreEntryCountLightweightAndFailure();
     return EXIT_SUCCESS;
 }

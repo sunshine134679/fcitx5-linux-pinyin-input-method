@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/learning_page.h"
 
 #include "modernime/settings/data_controller.h"
+#include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -48,6 +49,12 @@ public:
         refreshSettings();
         refresh(false);
         pageGuard.release();
+    }
+
+    ~Impl() {
+        if (lifetime) {
+            lifetime->deactivate();
+        }
     }
 
     void buildPage() {
@@ -102,26 +109,56 @@ public:
             page, {learningEnabled, contextLearning, clearLearningButton});
     }
 
-    void refresh(bool shouldNotify) {
+    struct RefreshTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        std::filesystem::path path;
+        bool shouldNotify = false;
+        std::size_t count = 0;
+        LearningBackendInfo backendInfo;
         std::string error;
-        const auto count = DataController::learningEntryCount(path, &error);
-        const auto backendInfo = DataController::detectActiveLearningBackend(path);
-        if (!error.empty()) {
-            g_warning("[ModernIME Learning] Storage=%s, path=%s, error=%s",
-                      backendInfo.name.c_str(), path.c_str(), error.c_str());
-            gtk_widget_set_sensitive(clearLearningButton, FALSE);
-            if (shouldNotify) {
-                notifyMessage(error);
-            }
-            return;
+    };
+
+    static void onRefreshFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *taskData = static_cast<RefreshTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (taskData != nullptr) {
+            taskData->lifetime->withOwner([taskData](Impl &owner) {
+                if (!taskData->error.empty()) {
+                    g_warning("[ModernIME Learning] Storage=%s, path=%s, error=%s",
+                              taskData->backendInfo.name.c_str(), taskData->path.c_str(),
+                              taskData->error.c_str());
+                    gtk_widget_set_sensitive(owner.clearLearningButton, FALSE);
+                    if (taskData->shouldNotify) {
+                        owner.notifyMessage(taskData->error);
+                    }
+                    return;
+                }
+                g_message("[ModernIME Learning] Storage=%s (%s), entries=%zu, path=%s",
+                          taskData->backendInfo.name.c_str(),
+                          taskData->backendInfo.description.c_str(),
+                          taskData->count, taskData->path.c_str());
+                gtk_widget_set_sensitive(owner.clearLearningButton, taskData->count != 0);
+                if (taskData->shouldNotify) {
+                    owner.notifyMessage("学习记录统计已刷新");
+                }
+            });
+            delete taskData;
         }
-        g_message("[ModernIME Learning] Storage=%s (%s), entries=%zu, path=%s",
-                  backendInfo.name.c_str(), backendInfo.description.c_str(),
-                  count, path.c_str());
-        gtk_widget_set_sensitive(clearLearningButton, count != 0);
-        if (shouldNotify) {
-            notifyMessage("学习记录统计已刷新");
-        }
+    }
+
+    void refresh(bool shouldNotify) {
+        auto *taskData = new RefreshTaskData{lifetime, path, shouldNotify, 0, {}, {}};
+        auto *task = g_task_new(nullptr, nullptr, onRefreshFinished, nullptr);
+        g_task_set_task_data(task, taskData, nullptr);
+        g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer data, GCancellable *) {
+            auto *td = static_cast<RefreshTaskData *>(data);
+            td->count = DataController::learningEntryCount(td->path, &td->error);
+            td->backendInfo = DataController::detectActiveLearningBackend(td->path);
+            g_task_return_pointer(t, td, nullptr);
+        });
+        g_object_unref(task);
     }
 
     void refreshSettings() {
@@ -174,6 +211,36 @@ private:
         impl->settingsChanged();
     }
 
+    struct ClearTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        std::filesystem::path path;
+        std::filesystem::path backup;
+        bool success = false;
+        std::string error;
+    };
+
+    static void onClearFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *taskData = static_cast<ClearTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (taskData != nullptr) {
+            taskData->lifetime->withOwner([taskData](Impl &owner) {
+                if (taskData->success) {
+                    g_message("[ModernIME Learning] Cleared learning data, backup created at: %s",
+                              taskData->backup.c_str());
+                    owner.notifyMessage("学习记录已清空，备份位于 " + taskData->backup.string());
+                } else {
+                    g_warning("[ModernIME Learning] Failed to clear learning data: %s",
+                              taskData->error.c_str());
+                    owner.notifyMessage(taskData->error);
+                }
+                owner.refresh(false);
+            });
+            delete taskData;
+        }
+    }
+
     static void onClear(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
         auto *dialog = gtk_message_dialog_new(
@@ -193,15 +260,15 @@ private:
 
         gtk_widget_set_sensitive(impl->clearLearningButton, FALSE);
         const auto backup = learningBackupPath(impl->path);
-        std::string error;
-        if (DataController::backupAndClearLearning(impl->path, backup, &error)) {
-            g_message("[ModernIME Learning] Cleared learning data, backup created at: %s", backup.c_str());
-            impl->notifyMessage("学习记录已清空，备份位于 " + backup.string());
-        } else {
-            g_warning("[ModernIME Learning] Failed to clear learning data: %s", error.c_str());
-            impl->notifyMessage(error);
-        }
-        impl->refresh(false);
+        auto *taskData = new ClearTaskData{impl->lifetime, impl->path, backup, false, {}};
+        auto *task = g_task_new(nullptr, nullptr, onClearFinished, nullptr);
+        g_task_set_task_data(task, taskData, nullptr);
+        g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
+            auto *td = static_cast<ClearTaskData *>(task_data);
+            td->success = DataController::backupAndClearLearning(td->path, td->backup, &td->error);
+            g_task_return_pointer(t, td, nullptr);
+        });
+        g_object_unref(task);
     }
 
     GtkWindow *parentWindow() const {
@@ -225,6 +292,8 @@ private:
     GtkWidget *clearLearningButton = nullptr;
     GtkWidget *learningDataFallback = nullptr;
     bool refreshing = false;
+    std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime =
+        std::make_shared<detail::DiagnosticsLifetime<Impl>>(this);
 };
 
 LearningPage::LearningPage(SettingsWindowModel &settings,

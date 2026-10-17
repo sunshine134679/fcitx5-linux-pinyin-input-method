@@ -24,9 +24,7 @@
 namespace {
 
 void drainEvents() {
-    while (gtk_events_pending()) {
-        gtk_main_iteration();
-    }
+    while (g_main_context_iteration(nullptr, FALSE)) {}
 }
 
 void dispatchKey(GtkWidget *window, guint keyval, GdkModifierType state) {
@@ -814,6 +812,8 @@ int main(int argc, char **argv) {
         shell.show(modernime::settings::SettingsPageId::Dictionary);
         auto *dictionaryView = findAccessibleWidget(window, GTK_TYPE_TREE_VIEW, "个人词典词条列表");
         assert(dictionaryView != nullptr);
+        auto *dictModel = gtk_tree_view_get_model(GTK_TREE_VIEW(dictionaryView));
+        assert(waitUntil([dictModel] { return gtk_tree_model_iter_n_children(dictModel, nullptr) > 0; }));
         auto *firstWord = gtk_tree_path_new_from_indices(0, -1);
         gtk_tree_view_set_cursor(GTK_TREE_VIEW(dictionaryView), firstWord, nullptr, FALSE);
         gtk_tree_path_free(firstWord);

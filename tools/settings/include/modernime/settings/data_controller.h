@@ -4,7 +4,9 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace modernime::settings {
@@ -41,6 +43,9 @@ class DataController final {
 public:
     static std::vector<pinyin::UserDictionaryEntry> loadDictionary(
         const std::filesystem::path &path);
+    static std::vector<std::size_t> filterDictionary(
+        std::span<const pinyin::UserDictionaryEntry> entries,
+        std::string_view query);
     static bool importDictionary(
         const std::filesystem::path &path,
         std::vector<pinyin::UserDictionaryEntry> &entries,

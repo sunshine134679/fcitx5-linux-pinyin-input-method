@@ -2,6 +2,7 @@
 
 #include "modernime/settings/data_controller.h"
 #include "modernime/settings/dictionary_pronunciation.h"
+#include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/runtime_environment.h"
 #include "modernime/settings/settings_widgets.h"
@@ -12,6 +13,7 @@
 #include <gtk/gtk.h>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <iomanip>
 #include <memory>
@@ -35,29 +37,6 @@ void setTarget(GtkWidget *widget, std::string_view target) {
                            g_strdup(std::string(target).c_str()), g_free);
 }
 
-std::string foldAscii(std::string_view value) {
-    std::string result(value);
-    for (auto &character : result) {
-        const auto byte = static_cast<unsigned char>(character);
-        if (byte >= static_cast<unsigned char>('A') &&
-            byte <= static_cast<unsigned char>('Z')) {
-            character = static_cast<char>(byte + ('a' - 'A'));
-        }
-    }
-    return result;
-}
-
-bool dictionaryMatches(const pinyin::UserDictionaryEntry &entry,
-                       std::string_view query) {
-    if (query.empty()) {
-        return true;
-    }
-    const auto foldedQuery = foldAscii(query);
-    const auto foldedPinyin = foldAscii(entry.pinyin);
-    const auto foldedPhrase = foldAscii(entry.phrase);
-    return foldedPinyin.find(foldedQuery) != std::string::npos ||
-           foldedPhrase.find(foldedQuery) != std::string::npos;
-}
 
 struct DictionaryDialogState final {
     GtkWidget *pinyin = nullptr;
@@ -236,6 +215,16 @@ public:
         pageGuard.release();
     }
 
+    ~Impl() {
+        if (lifetime) {
+            lifetime->deactivate();
+        }
+        if (idleBatchSourceId != 0) {
+            g_source_remove(idleBatchSourceId);
+            idleBatchSourceId = 0;
+        }
+    }
+
     void buildPage() {
         auto *section = createSectionCard(
             "我的词条", "输入词条即可建议拼音；选中已有词条可修改读音或删除。");
@@ -310,7 +299,7 @@ public:
         editButton = gtk_button_new_with_label("编辑");
         deleteButton = gtk_button_new_with_label("删除");
         importButton = gtk_button_new_with_label("导入");
-        auto *exportButton = gtk_button_new_with_label("导出");
+        exportButton = gtk_button_new_with_label("导出");
         setTarget(addButton, "dictionary-add");
         setTarget(importButton, "dictionary-import-export");
         gtk_widget_set_tooltip_text(addButton, "添加一条用户词典词条");
@@ -343,49 +332,170 @@ public:
                    deleteButton, importButton, exportButton});
     }
 
+    struct LoadTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        std::filesystem::path path;
+        uint64_t generation = 0;
+    };
+
+    static void onLoadFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *error = nullptr;
+        auto *entriesPtr = static_cast<std::vector<pinyin::UserDictionaryEntry> *>(
+            g_task_propagate_pointer(G_TASK(result), &error));
+        g_clear_error(&error);
+        const auto *taskData = static_cast<const LoadTaskData *>(
+            g_task_get_task_data(G_TASK(result)));
+        if (taskData != nullptr && entriesPtr != nullptr) {
+            const auto gen = taskData->generation;
+            taskData->lifetime->withOwner([entriesPtr, gen](Impl &owner) {
+                if (gen == owner.loadGeneration) {
+                    owner.dictionaryEntries = std::move(*entriesPtr);
+                    owner.setButtonsSensitive(true);
+                    owner.applyFilter();
+                }
+            });
+        }
+        delete entriesPtr;
+    }
+
+    void setButtonsSensitive(bool sensitive) {
+        if (addButton != nullptr) gtk_widget_set_sensitive(addButton, sensitive);
+        if (importButton != nullptr) gtk_widget_set_sensitive(importButton, sensitive);
+        if (exportButton != nullptr) gtk_widget_set_sensitive(exportButton, sensitive);
+        if (!sensitive) {
+            if (editButton != nullptr) gtk_widget_set_sensitive(editButton, FALSE);
+            if (deleteButton != nullptr) gtk_widget_set_sensitive(deleteButton, FALSE);
+        } else {
+            updateActionState();
+        }
+    }
+
     void refresh() {
-        dictionaryEntries = DataController::loadDictionary(path);
+        if (idleBatchSourceId != 0) {
+            g_source_remove(idleBatchSourceId);
+            idleBatchSourceId = 0;
+        }
+        ++loadGeneration;
+        setButtonsSensitive(false);
+        if (dictionaryCount != nullptr) {
+            gtk_label_set_text(GTK_LABEL(dictionaryCount), "正在读取用户词典…");
+        }
+        auto *taskData = new LoadTaskData{lifetime, path, loadGeneration};
+        auto *task = g_task_new(nullptr, nullptr, onLoadFinished, nullptr);
+        g_task_set_task_data(task, taskData, [](gpointer d) {
+            delete static_cast<LoadTaskData *>(d);
+        });
+        g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer data, GCancellable *) {
+            const auto *td = static_cast<const LoadTaskData *>(data);
+            auto entries = DataController::loadDictionary(td->path);
+            g_task_return_pointer(
+                t,
+                new std::vector<pinyin::UserDictionaryEntry>(std::move(entries)),
+                [](gpointer v) {
+                    delete static_cast<std::vector<pinyin::UserDictionaryEntry> *>(v);
+                });
+        });
+        g_object_unref(task);
+    }
+
+    struct BatchRenderContext {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        uint64_t generation = 0;
+        std::size_t nextIndex = 0;
+    };
+
+    static gboolean onBatchIdle(gpointer data) {
+        auto *ctx = static_cast<BatchRenderContext *>(data);
+        bool keepGoing = false;
+        const bool alive = ctx->lifetime->withOwner([ctx, &keepGoing](Impl &owner) {
+            if (ctx->generation != owner.batchGeneration) {
+                return;
+            }
+            const auto start = std::chrono::steady_clock::now();
+            std::size_t count = 0;
+            while (ctx->nextIndex < owner.filteredIndices.size()) {
+                const auto sourceIndex = owner.filteredIndices[ctx->nextIndex];
+                const auto &entry = owner.dictionaryEntries[sourceIndex];
+                auto weight = std::ostringstream{};
+                weight << std::setprecision(9) << entry.weight;
+                GtkTreeIter iterator;
+                gtk_list_store_append(owner.dictionaryStore, &iterator);
+                gtk_list_store_set(owner.dictionaryStore, &iterator, 0,
+                                   entry.pinyin.c_str(), 1, entry.phrase.c_str(),
+                                   2, weight.str().c_str(), 3,
+                                   static_cast<guint>(sourceIndex), -1);
+                ++ctx->nextIndex;
+                ++count;
+                if (count >= 200) {
+                    break;
+                }
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start) >=
+                    std::chrono::milliseconds(4)) {
+                    break;
+                }
+            }
+            if (ctx->nextIndex < owner.filteredIndices.size()) {
+                keepGoing = true;
+            } else {
+                owner.idleBatchSourceId = 0;
+                const auto query = owner.dictionarySearch == nullptr
+                                       ? std::string()
+                                       : gtk_entry_get_text(GTK_ENTRY(owner.dictionarySearch));
+                const auto countText =
+                    query.empty()
+                        ? "共 " + std::to_string(owner.filteredIndices.size()) + " 条"
+                        : "显示 " + std::to_string(owner.filteredIndices.size()) + " 条，共 " +
+                              std::to_string(owner.dictionaryEntries.size()) + " 条";
+                gtk_label_set_text(GTK_LABEL(owner.dictionaryCount), countText.c_str());
+                owner.updateActionState();
+            }
+        });
+        return (alive && keepGoing) ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+    }
+
+    void applyFilter() {
+        if (idleBatchSourceId != 0) {
+            g_source_remove(idleBatchSourceId);
+            idleBatchSourceId = 0;
+        }
         gtk_list_store_clear(dictionaryStore);
         const auto query = dictionarySearch == nullptr
                                ? std::string()
                                : gtk_entry_get_text(GTK_ENTRY(dictionarySearch));
-        std::size_t visibleCount = 0;
-        for (std::size_t index = 0; index < dictionaryEntries.size(); ++index) {
-            const auto &entry = dictionaryEntries[index];
-            if (!dictionaryMatches(entry, query)) {
-                continue;
+        filteredIndices = DataController::filterDictionary(dictionaryEntries, query);
+
+        if (filteredIndices.empty()) {
+            if (dictionaryCount != nullptr) {
+                const auto countText =
+                    query.empty()
+                        ? "共 0 条"
+                        : "显示 0 条，共 " + std::to_string(dictionaryEntries.size()) + " 条";
+                gtk_label_set_text(GTK_LABEL(dictionaryCount), countText.c_str());
             }
-            auto weight = std::ostringstream{};
-            weight << std::setprecision(9) << entry.weight;
-            GtkTreeIter iterator;
-            gtk_list_store_append(dictionaryStore, &iterator);
-            gtk_list_store_set(dictionaryStore, &iterator, 0,
-                               entry.pinyin.c_str(), 1, entry.phrase.c_str(), 2,
-                               weight.str().c_str(), 3,
-                               static_cast<guint>(index), -1);
-            ++visibleCount;
+            if (dictionaryState != nullptr) {
+                const char *state = nullptr;
+                if (dictionaryEntries.empty()) {
+                    state = "暂无用户词条；可以添加个人词条或导入专业词典";
+                } else {
+                    state = "没有匹配的词条；请更换拼音或词条关键词";
+                }
+                gtk_label_set_text(GTK_LABEL(dictionaryState), state);
+                gtk_widget_set_visible(dictionaryState, TRUE);
+            }
+            updateActionState();
+            return;
         }
 
-        if (dictionaryCount != nullptr) {
-            const auto countText =
-                query.empty()
-                    ? "共 " + std::to_string(visibleCount) + " 条"
-                    : "显示 " + std::to_string(visibleCount) + " 条，共 " +
-                          std::to_string(dictionaryEntries.size()) + " 条";
-            gtk_label_set_text(GTK_LABEL(dictionaryCount), countText.c_str());
-        }
         if (dictionaryState != nullptr) {
-            const char *state = nullptr;
-            if (dictionaryEntries.empty()) {
-                state = "暂无用户词条；可以添加个人词条或导入专业词典";
-            } else if (visibleCount == 0) {
-                state = "没有匹配的词条；请更换拼音或词条关键词";
-            }
-            gtk_label_set_text(GTK_LABEL(dictionaryState),
-                               state == nullptr ? "" : state);
-            gtk_widget_set_visible(dictionaryState, state != nullptr);
+            gtk_widget_set_visible(dictionaryState, FALSE);
         }
-        updateActionState();
+
+        ++batchGeneration;
+        auto *batchCtx = new BatchRenderContext{lifetime, batchGeneration, 0};
+        idleBatchSourceId = g_idle_add_full(
+            G_PRIORITY_DEFAULT_IDLE, onBatchIdle, batchCtx,
+            [](gpointer d) { delete static_cast<BatchRenderContext *>(d); });
     }
 
     bool focusTarget(std::string_view target) {
@@ -408,7 +518,7 @@ private:
     }
 
     static void onSearchChanged(GtkEditable *, gpointer data) {
-        static_cast<Impl *>(data)->refresh();
+        static_cast<Impl *>(data)->applyFilter();
     }
 
     static void onAdd(GtkButton *, gpointer data) {
@@ -834,7 +944,14 @@ private:
     GtkWidget *editButton = nullptr;
     GtkWidget *deleteButton = nullptr;
     GtkWidget *importButton = nullptr;
+    GtkWidget *exportButton = nullptr;
     std::vector<pinyin::UserDictionaryEntry> dictionaryEntries;
+    std::vector<std::size_t> filteredIndices;
+    std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime =
+        std::make_shared<detail::DiagnosticsLifetime<Impl>>(this);
+    uint64_t loadGeneration = 0;
+    uint64_t batchGeneration = 0;
+    guint idleBatchSourceId = 0;
 };
 
 DictionaryPage::DictionaryPage(std::filesystem::path dictionaryPath,
