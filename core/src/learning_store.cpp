@@ -624,6 +624,30 @@ std::optional<LearningStoreState> LearningStore::readState() const {
     return LearningStoreState{std::move(loaded), *revision};
 }
 
+std::optional<std::size_t> LearningStore::entryCount() const {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return std::nullopt;
+        }
+        return lmdbEngine_->EntryCount();
+    }
+
+    if (db_ == nullptr) {
+        return std::nullopt;
+    }
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM learning_entries;",
+                           -1, &statement, nullptr) != SQLITE_OK) {
+        return std::nullopt;
+    }
+    std::optional<std::size_t> count;
+    if (sqlite3_step(statement) == SQLITE_ROW) {
+        count = static_cast<std::size_t>(sqlite3_column_int64(statement, 0));
+    }
+    sqlite3_finalize(statement);
+    return count;
+}
+
 std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
     std::int64_t) const {
     if (useLmdb_) {

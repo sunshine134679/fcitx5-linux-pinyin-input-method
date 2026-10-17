@@ -1950,6 +1950,32 @@ int PersonalEngine::SchemaVersion() const {
     return kLmdbSchemaVersion;
 }
 
+std::optional<std::size_t> PersonalEngine::EntryCount() const {
+    std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        active_env_handle = lmdb_env_;
+    }
+    if (active_env_handle != nullptr) {
+        std::shared_lock env_lock(active_env_handle->lifecycle_gate);
+        MDB_env *active_env = active_env_handle->env;
+        const MDB_dbi active_words_dbi = active_env_handle->words_dbi;
+        if (active_env != nullptr) {
+            MDB_txn *txn = nullptr;
+            if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
+                MDB_stat stats{};
+                const int rc = mdb_stat(txn, active_words_dbi, &stats);
+                mdb_txn_abort(txn);
+                if (rc == MDB_SUCCESS) {
+                    return static_cast<std::size_t>(stats.ms_entries);
+                }
+            }
+        }
+        return std::nullopt;
+    }
+    return total_entries_;
+}
+
 bool PersonalEngine::IsMigratedFromSqlite() const {
     std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
     {

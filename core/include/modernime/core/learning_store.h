@@ -67,6 +67,7 @@ public:
     int schemaVersion() const;
     // Reads the reset marker and entries from the same read transaction.
     std::optional<LearningStoreState> readState() const;
+    std::optional<std::size_t> entryCount() const;
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;
 
     enum class FaultInjection {

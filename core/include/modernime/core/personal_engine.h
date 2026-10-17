@@ -186,6 +186,7 @@ public:
 
     int64_t ResetRevision() const;
     int SchemaVersion() const;
+    std::optional<std::size_t> EntryCount() const;
 
     // 与 ModernIME LearningStore / LearningSnapshot 无损互转
     std::vector<LearningEntry> ExportLearningEntries() const;

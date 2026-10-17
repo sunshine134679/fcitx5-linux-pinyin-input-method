@@ -298,6 +298,74 @@ void testLearningBackendDetection() {
     assertTrue(lmdbInfo.name == "LMDB", "lmdb name is LMDB");
 }
 
+void testFilterDictionaryPureFunction() {
+    using namespace modernime::settings;
+    using namespace modernime::pinyin;
+
+    const std::vector<UserDictionaryEntry> entries = {
+        {"nihao", "你好", 10.0F},
+        {"shijie", "世界", 20.0F},
+        {"beijing", "北京", 30.0F},
+        {"chongqing", "重庆", 40.0F},
+        {"nihao", "拟好", 50.0F},
+    };
+
+    // 1. Empty query returns all indices in order
+    const auto all = DataController::filterDictionary(entries, "");
+    assertTrue(all.size() == entries.size(), "empty query returns all items");
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        assertTrue(all[i] == i, "indices are in order");
+    }
+
+    // 2. Matching pinyin prefix / substring
+    const auto niResults = DataController::filterDictionary(entries, "ni");
+    assertTrue(niResults.size() == 2, "ni matches 2 entries");
+    assertTrue(niResults[0] == 0 && niResults[1] == 4, "ni matches nihao and nihao(拟好)");
+
+    // 3. Case insensitive ASCII matching
+    const auto upperResults = DataController::filterDictionary(entries, "BEI");
+    assertTrue(upperResults.size() == 1 && upperResults[0] == 2, "BEI matches beijing");
+
+    // 4. Matching phrase substring
+    const auto phraseResults = DataController::filterDictionary(entries, "好");
+    assertTrue(phraseResults.size() == 2, "好 matches 2 entries");
+    assertTrue(phraseResults[0] == 0 && phraseResults[1] == 4, "好 matches 你好 and 拟好");
+
+    // 5. Non matching query
+    const auto none = DataController::filterDictionary(entries, "nonexistent");
+    assertTrue(none.empty(), "nonexistent query returns empty");
+}
+
+void testFilterDictionaryPerformance() {
+    using namespace modernime::settings;
+    using namespace modernime::pinyin;
+
+    std::vector<UserDictionaryEntry> entries;
+    entries.reserve(200000);
+    for (std::size_t i = 0; i < 200000; ++i) {
+        entries.push_back({
+            "pinyin" + std::to_string(i % 1000),
+            "词条" + std::to_string(i),
+            static_cast<float>(i % 100)
+        });
+    }
+
+    std::span<const UserDictionaryEntry> span50k(entries.data(), 50000);
+    const auto start50k = std::chrono::steady_clock::now();
+    const auto res50k = DataController::filterDictionary(span50k, "pinyin42");
+    const auto elapsed50kMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start50k).count();
+    assertTrue(!res50k.empty(), "50k filtering found matches");
+    assertTrue(elapsed50kMs < 100, "50k filtering is fast (<100ms)");
+
+    const auto start200k = std::chrono::steady_clock::now();
+    const auto res200k = DataController::filterDictionary(entries, "词条999");
+    const auto elapsed200kMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start200k).count();
+    assertTrue(!res200k.empty(), "200k filtering found matches");
+    assertTrue(elapsed200kMs < 300, "200k filtering is fast (<300ms)");
+}
+
 } // namespace
 
 int main() {
@@ -309,6 +377,8 @@ int main() {
     testLearningBackupThenClear();
     testFailedBackupDoesNotClearLearning();
     testLearningBackendDetection();
+    testFilterDictionaryPureFunction();
+    testFilterDictionaryPerformance();
     return EXIT_SUCCESS;
 }
 
