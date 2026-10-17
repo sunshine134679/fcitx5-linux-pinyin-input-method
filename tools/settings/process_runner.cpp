@@ -56,6 +56,8 @@ void shutdownBackgroundReaper() {
     if (g_reaperThread.joinable()) {
         g_reaperThread.join();
     }
+    std::lock_guard<std::mutex> lk(g_reaperMutex);
+    g_reaperStop.store(false);
 }
 
 namespace {
@@ -651,22 +653,22 @@ ParsedState parseStateFile(const std::string &path, std::uint64_t expectedOpId, 
 
     if (entries["stdoutBytes"].type != JsonTokenType::Number) return s;
     const long long soBytes = entries["stdoutBytes"].num;
-    if (soBytes < 0 || soBytes > 1073741824LL) return s;
+    if (soBytes < 0) return s;
     s.stdoutBytes = static_cast<std::size_t>(soBytes);
 
     if (entries["stderrBytes"].type != JsonTokenType::Number) return s;
     const long long seBytes = entries["stderrBytes"].num;
-    if (seBytes < 0 || seBytes > 1073741824LL) return s;
+    if (seBytes < 0) return s;
     s.stderrBytes = static_cast<std::size_t>(seBytes);
 
     if (entries["bufferPeak"].type != JsonTokenType::Number) return s;
     const long long bPeak = entries["bufferPeak"].num;
-    if (bPeak < 0 || bPeak > 1073741824LL) return s;
+    if (bPeak < 0) return s;
     s.bufferPeak = static_cast<std::size_t>(bPeak);
 
     if (entries["filePeak"].type != JsonTokenType::Number) return s;
     const long long fPeak = entries["filePeak"].num;
-    if (fPeak < 0 || fPeak > 1073741824LL) return s;
+    if (fPeak < 0) return s;
     s.filePeak = static_cast<std::size_t>(fPeak);
 
     if (expectedOpId != 0 && s.operationId != expectedOpId) {

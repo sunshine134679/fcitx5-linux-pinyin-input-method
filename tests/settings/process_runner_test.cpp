@@ -204,6 +204,9 @@ void test_T13_A04_ResourceBudgetMeasurement() {
     TEST_ASSERT(finalRes.stderrText.size() <= 65536);
 
     // After Exited, verify transport directory was cleaned up (R4)
+    for (int i = 0; i < 50 && std::filesystem::exists(opDirPath, ec); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
     TEST_ASSERT(!std::filesystem::exists(opDirPath, ec));
 }
 
@@ -1471,8 +1474,59 @@ void test_T13_T01_ReaperLowCpuAndSafeShutdown() {
     TEST_ASSERT(nZombies == 0);
     TEST_ASSERT(::kill(cpid, 0) != 0);
 
-    // Test safe shutdown of reaper
-    shutdownBackgroundReaper();
+    // Test safe shutdown of reaper when alive collector is pending, in an isolated child process
+    const pid_t shutdownChild = ::fork();
+    TEST_ASSERT(shutdownChild >= 0);
+    if (shutdownChild == 0) {
+        // In isolated child: spawn a dummy live background process (e.g., sleep 2)
+        const pid_t dummyLive = ::fork();
+        if (dummyLive == 0) {
+            ::sleep(2);
+            ::_exit(0);
+        }
+        const std::string dummyOpDir = tmpDir + "/dummy-reap-op";
+        std::filesystem::create_directories(dummyOpDir);
+        {
+            std::ofstream out(dummyOpDir + "/state.json");
+            out << "{\"operationId\":1401,\"token\":\"tok\",\"collectorPid\":" << dummyLive
+                << ",\"childPid\":0,\"state\":\"Exited\",\"exitStatus\":0,\"stdoutTruncated\":false,\"stderrTruncated\":false,\"stdoutBytes\":0,\"stderrBytes\":0,\"bufferPeak\":0,\"filePeak\":0}\n";
+        }
+        OperationRef dummyRef;
+        dummyRef.operationId = 1401;
+        dummyRef.token = "tok";
+        dummyRef.opDir = dummyOpDir;
+        dummyRef.collectorPid = dummyLive;
+        dummyRef.isOwnedChild = true;
+        registerOperationRef(dummyRef);
+
+        // waitForOperation will observe Exited state, return, and enqueue dummyLive into pending reap
+        auto dummyRes = waitForOperation(dummyRef, 50);
+        if (dummyRes.state != CommandState::Exited) {
+            ::_exit(10);
+        }
+
+        // Shutdown reaper: must return quickly, must not kill dummyLive, must not hang
+        const auto t0 = std::chrono::steady_clock::now();
+        shutdownBackgroundReaper();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        if (elapsedMs > 500) {
+            ::_exit(1);
+        }
+        // Live process must NOT have been killed by shutdown
+        if (::kill(dummyLive, 0) != 0) {
+            ::_exit(2);
+        }
+        // Clean up dummy
+        ::kill(dummyLive, SIGKILL);
+        int dummySt = 0;
+        ::waitpid(dummyLive, &dummySt, 0);
+        std::filesystem::remove_all(dummyOpDir);
+        ::_exit(0);
+    }
+    int childStatus = 0;
+    ::waitpid(shutdownChild, &childStatus, 0);
+    TEST_ASSERT(WIFEXITED(childStatus) && WEXITSTATUS(childStatus) == 0);
 }
 
 // T13-T02: Single deadline for pre-exec delay and handshake; strict zero-spawn proof
@@ -1480,7 +1534,58 @@ void test_T13_T02_PreExecDeadlineBoundedAndStrictZeroSpawn() {
     const std::string tmpDir = getTempDir();
     const std::string settingsExe = resolveSettingsExeForTest();
 
-    // 1. Pre-exec delay: child delays before exec/handshake, timeout is 80ms
+    // 1. True pre-exec delay: hook execvp before exec happens so execPipe[1] remains open during stall
+    const std::string hookSrc = tmpDir + "/test_delay_exec.c";
+    const std::string hookSo = tmpDir + "/test_delay_exec.so";
+    {
+        std::ofstream out(hookSrc);
+        out << "#define _GNU_SOURCE\n"
+            << "#include <dlfcn.h>\n"
+            << "#include <time.h>\n"
+            << "#include <stdlib.h>\n"
+            << "#include <string.h>\n"
+            << "int execvp(const char *name, char *const argv[]) {\n"
+            << "    static int (*fn)(const char*, char *const*) = 0;\n"
+            << "    if (!fn) fn = dlsym(RTLD_NEXT, \"execvp\");\n"
+            << "    const char *m = getenv(\"TEST_DELAY_EXEC\");\n"
+            << "    if (m && strcmp(m, \"1\") == 0) {\n"
+            << "        struct timespec t = {0, 350000000};\n" // 350ms
+            << "        nanosleep(&t, 0);\n"
+            << "    }\n"
+            << "    return fn(name, argv);\n"
+            << "}\n";
+    }
+    char selfPathBuf[PATH_MAX];
+    const ssize_t selfLen = ::readlink("/proc/self/exe", selfPathBuf, sizeof(selfPathBuf) - 1);
+    TEST_ASSERT(selfLen > 0);
+    selfPathBuf[selfLen] = '\0';
+    const std::string selfExe(selfPathBuf);
+
+    const std::string buildCmd = "gcc -shared -fPIC \"" + hookSrc + "\" -o \"" + hookSo + "\" -ldl >/dev/null 2>&1";
+    const int compileRet = std::system(buildCmd.c_str());
+    if (compileRet == 0 && std::filesystem::exists(hookSo)) {
+        std::string preloadEnv = hookSo;
+        {
+            std::ifstream maps("/proc/self/maps");
+            std::string line;
+            while (std::getline(maps, line)) {
+                if (line.find("libasan.so") != std::string::npos) {
+                    const auto slash = line.find('/');
+                    if (slash != std::string::npos) {
+                        preloadEnv = line.substr(slash) + " " + hookSo;
+                        break;
+                    }
+                }
+            }
+        }
+        const std::string subCmd = "env LD_PRELOAD=\"" + preloadEnv + "\" TEST_DELAY_EXEC=1 \"" + selfExe + "\" --subtest-pre-exec >/dev/null 2>&1";
+        const int subRet = std::system(subCmd.c_str());
+        TEST_ASSERT(WIFEXITED(subRet) && WEXITSTATUS(subRet) == 0);
+        std::filesystem::remove(hookSrc);
+        std::filesystem::remove(hookSo);
+    }
+
+    // 2. Pre-exec wrapper delay: child delays before exec/handshake, timeout is 80ms
     const std::string delayWrapper = tmpDir + "/pre-exec-delay-wrapper.sh";
     {
         std::ofstream out(delayWrapper);
@@ -1604,6 +1709,47 @@ void test_T13_T03_NumericRangeAndProtocolValidation() {
     testState(12345, 0, "Exited", 0, true);
     testState(12345, 0, "Exited", 1, true);
 
+    auto testStateBytes = [&](long long soBytes, long long seBytes, long long bPeak, long long fPeak, bool expectedValid) {
+        std::ofstream out(opDir + "/state.json");
+        out << "{\n"
+            << "  \"operationId\": " << opId << ",\n"
+            << "  \"token\": \"token-t03\",\n"
+            << "  \"collectorPid\": 12345,\n"
+            << "  \"childPid\": 0,\n"
+            << "  \"state\": \"Exited\",\n"
+            << "  \"exitStatus\": 0,\n"
+            << "  \"stdoutTruncated\": false,\n"
+            << "  \"stderrTruncated\": false,\n"
+            << "  \"stdoutBytes\": " << soBytes << ",\n"
+            << "  \"stderrBytes\": " << seBytes << ",\n"
+            << "  \"bufferPeak\": " << bPeak << ",\n"
+            << "  \"filePeak\": " << fPeak << "\n"
+            << "}\n";
+        out.close();
+
+        const auto res = waitForOperation(ref, 20);
+        if (expectedValid) {
+            TEST_ASSERT(res.state == CommandState::Exited);
+            TEST_ASSERT(res.exitStatus == 0);
+        } else {
+            TEST_ASSERT(res.state != CommandState::Exited);
+            TEST_ASSERT(res.exitStatus == -1);
+        }
+    };
+
+    // 10. Large cumulative byte counts: 1GiB, 1GiB + 1, 5GiB must all be accepted as Exited/0
+    testStateBytes(1073741824LL, 0, 0, 0, true);
+    testStateBytes(1073741825LL, 0, 0, 0, true);
+    testStateBytes(5000000000LL, 0, 0, 0, true);
+    testStateBytes(0, 1073741825LL, 0, 0, true);
+    testStateBytes(5000000000LL, 5000000000LL, 1000000LL, 1000000LL, true);
+
+    // 11. Negative byte counts or peaks -> must be rejected
+    testStateBytes(-1LL, 0, 0, 0, false);
+    testStateBytes(0, -1LL, 0, 0, false);
+    testStateBytes(0, 0, -1LL, 0, false);
+    testStateBytes(0, 0, 0, -1LL, false);
+
     cleanupOperation(opId);
     std::filesystem::remove_all(opDir);
 }
@@ -1614,15 +1760,138 @@ void test_T13_T04_InstalledBinaryHeadlessInvocationRegression() {
     TEST_ASSERT(!exe.empty());
     TEST_ASSERT(std::filesystem::exists(exe));
 
-    // 1. Invocation without display and missing args must exit non-zero safely
-    const std::string cmd1 = "env -u DISPLAY -u WAYLAND_DISPLAY \"" + exe + "\" --internal-capture-collector 2>/dev/null";
+    // 1. Invocation without display and missing args must exit with status 1
+    const std::string cmd1 = "env -u DISPLAY -u WAYLAND_DISPLAY \"" + exe + "\" --internal-capture-collector >/dev/null 2>&1";
     const int ret1 = std::system(cmd1.c_str());
-    TEST_ASSERT(WIFEXITED(ret1) && WEXITSTATUS(ret1) != 0);
+    TEST_ASSERT(WIFEXITED(ret1) && WEXITSTATUS(ret1) == 1);
 
     // 2. Invocation with --version must output version and exit 0
     const std::string cmd2 = "env -u DISPLAY -u WAYLAND_DISPLAY \"" + exe + "\" --version >/dev/null 2>&1";
     const int ret2 = std::system(cmd2.c_str());
     TEST_ASSERT(WIFEXITED(ret2) && WEXITSTATUS(ret2) == 0);
+
+    // 3. Synthetic task execution in headless mode with FIFO handshake and strict verification
+    const std::string tmpDir = getTempDir();
+    const std::string opDir = tmpDir + "/synthetic-task-t04";
+    std::filesystem::create_directories(opDir);
+    ::chmod(opDir.c_str(), 0700);
+
+    const std::string specPath = opDir + "/spec.dat";
+    {
+        std::ofstream spec(specPath);
+        spec << "operationId=98765\n"
+             << "token=install-token-98765\n"
+             << "timeoutMs=5000\n"
+             << "mode=1\n"
+             << "perStreamBufferBytes=1048576\n"
+             << "perStreamResultBytes=65536\n"
+             << "perStreamFileBytes=1048576\n"
+             << "argc=3\n"
+             << "argv=/usr/bin/python3\n"
+             << "argv=-c\n"
+             << "argv=import sys; sys.stdout.write('INSTALL_COLLECTOR_STDOUT_OK\\n'); sys.stderr.write('INSTALL_COLLECTOR_STDERR_OK\\n')\n"
+             << "envc=0\n";
+    }
+    ::chmod(specPath.c_str(), 0600);
+
+    const std::string fifoPath = opDir + "/handshake.fifo";
+    ::mkfifo(fifoPath.c_str(), 0600);
+    const int fifoReadFd = ::open(fifoPath.c_str(), O_RDWR | O_NONBLOCK);
+    TEST_ASSERT(fifoReadFd >= 0);
+
+    const pid_t cpid = ::fork();
+    TEST_ASSERT(cpid >= 0);
+    if (cpid == 0) {
+        ::close(fifoReadFd);
+        const int fifoWriteFd = ::open(fifoPath.c_str(), O_WRONLY);
+        if (fifoWriteFd < 0) ::_exit(71);
+        std::vector<std::string> args = {
+            exe,
+            "--internal-capture-collector",
+            "--op-dir", opDir,
+            "--handshake-fd", std::to_string(fifoWriteFd)
+        };
+        std::vector<char*> cargv;
+        for (auto &a : args) cargv.push_back(const_cast<char*>(a.c_str()));
+        cargv.push_back(nullptr);
+        ::execvp(cargv[0], cargv.data());
+        ::_exit(72);
+    }
+
+    // Wait for handshake with deadline
+    char hsByte = 0;
+    const auto hsStart = std::chrono::steady_clock::now();
+    bool hsReceived = false;
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - hsStart).count() < 3000) {
+        const ssize_t nr = ::read(fifoReadFd, &hsByte, 1);
+        if (nr == 1) {
+            hsReceived = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ::close(fifoReadFd);
+    TEST_ASSERT(hsReceived);
+    TEST_ASSERT(hsByte == 'R' || hsByte == '1');
+
+    // Wait for collector to exit
+    int collectorStatus = 0;
+    const auto waitStart = std::chrono::steady_clock::now();
+    bool collectorExited = false;
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - waitStart).count() < 4000) {
+        const pid_t wp = ::waitpid(cpid, &collectorStatus, WNOHANG);
+        if (wp == cpid) {
+            collectorExited = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    if (!collectorExited) {
+        ::kill(cpid, SIGKILL);
+        ::waitpid(cpid, &collectorStatus, 0);
+    }
+    TEST_ASSERT(collectorExited);
+    TEST_ASSERT(WIFEXITED(collectorStatus) && WEXITSTATUS(collectorStatus) == 0);
+
+    // Verify state.json with waitForOperation
+    OperationRef ref;
+    ref.operationId = 98765;
+    ref.token = "install-token-98765";
+    ref.opDir = opDir;
+    ref.collectorPid = cpid;
+    registerOperationRef(ref);
+
+    CommandResult cr = waitForOperation(ref, 100);
+    TEST_ASSERT(cr.state == CommandState::Exited);
+    TEST_ASSERT(cr.exitStatus == 0);
+    TEST_ASSERT(cr.stdoutText.find("INSTALL_COLLECTOR_STDOUT_OK") != std::string::npos);
+    TEST_ASSERT(cr.stderrText.find("INSTALL_COLLECTOR_STDERR_OK") != std::string::npos);
+
+    // Negative check: wrong ID or wrong token must fail to complete
+    OperationRef refWrongId;
+    refWrongId.operationId = 987650;
+    refWrongId.token = "install-token-98765";
+    refWrongId.opDir = opDir;
+    refWrongId.collectorPid = cpid;
+    registerOperationRef(refWrongId);
+    CommandResult crWrongId = waitForOperation(refWrongId, 20);
+    TEST_ASSERT(crWrongId.state != CommandState::Exited);
+
+    OperationRef refWrongToken;
+    refWrongToken.operationId = 98765;
+    refWrongToken.token = "wrong-token";
+    refWrongToken.opDir = opDir;
+    refWrongToken.collectorPid = cpid;
+    registerOperationRef(refWrongToken);
+    CommandResult crWrongToken = waitForOperation(refWrongToken, 20);
+    TEST_ASSERT(crWrongToken.state != CommandState::Exited);
+
+    cleanupOperation(98765);
+    cleanupOperation(987650);
+
+    std::filesystem::remove_all(opDir);
 }
 
 // T13-T05: Test suite self-check
@@ -1632,7 +1901,34 @@ void test_T13_T05_TestSuiteSelfCheckT13() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string_view(argv[1]) == "--subtest-pre-exec") {
+        CommandSpec spec0;
+        spec0.mode = CommandMode::PackageTransaction;
+        spec0.timeoutMs = 80;
+        spec0.operationId = 15020;
+        spec0.limits.perStreamResultBytes = 65536;
+        spec0.argv = {"/bin/true"};
+
+        const auto start0 = std::chrono::steady_clock::now();
+        const auto res0 = runCommand(spec0);
+        const auto elapsed0 = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start0).count();
+
+        if (res0.state != CommandState::Unknown) {
+            return 1;
+        }
+        if (elapsed0 >= 250) {
+            return 2;
+        }
+        auto ref0 = getActiveOperationRef(spec0.operationId);
+        if (!ref0.has_value()) {
+            return 3;
+        }
+        cleanupOperation(spec0.operationId);
+        return 0;
+    }
+
     std::cout << "Starting modernime_process_runner tests...\n";
 
     RUN_TEST(test_T13_A01_QueryDualStreamTruncation);

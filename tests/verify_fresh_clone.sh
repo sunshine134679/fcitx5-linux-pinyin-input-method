@@ -44,9 +44,13 @@ test -f "$MODERNIME_PREFIX/bin/modernime-settings"
 test -x "$MODERNIME_PREFIX/bin/modernime-settings"
 installed_version=$(env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --version)
 [[ "$installed_version" == *"ModernIME settings"* ]]
-# Verify internal capture collector handles missing args by exiting non-zero safely
-if env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --internal-capture-collector 2>/dev/null; then
-    echo "ERROR: Expected non-zero exit when internal capture collector is invoked without args" >&2
+# Verify internal capture collector handles missing args by exiting with code 1
+set +e
+env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" --internal-capture-collector >/dev/null 2>&1
+t4_missing_status=$?
+set -e
+if [[ "$t4_missing_status" -ne 1 ]]; then
+    echo "ERROR: Expected exit code 1 when internal capture collector is invoked without args, got $t4_missing_status" >&2
     exit 1
 fi
 
@@ -79,8 +83,15 @@ env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" \
     --handshake-fd 3 &
 t4_pid=$!
 
-if ! read -r -n 1 -t 5 t4_hs <&3; then
+t4_start=$(date +%s)
+t4_timeout=5
+
+# 1. Read handshake byte with timeout
+if ! read -r -n 1 -t 4 t4_hs <&3; then
     kill -9 "$t4_pid" 2>/dev/null || true
+    wait "$t4_pid" 2>/dev/null || true
+    exec 3>&- 2>/dev/null || true
+    exec 3<&- 2>/dev/null || true
     echo "ERROR: Handshake read timed out" >&2
     exit 1
 fi
@@ -89,9 +100,22 @@ exec 3<&-
 
 if [[ "$t4_hs" != "R" && "$t4_hs" != "1" ]]; then
     kill -9 "$t4_pid" 2>/dev/null || true
+    wait "$t4_pid" 2>/dev/null || true
     echo "ERROR: Unexpected handshake byte: $t4_hs" >&2
     exit 1
 fi
+
+# 2. Wait for collector to exit with overall timeout
+while kill -0 "$t4_pid" 2>/dev/null; do
+    t4_now=$(date +%s)
+    if [ $((t4_now - t4_start)) -ge "$t4_timeout" ]; then
+        kill -9 "$t4_pid" 2>/dev/null || true
+        wait "$t4_pid" 2>/dev/null || true
+        echo "ERROR: Collector process stalled after handshake (exceeded total timeout of ${t4_timeout}s)" >&2
+        exit 1
+    fi
+    sleep 0.05
+done
 
 wait "$t4_pid"
 t4_status=$?
@@ -100,15 +124,53 @@ if [[ "$t4_status" -ne 0 ]]; then
     exit 1
 fi
 
-test -f "$t4_opdir/state.json"
-test -f "$t4_opdir/stdout.tail"
-test -f "$t4_opdir/stderr.tail"
-grep -q '"state": "Exited"' "$t4_opdir/state.json"
-grep -q '"exitStatus": 0' "$t4_opdir/state.json"
-grep -q '"operationId": 98765' "$t4_opdir/state.json"
-grep -q '"token": "install-token-98765"' "$t4_opdir/state.json"
-grep -q "INSTALL_COLLECTOR_STDOUT_OK" "$t4_opdir/stdout.tail"
-grep -q "INSTALL_COLLECTOR_STDERR_OK" "$t4_opdir/stderr.tail"
+python3 - "$t4_opdir" << 'PYEOF'
+import sys, json
+from pathlib import Path
+
+opdir = Path(sys.argv[1])
+state_file = opdir / "state.json"
+stdout_file = opdir / "stdout.tail"
+stderr_file = opdir / "stderr.tail"
+
+if not state_file.is_file():
+    sys.exit("state.json is missing")
+if not stdout_file.is_file():
+    sys.exit("stdout.tail is missing")
+if not stderr_file.is_file():
+    sys.exit("stderr.tail is missing")
+
+sz = state_file.stat().st_size
+if sz <= 0 or sz > 4096:
+    sys.exit(f"state.json size {sz} out of bounds")
+
+try:
+    with open(state_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception as e:
+    sys.exit(f"state.json is not valid JSON: {e}")
+
+if not isinstance(data, dict):
+    sys.exit("state.json root is not an object")
+
+if data.get("operationId") != 98765 or type(data.get("operationId")) is not int:
+    sys.exit("operationId mismatch or not int")
+if data.get("token") != "install-token-98765" or type(data.get("token")) is not str:
+    sys.exit("token mismatch or not str")
+if data.get("state") != "Exited" or type(data.get("state")) is not str:
+    sys.exit("state mismatch or not str")
+if data.get("exitStatus") != 0 or type(data.get("exitStatus")) is not int:
+    sys.exit("exitStatus mismatch or not int")
+
+stdout_text = stdout_file.read_text(encoding="utf-8", errors="replace")
+stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
+
+if "INSTALL_COLLECTOR_STDOUT_OK" not in stdout_text:
+    sys.exit("INSTALL_COLLECTOR_STDOUT_OK missing from stdout.tail")
+if "INSTALL_COLLECTOR_STDERR_OK" not in stderr_text:
+    sys.exit("INSTALL_COLLECTOR_STDERR_OK missing from stderr.tail")
+PYEOF
+
 rm -rf -- "$t4_opdir"
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
