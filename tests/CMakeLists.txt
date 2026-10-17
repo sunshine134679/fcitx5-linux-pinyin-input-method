@@ -356,6 +356,11 @@ if(MODERNIME_BUILD_SETTINGS)
     )
     add_test(NAME modernime_process_runner COMMAND modernime_process_runner_tests)
 
+    add_test(NAME modernime_install_gate_matrix
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_install_gate.py"
+                --binary "$<TARGET_FILE:modernime-settings>"
+    )
+
     add_executable(modernime_settings_widgets_contract_tests
         settings/settings_widgets_contract_test.cpp
         ../tools/settings/settings_widgets.cpp

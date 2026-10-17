@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import os
 import sys
 import time
@@ -10,6 +11,101 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+CASE_EXPECTATIONS = {
+    "real_binary_copy": {
+        "should_pass": True,
+    },
+    "valid_fake_control": {
+        "should_pass": True,
+    },
+    "duplicate_fields": {
+        "should_pass": False,
+        "expected_stderr": "Duplicate key detected in state.json: operationId",
+    },
+    "duplicate_token_identical": {
+        "should_pass": False,
+        "expected_stderr": "Duplicate key detected in state.json: token",
+    },
+    "wrong_id": {
+        "should_pass": False,
+        "expected_stderr": "operationId mismatch",
+    },
+    "wrong_token": {
+        "should_pass": False,
+        "expected_stderr": "token mismatch",
+    },
+    "wrong_state": {
+        "should_pass": False,
+        "expected_stderr": "state mismatch",
+    },
+    "wrong_exit_status": {
+        "should_pass": False,
+        "expected_stderr": "exitStatus mismatch",
+    },
+    "wrong_type_id": {
+        "should_pass": False,
+        "expected_stderr": "operationId mismatch",
+    },
+    "malformed_json": {
+        "should_pass": False,
+        "expected_stderr": "state.json parse failure",
+    },
+    "missing_stdout_marker": {
+        "should_pass": False,
+        "expected_stderr": "INSTALL_COLLECTOR_STDOUT_OK missing",
+    },
+    "missing_stderr_marker": {
+        "should_pass": False,
+        "expected_stderr": "INSTALL_COLLECTOR_STDERR_OK missing",
+    },
+    "oversized_state": {
+        "should_pass": False,
+        "expected_stderr": "state.json size",
+    },
+    "oversized_tail": {
+        "should_pass": False,
+        "expected_stderr": "stdout.tail size",
+    },
+    "invalid_file_permissions": {
+        "should_pass": False,
+        "expected_stderr": "state.json permissions invalid",
+    },
+    "invalid_dir_permissions": {
+        "should_pass": False,
+        "expected_stderr": "op_dir permissions invalid",
+    },
+    "pre_handshake_stall": {
+        "should_pass": False,
+        "expected_stderr": "Handshake failed",
+        "stalled": True,
+    },
+    "post_handshake_stall": {
+        "should_pass": False,
+        "expected_stderr": "Collector process stalled after handshake",
+        "stalled": True,
+    },
+    "stalled_with_descendant": {
+        "should_pass": False,
+        "expected_stderr": "Collector process stalled after handshake",
+        "stalled": True,
+        "check_descendant": True,
+    },
+    "descendant_inherits_fd": {
+        "should_pass": False,
+        "expected_stderr": "Handshake failed",
+        "check_descendant": True,
+    },
+    "stalled_clock_not_advancing": {
+        "should_pass": False,
+        "expected_stderr": "Collector process stalled after handshake",
+        "stalled": True,
+    },
+    "crash_before_handshake": {
+        "should_pass": False,
+        "expected_stderr": "Handshake failed",
+    },
+}
 
 def extract_gate_block():
     script_path = REPO_ROOT / "tests" / "verify_fresh_clone.sh"
@@ -101,14 +197,32 @@ fd = int(sys.argv[sys.argv.index('--handshake-fd') + 1])
             if case_name == "pre_handshake_stall":
                 code_body += "time.sleep(30)\n"
 
-            if case_name != "crash_before_handshake" and case_name != "descendant_inherits_fd":
+            if case_name not in ("crash_before_handshake", "descendant_inherits_fd"):
                 code_body += "os.write(fd, b'R')\n"
                 if sleep_time > 0:
                     code_body += f"time.sleep({sleep_time})\n"
+                elif case_name == "invalid_file_permissions":
+                    code_body += f"""(d / 'state.json').write_text({state_json!r})
+(d / 'stdout.tail').write_text({stdout_tail!r})
+(d / 'stderr.tail').write_text({stderr_tail!r})
+for name in ['stdout.tail', 'stderr.tail']:
+    os.chmod(d / name, 0o600)
+os.chmod(d / 'state.json', 0o644)
+"""
+                elif case_name == "invalid_dir_permissions":
+                    code_body += f"""(d / 'state.json').write_text({state_json!r})
+(d / 'stdout.tail').write_text({stdout_tail!r})
+(d / 'stderr.tail').write_text({stderr_tail!r})
+for name in ['state.json', 'stdout.tail', 'stderr.tail']:
+    os.chmod(d / name, 0o600)
+os.chmod(d, 0o755)
+"""
                 else:
                     code_body += f"""(d / 'state.json').write_text({state_json!r})
 (d / 'stdout.tail').write_text({stdout_tail!r})
 (d / 'stderr.tail').write_text({stderr_tail!r})
+for name in ['state.json', 'stdout.tail', 'stderr.tail']:
+    os.chmod(d / name, 0o600)
 """
             binary.write_text(code_body)
             binary.chmod(0o755)
@@ -128,7 +242,6 @@ fd = int(sys.argv[sys.argv.index('--handshake-fd') + 1])
             mock_date.write_text('#!/bin/sh\nprintf "1000\\n"\n')
             mock_date.chmod(0o755)
             env["PATH"] = f"{bins}:{env.get('PATH', '/usr/bin:/bin')}"
-            # Also make binary stall post-handshake
             binary.write_text("""#!/usr/bin/env python3
 import os, sys, time
 fd = int(sys.argv[sys.argv.index('--handshake-fd') + 1])
@@ -179,58 +292,92 @@ time.sleep(30)
             "stderr": (root / "stderr").read_text(encoding="utf-8", errors="replace")
         }
 
-def main():
-    block = extract_gate_block()
-    real_binary = REPO_ROOT / "build" / "architecture-debug" / "tools" / "settings" / "modernime-settings"
-
-    cases = [
-        "real_binary_copy",
-        "duplicate_fields",
-        "duplicate_token_identical",
-        "wrong_id",
-        "wrong_token",
-        "wrong_state",
-        "wrong_exit_status",
-        "wrong_type_id",
-        "malformed_json",
-        "missing_stdout_marker",
-        "missing_stderr_marker",
-        "oversized_state",
-        "oversized_tail",
-        "pre_handshake_stall",
-        "post_handshake_stall",
-        "stalled_with_descendant",
-        "descendant_inherits_fd",
-        "stalled_clock_not_advancing",
-        "crash_before_handshake",
+def find_candidate_binary():
+    env_bin = os.environ.get("MODERNIME_SETTINGS_EXECUTABLE")
+    if env_bin and Path(env_bin).is_file():
+        return Path(env_bin).resolve()
+    candidates = [
+        REPO_ROOT / "build" / "architecture-debug" / "tools" / "settings" / "modernime-settings",
+        REPO_ROOT / "build" / "architecture-release" / "tools" / "settings" / "modernime-settings",
+        REPO_ROOT / "build" / "tools" / "settings" / "modernime-settings",
     ]
+    for c in candidates:
+        if c.is_file():
+            return c.resolve()
+    return None
+
+def main():
+    parser = argparse.ArgumentParser(description="ModernIME install gate test matrix")
+    parser.add_argument("--binary", help="Path to modernime-settings binary")
+    parser.add_argument("--output-json", help="Path to write results JSON")
+    args = parser.parse_args()
+
+    block = extract_gate_block()
+
+    real_binary = None
+    if args.binary:
+        real_binary = Path(args.binary).resolve()
+    else:
+        real_binary = find_candidate_binary()
+
+    if not real_binary or not real_binary.is_file():
+        sys.exit(f"ERROR: real modernime-settings binary not found: {real_binary}")
+
+    print(f"Using binary: {real_binary}")
+
+    cases = list(CASE_EXPECTATIONS.keys())
 
     print(f"Running install gate test matrix ({len(cases)} cases)...")
     results = {}
     any_failed = False
 
     for c in cases:
+        exp = CASE_EXPECTATIONS[c]
         t0 = time.monotonic()
         res = run_gate_test(c, block, real_binary)
         dur = round(time.monotonic() - t0, 2)
         results[c] = res
 
-        # Assertion rules
-        if c == "real_binary_copy":
+        if "error" in res:
+            ok = False
+            reason = res["error"]
+        elif exp["should_pass"]:
             ok = (res["exit"] == 0 and not res["timed_out"])
-        elif "stalled" in c or "stall" in c:
-            ok = (res["exit"] != 0 and not res["timed_out"] and not res["descendant_alive"] and 4500 <= res["elapsed_ms"] <= 6500)
+            reason = "exit=0" if ok else f"exit={res['exit']} timed_out={res['timed_out']}"
         else:
-            ok = (res["exit"] != 0 and not res["timed_out"] and not res["descendant_alive"] and res["elapsed_ms"] < 2500)
+            expected_stderr = exp.get("expected_stderr", "")
+            stderr_ok = expected_stderr in res["stderr"]
+            exit_ok = (res["exit"] != 0 and not res["timed_out"])
+            descendant_ok = not res["descendant_alive"]
+            time_ok = True
+            if exp.get("stalled"):
+                time_ok = (4500 <= res["elapsed_ms"] <= 6500)
+            else:
+                time_ok = (res["elapsed_ms"] < 2500)
+
+            ok = exit_ok and stderr_ok and descendant_ok and time_ok
+            if not ok:
+                reasons = []
+                if not exit_ok:
+                    reasons.append(f"exit={res['exit']}")
+                if not stderr_ok:
+                    reasons.append(f"stderr missing {expected_stderr!r}")
+                if not descendant_ok:
+                    reasons.append("descendant alive")
+                if not time_ok:
+                    reasons.append(f"elapsed_ms={res['elapsed_ms']}")
+                reason = ", ".join(reasons)
+            else:
+                reason = f"matched {expected_stderr!r}"
 
         status_str = "PASS" if ok else "FAIL"
         if not ok:
             any_failed = True
-        print(f"  [{status_str}] {c:30s} -> exit={res['exit']} elapsed={res['elapsed_ms']}ms descendant_alive={res['descendant_alive']}")
+        print(f"  [{status_str}] {c:30s} -> exit={res.get('exit')} elapsed={res.get('elapsed_ms')}ms descendant_alive={res.get('descendant_alive')} ({reason})")
 
-    out_dir = REPO_ROOT / "build" / "t13-fifth-remediation-evidence"
-    if out_dir.is_dir():
-        out_file = out_dir / "install-gate-results.json"
+    if args.output_json:
+        out_file = Path(args.output_json)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
         out_file.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
 
     return 0 if not any_failed else 1
