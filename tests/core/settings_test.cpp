@@ -339,12 +339,22 @@ void testSettingsFileStampAndSameMtimeReplacement() {
     assertTrue(stamp1.inode != stamp2.inode, "atomic replacement changed inode");
     assertTrue(stamp1.mtimeSec == stamp2.mtimeSec, "mtime seconds match");
 
+    const auto load2 = modernime::core::SettingsStore::load(path);
+    assertTrue(load2.stamp == stamp2, "load2.stamp matches stamp2");
+    assertTrue(load2.contentHash != load1.contentHash, "load2 contentHash reflects new content");
+    assertTrue(!load2.settings.inputEnabled, "load2 reflects new settings value");
+
     // Delete file
     std::filesystem::remove(path, ec);
     assertTrue(!ec, "file removed");
     const auto stamp3 = modernime::core::SettingsFileStamp::fromPath(path);
     assertTrue(!stamp3.exists, "stamp3 indicates file missing");
     assertTrue(stamp3 != stamp2, "missing stamp differs from previous stamp");
+
+    const auto load3 = modernime::core::SettingsStore::load(path);
+    assertTrue(load3.isMissing(), "load3 reports isMissing after deletion");
+    assertTrue(load3.stamp == stamp3, "load3.stamp matches missing stamp");
+    assertTrue(load3.contentHash.empty(), "load3 contentHash is empty");
 
     // Recreate file
     {
@@ -354,6 +364,12 @@ void testSettingsFileStampAndSameMtimeReplacement() {
     const auto stamp4 = modernime::core::SettingsFileStamp::fromPath(path);
     assertTrue(stamp4.exists, "recreated file has exists=true");
     assertTrue(stamp4 != stamp3, "recreated file differs from missing stamp");
+
+    const auto load4 = modernime::core::SettingsStore::load(path);
+    assertTrue(load4.isSuccess(), "load4 reports isSuccess after recreation");
+    assertTrue(load4.stamp == stamp4, "load4.stamp matches recreated stamp");
+    assertTrue(!load4.contentHash.empty(), "load4 contentHash is non-empty");
+    assertTrue(load4.settings.inputEnabled, "load4 reflects recreated settings");
 }
 
 void testSettingsApplicationVersion() {

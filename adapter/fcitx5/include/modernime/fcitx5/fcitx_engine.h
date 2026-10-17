@@ -429,6 +429,8 @@ public:
     FcitxInputContextState *state(fcitx::InputContext *inputContext) const;
 
 private:
+    ModernIMEInputMethod(fcitx::AddonManager *manager,
+                         const core::SettingsLoadResult &initResult);
     void pollClipboard();
     void pollFileChanges();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN

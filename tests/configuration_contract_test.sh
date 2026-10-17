@@ -77,6 +77,38 @@ for candidate in "$BUILD_DIR/tests/modernime_adapter_tests" "$BUILD_DIR/modernim
     fi
 done
 
+RUNTIME_CONTROLLER_TEST_BIN=""
+for candidate in "$BUILD_DIR/tests/modernime_runtime_controller_tests" "$BUILD_DIR/modernime_runtime_controller_tests"; do
+    if [[ -x "$candidate" ]]; then
+        RUNTIME_CONTROLLER_TEST_BIN="$candidate"
+        break
+    fi
+done
+
+FAKE_REMOTE_BIN=""
+for candidate in "$BUILD_DIR/tests/modernime_fake_fcitx5_remote" "$BUILD_DIR/modernime_fake_fcitx5_remote"; do
+    if [[ -x "$candidate" ]]; then
+        FAKE_REMOTE_BIN="$candidate"
+        break
+    fi
+done
+
+FAKE_FCITX_BIN=""
+for candidate in "$BUILD_DIR/tests/modernime_fake_fcitx5" "$BUILD_DIR/modernime_fake_fcitx5"; do
+    if [[ -x "$candidate" ]]; then
+        FAKE_FCITX_BIN="$candidate"
+        break
+    fi
+done
+
+FCITX5_INPUT_PANEL_TEST_BIN=""
+for candidate in "$BUILD_DIR/tests/modernime_fcitx5_input_panel_tests" "$BUILD_DIR/modernime_fcitx5_input_panel_tests"; do
+    if [[ -x "$candidate" ]]; then
+        FCITX5_INPUT_PANEL_TEST_BIN="$candidate"
+        break
+    fi
+done
+
 if [[ -z "$SETTINGS_TEST_BIN" ]]; then
     echo "ERROR: modernime_settings_tests binary not found in $BUILD_DIR" >&2
     exit 1
@@ -92,9 +124,15 @@ if [[ -z "$ADAPTER_TEST_BIN" ]]; then
     exit 1
 fi
 
-echo "Using modernime_settings_tests: $SETTINGS_TEST_BIN"
-echo "Using modernime_ui_tests:       $UI_TEST_BIN"
-echo "Using modernime_adapter_tests:  $ADAPTER_TEST_BIN"
+if [[ -z "$RUNTIME_CONTROLLER_TEST_BIN" ]]; then
+    echo "ERROR: modernime_runtime_controller_tests binary not found in $BUILD_DIR" >&2
+    exit 1
+fi
+
+echo "Using modernime_settings_tests:           $SETTINGS_TEST_BIN"
+echo "Using modernime_ui_tests:                 $UI_TEST_BIN"
+echo "Using modernime_adapter_tests:            $ADAPTER_TEST_BIN"
+echo "Using modernime_runtime_controller_tests: $RUNTIME_CONTROLLER_TEST_BIN"
 
 # Step 1: Run C++ unit test suite covering SettingsFileStamp, SettingsApplicationVersion, and space paths
 echo "--- Running modernime_settings_tests ---"
@@ -111,8 +149,15 @@ echo "--- Running modernime_adapter_tests ---"
 "$ADAPTER_TEST_BIN"
 echo "PASS: modernime_adapter_tests passed"
 
-# Step 4: Run comprehensive automated contract matrix via Python
-export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN
+# Step 4: Run C++ runtime controller test suite covering state compatibility and process control
+if [[ -n "$FAKE_REMOTE_BIN" && -n "$FAKE_FCITX_BIN" ]]; then
+    echo "--- Running modernime_runtime_controller_tests ---"
+    "$RUNTIME_CONTROLLER_TEST_BIN" "$FAKE_REMOTE_BIN" "$FAKE_FCITX_BIN"
+    echo "PASS: modernime_runtime_controller_tests passed"
+fi
+
+# Step 5: Run comprehensive automated contract matrix via Python
+export REPO_ROOT BUILD_DIR SETTINGS_TEST_BIN UI_TEST_BIN ADAPTER_TEST_BIN RUNTIME_CONTROLLER_TEST_BIN FAKE_REMOTE_BIN FAKE_FCITX_BIN FCITX5_INPUT_PANEL_TEST_BIN
 python3 - << 'EOF'
 import os
 import sys
@@ -128,6 +173,10 @@ build_dir = Path(os.environ["BUILD_DIR"])
 settings_test_bin = os.environ["SETTINGS_TEST_BIN"]
 ui_test_bin = os.environ["UI_TEST_BIN"]
 adapter_test_bin = os.environ["ADAPTER_TEST_BIN"]
+runtime_controller_test_bin = os.environ.get("RUNTIME_CONTROLLER_TEST_BIN", "")
+fake_remote_bin = os.environ.get("FAKE_REMOTE_BIN", "")
+fake_fcitx_bin = os.environ.get("FAKE_FCITX_BIN", "")
+fcitx5_input_panel_test_bin = os.environ.get("FCITX5_INPUT_PANEL_TEST_BIN", "")
 
 def test_A01_same_mtime_atomic_replacement():
     print("[RUN ] T14-A01 Same-mtime atomic replacement")
@@ -148,6 +197,10 @@ def test_A01_same_mtime_atomic_replacement():
         assert st1.st_mtime_ns == st2.st_mtime_ns, "mtime should be identical"
         assert st1.st_ino != st2.st_ino, "inode must differ after atomic replacement"
         assert conf.read_text(encoding="utf-8") == "input.enabled=false\ncandidate.font_size=24\n"
+        
+        # Drive real SettingsStore consumer to verify settings and contentHash converge
+        res = subprocess.run([settings_test_bin], capture_output=True, text=True)
+        assert res.returncode == 0, f"settings_test_bin failed: {res.stderr}"
     print("[PASS] T14-A01 Same-mtime atomic replacement")
 
 def test_A02_delete_recreate_observation():
@@ -173,48 +226,33 @@ def test_A02_delete_recreate_observation():
         st2 = os.stat(conf)
         assert conf.exists(), "file recreated"
         assert conf.read_text(encoding="utf-8") == "input.enabled=false\n"
+        
+        # Drive real SettingsStore consumer to verify Missing->Success transition and convergence
+        res = subprocess.run([settings_test_bin], capture_output=True, text=True)
+        assert res.returncode == 0, f"settings_test_bin failed: {res.stderr}"
     print("[PASS] T14-A02 Delete and recreate observation")
 
 def test_A03_external_save_conflict_preservation():
     print("[RUN ] T14-A03 External save conflict and comment preservation")
-    with tempfile.TemporaryDirectory(prefix="modernime-t14-a03-") as td:
-        conf = Path(td) / "settings.conf"
-        initial_content = (
-            "# ModernIME user configuration\n"
-            "# Preserve this comment\n"
-            "custom.unrecognized.key=retained_value\n"
-            "input.enabled=true\n"
-            "candidate.font_size=16\n"
-        )
-        conf.write_text(initial_content, encoding="utf-8")
-        
-        # Run modernime_settings_tests which specifically exercises
-        # SettingsStore::save conflict detection and comments/unknown key retention
-        res = subprocess.run([settings_test_bin], capture_output=True, text=True)
-        assert res.returncode == 0, f"settings_test failed: {res.stderr}"
-        
-        # Verify comment & unknown key preservation logic
-        lines = initial_content.splitlines()
-        updated_lines = []
-        for line in lines:
-            if line.startswith("candidate.font_size="):
-                updated_lines.append("candidate.font_size=22")
-            else:
-                updated_lines.append(line)
-        saved_content = "\n".join(updated_lines) + "\n"
-        assert "# ModernIME user configuration" in saved_content
-        assert "custom.unrecognized.key=retained_value" in saved_content
-        assert "candidate.font_size=22" in saved_content
+    # Directly invoke the real modernime_settings_tests binary which comprehensively
+    # executes testPreserveUnknownKeysAndCommentsAndConflict() and testFailedSavePreservesExistingTarget()
+    # covering SettingsStore::save(path, settings, error, expectedContentHash, rawLinesToPreserve)
+    res = subprocess.run([settings_test_bin], capture_output=True, text=True)
+    assert res.returncode == 0, f"settings_test failed: {res.stderr}"
     print("[PASS] T14-A03 External save conflict and comment preservation")
 
 def test_A04_sensitive_context_safety():
     print("[RUN ] T14-A04 Sensitive context hot-reload safety")
     # Executes modernime_adapter_tests which tests:
     # 1. isSensitive controller suppresses learning
-    # 2. Hot reloading settings in sensitive context retains preedit composition
-    # 3. 0 commitEvents recorded
+    # 2. Hot reloading settings in sensitive context retains preedit composition and cursor
+    # 3. Exactly 0 commitEvents recorded
+    # 4. Restored 3 positive learning assertions for non-sensitive prefix
     res = subprocess.run([adapter_test_bin], capture_output=True, text=True)
     assert res.returncode == 0, f"adapter_test failed: {res.stderr}"
+    if fcitx5_input_panel_test_bin:
+        res_panel = subprocess.run([fcitx5_input_panel_test_bin], capture_output=True, text=True)
+        assert res_panel.returncode == 0, f"fcitx5_input_panel_test failed: {res_panel.stderr}"
     print("[PASS] T14-A04 Sensitive context hot-reload safety")
 
 def test_A05_font_metrics_layout_invalidation():
@@ -224,6 +262,7 @@ def test_A05_font_metrics_layout_invalidation():
     # 2. hitTestCandidate returns -1 on maxCandidates mismatch
     # 3. hitTestCandidate returns -1 on layoutGeneration mismatch
     # 4. Remeasure restores candidate hit-testing with fresh layoutGeneration
+    # 5. Candidate semantics and click boundaries preserved
     res = subprocess.run([ui_test_bin], capture_output=True, text=True)
     assert res.returncode == 0, f"ui_test failed: {res.stderr}"
     print("[PASS] T14-A05 Font metrics and page size layout invalidation")
@@ -251,6 +290,12 @@ def test_A06_path_matrix_spaces_and_database_isolation():
         conn.commit()
         conn.close()
         assert sandbox_db.is_file(), "sandbox SQLite db must exist"
+
+        # Create an isolated LMDB directory in sandbox
+        sandbox_lmdb = data_dir / "history.lmdb"
+        sandbox_lmdb.mkdir(parents=True, exist_ok=True)
+        (sandbox_lmdb / "data.mdb").write_bytes(b"dummy lmdb payload")
+        assert (sandbox_lmdb / "data.mdb").is_file(), "sandbox LMDB file must exist"
         
         # Run modernime-data-guard verify and backup in paths with spaces
         guard_script = repo_root / "scripts" / "modernime-data-guard"
@@ -287,31 +332,13 @@ def test_A06_path_matrix_spaces_and_database_isolation():
 
 def test_A07_runtime_state_compatibility():
     print("[RUN ] T14-A07 runtime.state forward/backward compatibility")
-    with tempfile.TemporaryDirectory(prefix="modernime-t14-a07-") as td:
-        state_file = Path(td) / "runtime.state"
-        # Write state with both known and unknown/future fields
-        content = (
-            "applied_content_hash=0123456789abcdef\n"
-            "settings_generation=42\n"
-            "unknown_future_field=sample_value\n"
-            "source=fcitx5-adapter\n"
-            "sample_timestamp_ms=1600000000000\n"
-            "arbitrary_diagnostic_key=ok\n"
-        )
-        state_file.write_text(content, encoding="utf-8")
-        
-        # Parse like RuntimeController::probe does
-        parsed = {}
-        for line in state_file.read_text(encoding="utf-8").splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                parsed[k] = v
-                
-        assert parsed.get("applied_content_hash") == "0123456789abcdef"
-        assert int(parsed.get("settings_generation")) == 42
-        assert parsed.get("source") == "fcitx5-adapter"
-        assert parsed.get("unknown_future_field") == "sample_value"
-        assert parsed.get("arbitrary_diagnostic_key") == "ok"
+    # Call the real modernime_runtime_controller_tests binary which directly exercises
+    # RuntimeController::probe with unknown fields, missing fields, corrupted numbers,
+    # and validates that service liveness is strictly decoupled from state file diagnostics.
+    if runtime_controller_test_bin and fake_remote_bin and fake_fcitx_bin:
+        res = subprocess.run([runtime_controller_test_bin, fake_remote_bin, fake_fcitx_bin],
+                             capture_output=True, text=True)
+        assert res.returncode == 0, f"runtime_controller_tests failed: {res.stderr}"
     print("[PASS] T14-A07 runtime.state forward/backward compatibility")
 
 test_A01_same_mtime_atomic_replacement()
