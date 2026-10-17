@@ -1,9 +1,9 @@
 # ModernIME 并行整改协调状态表 (Parallel Remediation Status)
 
-**更新时间:** 2026-10-17 20:23:00 CST  
+**更新时间:** 2026-10-17 20:58:00 CST  
 **协调分支:** `codex/architecture-integration-20261017`  
 **公共起点 B0:** `7f2f05db34073b526a623d31039b4af06c9198e8` (非验收证明)  
-**当前集成 Tip:** `f76bc2a` (已合入 T14 `a5dbf74`、T17 `612c32c`、T16 `041e731` 与 T15 `7d49e51`)  
+**当前集成 Tip:** `0bf9eea` (已合入 T14 `a5dbf74`、T17 `612c32c`、T16 `041e731` 与 T15 S1/S2 收尾 `a7e37d7`)  
 **全局机器锁:** `/home/wsl/ModernIME/build/parallel-control-20261017/machine.lock`  
 **控制目录:** `/home/wsl/ModernIME/build/parallel-control-20261017/` (仅协调者写)
 
@@ -14,7 +14,7 @@
 | 任务 | 分支 | 实际工作区路径 | Base SHA | Tip SHA | 接口版本 | 状态 | 接受集成 SHA | 关卡门禁 |
 |---|---|---|---|---|---|---|---|---|
 | **T14** | `main` | `/home/wsl/ModernIME` | `7f2f05db` | `74c19d86` | `C14-v1` (暂行) | `NEEDS_FIX` (V1/V2) | 中间提交 `d905aa8` (保留非 ACCEPTED) | 第三轮复审：委托构造/同源读取/单次错误/四项探针 PASS；剩 V1（连续失败5次后同 stamp 停止恢复）与 V2（假 LMDB/UI addon 集成/缺夹具假通过）待原 T14 对话收尾 |
-| **T15** | `codex/architecture-t15-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t15-20261017` | `7f2f05db` | `7d49e518` | `C15-v1` (暂行) | `NEEDS_FIX` (S1/S2 测试设施/R3) | 中间提交 `f76bc2a` (保留非 ACCEPTED) | 第二轮复审：R1/R2 生产修复独立关闭；剩 S1（IoHook 卸载 ASAN UAF）与 S2（旧统计测试放过旧缺陷反证、三轮搜索未在途打断批次）待原 T15 对话收尾 |
+| **T15** | `codex/architecture-t15-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t15-20261017` | `7f2f05db` | `a7e37d7d` | `C15-v1` (暂行) | `LOCAL_VERIFIED / AWAITING_REVIEW` | 已合入 `0bf9eea` (非 ACCEPTED) | S1（IoHook 卸载互斥保护与 ASAN 0 UAF）及 S2（反证确定性拦截 exit -6、连续搜索在途分片打断 200/4000）完成；build/t15-third-review-evidence 独立证据全过，待定向复审结论 |
 | **T17** | `codex/architecture-t17-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t17-20261017` | `7f2f05db` | `612c32c4` | `C17-v1` (已冻结) | `REVIEWED` | 已合入 `d65ef8a` | 本地 7/7 验证全过，待 T16+T17 组合快照门禁 |
 | **T16** | `codex/architecture-t16-20261017` | `/home/wsl/ModernIME/.worktrees/parallel-t16-20261017` | `d65ef8a` | `041e731b` | `C16-BUILD-TEST-WIRING` | `REVIEWED` | 已合入 `94f70bb` | 核心 25/25 校验全过，CMake 写权限已移交回协调者 |
 | **T18** | `codex/architecture-t18-20261017` | 待建 | - | - | C18 (待定) | `WAITING` | - | 等待 T14/T16/T17 集成与宿主依赖恢复 |
@@ -27,7 +27,7 @@
 | 文件 / 范围 | 当前唯一写入负责人 | 移交前置条件与规则 |
 |---|---|---|
 | 全仓 CMake, CI, 测试注册 (`CMakeLists.txt`, `tests/CMakeLists.txt` 等) | **协调者** (自 T16 移交) | T16 交付完成，写权限已正式移交回协调者，由协调者独占编辑处理 wiring request |
-| `tools/settings/include/modernime/settings/data_controller.h`, `tools/settings/data_controller.cpp`, `tests/settings/settings_data_async_gtk_test.cpp`, `docs/T15_ACCEPTANCE.md` | **原 T15 对话 (独占收尾)** | 负责 S1（IoHook 卸载 ASAN UAF/回调寿命）、S2a（旧统计测试反证闭环）、S2b（连续搜索在途批次打断），协调者不代写业务 |
+| `tools/settings/include/modernime/settings/data_controller.h`, `tools/settings/data_controller.cpp`, `tests/settings/settings_data_async_gtk_test.cpp`, `docs/T15_ACCEPTANCE.md` | **原 T15 对话 (独占收尾已交付)** | S1（IoHook 卸载 ASAN UAF/回调寿命）、S2a（旧统计测试反证闭环）、S2b（连续搜索在途批次打断）已提交 a7e37d7d，等待复审裁决 |
 | `adapter/fcitx5/src/inputmethod.cpp` (V1 修复) | **原 T14 对话** | 解决重试耗尽后同 stamp 持续故障恢复契约，协调者不代写 |
 | `tests/configuration_contract_test.sh` (V2 修复) | **原 T14 对话** | 解决 A06 真实 LMDB 校验、A07 缺失 fake 工具退出非零判定，协调者不代写 |
 | UI addon / candidate layout 集成测试 (V2 修复) | **原 T14 对话** | 补齐真实 UI 流程配置刷新与布局选择断言，协调者不代写 |
