@@ -679,7 +679,7 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
 
     // While "pin" is actively rendering in batches (only partial rows rendered), interrupt it with round 2!
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "xue");
-    // [DISABLED FOR DELAYED STIMULUS CONTRAST] g_signal_emit_by_name(searchEntry, "search-changed");
+    g_signal_emit_by_name(searchEntry, "search-changed");
     pumpEventsUntil([&] {
         return observedSearchSignals >= 2 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
     }, std::chrono::seconds(5));
@@ -691,7 +691,7 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
 
     // Now interrupt round 2 in-flight with final query "zhong"
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "zhong");
-    // [DISABLED FOR DELAYED STIMULUS CONTRAST] g_signal_emit_by_name(searchEntry, "search-changed");
+    g_signal_emit_by_name(searchEntry, "search-changed");
     pumpEventsUntil([&] {
         return observedSearchSignals >= 3;
     }, std::chrono::seconds(5));
