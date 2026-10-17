@@ -1,5 +1,7 @@
 #include "modernime/core/settings.h"
 
+#include <sys/stat.h>
+
 #include <array>
 #include <charconv>
 #include <cstdint>
@@ -11,6 +13,25 @@
 #include <utility>
 
 namespace modernime::core {
+
+SettingsFileStamp SettingsFileStamp::fromPath(const std::filesystem::path &path) {
+    SettingsFileStamp stamp;
+    if (path.empty()) {
+        return stamp;
+    }
+    struct stat st {};
+    if (::stat(path.c_str(), &st) == 0) {
+        stamp.device = static_cast<std::uint64_t>(st.st_dev);
+        stamp.inode = static_cast<std::uint64_t>(st.st_ino);
+        stamp.size = static_cast<std::uint64_t>(st.st_size);
+        stamp.mtimeSec = static_cast<std::int64_t>(st.st_mtim.tv_sec);
+        stamp.mtimeNsec = static_cast<std::int64_t>(st.st_mtim.tv_nsec);
+        stamp.ctimeSec = static_cast<std::int64_t>(st.st_ctim.tv_sec);
+        stamp.ctimeNsec = static_cast<std::int64_t>(st.st_ctim.tv_nsec);
+        stamp.exists = true;
+    }
+    return stamp;
+}
 namespace {
 
 std::string fnv1a64Hex(std::string_view text) {
@@ -187,6 +208,7 @@ SettingsPaths SettingsPaths::fromEnvironment(std::string_view xdgConfigHome,
 
 SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
     SettingsLoadResult result;
+    result.stamp = SettingsFileStamp::fromPath(path);
     std::ifstream input(path);
     if (!input) {
         std::error_code error;

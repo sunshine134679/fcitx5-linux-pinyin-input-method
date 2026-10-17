@@ -298,6 +298,103 @@ void testOversizedIntegersAreRejectedWithoutWrapping() {
                "each oversized integer reports an invalid value");
 }
 
+void testSettingsFileStampAndSameMtimeReplacement() {
+    const auto directory = testDirectory();
+    const auto path = directory / "stamp-test.conf";
+    {
+        std::ofstream out(path);
+        out << "input.enabled=true\n";
+    }
+
+    const auto stamp1 = modernime::core::SettingsFileStamp::fromPath(path);
+    assertTrue(stamp1.exists, "stamp1 indicates file exists");
+    assertTrue(stamp1.inode != 0, "stamp1 has valid inode");
+    assertTrue(stamp1.size > 0, "stamp1 has positive size");
+
+    // Load stamp via SettingsStore::load
+    const auto load1 = modernime::core::SettingsStore::load(path);
+    assertTrue(load1.stamp == stamp1, "load1.stamp matches stamp1");
+
+    // Perform atomic replacement with identical mtime
+    const auto tmpPath = directory / "stamp-test.conf.tmp";
+    {
+        std::ofstream out(tmpPath);
+        out << "input.enabled=false\n";
+    }
+    // Set tmpPath mtime to match path mtime
+    std::error_code ec;
+    const auto origMtime = std::filesystem::last_write_time(path, ec);
+    assertTrue(!ec, "read original last_write_time");
+    std::filesystem::last_write_time(tmpPath, origMtime, ec);
+    assertTrue(!ec, "set tmp last_write_time");
+
+    // Atomic rename
+    std::filesystem::rename(tmpPath, path, ec);
+    assertTrue(!ec, "atomic rename succeeds");
+
+    const auto stamp2 = modernime::core::SettingsFileStamp::fromPath(path);
+    assertTrue(stamp2.exists, "stamp2 indicates file exists");
+    assertTrue(stamp1 != stamp2, "stamp1 and stamp2 differ even with identical mtime");
+    assertTrue(stamp1.inode != stamp2.inode, "atomic replacement changed inode");
+    assertTrue(stamp1.mtimeSec == stamp2.mtimeSec, "mtime seconds match");
+
+    // Delete file
+    std::filesystem::remove(path, ec);
+    assertTrue(!ec, "file removed");
+    const auto stamp3 = modernime::core::SettingsFileStamp::fromPath(path);
+    assertTrue(!stamp3.exists, "stamp3 indicates file missing");
+    assertTrue(stamp3 != stamp2, "missing stamp differs from previous stamp");
+
+    // Recreate file
+    {
+        std::ofstream out(path);
+        out << "input.enabled=true\n";
+    }
+    const auto stamp4 = modernime::core::SettingsFileStamp::fromPath(path);
+    assertTrue(stamp4.exists, "recreated file has exists=true");
+    assertTrue(stamp4 != stamp3, "recreated file differs from missing stamp");
+}
+
+void testSettingsApplicationVersion() {
+    modernime::core::SettingsApplicationVersion v1{"hash_alpha", 1};
+    modernime::core::SettingsApplicationVersion v2{"hash_alpha", 1};
+    modernime::core::SettingsApplicationVersion v3{"hash_beta", 1};
+    modernime::core::SettingsApplicationVersion v4{"hash_alpha", 2};
+
+    assertTrue(v1 == v2, "identical hash and generation compare equal");
+    assertTrue(v1 != v3, "differing hash compares not equal");
+    assertTrue(v1 != v4, "differing generation compares not equal");
+}
+
+void testSpacePathHandlingAndXdgBoundary() {
+    const auto pathsWithSpaces = modernime::core::SettingsPaths::fromEnvironment(
+        "/opt/modern ime/custom cfg",
+        "/opt/modern ime/custom data",
+        "/home/wsl/user with spaces");
+
+    assertTrue(pathsWithSpaces.settingsFile ==
+                   "/opt/modern ime/custom cfg/modernime/settings.conf",
+               "settingsFile preserves spaces in XDG_CONFIG_HOME");
+    assertTrue(pathsWithSpaces.userDictionary ==
+                   "/opt/modern ime/custom data/modernime/user-dictionary.txt",
+               "userDictionary preserves spaces in XDG_DATA_HOME");
+    assertTrue(pathsWithSpaces.learningStore ==
+                   "/opt/modern ime/custom data/modernime/learning.sqlite3",
+               "learningStore preserves spaces in XDG_DATA_HOME");
+    assertTrue(pathsWithSpaces.runtimeState ==
+                   "/opt/modern ime/custom cfg/modernime/runtime.state",
+               "runtimeState preserves spaces in XDG_CONFIG_HOME");
+
+    const auto fallbackPaths = modernime::core::SettingsPaths::fromEnvironment(
+        "", "", "/home/wsl/user with spaces");
+    assertTrue(fallbackPaths.settingsFile ==
+                   "/home/wsl/user with spaces/.config/modernime/settings.conf",
+               "empty XDG_CONFIG_HOME falls back to home/.config");
+    assertTrue(fallbackPaths.learningStore ==
+                   "/home/wsl/user with spaces/.local/share/modernime/learning.sqlite3",
+               "empty XDG_DATA_HOME falls back to home/.local/share");
+}
+
 } // namespace
 
 int main() {
@@ -310,5 +407,8 @@ int main() {
     testShiftShortcutsRoundTrip();
     testSharedValidationRejectsInvalidValues();
     testPreserveUnknownKeysAndCommentsAndConflict();
+    testSettingsFileStampAndSameMtimeReplacement();
+    testSettingsApplicationVersion();
+    testSpacePathHandlingAndXdgBoundary();
     return EXIT_SUCCESS;
 }

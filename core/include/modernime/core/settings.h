@@ -29,6 +29,27 @@ struct ModernIMESettings final {
     bool operator==(const ModernIMESettings &) const = default;
 };
 
+struct SettingsFileStamp final {
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint64_t size = 0;
+    std::int64_t mtimeSec = 0;
+    std::int64_t mtimeNsec = 0;
+    std::int64_t ctimeSec = 0;
+    std::int64_t ctimeNsec = 0;
+    bool exists = false;
+
+    static SettingsFileStamp fromPath(const std::filesystem::path &path);
+    bool operator==(const SettingsFileStamp &) const = default;
+};
+
+struct SettingsApplicationVersion final {
+    std::string contentHash;
+    std::uint64_t generation = 0;
+
+    bool operator==(const SettingsApplicationVersion &) const = default;
+};
+
 struct SettingsValidationIssue final {
     std::string key;
     std::string message;
@@ -69,6 +90,7 @@ struct SettingsLoadResult final {
     std::vector<std::string> diagnostics;
     std::string contentHash;
     std::vector<std::string> rawLines;
+    SettingsFileStamp stamp;
 };
 
 class SettingsStore final {

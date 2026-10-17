@@ -75,7 +75,9 @@ struct ModernIMEUserInterface::Impl final {
     int lastWindowHeight = -1;
 
     std::chrono::steady_clock::time_point lastSettingsCheckTime{};
-    std::filesystem::file_time_type lastSettingsMtime{};
+    core::SettingsFileStamp lastSettingsStamp{};
+    std::string lastContentHash;
+    std::uint64_t layoutGeneration = 0;
     int currentFontSize = 20;
     int currentPageSize = 9;
 
@@ -94,26 +96,33 @@ struct ModernIMEUserInterface::Impl final {
             xdgDataHome == nullptr ? std::string_view{} : std::string_view(xdgDataHome),
             home == nullptr ? std::string_view{} : std::string_view(home)).settingsFile;
 
-        std::error_code ec;
-        const auto mtime = std::filesystem::last_write_time(path, ec);
-        if (!ec && mtime != lastSettingsMtime) {
-            lastSettingsMtime = mtime;
-            const auto loaded = core::SettingsStore::load(path).settings;
-            if (loaded.candidateFontSize != currentFontSize ||
-                loaded.candidatePageSize != currentPageSize) {
-                currentFontSize = loaded.candidateFontSize;
-                currentPageSize = loaded.candidatePageSize;
-                metrics = CandidateBarMetrics::reference(
-                    static_cast<double>(currentFontSize),
-                    static_cast<std::size_t>(currentPageSize));
-                style.candidateText.size = static_cast<double>(currentFontSize);
-                style.candidateNumberText.size =
-                    std::max(10.0, static_cast<double>(currentFontSize) - 4.0);
-                style.preeditText.size =
-                    std::max(12.0, static_cast<double>(currentFontSize) - 2.0);
-                sharedWidthCache.clear();
-                lastWindowWidth = -1;
-                lastWindowHeight = -1;
+        const auto currentStamp = core::SettingsFileStamp::fromPath(path);
+        if (currentStamp != lastSettingsStamp) {
+            lastSettingsStamp = currentStamp;
+            if (currentStamp.exists) {
+                const auto loadResult = core::SettingsStore::load(path);
+                if (loadResult.contentHash != lastContentHash) {
+                    lastContentHash = loadResult.contentHash;
+                    const auto &loaded = loadResult.settings;
+                    if (loaded.candidateFontSize != currentFontSize ||
+                        loaded.candidatePageSize != currentPageSize) {
+                        currentFontSize = loaded.candidateFontSize;
+                        currentPageSize = loaded.candidatePageSize;
+                        ++layoutGeneration;
+                        metrics = CandidateBarMetrics::reference(
+                            static_cast<double>(currentFontSize),
+                            static_cast<std::size_t>(currentPageSize));
+                        style.candidateText.size = static_cast<double>(currentFontSize);
+                        style.candidateNumberText.size =
+                            std::max(10.0, static_cast<double>(currentFontSize) - 4.0);
+                        style.preeditText.size =
+                            std::max(12.0, static_cast<double>(currentFontSize) - 2.0);
+                        sharedWidthCache.clear();
+                        lastWindowWidth = -1;
+                        lastWindowHeight = -1;
+                        layout = {};
+                    }
+                }
             }
         }
     }

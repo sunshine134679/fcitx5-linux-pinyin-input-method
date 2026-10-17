@@ -47,6 +47,7 @@ void writeRuntimeState(const std::filesystem::path &statePath,
     }
     out << "applied_content_hash=" << contentHash << "\n";
     out << "settings_generation=" << generation << "\n";
+    out << "source=fcitx5-adapter\n";
     out.close();
     std::filesystem::rename(tempPath, statePath, ec);
 }
@@ -429,20 +430,13 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
     }
 #endif
     {
-        std::error_code mtimeError;
-        settingsMtime_ = std::filesystem::last_write_time(
-            settingsPaths().settingsFile, mtimeError);
-        if (mtimeError) {
-            settingsMtime_ = {};
-        }
-        userDictionaryMtime_ = std::filesystem::last_write_time(
-            settingsPaths().userDictionary, mtimeError);
-        if (mtimeError) {
-            userDictionaryMtime_ = {};
-        }
+        settingsStamp_ = core::SettingsFileStamp::fromPath(settingsPaths().settingsFile);
+        userDictionaryStamp_ = core::SettingsFileStamp::fromPath(settingsPaths().userDictionary);
+        const auto hash = core::computeFileContentHash(settingsPaths().settingsFile);
+        appliedVersion_ = {hash, settingsGeneration_};
         writeRuntimeState(
             settingsPaths().runtimeState,
-            core::computeFileContentHash(settingsPaths().settingsFile),
+            hash,
             settingsGeneration_);
     }
     std::string historyError;
@@ -778,26 +772,28 @@ void ModernIMEInputMethod::pollFileChanges() {
     if (instance_ == nullptr) {
         return;
     }
-    std::error_code error;
     const auto settingsFile = settingsPaths().settingsFile;
-    const auto settingsTime =
-        std::filesystem::last_write_time(settingsFile, error);
-    if (!error && settingsTime != settingsMtime_) {
-        settingsMtime_ = settingsTime;
-        const auto loadResult = core::SettingsStore::load(settingsFile);
-        settings_ = loadResult.settings;
-        keyBindings_ = keyBindings(settings_);
-        ++settingsGeneration_;
-        writeRuntimeState(settingsPaths().runtimeState, loadResult.contentHash,
-                          settingsGeneration_);
-        FCITX_INFO() << "ModernIME settings reloaded from "
-                     << settingsFile.string();
+    const auto currentStamp = core::SettingsFileStamp::fromPath(settingsFile);
+    if (currentStamp != settingsStamp_) {
+        settingsStamp_ = currentStamp;
+        if (currentStamp.exists) {
+            const auto loadResult = core::SettingsStore::load(settingsFile);
+            if (loadResult.contentHash != appliedVersion_.contentHash) {
+                settings_ = loadResult.settings;
+                keyBindings_ = keyBindings(settings_);
+                ++settingsGeneration_;
+                appliedVersion_ = {loadResult.contentHash, settingsGeneration_};
+                writeRuntimeState(settingsPaths().runtimeState, loadResult.contentHash,
+                                  settingsGeneration_);
+                FCITX_INFO() << "ModernIME settings reloaded from "
+                             << settingsFile.string();
+            }
+        }
     }
     const auto dictionaryFile = settingsPaths().userDictionary;
-    const auto dictionaryTime =
-        std::filesystem::last_write_time(dictionaryFile, error);
-    if (!error && dictionaryTime != userDictionaryMtime_) {
-        userDictionaryMtime_ = dictionaryTime;
+    const auto dictStamp = core::SettingsFileStamp::fromPath(dictionaryFile);
+    if (dictStamp != userDictionaryStamp_) {
+        userDictionaryStamp_ = dictStamp;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
         ensurePinyinResources();
         if (pinyin::PinyinCandidateProvider::reloadUserDictionary(

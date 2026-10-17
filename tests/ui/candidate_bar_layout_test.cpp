@@ -282,5 +282,11 @@ int main() {
     assertTrue(annotationLayout.candidates[0].bounds.width > annotationLayout.candidates[1].bounds.width,
                "candidate 0 with annotation is wider than candidate 1 without annotation");
 
+    // Test font size metric invalidation: layout measured at font size 20.0 rejects hit testing against metrics at font size 24.0
+    auto updatedMetrics = metrics;
+    updatedMetrics.candidateFontSize = 24.0;
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, updatedMetrics, hc0.x + hc0.width / 2.0, hc0.y + hc0.height / 2.0) == -1,
+               "outdated layout font size is rejected by hitTestCandidate under new font metrics");
+
     return EXIT_SUCCESS;
 }

@@ -447,8 +447,9 @@ private:
     std::unique_ptr<fcitx::HandlerTableEntryBase> surroundingWatcher_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     std::unique_ptr<fcitx::EventSourceTime> fileTimer_;
-    std::filesystem::file_time_type settingsMtime_{};
-    std::filesystem::file_time_type userDictionaryMtime_{};
+    core::SettingsFileStamp settingsStamp_{};
+    core::SettingsFileStamp userDictionaryStamp_{};
+    core::SettingsApplicationVersion appliedVersion_{};
     bool shiftPressed_ = false;
     bool otherKeyPressedWhileShift_ = false;
     std::uint64_t settingsGeneration_ = 0;

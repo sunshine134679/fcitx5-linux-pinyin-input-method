@@ -93,6 +93,7 @@ struct CandidateBarLayout final {
     double candidateBaseline = 0.0;
     double clipboardTextPadding = 0.0;
     bool clipboardMode = false;
+    double fontSize = 0.0;
     std::vector<Rect> separators;
     std::vector<CandidateGeometry> candidates;
 
