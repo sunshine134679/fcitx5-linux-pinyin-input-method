@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <string_view>
+#include <sys/stat.h>
 
 namespace {
 
@@ -395,6 +396,68 @@ void testSpacePathHandlingAndXdgBoundary() {
                "empty XDG_DATA_HOME falls back to home/.local/share");
 }
 
+void testConsistentSingleSnapshotRead() {
+    const auto directory = testDirectory();
+    const auto path = directory / "settings_snapshot.conf";
+    {
+        std::ofstream out(path);
+        out << "input.enabled=false\n"
+            << "candidate.font_size=24\n"
+            << "candidate.page_size=7\n";
+    }
+    const auto res = modernime::core::SettingsStore::load(path);
+    assertTrue(res.isSuccess(), "consistent read is successful");
+    assertTrue(res.status == modernime::core::SettingsLoadStatus::Success, "status is Success");
+    assertTrue(!res.contentHash.empty(), "contentHash is not empty");
+    assertTrue(res.contentHash == modernime::core::computeFileContentHash(path), "hash matches computeFileContentHash");
+    assertTrue(res.stamp == modernime::core::SettingsFileStamp::fromPath(path), "stamp matches file stamp");
+    assertTrue(!res.settings.inputEnabled, "inputEnabled is false");
+    assertTrue(res.settings.candidateFontSize == 24, "font size is 24");
+    assertTrue(res.settings.candidatePageSize == 7, "page size is 7");
+}
+
+void testIoErrorAndMissingFileDifferentiated() {
+    const auto directory = testDirectory();
+    const auto missingPath = directory / "missing_target.conf";
+    const auto missing = modernime::core::SettingsStore::load(missingPath);
+    assertTrue(missing.isMissing(), "missing file reports isMissing");
+    assertTrue(!missing.isSuccess() && !missing.isIoError(), "missing is neither success nor io error");
+    assertTrue(!missing.stamp.exists, "missing stamp exists is false");
+    assertTrue(missing.contentHash.empty(), "missing contentHash is empty");
+
+    const auto unreadablePath = directory / "unreadable_target.conf";
+    {
+        std::ofstream out(unreadablePath);
+        out << "input.enabled=false\n";
+    }
+    ::chmod(unreadablePath.c_str(), 0000);
+    const auto ioErr = modernime::core::SettingsStore::load(unreadablePath);
+    ::chmod(unreadablePath.c_str(), 0600); // restore for cleanup
+    assertTrue(ioErr.isIoError(), "unreadable file reports isIoError");
+    assertTrue(!ioErr.isSuccess() && !ioErr.isMissing(), "io error is neither success nor missing");
+    assertTrue(ioErr.contentHash.empty(), "io error contentHash is empty");
+    assertTrue(!ioErr.diagnostics.empty(), "io error has diagnostics");
+}
+
+void testUnknownKeysReturnSuccessWithDiagnostics() {
+    const auto directory = testDirectory();
+    const auto path = directory / "unknown_keys.conf";
+    {
+        std::ofstream out(path);
+        out << "# A comment line\n"
+            << "input.enabled=true\n"
+            << "custom_unknown_key=custom_value\n"
+            << "candidate.font_size=18\n";
+    }
+    const auto res = modernime::core::SettingsStore::load(path);
+    assertTrue(res.isSuccess(), "file with unknown keys still reports isSuccess");
+    assertTrue(!res.contentHash.empty(), "contentHash is generated");
+    assertTrue(!res.diagnostics.empty(), "diagnostics record unknown key warning");
+    assertTrue(res.settings.inputEnabled, "known settings parsed properly");
+    assertTrue(res.settings.candidateFontSize == 18, "font size parsed properly");
+    assertTrue(res.rawLines.size() == 4, "all raw lines preserved");
+}
+
 } // namespace
 
 int main() {
@@ -410,5 +473,8 @@ int main() {
     testSettingsFileStampAndSameMtimeReplacement();
     testSettingsApplicationVersion();
     testSpacePathHandlingAndXdgBoundary();
+    testConsistentSingleSnapshotRead();
+    testIoErrorAndMissingFileDifferentiated();
+    testUnknownKeysReturnSuccessWithDiagnostics();
     return EXIT_SUCCESS;
 }

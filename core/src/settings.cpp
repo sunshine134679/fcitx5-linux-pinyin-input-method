@@ -4,6 +4,8 @@
 
 #include <array>
 #include <charconv>
+#include <cerrno>
+#include <cstdio>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
@@ -208,102 +210,166 @@ SettingsPaths SettingsPaths::fromEnvironment(std::string_view xdgConfigHome,
 
 SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
     SettingsLoadResult result;
-    result.stamp = SettingsFileStamp::fromPath(path);
-    std::ifstream input(path);
-    if (!input) {
-        std::error_code error;
-        if (std::filesystem::exists(path, error) && !error) {
-            result.diagnostics.push_back("unable to read settings file");
-        }
+    if (path.empty()) {
+        result.status = SettingsLoadStatus::Missing;
         return result;
     }
 
-    std::string line;
-    std::size_t lineNumber = 0;
-    while (std::getline(input, line)) {
-        ++lineNumber;
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        FILE *fp = std::fopen(path.c_str(), "rb");
+        if (fp == nullptr) {
+            const int err = errno;
+            if (err == ENOENT) {
+                result.status = SettingsLoadStatus::Missing;
+                result.stamp = SettingsFileStamp::fromPath(path);
+                result.settings = defaultSettings();
+                result.contentHash.clear();
+                return result;
+            }
+            result.status = SettingsLoadStatus::IoError;
+            result.stamp = SettingsFileStamp::fromPath(path);
+            result.diagnostics.push_back("unable to read settings file");
+            return result;
         }
-        result.rawLines.push_back(line);
-        const auto content = trim(line);
-        if (content.empty() || content.front() == '#') {
-            continue;
+
+        const int fd = fileno(fp);
+        struct stat st {};
+        if (::fstat(fd, &st) != 0) {
+            std::fclose(fp);
+            result.status = SettingsLoadStatus::IoError;
+            result.diagnostics.push_back("unable to stat open settings file");
+            return result;
         }
-        const auto separator = content.find('=');
-        if (separator == std::string::npos) {
-            diagnostic(result, lineNumber, "missing '='");
-            continue;
-        }
-        const auto key = trim(std::string_view(content).substr(0, separator));
-        const auto value = trim(
-            std::string_view(content).substr(separator + 1));
-        bool parsed = false;
-        if (key == "input.enabled") {
-            parsed = parseBoolean(value, result.settings.inputEnabled);
-        } else if (key == "input.default_mode") {
-            if (value == "chinese") {
-                result.settings.defaultMode = InputMode::Chinese;
-                parsed = true;
-            } else if (value == "english") {
-                result.settings.defaultMode = InputMode::English;
-                parsed = true;
+
+        std::string buffer;
+        if (st.st_size > 0) {
+            buffer.resize(static_cast<std::size_t>(st.st_size));
+            const std::size_t bytesRead = std::fread(buffer.data(), 1, buffer.size(), fp);
+            if (bytesRead != buffer.size()) {
+                buffer.resize(bytesRead);
+                if (std::ferror(fp)) {
+                    std::fclose(fp);
+                    result.status = SettingsLoadStatus::IoError;
+                    result.diagnostics.push_back("unable to finish reading settings file");
+                    return result;
+                }
             }
-        } else if (key == "input.toggle_key") {
-            if (validToggleKey(value)) {
-                result.settings.toggleKey = value;
-                parsed = true;
-            }
-        } else if (key == "candidate.page_size") {
-            int val = 0;
-            if (parseInteger(value, val) && val >= kMinimumCandidatePageSize &&
-                val <= kMaximumCandidatePageSize) {
-                result.settings.candidatePageSize = val;
-                parsed = true;
-            }
-        } else if (key == "candidate.font_size") {
-            int val = 0;
-            if (parseInteger(value, val) && val >= kMinimumCandidateFontSize &&
-                val <= kMaximumCandidateFontSize) {
-                result.settings.candidateFontSize = val;
-                parsed = true;
-            }
-        } else if (key == "candidate.number_selection") {
-            parsed = parseBoolean(value, result.settings.numberSelection);
-        } else if (key == "candidate.arrow_navigation") {
-            parsed = parseBoolean(value, result.settings.arrowNavigation);
-        } else if (key == "candidate.page_navigation") {
-            parsed = parseBoolean(value, result.settings.pageNavigation);
-        } else if (key == "punctuation.enabled") {
-            parsed = parseBoolean(value, result.settings.punctuationEnabled);
-        } else if (key == "learning.enabled") {
-            parsed = parseBoolean(value, result.settings.learningEnabled);
-        } else if (key == "learning.context_enabled") {
-            parsed = parseBoolean(value,
-                                  result.settings.contextLearningEnabled);
-        } else if (key == "clipboard.enabled") {
-            parsed = parseBoolean(value, result.settings.clipboardEnabled);
-        } else if (key == "clipboard.trigger") {
-            if (validClipboardTrigger(value)) {
-                result.settings.clipboardTrigger = value;
-                parsed = true;
-            }
-        } else if (key == "candidate.english_definition" || key == "input.english_definition") {
-            parsed = parseBoolean(value, result.settings.englishDefinitionEnabled);
-        } else if (key == "candidate.character_extraction" || key == "candidate.extract_character") {
-            parsed = parseBoolean(value, result.settings.characterExtractionEnabled);
         } else {
-            diagnostic(result, lineNumber, "unknown key '" + key + "'");
+            char chunk[4096];
+            while (const std::size_t n = std::fread(chunk, 1, sizeof(chunk), fp)) {
+                buffer.append(chunk, n);
+            }
+            if (std::ferror(fp)) {
+                std::fclose(fp);
+                result.status = SettingsLoadStatus::IoError;
+                result.diagnostics.push_back("unable to finish reading settings file");
+                return result;
+            }
+        }
+        std::fclose(fp);
+
+        struct stat diskSt {};
+        if (::stat(path.c_str(), &diskSt) == 0 &&
+            (diskSt.st_ino != st.st_ino || diskSt.st_dev != st.st_dev) &&
+            attempt < 2) {
             continue;
         }
-        if (!parsed) {
-            diagnostic(result, lineNumber, "invalid value for '" + key + "'");
+
+        result.stamp.device = static_cast<std::uint64_t>(st.st_dev);
+        result.stamp.inode = static_cast<std::uint64_t>(st.st_ino);
+        result.stamp.size = static_cast<std::uint64_t>(st.st_size);
+        result.stamp.mtimeSec = static_cast<std::int64_t>(st.st_mtim.tv_sec);
+        result.stamp.mtimeNsec = static_cast<std::int64_t>(st.st_mtim.tv_nsec);
+        result.stamp.ctimeSec = static_cast<std::int64_t>(st.st_ctim.tv_sec);
+        result.stamp.ctimeNsec = static_cast<std::int64_t>(st.st_ctim.tv_nsec);
+        result.stamp.exists = true;
+
+        result.contentHash = fnv1a64Hex(buffer);
+        result.status = SettingsLoadStatus::Success;
+
+        std::istringstream input(buffer);
+        std::string line;
+        std::size_t lineNumber = 0;
+        while (std::getline(input, line)) {
+            ++lineNumber;
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            result.rawLines.push_back(line);
+            const auto content = trim(line);
+            if (content.empty() || content.front() == '#') {
+                continue;
+            }
+            const auto separator = content.find('=');
+            if (separator == std::string::npos) {
+                diagnostic(result, lineNumber, "missing '='");
+                continue;
+            }
+            const auto key = trim(std::string_view(content).substr(0, separator));
+            const auto value = trim(std::string_view(content).substr(separator + 1));
+            bool parsed = false;
+            if (key == "input.enabled") {
+                parsed = parseBoolean(value, result.settings.inputEnabled);
+            } else if (key == "input.default_mode") {
+                if (value == "chinese") {
+                    result.settings.defaultMode = InputMode::Chinese;
+                    parsed = true;
+                } else if (value == "english") {
+                    result.settings.defaultMode = InputMode::English;
+                    parsed = true;
+                }
+            } else if (key == "input.toggle_key") {
+                if (validToggleKey(value)) {
+                    result.settings.toggleKey = value;
+                    parsed = true;
+                }
+            } else if (key == "candidate.page_size") {
+                int val = 0;
+                if (parseInteger(value, val) && val >= kMinimumCandidatePageSize &&
+                    val <= kMaximumCandidatePageSize) {
+                    result.settings.candidatePageSize = val;
+                    parsed = true;
+                }
+            } else if (key == "candidate.font_size") {
+                int val = 0;
+                if (parseInteger(value, val) && val >= kMinimumCandidateFontSize &&
+                    val <= kMaximumCandidateFontSize) {
+                    result.settings.candidateFontSize = val;
+                    parsed = true;
+                }
+            } else if (key == "candidate.number_selection") {
+                parsed = parseBoolean(value, result.settings.numberSelection);
+            } else if (key == "candidate.arrow_navigation") {
+                parsed = parseBoolean(value, result.settings.arrowNavigation);
+            } else if (key == "candidate.page_navigation") {
+                parsed = parseBoolean(value, result.settings.pageNavigation);
+            } else if (key == "punctuation.enabled") {
+                parsed = parseBoolean(value, result.settings.punctuationEnabled);
+            } else if (key == "learning.enabled") {
+                parsed = parseBoolean(value, result.settings.learningEnabled);
+            } else if (key == "learning.context_enabled") {
+                parsed = parseBoolean(value, result.settings.contextLearningEnabled);
+            } else if (key == "clipboard.enabled") {
+                parsed = parseBoolean(value, result.settings.clipboardEnabled);
+            } else if (key == "clipboard.trigger") {
+                if (validClipboardTrigger(value)) {
+                    result.settings.clipboardTrigger = value;
+                    parsed = true;
+                }
+            } else if (key == "candidate.english_definition" || key == "input.english_definition") {
+                parsed = parseBoolean(value, result.settings.englishDefinitionEnabled);
+            } else if (key == "candidate.character_extraction" || key == "candidate.extract_character") {
+                parsed = parseBoolean(value, result.settings.characterExtractionEnabled);
+            } else {
+                diagnostic(result, lineNumber, "unknown key '" + key + "'");
+                continue;
+            }
+            if (!parsed) {
+                diagnostic(result, lineNumber, "invalid value for '" + key + "'");
+            }
         }
+        return result;
     }
-    if (!input.eof() && input.fail()) {
-        result.diagnostics.push_back("unable to finish reading settings file");
-    }
-    result.contentHash = computeFileContentHash(path);
     return result;
 }
 

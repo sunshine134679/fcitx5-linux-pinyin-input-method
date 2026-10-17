@@ -91,6 +91,8 @@ CandidateBarLayout measureClipboard(
     layout.clipboardMode = true;
     layout.clipboardTextPadding = metrics.clipboardTextPadding;
     layout.fontSize = metrics.candidateFontSize;
+    layout.maxCandidates = metrics.maxCandidates;
+    layout.layoutGeneration = metrics.layoutGeneration;
     layout.preedit = page.preedit;
     const auto count = std::min<std::size_t>(kClipboardVisibleRows,
                                              page.items.size());
@@ -267,6 +269,8 @@ CandidateBarLayout CandidateBarLayout::measure(
     layout.preeditBaseline = metrics.preeditBaseline;
     layout.candidateBaseline = metrics.candidateBaseline;
     layout.fontSize = metrics.candidateFontSize;
+    layout.maxCandidates = metrics.maxCandidates;
+    layout.layoutGeneration = metrics.layoutGeneration;
 
     const auto count = visibleItems(page, &metrics);
     layout.candidates.reserve(count);
@@ -357,6 +361,13 @@ int hitTestCandidate(const CandidateBarLayout &layout,
     }
     if (layout.fontSize > 0.0 && metrics.candidateFontSize > 0.0 &&
         std::abs(layout.fontSize - metrics.candidateFontSize) > 1e-3) {
+        return -1;
+    }
+    if (layout.maxCandidates > 0 && metrics.maxCandidates > 0 &&
+        layout.maxCandidates != metrics.maxCandidates) {
+        return -1;
+    }
+    if (layout.layoutGeneration != metrics.layoutGeneration) {
         return -1;
     }
 

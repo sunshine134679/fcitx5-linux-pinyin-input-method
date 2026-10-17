@@ -450,6 +450,8 @@ private:
     core::SettingsFileStamp settingsStamp_{};
     core::SettingsFileStamp userDictionaryStamp_{};
     core::SettingsApplicationVersion appliedVersion_{};
+    bool settingsLoadFailed_ = false;
+    int settingsRetryCount_ = 0;
     bool shiftPressed_ = false;
     bool otherKeyPressedWhileShift_ = false;
     std::uint64_t settingsGeneration_ = 0;

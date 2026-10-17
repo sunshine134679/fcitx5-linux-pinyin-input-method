@@ -248,6 +248,7 @@ backup_user_database
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
+data_home=${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}
 environment_dir="$config_home/environment.d"
 environment_file="$environment_dir/90-modernime.conf"
 autostart_dir="$config_home/autostart"
@@ -563,6 +564,7 @@ fcitx_environment=(
     "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
     "XDG_DATA_DIRS=$data_directories"
     "XDG_CONFIG_HOME=$config_home"
+    "XDG_DATA_HOME=$data_home"
 )
 for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
     if [[ -n "${!environment_name:-}" ]]; then
@@ -574,11 +576,24 @@ if [[ "$is_system_prefix" != true ]]; then
     mkdir -p "$desktop_dir"
     desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
     {
+        settings_desktop_exec=""
+        if [[ -n "${MODERNIME_CONFIG_HOME:-}" || -n "${MODERNIME_DATA_HOME:-}" ]]; then
+            settings_desktop_exec="env"
+            if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
+                settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home")"
+            fi
+            if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
+                settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_DATA_HOME=$data_home")"
+            fi
+            settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+        else
+            settings_desktop_exec="$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+        fi
         printf '%s\n' '[Desktop Entry]'
         printf '%s\n' 'Type=Application'
         printf '%s\n' 'Name=ModernIME 设置'
         printf '%s\n' 'Comment=Configure ModernIME input method'
-        printf 'Exec=%s\n' "$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+        printf 'Exec=%s\n' "$settings_desktop_exec"
         printf 'Icon=%s\n' "$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
         printf '%s\n' 'Terminal=false'
         printf '%s\n' 'Categories=Settings;Utility;'
@@ -606,6 +621,12 @@ if [[ "$is_system_prefix" != true ]]; then
     {
         printf '%s\n' "$environment_line"
         printf 'XDG_DATA_DIRS="%s:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix/share"
+        if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
+            printf 'XDG_CONFIG_HOME="%s"\n' "$config_home"
+        fi
+        if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
+            printf 'XDG_DATA_HOME="%s"\n' "$data_home"
+        fi
         printf 'GTK_IM_MODULE=fcitx\n'
         printf 'QT_IM_MODULE=fcitx\n'
         printf 'XMODIFIERS=@im=fcitx\n'
@@ -613,7 +634,7 @@ if [[ "$is_system_prefix" != true ]]; then
     } > "$desktop_tmp"
     modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
 
-    autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") fcitx5 -d -u modernime-ui"
+    autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d -u modernime-ui"
     {
         printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
         printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'

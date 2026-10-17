@@ -288,5 +288,33 @@ int main() {
     assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, updatedMetrics, hc0.x + hc0.width / 2.0, hc0.y + hc0.height / 2.0) == -1,
                "outdated layout font size is rejected by hitTestCandidate under new font metrics");
 
+    // Test page size (maxCandidates) invalidation:
+    auto pageSizeMetrics = metrics;
+    pageSizeMetrics.maxCandidates = 5;
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, pageSizeMetrics, hc0.x + hc0.width / 2.0, hc0.y + hc0.height / 2.0) == -1,
+               "outdated layout maxCandidates is rejected by hitTestCandidate under new page size metrics");
+
+    // Test layoutGeneration invalidation:
+    auto generationMetrics = metrics;
+    generationMetrics.layoutGeneration = 42;
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, generationMetrics, hc0.x + hc0.width / 2.0, hc0.y + hc0.height / 2.0) == -1,
+               "outdated layoutGeneration is rejected by hitTestCandidate under new generation metrics");
+
+    // Test recovery after re-measure with new metrics:
+    const auto remeasuredLayout = modernime::ui::CandidateBarLayout::measure(
+        hitTestHPage, updatedMetrics,
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 10);
+        });
+    const auto &newHc0 = remeasuredLayout.candidates[0].bounds;
+    assertTrue(modernime::ui::hitTestCandidate(remeasuredLayout, updatedMetrics, newHc0.x + newHc0.width / 2.0, newHc0.y + newHc0.height / 2.0) == 0,
+               "re-measured layout with updated font size successfully hits candidate 0");
+    assertTrue(remeasuredLayout.candidates[0].displayText == hitTestHLayout.candidates[0].displayText,
+               "candidate 0 semantic displayText unchanged after re-measure");
+    assertTrue(remeasuredLayout.candidates[1].displayText == hitTestHLayout.candidates[1].displayText,
+               "candidate 1 semantic displayText unchanged after re-measure");
+    assertTrue(remeasuredLayout.candidates[2].displayText == hitTestHLayout.candidates[2].displayText,
+               "candidate 2 semantic displayText unchanged after re-measure");
+
     return EXIT_SUCCESS;
 }
