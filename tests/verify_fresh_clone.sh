@@ -55,123 +55,253 @@ if [[ "$t4_missing_status" -ne 1 ]]; then
 fi
 
 # Execute a synthetic task with installed binary in headless environment and verify full result
-t4_opdir=$(mktemp -d "$test_root/modernime-install-collector-XXXXXX")
-chmod 0700 "$t4_opdir"
-t4_spec="$t4_opdir/spec.dat"
-cat << 'EOF' > "$t4_spec"
-operationId=98765
-token=install-token-98765
-timeoutMs=5000
-mode=1
-perStreamBufferBytes=1048576
-perStreamResultBytes=65536
-perStreamFileBytes=1048576
-argc=3
-argv=/usr/bin/python3
-argv=-c
-argv=import sys; sys.stdout.write("INSTALL_COLLECTOR_STDOUT_OK\n"); sys.stderr.write("INSTALL_COLLECTOR_STDERR_OK\n")
-envc=0
-EOF
-chmod 0600 "$t4_spec"
-
-t4_pipe="$t4_opdir/handshake.fifo"
-mkfifo "$t4_pipe"
-exec 3<>"$t4_pipe"
-env -u DISPLAY -u WAYLAND_DISPLAY "$MODERNIME_PREFIX/bin/modernime-settings" \
-    --internal-capture-collector \
-    --op-dir "$t4_opdir" \
-    --handshake-fd 3 &
-t4_pid=$!
-
-t4_start=$(date +%s)
-t4_timeout=5
-
-# 1. Read handshake byte with timeout
-if ! read -r -n 1 -t 4 t4_hs <&3; then
-    kill -9 "$t4_pid" 2>/dev/null || true
-    wait "$t4_pid" 2>/dev/null || true
-    exec 3>&- 2>/dev/null || true
-    exec 3<&- 2>/dev/null || true
-    echo "ERROR: Handshake read timed out" >&2
-    exit 1
-fi
-exec 3>&-
-exec 3<&-
-
-if [[ "$t4_hs" != "R" && "$t4_hs" != "1" ]]; then
-    kill -9 "$t4_pid" 2>/dev/null || true
-    wait "$t4_pid" 2>/dev/null || true
-    echo "ERROR: Unexpected handshake byte: $t4_hs" >&2
-    exit 1
-fi
-
-# 2. Wait for collector to exit with overall timeout
-while kill -0 "$t4_pid" 2>/dev/null; do
-    t4_now=$(date +%s)
-    if [ $((t4_now - t4_start)) -ge "$t4_timeout" ]; then
-        kill -9 "$t4_pid" 2>/dev/null || true
-        wait "$t4_pid" 2>/dev/null || true
-        echo "ERROR: Collector process stalled after handshake (exceeded total timeout of ${t4_timeout}s)" >&2
-        exit 1
-    fi
-    sleep 0.05
-done
-
-wait "$t4_pid"
-t4_status=$?
-if [[ "$t4_status" -ne 0 ]]; then
-    echo "ERROR: Collector process exited with non-zero: $t4_status" >&2
-    exit 1
-fi
-
-python3 - "$t4_opdir" << 'PYEOF'
-import sys, json
+python3 - "$MODERNIME_PREFIX" "${test_root:-/tmp}" << 'PYEOF'
+import os
+import sys
+import json
+import time
+import signal
+import select
+import shutil
+import tempfile
+import subprocess
 from pathlib import Path
 
-opdir = Path(sys.argv[1])
-state_file = opdir / "state.json"
-stdout_file = opdir / "stdout.tail"
-stderr_file = opdir / "stderr.tail"
+prefix_arg = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.environ.get("MODERNIME_PREFIX")
+if not prefix_arg:
+    sys.exit("ERROR: MODERNIME_PREFIX is not set")
+prefix = Path(prefix_arg)
 
-if not state_file.is_file():
-    sys.exit("state.json is missing")
-if not stdout_file.is_file():
-    sys.exit("stdout.tail is missing")
-if not stderr_file.is_file():
-    sys.exit("stderr.tail is missing")
+test_root_arg = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else os.environ.get("test_root", "/tmp")
+test_root = Path(test_root_arg)
 
-sz = state_file.stat().st_size
-if sz <= 0 or sz > 4096:
-    sys.exit(f"state.json size {sz} out of bounds")
+binary = prefix / "bin" / "modernime-settings"
+if not binary.is_file() or not os.access(binary, os.X_OK):
+    sys.exit(f"ERROR: Settings binary not found or not executable: {binary}")
+
+# Create isolated operation directory with 0700 permissions
+op_dir = Path(tempfile.mkdtemp(prefix="modernime-install-collector-", dir=str(test_root)))
+os.chmod(op_dir, 0o700)
+
+spec_path = op_dir / "spec.dat"
+spec_content = (
+    "operationId=98765\n"
+    "token=install-token-98765\n"
+    "timeoutMs=5000\n"
+    "mode=1\n"
+    "perStreamBufferBytes=1048576\n"
+    "perStreamResultBytes=65536\n"
+    "perStreamFileBytes=1048576\n"
+    "argc=3\n"
+    "argv=/usr/bin/python3\n"
+    "argv=-c\n"
+    "argv=import sys; sys.stdout.write('INSTALL_COLLECTOR_STDOUT_OK\\n'); sys.stderr.write('INSTALL_COLLECTOR_STDERR_OK\\n')\n"
+    "envc=0\n"
+)
+spec_path.write_text(spec_content, encoding="utf-8")
+os.chmod(spec_path, 0o600)
+
+fifo_path = op_dir / "handshake.fifo"
+os.mkfifo(fifo_path, 0o600)
+# Open FIFO read end non-blocking with O_RDWR so opening write end will not block or race
+fifo_fd = os.open(fifo_path, os.O_RDWR | os.O_NONBLOCK)
+
+env = os.environ.copy()
+env.pop("DISPLAY", None)
+env.pop("WAYLAND_DISPLAY", None)
+
+start_time = time.monotonic()
+total_timeout = 5.0
+deadline = start_time + total_timeout
+
+proc = None
+clean_exit = False
+fifo_closed = False
 
 try:
-    with open(state_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
-except Exception as e:
-    sys.exit(f"state.json is not valid JSON: {e}")
+    # Spawn collector in a new process group so all descendants belong to proc.pid group
+    proc = subprocess.Popen(
+        [
+            str(binary),
+            "--internal-capture-collector",
+            "--op-dir", str(op_dir),
+            "--handshake-fd", str(fifo_fd)
+        ],
+        env=env,
+        start_new_session=True,
+        pass_fds=[fifo_fd]
+    )
 
-if not isinstance(data, dict):
-    sys.exit("state.json root is not an object")
+    # 1. Read handshake byte with monotonic deadline
+    poll = select.poll()
+    poll.register(fifo_fd, select.POLLIN | select.POLLHUP | select.POLLERR)
+    hs_byte = None
 
-if data.get("operationId") != 98765 or type(data.get("operationId")) is not int:
-    sys.exit("operationId mismatch or not int")
-if data.get("token") != "install-token-98765" or type(data.get("token")) is not str:
-    sys.exit("token mismatch or not str")
-if data.get("state") != "Exited" or type(data.get("state")) is not str:
-    sys.exit("state mismatch or not str")
-if data.get("exitStatus") != 0 or type(data.get("exitStatus")) is not int:
-    sys.exit("exitStatus mismatch or not int")
+    while time.monotonic() < deadline:
+        rem_ms = int(max(0.0, min(deadline - time.monotonic(), 4.0)) * 1000)
+        events = poll.poll(max(1, min(50, rem_ms)))
+        if events:
+            for fd, ev in events:
+                if ev & select.POLLIN:
+                    try:
+                        chunk = os.read(fifo_fd, 1)
+                        if chunk:
+                            hs_byte = chunk
+                            break
+                    except OSError:
+                        pass
+                if ev & (select.POLLHUP | select.POLLERR):
+                    break
+        if hs_byte is not None:
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.02)
 
-stdout_text = stdout_file.read_text(encoding="utf-8", errors="replace")
-stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
+    os.close(fifo_fd)
+    fifo_closed = True
 
-if "INSTALL_COLLECTOR_STDOUT_OK" not in stdout_text:
-    sys.exit("INSTALL_COLLECTOR_STDOUT_OK missing from stdout.tail")
-if "INSTALL_COLLECTOR_STDERR_OK" not in stderr_text:
-    sys.exit("INSTALL_COLLECTOR_STDERR_OK missing from stderr.tail")
+    if hs_byte not in (b"R", b"1"):
+        sys.exit(f"ERROR: Handshake failed (got {hs_byte!r}, process exited={proc.poll()})")
+
+    # 2. Wait for collector to exit with overall monotonic deadline
+    exited = False
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            exited = True
+            break
+        time.sleep(0.02)
+
+    if not exited:
+        sys.exit(f"ERROR: Collector process stalled after handshake (exceeded total monotonic timeout of {total_timeout}s)")
+
+    if proc.returncode != 0:
+        sys.exit(f"ERROR: Collector process exited with non-zero code {proc.returncode}")
+
+    # 3. Comprehensive verification of outputs and state.json (U2-B)
+    state_file = op_dir / "state.json"
+    stdout_file = op_dir / "stdout.tail"
+    stderr_file = op_dir / "stderr.tail"
+
+    if not state_file.is_file():
+        sys.exit("ERROR: state.json is missing")
+    if not stdout_file.is_file():
+        sys.exit("ERROR: stdout.tail is missing")
+    if not stderr_file.is_file():
+        sys.exit("ERROR: stderr.tail is missing")
+
+    # Permissions check (directory 0700, files 0600)
+    if (op_dir.stat().st_mode & 0o777) != 0o700:
+        sys.exit(f"ERROR: op_dir permissions invalid: {oct(op_dir.stat().st_mode)}")
+    if (spec_path.stat().st_mode & 0o777) != 0o600:
+        sys.exit(f"ERROR: spec.dat permissions invalid: {oct(spec_path.stat().st_mode)}")
+    if (state_file.stat().st_mode & 0o777) != 0o600:
+        sys.exit(f"ERROR: state.json permissions invalid: {oct(state_file.stat().st_mode)}")
+    if (stdout_file.stat().st_mode & 0o777) != 0o600:
+        sys.exit(f"ERROR: stdout.tail permissions invalid: {oct(stdout_file.stat().st_mode)}")
+    if (stderr_file.stat().st_mode & 0o777) != 0o600:
+        sys.exit(f"ERROR: stderr.tail permissions invalid: {oct(stderr_file.stat().st_mode)}")
+
+    # Resource budget checks
+    state_sz = state_file.stat().st_size
+    if state_sz <= 0 or state_sz > 4096:
+        sys.exit(f"ERROR: state.json size {state_sz} out of bounds (1..4096)")
+
+    stdout_sz = stdout_file.stat().st_size
+    if stdout_sz > 65536:
+        sys.exit(f"ERROR: stdout.tail size {stdout_sz} exceeds result limit 65536")
+
+    stderr_sz = stderr_file.stat().st_size
+    if stderr_sz > 65536:
+        sys.exit(f"ERROR: stderr.tail size {stderr_sz} exceeds result limit 65536")
+
+    stdout_diag = op_dir / "stdout.diag"
+    if stdout_diag.exists() and stdout_diag.stat().st_size > 1048576:
+        sys.exit(f"ERROR: stdout.diag size {stdout_diag.stat().st_size} exceeds file limit 1048576")
+
+    stderr_diag = op_dir / "stderr.diag"
+    if stderr_diag.exists() and stderr_diag.stat().st_size > 1048576:
+        sys.exit(f"ERROR: stderr.diag size {stderr_diag.stat().st_size} exceeds file limit 1048576")
+
+    # Strict JSON parsing rejecting duplicate keys
+    def reject_duplicate_keys(ordered_pairs):
+        d = {}
+        for k, v in ordered_pairs:
+            if k in d:
+                raise ValueError(f"Duplicate key detected in state.json: {k}")
+            d[k] = v
+        return d
+
+    raw_json = state_file.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw_json, object_pairs_hook=reject_duplicate_keys)
+    except Exception as e:
+        sys.exit(f"ERROR: state.json parse failure: {e}")
+
+    if not isinstance(data, dict):
+        sys.exit("ERROR: state.json root is not an object")
+
+    # Exact field type and value assertions
+    if type(data.get("operationId")) is not int or data.get("operationId") != 98765:
+        sys.exit(f"ERROR: operationId mismatch: {data.get('operationId')!r}")
+    if type(data.get("token")) is not str or data.get("token") != "install-token-98765":
+        sys.exit(f"ERROR: token mismatch: {data.get('token')!r}")
+    if type(data.get("state")) is not str or data.get("state") != "Exited":
+        sys.exit(f"ERROR: state mismatch: {data.get('state')!r}")
+    if type(data.get("exitStatus")) is not int or data.get("exitStatus") != 0:
+        sys.exit(f"ERROR: exitStatus mismatch: {data.get('exitStatus')!r}")
+    if type(data.get("collectorPid")) is not int or data.get("collectorPid") <= 0:
+        sys.exit(f"ERROR: collectorPid invalid: {data.get('collectorPid')!r}")
+    if type(data.get("stdoutBytes")) is not int or data.get("stdoutBytes") < 0:
+        sys.exit(f"ERROR: stdoutBytes invalid: {data.get('stdoutBytes')!r}")
+    if type(data.get("stderrBytes")) is not int or data.get("stderrBytes") < 0:
+        sys.exit(f"ERROR: stderrBytes invalid: {data.get('stderrBytes')!r}")
+    if type(data.get("bufferPeak")) is not int or data.get("bufferPeak") < 0:
+        sys.exit(f"ERROR: bufferPeak invalid: {data.get('bufferPeak')!r}")
+    if type(data.get("filePeak")) is not int or data.get("filePeak") < 0:
+        sys.exit(f"ERROR: filePeak invalid: {data.get('filePeak')!r}")
+    if type(data.get("stdoutTruncated")) is not bool:
+        sys.exit(f"ERROR: stdoutTruncated not bool: {data.get('stdoutTruncated')!r}")
+    if type(data.get("stderrTruncated")) is not bool:
+        sys.exit(f"ERROR: stderrTruncated not bool: {data.get('stderrTruncated')!r}")
+
+    # Output markers check
+    stdout_text = stdout_file.read_text(encoding="utf-8", errors="replace")
+    stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
+    if "INSTALL_COLLECTOR_STDOUT_OK" not in stdout_text:
+        sys.exit("ERROR: INSTALL_COLLECTOR_STDOUT_OK missing from stdout.tail")
+    if "INSTALL_COLLECTOR_STDERR_OK" not in stderr_text:
+        sys.exit("ERROR: INSTALL_COLLECTOR_STDERR_OK missing from stderr.tail")
+
+    clean_exit = True
+
+finally:
+    if not fifo_closed:
+        try:
+            os.close(fifo_fd)
+        except OSError:
+            pass
+
+    # Terminate the process group to ensure collector and any spawned descendants are killed
+    if proc is not None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=0.2)
+        except Exception:
+            pass
+
+    # Clean up operation directory on successful exit
+    if clean_exit:
+        try:
+            shutil.rmtree(op_dir, ignore_errors=True)
+        except Exception:
+            pass
 PYEOF
-
-rm -rf -- "$t4_opdir"
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
 test -x "$MODERNIME_PREFIX/bin/modernime-session-init"

@@ -1474,59 +1474,16 @@ void test_T13_T01_ReaperLowCpuAndSafeShutdown() {
     TEST_ASSERT(nZombies == 0);
     TEST_ASSERT(::kill(cpid, 0) != 0);
 
-    // Test safe shutdown of reaper when alive collector is pending, in an isolated child process
-    const pid_t shutdownChild = ::fork();
-    TEST_ASSERT(shutdownChild >= 0);
-    if (shutdownChild == 0) {
-        // In isolated child: spawn a dummy live background process (e.g., sleep 2)
-        const pid_t dummyLive = ::fork();
-        if (dummyLive == 0) {
-            ::sleep(2);
-            ::_exit(0);
-        }
-        const std::string dummyOpDir = tmpDir + "/dummy-reap-op";
-        std::filesystem::create_directories(dummyOpDir);
-        {
-            std::ofstream out(dummyOpDir + "/state.json");
-            out << "{\"operationId\":1401,\"token\":\"tok\",\"collectorPid\":" << dummyLive
-                << ",\"childPid\":0,\"state\":\"Exited\",\"exitStatus\":0,\"stdoutTruncated\":false,\"stderrTruncated\":false,\"stdoutBytes\":0,\"stderrBytes\":0,\"bufferPeak\":0,\"filePeak\":0}\n";
-        }
-        OperationRef dummyRef;
-        dummyRef.operationId = 1401;
-        dummyRef.token = "tok";
-        dummyRef.opDir = dummyOpDir;
-        dummyRef.collectorPid = dummyLive;
-        dummyRef.isOwnedChild = true;
-        registerOperationRef(dummyRef);
+    // Test safe shutdown of reaper when alive collector is pending, in a fresh exec process
+    char selfPathBuf[PATH_MAX];
+    const ssize_t selfLen = ::readlink("/proc/self/exe", selfPathBuf, sizeof(selfPathBuf) - 1);
+    TEST_ASSERT(selfLen > 0);
+    selfPathBuf[selfLen] = '\0';
+    const std::string selfExe(selfPathBuf);
 
-        // waitForOperation will observe Exited state, return, and enqueue dummyLive into pending reap
-        auto dummyRes = waitForOperation(dummyRef, 50);
-        if (dummyRes.state != CommandState::Exited) {
-            ::_exit(10);
-        }
-
-        // Shutdown reaper: must return quickly, must not kill dummyLive, must not hang
-        const auto t0 = std::chrono::steady_clock::now();
-        shutdownBackgroundReaper();
-        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsedMs > 500) {
-            ::_exit(1);
-        }
-        // Live process must NOT have been killed by shutdown
-        if (::kill(dummyLive, 0) != 0) {
-            ::_exit(2);
-        }
-        // Clean up dummy
-        ::kill(dummyLive, SIGKILL);
-        int dummySt = 0;
-        ::waitpid(dummyLive, &dummySt, 0);
-        std::filesystem::remove_all(dummyOpDir);
-        ::_exit(0);
-    }
-    int childStatus = 0;
-    ::waitpid(shutdownChild, &childStatus, 0);
-    TEST_ASSERT(WIFEXITED(childStatus) && WEXITSTATUS(childStatus) == 0);
+    const std::string subCmd = "\"" + selfExe + "\" --subtest-shutdown-reaper >/dev/null 2>&1";
+    const int subRet = std::system(subCmd.c_str());
+    TEST_ASSERT(WIFEXITED(subRet) && WEXITSTATUS(subRet) == 0);
 }
 
 // T13-T02: Single deadline for pre-exec delay and handshake; strict zero-spawn proof
@@ -1563,27 +1520,27 @@ void test_T13_T02_PreExecDeadlineBoundedAndStrictZeroSpawn() {
 
     const std::string buildCmd = "gcc -shared -fPIC \"" + hookSrc + "\" -o \"" + hookSo + "\" -ldl >/dev/null 2>&1";
     const int compileRet = std::system(buildCmd.c_str());
-    if (compileRet == 0 && std::filesystem::exists(hookSo)) {
-        std::string preloadEnv = hookSo;
-        {
-            std::ifstream maps("/proc/self/maps");
-            std::string line;
-            while (std::getline(maps, line)) {
-                if (line.find("libasan.so") != std::string::npos) {
-                    const auto slash = line.find('/');
-                    if (slash != std::string::npos) {
-                        preloadEnv = line.substr(slash) + " " + hookSo;
-                        break;
-                    }
+    TEST_ASSERT(compileRet == 0 && std::filesystem::exists(hookSo));
+
+    std::string preloadEnv = hookSo;
+    {
+        std::ifstream maps("/proc/self/maps");
+        std::string line;
+        while (std::getline(maps, line)) {
+            if (line.find("libasan.so") != std::string::npos) {
+                const auto slash = line.find('/');
+                if (slash != std::string::npos) {
+                    preloadEnv = line.substr(slash) + " " + hookSo;
+                    break;
                 }
             }
         }
-        const std::string subCmd = "env LD_PRELOAD=\"" + preloadEnv + "\" TEST_DELAY_EXEC=1 \"" + selfExe + "\" --subtest-pre-exec >/dev/null 2>&1";
-        const int subRet = std::system(subCmd.c_str());
-        TEST_ASSERT(WIFEXITED(subRet) && WEXITSTATUS(subRet) == 0);
-        std::filesystem::remove(hookSrc);
-        std::filesystem::remove(hookSo);
     }
+    const std::string subCmd = "env LD_PRELOAD=\"" + preloadEnv + "\" TEST_DELAY_EXEC=1 \"" + selfExe + "\" --subtest-pre-exec >/dev/null 2>&1";
+    const int subRet = std::system(subCmd.c_str());
+    TEST_ASSERT(WIFEXITED(subRet) && WEXITSTATUS(subRet) == 0);
+    std::filesystem::remove(hookSrc);
+    std::filesystem::remove(hookSo);
 
     // 2. Pre-exec wrapper delay: child delays before exec/handshake, timeout is 80ms
     const std::string delayWrapper = tmpDir + "/pre-exec-delay-wrapper.sh";
@@ -1888,6 +1845,14 @@ void test_T13_T04_InstalledBinaryHeadlessInvocationRegression() {
     CommandResult crWrongToken = waitForOperation(refWrongToken, 20);
     TEST_ASSERT(crWrongToken.state != CommandState::Exited);
 
+    // Negative check: duplicate key in state.json must be rejected
+    {
+        std::ofstream out(opDir + "/state.json");
+        out << "{\"operationId\":987650,\"operationId\":98765,\"token\":\"install-token-98765\",\"state\":\"Exited\",\"exitStatus\":1,\"exitStatus\":0}\n";
+    }
+    CommandResult crDup = waitForOperation(ref, 20);
+    TEST_ASSERT(crDup.state != CommandState::Exited);
+
     cleanupOperation(98765);
     cleanupOperation(987650);
 
@@ -1926,6 +1891,50 @@ int main(int argc, char** argv) {
             return 3;
         }
         cleanupOperation(spec0.operationId);
+        return 0;
+    }
+
+    if (argc > 1 && std::string_view(argv[1]) == "--subtest-shutdown-reaper") {
+        const std::string tmpDir = getTempDir();
+        const pid_t dummyLive = ::fork();
+        if (dummyLive == 0) {
+            ::sleep(2);
+            ::_exit(0);
+        }
+        const std::string dummyOpDir = tmpDir + "/dummy-reap-op";
+        std::filesystem::create_directories(dummyOpDir);
+        {
+            std::ofstream out(dummyOpDir + "/state.json");
+            out << "{\"operationId\":1401,\"token\":\"tok\",\"collectorPid\":" << dummyLive
+                << ",\"childPid\":0,\"state\":\"Exited\",\"exitStatus\":0,\"stdoutTruncated\":false,\"stderrTruncated\":false,\"stdoutBytes\":0,\"stderrBytes\":0,\"bufferPeak\":0,\"filePeak\":0}\n";
+        }
+        OperationRef dummyRef;
+        dummyRef.operationId = 1401;
+        dummyRef.token = "tok";
+        dummyRef.opDir = dummyOpDir;
+        dummyRef.collectorPid = dummyLive;
+        dummyRef.isOwnedChild = true;
+        registerOperationRef(dummyRef);
+
+        auto dummyRes = waitForOperation(dummyRef, 50);
+        if (dummyRes.state != CommandState::Exited) {
+            return 10;
+        }
+
+        const auto t0 = std::chrono::steady_clock::now();
+        shutdownBackgroundReaper();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        if (elapsedMs > 500) {
+            return 1;
+        }
+        if (::kill(dummyLive, 0) != 0) {
+            return 2;
+        }
+        ::kill(dummyLive, SIGKILL);
+        int dummySt = 0;
+        ::waitpid(dummyLive, &dummySt, 0);
+        std::filesystem::remove_all(dummyOpDir);
         return 0;
     }
 
