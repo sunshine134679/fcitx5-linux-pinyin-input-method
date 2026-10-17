@@ -274,7 +274,7 @@ icon_paths = [rootfs / f"usr/share/icons/hicolor/{size}x{size}/apps/modernime.pn
 for icon in icon_paths:
     assert icon.is_file(), f"RPM missing application icon: {icon}"
     assert icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), f"Invalid PNG icon: {icon}"
-expected_regular_files = 19 + len(icon_paths)
+expected_regular_files = 20 + len(icon_paths)
 assert len(payload_reg_files) == expected_regular_files, (
     f"Expected {expected_regular_files} regular files in RPM payload, got {len(payload_reg_files)}"
 )
