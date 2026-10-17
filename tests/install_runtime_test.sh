@@ -301,6 +301,7 @@ guard_package="$test_root/guard-package"
 mkdir -p "$guard_package/scripts" "$test_root/guard-data/modernime"
 cp "$project_root/install.sh" "$guard_package/install.sh"
 cp "$project_root/scripts/install_state.sh" "$guard_package/scripts/install_state.sh"
+cp "$project_root/scripts/install_lifecycle.sh" "$guard_package/scripts/install_lifecycle.sh"
 cat > "$guard_package/scripts/modernime-data-guard" <<'GUARD'
 import os
 with open(os.environ["TEST_GUARD_LOG"], "a") as log:

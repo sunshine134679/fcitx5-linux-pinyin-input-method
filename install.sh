@@ -3,6 +3,9 @@ set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source "$project_root/scripts/install_state.sh"
+if [[ -f "$project_root/scripts/install_lifecycle.sh" ]]; then
+    source "$project_root/scripts/install_lifecycle.sh"
+fi
 
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 explicit_prefix=false
@@ -359,104 +362,28 @@ fi
 # large and must never be copied or restored wholesale.
 src_transaction_dir=$(mktemp -d "${TMPDIR:-/tmp}/modernime-src-transaction.XXXXXX")
 src_stage_dir="$src_transaction_dir/stage"
-src_backup_dir="$src_transaction_dir/backup"
-src_payload_list="$src_transaction_dir/payload"
-src_changed_list="$src_transaction_dir/changed"
-src_created_dirs="$src_transaction_dir/directories"
-src_deployment_started=false
-restore_src_on_failure() {
-    local dest_file rel_path created_dir restore_failed=false
-    printf 'Error encountered during source installation; restoring previous version...\n' >&2
-    while IFS= read -r -d '' rel_path; do
-        dest_file="$prefix/$rel_path"
-        if ! rm -f -- "$dest_file"; then
-            restore_failed=true
-            continue
-        fi
-        if [[ -e "$src_backup_dir/$rel_path" || -L "$src_backup_dir/$rel_path" ]]; then
-            if ! cp -a --remove-destination -- "$src_backup_dir/$rel_path" "$dest_file"; then
-                restore_failed=true
-            fi
-        fi
-    done < "$src_changed_list"
-    # Deeper paths sort after their parents; reverse order removes children first.
-    while IFS= read -r -d '' created_dir; do
-        rmdir -- "$created_dir" 2>/dev/null || true
-    done < <(sort -rz "$src_created_dirs")
-    # Payload deployment never rewrites live learning or user configuration.
-    # Restoring their pre-build snapshot would discard writes made during upgrade.
-    if [[ "$restore_failed" == true ]]; then
-        printf 'Error: Rollback incomplete; recovery files retained at %s\n' "$src_transaction_dir" >&2
-        return 1
-    fi
-    printf 'Rollback to previous version completed.\n' >&2
-}
+deploy_tx_dir="$src_transaction_dir/tx"
+mkdir -p -- "$src_stage_dir" "$deploy_tx_dir"
+
 cleanup_src_transaction() {
-    local exit_code=$? retain_backup=false
+    local exit_code=$?
     trap - EXIT
-    if [[ "$exit_code" -ne 0 && "$src_deployment_started" == true ]]; then
-        if ! restore_src_on_failure; then
-            retain_backup=true
-        fi
-    fi
-    if [[ "$retain_backup" != true ]]; then
+    if [[ -n "${src_transaction_dir:-}" && -d "${src_transaction_dir:-}" ]]; then
         rm -rf -- "$src_transaction_dir"
     fi
     cleanup_desktop_tmp
     exit "$exit_code"
 }
 trap cleanup_src_transaction EXIT
-mkdir -p -- "$src_stage_dir" "$src_backup_dir"
-: > "$src_changed_list"
-: > "$src_created_dirs"
 
 DESTDIR="$src_stage_dir" cmake --install "$build_dir" --prefix "$prefix"
 src_payload_dir="$src_stage_dir/${prefix#/}"
-# A CMake project with no selected install targets can have an empty payload.
 mkdir -p -- "$src_payload_dir"
-find "$src_payload_dir" \( -type f -o -type l \) -print0 > "$src_payload_list"
 
-# Complete every backup before the first live file is replaced. Reject directory
-# and special-file collisions rather than backing up unrelated directory trees.
-while IFS= read -r -d '' src_file; do
-    rel_path=${src_file#"$src_payload_dir/"}
-    dest_file="$prefix/$rel_path"
-    if [[ -e "$dest_file" || -L "$dest_file" ]]; then
-        if [[ ! -f "$dest_file" && ! -L "$dest_file" ]]; then
-            printf 'Error: Install payload destination is not a file: %s\n' "$dest_file" >&2
-            exit 1
-        fi
-        mkdir -p -- "$src_backup_dir/$(dirname -- "$rel_path")"
-        if ! cp -a -- "$dest_file" "$src_backup_dir/$rel_path"; then
-            printf 'Error: Failed to back up %s; installation aborted before deployment.\n' "$dest_file" >&2
-            exit 1
-        fi
-    fi
-done < "$src_payload_list"
-
-src_deployment_started=true
-while IFS= read -r -d '' src_file; do
-    rel_path=${src_file#"$src_payload_dir/"}
-    dest_file="$prefix/$rel_path"
-    parent_dir=$(dirname -- "$dest_file")
-    missing_dir="$parent_dir"
-    while [[ ! -d "$missing_dir" ]]; do
-        printf '%s\0' "$missing_dir" >> "$src_created_dirs"
-        next_dir=$(dirname -- "$missing_dir")
-        [[ "$next_dir" != "$missing_dir" ]] || break
-        missing_dir="$next_dir"
-    done
-    mkdir -p -- "$parent_dir"
-    # Record before copying, since a failed copy may already have replaced the
-    # destination. Unlinking also protects plugins mapped by running Fcitx5.
-    printf '%s\0' "$rel_path" >> "$src_changed_list"
-    cp -a --remove-destination -- "$src_file" "$dest_file"
-done < "$src_payload_list"
-if [[ "${MODERNIME_SIMULATE_INSTALL_FAILURE:-0}" == "1" ]]; then
-    printf 'Error: Simulated mid-upgrade installation failure via MODERNIME_SIMULATE_INSTALL_FAILURE=1\n' >&2
+if ! modernime_deploy_payload "$src_payload_dir" "$prefix" "$deploy_tx_dir"; then
+    printf 'Error: Source payload deployment failed; rollback completed.\n' >&2
     exit 1
 fi
-src_deployment_started=false
 rm -rf -- "$src_transaction_dir"
 trap cleanup_desktop_tmp EXIT
 
@@ -572,110 +499,10 @@ for environment_name in DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUN
     fi
 done
 
-if [[ "$is_system_prefix" != true ]]; then
-    mkdir -p "$desktop_dir"
-    desktop_tmp=$(mktemp "$desktop_dir/.modernime-settings.XXXXXX")
-    {
-        settings_desktop_exec=""
-        if [[ -n "${MODERNIME_CONFIG_HOME:-}" || -n "${MODERNIME_DATA_HOME:-}" ]]; then
-            settings_desktop_exec="env"
-            if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
-                settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home")"
-            fi
-            if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
-                settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_DATA_HOME=$data_home")"
-            fi
-            settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "$prefix/bin/modernime-settings")"
-        else
-            settings_desktop_exec="$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
-        fi
-        printf '%s\n' '[Desktop Entry]'
-        printf '%s\n' 'Type=Application'
-        printf '%s\n' 'Name=ModernIME 设置'
-        printf '%s\n' 'Comment=Configure ModernIME input method'
-        printf 'Exec=%s\n' "$settings_desktop_exec"
-        printf 'Icon=%s\n' "$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
-        printf '%s\n' 'Terminal=false'
-        printf '%s\n' 'Categories=Settings;Utility;'
-    } > "$desktop_tmp"
-    manifest_dir="$prefix/share/modernime"
-    managed_state_dir="$manifest_dir/managed-files"
-    modernime_write_managed_file "$desktop_tmp" "$desktop_shortcut" desktop
-    if [[ "$managed_file_written" == true ]]; then
-        chmod +x "$desktop_shortcut"
-        if command -v gio >/dev/null 2>&1; then
-            gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
-        fi
-    fi
-
-    application_desktop="$prefix/share/applications/modernime-settings.desktop"
-    if [[ -f "$application_desktop" ]]; then
-        MODERNIME_DESKTOP_EXEC="$(modernime_desktop_argument "$prefix/bin/modernime-settings")" \
-        MODERNIME_DESKTOP_ICON="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")" \
-            awk '/^Exec=/ { print "Exec=" ENVIRON["MODERNIME_DESKTOP_EXEC"]; next } /^Icon=/ { print "Icon=" ENVIRON["MODERNIME_DESKTOP_ICON"]; next } { print }' \
-                "$application_desktop" > "$desktop_tmp"
-        cp -- "$desktop_tmp" "$application_desktop"
-    fi
-
-    environment_line="FCITX_ADDON_DIRS=\"$prefix_addon_dir:$system_addon_dir\""
-    {
-        printf '%s\n' "$environment_line"
-        printf 'XDG_DATA_DIRS="%s:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n' "$prefix/share"
-        if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
-            printf 'XDG_CONFIG_HOME="%s"\n' "$config_home"
-        fi
-        if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
-            printf 'XDG_DATA_HOME="%s"\n' "$data_home"
-        fi
-        printf 'GTK_IM_MODULE=fcitx\n'
-        printf 'QT_IM_MODULE=fcitx\n'
-        printf 'XMODIFIERS=@im=fcitx\n'
-        printf 'SDL_IM_MODULE=fcitx\n'
-    } > "$desktop_tmp"
-    modernime_write_managed_file "$desktop_tmp" "$environment_file" environment
-
-    autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d -u modernime-ui"
-    {
-        printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
-        printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
-        printf 'Exec=%s\n' "$autostart_exec"
-        printf '%s\n' 'Terminal=false' 'X-GNOME-Autostart-enabled=true' 'NoDisplay=true'
-    } > "$desktop_tmp"
-    modernime_write_managed_file "$desktop_tmp" "$autostart_file" autostart
-fi
-
-skip_xprofile=false
-case "${MODERNIME_SKIP_XPROFILE:-}" in
-    1|true|TRUE|yes|YES)
-        skip_xprofile=true
-        ;;
-esac
-xprofile_file=${MODERNIME_XPROFILE_FILE:-"$HOME/.xprofile"}
-if [[ -z "${MODERNIME_XPROFILE_FILE:-}" && "$config_home" != "$HOME/.config" ]]; then
-    skip_xprofile=true
-fi
-if [[ "$skip_xprofile" != true && "$is_system_prefix" != true ]]; then
-    cat > "$desktop_tmp" <<EOF
-# BEGIN MODERNIME ENV
-export GTK_IM_MODULE=fcitx
-export QT_IM_MODULE=fcitx
-export XMODIFIERS=@im=fcitx
-export SDL_IM_MODULE=fcitx
-export FCITX_ADDON_DIRS="$prefix_addon_dir:$system_addon_dir"
-export XDG_DATA_DIRS="$prefix/share:\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-# END MODERNIME ENV
-EOF
-    modernime_write_profile_block "$desktop_tmp" "$xprofile_file"
-fi
-
-if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -d "$prefix/share/icons/hicolor" ]]; then
-    gtk-update-icon-cache -q -t -f "$prefix/share/icons/hicolor" 2>/dev/null || true
-fi
-
 manifest_dir="$prefix/share/modernime"
+managed_state_dir="$manifest_dir/managed-files"
 manifest="$manifest_dir/install-manifest.txt"
-channel_file="$manifest_dir/install-channel.txt"
-mkdir -p "$manifest_dir"
+desktop_shortcut="$desktop_dir/modernime-settings.desktop"
 installed_version=${binary_version:-}
 if [[ -z "$installed_version" ]]; then
     installed_version=$(grep -m1 '^PROJECT_VERSION:STATIC=' "$build_dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
@@ -683,43 +510,9 @@ fi
 if [[ -z "$installed_version" ]]; then
     installed_version=$(grep -m1 'project(ModernIME VERSION' "$project_root/CMakeLists.txt" 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo "unknown")
 fi
-{
-    printf 'channel=script\n'
-    printf 'version=%s\n' "$installed_version"
-    printf 'prefix=%s\n' "$prefix"
-} > "$channel_file"
-{
-    printf '%s\n' "$prefix_addon_dir/modernime_fcitx5.so"
-    printf '%s\n' "$prefix_addon_dir/modernime_ui.so"
-    printf '%s\n' "$prefix/share/modernime/pinyin/modernime-knowledge.dict"
-    printf '%s\n' "$prefix/share/modernime/pinyin/modernime-hotwords.dict"
-    printf '%s\n' "$prefix/share/modernime/pinyin/modernime-english-dict.bin"
-    printf '%s\n' "$channel_file"
-    printf '%s\n' "$prefix/share/fcitx5/addon/modernime.conf"
-    printf '%s\n' "$prefix/share/fcitx5/addon/modernime-ui.conf"
-    printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
-    printf '%s\n' "$prefix/bin/modernime-settings"
-    printf '%s\n' "$prefix/bin/modernime-session-init"
-    printf '%s\n' "$prefix/share/modernime/install_state.sh"
-    printf '%s\n' "$prefix/bin/modernime-data-guard"
-    printf '%s\n' "$prefix/bin/modernime-migrate-channel"
-    printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
-    for icon_size in 16 32 48 64 128 256 512; do
-        printf '%s\n' "$prefix/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"
-    done
-    printf '%s\n' "$prefix/share/doc/modernime/LICENSE"
-    printf '%s\n' "$prefix/share/doc/modernime/copyright"
-    printf '%s\n' "$prefix/share/doc/modernime/THIRD_PARTY_NOTICES.md"
-    printf '%s\n' "$prefix/share/doc/modernime/SOURCES.json"
-    if [[ "$is_system_prefix" != true ]]; then
-        printf '%s\n' "$desktop_shortcut"
-        printf '%s\n' "$environment_file"
-        printf '%s\n' "$autostart_file"
-        if [[ -f "$managed_state_dir/xprofile.path" ]]; then
-            cat "$managed_state_dir/xprofile.path"
-        fi
-    fi
-} > "$manifest"
+
+MODERNIME_INSTALLED_VERSION="$installed_version" \
+    modernime_integrate "$prefix" "$config_home" "$desktop_dir" "$managed_state_dir" "$data_home"
 
 if [[ "$is_system_prefix" != true && -x "$prefix/bin/modernime-session-init" ]]; then
     MODERNIME_PREFIX="$prefix" MODERNIME_CONFIG_HOME="$config_home" \
@@ -805,6 +598,8 @@ printf '   export QT_IM_MODULE=fcitx\n'
 printf '   export XMODIFIERS=@im=fcitx\n'
 printf '   export SDL_IM_MODULE=fcitx\n'
 printf '   export FCITX_ADDON_DIRS="%s:%s"\n' "$prefix_addon_dir" "$system_addon_dir"
-if [[ "$skip_xprofile" != true && "$is_system_prefix" != true && -f "$managed_state_dir/xprofile.path" ]]; then
+if [[ "$is_system_prefix" != true && -f "$managed_state_dir/xprofile.path" ]]; then
+    environment_file="$config_home/environment.d/90-modernime.conf"
+    xprofile_file=$(cat "$managed_state_dir/xprofile.path" 2>/dev/null || true)
     printf ' (脚本已自动同步写入至 %s 与 %s)\n' "$environment_file" "$xprofile_file"
 fi

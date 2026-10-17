@@ -35,6 +35,7 @@ echo "modernime-settings 0.1.8"
 EOF
 cp "$project_root/scripts/modernime-session-init" "$payload_pkg/usr/bin/modernime-session-init"
 cp "$project_root/scripts/install_state.sh" "$payload_pkg/usr/share/modernime/install_state.sh"
+cp "$project_root/scripts/install_lifecycle.sh" "$payload_pkg/usr/share/modernime/install_lifecycle.sh"
 cp "$project_root/scripts/modernime-data-guard" "$payload_pkg/usr/bin/modernime-data-guard"
 chmod +x "$payload_pkg/usr/bin/modernime-settings" \
          "$payload_pkg/usr/bin/modernime-session-init" \

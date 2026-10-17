@@ -104,6 +104,7 @@ while IFS= read -r path; do
         "$prefix/bin/modernime-settings"|\
         "$prefix/bin/modernime-session-init"|\
         "$prefix/share/modernime/install_state.sh"|\
+        "$prefix/share/modernime/install_lifecycle.sh"|\
         "$prefix/bin/modernime-data-guard"|\
         "$prefix/bin/modernime-migrate-channel"|\
         "$prefix/share/doc/modernime/LICENSE"|\
@@ -134,16 +135,16 @@ while IFS= read -r path; do
             rm -f -- "$path"
             ;;
         "$recorded_desktop"|"$desktop_shortcut"|*/modernime-settings.desktop)
-            modernime_remove_managed_file "$path" desktop
+            modernime_remove_managed_file "$path" desktop "$managed_state_dir"
             ;;
         "$recorded_environment"|"$environment_file"|*/environment.d/90-modernime.conf)
-            modernime_remove_managed_file "$path" environment
+            modernime_remove_managed_file "$path" environment "$managed_state_dir"
             ;;
         "$recorded_autostart"|"$autostart_file"|*/autostart/modernime-fcitx5-session.desktop)
-            modernime_remove_managed_file "$path" autostart
+            modernime_remove_managed_file "$path" autostart "$managed_state_dir"
             ;;
         "$recorded_xprofile")
-            modernime_remove_profile_block "$path"
+            modernime_remove_profile_block "$path" "$managed_state_dir"
             ;;
         *)
             printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
