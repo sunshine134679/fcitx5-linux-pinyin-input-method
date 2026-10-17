@@ -927,6 +927,9 @@ int main() {
     assertTrue(!deletionProvider.negativeFeedbacks.empty(), "negative feedback triggered for original word");
     assertTrue(deletionProvider.negativeFeedbacks.back().first == "你好", "negative feedback on 你好");
     assertTrue(deletionProvider.negativeFeedbacks.back().second == "ni'hao", "negative feedback on ni'hao");
+    assertTrue(!deletionProvider.commitEvents.empty(), "commit event recorded for retained prefix");
+    assertTrue(deletionProvider.commitEvents.back().text == "你", "positive commit event for retained prefix 你");
+    assertTrue(deletionProvider.commitEvents.back().fullPinyin == "ni", "positive commit event for pinyin ni");
     // Test sensitive context hot reload safety:
     FakeProvider sensitiveProvider;
     RecordingHost sensitiveHost;

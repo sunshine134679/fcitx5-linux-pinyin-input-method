@@ -117,10 +117,6 @@ core::SettingsPaths settingsPaths() {
         home == nullptr ? std::string_view{} : std::string_view(home));
 }
 
-core::ModernIMESettings loadSettings() {
-    return core::SettingsStore::load(settingsPaths().settingsFile).settings;
-}
-
 ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
     return {settings.inputEnabled, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
@@ -394,10 +390,21 @@ void FcitxInputContextState::applySettings(
 }
 
 ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
+    : ModernIMEInputMethod(manager, core::SettingsStore::load(settingsPaths().settingsFile)) {}
+
+ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
+                                           const core::SettingsLoadResult &initResult)
     : manager_(manager),
       instance_(manager == nullptr ? nullptr : manager->instance()),
       clipboardHistory_(settingsPaths().clipboardHistory),
-      settings_(loadSettings()), keyBindings_(keyBindings(settings_)),
+      settingsStamp_(initResult.stamp),
+      userDictionaryStamp_(core::SettingsFileStamp::fromPath(settingsPaths().userDictionary)),
+      appliedVersion_({initResult.isSuccess() ? initResult.contentHash : std::string{}, 0}),
+      settingsLoadFailed_(initResult.isIoError()),
+      settingsRetryCount_(0),
+      settingsGeneration_(0),
+      settings_(initResult.settings),
+      keyBindings_(keyBindings(settings_)),
       stateFactory_([this](fcitx::InputContext &inputContext) {
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
           // 首个输入上下文创建时加入后台预热（通常早已完成），
@@ -429,15 +436,20 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager)
         }).detach();
     }
 #endif
-    {
-        settingsStamp_ = core::SettingsFileStamp::fromPath(settingsPaths().settingsFile);
-        userDictionaryStamp_ = core::SettingsFileStamp::fromPath(settingsPaths().userDictionary);
-        const auto hash = core::computeFileContentHash(settingsPaths().settingsFile);
-        appliedVersion_ = {hash, settingsGeneration_};
+    if (initResult.isSuccess()) {
         writeRuntimeState(
             settingsPaths().runtimeState,
-            hash,
-            settingsGeneration_);
+            initResult.contentHash,
+            0);
+    } else {
+        writeRuntimeState(
+            settingsPaths().runtimeState,
+            "",
+            0);
+        if (initResult.isIoError()) {
+            FCITX_WARN() << "ModernIME initial settings load failed: "
+                         << settingsPaths().settingsFile.string();
+        }
     }
     std::string historyError;
     if (!clipboardHistory_.load(&historyError)) {
@@ -774,10 +786,23 @@ void ModernIMEInputMethod::pollFileChanges() {
     }
     const auto settingsFile = settingsPaths().settingsFile;
     const auto currentStamp = core::SettingsFileStamp::fromPath(settingsFile);
-    if (currentStamp != settingsStamp_ || (settingsLoadFailed_ && settingsRetryCount_ < 5)) {
-        if (settingsLoadFailed_) {
-            ++settingsRetryCount_;
+    const bool stampChanged = (currentStamp != settingsStamp_);
+    bool shouldRetry = false;
+    if (stampChanged) {
+        shouldRetry = true;
+    } else if (settingsLoadFailed_) {
+        // Immediate retries for first 5 attempts (every 2s poll),
+        // then bounded backoff (every 2nd poll, i.e., every 4s) indefinitely.
+        if (settingsRetryCount_ < 5) {
+            shouldRetry = true;
+        } else if ((settingsRetryCount_ - 5) % 2 == 0) {
+            shouldRetry = true;
         }
+    }
+    if (settingsLoadFailed_) {
+        ++settingsRetryCount_;
+    }
+    if (shouldRetry) {
         if (currentStamp.exists) {
             const auto loadResult = core::SettingsStore::load(settingsFile);
             if (loadResult.isSuccess()) {
@@ -791,11 +816,21 @@ void ModernIMEInputMethod::pollFileChanges() {
                     appliedVersion_ = {loadResult.contentHash, settingsGeneration_};
                     writeRuntimeState(settingsPaths().runtimeState, loadResult.contentHash,
                                       settingsGeneration_);
+                    if (instance_ != nullptr) {
+                        if (auto *ic = instance_->inputContextManager().mostRecentInputContext()) {
+                            if (auto *contextState = state(ic)) {
+                                if (contextState->settingsGeneration() != settingsGeneration_) {
+                                    contextState->applySettings(settings_, settingsGeneration_);
+                                }
+                            }
+                        }
+                    }
                     FCITX_INFO() << "ModernIME settings reloaded from "
                                  << settingsFile.string();
                 }
             } else if (loadResult.isIoError()) {
                 settingsLoadFailed_ = true;
+                settingsStamp_ = currentStamp;
                 FCITX_WARN() << "ModernIME failed to read settings from "
                              << settingsFile.string();
             } else if (loadResult.isMissing()) {

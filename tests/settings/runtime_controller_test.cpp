@@ -261,6 +261,59 @@ int main(int argc, char **argv) {
     assertTrue(statusWithState.appliedContentHash == "aabbccdd11223344", "probe reads correct hash");
     assertTrue(statusWithState.settingsGeneration == 42, "probe reads settings generation");
 
+    // Forward/backward compatibility: unknown future fields, comments, extra diagnostic keys
+    {
+        std::ofstream stateOut(runtimeStateFile);
+        stateOut << "# Diagnostic state comment\n"
+                 << "unknown_field_1=custom_val\n"
+                 << "applied_content_hash=0123456789abcdef\n"
+                 << "source=fcitx5-adapter\n"
+                 << "settings_generation=99\n"
+                 << "future_telemetry_key=ok\n";
+    }
+    const auto statusFuture = modernime::settings::RuntimeController::probe(
+        argv[1], runtimeStateFile, baseEnvironment);
+    assertTrue(statusFuture.appliedHashAvailable, "probe finds applied hash with unknown fields");
+    assertTrue(statusFuture.appliedContentHash == "0123456789abcdef", "probe extracts hash correctly");
+    assertTrue(statusFuture.settingsGeneration == 99, "probe extracts generation correctly");
+    assertTrue(statusFuture.available && statusFuture.running, "liveness facts preserved despite unknown fields");
+
+    // Missing hash field: only settings_generation
+    {
+        std::ofstream stateOut(runtimeStateFile);
+        stateOut << "settings_generation=5\n"
+                 << "source=fcitx5-adapter\n";
+    }
+    const auto statusNoHash = modernime::settings::RuntimeController::probe(
+        argv[1], runtimeStateFile, baseEnvironment);
+    assertTrue(!statusNoHash.appliedHashAvailable, "probe reports appliedHashAvailable=false when hash missing");
+    assertTrue(statusNoHash.appliedContentHash.empty(), "probe contentHash is empty");
+    assertTrue(statusNoHash.settingsGeneration == 5, "generation is still parsed");
+
+    // Missing generation: only hash present
+    {
+        std::ofstream stateOut(runtimeStateFile);
+        stateOut << "applied_content_hash=fedcba9876543210\n";
+    }
+    const auto statusNoGen = modernime::settings::RuntimeController::probe(
+        argv[1], runtimeStateFile, baseEnvironment);
+    assertTrue(statusNoGen.appliedHashAvailable, "probe reports appliedHashAvailable=true when hash present");
+    assertTrue(statusNoGen.appliedContentHash == "fedcba9876543210", "probe hash extracted");
+    assertTrue(statusNoGen.settingsGeneration == 0, "default generation 0");
+
+    // Corrupted state file: invalid number, missing '=', blank lines
+    {
+        std::ofstream stateOut(runtimeStateFile);
+        stateOut << "\n"
+                 << "corrupted_line_without_equal\n"
+                 << "settings_generation=not_a_number\n";
+    }
+    const auto statusCorrupt = modernime::settings::RuntimeController::probe(
+        argv[1], runtimeStateFile, baseEnvironment);
+    assertTrue(!statusCorrupt.appliedHashAvailable, "corrupted file has no hash");
+    assertTrue(statusCorrupt.settingsGeneration == 0, "corrupted generation defaults to 0");
+    assertTrue(statusCorrupt.running, "service running status is decoupled from corrupted state file");
+
     // describeSettingsApplication tests
     modernime::settings::RuntimeStatus testStatus;
     testStatus.running = false;
