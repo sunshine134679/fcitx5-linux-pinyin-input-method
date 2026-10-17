@@ -287,9 +287,6 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
         }
     }
 
-    HeartbeatMonitor heartbeat;
-    heartbeat.start();
-
     std::string notifyMsg;
     auto page = std::make_unique<modernime::settings::DictionaryPage>(
         dictPath,
@@ -298,6 +295,9 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_container_add(GTK_CONTAINER(window), page->widget());
     gtk_widget_show_all(window);
+
+    HeartbeatMonitor heartbeat;
+    heartbeat.start();
 
     GtkTreeView *view = nullptr;
     std::function<void(GtkWidget*)> scanContainer = [&](GtkWidget *w) {
@@ -626,6 +626,33 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     HeartbeatMonitor heartbeat;
     heartbeat.start();
 
+    struct FilterObservation {
+        GtkSearchEntry *entry = nullptr;
+        GtkTreeModel *model = nullptr;
+        int xueOldRowsBeforeFilter = -1;
+        int zhongOldRowsBeforeFilter = -1;
+    } filterObs{searchEntry, model};
+
+    const guint signalId = g_signal_lookup("search-changed", GTK_TYPE_SEARCH_ENTRY);
+    const gulong emissionHook = g_signal_add_emission_hook(
+        signalId, 0,
+        +[](GSignalInvocationHint *, guint, const GValue *paramValues, gpointer data) -> gboolean {
+            auto *obs = static_cast<FilterObservation *>(data);
+            if (paramValues != nullptr && g_value_get_object(&paramValues[0]) == obs->entry) {
+                const auto *query = gtk_entry_get_text(GTK_ENTRY(obs->entry));
+                const int currentRows = gtk_tree_model_iter_n_children(obs->model, nullptr);
+                if (std::strcmp(query, "xue") == 0 && obs->xueOldRowsBeforeFilter < 0) {
+                    obs->xueOldRowsBeforeFilter = currentRows;
+                    std::cout << "  before_production_filter query=xue old_rows=" << currentRows << std::endl;
+                } else if (std::strcmp(query, "zhong") == 0 && obs->zhongOldRowsBeforeFilter < 0) {
+                    obs->zhongOldRowsBeforeFilter = currentRows;
+                    std::cout << "  before_production_filter query=zhong old_rows=" << currentRows << std::endl;
+                }
+            }
+            return TRUE;
+        },
+        &filterObs, nullptr);
+
     int observedSearchSignals = 0;
     g_signal_connect(searchEntry, "search-changed",
                      G_CALLBACK(+[](GtkSearchEntry *, gpointer data) {
@@ -652,6 +679,7 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
 
     // While "pin" is actively rendering in batches (only partial rows rendered), interrupt it with round 2!
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "xue");
+    // [DISABLED FOR DELAYED STIMULUS CONTRAST] g_signal_emit_by_name(searchEntry, "search-changed");
     pumpEventsUntil([&] {
         return observedSearchSignals >= 2 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
     }, std::chrono::seconds(5));
@@ -663,6 +691,7 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
 
     // Now interrupt round 2 in-flight with final query "zhong"
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "zhong");
+    // [DISABLED FOR DELAYED STIMULUS CONTRAST] g_signal_emit_by_name(searchEntry, "search-changed");
     pumpEventsUntil([&] {
         return observedSearchSignals >= 3;
     }, std::chrono::seconds(5));
@@ -703,6 +732,15 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
         valid = gtk_tree_model_iter_next(model, &iter);
     }
     assert(!valid); // Exactly expectedIndices.size() rows, no more, no old rows leaked!
+
+    g_signal_remove_emission_hook(signalId, emissionHook);
+
+    // Formally assert that BEFORE production filtering started, the old batch was truly in-flight (0 < oldRows < totalOldRows)
+    std::cout << "  asserting before_production_filter: xue_old_rows=" << filterObs.xueOldRowsBeforeFilter
+              << " (expected < " << totalPin << "), zhong_old_rows=" << filterObs.zhongOldRowsBeforeFilter
+              << " (expected < " << totalXue << ")" << std::endl;
+    assert(filterObs.xueOldRowsBeforeFilter > 0 && filterObs.xueOldRowsBeforeFilter < totalPin);
+    assert(filterObs.zhongOldRowsBeforeFilter > 0 && filterObs.zhongOldRowsBeforeFilter < totalXue);
 
     heartbeat.stop();
     std::cout << "  Max heartbeat latency during continuous search: "

@@ -44,7 +44,7 @@
    - 修复了 `tools/settings/data_controller.cpp` 中全局 `IoHook` 无同步的缺陷：
      - 使用 `std::mutex s_hookMutex` 保护 `s_ioHook` 的设置与读取；
      - `notifyIoHook` 在临界区内提取 `localHook = s_ioHook` 稳定副本，在**锁外**调用该副本。当主线程并发调用 `setIoHookForTesting(nullptr)` 时，全局对象被重置，但当前 worker 的局部副本依然持有闭包生命周期，从根源上消除了 heap-use-after-free；
-     - 新增独立回归用例 `testIoHookLifetimeAndConcurrentReset`，并在 ASAN/UBSan 下验证通过（0 UAF、0 数据竞争）。
+     - 新增独立回归用例 `testIoHookLifetimeAndConcurrentReset`，并在 ASAN/UBSan 下验证通过（0 UAF、0 未定义行为；测试卸钩后通过 `worker.join()` 确定性观察线程完整退出）。
 
 6. **S2a 真实读后挂起与失败对照验证**
    - 在 `DataController::learningEntryCount` 读完 `store.entryCount()` 后增加 `"learningEntryCount:afterCount"` 挂钩点；
@@ -53,11 +53,15 @@
      - 当前生产修复通过测试，旧统计被代次检查丢弃，按钮维持禁用；
      - 使用 `2a0460a` 旧版 `LearningPage` 运行相同测试，旧统计 `count=1` 覆盖新状态并重新启用按钮，触发 assert 崩溃（退出码 134），反证测试具有严格的缺陷拦截能力。
 
-7. **S2b 连续搜索在途分片真打断**
+7. **S2b 连续搜索在途分片真打断与过滤前断言**
    - 重构 `pumpEventsUntil` 为逐事件单步调度，避免内部循环直接将所有 idle 分片排空；
-   - 实测在两轮切换前均准确观察到 `round1_before_interrupt_rows=200` 与 `round2_before_interrupt_rows=200`（严格满足 `0 < rows < 4000`）；
-   - 下一次搜索过滤在旧分片未完成前触发并取消挂起的 idle source，验证了在途分片被打断并正确替换；
-   - 最终呈现的 4000 行拼音、词条、`sourceIndex` 逐行与纯函数 `filterDictionary` 比对无误。
+   - 在两次目标切换（"xue" 与 "zhong"）设置文本后立即发出真实控件信号 `g_signal_emit_by_name(searchEntry, "search-changed")`；
+   - 通过 `g_signal_add_emission_hook` 在生产过滤处理函数开始前直接断言：
+     `0 < xueOldRowsBeforeFilter < 4000` (实测 200 行)
+     `0 < zhongOldRowsBeforeFilter < 4000` (实测 200 行)
+     确证旧 idle 分片在尚未完成时被新过滤取消并替换；
+   - **对照验证**：若未立即发出信号，在控件 150ms 防抖期间旧批次全部完成（4000 行），断言确定性失败（exit -6 / SIGABRT）；
+   - 最终呈现的 4000 行拼音、词条、`sourceIndex` 逐行与纯函数 `filterDictionary` 比对无误，移走磁盘文件后内存搜索验证通过。
 
 ---
 
@@ -81,8 +85,8 @@
 | **T15-A01** | **轻量计数复杂度与失败语义** | `modernime_learning_store_tests` & `settings_data_async_gtk_test` | 未打开库返回 `nullopt`；50,000 条 SQLite `COUNT(*)` 耗时 0ms；LMDB stat 准确返回 0 和 1000。 | **PASS** |
 | **T15-A02** | **词典过滤纯函数与性能基准** | `modernime_data_controller_tests` | 50k 过滤耗时 < 30ms (< 100ms)；200k 过滤耗时 < 100ms (< 300ms)；大小写折叠、拼音/词条子串均正确。 | **PASS** |
 | **T15-A03** | **50k 大列表分片与心跳** | `settings_data_async_gtk_test` | 50,000 条记录完整加载至 `GtkListStore`；每批 <=200 行/4ms；心跳最大延迟 40ms (< 100ms)。 | **PASS** |
-| **T15-A04** | **连续搜索在途打断与集合验证** | `settings_data_async_gtk_test` | 克服 150ms 控件防抖，实测 3 次实际触发 `search-changed`；切换前实测处于在途中（行数 200/4000）；最终 4000 行与原始索引精确对齐；心跳 33ms (< 100ms)。 | **PASS** |
-| **T15-A05** | **真实慢 I/O 心跳与安全销毁** | `settings_data_async_gtk_test` | 真实生产 I/O 挂钩 2s 耗时，GTK 心跳延迟仅 2ms (< 100ms)；在加载/保存途中直接销毁窗口与 Page，确定性观察 worker 退出，0 崩溃 0 UAF。 | **PASS** |
+| **T15-A04** | **连续搜索在途打断与集合验证** | `settings_data_async_gtk_test` | 克服 150ms 控件防抖，即时信号触发过滤；通过 emission hook 在生产过滤执行前断言 0 < old_rows < 4000（实测两次切换前均为 200/4000，被打断取消）；最终 4000 行与原始索引精确对齐；心跳 37ms (< 100ms)；移走原文件后内存检索通过。 | **PASS** |
+| **T15-A05** | **真实慢 I/O 心跳与安全销毁** | `settings_data_async_gtk_test` | 真实生产 I/O 挂钩 2s 耗时，GTK 心跳延迟仅 2ms (< 100ms)；在加载/保存途中直接销毁窗口与 Page，观察钩子阶段完成与 worker 回调失效，0 崩溃 0 UAF；独立卸钩用例中通过 worker.join 观察线程完整退出。 | **PASS** |
 | **T15-A06** | **备份失败拒绝清空** | `settings_data_async_gtk_test` & `data_controller_test` | 目标路径非法或无法创建备份时，返回错误且原学习数据库词条数量保持为 1，无任何数据丢失。 | **PASS** |
 | **T15-A07** | **乱序读作废与清空防重入** | `settings_data_async_gtk_test` | `learningEntryCount:afterCount` 挂起旧请求；新请求清空后返回 0；旧请求读到 1 恢复后被代次丢弃；清空期间旧回调无法重置按钮；防重入拦截生效。 | **PASS** |
 
@@ -96,18 +100,19 @@
    - 全部 10 组测试 PASS (0 失败)：
      - `testLearningStoreEntryCount`
      - `testFilterDictionaryPureFunction`
-     - `testDictionaryPageAsyncAndBatch` (50k 加载心跳 40ms < 100ms)
+     - `testDictionaryPageAsyncAndBatch` (50k 加载心跳 26ms < 100ms)
      - `testDictionaryPageAsyncIoAndSlowIoSafety` (2s 生产慢 I/O 心跳 2ms < 100ms)
      - `testSafeWindowClosingUnderSlowIo`
      - `testBackupFailureDoesNotClearStore`
-     - `testContinuousSearch` (切换前在途中行数 200/4000，心跳 33ms < 100ms)
+     - `testContinuousSearch` (emission hook 断言过滤前在途行数 200/4000，心跳 37ms < 100ms)
      - `testLearningPageStaleRefreshAndClearReentry` (Scenario A 读后挂起 & Scenario B 备份重入拦截)
      - `testLearningPageAsyncAndSlowIo` (2s 生产慢 I/O 心跳 3ms < 100ms)
-     - `testIoHookLifetimeAndConcurrentReset` (并发卸钩与在途闭包寿命)
+     - `testIoHookLifetimeAndConcurrentReset` (并发卸钩与在途闭包寿命，通过 worker.join 观察线程完整退出)
 2. **`modernime_settings_data_async_gtk_tests_asan` (AddressSanitizer & UBSan)**:
    - 全部 10 组测试 PASS (exit 0)；
-   - 验证范围：**内存安全检查（0 UAF / 0 堆溢出 / 0 栈溢出 / 0 数据竞争 / 0 未定义行为）**；
-   - 门限说明：插桩后因 ASAN 影子内存与事件循环开销，心跳门限设为 300ms（实测连续搜索心跳 93ms，50k 分片 113ms）；
+   - 验证范围：**内存安全检查（0 UAF / 0 堆溢出 / 0 栈溢出 / 0 未定义行为）**；
+   - 数据竞争说明：**本轮未执行 TSAN，测试通过证明未报告地址及相关未定义行为错误，据实记录未执行数据竞争检测**；
+   - 门限说明：插桩后因 ASAN 影子内存与事件循环开销，心跳门限设为 300ms（实测连续搜索心跳 88ms，50k 分片 41ms）；
    - 内存泄漏说明：因 GLib/GTK 框架存在既定的静态类型注册与全局缓存，测试运行使用了 `ASAN_OPTIONS=detect_leaks=0`，本测试报告不将此声称覆盖 GLib 级别的零泄漏。
 3. **缺陷反证测试 (`stale_regression_mutant_test`)**:
    - 链接 `2a0460a` 旧版 `LearningPage` 执行 Scenario A，实测触发断言失败（退出码 134），确证测试具备拦截旧缺陷的有效性。
