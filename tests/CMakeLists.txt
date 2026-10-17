@@ -6,6 +6,8 @@ else()
     add_compile_options(-UNDEBUG)
 endif()
 
+enable_language(C)
+find_package(SQLite3 REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME modernime_required_tests_contract

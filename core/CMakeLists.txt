@@ -44,7 +44,7 @@ if(NOT LMDB_INCLUDE_DIR OR NOT LMDB_LIBRARY)
     message(FATAL_ERROR "LMDB (liblmdb-dev / lmdb-devel) is required to build modernime_core")
 endif()
 if(NOT TARGET LMDB::LMDB)
-    add_library(LMDB::LMDB UNKNOWN IMPORTED)
+    add_library(LMDB::LMDB UNKNOWN IMPORTED GLOBAL)
     set_target_properties(LMDB::LMDB PROPERTIES
         IMPORTED_LOCATION "${LMDB_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${LMDB_INCLUDE_DIR}"
