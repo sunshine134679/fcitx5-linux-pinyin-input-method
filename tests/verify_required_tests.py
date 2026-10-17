@@ -51,6 +51,8 @@ FULL_FINAL_ADDITIONAL = [
     "modernime_configuration_contract",
     "modernime_process_runner",
     "modernime_settings_data_async_gtk",
+    "modernime_ui_addon",
+    "modernime_adapter_recovery",
 ]
 
 STORAGE_TSAN_REQUIRED = [
@@ -82,6 +84,7 @@ HEADLESS_SKIP_WHITELIST = {
     "modernime_settings_shell_gtk",
     "modernime_settings_save_gtk",
     "modernime_settings_data_async_gtk",
+    "modernime_ui_addon",
 }
 
 FINAL_REQUIRED_GTEST_SUITES = [

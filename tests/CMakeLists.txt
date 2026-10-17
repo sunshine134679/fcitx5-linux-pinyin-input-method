@@ -16,6 +16,9 @@ add_executable(modernime_settings_tests core/settings_test.cpp)
 target_link_libraries(modernime_settings_tests PRIVATE modernime_core)
 add_test(NAME modernime_settings COMMAND modernime_settings_tests)
 
+add_executable(modernime_db_fixture_helper core/db_fixture_helper.cpp)
+target_link_libraries(modernime_db_fixture_helper PRIVATE modernime_core SQLite::SQLite3 LMDB::LMDB)
+
 if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     add_test(NAME modernime_configuration_contract
         COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_test.sh" --build-dir "${CMAKE_BINARY_DIR}"
@@ -736,6 +739,31 @@ if(MODERNIME_BUILD_FCITX5)
     add_test(NAME modernime_key_translation
         COMMAND modernime_key_translation_tests
     )
+
+    find_package(Fcitx5Config REQUIRED)
+
+    add_library(config_fault_hooks SHARED adapter/config_fault_hooks.c)
+    target_link_libraries(config_fault_hooks PRIVATE ${CMAKE_DL_LIBS})
+
+    add_executable(modernime_adapter_recovery_tests
+        adapter/adapter_recovery_test.cpp
+        ../adapter/fcitx5/src/inputmethod.cpp
+        ../adapter/fcitx5/src/engine.cpp
+    )
+    target_include_directories(modernime_adapter_recovery_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+    )
+    target_link_libraries(modernime_adapter_recovery_tests
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Config Fcitx5::Utils SQLite::SQLite3 LMDB::LMDB ${CMAKE_DL_LIBS} pthread
+    )
+    if(MODERNIME_BUILD_LIBIME_PINYIN)
+        target_compile_definitions(modernime_adapter_recovery_tests PRIVATE
+            MODERNIME_HAS_LIBIME_PINYIN=1
+        )
+        target_link_libraries(modernime_adapter_recovery_tests PRIVATE modernime_pinyin)
+    endif()
+    add_dependencies(modernime_adapter_recovery_tests config_fault_hooks)
+    add_test(NAME modernime_adapter_recovery COMMAND modernime_adapter_recovery_tests)
 endif()
 
 if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
@@ -780,6 +808,57 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     )
     target_link_libraries(modernime_cairo_surface_tests PRIVATE modernime_ui_layout)
     add_test(NAME modernime_cairo_surface COMMAND modernime_cairo_surface_tests)
+
+    if(MODERNIME_BUILD_FCITX5)
+        pkg_check_modules(GTK3 QUIET IMPORTED_TARGET gtk+-3.0)
+        pkg_check_modules(PANGOCAIRO QUIET IMPORTED_TARGET pangocairo)
+        if(GTK3_FOUND AND PANGOCAIRO_FOUND)
+            pkg_check_modules(AYATANA_APPINDICATOR QUIET IMPORTED_TARGET ayatana-appindicator3-0.1)
+            set(UI_TEST_APPINDICATOR_TARGET "")
+            set(UI_TEST_APPINDICATOR_DEF "")
+            if(AYATANA_APPINDICATOR_FOUND)
+                set(UI_TEST_APPINDICATOR_TARGET PkgConfig::AYATANA_APPINDICATOR)
+                set(UI_TEST_APPINDICATOR_DEF "MODERNIME_USE_AYATANA_APPINDICATOR")
+            else()
+                pkg_check_modules(APPINDICATOR QUIET IMPORTED_TARGET appindicator3-0.1)
+                if(APPINDICATOR_FOUND)
+                    set(UI_TEST_APPINDICATOR_TARGET PkgConfig::APPINDICATOR)
+                    set(UI_TEST_APPINDICATOR_DEF "MODERNIME_USE_APPINDICATOR")
+                endif()
+            endif()
+
+            add_executable(modernime_ui_addon_tests
+                ui/ui_addon_test.cpp
+                ../ui/fcitx5/src/ui_addon.cpp
+            )
+            target_include_directories(modernime_ui_addon_tests PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+            )
+            target_link_libraries(modernime_ui_addon_tests PRIVATE
+                modernime_ui_layout
+                modernime_core
+                Fcitx5::Core
+                Fcitx5::Config
+                Fcitx5::Utils
+                PkgConfig::GTK3
+                PkgConfig::PANGOCAIRO
+                SQLite::SQLite3
+                LMDB::LMDB
+            )
+            if(UI_TEST_APPINDICATOR_TARGET)
+                target_link_libraries(modernime_ui_addon_tests PRIVATE ${UI_TEST_APPINDICATOR_TARGET})
+                target_compile_definitions(modernime_ui_addon_tests PRIVATE ${UI_TEST_APPINDICATOR_DEF})
+            endif()
+            add_test(NAME modernime_ui_addon COMMAND modernime_ui_addon_tests)
+            set_tests_properties(modernime_ui_addon PROPERTIES
+                RESOURCE_LOCK modernime_gtk_display
+                TIMEOUT 20
+                SKIP_RETURN_CODE 77
+            )
+        endif()
+    endif()
 endif()
 
 if(BASH_EXECUTABLE)
