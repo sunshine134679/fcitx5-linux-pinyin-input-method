@@ -51,7 +51,7 @@
 
 | 契约项 | 接口 / 协议细节 | 行为语义 |
 |---|---|---|
-| **轻量学习词条计数** | `std::optional<std::size_t> LearningStore::entryCount() const` | O(1) SQL `COUNT(*)` 或 LMDB `mdb_stat`；未打开或失败返回 `nullopt`，不返回伪造 0；不构造 `LearningSnapshot`。 |
+| **轻量学习词条计数** | `std::optional<std::size_t> LearningStore::entryCount() const` | 轻量 SQL `COUNT(*)`（遍历 B-tree 叶子节点，避免构造 `LearningSnapshot`，常用量级毫秒级返回）或 LMDB `mdb_stat`（O(1)）；未打开或失败返回 `nullopt`，不返回伪造 0。 |
 | **词典检索纯函数** | `std::vector<std::size_t> filterDictionary(std::span<const pinyin::UserDictionaryEntry> entries, std::string_view query)` | 纯内存计算，大小写折叠，返回满足匹配的词条原始索引；不触发任何磁盘 I/O。 |
 | **异步加载与分片** | `DictionaryPage::refresh()` / `applyFilter()` / `onBatchIdle` | 磁盘异步读取；批次渲染每片 `<= 200` 行或 `<= 4ms`；代次 `loadGeneration` / `batchGeneration` 拦截作废批次。 |
 | **生命周期安全失活** | `detail::DiagnosticsLifetime<Impl>` 与 `~Impl()` | 页面析构时调用 `deactivate()` 并移除 active idle source；异步回调通过 `withOwner` 守卫，杜绝 UAF。 |
@@ -59,16 +59,17 @@
 
 ---
 
-## 3. 契约关卡逐项实测表现 (T15-A01 ~ A06)
+## 3. 契约关卡逐项实测表现 (T15-A01 ~ A07)
 
 | 关卡代号 | 契约要求 | 验证执行方式 | 实测表现 | 结论 |
 |---|---|---|---|---|
 | **T15-A01** | **轻量计数复杂度与失败语义** | `modernime_learning_store_tests` & `settings_data_async_gtk_test` | 未打开库返回 `nullopt`；50,000 条 SQLite `COUNT(*)` 耗时 0ms；LMDB stat 准确返回 0 和 1000。 | **PASS** |
 | **T15-A02** | **词典过滤纯函数与性能基准** | `modernime_data_controller_tests` | 50k 过滤耗时 < 30ms (< 100ms)；200k 过滤耗时 < 100ms (< 300ms)；大小写折叠、拼音/词条子串均正确。 | **PASS** |
-| **T15-A03** | **50k 大列表分片与心跳** | `settings_data_async_gtk_test` | 50,000 条记录完整加载至 `GtkListStore`；每批 <=200 行/4ms；心跳最大延迟 16ms (< 100ms)。 | **PASS** |
-| **T15-A04** | **连续搜索打断与旧批次作废** | `settings_data_async_gtk_test` | 连续快速输入 6 次搜索关键词；旧批次被 `batchGeneration` 立即拦截作废；心跳 33ms (< 100ms)；最终结果精准对齐。 | **PASS** |
-| **T15-A05** | **慢 I/O 响应与关闭无 UAF** | `settings_data_async_gtk_test` | 模拟 2s 耗时后台任务，GTK 心跳延迟仅 2ms (< 100ms)；在刷新/清理中途直接销毁窗口与 Page，0 崩溃 0 UAF。 | **PASS** |
+| **T15-A03** | **50k 大列表分片与心跳** | `settings_data_async_gtk_test` | 50,000 条记录完整加载至 `GtkListStore`；每批 <=200 行/4ms；心跳最大延迟 15ms (< 100ms)。 | **PASS** |
+| **T15-A04** | **连续搜索打断与集合验证** | `settings_data_async_gtk_test` | 克服 150ms 控件防抖，实测 3 次实际触发 `search-changed`；在途批次被立即打断拦截；心跳 27ms (< 100ms)；最终 4000 行与原始索引精确对齐。 | **PASS** |
+| **T15-A05** | **真实慢 I/O 心跳与安全销毁** | `settings_data_async_gtk_test` | 真实生产 I/O 挂钩 2s 耗时，GTK 心跳延迟仅 4ms (< 100ms)；在加载/保存途中直接销毁窗口与 Page，ASAN 验证 0 崩溃 0 UAF。 | **PASS** |
 | **T15-A06** | **备份失败拒绝清空** | `settings_data_async_gtk_test` & `data_controller_test` | 目标路径非法或无法创建备份时，返回错误且原学习数据库词条数量保持为 1，无任何数据丢失。 | **PASS** |
+| **T15-A07** | **乱序读作废与清空防重入** | `settings_data_async_gtk_test` | `refreshGeneration_` 拦截旧代统计回调，旧读决不覆盖新状态；`isClearing_` 阻断重入，清空期间旧回调决不重新放行按钮。 | **PASS** |
 
 ---
 
@@ -78,8 +79,9 @@
 
 1. **`modernime_learning_store_tests`**: PASS (0 失败)
 2. **`modernime_data_controller_tests`**: PASS (0 失败，包含 50k/200k 过滤基准测试)
-3. **`modernime_settings_data_async_gtk`**: PASS (全部 7 组综合测试通过，包含 50k 分片、连续搜索、2s 慢 I/O 心跳、无头检测 77 机制等)
-4. **既有页面与模型测试回归**：
+3. **`modernime_settings_data_async_gtk`**: PASS (全部 9 组综合测试通过，包含 50k 分片、连续搜索打断、2s 真实慢 I/O 心跳、无头检测 77 机制、R1 固化测试等)
+4. **`modernime_settings_data_async_gtk_tests_asan` (AddressSanitizer)**: PASS (0 leaks / 0 UAF / 0 heap-use-after-free)
+5. **既有页面与模型测试回归**：
    - `modernime_learning_page_contract_tests`: PASS
    - `modernime_dictionary_page_contract_tests`: PASS
    - `modernime_settings_tests`: PASS

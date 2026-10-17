@@ -359,10 +359,11 @@ public:
     }
 
     void setButtonsSensitive(bool sensitive) {
-        if (addButton != nullptr) gtk_widget_set_sensitive(addButton, sensitive);
-        if (importButton != nullptr) gtk_widget_set_sensitive(importButton, sensitive);
-        if (exportButton != nullptr) gtk_widget_set_sensitive(exportButton, sensitive);
-        if (!sensitive) {
+        const bool allow = sensitive && !operationInProgress;
+        if (addButton != nullptr) gtk_widget_set_sensitive(addButton, allow);
+        if (importButton != nullptr) gtk_widget_set_sensitive(importButton, allow);
+        if (exportButton != nullptr) gtk_widget_set_sensitive(exportButton, allow);
+        if (!allow) {
             if (editButton != nullptr) gtk_widget_set_sensitive(editButton, FALSE);
             if (deleteButton != nullptr) gtk_widget_set_sensitive(deleteButton, FALSE);
         } else {
@@ -522,11 +523,18 @@ private:
     }
 
     static void onAdd(GtkButton *, gpointer data) {
-        static_cast<Impl *>(data)->editEntry(std::nullopt);
+        auto *impl = static_cast<Impl *>(data);
+        if (impl->operationInProgress) {
+            return;
+        }
+        impl->editEntry(std::nullopt);
     }
 
     static void onEdit(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
+        if (impl->operationInProgress) {
+            return;
+        }
         const auto selected = impl->selectedIndex();
         if (!selected.has_value()) {
             impl->notifyMessage("请先选择要编辑的词条");
@@ -537,6 +545,9 @@ private:
 
     static void onDelete(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
+        if (impl->operationInProgress) {
+            return;
+        }
         const auto selected = impl->selectedIndex();
         if (!selected.has_value()) {
             impl->notifyMessage("请先选择要删除的词条");
@@ -554,42 +565,93 @@ private:
         if (response != GTK_RESPONSE_YES) {
             return;
         }
+        if (impl->operationInProgress) {
+            return;
+        }
         auto entries = impl->dictionaryEntries;
         entries.erase(entries.begin() +
                       static_cast<std::ptrdiff_t>(*selected));
-        impl->saveEntries(entries);
+        impl->saveEntriesAsync(std::move(entries), "词条已删除；输入法会自动读取（约 2 秒）");
     }
 
-    static void onImport(GtkButton *, gpointer data) {
-        auto *impl = static_cast<Impl *>(data);
-        auto *fileChooser = gtk_file_chooser_dialog_new(
-            "导入用户词典", impl->parentWindow(), GTK_FILE_CHOOSER_ACTION_OPEN,
-            "取消", GTK_RESPONSE_CANCEL, "下一步", GTK_RESPONSE_ACCEPT, nullptr);
-        setDialogResponseAccessibility(GTK_DIALOG(fileChooser), GTK_RESPONSE_CANCEL,
-                                       "取消", "关闭文件选择器且不导入词典");
-        setDialogResponseAccessibility(
-            GTK_DIALOG(fileChooser), GTK_RESPONSE_ACCEPT, "下一步",
-            "读取选中的文本文件并生成合并预览");
-        gchar *filename = nullptr;
-        if (gtk_dialog_run(GTK_DIALOG(fileChooser)) == GTK_RESPONSE_ACCEPT) {
-            filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(fileChooser));
-        }
-        gtk_widget_destroy(fileChooser);
-        if (filename == nullptr) {
-            return;
-        }
+    struct ImportPreviewTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        uint64_t generation = 0;
+        std::filesystem::path filename;
+        std::vector<pinyin::UserDictionaryEntry> currentEntries;
+        DictionaryImportPreview preview;
+    };
 
-        const auto preview = DataController::previewDictionaryImport(
-            filename, impl->dictionaryEntries);
-        g_free(filename);
-
-        if (!preview.valid) {
-            impl->notifyMessage(preview.error.empty() ? "导入失败：文件格式无效" : preview.error);
-            return;
+    static void onImportPreviewFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *taskData = static_cast<ImportPreviewTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (taskData != nullptr) {
+            const auto gen = taskData->generation;
+            taskData->lifetime->withOwner([taskData, gen](Impl &owner) {
+                if (gen != owner.operationGeneration) {
+                    return;
+                }
+                if (!taskData->preview.valid) {
+                    owner.operationInProgress = false;
+                    owner.setButtonsSensitive(true);
+                    owner.updateActionState();
+                    owner.notifyMessage(taskData->preview.error.empty()
+                                            ? "导入失败：文件格式无效"
+                                            : taskData->preview.error);
+                    return;
+                }
+                owner.showImportOptionsDialog(std::move(taskData->preview));
+            });
+            delete taskData;
         }
+    }
 
+    struct ImportSaveTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        uint64_t generation = 0;
+        std::filesystem::path path;
+        bool isReplace = false;
+        DictionaryConflictPolicy policy = DictionaryConflictPolicy::KeepExisting;
+        std::vector<pinyin::UserDictionaryEntry> parsedEntries;
+        std::vector<pinyin::UserDictionaryEntry> currentEntries;
+        std::size_t newEntries = 0;
+        std::size_t conflictEntries = 0;
+        bool success = false;
+        std::filesystem::path backupPath;
+        std::string error;
+        std::string successMessage;
+    };
+
+    static void onImportSaveFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *taskData = static_cast<ImportSaveTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (taskData != nullptr) {
+            const auto gen = taskData->generation;
+            taskData->lifetime->withOwner([taskData, gen](Impl &owner) {
+                if (gen != owner.operationGeneration) {
+                    return;
+                }
+                owner.operationInProgress = false;
+                if (taskData->success) {
+                    owner.notifyMessage(taskData->successMessage);
+                    owner.refresh();
+                } else {
+                    owner.notifyMessage(taskData->error.empty() ? "导入词典保存失败" : taskData->error);
+                    owner.setButtonsSensitive(true);
+                    owner.updateActionState();
+                }
+            });
+            delete taskData;
+        }
+    }
+
+    void showImportOptionsDialog(DictionaryImportPreview preview) {
         auto *dialog = gtk_dialog_new_with_buttons(
-            "导入个人词典", impl->parentWindow(), GTK_DIALOG_MODAL,
+            "导入个人词典", parentWindow(), GTK_DIALOG_MODAL,
             "取消", GTK_RESPONSE_CANCEL, "确认导入", GTK_RESPONSE_ACCEPT, nullptr);
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
                                        "取消", "关闭导入对话框且不修改词典");
@@ -672,7 +734,10 @@ private:
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         if (response != GTK_RESPONSE_ACCEPT) {
             gtk_widget_destroy(dialog);
-            impl->notifyMessage("已取消导入，现有词典未修改");
+            operationInProgress = false;
+            setButtonsSensitive(true);
+            updateActionState();
+            notifyMessage("已取消导入，现有词典未修改");
             return;
         }
 
@@ -684,36 +749,136 @@ private:
         }
         gtk_widget_destroy(dialog);
 
-        if (isReplace) {
-            std::filesystem::path backupPath;
-            std::string backupError;
-            if (!DataController::createDictionaryBackup(impl->path, &backupPath, &backupError)) {
-                impl->notifyMessage("整体替换已中止：无法创建词典备份（" + backupError + "）");
-                return;
-            }
-            if (impl->saveEntries(preview.parsedEntries)) {
-                impl->notifyMessage("已整体替换个人词典（原词典已自动备份至 " +
-                                    backupPath.filename().string() + "）");
-            }
-        } else {
-            const auto merged = DataController::mergeDictionary(
-                impl->dictionaryEntries, preview.parsedEntries, policy);
-            if (impl->saveEntries(merged)) {
-                std::ostringstream msg;
-                msg << "已成功合并导入 " << preview.newEntries << " 条新词条";
-                if (preview.conflictEntries > 0) {
-                    msg << "（" << (policy == DictionaryConflictPolicy::OverwriteWithImport
-                                        ? "已覆盖 "
-                                        : "已保留现有 ")
-                        << preview.conflictEntries << " 条冲突词条）";
+        operationInProgress = true;
+        ++operationGeneration;
+        setButtonsSensitive(false);
+
+        auto *saveTaskData = new ImportSaveTaskData{
+            lifetime, operationGeneration, path, isReplace, policy,
+            std::move(preview.parsedEntries), dictionaryEntries,
+            preview.newEntries, preview.conflictEntries,
+            false, {}, {}, {}
+        };
+
+        auto *saveTask = g_task_new(nullptr, nullptr, onImportSaveFinished, nullptr);
+        g_task_set_task_data(saveTask, saveTaskData, nullptr);
+        g_task_run_in_thread(saveTask, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
+            auto *td = static_cast<ImportSaveTaskData *>(task_data);
+            if (td->isReplace) {
+                std::filesystem::path backupPath;
+                std::string backupError;
+                if (!DataController::createDictionaryBackup(td->path, &backupPath, &backupError)) {
+                    td->error = "整体替换已中止：无法创建词典备份（" + backupError + "）";
+                    td->success = false;
+                } else {
+                    td->backupPath = backupPath;
+                    td->success = DataController::saveDictionary(td->path, td->parsedEntries, &td->error);
+                    if (td->success) {
+                        td->successMessage = "已整体替换个人词典（原词典已自动备份至 " +
+                                            backupPath.filename().string() + "）";
+                    }
                 }
-                impl->notifyMessage(msg.str());
+            } else {
+                const auto merged = DataController::mergeDictionary(
+                    td->currentEntries, td->parsedEntries, td->policy);
+                td->success = DataController::saveDictionary(td->path, merged, &td->error);
+                if (td->success) {
+                    std::ostringstream msg;
+                    msg << "已成功合并导入 " << td->newEntries << " 条新词条";
+                    if (td->conflictEntries > 0) {
+                        msg << "（" << (td->policy == DictionaryConflictPolicy::OverwriteWithImport
+                                            ? "已覆盖 "
+                                            : "已保留现有 ")
+                            << td->conflictEntries << " 条冲突词条）";
+                    }
+                    td->successMessage = msg.str();
+                }
             }
+            g_task_return_pointer(t, td, nullptr);
+        });
+        g_object_unref(saveTask);
+    }
+
+    static void onImport(GtkButton *, gpointer data) {
+        auto *impl = static_cast<Impl *>(data);
+        if (impl->operationInProgress) {
+            return;
+        }
+        auto *fileChooser = gtk_file_chooser_dialog_new(
+            "导入用户词典", impl->parentWindow(), GTK_FILE_CHOOSER_ACTION_OPEN,
+            "取消", GTK_RESPONSE_CANCEL, "下一步", GTK_RESPONSE_ACCEPT, nullptr);
+        setDialogResponseAccessibility(GTK_DIALOG(fileChooser), GTK_RESPONSE_CANCEL,
+                                       "取消", "关闭文件选择器且不导入词典");
+        setDialogResponseAccessibility(
+            GTK_DIALOG(fileChooser), GTK_RESPONSE_ACCEPT, "下一步",
+            "读取选中的文本文件并生成合并预览");
+        gchar *filename = nullptr;
+        if (gtk_dialog_run(GTK_DIALOG(fileChooser)) == GTK_RESPONSE_ACCEPT) {
+            filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(fileChooser));
+        }
+        gtk_widget_destroy(fileChooser);
+        if (filename == nullptr) {
+            return;
+        }
+
+        impl->operationInProgress = true;
+        ++impl->operationGeneration;
+        impl->setButtonsSensitive(false);
+
+        auto *previewTaskData = new ImportPreviewTaskData{
+            impl->lifetime, impl->operationGeneration, std::filesystem::path(filename),
+            impl->dictionaryEntries, {}
+        };
+        g_free(filename);
+
+        auto *task = g_task_new(nullptr, nullptr, onImportPreviewFinished, nullptr);
+        g_task_set_task_data(task, previewTaskData, nullptr);
+        g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
+            auto *td = static_cast<ImportPreviewTaskData *>(task_data);
+            td->preview = DataController::previewDictionaryImport(td->filename, td->currentEntries);
+            g_task_return_pointer(t, td, nullptr);
+        });
+        g_object_unref(task);
+    }
+
+    struct ExportTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        uint64_t generation = 0;
+        std::filesystem::path filename;
+        std::vector<pinyin::UserDictionaryEntry> entries;
+        bool success = false;
+        std::string error;
+    };
+
+    static void onExportFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *taskData = static_cast<ExportTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (taskData != nullptr) {
+            const auto gen = taskData->generation;
+            taskData->lifetime->withOwner([taskData, gen](Impl &owner) {
+                if (gen != owner.operationGeneration) {
+                    return;
+                }
+                owner.operationInProgress = false;
+                owner.setButtonsSensitive(true);
+                owner.updateActionState();
+                if (taskData->success) {
+                    owner.notifyMessage("用户词典已导出");
+                } else {
+                    owner.notifyMessage(taskData->error.empty() ? "导出用户词典失败" : taskData->error);
+                }
+            });
+            delete taskData;
         }
     }
 
     static void onExport(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
+        if (impl->operationInProgress) {
+            return;
+        }
         auto *dialog = gtk_file_chooser_dialog_new(
             "导出用户词典", impl->parentWindow(), GTK_FILE_CHOOSER_ACTION_SAVE,
             "取消", GTK_RESPONSE_CANCEL, "导出", GTK_RESPONSE_ACCEPT, nullptr);
@@ -722,22 +887,34 @@ private:
         setDialogResponseAccessibility(
             GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "导出",
             "将当前个人词典写入选择的文件");
-        gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dialog),
-                                                       TRUE);
+        gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dialog), TRUE);
+        gchar *filename = nullptr;
         if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-            const auto filename =
-                gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
-            std::string error;
-            if (DataController::saveDictionary(filename,
-                                               impl->dictionaryEntries,
-                                               &error)) {
-                impl->notifyMessage("用户词典已导出");
-            } else {
-                impl->notifyMessage(error);
-            }
-            g_free(filename);
+            filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
         }
         gtk_widget_destroy(dialog);
+        if (filename == nullptr) {
+            return;
+        }
+
+        impl->operationInProgress = true;
+        ++impl->operationGeneration;
+        impl->setButtonsSensitive(false);
+
+        auto *taskData = new ExportTaskData{
+            impl->lifetime, impl->operationGeneration, std::filesystem::path(filename),
+            impl->dictionaryEntries, false, {}
+        };
+        g_free(filename);
+
+        auto *task = g_task_new(nullptr, nullptr, onExportFinished, nullptr);
+        g_task_set_task_data(task, taskData, nullptr);
+        g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
+            auto *td = static_cast<ExportTaskData *>(task_data);
+            td->success = DataController::saveDictionary(td->filename, td->entries, &td->error);
+            g_task_return_pointer(t, td, nullptr);
+        });
+        g_object_unref(task);
     }
 
     std::optional<std::size_t> selectedIndex() const {
@@ -757,7 +934,7 @@ private:
     }
 
     void updateActionState() {
-        const bool hasSelected = selectedIndex().has_value();
+        const bool hasSelected = selectedIndex().has_value() && !operationInProgress;
         if (editButton != nullptr) {
             gtk_widget_set_sensitive(editButton, hasSelected);
         }
@@ -766,18 +943,68 @@ private:
         }
     }
 
-    bool saveEntries(const std::vector<pinyin::UserDictionaryEntry> &entries) {
+    struct SaveTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        uint64_t generation = 0;
+        std::filesystem::path path;
+        std::vector<pinyin::UserDictionaryEntry> entries;
+        std::string successMessage;
+        bool success = false;
         std::string error;
-        if (!DataController::saveDictionary(path, entries, &error)) {
-            notifyMessage(error);
-            return false;
+    };
+
+    static void onSaveFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *taskData = static_cast<SaveTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (taskData != nullptr) {
+            const auto gen = taskData->generation;
+            taskData->lifetime->withOwner([taskData, gen](Impl &owner) {
+                if (gen != owner.operationGeneration) {
+                    return;
+                }
+                owner.operationInProgress = false;
+                if (taskData->success) {
+                    owner.notifyMessage(taskData->successMessage);
+                    owner.refresh();
+                } else {
+                    owner.notifyMessage(taskData->error.empty() ? "保存个人词典失败" : taskData->error);
+                    owner.setButtonsSensitive(true);
+                    owner.updateActionState();
+                }
+            });
+            delete taskData;
         }
-        refresh();
-        notifyMessage("词条已保存；输入法会自动读取（约 2 秒）");
-        return true;
+    }
+
+    void saveEntriesAsync(std::vector<pinyin::UserDictionaryEntry> entries,
+                          std::string successMessage) {
+        if (operationInProgress) {
+            return;
+        }
+        operationInProgress = true;
+        ++operationGeneration;
+        setButtonsSensitive(false);
+
+        auto *taskData = new SaveTaskData{
+            lifetime, operationGeneration, path, std::move(entries),
+            std::move(successMessage), false, {}
+        };
+        auto *task = g_task_new(nullptr, nullptr, onSaveFinished, nullptr);
+        g_task_set_task_data(task, taskData, nullptr);
+        g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
+            auto *td = static_cast<SaveTaskData *>(task_data);
+            td->success = DataController::saveDictionary(td->path, td->entries, &td->error);
+            g_task_return_pointer(t, td, nullptr);
+        });
+        g_object_unref(task);
     }
 
     bool editEntry(std::optional<std::size_t> selected) {
+        if (operationInProgress) {
+            return false;
+        }
         auto *dialog = gtk_dialog_new_with_buttons(
             selected.has_value() ? "编辑用户词条" : "添加用户词条",
             parentWindow(), GTK_DIALOG_MODAL, "取消", GTK_RESPONSE_CANCEL,
@@ -918,7 +1145,8 @@ private:
             notifyMessage("词条未保存：拼音、词条或权重格式不合法");
             return false;
         }
-        return saveEntries(dictionary.entries());
+        saveEntriesAsync(dictionary.entries(), "词条已保存；输入法会自动读取（约 2 秒）");
+        return true;
     }
 
     GtkWindow *parentWindow() const {
@@ -951,6 +1179,8 @@ private:
         std::make_shared<detail::DiagnosticsLifetime<Impl>>(this);
     uint64_t loadGeneration = 0;
     uint64_t batchGeneration = 0;
+    uint64_t operationGeneration = 0;
+    bool operationInProgress = false;
     guint idleBatchSourceId = 0;
 };
 
