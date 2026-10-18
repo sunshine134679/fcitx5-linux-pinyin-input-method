@@ -40,7 +40,7 @@ jobs:
           unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
           ctest --test-dir build/ci --output-on-failure \
             -E '^modernime_personal_engine_benchmark$' \
-            --output-junit build/ci/debug-junit.xml \
+            --output-junit "$PWD/build/ci/debug-junit.xml" \
             --parallel $(nproc)
 
       # Latency budgets describe shipped optimized code. Keep Debug correctness
@@ -57,7 +57,7 @@ jobs:
           cmake --build build/ci-performance --target modernime_personal_engine_benchmark --parallel 2
           ctest --test-dir build/ci-performance --output-on-failure \
             -R '^modernime_personal_engine_benchmark$' \
-            --output-junit build/ci-performance/release-junit.xml
+            --output-junit "$PWD/build/ci-performance/release-junit.xml"
 
       - name: Verify required tests contracts
         run: |
@@ -81,7 +81,9 @@ jobs:
             -DMODERNIME_BUILD_TESTS=ON
           cmake --build build/ci-core-only --parallel $(nproc)
           ctest --test-dir build/ci-core-only --show-only=json-v1 > build/ci-core-only/registered.json
-          ctest --test-dir build/ci-core-only --output-on-failure --output-junit build/ci-core-only/junit.xml --parallel $(nproc)
+          ctest --test-dir build/ci-core-only --output-on-failure \
+            --output-junit "$PWD/build/ci-core-only/junit.xml" \
+            --parallel $(nproc)
           python3 tests/verify_required_tests.py \
             --registered build/ci-core-only/registered.json \
             --profile core-only \
