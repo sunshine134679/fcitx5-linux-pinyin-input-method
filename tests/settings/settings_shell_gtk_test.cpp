@@ -1129,12 +1129,18 @@ int main(int argc, char **argv) {
         window.show(modernime::settings::SettingsPageId::Candidates, "candidate-font-size");
         drainEvents();
         auto *fontSpin = findTarget(winWidget, "candidate-font-size");
-        assert(fontSpin != nullptr && hasFocusWithin(winWidget, fontSpin));
+        assert(fontSpin != nullptr);
+        assert(waitUntil([winWidget, fontSpin] {
+            return hasFocusWithin(winWidget, fontSpin);
+        }));
 
         window.show(modernime::settings::SettingsPageId::Input, "input-enabled");
         drainEvents();
         auto *inputToggle = findTarget(winWidget, "input-enabled");
-        assert(inputToggle != nullptr && hasFocusWithin(winWidget, inputToggle));
+        assert(inputToggle != nullptr);
+        assert(waitUntil([winWidget, inputToggle] {
+            return hasFocusWithin(winWidget, inputToggle);
+        }));
 
         // 4. Diagnostic error presentation does not switch visible page to invalid child
         window.show(modernime::settings::SettingsPageId::Candidates);
