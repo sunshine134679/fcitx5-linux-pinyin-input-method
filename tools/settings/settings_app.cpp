@@ -23,6 +23,7 @@ struct ApplicationState final {
 
     modernime::core::SettingsPaths settingsPaths;
     std::unique_ptr<modernime::settings::SettingsWindow> window;
+    uint64_t sequenceNumber = 0;
 };
 
 struct NavigationRequest final {
@@ -167,11 +168,14 @@ void dumpSettingsStateIfConfigured(ApplicationState *state) {
         windowCount = static_cast<int>(g_list_length(windows));
     }
 
+    state->sequenceNumber++;
+
     const std::string tmpFile = std::string(stateFile) + ".tmp";
     std::ofstream ofs(tmpFile);
     if (ofs) {
         ofs << "{\n"
             << "  \"pid\": " << getpid() << ",\n"
+            << "  \"sequence\": " << state->sequenceNumber << ",\n"
             << "  \"window_count\": " << windowCount << ",\n"
             << "  \"visible_page\": \"" << visiblePage << "\",\n"
             << "  \"focused_target\": \"" << focusedTarget << "\",\n"
@@ -215,6 +219,9 @@ int commandLine(GApplication *application,
             const std::string err = "Unknown settings page: " + req.pageName;
             g_application_command_line_printerr(cmdline, "%s\n", err.c_str());
             g_application_command_line_set_exit_status(cmdline, EXIT_FAILURE);
+            if (state->window != nullptr) {
+                dumpSettingsStateIfConfigured(state);
+            }
             return EXIT_FAILURE;
         }
     }
