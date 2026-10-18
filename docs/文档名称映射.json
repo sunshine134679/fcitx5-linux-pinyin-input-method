@@ -1,0 +1,308 @@
+{
+  "版本": 1,
+  "日期": "2026-10-18",
+  "适用项目": "ModernIME",
+  "说明": "中文文件为主检出正式文档；原英文路径为相对符号链接兼容入口。其他冻结工作树暂保留各自受版本控制的英文文档，中文别名指向本树版本。",
+  "映射": [
+    {
+      "旧路径": "docs/ALGORITHM_ARCHITECTURE.md",
+      "中文路径": "docs/算法架构.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/ALGORITHM_CHANGE_GUIDE.md",
+      "中文路径": "docs/算法变更指南.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/ALGORITHM_EVOLUTION.md",
+      "中文路径": "docs/算法演化记录.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/ALGORITHM_USAGE_SIMULATION_2026-10-15.md",
+      "中文路径": "docs/算法使用仿真报告-2026-10-15.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/ARCHITECTURE_AUDIT.md",
+      "中文路径": "docs/全仓架构审查.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/CANDIDATE_PIPELINE_ARCHITECTURE.md",
+      "中文路径": "docs/候选链路架构.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/HANDOVER.md",
+      "中文路径": "docs/项目交接手册.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/PARALLEL_TASK_PROMPTS.md",
+      "中文路径": "docs/并行任务提示词.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/PERSONALIZATION_REVIEW_2026-10-15.md",
+      "中文路径": "docs/自学习复审-2026-10-15.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/REFACTOR_BACKLOG.md",
+      "中文路径": "docs/重构任务清单.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/RELEASE_MAINTENANCE.md",
+      "中文路径": "docs/发布维护指南.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/STABILITY_AUDIT.md",
+      "中文路径": "docs/稳定性审计.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/ARCHITECTURE_REMEDIATION_ACCEPTANCE.md",
+      "中文路径": "docs/架构整改最终验收报告.md",
+      "主检出已迁移": false
+    },
+    {
+      "旧路径": "docs/PARALLEL_REMEDIATION_STATUS.md",
+      "中文路径": "docs/并行整改状态.md",
+      "主检出已迁移": false
+    },
+    {
+      "旧路径": "docs/T11_ACCEPTANCE.md",
+      "中文路径": "docs/T11-验收报告.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T11_FINAL_REVIEW_AND_T12_HANDOFF.md",
+      "中文路径": "docs/T11-最终复审与T12交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T11_FOURTH_REVIEW.md",
+      "中文路径": "docs/T11-第四轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T11_PERFORMANCE_GATE_REVIEW.md",
+      "中文路径": "docs/T11-性能门禁复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T11_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T11-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T11_SECOND_REVIEW.md",
+      "中文路径": "docs/T11-第二轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T11_THIRD_REVIEW.md",
+      "中文路径": "docs/T11-第三轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T12_ACCEPTANCE.md",
+      "中文路径": "docs/T12-验收报告.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T12_FINAL_REVIEW_AND_T13_HANDOFF.md",
+      "中文路径": "docs/T12-最终复审与T13交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T12_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T12-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T13_ACCEPTANCE.md",
+      "中文路径": "docs/T13-验收报告.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T13_FIFTH_REVIEW.md",
+      "中文路径": "docs/T13-第五轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T13_FINAL_REVIEW_AND_T14_HANDOFF.md",
+      "中文路径": "docs/T13-最终复审与T14交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T13_FOURTH_REVIEW.md",
+      "中文路径": "docs/T13-第四轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T13_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T13-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T13_SECOND_REVIEW.md",
+      "中文路径": "docs/T13-第二轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T13_THIRD_REVIEW.md",
+      "中文路径": "docs/T13-第三轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T14_ACCEPTANCE.md",
+      "中文路径": "docs/T14-验收报告.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T14_FINAL_REVIEW_AND_INTEGRATION_HANDOFF.md",
+      "中文路径": "docs/T14-最终复审与集成交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T14_FOURTH_REVIEW.md",
+      "中文路径": "docs/T14-第四轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T14_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T14-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T14_SECOND_REVIEW.md",
+      "中文路径": "docs/T14-第二轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T14_THIRD_REVIEW.md",
+      "中文路径": "docs/T14-第三轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T15_ACCEPTANCE.md",
+      "中文路径": "docs/T15-验收报告.md",
+      "主检出已迁移": false
+    },
+    {
+      "旧路径": "docs/T15_FINAL_REVIEW_AND_INTEGRATION_HANDOFF.md",
+      "中文路径": "docs/T15-最终复审与集成交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T15_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T15-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T15_SECOND_REVIEW.md",
+      "中文路径": "docs/T15-第二轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T15_THIRD_REVIEW.md",
+      "中文路径": "docs/T15-第三轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T16_ACCEPTANCE.md",
+      "中文路径": "docs/T16-验收报告.md",
+      "主检出已迁移": false
+    },
+    {
+      "旧路径": "docs/T16_R1_FINAL_REVIEW.md",
+      "中文路径": "docs/T16-R1最终复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T16_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T16-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T17_ACCEPTANCE.md",
+      "中文路径": "docs/T17-验收报告.md",
+      "主检出已迁移": false
+    },
+    {
+      "旧路径": "docs/T17_FINAL_REVIEW.md",
+      "中文路径": "docs/T17-最终复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T17_INSTALL_LIFECYCLE_DESIGN.md",
+      "中文路径": "docs/T17-安装生命周期设计.md",
+      "主检出已迁移": false
+    },
+    {
+      "旧路径": "docs/T18_ACCEPTANCE.md",
+      "中文路径": "docs/T18-验收报告.md",
+      "主检出已迁移": false
+    },
+    {
+      "旧路径": "docs/T18_FINAL_REVIEW_AND_INTEGRATION_HANDOFF.md",
+      "中文路径": "docs/T18-最终复审与集成交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T18_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T18-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T18_SECOND_REVIEW.md",
+      "中文路径": "docs/T18-第二轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T19_COMBINED_GATE_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T19-组合门禁复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T19_REMEDIATION_FINAL_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T19-整改最终复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T19_REMEDIATION_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T19-整改复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T19_REVIEW_AND_HANDOFF.md",
+      "中文路径": "docs/T19-复审与交接.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/T19_SECOND_REVIEW.md",
+      "中文路径": "docs/T19-第二轮复审.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/superpowers/plans/2026-10-16-architecture-remediation.md",
+      "中文路径": "docs/superpowers/plans/2026-10-16-架构整改实施与验收方案.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/superpowers/plans/2026-10-17-parallel-remediation.md",
+      "中文路径": "docs/superpowers/plans/2026-10-17-并行整改方案.md",
+      "主检出已迁移": true
+    },
+    {
+      "旧路径": "docs/superpowers/plans/2026-10-17-remaining-task-prompts.md",
+      "中文路径": "docs/superpowers/plans/2026-10-17-后续任务提示词.md",
+      "主检出已迁移": true
+    }
+  ]
+}
