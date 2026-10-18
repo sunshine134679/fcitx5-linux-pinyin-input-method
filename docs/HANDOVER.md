@@ -16,11 +16,11 @@
   - HTTPS: `https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method.git`
   - SSH: `git@github.com:sunshine134679/fcitx5-linux-pinyin-input-method.git`
 - **核心技术栈**：
-  - 核心语言：C++17
+  - 核心语言：C++20
   - 输入法框架：Fcitx5 (`libfcitx5core-dev`, `libfcitx5utils-dev`, `fcitx5-modules-dev`)
   - 拼音引擎内核：LibIME (`libimecore-dev`, `libimepinyin-dev`)
   - 设置客户端与渲染：GTK3 (`libgtk-3-dev`), Pango (`libpango1.0-dev`), Cairo
-  - 存储与工具：SQLite3 (`libsqlite3-dev`), Boost (`libboost-dev`), CMake (>= 3.20)
+  - 存储与工具：SQLite3 (`libsqlite3-dev`), Boost (`libboost-dev`), LMDB (`liblmdb-dev`), CMake (>= 3.24)
 
 ---
 
@@ -28,36 +28,37 @@
 
 ```text
 /home/wsl/ModernIME/
-├── CMakeLists.txt              # 顶层 CMake 构建配置
+├── CMakeLists.txt              # 顶层 CMake 构建配置 (CMake >= 3.24, C++20)
 ├── CMakePresets.json           # 预设配置 (fcitx5-debug, asan-debug, strict-debug 等)
-├── AGENTS.md                   # 必须严格遵守的从 GitHub 克隆直接安装的维护规范
+├── AGENTS.md                   # 安装生命周期维护准则与算法防退化铁律
 ├── README.md                   # 用户文档与快速安装指南
 ├── install.sh                  # 一键安装脚本（自动编译、测试、安装、创建桌面与自启入口）
 ├── uninstall.sh                # 一键干净卸载脚本（基于 manifest 严格对称回滚）
 │
-├── src/                        # 输入法核心插件源码
-│   ├── engine/                 # 核心拼音引擎
-│   │   ├── pinyin_engine.cpp   # 顶层按键流分发、候选词生成、异常隔离防线
-│   │   ├── punctuation_mapper  # 全量中文标点符号映射与数字/英文半角智能直通
-│   │   ├── learning_store      # 本地自学习调频引擎 (幂律调频算法，最大权重 180)
-│   │   ├── english_dictionary  # 7.3 万常用英文单词与 Linux 高频命令词库、词频仲裁
-│   │   └── dynamic_macros      # 动态系统日期宏 (rq -> 2026-09-22, sj -> 时间, xq -> 星期)
-│   ├── ui/                     # 候选栏窗口与渲染组件
-│   │   ├── candidate_window    # GTK3/Cairo 无边框自适应浮动窗口，首键预热防卡顿
-│   │   ├── renderer            # Cairo + Pango 手绘高精渲染，字号/行距/高亮自适应
-│   │   └── config_monitor      # inotify 监听 settings.json，外观变更毫秒级热生效
-│   └── data/                   # 离线扩展知识库 (成语、IT、医学、法律等数十万离线词典)
+├── core/                       # 核心业务逻辑与数据存储（无 GUI/Fcitx 依赖）
+│   ├── include/modernime/core/ # candidate_model, learning_store, personal_engine, settings, commit_event...
+│   └── src/                    # learning_store.cpp, personal_engine.cpp, settings.cpp, candidate_ranker.cpp...
 │
-├── tools/settings/             # 独立现代化设置客户端 (modernime-settings)
-│   ├── modernime_settings_app  # GTK3 应用程序入口，Bento 仪表盘布局
-│   ├── pages/                  # 六大功能页：概览、输入体验、个人词典、剪贴板、智能学习、系统与诊断
-│   └── theme/                  # 纯净深空灰/石墨黑 CSS，彻底清除了 Adwaita 伪类绿色残影
+├── algorithm/                  # 拼音与候选生成算法模块
+│   └── pinyin/                 # pinyin_candidate_provider, candidate_pipeline, candidate_features,
+│                               # candidate_prefixes, candidate_mixer, recent_choice...
 │
-└── tests/                      # CTest 自动化测试套件 (48 个全量用例，必须保持 100% 通过)
-    ├── test_punctuation.cpp    # 正反斜线顿号、全角标点、数字直通测试
-    ├── test_learning_store.cpp # 调频、置顶与英文调频学习测试
-    ├── test_pinyin_daily_simulation.cpp # 日常高频打字模拟与优先级压测
-    ├── test_install_runtime    # 端到端全新安装与环境自启测试
+├── adapter/                    # 输入法框架适配层
+│   └── fcitx5/                 # Fcitx5 引擎、状态机、事件处理 (inputmethod.cpp, engine.cpp)
+│
+├── ui/                         # 候选栏窗口排版与渲染组件
+│   └── fcitx5/                 # candidate_bar_layout, candidate_bar_renderer, ui_addon
+│
+├── tools/                      # 独立工具与桌面设置客户端
+│   └── settings/               # modernime-settings: settings_app, settings_window, settings_shell,
+│                               # page_registry (统一页面解析与别名), data_controller, pages/ (八大功能页)
+│
+└── tests/                      # 自动化测试套件与门禁工具 (动态 Profile 管理)
+    ├── verify_required_tests.py# 必需测试与质量门禁校验工具 (支持 full / core-only / storage-tsan)
+    ├── core/                   # 核心、存储、候选排序回归测试
+    ├── adapter/                # 适配器、故障恢复回归测试
+    ├── ui/                     # UI 布局与渲染测试
+    ├── settings/               # 设置客户端与 GTK 异步/导航测试
     └── ...
 ```
 
@@ -130,9 +131,17 @@
 - ❌ **绝对不要触碰用户的 `/home/wsl/Linux` 目录**（这是用户的 IMX6ULL 嵌入式开发与内核开发专属工作区）；
 - ❌ **绝对不要在未确认的情况下清理非缓存目录**。
 
-### 🚨 铁律三：测试全绿方可交付
-- 仓库内包含 48 个全量测试（涵盖基础逻辑、拼音引擎、标点、GTK契约、日常输入模拟、安装运行测试）。
-- 任何代码改动必须执行 `ctest --test-dir build/fcitx5-debug --output-on-failure`，必须确保 **48/48 全部 Passed**。
+### 🚨 铁律三：测试全绿与门禁核验方可交付
+- 仓库支持按 Profile 动态注册测试套件：
+  - **Full Profile**（`MODERNIME_REQUIRE_FULL_TESTS=ON` / 预设 `fcitx5-debug`）：包含 74+ 个测试（涵盖基础逻辑、拼音引擎、标点、GTK 契约、日常输入模拟、安装运行及 Benchmark 性能门禁）。无物理显示环境下，GTK/UI 测试通过 `SKIP_RETURN_CODE 77` 明确跳过，严禁伪造通过。
+  - **Core-only Profile**（`MODERNIME_BUILD_LIBIME_PINYIN=OFF`）：包含 25+ 个基础核心测试。
+  - **Storage-TSAN Profile**：专用于并发与生命周期线程安全验证。
+- 任何代码改动必须执行 CTest 并经由门禁工具校验：
+  ```bash
+  ctest --test-dir build/fcitx5-debug --output-on-failure
+  python3 tests/verify_required_tests.py --ctest-dir build/fcitx5-debug --profile full --stage final
+  ```
+- 必须确保所有必需测试 **100% Passed（或白名单 Skipped）** 且 0 Failed。
 
 ---
 
@@ -147,8 +156,9 @@ cd /home/wsl/ModernIME
 cmake --preset fcitx5-debug
 cmake --build --preset fcitx5-debug -j$(nproc)
 
-# 运行全量测试套件 (需 100% 通过)
+# 运行全量测试套件并执行门禁校验
 ctest --test-dir build/fcitx5-debug --output-on-failure
+python3 tests/verify_required_tests.py --ctest-dir build/fcitx5-debug --profile full --stage final
 ```
 
 ### ② 一键安装与重新加载
@@ -160,17 +170,23 @@ ctest --test-dir build/fcitx5-debug --output-on-failure
 fcitx5-remote -r
 fcitx5-remote -s modernime
 
-# 启动设置客户端
+# 启动设置客户端（支持参数如 --candidates / -a, --clipboard / -c 等）
 ~/.local/bin/modernime-settings
 ```
 
-### ③ 提交与远程推送
+### ③ 本地分支提交与协同规范
 ```bash
+# 检查当前改动状态，确认无未受控文件
 git status
-git diff
-git add -A
+
+# 精确审查差异与添加受控文件（严禁 git add -A / git add .）
+git diff <file>
+git add <file1> <file2>
+
+# 提交变更
 git commit -m "feat/fix: 详细说明"
-git push origin main
+
+# 注意：并行开发必须经由独立 worktree / 分支与协调者验收门禁，严禁直接 git push origin main！
 ```
 
 ---

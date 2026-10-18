@@ -172,4 +172,42 @@ std::vector<SettingsSearchEntry> searchSettings(std::string_view query) {
     return exactTitle;
 }
 
+std::optional<SettingsPageId> parseSettingsPage(std::string_view name) {
+    const auto normalized = trimAndFoldAscii(name);
+    if (normalized.empty()) {
+        return std::nullopt;
+    }
+
+    for (const auto &page : kPages) {
+        if (normalized == page.name) {
+            return page.id;
+        }
+    }
+
+    if (normalized == "home") {
+        return SettingsPageId::Overview;
+    }
+    if (normalized == "basic") {
+        return SettingsPageId::Input;
+    }
+    if (normalized == "candidate" || normalized == "appearance") {
+        return SettingsPageId::Candidates;
+    }
+    if (normalized == "dict") {
+        return SettingsPageId::Dictionary;
+    }
+    if (normalized == "clip") {
+        return SettingsPageId::Clipboard;
+    }
+    if (normalized == "update" || normalized == "upgrade") {
+        return SettingsPageId::Updates;
+    }
+    if (normalized == "diagnostic" || normalized == "status" ||
+        normalized == "diag" || normalized == "system") {
+        return SettingsPageId::Diagnostics;
+    }
+
+    return std::nullopt;
+}
+
 } // namespace modernime::settings

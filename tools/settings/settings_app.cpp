@@ -1,3 +1,4 @@
+#include "modernime/settings/page_registry.h"
 #include "modernime/settings/settings_window.h"
 #include "modernime/settings/detail/process_runner.h"
 
@@ -6,6 +7,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -13,14 +16,93 @@
 namespace {
 
 struct ApplicationState final {
-    explicit ApplicationState(modernime::core::SettingsPaths paths,
-                             std::string targetPage = {})
-        : settingsPaths(std::move(paths)), initialPage(std::move(targetPage)) {}
+    explicit ApplicationState(modernime::core::SettingsPaths paths)
+        : settingsPaths(std::move(paths)) {}
 
     modernime::core::SettingsPaths settingsPaths;
-    std::string initialPage;
     std::unique_ptr<modernime::settings::SettingsWindow> window;
 };
+
+struct NavigationRequest final {
+    std::string pageName;
+    std::string target;
+    bool hasTarget = false;
+    bool showVersion = false;
+};
+
+NavigationRequest parseArguments(int argc, char **argv) {
+    NavigationRequest req;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg(argv[i]);
+        if (arg == "--version") {
+            req.showVersion = true;
+        } else if (arg == "--page" && i + 1 < argc) {
+            req.pageName = argv[++i];
+        } else if (arg == "--target" && i + 1 < argc) {
+            req.target = argv[++i];
+            req.hasTarget = true;
+        } else if (arg == "--overview" || arg == "-o") {
+            req.pageName = "overview";
+        } else if (arg == "--input" || arg == "-i") {
+            req.pageName = "input";
+        } else if (arg == "--candidates" || arg == "-k") {
+            req.pageName = "candidates";
+        } else if (arg == "--dictionary" || arg == "-d") {
+            req.pageName = "dictionary";
+        } else if (arg == "--clipboard" || arg == "-c") {
+            req.pageName = "clipboard";
+        } else if (arg == "--learning" || arg == "-l") {
+            req.pageName = "learning";
+        } else if (arg == "--updates" || arg == "-u") {
+            req.pageName = "updates";
+        } else if (arg == "--diagnostics" || arg == "--status") {
+            req.pageName = "diagnostics";
+        }
+    }
+    return req;
+}
+
+int applyNavigationRequest(ApplicationState *state,
+                           const NavigationRequest &req,
+                           GApplicationCommandLine *cmdline = nullptr) {
+    if (req.showVersion) {
+        if (cmdline != nullptr) {
+            g_application_command_line_print(
+                cmdline, "ModernIME settings %s\n", MODERNIME_VERSION);
+        } else {
+            std::cout << "ModernIME settings " << MODERNIME_VERSION << '\n';
+        }
+        return EXIT_SUCCESS;
+    }
+
+    if (state->window == nullptr) {
+        return EXIT_FAILURE;
+    }
+    state->window->present();
+
+    if (req.pageName.empty()) {
+        if (req.hasTarget) {
+            state->window->show(modernime::settings::SettingsPageId::Overview, req.target);
+        }
+        return EXIT_SUCCESS;
+    }
+
+    const auto parsedPage = modernime::settings::parseSettingsPage(req.pageName);
+    if (!parsedPage.has_value()) {
+        const std::string err = "Unknown settings page: " + req.pageName;
+        if (cmdline != nullptr) {
+            g_application_command_line_printerr(cmdline, "%s\n", err.c_str());
+            g_application_command_line_set_exit_status(cmdline, EXIT_FAILURE);
+        } else {
+            std::cerr << err << '\n';
+        }
+        state->window->presentError(err);
+        return EXIT_FAILURE;
+    }
+
+    state->window->show(*parsedPage, req.target);
+    return EXIT_SUCCESS;
+}
 
 void activate(GtkApplication *application, gpointer data) {
     auto *state = static_cast<ApplicationState *>(data);
@@ -29,20 +111,23 @@ void activate(GtkApplication *application, gpointer data) {
             application, state->settingsPaths);
     }
     state->window->present();
-    if (state->initialPage == "clipboard") {
-        state->window->showClipboardPage();
-    } else if (state->initialPage == "learning") {
-        state->window->showLearningPage();
-    } else if (state->initialPage == "dictionary") {
-        state->window->showDictionaryPage();
-    } else if (state->initialPage == "input") {
-        state->window->showBasicPage();
-    } else if (state->initialPage == "diagnostics" ||
-               state->initialPage == "status") {
-        state->window->showStatusPage();
-    } else if (state->initialPage == "updates") {
-        state->window->showUpdatesPage();
+}
+
+int commandLine(GApplication *application,
+                GApplicationCommandLine *cmdline,
+                gpointer data) {
+    auto *state = static_cast<ApplicationState *>(data);
+    if (state->window == nullptr) {
+        state->window = std::make_unique<modernime::settings::SettingsWindow>(
+            application, state->settingsPaths);
     }
+
+    int argc = 0;
+    char **argv = g_application_command_line_get_arguments(cmdline, &argc);
+    const auto req = parseArguments(argc, argv);
+    const int status = applyNavigationRequest(state, req, cmdline);
+    g_strfreev(argv);
+    return status;
 }
 
 modernime::core::SettingsPaths settingsPaths() {
@@ -69,44 +154,19 @@ int main(int argc, char **argv) {
         return EXIT_SUCCESS;
     }
 
-    std::string targetPage;
-    std::vector<char *> filteredArgs;
-    filteredArgs.reserve(static_cast<std::size_t>(argc));
-    filteredArgs.push_back(argv[0]);
-
-    for (int i = 1; i < argc; ++i) {
-        const std::string_view arg(argv[i]);
-        if (arg == "--page" && i + 1 < argc) {
-            targetPage = argv[++i];
-        } else if (arg == "--clipboard" || arg == "-c") {
-            targetPage = "clipboard";
-        } else if (arg == "--learning" || arg == "-l") {
-            targetPage = "learning";
-        } else if (arg == "--dictionary" || arg == "-d") {
-            targetPage = "dictionary";
-        } else if (arg == "--input" || arg == "-i") {
-            targetPage = "input";
-        } else if (arg == "--diagnostics") {
-            targetPage = "diagnostics";
-        } else if (arg == "--updates" || arg == "-u") {
-            targetPage = "updates";
-        } else {
-            filteredArgs.push_back(argv[i]);
-        }
-    }
-
     const auto paths = settingsPaths();
-    ApplicationState state(paths, targetPage);
+    ApplicationState state(paths);
 #if GLIB_CHECK_VERSION(2, 74, 0)
-    constexpr auto appFlags = G_APPLICATION_DEFAULT_FLAGS;
+    constexpr auto appFlags = static_cast<GApplicationFlags>(
+        G_APPLICATION_DEFAULT_FLAGS | G_APPLICATION_HANDLES_COMMAND_LINE);
 #else
-    constexpr auto appFlags = G_APPLICATION_FLAGS_NONE;
+    constexpr auto appFlags = static_cast<GApplicationFlags>(
+        G_APPLICATION_FLAGS_NONE | G_APPLICATION_HANDLES_COMMAND_LINE);
 #endif
     auto *application = gtk_application_new("com.modernime.Settings", appFlags);
     g_signal_connect(application, "activate", G_CALLBACK(activate), &state);
-    int filteredArgc = static_cast<int>(filteredArgs.size());
-    const auto result = g_application_run(G_APPLICATION(application), filteredArgc,
-                                           filteredArgs.data());
+    g_signal_connect(application, "command-line", G_CALLBACK(commandLine), &state);
+    const auto result = g_application_run(G_APPLICATION(application), argc, argv);
     g_object_unref(application);
     return result;
 }

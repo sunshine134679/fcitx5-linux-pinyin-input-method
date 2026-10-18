@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -36,5 +37,6 @@ struct SettingsSearchEntry final {
 std::span<const SettingsPageDefinition> settingsPageDefinitions();
 std::span<const SettingsSearchEntry> settingsSearchEntries();
 std::vector<SettingsSearchEntry> searchSettings(std::string_view query);
+std::optional<SettingsPageId> parseSettingsPage(std::string_view name);
 
 } // namespace modernime::settings

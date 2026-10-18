@@ -199,8 +199,9 @@
   4. 旧版候选特征提取中 `count != 1 || candidate.learning_boost >= 1.8` 会在候选字被学习后错误抹除原生 0 号位的 `unigram_anchor`，削弱了核心高频单字的自防御能力。
 
 - **算法逻辑与核心防御**：
-  1. **导入频次硬核截断清洗 (`core/src/personal_engine.cpp`)**：
-     `ImportFromFile` 引入导入安全门禁：单字导入频次强制截断至 $\le 3$ 次（`kMaxImportedSingleCharHitCount = 3`），多字短语强制截断至 $\le 20$ 次（`kMaxImportedHitCount = 20`）。彻底阻断第三方非对称词库对本地自学习模型的巨幅污染；
+  1. **外部不可信导入截断 vs 本地可信恢复边界 (`core/src/personal_engine.cpp`)**：
+     - **外部不可信导入门禁**：`ImportFromFile` 针对第三方非对称词典（如微信、搜狗等导出的次选词表）实施频次安全截断，单字强制截断至 $\le 3$ 次（`kMaxImportedSingleCharHitCount = 3`），多字短语强制截断至 $\le 20$ 次（`kMaxImportedHitCount = 20`），彻底阻断外部畸形高频对本地自学习模型的巨幅污染；
+     - **可信本地恢复保障**：与外部导入严格区分，输入法自身的安装升级、事务备份与原生二进制快照（如带有 `0xA55AA55A` 魔数的 `WordMeta` 本地恢复）完整保留原生历史频次与代次，不作截断削减，确保用户真实打字资产 100% 忠实还原；
   2. **核心单字原生锚定坚守 (`algorithm/pinyin/src/candidate_features.cpp`)**：
      修改 `unigram_anchor` 清除条件为 `if (count != 1) candidate.unigram_anchor = 0.0;`，单字即便产生自学习（`learning_boost >= 1.8`）也始终保留 3.0 点的原生 0 号位锚定防御，防止因自身被学习反而被削弱；
   3. **词典词原生先验强化与非词典无语境惩罚 (`core/include/modernime/core/candidate_ranker.h`)**：
@@ -233,10 +234,16 @@
      - 在 `LearningWriter::enqueueCommit` 与 `LearningStore::recordCommit` 中拦截：当上屏事件角色为 `Raw` 且输入完全为合法拼音音节串、且不在静态英文词典中时，**禁止**作为英文候选学习入库。
   2. **英文召回双重隔离守护 (`core/src/learning_snapshot.cpp`)**：
      - 在快照构建与 `recallEnglishWords` 中新增 `isRecallableEnglishWord` 过滤：非英文字符串若由纯拼音音节组成，绝不建立英文字典索引，确保即便历史遗留脏数据也无法在打字时被作为英文词预测召回。
-  3. **差量偏差自学习 (Deviation-Only Learning) (`core/src/learning_writer.cpp`, `core/src/learning_store.cpp`, `algorithm/pinyin/src/pinyin_candidate_provider.cpp`)**：
+  3. **差量偏差自学习 (Deviation-Only Learning) 与核心词正向频次记录例外 (`core/src/learning_writer.cpp`, `core/src/learning_store.cpp`, `algorithm/pinyin/src/pinyin_candidate_provider.cpp`)**：
      - `CommitEvent` 携带候选位次 `candidateIndex` 与偏差标记 `isDeviation`。
      - 在 `PinyinCandidateProvider::select` 中，次选（`index > 0`）自动标记 `isDeviation = true`；组词成句、单字拆词（`extractCharacter`）、退格删除纠错（`finalizeRecentCommitDeletion`）均标记 `isDeviation = true`。
-     - 当选择默认 Rank 0 核心字词（如 `是/shi`, `这个/zhege`, `的/de`, `你/ni`, `好/hao`, `吗/ma`, `和/he`, `在/zai`, `有/you`, `了/le`, `不/bu`, `我/wo`, `不是/bushi`, `好的/haode`, `可以/keyi` 等），且处于无上下文、非偏差点选、非组词状态时，跳过无条件全局频次累加（保持先验 0 污染）；若用户在特定上下文中选择或次选点选，则正常记录其偏好。
+     - **基线规则**：当用户选择默认 Rank 0 核心字词（如 `是/shi`, `这个/zhege`, `的/de`, `你/ni`, `好/hao`, `吗/ma`, `和/he`, `在/zai`, `有/you`, `了/le`, `不/bu`, `我/wo`, `不是/bushi`, `好的/haode`, `可以/keyi` 等），且处于无上下文、非偏差点选、非组词状态时，跳过无条件全局频次累加（保持语言模型先验 0 污染）；
+     - **五大正向频次记录例外**（满足任一条件即正常记录用户偏好与自学习频次）：
+       1. **显式上下文关联**（`context.length() > 0`）：用户在特定词组或前文语境下选词；
+       2. **次选与翻页点选**（`candidateIndex > 0`，即非 Rank 0 默认项）：用户明确偏离首选；
+       3. **分段组词反馈**：连续分步输入经 `PhraseFormationTracker` 识别合成新词；
+       4. **以词定字与退格留字提取**：按 `[`/`]` 快捷键取字，或提交整词后 Backspace 删词留单字（`finalizeRecentCommitDeletion`）；
+       5. **显式解除屏蔽**：显式重选并解除此前被加入抑制名单的词条（Un-suppress）。
   4. **全量脏数据净化 (`cleanse_learning_store.py`)**：
      - 彻底清除个人学习库中的回车拼音串英文脏记录（如 `jianpan`, `genxin`, `gengxin`, `shi`, `zi` 等），恢复纯净词条。
 
@@ -323,6 +330,9 @@
   - TSAN 运行时检查：核心并发/生命周期测试（30 项）及学习存储单测在 ThreadSanitizer (`setarch x86_64 -R`) 下 100% 运行通过，0 数据竞争；
   - Core-only profile：`MODERNIME_BUILD_LIBIME_PINYIN=OFF` 独立配置、构建及基准运行 100% 通过；
   - 全量 CTest 68 项测试通过（100% 通过，3 项 GTK 测试在无显示服务环境下正常 Skipped），`verify_fresh_clone.sh` 全流程 100% 通过。
+- **过渡状态与未覆盖项边界说明**：
+  - **已落实的核心能力**：LMDB 生命周期门、Worker 线程后台异步重载与快照发布、有界队列（$\le 100$）截断、清空世代强校验、在途就绪任务排空、构造期不可变容量 TSAN 零数据竞争，以及性能延迟门禁与 NDEBUG 解耦与确定性负向自检（8/8 严格拒绝）；
+  - **未覆盖项与客观边界**：在无物理显示环境（如 WSL / CI 无头环境）下，GTK 客户端及 UI 交互测试通过 `SKIP_RETURN_CODE 77` 明确声明跳过，绝不伪造通过；真实桌面环境下的多 DPI 缩放、真实物理字体渲染度量、Wayland 原生浮动定位以及跨日长时间连续多应用输入交互仍需后续在物理桌面环境中进行最终验收。
 
 ---
 

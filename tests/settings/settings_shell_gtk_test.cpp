@@ -1,4 +1,5 @@
 #include "modernime/settings/settings_shell.h"
+#include "modernime/settings/settings_window.h"
 #include "modernime/settings/settings_widgets.h"
 #include "modernime/settings/pages/updates_page.h"
 #include "modernime/settings/update_controller.h"
@@ -1055,6 +1056,93 @@ int main(int argc, char **argv) {
             }
             assert(spawnCount == 1);
         }
+    }
+
+    // T18: SettingsWindow Unified Page Navigation, Candidates/Overview routing,
+    // wrappers delegation, and diagnostic error presentation.
+    {
+        modernime::settings::SettingsWindow window(application, paths);
+        auto *winWidget = window.window();
+        assert(winWidget != nullptr && !gtk_widget_get_mapped(winWidget));
+        window.present();
+        drainEvents();
+        assert(gtk_widget_get_mapped(winWidget));
+
+        auto *stack = findWidgetByType(winWidget, GTK_TYPE_STACK);
+        assert(stack != nullptr);
+
+        // 1. Universal show() entry across all 8 pages
+        const struct PageCheck {
+            modernime::settings::SettingsPageId id;
+            const char *expectedName;
+        } kAllPages[] = {
+            {modernime::settings::SettingsPageId::Overview, "overview"},
+            {modernime::settings::SettingsPageId::Input, "input"},
+            {modernime::settings::SettingsPageId::Candidates, "candidates"},
+            {modernime::settings::SettingsPageId::Dictionary, "dictionary"},
+            {modernime::settings::SettingsPageId::Clipboard, "clipboard"},
+            {modernime::settings::SettingsPageId::Learning, "learning"},
+            {modernime::settings::SettingsPageId::Updates, "updates"},
+            {modernime::settings::SettingsPageId::Diagnostics, "diagnostics"},
+        };
+
+        for (const auto &p : kAllPages) {
+            window.show(p.id);
+            drainEvents();
+            assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == p.expectedName);
+        }
+
+        // 2. Specific fix: showCandidatePage() MUST route to Candidates (not Input)
+        window.showBasicPage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "input");
+
+        window.showCandidatePage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "candidates");
+
+        window.showOverviewPage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "overview");
+
+        window.showClipboardPage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "clipboard");
+
+        window.showLearningPage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "learning");
+
+        window.showDictionaryPage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "dictionary");
+
+        window.showStatusPage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "diagnostics");
+
+        window.showUpdatesPage();
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "updates");
+
+        // 3. Sub-target navigation via show(page, target)
+        window.show(modernime::settings::SettingsPageId::Candidates, "candidate-font-size");
+        drainEvents();
+        auto *fontSpin = findTarget(winWidget, "candidate-font-size");
+        assert(fontSpin != nullptr && hasFocusWithin(winWidget, fontSpin));
+
+        window.show(modernime::settings::SettingsPageId::Input, "input-enabled");
+        drainEvents();
+        auto *inputToggle = findTarget(winWidget, "input-enabled");
+        assert(inputToggle != nullptr && hasFocusWithin(winWidget, inputToggle));
+
+        // 4. Diagnostic error presentation does not switch visible page to invalid child
+        window.show(modernime::settings::SettingsPageId::Candidates);
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "candidates");
+        window.presentError("Unknown settings page: bogus_page");
+        drainEvents();
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "candidates");
     }
 
     CloseApplicationProbe closeProbe;
