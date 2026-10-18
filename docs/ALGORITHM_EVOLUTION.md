@@ -300,6 +300,11 @@
      - **负向超限拒绝验证**：在同一基准路径下实现确定性超限注入机制（`--inject_gate_failure=<gate>` 与 `--self_test_gate_rejection`），针对快照召回、繁忙 Writer、SQLite 并发写入、LMDB 写入/并发剪枝、首观察者、清空首键及启学首提交共 8 项延迟检查分支进行子进程严格判定，证明超限时 100% 触发非 0 退出（exit code 1），负向日志保存在 `build/t11-fourth-review-evidence/negative-gates-rejection.log`；
      - **历史超限记录留存与串行静默复测**：坦承并保留历史第 3 轮并发剪枝 max=34.6ms 及清空首键 6.29ms 超限日志（重命名为 `performance-run-3-historical-failure.log`），在消除并行编译/测试干扰的静默环境下串行执行 3 轮完整 Release 性能测试，3 轮退出码均为 0，P99 与 max 严格满足原门限要求（SQLite 并发 max 20.9~28.9ms < 30ms，LMDB 并发剪枝 max 4.5~15.9ms < 30ms）。
 
+   8. **LearningWriter 共享不可变空快照与清空过渡零分配优化（T19 D3/R2）**：
+     - **不可变共享空快照**：在 `LearningWriter` 中引入静态 `emptySnapshot()` 单例（`std::shared_ptr<const LearningSnapshot>`），在清空（clear）或空词库过渡加载时复用该共享不可变空快照，避免每次清空分配全新的空快照堆对象，降低内存分配与回收抖动；
+     - **复制后修改与世代权限不变**：维持原有的 Copy-on-Write（COW）语义与世代权限划分。当用户打字产生新提交事件时，始终复制快照生成全新快照对象后再修改，绝不就地修改 `emptySnapshot()` 实例；清空代次（`resetRevision`）与磁盘底层保持一致；
+     - **全工作范围生命周期计时闭环**：在性能基准（`verifyLmdbConcurrentPruningLatency`、`verifyLmdbFirstKeyAfterClearLatency`）中采用显式作用域与 `snap.reset()` 计时，将快照命名引用释放与对象析构成本（`release_us`）全量纳入总延迟 `total_us`，确保在真实包含对象销毁生命周期的严格口径下，LMDB 清空首键延迟仍维持在 ~0.15ms（远低于 5000us 门限），并发剪枝 P99 维持在 ~0.02ms / max ~2.5ms（远低于 5000us/30000us 门限）。
+
 - **打字体验变化**：
   - 词库在后台重载或清空时，输入法完全不卡顿，首按键即时响应；
   - 重载完成后，当前编辑区候选栏自动无感刷新为最新计算结果，光标与输入保持完好；

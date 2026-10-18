@@ -249,33 +249,71 @@ int UpdateController::compareVersions(std::string_view lhsRaw, std::string_view 
 }
 
 bool UpdateController::isPackageManagerLocked(const Environment &environment) {
-    const auto forceLocked = lookupEnv(environment, "MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED");
-    if (forceLocked == "1") {
-        return true;
+    // Force-locked check: can only add protection (return true), never bypasses.
+    for (const auto &[k, v] : environment) {
+        if (k == "MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED" && v == "1") {
+            return true;
+        }
     }
-    const auto mockLock = lookupEnv(environment, "MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
-    if (!mockLock.empty()) {
-        std::error_code ec;
-        return std::filesystem::exists(mockLock, ec) && isPathLocked(mockLock.c_str());
+    if (const char *fl = std::getenv("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED")) {
+        if (std::string_view(fl) == "1") {
+            return true;
+        }
     }
-    const auto mockDir = lookupEnv(environment, "MODERNIME_PACKAGE_MANAGER_LOCK_DIR");
-    if (!mockDir.empty()) {
-        std::error_code ec;
-        for (const char *subLock : {
-                 "lock-frontend",
-                 "lock",
-                 "lists-lock",
-                 "archives-lock",
-                 ".rpm.lock",
-                 "metadata_lock.pid",
-             }) {
-            const auto p = std::filesystem::path(mockDir) / subLock;
-            if (std::filesystem::exists(p, ec) && isPathLocked(p.c_str())) {
+
+    // Synthetic lock source: ONLY allowed if explicitly supplied in the scoped environment vector.
+    // Never fallback to getenv() for mock lock files or directories!
+    for (const auto &[k, v] : environment) {
+        if (k == "MODERNIME_PACKAGE_MANAGER_LOCK_FILE" && !v.empty()) {
+            std::error_code ec;
+            const bool exists = std::filesystem::exists(v, ec);
+            if (ec && ec != std::errc::no_such_file_or_directory) {
+                // Unreadable or abnormal filesystem error: do not silently assume unlocked
                 return true;
             }
+            if (exists && ::access(v.c_str(), R_OK) != 0 && errno != ENOENT) {
+                return true;
+            }
+            return exists && isPathLocked(v.c_str());
         }
-        return false;
     }
+
+    for (const auto &[k, v] : environment) {
+        if (k == "MODERNIME_PACKAGE_MANAGER_LOCK_DIR" && !v.empty()) {
+            std::error_code ec;
+            const bool exists = std::filesystem::exists(v, ec);
+            if (ec && ec != std::errc::no_such_file_or_directory) {
+                return true;
+            }
+            if (!exists) {
+                return false;
+            }
+            if (::access(v.c_str(), R_OK | X_OK) != 0 && errno != ENOENT) {
+                return true;
+            }
+            for (const char *subLock : {
+                     "lock-frontend",
+                     "lock",
+                     "lists-lock",
+                     "archives-lock",
+                     ".rpm.lock",
+                     "metadata_lock.pid",
+                 }) {
+                std::error_code subEc;
+                const auto p = std::filesystem::path(v) / subLock;
+                const bool subExists = std::filesystem::exists(p, subEc);
+                if (subEc && subEc != std::errc::no_such_file_or_directory) {
+                    return true;
+                }
+                if (subExists && isPathLocked(p.c_str())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    // Default production check: inspect real host lock files
     for (const char *lockPath : {
              "/var/lib/dpkg/lock-frontend",
              "/var/lib/dpkg/lock",

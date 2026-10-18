@@ -59,9 +59,8 @@ int main(int argc, char **argv) {
     assert(UpdateController::compareVersions("1:0.1.0", "0.9.9") > 0);
 
     const auto tempRoot = makeTempDir();
-    const auto globalMockLockPath = tempRoot / "global_mock.lock";
-    writeTextFile(globalMockLockPath, "unlocked");
-    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE", globalMockLockPath.c_str(), 1);
+    const auto mockLockPath = tempRoot / "mock.lock";
+    writeTextFile(mockLockPath, "unlocked");
     const auto aptBinDir = tempRoot / "apt-bin";
     const auto dnfBinDir = tempRoot / "dnf-bin";
     const auto offlineBinDir = tempRoot / "offline-bin";
@@ -109,6 +108,7 @@ int main(int argc, char **argv) {
         {"PATH", aptBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto aptStatus = UpdateController::checkForUpdates(aptEnv);
     assert(aptStatus.checked);
@@ -142,6 +142,7 @@ int main(int argc, char **argv) {
         {"PATH", dnfBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto dnfStatus = UpdateController::checkForUpdates(dnfEnv);
     assert(dnfStatus.checked);
@@ -160,6 +161,7 @@ int main(int argc, char **argv) {
         {"PATH", aptBinDir.string() + ":" + dnfBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto mixedRpmStatus = UpdateController::checkForUpdates(mixedRpmEnv);
     assert(mixedRpmStatus.manager == PackageManagerKind::Dnf);
@@ -176,6 +178,7 @@ int main(int argc, char **argv) {
         {"PATH", emptyDnfBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto emptyDnfStatus = UpdateController::checkForUpdates(emptyDnfEnv);
     assert(emptyDnfStatus.offlineOrUnreachable);
@@ -211,6 +214,7 @@ int main(int argc, char **argv) {
         {"PATH", upToDateDnfBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.10"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto upToDateDnfStatus = UpdateController::checkForUpdates(upToDateDnfEnv);
     assert(upToDateDnfStatus.checked);
@@ -258,6 +262,7 @@ int main(int argc, char **argv) {
         {"PATH", multiSectionDnfBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto multiSectionDnfStatus = UpdateController::checkForUpdates(multiSectionDnfEnv);
     assert(multiSectionDnfStatus.checked);
@@ -290,6 +295,7 @@ int main(int argc, char **argv) {
         {"PATH", localRpmDnfBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.10"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto localRpmDnfStatus = UpdateController::checkForUpdates(localRpmDnfEnv);
     assert(localRpmDnfStatus.checked);
@@ -303,6 +309,7 @@ int main(int argc, char **argv) {
         {"PATH", aptBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", scriptChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto scriptStatus = UpdateController::checkForUpdates(scriptEnv);
     assert(scriptStatus.updateAvailable);
@@ -328,6 +335,7 @@ int main(int argc, char **argv) {
         {"PATH", offlineBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto offlineStatus = UpdateController::checkForUpdates(offlineEnv);
     assert(offlineStatus.checked);
@@ -356,6 +364,7 @@ int main(int argc, char **argv) {
         {"PATH", dpkgOnlyBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto dpkgOnlyStatus = UpdateController::checkForUpdates(dpkgOnlyEnv);
     assert(dpkgOnlyStatus.checked);
@@ -385,6 +394,7 @@ int main(int argc, char **argv) {
         {"PATH", cachedUpToDateBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto cachedUpToDateStatus = UpdateController::checkForUpdates(cachedUpToDateEnv);
     assert(cachedUpToDateStatus.checked);
@@ -484,6 +494,7 @@ int main(int argc, char **argv) {
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", debChannelFile.string()},
         {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "60"},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto timeoutRes = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
     assert(!timeoutRes.success);
@@ -723,10 +734,9 @@ int main(int argc, char **argv) {
     }
     assert(countSubprocTempFds() == 0);
     // 8. Package manager lock detection
-    const auto mockLockPath = tempRoot / "mock.lock";
-    writeTextFile(mockLockPath, "lock-placeholder");
-    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.c_str(), 1);
-    assert(!UpdateController::isPackageManagerLocked()); // Unlocked file returns false
+    // A. Explicit mock lock file via Environment map (scoped test seam)
+    const Environment unlockedMockEnv{{"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()}};
+    assert(!UpdateController::isPackageManagerLocked(unlockedMockEnv)); // Unlocked file returns false
     {
         const pid_t lockChild = ::fork();
         assert(lockChild >= 0);
@@ -742,15 +752,63 @@ int main(int argc, char **argv) {
             ::_exit(0);
         }
         ::usleep(20000); // wait for child to obtain lock
-        assert(UpdateController::isPackageManagerLocked()); // Actively locked file returns true
+        assert(UpdateController::isPackageManagerLocked(unlockedMockEnv)); // Actively locked file returns true
         ::kill(lockChild, SIGTERM);
         ::waitpid(lockChild, nullptr, 0);
     }
-    assert(!UpdateController::isPackageManagerLocked()); // Unlocked returns false
-    // Test synthetic lock environment parameters
+    assert(!UpdateController::isPackageManagerLocked(unlockedMockEnv)); // Unlocked returns false
+
+    // B. Explicit mock lock dir via Environment map
+    const auto mockLockDir = tempRoot / "mock_lock_dir";
+    std::filesystem::create_directories(mockLockDir);
+    const Environment mockDirEnv{{"MODERNIME_PACKAGE_MANAGER_LOCK_DIR", mockLockDir.string()}};
+    assert(!UpdateController::isPackageManagerLocked(mockDirEnv));
+    const auto mockDirFrontendLock = mockLockDir / "lock-frontend";
+    writeTextFile(mockDirFrontendLock, "frontend");
+    {
+        const pid_t lockChild = ::fork();
+        assert(lockChild >= 0);
+        if (lockChild == 0) {
+            int lockFd = ::open(mockDirFrontendLock.c_str(), O_RDWR);
+            struct flock fl{};
+            fl.l_type = F_WRLCK;
+            fl.l_whence = SEEK_SET;
+            fl.l_start = 0;
+            fl.l_len = 0;
+            ::fcntl(lockFd, F_SETLK, &fl);
+            ::pause();
+            ::_exit(0);
+        }
+        ::usleep(20000);
+        assert(UpdateController::isPackageManagerLocked(mockDirEnv));
+        ::kill(lockChild, SIGTERM);
+        ::waitpid(lockChild, nullptr, 0);
+    }
+    assert(!UpdateController::isPackageManagerLocked(mockDirEnv));
+
+    // C. Synthetic force-locked flag
     assert(UpdateController::isPackageManagerLocked(Environment{{"MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED", "1"}}));
-    assert(!UpdateController::isPackageManagerLocked(Environment{{"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()}}));
-    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE", globalMockLockPath.c_str(), 1);
+
+    // D. CRITICAL R1 REGRESSION GUARD:
+    // Default production call isPackageManagerLocked() MUST NOT read inherited getenv for mock lock file or dir!
+    // Even if an inherited environment variable points to a nonexistent mock file/dir,
+    // the default production call MUST ignore it and inspect real host locks.
+    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE", "/nonexistent/path/for/r1/test", 1);
+    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_DIR", "/nonexistent/dir/for/r1/test", 1);
+    // Explicit environment map with nonexistent file returns false
+    assert(!UpdateController::isPackageManagerLocked(Environment{{"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", "/nonexistent/path/for/r1/test"}}));
+    // Default production call (no args or empty map) ignores getenv for mock lock:
+    (void)UpdateController::isPackageManagerLocked();
+    ::unsetenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
+    ::unsetenv("MODERNIME_PACKAGE_MANAGER_LOCK_DIR");
+
+    // E. Permission/unreadable directory error safety:
+    // If mock dir exists but permissions make it unreadable, isPackageManagerLocked must return true (safe fallback, never silent false)
+    const auto unreadableDir = tempRoot / "unreadable_lock_dir";
+    std::filesystem::create_directories(unreadableDir);
+    ::chmod(unreadableDir.c_str(), 0000);
+    assert(UpdateController::isPackageManagerLocked(Environment{{"MODERNIME_PACKAGE_MANAGER_LOCK_DIR", unreadableDir.string()}}));
+    ::chmod(unreadableDir.c_str(), 0755);
 
     // 9. T12 Required Test 1: NormalWaitRejectsConcurrentOperation
     // Fake pkexec blocks on a barrier during normal wait (before timeout).
@@ -1007,17 +1065,17 @@ int main(int argc, char **argv) {
             "printf 'spawn\\n' >> \"" + r1SpawnCountFile.string() + "\"\n"
             "exit 0\n");
 
-        // 2. Set mock lock and invoke refreshPackageCache 9 times
-        ::setenv("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED", "1", 1);
+        // 2. Set mock lock via scoped environment and invoke refreshPackageCache 9 times
+        Environment lockedAptEnv = aptEnv;
+        lockedAptEnv.emplace_back("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED", "1");
         for (int i = 1; i <= 9; ++i) {
-            const auto res = UpdateController::refreshPackageCache(aptStatus, aptEnv);
+            const auto res = UpdateController::refreshPackageCache(aptStatus, lockedAptEnv);
             assert(!res.success);
             assert(res.message.find("系统包管理器正忙") != std::string::npos);
             assert(!UpdateController::hasActivePackageOperation());
             assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
             assert(UpdateController::unconsumedPackageOperationCount() == 1); // MUST NOT INCREASE
         }
-        ::unsetenv("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED");
 
         // Spawn count must be 0
         assert(!std::filesystem::exists(r1SpawnCountFile) || std::filesystem::file_size(r1SpawnCountFile) == 0);
@@ -1112,7 +1170,10 @@ int main(int argc, char **argv) {
 
         UpdateStatus status;
         status.manager = PackageManagerKind::Apt;
-        Environment env{{"PATH", uncertainDir.string()}};
+        Environment env{
+            {"PATH", uncertainDir.string()},
+            {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
+        };
 
         const auto res = UpdateController::refreshPackageCache(status, env);
         assert(!res.success);
@@ -1154,7 +1215,11 @@ int main(int argc, char **argv) {
 
         UpdateStatus status;
         status.manager = PackageManagerKind::Apt;
-        Environment env{{"PATH", uncertainDir.string()}, {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "30"}};
+        Environment env{
+            {"PATH", uncertainDir.string()},
+            {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "30"},
+            {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
+        };
 
         const auto res = UpdateController::refreshPackageCache(status, env);
         assert(!res.success);
@@ -1183,7 +1248,6 @@ int main(int argc, char **argv) {
         assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
     }
 
-    ::unsetenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
     std::filesystem::remove_all(tempRoot);
     return 0;
 }

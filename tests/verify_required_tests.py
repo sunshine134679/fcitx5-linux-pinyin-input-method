@@ -54,6 +54,7 @@ FULL_FINAL_ADDITIONAL = [
     "modernime_ui_addon",
     "modernime_adapter_recovery",
     "modernime_settings_navigation_dbus",
+    "modernime_runtime_controller_concurrency",
 ]
 
 STORAGE_TSAN_REQUIRED = [

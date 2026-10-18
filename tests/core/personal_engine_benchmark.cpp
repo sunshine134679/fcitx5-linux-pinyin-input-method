@@ -553,6 +553,7 @@ void verifyLmdbConcurrentPruningLatency() {
             double enqueue = 0.0;
             double snapshot = 0.0;
             double recall = 0.0;
+            double release = 0.0;
         };
         std::vector<SampleBreakdown> breakdowns;
         breakdowns.reserve(1024);
@@ -574,12 +575,15 @@ void verifyLmdbConcurrentPruningLatency() {
             const auto t2 = std::chrono::steady_clock::now();
             benchmark::DoNotOptimize(snap->recallCandidates("nihao", event.timestampMs));
             const auto t3 = std::chrono::steady_clock::now();
-            double total_us = std::chrono::duration<double, std::micro>(t3 - t0).count();
+            snap.reset();
+            const auto t4 = std::chrono::steady_clock::now();
+            double total_us = std::chrono::duration<double, std::micro>(t4 - t0).count();
             double enqueue_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
             double snap_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
             double recall_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
+            double release_us = std::chrono::duration<double, std::micro>(t4 - t3).count();
             samples.push_back(total_us);
-            breakdowns.push_back({total_us, enqueue_us, snap_us, recall_us});
+            breakdowns.push_back({total_us, enqueue_us, snap_us, recall_us, release_us});
         }
         stopPrune.store(true, std::memory_order_relaxed);
         pruner.join();
@@ -601,7 +605,8 @@ void verifyLmdbConcurrentPruningLatency() {
                   << "  LMDB concurrent write/pruning peak sample breakdown: total="
                   << peak_bd.total << " us (enqueue=" << peak_bd.enqueue
                   << " us, snapshot=" << peak_bd.snapshot
-                  << " us, recall=" << peak_bd.recall << " us)\n";
+                  << " us, recall=" << peak_bd.recall
+                  << " us, release=" << peak_bd.release << " us)\n";
 
         // Verify real LMDB concurrent pruning occurred in timed scenario
         size_t finalEntries = 0;
@@ -692,14 +697,18 @@ void verifyLmdbFirstKeyAfterClearLatency() {
     const auto t2 = std::chrono::steady_clock::now();
     benchmark::DoNotOptimize(snap->recallCandidates("nihao", event.timestampMs));
     const auto t3 = std::chrono::steady_clock::now();
-    double latency_us = std::chrono::duration<double, std::micro>(t3 - t0).count();
+    snap.reset();
+    const auto t4 = std::chrono::steady_clock::now();
+    double latency_us = std::chrono::duration<double, std::micro>(t4 - t0).count();
     double enqueue_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
     double snap_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
     double recall_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
+    double release_us = std::chrono::duration<double, std::micro>(t4 - t3).count();
 
     std::cout << "  LMDB first key after clear: latency=" << latency_us << " us (enqueue="
               << enqueue_us << " us, snapshot=" << snap_us
-              << " us, recall=" << recall_us << " us)\n";
+              << " us, recall=" << recall_us
+              << " us, release=" << release_us << " us)\n";
     if (!writer.flush()) std::exit(EXIT_FAILURE);
 #if MODERNIME_ENFORCE_LATENCY_GATES
     if (g_injected_gate_failure == "lmdb_first_key_after_clear") {

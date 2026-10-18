@@ -345,6 +345,54 @@ class VerifyRequiredTestsContractTest(unittest.TestCase):
             any("Illegal test SKIP for modernime_settings_navigation_dbus" in e for e in errors)
         )
 
+    def test_final_stage_missing_runtime_controller_concurrency_execution_fails(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        executed = {t: "passed" for t in all_final if t != "modernime_runtime_controller_concurrency"}
+        self.create_junit_xml(executed)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("modernime_runtime_controller_concurrency" in e for e in errors))
+        self.assertTrue(any("missing execution evidence" in e for e in errors))
+
+    def test_final_stage_runtime_controller_concurrency_failure_fails(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        results = {t: "passed" for t in all_final}
+        results["modernime_runtime_controller_concurrency"] = "failed"
+        self.create_junit_xml(results)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Test FAILED: modernime_runtime_controller_concurrency" in e for e in errors))
+
+    def test_runtime_controller_concurrency_skip_in_headless_fails(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        results = {t: "passed" for t in all_final}
+        results["modernime_runtime_controller_concurrency"] = "skipped"
+        self.create_junit_xml(results)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+            execution="headless",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(
+            any("Illegal test SKIP for modernime_runtime_controller_concurrency" in e for e in errors)
+        )
+
     def test_nonexistent_junit_path_fails(self):
         all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
         self.create_registered_json(all_final)
