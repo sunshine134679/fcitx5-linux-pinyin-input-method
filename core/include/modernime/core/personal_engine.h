@@ -20,6 +20,7 @@
 #include <vector>
 
 struct MDB_env;
+struct MDB_txn;
 
 namespace modernime::core {
 
@@ -252,6 +253,8 @@ private:
     bool lmdb_read_only_ = false;
     size_t last_lmdb_txn_id_ = 0;
     mutable std::mutex lmdb_mutex_;
+    mutable MDB_env *cached_read_env_ = nullptr;
+    mutable MDB_txn *cached_read_txn_ = nullptr;
 };
 
 } // namespace modernime::core

@@ -603,6 +603,9 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
         add_test(NAME modernime_personal_engine_gtest
             COMMAND modernime_personal_engine_gtest
         )
+        set_tests_properties(modernime_personal_engine_gtest PROPERTIES
+            RUN_SERIAL TRUE
+        )
     elseif(MODERNIME_REQUIRE_FULL_TESTS)
         message(FATAL_ERROR "MODERNIME_REQUIRE_FULL_TESTS=ON requires Google Test (gtest and gtest_main), but it was not found.")
     endif()

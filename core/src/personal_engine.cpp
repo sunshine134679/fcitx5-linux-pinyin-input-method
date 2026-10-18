@@ -22,6 +22,16 @@ namespace {
 constexpr double kLn2 = 0.693147180559945309417232121458176568;
 constexpr int kLmdbSchemaVersion = 2;
 
+template <typename T>
+constexpr T maxVal(T a, T b) noexcept {
+    return (a < b) ? b : a;
+}
+
+template <typename T>
+constexpr T minVal(T a, T b) noexcept {
+    return (a < b) ? a : b;
+}
+
 bool isUtf8ContinuationByte(unsigned char byte) noexcept {
     return (byte & 0xC0U) == 0x80U;
 }
@@ -678,14 +688,14 @@ std::vector<PersonalCandidate> PersonalEngine::QueryCandidates(
             if (v.meta.suppressed != 0) {
                 agg.suppressed = true;
             }
-            agg.meta.base_weight = std::max(agg.meta.base_weight, v.meta.base_weight);
+            agg.meta.base_weight = maxVal(agg.meta.base_weight, v.meta.base_weight);
             agg.meta.hit_count += v.meta.hit_count;
             agg.meta.last_used_timestamp =
-                std::max(agg.meta.last_used_timestamp, v.meta.last_used_timestamp);
+                maxVal(agg.meta.last_used_timestamp, v.meta.last_used_timestamp);
             agg.meta.last_selected_ms =
-                std::max(agg.meta.last_selected_ms, v.meta.last_selected_ms);
+                maxVal(agg.meta.last_selected_ms, v.meta.last_selected_ms);
             agg.meta.negative_feedback =
-                std::max(agg.meta.negative_feedback, v.meta.negative_feedback);
+                maxVal(agg.meta.negative_feedback, v.meta.negative_feedback);
             agg.meta.text_bytes_len = v.meta.text_bytes_len;
 
             const float factor =
@@ -891,13 +901,13 @@ std::vector<PersonalCandidate> PersonalEngine::QueryLmdbCandidates(
                 agg.suppressed = true;
             }
             agg.meta.base_weight =
-                std::max(agg.meta.base_weight, view.meta.base_weight);
+                maxVal(agg.meta.base_weight, view.meta.base_weight);
             agg.meta.hit_count += view.meta.hit_count;
-            agg.meta.last_used_timestamp = std::max(
+            agg.meta.last_used_timestamp = maxVal(
                 agg.meta.last_used_timestamp, view.meta.last_used_timestamp);
             agg.meta.last_selected_ms =
-                std::max(agg.meta.last_selected_ms, view.meta.last_selected_ms);
-            agg.meta.negative_feedback = std::max(
+                maxVal(agg.meta.last_selected_ms, view.meta.last_selected_ms);
+            agg.meta.negative_feedback = maxVal(
                 agg.meta.negative_feedback, view.meta.negative_feedback);
             agg.meta.text_bytes_len = view.meta.text_bytes_len;
 
@@ -1189,6 +1199,11 @@ void PersonalEngine::CloseLmdb() noexcept {
     std::shared_ptr<detail::LmdbEnvironment> env_to_release;
     {
         std::lock_guard lock(lmdb_mutex_);
+        if (cached_read_txn_ != nullptr) {
+            mdb_txn_abort(cached_read_txn_);
+            cached_read_txn_ = nullptr;
+        }
+        cached_read_env_ = nullptr;
         env_to_release = std::move(lmdb_env_);
         env_ = nullptr;
         words_dbi_ = 0;
@@ -1904,21 +1919,39 @@ bool PersonalEngine::Clear() {
 
 int64_t PersonalEngine::ResetRevision() const {
     std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
+    unsigned int active_meta_dbi = 0;
     {
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
+        active_meta_dbi = meta_dbi_;
     }
     if (active_env_handle != nullptr) {
         std::shared_lock env_lock(active_env_handle->lifecycle_gate);
         MDB_env *active_env = active_env_handle->env;
-        const MDB_dbi active_meta_dbi = active_env_handle->meta_dbi;
         if (active_env != nullptr) {
-            MDB_txn *txn = nullptr;
-            if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
-                const auto rev = getMetaInt64(txn, active_meta_dbi, "reset_revision");
-                mdb_txn_abort(txn);
-                if (rev.has_value()) {
-                    return *rev;
+            std::lock_guard lock(lmdb_mutex_);
+            if (cached_read_env_ != active_env) {
+                if (cached_read_txn_ != nullptr) {
+                    mdb_txn_abort(cached_read_txn_);
+                    cached_read_txn_ = nullptr;
+                }
+                cached_read_env_ = active_env;
+            }
+            if (cached_read_txn_ == nullptr) {
+                if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &cached_read_txn_) == MDB_SUCCESS) {
+                    mdb_txn_reset(cached_read_txn_);
+                }
+            }
+            if (cached_read_txn_ != nullptr) {
+                if (mdb_txn_renew(cached_read_txn_) == MDB_SUCCESS) {
+                    const auto rev = getMetaInt64(cached_read_txn_, active_meta_dbi, "reset_revision");
+                    mdb_txn_reset(cached_read_txn_);
+                    if (rev.has_value()) {
+                        return *rev;
+                    }
+                } else {
+                    mdb_txn_abort(cached_read_txn_);
+                    cached_read_txn_ = nullptr;
                 }
             }
         }
@@ -2108,14 +2141,14 @@ bool PersonalEngine::MigrateFromSqlite(const std::filesystem::path &sqlite_path)
                 : 0;
         if (existing != nullptr) {
             existing->meta.hit_count = static_cast<uint32_t>(
-                std::min<int64_t>(std::numeric_limits<uint32_t>::max(),
-                                  static_cast<int64_t>(existing->meta.hit_count) + freq));
+                minVal<int64_t>(std::numeric_limits<uint32_t>::max(),
+                                static_cast<int64_t>(existing->meta.hit_count) + freq));
             existing->meta.last_used_timestamp =
-                std::max(existing->meta.last_used_timestamp, ts_sec);
+                maxVal(existing->meta.last_used_timestamp, ts_sec);
             existing->meta.last_selected_ms =
-                std::max(existing->meta.last_selected_ms, last_ms);
+                maxVal(existing->meta.last_selected_ms, last_ms);
             existing->meta.negative_feedback = static_cast<uint32_t>(
-                std::max<int64_t>(existing->meta.negative_feedback, neg_fb));
+                maxVal<int64_t>(existing->meta.negative_feedback, neg_fb));
             existing->meta.suppressed = suppressed ? 1 : existing->meta.suppressed;
         } else {
             StoredVariant created;
@@ -2406,9 +2439,9 @@ bool PersonalEngine::ReadPersonalFile(const std::string &file_path,
                     constexpr uint32_t kMaxImportedSingleCharHitCount = 3;
                     const auto codepoint_count = countUtf8Codepoints(text);
                     if (codepoint_count == 1) {
-                        meta.hit_count = std::min(meta.hit_count, kMaxImportedSingleCharHitCount);
+                        meta.hit_count = minVal(meta.hit_count, kMaxImportedSingleCharHitCount);
                     } else {
-                        meta.hit_count = std::min(meta.hit_count, kMaxImportedHitCount);
+                        meta.hit_count = minVal(meta.hit_count, kMaxImportedHitCount);
                     }
                 }
                 StoredVariant v;
@@ -2455,17 +2488,17 @@ bool PersonalEngine::ReadPersonalFile(const std::string &file_path,
                 }
             }
             if (existing != nullptr) {
-                existing->meta.hit_count = static_cast<uint32_t>(std::min<uint64_t>(
+                existing->meta.hit_count = static_cast<uint32_t>(minVal<uint64_t>(
                     std::numeric_limits<uint32_t>::max(),
                     static_cast<uint64_t>(existing->meta.hit_count) +
                         item.variant.meta.hit_count));
-                existing->meta.last_used_timestamp = std::max(
+                existing->meta.last_used_timestamp = maxVal(
                     existing->meta.last_used_timestamp,
                     item.variant.meta.last_used_timestamp);
-                existing->meta.last_selected_ms = std::max(
+                existing->meta.last_selected_ms = maxVal(
                     existing->meta.last_selected_ms,
                     item.variant.meta.last_selected_ms);
-                existing->meta.base_weight = std::max(
+                existing->meta.base_weight = maxVal(
                     existing->meta.base_weight, item.variant.meta.base_weight);
                 continue;
             }
