@@ -27,6 +27,7 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     )
     set_tests_properties(modernime_configuration_contract PROPERTIES
         TIMEOUT 180
+        RUN_SERIAL TRUE
     )
 endif()
 

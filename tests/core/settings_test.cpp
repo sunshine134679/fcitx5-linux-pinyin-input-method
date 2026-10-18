@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string_view>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -17,13 +18,11 @@ void assertTrue(bool condition, std::string_view message) {
 }
 
 std::filesystem::path testDirectory() {
-    const auto path = std::filesystem::temp_directory_path() /
-                      "modernime-settings-test";
-    std::error_code error;
-    std::filesystem::remove_all(path, error);
-    std::filesystem::create_directories(path, error);
-    assertTrue(!error, "test directory is created");
-    return path;
+    std::string pattern = (std::filesystem::temp_directory_path() /
+                           "modernime-settings-test-XXXXXX").string();
+    char *createdDir = ::mkdtemp(pattern.data());
+    assertTrue(createdDir != nullptr, "mkdtemp creates isolated test directory");
+    return std::filesystem::path(pattern);
 }
 
 void testPaths() {
