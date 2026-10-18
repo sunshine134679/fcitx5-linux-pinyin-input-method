@@ -163,7 +163,7 @@ Total Test time (real) = 182.13 sec
 ## 8. R1 / CI 报告路径定向收尾（协调者修复）
 
 - **问题根因**：`.github/workflows/ci.yml` 在 `ctest --test-dir` 之后传入包含 build 目录前缀的相对路径（如 `--output-junit build/ci/debug-junit.xml`），导致 CTest 在测试目录下再次创建相对目录，将产物写入 `build/ci/build/ci/debug-junit.xml`，而后续 `verify_required_tests.py` 在仓库根读取的 `build/ci/debug-junit.xml` 实际不存在。
-- **修复提交**：`08fb1624cb185c88b0a7da8303f27f0524458f31`
+- **修复提交**：`08fb1629a86ce7a59fcc0dccf206235a9cb395a1`
 - **修复方案**：在 `.github/workflows/ci.yml` 中，将 Debug、Release、core-only 三处的 `--output-junit` 统一使用绝对路径 `"$PWD/build/ci/debug-junit.xml"`、`"$PWD/build/ci-performance/release-junit.xml"` 及 `"$PWD/build/ci-core-only/junit.xml"`，与后续 `verify_required_tests.py` 读取路径严格一致。
 - **定向核验**：
   1. 私有临时 CTest 夹具复现了原相对路径目录重复缺陷（原形式 exit 0 但预期目标缺失，写入嵌套目录）；
