@@ -154,6 +154,20 @@ Total Test time (real) = 182.13 sec
 
 ## 7. 交付状态与交接说明
 
-- **当前状态**：`WIRING_COMPLETE`
+- **当前状态**：`REVIEWED / CI_REMEDIATED`
 - **交接提示**：基线提交 `d65ef8a` 为协调者指定的 provisional 提交（已集成 C14 `a5dbf74`、C17 `612c32c` 及 C15 `2a0460a`）。T16 的全仓 CMake / CI / 测试接线已全面就绪，T14、T15、T17 全部接线要求均已闭环。前置提交为 provisional，最终通过判定留待协调者在集成验收阶段统一运行全量测试。
 - 写权限在提交后完整移交回协调者。
+
+---
+
+## 8. R1 / CI 报告路径定向收尾（协调者修复）
+
+- **问题根因**：`.github/workflows/ci.yml` 在 `ctest --test-dir` 之后传入包含 build 目录前缀的相对路径（如 `--output-junit build/ci/debug-junit.xml`），导致 CTest 在测试目录下再次创建相对目录，将产物写入 `build/ci/build/ci/debug-junit.xml`，而后续 `verify_required_tests.py` 在仓库根读取的 `build/ci/debug-junit.xml` 实际不存在。
+- **修复提交**：`08fb1624cb185c88b0a7da8303f27f0524458f31`
+- **修复方案**：在 `.github/workflows/ci.yml` 中，将 Debug、Release、core-only 三处的 `--output-junit` 统一使用绝对路径 `"$PWD/build/ci/debug-junit.xml"`、`"$PWD/build/ci-performance/release-junit.xml"` 及 `"$PWD/build/ci-core-only/junit.xml"`，与后续 `verify_required_tests.py` 读取路径严格一致。
+- **定向核验**：
+  1. 私有临时 CTest 夹具复现了原相对路径目录重复缺陷（原形式 exit 0 但预期目标缺失，写入嵌套目录）；
+  2. 验证修正后的 Debug、Release、core-only 三种形式均在预期绝对路径生成 JUnit XML，且均成功通过 `xml.etree.ElementTree` 完整结构解析；
+  3. 核心定向 CTest 4/4 全部通过（`modernime_required_tests_contract`、`modernime_settings`、`modernime_learning_store`、`modernime_engine_state`，耗时 8.51s）；
+  4. 远程 GitHub Actions 状态标记为 `NotRun`（仅完成本地最小复现与正向对照，不声称远程已绿）。
+
