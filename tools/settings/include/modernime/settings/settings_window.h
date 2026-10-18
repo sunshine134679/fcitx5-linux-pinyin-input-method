@@ -1,11 +1,16 @@
 #pragma once
 
 #include "modernime/core/settings.h"
+#include "modernime/settings/page_registry.h"
 
 #include <memory>
 #include <string_view>
 
+struct _GtkWidget;
+
 namespace modernime::settings {
+
+using GtkWidget = ::_GtkWidget;
 
 class SettingsShell;
 
@@ -18,6 +23,9 @@ public:
     SettingsWindow &operator=(const SettingsWindow &) = delete;
 
     void present();
+    GtkWidget *window() const;
+    void show(SettingsPageId page, std::string_view target = {});
+    void showOverviewPage();
     void showBasicPage();
     void showCandidatePage();
     void showClipboardPage();

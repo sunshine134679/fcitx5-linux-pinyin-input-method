@@ -18,32 +18,44 @@ void SettingsWindow::present() {
     shell_->present();
 }
 
+GtkWidget *SettingsWindow::window() const {
+    return shell_ ? shell_->window() : nullptr;
+}
+
+void SettingsWindow::show(SettingsPageId page, std::string_view target) {
+    shell_->show(page, target);
+}
+
+void SettingsWindow::showOverviewPage() {
+    show(SettingsPageId::Overview);
+}
+
 void SettingsWindow::showBasicPage() {
-    shell_->show(SettingsPageId::Input);
+    show(SettingsPageId::Input);
 }
 
 void SettingsWindow::showCandidatePage() {
-    shell_->show(SettingsPageId::Input);
+    show(SettingsPageId::Candidates);
 }
 
 void SettingsWindow::showClipboardPage() {
-    shell_->show(SettingsPageId::Clipboard);
+    show(SettingsPageId::Clipboard);
 }
 
 void SettingsWindow::showLearningPage() {
-    shell_->show(SettingsPageId::Learning);
+    show(SettingsPageId::Learning);
 }
 
 void SettingsWindow::showDictionaryPage() {
-    shell_->show(SettingsPageId::Dictionary);
+    show(SettingsPageId::Dictionary);
 }
 
 void SettingsWindow::showStatusPage() {
-    shell_->show(SettingsPageId::Diagnostics);
+    show(SettingsPageId::Diagnostics);
 }
 
 void SettingsWindow::showUpdatesPage() {
-    shell_->show(SettingsPageId::Updates);
+    show(SettingsPageId::Updates);
 }
 
 void SettingsWindow::presentError(std::string_view message) {

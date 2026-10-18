@@ -386,6 +386,16 @@ if(MODERNIME_BUILD_SETTINGS)
     )
     add_test(NAME modernime_page_registry COMMAND modernime_page_registry_tests)
 
+    add_test(NAME modernime_settings_navigation_dbus
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/settings/settings_navigation_dbus_test.sh
+                $<TARGET_FILE:modernime-settings>
+    )
+    set_tests_properties(modernime_settings_navigation_dbus PROPERTIES
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30
+    )
+
     add_executable(modernime_clipboard_history_model_tests
         settings/clipboard_history_model_test.cpp
         ../tools/settings/clipboard_history_model.cpp

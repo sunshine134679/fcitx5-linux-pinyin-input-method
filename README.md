@@ -22,7 +22,7 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 | `modernime_0.1.13_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
 | `modernime-0.1.13-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
 | `modernime-0.1.13-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
-| 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
+| 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
 
@@ -289,12 +289,31 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 
 ## 启动设置客户端
 
-安装后可以从应用菜单或桌面快捷方式启动，也可以直接运行：
+安装后可以从应用菜单或桌面快捷方式启动，也可以直接运行命令行启动：
 
 ```bash
 ~/.local/bin/modernime-settings
-# 或使用快捷参数直接打开特定页面（如剪贴板页）：
-~/.local/bin/modernime-settings --clipboard  # 或 -c
+
+# 常用快捷参数（直接打开指定页面）：
+~/.local/bin/modernime-settings --overview     # 或 -o
+~/.local/bin/modernime-settings --input        # 或 -i
+~/.local/bin/modernime-settings --candidates   # 或 -k
+~/.local/bin/modernime-settings --dictionary   # 或 -d
+~/.local/bin/modernime-settings --clipboard    # 或 -c
+~/.local/bin/modernime-settings --learning     # 或 -l
+~/.local/bin/modernime-settings --updates      # 或 -u
+~/.local/bin/modernime-settings --diagnostics  # 或 --status
+
+# 通用页面参数（支持规范页面名及其中英文别名）：
+~/.local/bin/modernime-settings --page candidates
+~/.local/bin/modernime-settings --page clip
+
+# 支持子项锚定（如打开个人词典页并聚焦导入功能）：
+~/.local/bin/modernime-settings --page dictionary --target dictionary-import
+
+# 单实例与 DBus 通信说明：
+# 若已有设置客户端实例在运行，后续命令行调用会通过独立会话 DBus 自动唤起已有窗口并切换到目标页面，不产生多实例弹窗冲突。
+# 若传入未知的页面名称，命令行会输出明确诊断并返回非零退出码。
 ```
 
 设置客户端和输入法插件在同一个仓库中，会随 `./install.sh` 一起构建和安装。若 `~/.local/bin` 不在 `PATH` 中，请使用上面的绝对路径。桌面菜单文件位于：

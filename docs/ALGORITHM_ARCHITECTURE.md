@@ -95,6 +95,13 @@ flowchart TD
 3. Writer 在当前清空代次下更新乐观快照并入有限队列；旧快照继续可读。
 4. Store 在事务内完成同批事件、上下文裁剪、容量剪枝和代次校验；失败不能留下半批结果。
 5. 后台读取一致的“条目＋清空代次”，在输入锁外构造重放结果；版本仍匹配时发布。同代次的新输入不能被旧后台结果覆盖；更高的清空代次必须优先使旧事件失效。
+6. **差量自学习与核心高频词保护**：对无上下文、默认空格选中的 Rank 0 核心字词（如“是”、“这个”、“的”、“你”等）采用差量自学习（Deviation-Only Learning），不累加无条件全局频次，保护语言模型先验纯净。
+   **核心词正向频次记录例外**（满足任一条件即记录正向偏好）：
+   - ① **显式上下文连接**：存在有效光标前上下文（`context.length() > 0`）；
+   - ② **翻页与次选点选**：用户手动选择非首位候选（`candidateIndex > 0`，属于显式偏差点选）；
+   - ③ **分段组词反馈**：经由 `PhraseFormationTracker` 连续分段重复成词触发；
+   - ④ **以词定字与退格留字**：经由 `[` / `]` 取字快捷键或 `finalizeRecentCommitDeletion` 确认为退格留字单字提取意图；
+   - ⑤ **显式解除屏蔽**：显式重选并解除此前被持久屏蔽的词条（Un-suppress）。
 
 现有事务重试保证同一批次正常重试不重复计数，**不等于已有跨崩溃的全局事件去重协议**。未来若引入持久事件日志，应另建契约并设计事件身份，不能把本地快照版本当成事件 ID。
 
@@ -168,7 +175,7 @@ ID 永久稳定。特性停用后保留 ID 和历史，不能把旧 ID 分配给
 | `ALG-RANK` 中文排序 | 匹配等级与可信简拼规则优先；偶发选字不破坏常用字，重复学习能上位；比较器无环 | `candidate_ranker.h/.cpp`、管线 | `modernime_pinyin_match`（排列传递性）、`modernime_pinyin_quality` |
 | `ALG-DECAY` 遗忘与频率 | 对数频率、各自时间机制、负反馈和近期学习保持原用途 | `personal_engine.cpp`、`learning_snapshot.cpp`、Ranker | `modernime_personal_engine_gtest`、`modernime_learning_store`；迁移须补齐三策略固定时钟对照 |
 | `ALG-CONTEXT` 上下文 | 有效空文本清除旧上下文；仅不支持采集的连续输入可回退；失效状态丢弃待确认证据 | `inputmethod.cpp`、`engine.cpp`、学习清洗 | Controller 回归；`modernime_engine_state` |
-| `ALG-GATE` 学习资格 | 密码/敏感和禁学场景既不入库，也不累计共享造词次数；恢复不补记 | Controller、Provider、Tracker | Provider 回归 `SensitiveRoundsDoNotContributeToSharedFormation`、`LearningToggleClearsTransientSequenceButKeepsNormalStats` |
+| `ALG-GATE` 学习资格 | 密码/敏感和禁学场景既不入库，也不累计共享造词次数；恢复不补记；核心词无上下文 Rank 0 保持差量自学习（不累加无偏见频次），五类显式偏离场景方记录正向频次 | Controller、Provider、Tracker | Provider 回归 `SensitiveRoundsDoNotContributeToSharedFormation`、`LearningToggleClearsTransientSequenceButKeepsNormalStats`、`modernime_pinyin_daily_simulation` |
 | `ALG-FORM` 分段造词 | 正常三轮重复可成词；只学习已消费音节；取消和边界清临时序列 | Tracker、Provider、CommitEvent | `modernime_pinyin_engine`、`modernime_personal_engine_gtest`、`modernime_pinyin_daily_simulation` |
 | `ALG-EXTRACT` 单字提取 | `[`/`]` 独立学习目标字；删词留字在下一正常输入确认；移动、敏感、继续删光不误学 | Controller、Provider | Controller 回归；`modernime_pinyin_provider`、`modernime_pinyin_engine` |
 | `ALG-SUPPRESS` 持久屏蔽 | 系统、学习、英文来源都遵守；跨前缀/会话/重启有效；明确重选按规则恢复 | Provider、Snapshot、Store | Provider 回归、Storage 回归 `GenericSuppressionBlocksPrefixContextVariants` |
@@ -197,19 +204,19 @@ ID 永久稳定。特性停用后保留 ID 和历史，不能把旧 ID 分配给
 
 敏感输入、学习禁用、明确持久屏蔽、用户清空和消费范围正确性属于公共边界，优先于新特性的加分、召回或学习需求。关闭一个可选特性必须回到已定义基线，不能同时关闭这些公共边界。
 
-## 9. 渐进迁移设计
+## 9. 渐进迁移设计与当前落地状态
 
-以下阶段均为待实施，不能据此把当前代码描述为已完成重构。每阶段独立提交、独立验收；前一阶段未过关，不开展依赖它的拆分。
+以下阶段记录了算法重构的渐进实施进度。目前核心模块的策略与语义已经落实，但全链路自动化回放仍待持续推进，不能把部分完成描述为全部重构完毕。每阶段独立提交、独立验收；前一阶段未过关，不开展依赖它的拆分。
 
-| 阶段 | 范围 | 验收与回退 |
+| 阶段 | 范围 | 实际落地状态与验收 |
 |---|---|---|
-| M0 固定行为证据 | 以现有测试为起点，建立固定时钟、词库版本、事件序列和旧数据夹具的差异回放 | 覆盖本目录 14 个契约及关键交互；输出、消费范围、学习状态和清空代次可比较；尚缺的覆盖明确列出 |
-| M1 提取只读策略 | 从 Provider 逐项提取英文资格、身份归一化、候选证据与协调阶段；先保持公式及操作顺序 | 无意图行为变化的场景结果相同；每次只提取一种职责，可直接回退代码 |
-| M2 提取学习决策 | 将资格判断、造词输入与反馈转换形成独立协调边界，宿主删字证据仍由 Controller 提供 | 敏感/禁学零副作用，普通造词与留字行为不变；不引入第二写入通道 |
-| M3 收敛学习语义 | 为 Snapshot、SQLite、LMDB 建立同事件流一致性套件，再逐项提取共享归一化/事件变换规则 | 比较频率、屏蔽、上下文、别名与清空；后端明确允许的排序/剪枝差异单独断言，不能盲目要求全量相等 |
-| M4 自动化准入 | 将契约引用、必需测试存在性、回放差异和独立 Benchmark 纳入 CI | 缺少必需测试直接失败；性能与功能分别留证据；文档检查不冒充语义验证 |
+| M0 固定行为证据 | 以现有测试为起点，建立固定时钟、词库版本、事件序列和旧数据夹具的差异回放 | **部分落实**：已有 `tests/verify_required_tests.py` 门禁契约与基线回归套件（`ArchitectureWriterRegression`, `ArchitectureLmdbRegression`, `ArchitectureSelectionRegression` 等）；跨版本全自动回放与 CI 差异比对仍在推进中。 |
+| M1 提取只读策略 | 从 Provider 逐项提取英文资格、身份归一化、候选证据与协调阶段；先保持公式及操作顺序 | **已落实**：`candidate_pipeline`、`candidate_features`、`candidate_prefixes`、`candidate_mixer` 已独立提取，中文多粒度席位与特征编排已解耦。 |
+| M2 提取学习决策 | 将资格判断、造词输入与反馈转换形成独立协调边界，宿主删字证据仍由 Controller 提供 | **已落实**：`PhraseFormationTracker`、`CommitEvent`、`RecentChoices` 决策边界已清晰，敏感/禁学零副作用，退格留字提权在下一正常输入确认。 |
+| M3 收敛学习语义 | 为 Snapshot、SQLite、LMDB 建立同事件流一致性套件，再逐项提取共享归一化/事件变换规则 | **核心落实**：`LearningSnapshot` 与 `LearningStore` LMDB 门面的一致性语义已收敛（别名规范化、通用屏蔽、清空代次隔离、200,000 上限与淘汰策略），仍保持独立 `PersonalEngine` 160,000 剪枝与 7天/30天/12小时机制。 |
+| M4 自动化准入 | 将契约引用、必需测试存在性、回放差异和独立 Benchmark 纳入 CI | **部分落实**：`verify_required_tests.py` 已加入准入门禁，缺少必需测试直接失败，Release Benchmark 延迟门禁独立验证；全自动持续差异回放待进一步落地。 |
 
-建议提取后的逻辑职责为 `recall`、`eligibility`、`ranking`、`composition`、`learning_policy`；这是职责划分，**不要求立即创建这些目录、重命名现有公共 API 或新增动态插件系统**。小规模策略可先留在现有构建目标中，验证稳定后再调整目录。
+建议提取后的逻辑职责为 `recall`、`eligibility`、`ranking`、`composition`、`learning_policy`；这是职责划分，**不要求立即创建这些目录、重命名现有公共 API 或新增动态插件系统**。小规模策略先留在现有构建目标中，验证稳定后再调整目录。
 
 M3 的共同语义层只统一事件含义及规范化，不强制统一物理索引、得分公式、写事务或容量剪枝实现。先以一致性测试发现差异，再逐个判定差异是既有政策还是缺陷。
 

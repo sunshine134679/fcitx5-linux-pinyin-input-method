@@ -53,6 +53,7 @@ FULL_FINAL_ADDITIONAL = [
     "modernime_settings_data_async_gtk",
     "modernime_ui_addon",
     "modernime_adapter_recovery",
+    "modernime_settings_navigation_dbus",
 ]
 
 STORAGE_TSAN_REQUIRED = [
@@ -85,6 +86,7 @@ HEADLESS_SKIP_WHITELIST = {
     "modernime_settings_save_gtk",
     "modernime_settings_data_async_gtk",
     "modernime_ui_addon",
+    "modernime_settings_navigation_dbus",
 }
 
 FINAL_REQUIRED_GTEST_SUITES = [

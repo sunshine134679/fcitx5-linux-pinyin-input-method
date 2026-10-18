@@ -281,6 +281,82 @@ class VerifyRequiredTestsContractTest(unittest.TestCase):
         )
         self.assertTrue(ok, f"Expected pass for complete core-only final, got: {errors}")
 
+    def test_final_stage_missing_navigation_dbus_execution_fails(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        # Execute everything except modernime_settings_navigation_dbus
+        executed = {t: "passed" for t in all_final if t != "modernime_settings_navigation_dbus"}
+        self.create_junit_xml(executed)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("modernime_settings_navigation_dbus" in e for e in errors))
+        self.assertTrue(any("missing execution evidence" in e for e in errors))
+
+    def test_final_stage_navigation_dbus_failure_fails(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        results = {t: "passed" for t in all_final}
+        results["modernime_settings_navigation_dbus"] = "failed"
+        self.create_junit_xml(results)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Test FAILED: modernime_settings_navigation_dbus" in e for e in errors))
+
+    def test_navigation_dbus_whitelisted_skip_in_headless_passes(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        results = {t: "passed" for t in all_final}
+        results["modernime_settings_navigation_dbus"] = "skipped"
+        self.create_junit_xml(results)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+            execution="headless",
+        )
+        self.assertTrue(ok, f"Expected pass for headless skip, got: {errors}")
+
+    def test_navigation_dbus_skip_in_desktop_fails(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        results = {t: "passed" for t in all_final}
+        results["modernime_settings_navigation_dbus"] = "skipped"
+        self.create_junit_xml(results)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+            execution="desktop",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(
+            any("Illegal test SKIP for modernime_settings_navigation_dbus" in e for e in errors)
+        )
+
+    def test_nonexistent_junit_path_fails(self):
+        all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(all_final)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=["/tmp/nonexistent_junit_report.xml"],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Error reading JUnit XML" in e or "not found" in e for e in errors))
+
 
 if __name__ == "__main__":
     unittest.main()
