@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <iostream>
 #include <unistd.h>
 
 namespace {
@@ -937,12 +938,21 @@ int main(int argc, char **argv) {
             chmod((pkgRoot / "bin/apt-get").c_str(), 0755);
         }
 
+        const auto mockLock = pkgRoot / "mock.lock";
         UpdateStatus aptStatus;
         aptStatus.manager = PackageManagerKind::Apt;
-        Environment pkgEnv{{"PATH", (pkgRoot / "bin").string()}};
+        Environment pkgEnv{
+            {"PATH", (pkgRoot / "bin").string()},
+            {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLock.string()}
+        };
 
         std::thread worker([&]() {
             const auto res = UpdateController::refreshPackageCache(aptStatus, pkgEnv);
+            if (!res.success) {
+                std::cerr << "settings_shell_gtk_test: worker refreshPackageCache failed:\n"
+                          << "  res.message: " << res.message << "\n"
+                          << "  isPackageManagerLocked: " << UpdateController::isPackageManagerLocked(pkgEnv) << "\n";
+            }
             assert(res.success);
         });
 

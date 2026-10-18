@@ -811,7 +811,8 @@ void test_T13_R06_ResourceBoundedRetentionAndZeroZombies() {
     Environment env{
         {"PATH", fakeBinDir},
         {"TMPDIR", r06Tmp},
-        {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "1000"}
+        {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "1000"},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", r06Tmp + "/mock.lock"}
     };
     ::setenv("TMPDIR", r06Tmp.c_str(), 1);
 
@@ -820,6 +821,11 @@ void test_T13_R06_ResourceBoundedRetentionAndZeroZombies() {
 
     for (int i = 0; i < 5; ++i) {
         auto r = UpdateController::refreshPackageCache(status, env);
+        if (!r.success) {
+            std::cerr << "R06 refreshPackageCache iteration " << i << " failed:\n"
+                      << "  r.message: " << r.message << "\n"
+                      << "  isPackageManagerLocked: " << UpdateController::isPackageManagerLocked(env) << "\n";
+        }
         TEST_ASSERT(r.success == true);
     }
 

@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
+#include <iostream>
 #include <unistd.h>
 
 namespace {
@@ -58,6 +59,9 @@ int main(int argc, char **argv) {
     assert(UpdateController::compareVersions("1:0.1.0", "0.9.9") > 0);
 
     const auto tempRoot = makeTempDir();
+    const auto globalMockLockPath = tempRoot / "global_mock.lock";
+    writeTextFile(globalMockLockPath, "unlocked");
+    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE", globalMockLockPath.c_str(), 1);
     const auto aptBinDir = tempRoot / "apt-bin";
     const auto dnfBinDir = tempRoot / "dnf-bin";
     const auto offlineBinDir = tempRoot / "offline-bin";
@@ -216,6 +220,12 @@ int main(int argc, char **argv) {
     assert(upToDateDnfStatus.candidateVersion == "0.1.10");
     assert(upToDateDnfStatus.packageSource.find("modernime-openeuler") != std::string::npos);
     assert(upToDateDnfStatus.packageSource.find("channel=rpm") != std::string::npos);
+    if (upToDateDnfStatus.statusMessage.find("本地软件源缓存中当前已是最新版本") == std::string::npos) {
+        std::cerr << "Assertion failure diagnostics at line 222 (orig 219):\n"
+                  << "  statusMessage: " << upToDateDnfStatus.statusMessage << "\n"
+                  << "  packageManagerLocked: " << upToDateDnfStatus.packageManagerLocked << "\n"
+                  << "  isPackageManagerLocked(env): " << UpdateController::isPackageManagerLocked(upToDateDnfEnv) << "\n";
+    }
     assert(upToDateDnfStatus.statusMessage.find("本地软件源缓存中当前已是最新版本") != std::string::npos);
     assert(upToDateDnfStatus.statusMessage.find("sudo dnf makecache") != std::string::npos);
 
@@ -737,7 +747,10 @@ int main(int argc, char **argv) {
         ::waitpid(lockChild, nullptr, 0);
     }
     assert(!UpdateController::isPackageManagerLocked()); // Unlocked returns false
-    ::unsetenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
+    // Test synthetic lock environment parameters
+    assert(UpdateController::isPackageManagerLocked(Environment{{"MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED", "1"}}));
+    assert(!UpdateController::isPackageManagerLocked(Environment{{"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()}}));
+    ::setenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE", globalMockLockPath.c_str(), 1);
 
     // 9. T12 Required Test 1: NormalWaitRejectsConcurrentOperation
     // Fake pkexec blocks on a barrier during normal wait (before timeout).
@@ -1170,6 +1183,7 @@ int main(int argc, char **argv) {
         assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
     }
 
+    ::unsetenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
     std::filesystem::remove_all(tempRoot);
     return 0;
 }

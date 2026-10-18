@@ -11,12 +11,19 @@
 
 namespace modernime::core {
 
+namespace {
+std::shared_ptr<const LearningSnapshot> emptySnapshot() {
+    static const auto kEmpty = std::make_shared<const LearningSnapshot>();
+    return kEmpty;
+}
+} // namespace
+
 LearningWriter::LearningWriter(std::filesystem::path path, bool synchronousInitialLoad,
                                std::size_t totalEntryLimit)
     : store_(std::make_unique<LearningStore>(path)),
       observerStore_(std::make_unique<LearningStore>(std::move(path))),
       totalEntryLimit_(totalEntryLimit),
-      snapshot_(std::make_shared<const LearningSnapshot>()) {
+      snapshot_(emptySnapshot()) {
     if (totalEntryLimit_ > 0) {
         store_->setTotalEntryLimit(totalEntryLimit_);
         observerStore_->setTotalEntryLimit(totalEntryLimit_);
@@ -308,7 +315,7 @@ bool LearningWriter::reloadIfChanged() {
         viewState_ = EpochViewState::Reloading;
         storageAvailable_ = true;
         retiredSnapshots_.push_back(std::move(snapshot_));
-        snapshot_ = std::make_shared<const LearningSnapshot>();
+        snapshot_ = emptySnapshot();
         ++snapshotVersion_;
         std::erase_if(events_, [rev = *revision](const Event &event) {
             return event.resetRevision < rev;
@@ -337,7 +344,7 @@ void LearningWriter::refreshBeforeEnqueue() {
         viewState_ = EpochViewState::Reloading;
         storageAvailable_ = true;
         retiredSnapshots_.push_back(std::move(snapshot_));
-        snapshot_ = std::make_shared<const LearningSnapshot>();
+        snapshot_ = emptySnapshot();
         ++snapshotVersion_;
         std::erase_if(events_, [rev = *revision](const Event &event) {
             return event.resetRevision < rev;

@@ -433,6 +433,10 @@ if(MODERNIME_BUILD_SETTINGS)
             $<TARGET_FILE:modernime_fake_fcitx5_remote>
             $<TARGET_FILE:modernime_fake_fcitx5>
     )
+    add_test(NAME modernime_runtime_controller_concurrency
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/settings/runtime_controller_concurrency_test.sh
+            "${CMAKE_BINARY_DIR}"
+    )
 
     add_executable(modernime_data_controller_tests
         settings/data_controller_test.cpp

@@ -24,18 +24,17 @@ void assertTrue(bool condition, std::string_view message) {
 
 int main(int argc, char **argv) {
     assertTrue(argc == 3, "test receives fake remote and fcitx executables");
-    const auto directory = std::filesystem::temp_directory_path() /
-                           "modernime-runtime-controller-test";
+    std::string pattern = (std::filesystem::temp_directory_path() /
+                           "modernime-runtime-controller-XXXXXX").string();
+    char *createdDir = ::mkdtemp(pattern.data());
+    assertTrue(createdDir != nullptr, "mkdtemp creates isolated test directory");
+    const std::filesystem::path directory(pattern);
     const auto runningFcitxLog = directory / "running-fcitx.log";
     const auto runningRemoteLog = directory / "running-remote.log";
     const auto stoppedFcitxLog = directory / "stopped-fcitx.log";
     const auto stoppedRemoteLog = directory / "stopped-remote.log";
     const auto stoppedState = directory / "stopped.state";
     const auto missingFcitxState = directory / "missing-fcitx.state";
-    std::error_code cleanupError;
-    std::filesystem::remove_all(directory, cleanupError);
-    std::filesystem::create_directories(directory, cleanupError);
-    assertTrue(!cleanupError, "runtime test directory is created");
     const modernime::settings::Environment baseEnvironment{
         {"DISPLAY", ":0"},
         {"DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus"},
@@ -348,6 +347,7 @@ int main(int argc, char **argv) {
                    "设置已保存",
                "empty saved hash reports saved");
 
+    std::error_code cleanupError;
     std::filesystem::remove_all(directory, cleanupError);
     return EXIT_SUCCESS;
 }

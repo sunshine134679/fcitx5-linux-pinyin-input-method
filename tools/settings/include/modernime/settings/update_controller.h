@@ -38,7 +38,7 @@ class UpdateController final {
 public:
     static int compareVersions(std::string_view lhs, std::string_view rhs);
 
-    static bool isPackageManagerLocked();
+    static bool isPackageManagerLocked(const Environment &environment = {});
 
     static std::string detectInstallChannel(const Environment &environment = {});
 

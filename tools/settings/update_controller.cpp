@@ -248,17 +248,33 @@ int UpdateController::compareVersions(std::string_view lhsRaw, std::string_view 
     return detail::compareVersions(lhsRaw, rhsRaw);
 }
 
-bool UpdateController::isPackageManagerLocked() {
-    const char *mockLock = std::getenv("MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
-    if (mockLock != nullptr && *mockLock != '\0') {
-        std::error_code ec;
-        if (std::filesystem::exists(mockLock, ec) && isPathLocked(mockLock)) {
-            return true;
-        }
-    }
-    const char *forceLocked = std::getenv("MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED");
-    if (forceLocked != nullptr && std::string_view(forceLocked) == "1") {
+bool UpdateController::isPackageManagerLocked(const Environment &environment) {
+    const auto forceLocked = lookupEnv(environment, "MODERNIME_MOCK_PACKAGE_MANAGER_LOCKED");
+    if (forceLocked == "1") {
         return true;
+    }
+    const auto mockLock = lookupEnv(environment, "MODERNIME_PACKAGE_MANAGER_LOCK_FILE");
+    if (!mockLock.empty()) {
+        std::error_code ec;
+        return std::filesystem::exists(mockLock, ec) && isPathLocked(mockLock.c_str());
+    }
+    const auto mockDir = lookupEnv(environment, "MODERNIME_PACKAGE_MANAGER_LOCK_DIR");
+    if (!mockDir.empty()) {
+        std::error_code ec;
+        for (const char *subLock : {
+                 "lock-frontend",
+                 "lock",
+                 "lists-lock",
+                 "archives-lock",
+                 ".rpm.lock",
+                 "metadata_lock.pid",
+             }) {
+            const auto p = std::filesystem::path(mockDir) / subLock;
+            if (std::filesystem::exists(p, ec) && isPathLocked(p.c_str())) {
+                return true;
+            }
+        }
+        return false;
     }
     for (const char *lockPath : {
              "/var/lib/dpkg/lock-frontend",
@@ -278,7 +294,7 @@ bool UpdateController::isPackageManagerLocked() {
 
 UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
     UpdateStatus status;
-    status.packageManagerLocked = isPackageManagerLocked();
+    status.packageManagerLocked = isPackageManagerLocked(environment);
     const auto currentVerEnv = lookupEnv(environment, "MODERNIME_CURRENT_VERSION");
     status.currentVersion = currentVerEnv.empty() ? MODERNIME_VERSION : currentVerEnv;
     status.installChannel = detectInstallChannel(environment);
@@ -412,7 +428,7 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
         return {false,
                 "包操作结果队列已满（最多保留8项未消费结果），请先消费已有结果。"};
     }
-    if (isPackageManagerLocked()) {
+    if (isPackageManagerLocked(environment)) {
         RuntimeResult res{false,
                 "系统包管理器正忙（检测到锁占用，可能有其他包管理进程或自动更新正在运行），请等待其结束后重试。"};
         finishPackageOperation(*opId, res, {}, {}, false);
@@ -529,7 +545,7 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
         return {false,
                 "包操作结果队列已满（最多保留8项未消费结果），请先消费已有结果。"};
     }
-    if (isPackageManagerLocked()) {
+    if (isPackageManagerLocked(environment)) {
         RuntimeResult res{false,
                 "系统包管理器正忙（检测到锁占用，可能有其他包管理进程或自动更新正在运行），请等待其结束后重试。"};
         finishPackageOperation(*opId, res, {}, {}, false);

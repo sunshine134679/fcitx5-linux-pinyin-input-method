@@ -548,6 +548,14 @@ void verifyLmdbConcurrentPruningLatency() {
             }
         });
 
+        struct SampleBreakdown {
+            double total = 0.0;
+            double enqueue = 0.0;
+            double snapshot = 0.0;
+            double recall = 0.0;
+        };
+        std::vector<SampleBreakdown> breakdowns;
+        breakdowns.reserve(1024);
         std::vector<double> samples;
         samples.reserve(1024);
         modernime::core::CommitEvent event;
@@ -559,21 +567,41 @@ void verifyLmdbConcurrentPruningLatency() {
 
         for (int i = 0; i < 1024; ++i) {
             event.timestampMs = 1700000001000LL + i;
-            const auto start = std::chrono::steady_clock::now();
+            const auto t0 = std::chrono::steady_clock::now();
             writer.enqueueCommit(event);
-            benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", event.timestampMs));
-            samples.push_back(std::chrono::duration<double, std::micro>(
-                std::chrono::steady_clock::now() - start).count());
+            const auto t1 = std::chrono::steady_clock::now();
+            auto snap = writer.snapshot();
+            const auto t2 = std::chrono::steady_clock::now();
+            benchmark::DoNotOptimize(snap->recallCandidates("nihao", event.timestampMs));
+            const auto t3 = std::chrono::steady_clock::now();
+            double total_us = std::chrono::duration<double, std::micro>(t3 - t0).count();
+            double enqueue_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+            double snap_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
+            double recall_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
+            samples.push_back(total_us);
+            breakdowns.push_back({total_us, enqueue_us, snap_us, recall_us});
         }
         stopPrune.store(true, std::memory_order_relaxed);
         pruner.join();
         if (!writer.flush()) std::exit(EXIT_FAILURE);
 
+        std::size_t max_idx = 0;
+        for (std::size_t i = 1; i < breakdowns.size(); ++i) {
+            if (breakdowns[i].total > breakdowns[max_idx].total) {
+                max_idx = i;
+            }
+        }
+        const auto peak_bd = breakdowns[max_idx];
+
         std::sort(samples.begin(), samples.end());
         const double p99 = samples[1013];
         double max_val = samples.back();
         std::cout << "  LMDB concurrent write/pruning: enqueue+next recall P99="
-                  << p99 << " us, maximum=" << max_val << " us\n";
+                  << p99 << " us, maximum=" << max_val << " us\n"
+                  << "  LMDB concurrent write/pruning peak sample breakdown: total="
+                  << peak_bd.total << " us (enqueue=" << peak_bd.enqueue
+                  << " us, snapshot=" << peak_bd.snapshot
+                  << " us, recall=" << peak_bd.recall << " us)\n";
 
         // Verify real LMDB concurrent pruning occurred in timed scenario
         size_t finalEntries = 0;
@@ -657,13 +685,21 @@ void verifyLmdbFirstKeyAfterClearLatency() {
     event.isDeviation = true;
     event.timestampMs = 1700000002000LL;
 
-    const auto start = std::chrono::steady_clock::now();
+    const auto t0 = std::chrono::steady_clock::now();
     writer.enqueueCommit(event);
-    benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", event.timestampMs));
-    double latency_us = std::chrono::duration<double, std::micro>(
-        std::chrono::steady_clock::now() - start).count();
+    const auto t1 = std::chrono::steady_clock::now();
+    auto snap = writer.snapshot();
+    const auto t2 = std::chrono::steady_clock::now();
+    benchmark::DoNotOptimize(snap->recallCandidates("nihao", event.timestampMs));
+    const auto t3 = std::chrono::steady_clock::now();
+    double latency_us = std::chrono::duration<double, std::micro>(t3 - t0).count();
+    double enqueue_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+    double snap_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
+    double recall_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
 
-    std::cout << "  LMDB first key after clear: latency=" << latency_us << " us\n";
+    std::cout << "  LMDB first key after clear: latency=" << latency_us << " us (enqueue="
+              << enqueue_us << " us, snapshot=" << snap_us
+              << " us, recall=" << recall_us << " us)\n";
     if (!writer.flush()) std::exit(EXIT_FAILURE);
 #if MODERNIME_ENFORCE_LATENCY_GATES
     if (g_injected_gate_failure == "lmdb_first_key_after_clear") {
