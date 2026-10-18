@@ -5,11 +5,13 @@
 #include <gtk/gtk.h>
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -62,46 +64,122 @@ NavigationRequest parseArguments(int argc, char **argv) {
     return req;
 }
 
-int applyNavigationRequest(ApplicationState *state,
-                           const NavigationRequest &req,
-                           GApplicationCommandLine *cmdline = nullptr) {
-    if (req.showVersion) {
-        if (cmdline != nullptr) {
-            g_application_command_line_print(
-                cmdline, "ModernIME settings %s\n", MODERNIME_VERSION);
-        } else {
-            std::cout << "ModernIME settings " << MODERNIME_VERSION << '\n';
+struct WidgetTypeSearch final {
+    GType type;
+    GtkWidget *result = nullptr;
+};
+
+GtkWidget *findWidgetByType(GtkWidget *widget, GType type);
+
+void findWidgetByTypeChild(GtkWidget *child, gpointer data) {
+    auto *search = static_cast<WidgetTypeSearch *>(data);
+    if (search->result == nullptr) {
+        search->result = findWidgetByType(child, search->type);
+    }
+}
+
+GtkWidget *findWidgetByType(GtkWidget *widget, GType type) {
+    if (widget == nullptr) {
+        return nullptr;
+    }
+    if (g_type_is_a(G_OBJECT_TYPE(widget), type)) {
+        return widget;
+    }
+    if (!GTK_IS_CONTAINER(widget)) {
+        return nullptr;
+    }
+    WidgetTypeSearch search{type};
+    gtk_container_forall(GTK_CONTAINER(widget), findWidgetByTypeChild, &search);
+    return search.result;
+}
+
+const char *findTargetInWidget(GtkWidget *widget) {
+    if (widget == nullptr) {
+        return nullptr;
+    }
+    const void *data =
+        g_object_get_data(G_OBJECT(widget), "modernime-settings-target");
+    if (data != nullptr) {
+        return static_cast<const char *>(data);
+    }
+    if (GTK_IS_CONTAINER(widget)) {
+        GList *children = gtk_container_get_children(GTK_CONTAINER(widget));
+        const char *result = nullptr;
+        for (GList *l = children; l != nullptr; l = l->next) {
+            result = findTargetInWidget(GTK_WIDGET(l->data));
+            if (result != nullptr) {
+                break;
+            }
         }
-        return EXIT_SUCCESS;
+        g_list_free(children);
+        return result;
+    }
+    return nullptr;
+}
+
+void dumpSettingsStateIfConfigured(ApplicationState *state) {
+    const char *stateFile = std::getenv("MODERNIME_SETTINGS_STATE_FILE");
+    if (stateFile == nullptr || stateFile[0] == '\0') {
+        return;
+    }
+    if (state == nullptr || state->window == nullptr) {
+        return;
+    }
+    GtkWidget *win = state->window->window();
+    if (win == nullptr) {
+        return;
     }
 
-    if (state->window == nullptr) {
-        return EXIT_FAILURE;
-    }
-    state->window->present();
+    while (g_main_context_iteration(nullptr, FALSE)) {}
 
-    if (req.pageName.empty()) {
-        if (req.hasTarget) {
-            state->window->show(modernime::settings::SettingsPageId::Overview, req.target);
+    std::string visiblePage;
+    GtkWidget *stack = findWidgetByType(win, GTK_TYPE_STACK);
+    if (stack != nullptr) {
+        const char *name = gtk_stack_get_visible_child_name(GTK_STACK(stack));
+        if (name != nullptr) {
+            visiblePage = name;
         }
-        return EXIT_SUCCESS;
     }
 
-    const auto parsedPage = modernime::settings::parseSettingsPage(req.pageName);
-    if (!parsedPage.has_value()) {
-        const std::string err = "Unknown settings page: " + req.pageName;
-        if (cmdline != nullptr) {
-            g_application_command_line_printerr(cmdline, "%s\n", err.c_str());
-            g_application_command_line_set_exit_status(cmdline, EXIT_FAILURE);
-        } else {
-            std::cerr << err << '\n';
+    std::string focusedTarget;
+    GtkWidget *f = gtk_window_get_focus(GTK_WINDOW(win));
+    if (f != nullptr) {
+        for (GtkWidget *w = f; w != nullptr; w = gtk_widget_get_parent(w)) {
+            const void *targetData =
+                g_object_get_data(G_OBJECT(w), "modernime-settings-target");
+            if (targetData != nullptr) {
+                focusedTarget = static_cast<const char *>(targetData);
+                break;
+            }
         }
-        state->window->presentError(err);
-        return EXIT_FAILURE;
+        if (focusedTarget.empty()) {
+            const char *targetData = findTargetInWidget(f);
+            if (targetData != nullptr) {
+                focusedTarget = targetData;
+            }
+        }
     }
 
-    state->window->show(*parsedPage, req.target);
-    return EXIT_SUCCESS;
+    int windowCount = 1;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(win));
+    if (app != nullptr) {
+        GList *windows = gtk_application_get_windows(app);
+        windowCount = static_cast<int>(g_list_length(windows));
+    }
+
+    const std::string tmpFile = std::string(stateFile) + ".tmp";
+    std::ofstream ofs(tmpFile);
+    if (ofs) {
+        ofs << "{\n"
+            << "  \"pid\": " << getpid() << ",\n"
+            << "  \"window_count\": " << windowCount << ",\n"
+            << "  \"visible_page\": \"" << visiblePage << "\",\n"
+            << "  \"focused_target\": \"" << focusedTarget << "\",\n"
+            << "  \"ready\": true\n"
+            << "}\n";
+        ofs.close();
+        std::rename(tmpFile.c_str(), stateFile);
+    }
 }
 
 void activate(GtkApplication *application, gpointer data) {
@@ -111,23 +189,51 @@ void activate(GtkApplication *application, gpointer data) {
             application, state->settingsPaths);
     }
     state->window->present();
+    dumpSettingsStateIfConfigured(state);
 }
 
 int commandLine(GApplication *application,
                 GApplicationCommandLine *cmdline,
                 gpointer data) {
     auto *state = static_cast<ApplicationState *>(data);
-    if (state->window == nullptr) {
-        state->window = std::make_unique<modernime::settings::SettingsWindow>(
-            application, state->settingsPaths);
-    }
 
     int argc = 0;
     char **argv = g_application_command_line_get_arguments(cmdline, &argc);
     const auto req = parseArguments(argc, argv);
-    const int status = applyNavigationRequest(state, req, cmdline);
     g_strfreev(argv);
-    return status;
+
+    if (req.showVersion) {
+        g_application_command_line_print(
+            cmdline, "ModernIME settings %s\n", MODERNIME_VERSION);
+        return EXIT_SUCCESS;
+    }
+
+    std::optional<modernime::settings::SettingsPageId> parsedPage;
+    if (!req.pageName.empty()) {
+        parsedPage = modernime::settings::parseSettingsPage(req.pageName);
+        if (!parsedPage.has_value()) {
+            const std::string err = "Unknown settings page: " + req.pageName;
+            g_application_command_line_printerr(cmdline, "%s\n", err.c_str());
+            g_application_command_line_set_exit_status(cmdline, EXIT_FAILURE);
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (state->window == nullptr) {
+        state->window = std::make_unique<modernime::settings::SettingsWindow>(
+            application, state->settingsPaths);
+    }
+    state->window->present();
+
+    if (parsedPage.has_value()) {
+        state->window->show(*parsedPage, req.target);
+    } else if (req.hasTarget) {
+        state->window->show(modernime::settings::SettingsPageId::Overview, req.target);
+    }
+
+    dumpSettingsStateIfConfigured(state);
+
+    return EXIT_SUCCESS;
 }
 
 modernime::core::SettingsPaths settingsPaths() {

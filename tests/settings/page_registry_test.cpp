@@ -100,6 +100,17 @@ int main() {
     assert(parseSettingsPage("  UpDaTeS  ") == SettingsPageId::Updates);
     assert(parseSettingsPage("STATUS") == SettingsPageId::Diagnostics);
 
+    // Verify all 8 canonical Chinese page titles
+    assert(parseSettingsPage("概览") == SettingsPageId::Overview);
+    assert(parseSettingsPage("输入与按键") == SettingsPageId::Input);
+    assert(parseSettingsPage("候选与外观") == SettingsPageId::Candidates);
+    assert(parseSettingsPage("个人词典") == SettingsPageId::Dictionary);
+    assert(parseSettingsPage("剪贴板") == SettingsPageId::Clipboard);
+    assert(parseSettingsPage("智能学习") == SettingsPageId::Learning);
+    assert(parseSettingsPage("更新与安装") == SettingsPageId::Updates);
+    assert(parseSettingsPage("系统与诊断") == SettingsPageId::Diagnostics);
+    assert(parseSettingsPage("  系统与诊断  ") == SettingsPageId::Diagnostics);
+
     // Verify unknown and invalid page names return std::nullopt (explicit diagnostic)
     assert(!parseSettingsPage("").has_value());
     assert(!parseSettingsPage("   ").has_value());

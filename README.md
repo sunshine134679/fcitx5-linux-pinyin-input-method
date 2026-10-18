@@ -297,19 +297,19 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 # 常用快捷参数（直接打开指定页面）：
 ~/.local/bin/modernime-settings --overview     # 或 -o
 ~/.local/bin/modernime-settings --input        # 或 -i
-~/.local/bin/modernime-settings --candidates   # 或 -a
+~/.local/bin/modernime-settings --candidates   # 或 -k
 ~/.local/bin/modernime-settings --dictionary   # 或 -d
 ~/.local/bin/modernime-settings --clipboard    # 或 -c
 ~/.local/bin/modernime-settings --learning     # 或 -l
 ~/.local/bin/modernime-settings --updates      # 或 -u
-~/.local/bin/modernime-settings --diagnostics  # 或 -s
+~/.local/bin/modernime-settings --diagnostics  # 或 --status
 
 # 通用页面参数（支持规范页面名及其中英文别名）：
 ~/.local/bin/modernime-settings --page candidates
 ~/.local/bin/modernime-settings --page clip
 
 # 支持子项锚定（如打开个人词典页并聚焦导入功能）：
-~/.local/bin/modernime-settings --page dictionary --target import
+~/.local/bin/modernime-settings --page dictionary --target dictionary-import
 
 # 单实例与 DBus 通信说明：
 # 若已有设置客户端实例在运行，后续命令行调用会通过独立会话 DBus 自动唤起已有窗口并切换到目标页面，不产生多实例弹窗冲突。

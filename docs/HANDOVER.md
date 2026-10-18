@@ -138,8 +138,15 @@
   - **Storage-TSAN Profile**：专用于并发与生命周期线程安全验证。
 - 任何代码改动必须执行 CTest 并经由门禁工具校验：
   ```bash
-  ctest --test-dir build/fcitx5-debug --output-on-failure
-  python3 tests/verify_required_tests.py --ctest-dir build/fcitx5-debug --profile full --stage final
+  # 1. 导出测试注册列表并运行测试套件（支持生成 JUnit 执行报告）
+  ctest --test-dir build/fcitx5-debug --show-only=json-v1 > build/fcitx5-debug/registered_tests.json
+  ctest --test-dir build/fcitx5-debug --output-junit build/fcitx5-debug/junit.xml --output-on-failure
+
+  # 2. 校验必需测试注册状态（仅注册检查）
+  python3 tests/verify_required_tests.py --registered build/fcitx5-debug/registered_tests.json --profile full --stage final
+
+  # 3. 校验必需测试实际执行证据（执行检查）
+  python3 tests/verify_required_tests.py --registered build/fcitx5-debug/registered_tests.json --profile full --stage final --junit build/fcitx5-debug/junit.xml
   ```
 - 必须确保所有必需测试 **100% Passed（或白名单 Skipped）** 且 0 Failed。
 
@@ -152,13 +159,14 @@
 # 进入工作区
 cd /home/wsl/ModernIME
 
-# 使用预设编译
+# 使用预设编译 (Debug 构建用于日常开发与契约测试)
 cmake --preset fcitx5-debug
 cmake --build --preset fcitx5-debug -j$(nproc)
 
-# 运行全量测试套件并执行门禁校验
-ctest --test-dir build/fcitx5-debug --output-on-failure
-python3 tests/verify_required_tests.py --ctest-dir build/fcitx5-debug --profile full --stage final
+# 运行全量测试套件并执行门禁校验 (区分注册检查与实际执行证据检查)
+ctest --test-dir build/fcitx5-debug --show-only=json-v1 > build/fcitx5-debug/registered_tests.json
+ctest --test-dir build/fcitx5-debug --output-junit build/fcitx5-debug/junit.xml --output-on-failure
+python3 tests/verify_required_tests.py --registered build/fcitx5-debug/registered_tests.json --profile full --stage final --junit build/fcitx5-debug/junit.xml
 ```
 
 ### ② 一键安装与重新加载
@@ -170,7 +178,7 @@ python3 tests/verify_required_tests.py --ctest-dir build/fcitx5-debug --profile 
 fcitx5-remote -r
 fcitx5-remote -s modernime
 
-# 启动设置客户端（支持参数如 --candidates / -a, --clipboard / -c 等）
+# 启动设置客户端（支持参数如 --candidates / -k, --clipboard / -c 等）
 ~/.local/bin/modernime-settings
 ```
 

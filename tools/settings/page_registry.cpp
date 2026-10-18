@@ -179,7 +179,7 @@ std::optional<SettingsPageId> parseSettingsPage(std::string_view name) {
     }
 
     for (const auto &page : kPages) {
-        if (normalized == page.name) {
+        if (normalized == page.name || normalized == page.title) {
             return page.id;
         }
     }
