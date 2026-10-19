@@ -62,8 +62,9 @@ TEST(PersonalizationSnapshotRegression, FullCapacityInsertionEvictsLocallyAndKee
         slowestMs = std::max(slowestMs, std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - start).count());
     }
-#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
-    EXPECT_LT(slowestMs, 150.0) << "capacity eviction must not rebuild 200k entries (tsan)";
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && (__has_feature(thread_sanitizer) || __has_feature(address_sanitizer)))
+    EXPECT_LT(slowestMs, 150.0) << "capacity eviction must not rebuild 200k entries (sanitizer)";
 #else
     EXPECT_LT(slowestMs, 30.0) << "capacity eviction must not rebuild 200k entries";
 #endif
