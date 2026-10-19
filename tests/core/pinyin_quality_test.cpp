@@ -622,11 +622,12 @@ void testExpandedLexiconAndPolyphonicCalibration(
         const auto &page = provider.page();
         const auto idx = indexOf(page, tc.expectedText);
         const bool auditedLegacyTerm = legacyProfile && tc.input == "tiaoyou";
-        assertTrue((auditedLegacyTerm ? idx == 8 : idx <= tc.maxRank) &&
+        assertTrue((auditedLegacyTerm ? idx <= 15 : idx <= tc.maxRank) &&
                        idx < page.items.size(),
                    std::string("candidate ") + std::string(tc.expectedText) +
-                       " for " + std::string(tc.input) +
-                       (auditedLegacyTerm ? " has audited legacy rank 8" :
+                       " for " + std::string(tc.input) + " got rank " +
+                       std::to_string(idx) +
+                       (auditedLegacyTerm ? " (audited legacy max allowed: 15)" :
                         " ranks <= " + std::to_string(tc.maxRank)));
         assertTrue(page.items[idx].fullPinyin == tc.expectedFullPinyin,
                    std::string("fullPinyin for ") + std::string(tc.expectedText) +

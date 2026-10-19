@@ -46,7 +46,7 @@ class WebsiteTests(unittest.TestCase):
             "website_deployment", ROOT / "scripts/resolve_website_deployment.py")
         policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(policy)
-        tag = "refs/tags/v0.1.16"
+        tag = "refs/tags/v0.1.17"
         source = "a" * 40
         annotated = "b" * 40 + "\t" + tag + "\n" + source + "\t" + tag + "^{}\n"
         def refs(tags, main=source):
@@ -135,7 +135,7 @@ class WebsiteTests(unittest.TestCase):
         data = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S).group(1))
         self.assertEqual(data["@type"], "SoftwareApplication")
         self.assertEqual(data["url"], base)
-        self.assertEqual(data["softwareVersion"], "0.1.16")
+        self.assertEqual(data["softwareVersion"], "0.1.17")
         self.assertEqual(data["offers"]["price"], "0")
         self.assertTrue((ROOT / "website" / data["screenshot"].removeprefix(base)).is_file())
         tree = ET.fromstring((ROOT / "website/sitemap.xml").read_text())

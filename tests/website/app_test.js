@@ -192,7 +192,7 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(app.copied(), e["install-command"].textContent);
   const offline = await run(null, {copyFailure: true});
   await offline.systemOptions[0].events.change();
-  assert.match(offline.elements["deb-download"].href, /v0\.1\.16\/.*ubuntu24\.04\.deb$/);
+  assert.match(offline.elements["deb-download"].href, /v0\.1\.17\/.*ubuntu24\.04\.deb$/);
   assert.match(offline.elements["release-status"].textContent, /暂时无法/);
   await offline.elements["copy-install"].events.click();
   assert.equal(offline.selected(), true);
