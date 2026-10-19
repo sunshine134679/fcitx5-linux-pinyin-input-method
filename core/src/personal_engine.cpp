@@ -1199,11 +1199,6 @@ void PersonalEngine::CloseLmdb() noexcept {
     std::shared_ptr<detail::LmdbEnvironment> env_to_release;
     {
         std::lock_guard lock(lmdb_mutex_);
-        if (cached_read_txn_ != nullptr) {
-            mdb_txn_abort(cached_read_txn_);
-            cached_read_txn_ = nullptr;
-        }
-        cached_read_env_ = nullptr;
         env_to_release = std::move(lmdb_env_);
         env_ = nullptr;
         words_dbi_ = 0;
@@ -1919,41 +1914,14 @@ bool PersonalEngine::Clear() {
 
 int64_t PersonalEngine::ResetRevision() const {
     std::shared_ptr<detail::LmdbEnvironment> active_env_handle;
-    unsigned int active_meta_dbi = 0;
     {
         std::lock_guard lock(lmdb_mutex_);
         active_env_handle = lmdb_env_;
-        active_meta_dbi = meta_dbi_;
     }
     if (active_env_handle != nullptr) {
-        std::shared_lock env_lock(active_env_handle->lifecycle_gate);
-        MDB_env *active_env = active_env_handle->env;
-        if (active_env != nullptr) {
-            std::lock_guard lock(lmdb_mutex_);
-            if (cached_read_env_ != active_env) {
-                if (cached_read_txn_ != nullptr) {
-                    mdb_txn_abort(cached_read_txn_);
-                    cached_read_txn_ = nullptr;
-                }
-                cached_read_env_ = active_env;
-            }
-            if (cached_read_txn_ == nullptr) {
-                if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &cached_read_txn_) == MDB_SUCCESS) {
-                    mdb_txn_reset(cached_read_txn_);
-                }
-            }
-            if (cached_read_txn_ != nullptr) {
-                if (mdb_txn_renew(cached_read_txn_) == MDB_SUCCESS) {
-                    const auto rev = getMetaInt64(cached_read_txn_, active_meta_dbi, "reset_revision");
-                    mdb_txn_reset(cached_read_txn_);
-                    if (rev.has_value()) {
-                        return *rev;
-                    }
-                } else {
-                    mdb_txn_abort(cached_read_txn_);
-                    cached_read_txn_ = nullptr;
-                }
-            }
+        const auto rev = active_env_handle->readResetRevision();
+        if (rev.has_value()) {
+            return *rev;
         }
     }
     return reset_revision_;

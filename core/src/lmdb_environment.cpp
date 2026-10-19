@@ -129,6 +129,13 @@ LmdbEnvironment::~LmdbEnvironment() {
 
 void LmdbEnvironment::close() noexcept {
     std::unique_lock lock(lifecycle_gate);
+    {
+        std::lock_guard rev_lock(revision_mutex_);
+        if (cached_revision_txn_ != nullptr) {
+            mdb_txn_abort(cached_revision_txn_);
+            cached_revision_txn_ = nullptr;
+        }
+    }
     if (env != nullptr) {
         mdb_env_close(env);
         env = nullptr;
@@ -210,6 +217,13 @@ bool LmdbEnvironment::upgradeToWritableLocked(size_t initial_map_size) {
         return true;
     }
     if (env != nullptr) {
+        {
+            std::lock_guard rev_lock(revision_mutex_);
+            if (cached_revision_txn_ != nullptr) {
+                mdb_txn_abort(cached_revision_txn_);
+                cached_revision_txn_ = nullptr;
+            }
+        }
         mdb_env_close(env);
         env = nullptr;
         words_dbi = 0;
@@ -260,6 +274,13 @@ bool LmdbEnvironment::ensureMapCapacity(size_t required_extra_bytes) {
     if (env == nullptr || read_only) {
         return false;
     }
+    {
+        std::lock_guard rev_lock(revision_mutex_);
+        if (cached_revision_txn_ != nullptr) {
+            mdb_txn_abort(cached_revision_txn_);
+            cached_revision_txn_ = nullptr;
+        }
+    }
     MDB_envinfo info{};
     if (mdb_env_info(env, &info) != MDB_SUCCESS) {
         return false;
@@ -271,6 +292,35 @@ bool LmdbEnvironment::ensureMapCapacity(size_t required_extra_bytes) {
     // 4 KiB page aligned
     next_size = (next_size + 4095ULL) & ~4095ULL;
     return mdb_env_set_mapsize(env, next_size) == MDB_SUCCESS;
+}
+
+std::optional<int64_t> LmdbEnvironment::readResetRevision() const {
+    std::shared_lock lock(lifecycle_gate);
+    if (env == nullptr || meta_dbi == 0) {
+        return std::nullopt;
+    }
+    std::lock_guard rev_lock(revision_mutex_);
+    if (env == nullptr || meta_dbi == 0) {
+        return std::nullopt;
+    }
+    if (cached_revision_txn_ == nullptr) {
+        if (mdb_txn_begin(env, nullptr, MDB_RDONLY, &cached_revision_txn_) == MDB_SUCCESS) {
+            mdb_txn_reset(cached_revision_txn_);
+        }
+    }
+    if (cached_revision_txn_ != nullptr) {
+        if (mdb_txn_renew(cached_revision_txn_) == MDB_SUCCESS) {
+            const auto rev = getMetaInt64(cached_revision_txn_, meta_dbi, "reset_revision");
+            mdb_txn_reset(cached_revision_txn_);
+            if (rev.has_value()) {
+                return rev;
+            }
+        } else {
+            mdb_txn_abort(cached_revision_txn_);
+            cached_revision_txn_ = nullptr;
+        }
+    }
+    return std::nullopt;
 }
 
 LmdbRegistry &LmdbRegistry::instance() {

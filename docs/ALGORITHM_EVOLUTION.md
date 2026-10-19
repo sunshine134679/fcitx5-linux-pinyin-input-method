@@ -305,6 +305,12 @@
      - **复制后修改与世代权限不变**：维持原有的 Copy-on-Write（COW）语义与世代权限划分。当用户打字产生新提交事件时，始终复制快照生成全新快照对象后再修改，绝不就地修改 `emptySnapshot()` 实例；清空代次（`resetRevision`）与磁盘底层保持一致；
      - **全工作范围生命周期计时闭环**：在性能基准（`verifyLmdbConcurrentPruningLatency`、`verifyLmdbFirstKeyAfterClearLatency`）中采用显式作用域与 `snap.reset()` 计时，将快照命名引用释放与对象析构成本（`release_us`）全量纳入总延迟 `total_us`，确保在真实包含对象销毁生命周期的严格口径下，LMDB 清空首键延迟仍维持在 ~0.15ms（远低于 5000us 门限），并发剪枝 P99 维持在 ~0.02ms / max ~2.5ms（远低于 5000us/30000us 门限）。
 
+   9. **LMDB 只读事务缓存生命周期归属与失效管理（T19 G5/G4 收尾 R1）**：
+     - **生命周期归属收敛**：将 `ResetRevision()` 轮询使用的只读事务缓存句柄（`cached_revision_txn_`）从 `PersonalEngine` 内部剥离，收敛并下沉至 `LmdbEnvironment` 本身集中管理；
+     - **环境关闭与升级前安全失效**：在 `LmdbEnvironment::close()`、`upgradeToWritableLocked()`（只读升级为可写）以及 `ensureMapCapacity()`（动态扩容）等所有涉及底层 `MDB_env` 关闭或变更的生命周期边界，强制先获取 `revision_mutex_` 互斥锁，将存量 `cached_revision_txn_` 安全 `mdb_txn_abort` 并置空，随后才调用 `mdb_env_close`。彻底消除换库、RO$\to$RW升级或关闭后 abort/renew 悬空事务句柄所引发的 SIGSEGV（原生换库退出 -11）及跨代旧事务越界访问（exit 86）；
+     - **锁序与并发安全保证**：严格维持 `PersonalEngine::lmdb_mutex_` $\to$（释放）$\to$ `LmdbEnvironment::lifecycle_gate` (shared) $\to$ `LmdbEnvironment::revision_mutex_` (exclusive) 顺序，不引入任何跨模块锁环；单次读代次执行快速 `renew` + `get` + `reset`（耗时约 170ns），既避免长期占用只读快照槽，又保证最新清空代次立即可见；
+     - **性能与安全闭环**：在根除生命周期缺陷的同时，保留 `mdb_txn_renew` 零读者槽互斥争抢优化，清空后首键延迟实测稳定在 ~192us（严格满足 $\le 5000\text{us}$ 门禁）。
+
 - **打字体验变化**：
   - 词库在后台重载或清空时，输入法完全不卡顿，首按键即时响应；
   - 重载完成后，当前编辑区候选栏自动无感刷新为最新计算结果，光标与输入保持完好；

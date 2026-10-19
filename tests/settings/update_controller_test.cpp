@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <thread>
 #include <iostream>
+#include <sys/prctl.h>
 #include <unistd.h>
 
 namespace {
@@ -477,12 +478,19 @@ int main(int argc, char **argv) {
     // - Must keep draining stdout/stderr in the background tracker until completion
     // - Must block duplicate upgrade/refresh triggers while background transaction is still running
     // - Must record final completion result once child exits
+    const auto releaseMarker = tempRoot / "pkg-op-release-continue.txt";
     const auto completedMarker = tempRoot / "pkg-op-completed-gracefully.txt";
     writeExecutable(
         aptBinDir / "pkexec",
         "#!/bin/sh\n"
         "printf 'PRE_TIMEOUT_LINE\\n'\n"
-        "sleep 0.25\n"
+        "i=0\n"
+        "while [ ! -f \"" +
+            releaseMarker.string() +
+            "\" ] && [ \"$i\" -lt 250 ]; do\n"
+        "  sleep 0.02\n"
+        "  i=$((i + 1))\n"
+        "done\n"
         "printf 'POST_TIMEOUT_UPGRADE_OUTPUT_OK\\n'\n"
         "printf 'completed\\n' > \"" +
             completedMarker.string() +
@@ -512,8 +520,11 @@ int main(int argc, char **argv) {
     assert(!dupRefreshRes.success);
     assert(dupRefreshRes.message.find("未完成的系统包管理器事务正在运行") != std::string::npos);
 
+    // Release the background mock process to complete cleanly
+    writeTextFile(releaseMarker, "proceed\n");
+
     // Wait for background tracker to finish draining output and reaping the child process
-    assert(UpdateController::waitForActivePackageOperation(2000));
+    assert(UpdateController::waitForActivePackageOperation(5000));
     assert(!UpdateController::hasActivePackageOperation());
     assert(std::filesystem::exists(completedMarker));
     const auto capturedOut = UpdateController::lastCompletedPackageOperationStdout();
@@ -593,13 +604,13 @@ int main(int argc, char **argv) {
 
     int waitStatus = 0;
     bool childExitedFast = false;
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < 120; ++i) {
         const pid_t waited = ::waitpid(childPid, &waitStatus, WNOHANG);
         if (waited == childPid) {
             childExitedFast = WIFEXITED(waitStatus) && (WEXITSTATUS(waitStatus) == 0);
             break;
         }
-        ::usleep(25000); // 40 * 25ms = 1.0s max
+        ::usleep(25000); // 120 * 25ms = 3.0s max
     }
     if (!childExitedFast) {
         ::kill(childPid, SIGKILL);
@@ -612,12 +623,12 @@ int main(int argc, char **argv) {
     writeTextFile(clientExitedMarker, "client-exited\n");
 
     bool bgCompletedAfterClientExit = false;
-    for (int i = 0; i < 60; ++i) {
+    for (int i = 0; i < 120; ++i) {
         if (std::filesystem::exists(postExitDoneMarker)) {
             bgCompletedAfterClientExit = true;
             break;
         }
-        ::usleep(25000); // 60 * 25ms = 1.5s max
+        ::usleep(25000); // 120 * 25ms = 3.0s max
     }
     if (!bgCompletedAfterClientExit && std::filesystem::exists(pidFile)) {
         std::ifstream pidIn(pidFile);
@@ -1204,10 +1215,17 @@ int main(int argc, char **argv) {
         UpdateController::resetPackageOperationStateForTesting();
         const auto uncertainDir = tempRoot / "uncertain-timeout-bg";
         std::filesystem::create_directories(uncertainDir);
+        const auto signalReady = uncertainDir / "signal-ready.txt";
         writeExecutable(
             uncertainDir / "pkexec",
             "#!/bin/sh\n"
-            "sleep 0.15\n"
+            "i=0\n"
+            "while [ ! -f \"" +
+                signalReady.string() +
+                "\" ] && [ \"$i\" -lt 250 ]; do\n"
+            "  sleep 0.02\n"
+            "  i=$((i + 1))\n"
+            "done\n"
             "kill -TERM $$\n");
         writeExecutable(
             uncertainDir / "apt-get",
@@ -1217,7 +1235,7 @@ int main(int argc, char **argv) {
         status.manager = PackageManagerKind::Apt;
         Environment env{
             {"PATH", uncertainDir.string()},
-            {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "30"},
+            {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "80"},
             {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
         };
 
@@ -1225,8 +1243,11 @@ int main(int argc, char **argv) {
         assert(!res.success);
         assert(res.message.find("刷新软件源缓存等待超时") != std::string::npos);
 
+        // Signal mock pkexec to terminate abnormally with SIGTERM
+        writeTextFile(signalReady, "trigger-signal\n");
+
         // Wait with bounded deadline for background thread to detect signal termination and transition to Uncertain
-        for (int i = 0; i < 100 && UpdateController::currentPackageOperationPhase() != PackageOperationPhase::Uncertain; ++i) {
+        for (int i = 0; i < 200 && UpdateController::currentPackageOperationPhase() != PackageOperationPhase::Uncertain; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 

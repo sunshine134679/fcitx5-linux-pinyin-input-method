@@ -418,4 +418,114 @@ TEST_F(ArchitectureLmdbRegression, MapFullTriggersRealMapResize) {
     engine.CloseLmdb();
 }
 
+// 7. SwitchDatabasePreservesLifecycleWithoutStaleCachedTxn:
+// Switching database paths after caching a read transaction must not retain or abort a stale
+// transaction handle on an already-closed MDB_env (preventing SIGSEGV on switch/close).
+TEST_F(ArchitectureLmdbRegression, SwitchDatabasePreservesLifecycleWithoutStaleCachedTxn) {
+    const auto pathA = root_ / "db_switch_a.lmdb";
+    const auto pathB = root_ / "db_switch_b.lmdb";
+
+    PersonalEngine engine;
+    ASSERT_TRUE(engine.OpenLmdb(pathA, /*read_only=*/false));
+    EXPECT_EQ(engine.ResetRevision(), 0);
+
+    // Switch to path B; path A environment closes cleanly without leaking or dangling cached txn
+    ASSERT_TRUE(engine.OpenLmdb(pathB, /*read_only=*/false));
+    EXPECT_EQ(engine.ResetRevision(), 0);
+
+    // Close engine cleanly
+    engine.CloseLmdb();
+    EXPECT_FALSE(engine.IsLmdbOpen());
+}
+
+// 8. ReadOnlyUpgradeInvalidatesCachedRevisionTxn:
+// Upgrading a read-only environment to writable invalidates any cached revision transaction,
+// and subsequent revision queries see newly committed revisions without stale transaction aborts.
+TEST_F(ArchitectureLmdbRegression, ReadOnlyUpgradeInvalidatesCachedRevisionTxn) {
+    const auto dbPath = root_ / "db_upgrade_rev.lmdb";
+
+    // Seed database with revision 0
+    {
+        PersonalEngine seed;
+        ASSERT_TRUE(seed.OpenLmdb(dbPath, /*read_only=*/false));
+        ASSERT_TRUE(seed.RecordUsage("init", "初始"));
+        seed.CloseLmdb();
+    }
+
+    // Engine 1 opens read-only and populates its cached revision transaction
+    PersonalEngine engine1;
+    ASSERT_TRUE(engine1.OpenLmdb(dbPath, /*read_only=*/true));
+    EXPECT_EQ(engine1.ResetRevision(), 0);
+
+    // Engine 2 opens read-write on the same path, upgrading the environment
+    PersonalEngine engine2;
+    ASSERT_TRUE(engine2.OpenLmdb(dbPath, /*read_only=*/false));
+    ASSERT_TRUE(engine2.Clear());
+    EXPECT_EQ(engine2.ResetRevision(), 1);
+
+    // Engine 1 queries revision again; it must observe revision 1 through a renewed transaction on the upgraded env
+    EXPECT_EQ(engine1.ResetRevision(), 1);
+
+    engine1.CloseLmdb();
+    engine2.CloseLmdb();
+}
+
+// 9. CloseAndReopenSamePathSafelyRecreatesCachedRevisionTxn:
+// Closing and reopening the same database path safely cleans up and recreates the cached revision transaction.
+TEST_F(ArchitectureLmdbRegression, CloseAndReopenSamePathSafelyRecreatesCachedRevisionTxn) {
+    const auto dbPath = root_ / "db_reopen_rev.lmdb";
+
+    PersonalEngine engine;
+    ASSERT_TRUE(engine.OpenLmdb(dbPath, /*read_only=*/false));
+    EXPECT_EQ(engine.ResetRevision(), 0);
+    engine.CloseLmdb();
+
+    ASSERT_TRUE(engine.OpenLmdb(dbPath, /*read_only=*/false));
+    ASSERT_TRUE(engine.Clear());
+    EXPECT_EQ(engine.ResetRevision(), 1);
+    engine.CloseLmdb();
+}
+
+// 10. ConcurrentRevisionReadsAndCloseInterleaving:
+// Multiple threads concurrently reading ResetRevision while an engine clears and closes.
+TEST_F(ArchitectureLmdbRegression, ConcurrentRevisionReadsAndCloseInterleaving) {
+    const auto dbPath = root_ / "db_concurrent_rev.lmdb";
+
+    PersonalEngine engine;
+    ASSERT_TRUE(engine.OpenLmdb(dbPath, /*read_only=*/false));
+
+    std::atomic<bool> stopFlag{false};
+    std::atomic<int> readSuccessCount{0};
+
+    std::vector<std::thread> readers;
+    for (int i = 0; i < 4; ++i) {
+        readers.emplace_back([&]() {
+            PersonalEngine reader;
+            if (reader.OpenLmdb(dbPath, /*read_only=*/true)) {
+                while (!stopFlag.load(std::memory_order_relaxed)) {
+                    int64_t rev = reader.ResetRevision();
+                    EXPECT_GE(rev, 0);
+                    readSuccessCount.fetch_add(1, std::memory_order_relaxed);
+                    std::this_thread::yield();
+                }
+                reader.CloseLmdb();
+            }
+        });
+    }
+
+    for (int i = 0; i < 5; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        ASSERT_TRUE(engine.Clear());
+    }
+
+    stopFlag.store(true, std::memory_order_relaxed);
+    for (auto &t : readers) {
+        t.join();
+    }
+
+    EXPECT_GT(readSuccessCount.load(), 0);
+    EXPECT_EQ(engine.ResetRevision(), 5);
+    engine.CloseLmdb();
+}
+
 } // namespace

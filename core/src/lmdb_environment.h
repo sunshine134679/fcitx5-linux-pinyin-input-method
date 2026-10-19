@@ -52,6 +52,11 @@ public:
     bool upgradeToWritableLocked(size_t initial_map_size);
     bool ensureMapCapacity(size_t required_extra_bytes);
     void close() noexcept;
+    std::optional<int64_t> readResetRevision() const;
+
+private:
+    mutable std::mutex revision_mutex_;
+    mutable MDB_txn *cached_revision_txn_ = nullptr;
 };
 
 class LmdbRegistry final {

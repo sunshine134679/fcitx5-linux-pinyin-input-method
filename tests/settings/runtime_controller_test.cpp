@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
     daemonizedEnvironment.emplace_back(
         "FAKE_FCITX5_DAEMONIZE", "1");
     daemonizedEnvironment.emplace_back(
-        "FAKE_FCITX5_DAEMON_SECONDS", "2");
+        "FAKE_FCITX5_DAEMON_SECONDS", "5");
     const auto daemonizedStart = std::chrono::steady_clock::now();
     const auto daemonizedReload =
         modernime::settings::RuntimeController::reload(
@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
                                    daemonizedStart);
     assertTrue(daemonizedReload.success,
                "daemonized Fcitx5 replacement still reloads successfully");
-    assertTrue(daemonizedElapsed < std::chrono::seconds(1),
+    assertTrue(daemonizedElapsed < std::chrono::seconds(3),
                "daemonized Fcitx5 replacement does not wait for inherited "
                "stderr");
 

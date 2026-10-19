@@ -18,6 +18,7 @@
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <thread>
+#include <iostream>
 #include <unistd.h>
 #include <vector>
 
@@ -177,17 +178,33 @@ bool isPathLocked(const char *path) {
     return false;
 }
 
+std::atomic<bool> g_packageTrackingShuttingDown{false};
+
+void initPackageTrackingShutdownHandler() {
+    static const int dummy = []() {
+        std::atexit([]() {
+            g_packageTrackingShuttingDown.store(true);
+        });
+        return 0;
+    }();
+    (void)dummy;
+}
+
 void startBackgroundPackageTracking(std::uint64_t operationId,
                                     PackageOperationKind opKind,
                                     std::string fallbackCmd) {
+    initPackageTrackingShutdownHandler();
     std::thread([operationId, opKind, fallbackCmd = std::move(fallbackCmd)]() {
         detail::CommandResult out;
-        while (true) {
-            out = detail::waitForOperation(operationId, 300000);
+        while (!g_packageTrackingShuttingDown.load()) {
+            out = detail::waitForOperation(operationId, 200);
             if (out.state == detail::CommandState::Continuing) {
                 continue;
             }
             break;
+        }
+        if (g_packageTrackingShuttingDown.load()) {
+            return;
         }
         if (out.state == detail::CommandState::Exited) {
             const bool exitedZero = (out.exitStatus == 0);

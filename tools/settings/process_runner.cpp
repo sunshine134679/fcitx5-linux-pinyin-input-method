@@ -36,25 +36,47 @@ struct PendingReap {
     std::string opDir;
 };
 
+std::vector<PendingReap> g_pendingReaps;
 std::mutex g_reaperMutex;
 std::condition_variable g_reaperCv;
-std::vector<PendingReap> g_pendingReaps;
 std::uint64_t g_reaperEnqueueSeq = 0;
 std::atomic<bool> g_reaperStop{false};
-std::thread g_reaperThread;
+pthread_t g_reaperThread = 0;
+pid_t g_reaperOwnerPid = 0;
+
+void initReaperForkHandler() {
+    static const int dummy = []() {
+        ::pthread_atfork(nullptr, nullptr, []() {
+            g_reaperThread = 0;
+            ::pthread_cond_init(g_reaperCv.native_handle(), nullptr);
+            g_pendingReaps.clear();
+            g_reaperStop.store(false);
+            g_reaperOwnerPid = 0;
+        });
+        return 0;
+    }();
+    (void)dummy;
+}
 } // namespace
 
 void shutdownBackgroundReaper() {
+    if (g_reaperOwnerPid != 0 && g_reaperOwnerPid != ::getpid()) {
+        g_reaperThread = 0;
+        return;
+    }
+    pthread_t th = 0;
     {
         std::lock_guard<std::mutex> lk(g_reaperMutex);
-        if (!g_reaperThread.joinable()) {
+        if (g_reaperThread == 0) {
             return;
         }
         g_reaperStop.store(true);
         g_reaperCv.notify_all();
+        th = g_reaperThread;
+        g_reaperThread = 0;
     }
-    if (g_reaperThread.joinable()) {
-        g_reaperThread.join();
+    if (th != 0) {
+        ::pthread_join(th, nullptr);
     }
     std::lock_guard<std::mutex> lk(g_reaperMutex);
     g_reaperStop.store(false);
@@ -68,66 +90,77 @@ struct ReaperCleaner {
 };
 static ReaperCleaner g_reaperCleaner;
 
+void *reaperThreadRoutine(void *) {
+    std::uint64_t lastSeq = 0;
+    while (true) {
+        std::vector<PendingReap> current;
+        {
+            std::unique_lock<std::mutex> lk(g_reaperMutex);
+            if (g_reaperStop.load()) {
+                break;
+            }
+            if (g_pendingReaps.empty()) {
+                g_reaperCv.wait(lk, [&]() {
+                    return g_reaperStop.load() || !g_pendingReaps.empty();
+                });
+            } else {
+                g_reaperCv.wait_for(lk, std::chrono::milliseconds(50), [&]() {
+                    return g_reaperStop.load() || (g_reaperEnqueueSeq != lastSeq);
+                });
+            }
+            if (g_reaperStop.load()) {
+                break;
+            }
+            lastSeq = g_reaperEnqueueSeq;
+            current = g_pendingReaps;
+        }
+
+        if (current.empty()) {
+            continue;
+        }
+
+        std::vector<pid_t> reapedPids;
+        for (const auto &item : current) {
+            int st = 0;
+            pid_t wp = ::waitpid(item.pid, &st, WNOHANG);
+            if (wp == item.pid || (wp < 0 && errno == ECHILD)) {
+                reapedPids.push_back(item.pid);
+                if (!item.opDir.empty()) {
+                    std::error_code ec;
+                    std::filesystem::remove_all(item.opDir, ec);
+                }
+            }
+        }
+
+        if (!reapedPids.empty()) {
+            std::lock_guard<std::mutex> lk(g_reaperMutex);
+            g_pendingReaps.erase(
+                std::remove_if(g_pendingReaps.begin(), g_pendingReaps.end(),
+                               [&](const PendingReap &p) {
+                                   return std::find(reapedPids.begin(), reapedPids.end(), p.pid) != reapedPids.end();
+                               }),
+                g_pendingReaps.end());
+        }
+    }
+    return nullptr;
+}
+
 void enqueuePendingReap(pid_t pid, const std::string &opDir) {
     if (pid <= 0) return;
+    initReaperForkHandler();
     std::lock_guard<std::mutex> lock(g_reaperMutex);
+    if (g_reaperOwnerPid != 0 && g_reaperOwnerPid != ::getpid()) {
+        g_reaperThread = 0;
+        g_reaperStop.store(false);
+        g_pendingReaps.clear();
+        g_reaperOwnerPid = ::getpid();
+    }
     if (g_reaperStop.load()) return;
     g_pendingReaps.push_back({pid, opDir});
     ++g_reaperEnqueueSeq;
-    if (!g_reaperThread.joinable()) {
-        g_reaperThread = std::thread([]() {
-            std::uint64_t lastSeq = 0;
-            while (true) {
-                std::vector<PendingReap> current;
-                {
-                    std::unique_lock<std::mutex> lk(g_reaperMutex);
-                    if (g_reaperStop.load()) {
-                        break;
-                    }
-                    if (g_pendingReaps.empty()) {
-                        g_reaperCv.wait(lk, [&]() {
-                            return g_reaperStop.load() || !g_pendingReaps.empty();
-                        });
-                    } else {
-                        g_reaperCv.wait_for(lk, std::chrono::milliseconds(50), [&]() {
-                            return g_reaperStop.load() || (g_reaperEnqueueSeq != lastSeq);
-                        });
-                    }
-                    if (g_reaperStop.load()) {
-                        break;
-                    }
-                    lastSeq = g_reaperEnqueueSeq;
-                    current = g_pendingReaps;
-                }
-
-                if (current.empty()) {
-                    continue;
-                }
-
-                std::vector<pid_t> reapedPids;
-                for (const auto &item : current) {
-                    int st = 0;
-                    pid_t wp = ::waitpid(item.pid, &st, WNOHANG);
-                    if (wp == item.pid || (wp < 0 && errno == ECHILD)) {
-                        reapedPids.push_back(item.pid);
-                        if (!item.opDir.empty()) {
-                            std::error_code ec;
-                            std::filesystem::remove_all(item.opDir, ec);
-                        }
-                    }
-                }
-
-                if (!reapedPids.empty()) {
-                    std::lock_guard<std::mutex> lk(g_reaperMutex);
-                    g_pendingReaps.erase(
-                        std::remove_if(g_pendingReaps.begin(), g_pendingReaps.end(),
-                                       [&](const PendingReap &p) {
-                                           return std::find(reapedPids.begin(), reapedPids.end(), p.pid) != reapedPids.end();
-                                       }),
-                        g_pendingReaps.end());
-                }
-            }
-        });
+    if (g_reaperThread == 0) {
+        g_reaperOwnerPid = ::getpid();
+        ::pthread_create(&g_reaperThread, nullptr, reaperThreadRoutine, nullptr);
     } else {
         g_reaperCv.notify_all();
     }
