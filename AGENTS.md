@@ -1,5 +1,14 @@
 # ModernIME 开发与维护规范 (Engineering Guidelines)
 
+## 后续 AI 修改前必读（2026-10-19 起）
+
+- 修改任何生产代码、测试、依赖、安装或发布逻辑前，先读 [项目基础与 AI 修改护栏](docs/项目基础与AI修改护栏.md)，按 [AI 改动前后检查清单](docs/AI改动前后检查清单.md) 确定影响和验证范围；算法变更仍须完整阅读下述既有算法规范。
+- 保留候选身份/选择代次、消费范围、统一学习政策、清空世代、不可变快照、LMDB 环境/事务寿命、包事务所有权和用户数据保护。不以拆文件、加锁、追加 flag 或测试变绿代替职责与行为验证。
+- 无意图行为变化的重构保持原断言；不得通过降低 200,000 条能力、放宽原生性能门限、吞退出码、跳过真实消费者或复制状态来使新实现通过。
+- 先核对当前提交、安装/加载产物、模型与构建配置。历史通过只覆盖其基线与环境；用户“体验正常”不替代未执行的专项测试。
+- 新建维护文档和 Git 提交说明使用中文，保留工具入口、API、任务 ID 及必要技术名；中英文兼容路径维护同一正文，编辑前检查符号链接。
+- 文档与代码/证据不符时先定位差异，区分历史、目标与已实现事实；不抄旧报告覆盖新结果。用户最新授权优先，护栏不增加额外审批关卡。
+
 为了确保用户从 GitHub 拉取代码后能够始终“开箱即用、一键安装、平滑运行”，在涉及功能新增、架构重构、依赖引入或构建调整等较大变更时，必须严格遵守以下**安装生命周期维护准则（Clean-Clone-to-Install Lifecycle）**：
 
 ---
@@ -31,7 +40,7 @@
 
 ## 4. 重大变更后的端到端验证流程 (Mandatory Verification Workflow)
 - 每次完成较大功能更改或架构调整后，推送远程前必须执行以下验证：
-  1. **单元测试回归**：运行 `ctest` 确保 47 项及后续新增测试 100% 通过（包括 `modernime_install_runtime`、`modernime_install_environment`、`modernime_settings_install`）；
+  1. **单元测试回归**：运行 `ctest`，按当前 Profile、注册表和 `tests/verify_required_tests.py` 核对必需项实际执行及结果（包括 `modernime_install_runtime`、`modernime_install_environment`、`modernime_settings_install`）；不以历史固定测试数量判断通过，失败、合法跳过与未运行分别报告；
   2. **模拟全新克隆构建**：运行自动化沙箱验证脚本（自动创建隔离环境并验证完整安装与卸载闭环，严禁直接在 `/tmp` 下裸跑无参脚本）：
      ```bash
      ./tests/verify_fresh_clone.sh
@@ -43,7 +52,7 @@
 
 ## 5. 算法更新与打字体验防退化准则 (Algorithm Evolution & Anti-Regression Baseline)
 - 在对 ModernIME 的**候选排序、拼音切分、中英仲裁、自学习、分段造词、纠错或持久化存储算法**进行任何更新、重构或参数调整之前：
-  1. **更新前必读**：**必须先完整查阅 [`docs/ALGORITHM_EVOLUTION.md`](file:///home/wsl/ModernIME/docs/ALGORITHM_EVOLUTION.md)** 中的「算法更新前必读核对清单」与「体验不可退化不变量矩阵」；
+  1. **更新前必读**：**必须先完整查阅 [`docs/ALGORITHM_EVOLUTION.md`](docs/ALGORITHM_EVOLUTION.md)** 中的「算法更新前必读核对清单」与「体验不可退化不变量矩阵」；
   2. **防特性覆盖**：严禁任何以“优化某单项指标”为由破坏、覆盖或削弱既有算法特性的行为（例如严禁降低 200,000 词库容量上限、严禁让生僻英文抢占高频中文、严禁破坏艾宾浩斯时间遗忘衰减等）；
   3. **更新后必记**：新算法开发并通过 CTest、GTest 和 Benchmark 验证后，**必须在 `docs/ALGORITHM_EVOLUTION.md` 中追加记录**本次新增特性的算法逻辑、实现的具体代码文件、以及给用户实际打字体验带来的变化。
   4. **架构与契约**：修改前同时查阅 [`docs/ALGORITHM_ARCHITECTURE.md`](docs/ALGORITHM_ARCHITECTURE.md) 的特性契约、参数用途及交互表，按 [`docs/ALGORITHM_CHANGE_GUIDE.md`](docs/ALGORITHM_CHANGE_GUIDE.md) 记录涉及的契约 ID、状态权限、依赖、预期差异与验证证据。新候选来源不得绕过已有隐私、学习资格、持久屏蔽、用户清空和消费范围边界；不同用途的衰减参数不得因重构而盲目统一。
