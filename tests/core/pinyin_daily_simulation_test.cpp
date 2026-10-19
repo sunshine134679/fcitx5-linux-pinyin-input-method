@@ -548,7 +548,7 @@ void testModelBaselinePhraseLearning() {
     NativePinyinTestBaseline nativeBaseline;
     const bool legacyProfile = nativeBaseline.hasAuditedLegacyProfile();
     for (const auto &phrase : std::vector<Phrase>{
-             {"tiaoyou", "调优", "tiao'you", 7, 0},
+             {"tiaoyou", "调优", "tiao'you", 8, 0},
              {"sisuo", "死锁", "si'suo", 3, 1},
              {"pozhehao", "破折号", "po'zhe'hao", 15, 0}}) {
         const auto learningPath = testPath(

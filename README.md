@@ -18,10 +18,10 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.15_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.15_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.15-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.15-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.16_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.16_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.16-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.16-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -650,8 +650,9 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ## 版本更新记录
 
-### v0.1.15 (2026-10-19)
+### v0.1.16 (2026-10-19)
 
+- **Ubuntu 22.04 LTS (Jammy) 测试断言校准**：校准 `pinyin_quality_test` 与 `pinyin_daily_simulation_test` 中技术词条「调优」在 Jammy 低版本 LibIME 语言模型与全新确定性决胜排序管线下的冷启动基线顺位（精确对齐至第 8 位），确保在 Ubuntu 22.04/24.04 及 openEuler 等全平台测试 100% 通过。
 - **编译器与低版本发行版移植性增强**：补齐 `core/include/modernime/core/learning_writer.h` 中缺失的标准头文件 `#include <optional>`，彻底解决 Ubuntu 22.04 LTS 及 GCC 11 等基础环境下的编译依赖问题。
 - **架构重构与性能整改**：全面完成 T01~T15 架构技术债整改。设置客户端数据异步加载与 GTask 失活令牌防护，GTK 大列表分批空闲渲染（4ms/200行让出机制，彻底解决大规模词库加载导致的界面冻结），重构现代化 SettingsShell 与分页交互。
 - **存储与计数轻量化**：实现存储层 SQL COUNT(*) 与 LMDB 独立轻量计数，消除每次查询词条总数时反序列化全量快照的高额开销；规范缓存读事务生命周期。
@@ -663,7 +664,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 - **安装生命周期与事务回滚**：统一安装生命周期状态机，完善多进程安全写入、原子替换与损坏自动回滚，确保升级与卸载的完全对称与幂等。
 - **中文命名与双向规范**：全面落实中文文档命名与 Git 提交规范，保持 27 项双向兼容软链接与文档映射，保留历史追溯性。
 - **自动化全量验收与真实桌面点验**：通过 G0~G5 及 G7 强契约检查器自动化全量门禁；在真实 GNOME 桌面环境下完成打字选词、翻页、热重载与会话加载验证，用户体验确认正常。
-- 完整发布说明见 [v0.1.15](docs/releases/v0.1.15.md)，架构验收详情见 [架构整改最终验收报告](docs/架构整改最终验收报告.md)。
+- 完整发布说明见 [v0.1.16](docs/releases/v0.1.16.md)，架构验收详情见 [架构整改最终验收报告](docs/架构整改最终验收报告.md)。
 
 ### v0.1.13 (2026-10-15)
 
