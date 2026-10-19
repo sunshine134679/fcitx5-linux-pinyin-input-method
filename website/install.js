@@ -18,8 +18,10 @@
   document.querySelectorAll("[data-copy]").forEach(button => button.addEventListener("click", async () => {
     const code = document.getElementById(button.dataset.copy);
     const status = document.getElementById(button.dataset.status);
+    document.querySelectorAll("[data-copy]").forEach(item => delete item.dataset.copied);
     try {
       await navigator.clipboard.writeText(code.textContent);
+      button.dataset.copied = "true";
       status.textContent = "命令已复制。请按顺序在终端执行。";
     } catch {
       const range = document.createRange();
