@@ -46,7 +46,7 @@ class WebsiteTests(unittest.TestCase):
             "website_deployment", ROOT / "scripts/resolve_website_deployment.py")
         policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(policy)
-        tag = "refs/tags/v0.1.13"
+        tag = "refs/tags/v0.1.14"
         source = "a" * 40
         annotated = "b" * 40 + "\t" + tag + "\n" + source + "\t" + tag + "^{}\n"
         def refs(tags, main=source):
@@ -56,7 +56,7 @@ class WebsiteTests(unittest.TestCase):
         self.assertTrue(policy.should_deploy("workflow_dispatch", source, tag, ""))
         self.assertTrue(policy.should_deploy("push", "c" * 40, tag, refs(annotated, "c" * 40)))
         self.assertFalse(policy.should_deploy("push", source, tag, refs("")))
-        self.assertFalse(policy.should_deploy("push", source, tag, refs(source + "\trefs/tags/v0.1.12")))
+        self.assertFalse(policy.should_deploy("push", source, tag, refs(source + "\trefs/tags/v0.1.13")))
         self.assertFalse(policy.should_deploy("push", "c" * 40, tag, refs(annotated)),
                          "superseded website commits must not publish an older homepage")
         workflow = (ROOT / ".github/workflows/website.yml").read_text()
@@ -135,7 +135,7 @@ class WebsiteTests(unittest.TestCase):
         data = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S).group(1))
         self.assertEqual(data["@type"], "SoftwareApplication")
         self.assertEqual(data["url"], base)
-        self.assertEqual(data["softwareVersion"], "0.1.13")
+        self.assertEqual(data["softwareVersion"], "0.1.14")
         self.assertEqual(data["offers"]["price"], "0")
         self.assertTrue((ROOT / "website" / data["screenshot"].removeprefix(base)).is_file())
         tree = ET.fromstring((ROOT / "website/sitemap.xml").read_text())
