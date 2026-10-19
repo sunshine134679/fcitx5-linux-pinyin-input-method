@@ -26,20 +26,21 @@ for f in "$prev_tarball" "$prev_deb" "$prev_rpm"; do
 done
 
 # 2. 检查 0.1.14 发布产物
-new_tarball=$(ls -1 "$dist_dir"/modernime-0.1.14-linux-x86_64.tar.gz 2>/dev/null || true)
-new_deb=$(ls -1 "$dist_dir"/modernime-0.1.14-Linux.deb 2>/dev/null || true)
-new_rpm=$(ls -1 "$dist_dir"/modernime-0.1.14-*.rpm 2>/dev/null || true)
+new_ver=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUAGES CXX)$/\1/p' "$project_root/CMakeLists.txt")
+new_tarball=$(ls -1 "$dist_dir"/modernime-"${new_ver}"-linux-x86_64.tar.gz 2>/dev/null | head -n 1 || true)
+new_deb=$(ls -1 "$dist_dir"/modernime-"${new_ver}"-Linux.deb 2>/dev/null | head -n 1 || true)
+new_rpm=$(ls -1 "$dist_dir"/modernime-"${new_ver}"-*.rpm 2>/dev/null | head -n 1 || true)
 
 if [[ -z "$new_tarball" || ! -f "$new_tarball" ]]; then
-    printf 'Error: 0.1.14 tarball not found in %s\n' "$dist_dir" >&2
+    printf 'Error: New tarball not found in %s\n' "$dist_dir" >&2
     exit 1
 fi
 if [[ -z "$new_deb" || ! -f "$new_deb" ]]; then
-    printf 'Error: 0.1.14 deb not found in %s\n' "$dist_dir" >&2
+    printf 'Error: New deb not found in %s\n' "$dist_dir" >&2
     exit 1
 fi
 if [[ -z "$new_rpm" || ! -f "$new_rpm" ]]; then
-    printf 'Error: 0.1.14 rpm not found in %s\n' "$dist_dir" >&2
+    printf 'Error: New rpm not found in %s\n' "$dist_dir" >&2
     exit 1
 fi
 
@@ -120,17 +121,17 @@ mkdir -p "$extract_v14"
 tar -xzf "$new_tarball" -C "$extract_v14"
 
 (
-    cd "$extract_v14"/modernime-0.1.14-linux-x86_64
+    cd "$extract_v14"/modernime-*-linux-x86_64
     bash ./install.sh "$prefix"
 )
 
 # 校验升级后状态
 v14_ver=$(grep '^version=' "$v13_channel_file" | cut -d= -f2)
-if [[ "$v14_ver" != "0.1.14" ]]; then
-    printf 'Error: Expected upgraded version 0.1.14, got %s\n' "$v14_ver" >&2
+if [[ "$v14_ver" != "$new_ver" ]]; then
+    printf 'Error: Expected upgraded version %s, got %s\n' "$new_ver" "$v14_ver" >&2
     exit 1
 fi
-printf '0.1.14 升级成功，版本验证通过: %s\n' "$v14_ver"
+printf '%s 升级成功，版本验证通过: %s\n' "$new_ver" "$v14_ver"
 
 # 校验数据完整性
 sqlite_count_after=$(python3 -c "import sqlite3; c=sqlite3.connect('$data_home/modernime/learning.sqlite3'); print(c.execute('SELECT count(*) FROM learning_entries').fetchone()[0])")
