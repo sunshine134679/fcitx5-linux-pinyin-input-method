@@ -43,6 +43,25 @@ void writeTextFile(const std::filesystem::path &path, const std::string &content
 } // namespace
 
 int main(int argc, char **argv) {
+    if (argc == 4 && std::string_view(argv[1]) == "--subtest-client-exit") {
+        using namespace modernime::settings;
+        UpdateStatus status;
+        status.updateAvailable = true;
+        status.manager = PackageManagerKind::Apt;
+        status.installChannel = "deb";
+        status.upgradeCommand = "fake upgrade";
+        const Environment environment{
+            {"PATH", argv[2]},
+            {"MODERNIME_PACKAGE_OP_TIMEOUT_MS", "100"},
+            {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", argv[3]},
+        };
+        const auto res = UpdateController::runSystemUpgrade(status, environment);
+        assert(!res.success);
+        assert(UpdateController::hasActivePackageOperation());
+        // Normal process exit, including this fresh client's static destructors.
+        return 0;
+    }
+
     if (argc > 1 && std::string_view(argv[1]) == "--mock-zombie-exit") {
         std::thread([]() { ::usleep(200000); }).detach();
         ::pthread_exit(nullptr);
@@ -592,14 +611,17 @@ int main(int argc, char **argv) {
             "\"\n"
             "exit 0\n");
 
+    // Fork only to exec. The client owns fresh C++ runtime and tracking state.
+    const std::string selfPath = selfExe.string();
+    const std::string binPath = aptBinDir.string();
+    const std::string lockPath = mockLockPath.string();
+    const char *childArgs[] = {selfPath.c_str(), "--subtest-client-exit",
+                               binPath.c_str(), lockPath.c_str(), nullptr};
     const pid_t childPid = ::fork();
     assert(childPid >= 0);
     if (childPid == 0) {
-        const auto res = UpdateController::runSystemUpgrade(aptStatus, timeoutEnv);
-        assert(!res.success);
-        assert(UpdateController::hasActivePackageOperation());
-        // Full C++ std::exit(0) runs static destructors and closes all FDs in settings client
-        std::exit(0);
+        ::execv(selfPath.c_str(), const_cast<char *const *>(childArgs));
+        ::_exit(127);
     }
 
     int waitStatus = 0;

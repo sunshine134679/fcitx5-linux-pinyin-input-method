@@ -256,44 +256,15 @@ void test_T13_A06_ParentExitWithInheritedOutput() {
     std::filesystem::remove(doneFile);
     std::filesystem::remove(refFile);
 
-    const pid_t parentPid = fork();
+    const std::string selfExe = std::filesystem::canonical("/proc/self/exe").string();
+    // Prepare argv in the parent; run the simulated client in a fresh process.
+    const char *childArgs[] = {selfExe.c_str(), "--subtest-parent-exit",
+                               doneFile.c_str(), refFile.c_str(), nullptr};
+    const pid_t parentPid = ::fork();
+    TEST_ASSERT(parentPid >= 0);
     if (parentPid == 0) {
-        // Child acting as test GUI parent process
-        CommandSpec spec;
-        spec.mode = CommandMode::PackageTransaction;
-        spec.timeoutMs = 150; // Fast timeout
-        spec.operationId = opId;
-        spec.limits.perStreamBufferBytes = 1048576;
-        spec.limits.perStreamResultBytes = 65536;
-        spec.limits.perStreamFileBytes = 1048576;
-        // Leader forks a descendant that sleeps 0.3s and writes late output, leader exits immediately
-        spec.argv = {
-            "python3", "-c",
-            "import os, sys, time\n"
-            "pid = os.fork()\n"
-            "if pid == 0:\n"
-            "    time.sleep(0.3)\n"
-            "    sys.stdout.write('PARENT_EXIT_STDOUT_OK\\n')\n"
-            "    sys.stderr.write('PARENT_EXIT_STDERR_OK\\n')\n"
-            "    sys.stdout.flush()\n"
-            "    sys.stderr.flush()\n"
-            "    with open('" + doneFile + "', 'w') as f:\n"
-            "        f.write('done')\n"
-            "    sys.exit(0)\n"
-            "sys.stdout.write('leader_done\\n')\n"
-            "sys.exit(0)\n"
-        };
-        runCommand(spec);
-
-        // Export active OperationRef for observer
-        auto ref = getActiveOperationRef(opId);
-        if (ref.has_value()) {
-            std::ofstream out(refFile);
-            out << ref->operationId << " " << ref->token << " " << ref->opDir << " " << ref->collectorPid << "\n";
-        }
-
-        // True _exit(0) simulating sudden GUI parent termination
-        _exit(0);
+        ::execv(selfExe.c_str(), const_cast<char *const *>(childArgs));
+        ::_exit(127);
     }
 
     int status = 0;
@@ -1865,6 +1836,39 @@ void test_T13_T04_InstalledBinaryHeadlessInvocationRegression() {
     std::filesystem::remove_all(opDir);
 }
 
+// A fork child must reach exec even while the parent reaper is freeing a path.
+void test_T19_ForkDuringReaperDestructionExecutesSafely() {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "process_runner_fork_fixture.cpp";
+    const auto root = fixture.parent_path().parent_path().parent_path();
+    std::string pattern = getTempDir() + "/modernime-fork-regression-XXXXXX";
+    char *created = ::mkdtemp(pattern.data());
+    TEST_ASSERT(created != nullptr);
+    const std::filesystem::path temp(created);
+    const auto binary = temp / "fork-fixture";
+    CommandSpec compile;
+    compile.argv = {"c++", "-std=c++20", "-pthread", "-g", "-O0",
+                    "-I" + (root / "tools/settings/include").string(),
+                    fixture.string(), "-o", binary.string()};
+#ifdef __SANITIZE_ADDRESS__
+    compile.argv.push_back("-fsanitize=address,undefined");
+    compile.argv.push_back("-fno-omit-frame-pointer");
+#endif
+    compile.timeoutMs = 30000;
+    const auto built = runCommand(compile);
+    std::cerr << built.stderrText;
+    TEST_ASSERT(built.state == CommandState::Exited && built.exitStatus == 0);
+    CommandSpec probe;
+    probe.argv = {binary.string(), temp.string()};
+    probe.timeoutMs = 10000;
+    const auto result = runCommand(probe);
+    std::cout << result.stdoutText;
+    std::cerr << result.stderrText;
+    std::filesystem::remove_all(temp);
+    TEST_ASSERT(result.state == CommandState::Exited && result.exitStatus == 0);
+    TEST_ASSERT(result.stdoutText.find("FORK_EXEC_OK_PARENT_REAPED") != std::string::npos);
+}
+
 // T13-T05: Test suite self-check
 void test_T13_T05_TestSuiteSelfCheckT13() {
     TEST_ASSERT(g_passCount >= 33);
@@ -1873,6 +1877,47 @@ void test_T13_T05_TestSuiteSelfCheckT13() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string_view(argv[1]) == "--subtest-parent-exit") {
+        const std::uint64_t opId = 106;
+        const std::string doneFile = argv[2];
+        const std::string refFile = argv[3];
+        // Child acting as test GUI parent process
+        CommandSpec spec;
+        spec.mode = CommandMode::PackageTransaction;
+        spec.timeoutMs = 150; // Fast timeout
+        spec.operationId = opId;
+        spec.limits.perStreamBufferBytes = 1048576;
+        spec.limits.perStreamResultBytes = 65536;
+        spec.limits.perStreamFileBytes = 1048576;
+        // Leader forks a descendant that sleeps 0.3s and writes late output, leader exits immediately
+        spec.argv = {
+            "python3", "-c",
+            "import os, sys, time\n"
+            "pid = os.fork()\n"
+            "if pid == 0:\n"
+            "    time.sleep(0.3)\n"
+            "    sys.stdout.write('PARENT_EXIT_STDOUT_OK\\n')\n"
+            "    sys.stderr.write('PARENT_EXIT_STDERR_OK\\n')\n"
+            "    sys.stdout.flush()\n"
+            "    sys.stderr.flush()\n"
+            "    with open('" + doneFile + "', 'w') as f:\n"
+            "        f.write('done')\n"
+            "    sys.exit(0)\n"
+            "sys.stdout.write('leader_done\\n')\n"
+            "sys.exit(0)\n"
+        };
+        runCommand(spec);
+
+        // Export active OperationRef for observer
+        auto ref = getActiveOperationRef(opId);
+        if (ref.has_value()) {
+            std::ofstream out(refFile);
+            out << ref->operationId << " " << ref->token << " " << ref->opDir << " " << ref->collectorPid << "\n";
+        }
+
+        ::_exit(0);
+    }
+
     if (argc > 1 && std::string_view(argv[1]) == "--subtest-pre-exec") {
         CommandSpec spec0;
         spec0.mode = CommandMode::PackageTransaction;
@@ -1982,6 +2027,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_T13_T02_PreExecDeadlineBoundedAndStrictZeroSpawn);
     RUN_TEST(test_T13_T03_NumericRangeAndProtocolValidation);
     RUN_TEST(test_T13_T04_InstalledBinaryHeadlessInvocationRegression);
+    RUN_TEST(test_T19_ForkDuringReaperDestructionExecutesSafely);
     RUN_TEST(test_T13_T05_TestSuiteSelfCheckT13);
 
     std::cout << "========================================\n";

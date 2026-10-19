@@ -44,19 +44,8 @@ std::atomic<bool> g_reaperStop{false};
 pthread_t g_reaperThread = 0;
 pid_t g_reaperOwnerPid = 0;
 
-void initReaperForkHandler() {
-    static const int dummy = []() {
-        ::pthread_atfork(nullptr, nullptr, []() {
-            g_reaperThread = 0;
-            ::pthread_cond_init(g_reaperCv.native_handle(), nullptr);
-            g_pendingReaps.clear();
-            g_reaperStop.store(false);
-            g_reaperOwnerPid = 0;
-        });
-        return 0;
-    }();
-    (void)dummy;
-}
+// Reaper state belongs to this process. Fork children only exec or _exit;
+// touching inherited containers/condition variables can race a parent destructor.
 } // namespace
 
 void shutdownBackgroundReaper() {
@@ -147,14 +136,7 @@ void *reaperThreadRoutine(void *) {
 
 void enqueuePendingReap(pid_t pid, const std::string &opDir) {
     if (pid <= 0) return;
-    initReaperForkHandler();
     std::lock_guard<std::mutex> lock(g_reaperMutex);
-    if (g_reaperOwnerPid != 0 && g_reaperOwnerPid != ::getpid()) {
-        g_reaperThread = 0;
-        g_reaperStop.store(false);
-        g_pendingReaps.clear();
-        g_reaperOwnerPid = ::getpid();
-    }
     if (g_reaperStop.load()) return;
     g_pendingReaps.push_back({pid, opDir});
     ++g_reaperEnqueueSeq;
@@ -750,6 +732,7 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
     }
     argvPtrs.push_back(nullptr);
 
+    const std::string execFailure = "Failed to execute " + spec.argv.front() + "\n";
     const pid_t pid = ::fork();
     if (pid < 0) {
         ::close(outPipe[0]);
@@ -775,8 +758,7 @@ CommandResult runQueryCommand(const CommandSpec &spec) {
         if (fErr >= 0) ::fcntl(STDERR_FILENO, F_SETFL, fErr & ~O_NONBLOCK);
 
         ::execvpe(argvPtrs[0], argvPtrs.data(), prepEnv.envp.data());
-        const int err = errno;
-        ::dprintf(STDERR_FILENO, "Failed to execute %s: %s\n", argvPtrs[0], std::strerror(err));
+        (void)::write(STDERR_FILENO, execFailure.data(), execFailure.size());
         ::_exit(127);
     }
 
@@ -1491,6 +1473,8 @@ int runCommandCaptureChild(int argc, char **argv) {
     }
     childArgvPtrs.push_back(nullptr);
 
+    const std::string execFailure = "Failed to execute child process \"" +
+                                    childArgv.front() + "\"\n";
     const pid_t childPid = ::fork();
     if (childPid < 0) {
         const char errByte = 'N';
@@ -1521,8 +1505,7 @@ int runCommandCaptureChild(int argc, char **argv) {
         ::close(handshakeFd);
 
         ::execvpe(childArgvPtrs[0], childArgvPtrs.data(), prepEnv.envp.data());
-        const int err = errno;
-        ::dprintf(STDERR_FILENO, "Failed to execute child process \"%s\": %s\n", childArgvPtrs[0], std::strerror(err));
+        (void)::write(STDERR_FILENO, execFailure.data(), execFailure.size());
         ::_exit(127);
     }
 
