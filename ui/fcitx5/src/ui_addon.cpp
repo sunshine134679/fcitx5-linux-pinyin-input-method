@@ -20,18 +20,10 @@
 #include <fcitx/instance.h>
 #include <fcitx-utils/event.h>
 
+#include <dlfcn.h>
+#include <fcitx/action.h>
+#include <fcitx/statusarea.h>
 #include <gtk/gtk.h>
-#if defined(MODERNIME_USE_AYATANA_APPINDICATOR)
-#if __has_include(<libayatana-appindicator/app-indicator.h>)
-#include <libayatana-appindicator/app-indicator.h>
-#define MODERNIME_HAVE_APPINDICATOR 1
-#endif
-#elif defined(MODERNIME_USE_APPINDICATOR)
-#if __has_include(<libappindicator/app-indicator.h>)
-#include <libappindicator/app-indicator.h>
-#define MODERNIME_HAVE_APPINDICATOR 1
-#endif
-#endif
 #include <pango/pango.h>
 
 #include <algorithm>
@@ -43,15 +35,90 @@
 
 namespace modernime::ui {
 
+enum AppIndicatorCategory {
+    APP_INDICATOR_CATEGORY_APPLICATION_STATUS = 0,
+    APP_INDICATOR_CATEGORY_COMMUNICATIONS,
+    APP_INDICATOR_CATEGORY_SYSTEM_SERVICES,
+    APP_INDICATOR_CATEGORY_HARDWARE,
+    APP_INDICATOR_CATEGORY_OTHER
+};
+
+enum AppIndicatorStatus {
+    APP_INDICATOR_STATUS_PASSIVE = 0,
+    APP_INDICATOR_STATUS_ACTIVE,
+    APP_INDICATOR_STATUS_ATTENTION
+};
+
+struct _AppIndicator;
+using AppIndicator = struct _AppIndicator;
+
+struct AppIndicatorAPI {
+    AppIndicator *(*app_indicator_new)(const char *, const char *, AppIndicatorCategory) = nullptr;
+    void (*app_indicator_set_status)(AppIndicator *, AppIndicatorStatus) = nullptr;
+    void (*app_indicator_set_icon)(AppIndicator *, const char *) = nullptr;
+    void (*app_indicator_set_label)(AppIndicator *, const char *, const char *) = nullptr;
+    void (*app_indicator_set_title)(AppIndicator *, const char *) = nullptr;
+    void (*app_indicator_set_menu)(AppIndicator *, GtkMenu *) = nullptr;
+    void *handle = nullptr;
+
+    bool init() {
+        if (handle != nullptr) {
+            return true;
+        }
+        static const char *const libNames[] = {
+            "libayatana-appindicator3.so.1",
+            "libappindicator3.so.1",
+            "libayatana-appindicator3.so",
+            "libappindicator3.so"
+        };
+        for (const char *name : libNames) {
+            handle = dlopen(name, RTLD_LAZY | RTLD_LOCAL);
+            if (handle != nullptr) {
+                break;
+            }
+        }
+        if (handle == nullptr) {
+            return false;
+        }
+        app_indicator_new = reinterpret_cast<decltype(app_indicator_new)>(
+            dlsym(handle, "app_indicator_new"));
+        app_indicator_set_status = reinterpret_cast<decltype(app_indicator_set_status)>(
+            dlsym(handle, "app_indicator_set_status"));
+        app_indicator_set_icon = reinterpret_cast<decltype(app_indicator_set_icon)>(
+            dlsym(handle, "app_indicator_set_icon"));
+        app_indicator_set_label = reinterpret_cast<decltype(app_indicator_set_label)>(
+            dlsym(handle, "app_indicator_set_label"));
+        app_indicator_set_title = reinterpret_cast<decltype(app_indicator_set_title)>(
+            dlsym(handle, "app_indicator_set_title"));
+        app_indicator_set_menu = reinterpret_cast<decltype(app_indicator_set_menu)>(
+            dlsym(handle, "app_indicator_set_menu"));
+
+        if (!app_indicator_new || !app_indicator_set_status || !app_indicator_set_label ||
+            !app_indicator_set_title || !app_indicator_set_menu) {
+            dlclose(handle);
+            handle = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    ~AppIndicatorAPI() {
+        if (handle != nullptr) {
+            dlclose(handle);
+            handle = nullptr;
+        }
+    }
+};
+
+static AppIndicatorAPI g_appIndicator;
+
 struct ModernIMEUserInterface::Impl final {
     fcitx::Instance *instance = nullptr;
     fcitx::InputContext *currentInputContext = nullptr;
     GtkWidget *window = nullptr;
     GtkWidget *drawingArea = nullptr;
-#if defined(MODERNIME_HAVE_APPINDICATOR)
     AppIndicator *indicator = nullptr;
     GtkWidget *indicatorMenu = nullptr;
-#endif
 
     CandidateBarLayout layout;
     WindowAnchor windowAnchor;
@@ -325,40 +392,73 @@ struct ModernIMEUserInterface::Impl final {
         return width;
     }
 
+    GDBusConnection *sessionBus = nullptr;
+
     void updateIndicator(fcitx::InputContext *inputContext) {
-#if defined(MODERNIME_HAVE_APPINDICATOR)
         if (indicator == nullptr || instance == nullptr || inputContext == nullptr) {
             return;
         }
-        const auto inputMethod = instance->inputMethod(inputContext);
-        const auto label =
-            std::string(StatusIndicator::labelForInputMethod(inputMethod));
-        const auto title =
-            std::string(StatusIndicator::titleForInputMethod(inputMethod));
+        std::string label;
+        std::string title;
+        const auto actions =
+            inputContext->statusArea().actions(fcitx::StatusGroup::InputMethod);
+        if (!actions.empty()) {
+            label = actions.front()->shortText(inputContext);
+            title = actions.front()->longText(inputContext);
+        }
+        if (label.empty()) {
+            const auto inputMethod = instance->inputMethod(inputContext);
+            label = std::string(StatusIndicator::labelForInputMethod(inputMethod));
+            title = std::string(StatusIndicator::titleForInputMethod(inputMethod));
+        }
+        bool labelChanged = false;
+        bool titleChanged = false;
         if (label != lastIndicatorLabel) {
-            app_indicator_set_label(indicator, label.c_str(), "");
+            g_appIndicator.app_indicator_set_label(indicator, label.c_str(), "");
             lastIndicatorLabel = std::move(label);
+            labelChanged = true;
         }
         if (title != lastIndicatorTitle) {
-            app_indicator_set_title(indicator, title.c_str());
+            g_appIndicator.app_indicator_set_title(indicator, title.c_str());
             lastIndicatorTitle = std::move(title);
+            titleChanged = true;
         }
-#else
-        (void)inputContext;
-#endif
+        if ((labelChanged || titleChanged) && sessionBus != nullptr) {
+            GVariantBuilder changedBuilder;
+            g_variant_builder_init(&changedBuilder, G_VARIANT_TYPE("a{sv}"));
+            if (labelChanged) {
+                g_variant_builder_add(&changedBuilder, "{sv}", "XAyatanaLabel",
+                                      g_variant_new_string(lastIndicatorLabel.c_str()));
+            }
+            if (titleChanged) {
+                g_variant_builder_add(&changedBuilder, "{sv}", "Title",
+                                      g_variant_new_string(lastIndicatorTitle.c_str()));
+            }
+            GVariantBuilder invalidatedBuilder;
+            g_variant_builder_init(&invalidatedBuilder, G_VARIANT_TYPE("as"));
+            g_dbus_connection_emit_signal(
+                sessionBus,
+                nullptr,
+                "/org/ayatana/NotificationItem/modernime_fcitx5",
+                "org.freedesktop.DBus.Properties",
+                "PropertiesChanged",
+                g_variant_new("(sa{sv}as)",
+                              "org.kde.StatusNotifierItem",
+                              &changedBuilder,
+                              &invalidatedBuilder),
+                nullptr);
+        }
     }
 };
 
 namespace {
 
-#if defined(MODERNIME_HAVE_APPINDICATOR)
 void toggleInputMethod(GtkMenuItem *, gpointer data) {
     if (auto *instance = static_cast<fcitx::Instance *>(data);
         instance != nullptr) {
         instance->toggle();
     }
 }
-#endif
 
 gboolean drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
     static_cast<ModernIMEUserInterface *>(data)->draw(context);
@@ -434,6 +534,7 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
         return;
     }
     impl_->refreshSettingsIfNeeded();
+    impl_->sessionBus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
     impl_->window = gtk_window_new(GTK_WINDOW_POPUP);
     configureWindow(impl_->window);
     if (GdkDisplay *display = gtk_widget_get_display(impl_->window);
@@ -442,23 +543,31 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
         impl_->wayland = backendName != nullptr &&
                          std::string_view(backendName).starts_with("wayland");
     }
-#if defined(MODERNIME_HAVE_APPINDICATOR)
-    impl_->indicator = app_indicator_new(
-        "modernime-fcitx5", std::string(StatusIndicator::iconName()).c_str(),
-        APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
-    app_indicator_set_title(impl_->indicator,
-                            std::string(StatusIndicator::title()).c_str());
-    app_indicator_set_status(impl_->indicator, APP_INDICATOR_STATUS_ACTIVE);
-    impl_->indicatorMenu = gtk_menu_new();
-    auto *indicatorItem = gtk_menu_item_new_with_label(
-        std::string(StatusIndicator::title()).c_str());
-    g_signal_connect(indicatorItem, "activate",
-                     G_CALLBACK(toggleInputMethod), instance);
-    gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), indicatorItem);
-    gtk_widget_show_all(impl_->indicatorMenu);
-    app_indicator_set_menu(impl_->indicator,
-                           GTK_MENU(impl_->indicatorMenu));
-#endif
+    if (g_appIndicator.init()) {
+        impl_->indicator = g_appIndicator.app_indicator_new(
+            "modernime-fcitx5", std::string(StatusIndicator::iconName()).c_str(),
+            APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+        g_appIndicator.app_indicator_set_title(
+            impl_->indicator, std::string(StatusIndicator::title()).c_str());
+        g_appIndicator.app_indicator_set_status(
+            impl_->indicator, APP_INDICATOR_STATUS_ACTIVE);
+        const auto initialLabel =
+            std::string(StatusIndicator::labelForInputMethod("modernime"));
+        g_appIndicator.app_indicator_set_label(
+            impl_->indicator, initialLabel.c_str(), "");
+        impl_->lastIndicatorLabel = initialLabel;
+        impl_->lastIndicatorTitle = std::string(StatusIndicator::title());
+
+        impl_->indicatorMenu = gtk_menu_new();
+        auto *indicatorItem = gtk_menu_item_new_with_label(
+            std::string(StatusIndicator::title()).c_str());
+        g_signal_connect(indicatorItem, "activate",
+                         G_CALLBACK(toggleInputMethod), instance);
+        gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), indicatorItem);
+        gtk_widget_show_all(impl_->indicatorMenu);
+        g_appIndicator.app_indicator_set_menu(
+            impl_->indicator, GTK_MENU(impl_->indicatorMenu));
+    }
     impl_->drawingArea = gtk_drawing_area_new();
     gtk_widget_add_events(impl_->drawingArea,
                           GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
@@ -505,14 +614,16 @@ ModernIMEUserInterface::~ModernIMEUserInterface() {
     if (impl_->window != nullptr) {
         gtk_widget_destroy(impl_->window);
     }
-#if defined(MODERNIME_HAVE_APPINDICATOR)
     if (impl_->indicatorMenu != nullptr) {
         gtk_widget_destroy(impl_->indicatorMenu);
     }
     if (impl_->indicator != nullptr) {
         g_object_unref(impl_->indicator);
     }
-#endif
+    if (impl_->sessionBus != nullptr) {
+        g_object_unref(impl_->sessionBus);
+        impl_->sessionBus = nullptr;
+    }
 }
 
 void ModernIMEUserInterface::draw(cairo_t *context) {

@@ -747,6 +747,64 @@ if(MODERNIME_BUILD_FCITX5)
     add_test(NAME modernime_key_translation
         COMMAND modernime_key_translation_tests
     )
+    add_executable(modernime_ui_addon_tests
+        ui/ui_addon_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/ui_addon.cpp
+    )
+    target_include_directories(modernime_ui_addon_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+    )
+    target_link_libraries(modernime_ui_addon_tests PRIVATE
+        modernime_ui_layout
+        modernime_core
+        Fcitx5::Core
+        Fcitx5::Utils
+        PkgConfig::GTK3
+        ${CMAKE_DL_LIBS}
+    )
+    add_test(NAME modernime_ui_addon COMMAND modernime_ui_addon_tests)
+    set_tests_properties(modernime_ui_addon PROPERTIES
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK modernime_gtk_display
+    )
+    add_executable(modernime_db_fixture_helper
+        core/db_fixture_helper.cpp
+    )
+    target_include_directories(modernime_db_fixture_helper PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../core/include
+    )
+    target_link_libraries(modernime_db_fixture_helper PRIVATE
+        modernime_core
+    )
+
+    enable_language(C)
+    add_library(config_fault_hooks SHARED
+        adapter/config_fault_hooks.c
+    )
+    set_target_properties(config_fault_hooks PROPERTIES PREFIX "")
+    target_link_libraries(config_fault_hooks PRIVATE ${CMAKE_DL_LIBS})
+
+    add_executable(modernime_adapter_recovery_tests
+        adapter/adapter_recovery_test.cpp
+        ../adapter/fcitx5/src/inputmethod.cpp
+        ../adapter/fcitx5/src/engine.cpp
+    )
+    target_include_directories(modernime_adapter_recovery_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../core/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../algorithm/pinyin/include
+    )
+    target_link_libraries(modernime_adapter_recovery_tests PRIVATE
+        modernime_pinyin
+        modernime_core
+        Fcitx5::Core
+        Fcitx5::Config
+        Fcitx5::Utils
+        ${CMAKE_DL_LIBS}
+    )
+    add_dependencies(modernime_adapter_recovery_tests config_fault_hooks)
+    add_test(NAME modernime_adapter_recovery COMMAND modernime_adapter_recovery_tests)
 endif()
 
 add_executable(modernime_ui_tests ui/candidate_bar_layout_test.cpp)

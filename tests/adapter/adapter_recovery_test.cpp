@@ -311,8 +311,11 @@ std::filesystem::path findHooksLibrary(const std::filesystem::path &selfDir) {
     }
     const std::vector<std::filesystem::path> candidates = {
         selfDir / "config_fault_hooks.so",
+        selfDir / "libconfig_fault_hooks.so",
         selfDir / "tests" / "config_fault_hooks.so",
+        selfDir / "tests" / "libconfig_fault_hooks.so",
         selfDir / ".." / "tests" / "config_fault_hooks.so",
+        selfDir / ".." / "tests" / "libconfig_fault_hooks.so",
         "/home/wsl/ModernIME/build/architecture-debug/tests/config_fault_hooks.so",
     };
     for (const auto &cand : candidates) {

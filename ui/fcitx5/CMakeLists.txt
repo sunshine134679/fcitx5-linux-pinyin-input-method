@@ -52,6 +52,7 @@ if(MODERNIME_BUILD_FCITX5)
         Fcitx5::Core
         Fcitx5::Utils
         PkgConfig::GTK3
+        ${CMAKE_DL_LIBS}
     )
     if(MODERNIME_APPINDICATOR_TARGET)
         target_link_libraries(modernime_ui PRIVATE ${MODERNIME_APPINDICATOR_TARGET})

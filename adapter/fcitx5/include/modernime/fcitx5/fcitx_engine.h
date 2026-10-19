@@ -7,6 +7,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #endif
 
+#include <fcitx/action.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx-utils/event.h>
@@ -469,6 +470,7 @@ private:
     bool pinyinResourcesResolved_ = false;
 #endif
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
+    fcitx::SimpleAction subModeAction_;
 };
 
 } // namespace modernime::fcitx5
