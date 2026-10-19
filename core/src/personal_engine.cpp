@@ -1126,12 +1126,14 @@ bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
         return false;
     }
 
+    std::shared_ptr<detail::LmdbEnvironment> prior_env_to_release;
     {
         std::shared_lock env_lock(handle->lifecycle_gate);
         if (handle->env == nullptr) {
             return false;
         }
         std::lock_guard lock(lmdb_mutex_);
+        prior_env_to_release = std::move(lmdb_env_);
         lmdb_env_ = handle;
         env_ = handle->env;
         words_dbi_ = handle->words_dbi;
@@ -1139,6 +1141,7 @@ bool PersonalEngine::OpenLmdb(const std::filesystem::path &lmdb_path,
         lmdb_path_ = lmdb_path;
         lmdb_read_only_ = handle->read_only;
     }
+    prior_env_to_release.reset();
 
     auto prior_db = std::move(db_);
     auto prior_compact = std::move(compact_index_);

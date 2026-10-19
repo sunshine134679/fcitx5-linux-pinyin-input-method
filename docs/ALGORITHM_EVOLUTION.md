@@ -311,6 +311,11 @@
      - **锁序与并发安全保证**：严格维持 `PersonalEngine::lmdb_mutex_` $\to$（释放）$\to$ `LmdbEnvironment::lifecycle_gate` (shared) $\to$ `LmdbEnvironment::revision_mutex_` (exclusive) 顺序，不引入任何跨模块锁环；单次读代次执行快速 `renew` + `get` + `reset`（耗时约 170ns），既避免长期占用只读快照槽，又保证最新清空代次立即可见；
      - **性能与安全闭环**：在根除生命周期缺陷的同时，保留 `mdb_txn_renew` 零读者槽互斥争抢优化，清空后首键延迟实测稳定在 ~192us（严格满足 $\le 5000\text{us}$ 门禁）。
 
+   10. **LMDB 换库路径锁序死锁消除与延迟释放（G4-L1，2026-10-19）**：
+      - **死锁根因定位**：在 `PersonalEngine::OpenLmdb`（`core/src/personal_engine.cpp:1129-1141`）中，先持有了新库环境 `handle->lifecycle_gate` 读锁（M0），再获取引擎实例的 `lmdb_mutex_`（M1，顺序 M0 -> M1）；若此前 `lmdb_env_` 已绑定旧库环境句柄，在持锁 M1 时直接执行 `lmdb_env_ = handle` 会使得旧句柄在持锁 M1 的状态下直接析构；旧环境析构调用 `LmdbEnvironment::close()` 进而尝试获取自身的 `lifecycle_gate` 写锁（M0，顺序 M1 -> M0），被 TSAN 准确捕获为 `lock-order-inversion (potential deadlock)` 警告（退出码 66）；
+      - **无锁延迟析构设计**：对齐现存 `CloseLmdb` 的安全释放语义：在持有 `lmdb_mutex_` 时，仅将旧句柄使用 `std::move` 转入局部变量 `prior_env_to_release`，完成引擎内环境状态的原子替换；在离开互斥作用域、彻底释放 `lmdb_mutex_` 与新环境 `lifecycle_gate` 后，再在无锁状态下执行 `prior_env_to_release.reset()`。若旧环境无其他外部引用，其析构与底层资源关闭完全在无锁上下文中安全完成，彻底解耦锁序依赖；
+      - **验证证据闭环**：`ArchitectureLmdbRegression` 全部 10 项测试通过（`SwitchDatabase...` 6ms 通过）；包含 Fcitx5 Ready 端点与新回归用例的完整 136 项 TSAN 综合测试执行通过，0 警告，0 数据竞争，退出码 0（`tsan-full-gtest-fixed.log`，`EXIT_CODE=0`）；Release 性能基准清空首键延迟 204.77 us（<= 5000 us），并发修剪 3.16 ms（<= 30 ms），8 项负向拒绝门禁有效性 8/8 通过。
+
 - **打字体验变化**：
   - 词库在后台重载或清空时，输入法完全不卡顿，首按键即时响应；
   - 重载完成后，当前编辑区候选栏自动无感刷新为最新计算结果，光标与输入保持完好；
