@@ -55,6 +55,7 @@ struct CandidateScore final {
     double dictionary_bonus = 0.0;
     double context_bonus = 0.0;
     double unigram_anchor = 0.0;
+    double unigram_prominence = 0.0;
     std::int64_t last_selected_ms = 0;
     double dormant_factor = 1.0;
     bool is_rare = false;
@@ -64,10 +65,11 @@ struct CandidateScore final {
     std::size_t phrase_length = 0;
 
     double base_prior() const {
-        double score = static_cast<double>(source_index) -
+        const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? 0.08 : 1.0;
+        double score = sourceStep * static_cast<double>(source_index) -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
-               DecoderPriorWeight * decoder_bonus - unigram_anchor;
+               DecoderPriorWeight * decoder_bonus - unigram_anchor - unigram_prominence;
         if (!is_rare && is_level1) {
             score -= 2.0;
         }

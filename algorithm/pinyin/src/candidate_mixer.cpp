@@ -55,11 +55,12 @@ std::vector<core::CandidateItem> mixCandidateItems(
 
     const auto derived = prefixEvidence != nullptr ? *prefixEvidence :
         buildPrefixEvidence(*bestFullSentence, syllablePrefixEnds, rawPinyin, partialCandidates);
-    const core::CandidateItem *threeSyllable = nullptr, *twoSyllable = nullptr;
+    const core::CandidateItem *threeSyllable = nullptr, *twoSyllable = nullptr, *oneSyllable = nullptr;
     for (const auto &item : derived) {
         const auto syllables = std::count(item.fullPinyin.begin(), item.fullPinyin.end(), '\'') + 1;
         if (syllables == 3) threeSyllable = &item;
         if (syllables == 2) twoSyllable = &item;
+        if (syllables == 1) oneSyllable = &item;
     }
     const core::CandidateItem *personalPrefix = nullptr;
     const auto considerPersonal = [&](const core::CandidateItem &item) {
@@ -76,12 +77,19 @@ std::vector<core::CandidateItem> mixCandidateItems(
     };
     for (const auto &item : partialCandidates) considerPersonal(item);
     if (threeSyllable) considerPersonal(*threeSyllable);
-    if (twoSyllable) considerPersonal(*twoSyllable);
+    const bool isFourSyllablesWithSinglePrefix =
+        (syllablePrefixEnds.size() == 3) && (personalPrefix == nullptr) && (oneSyllable != nullptr) &&
+        std::any_of(partialCandidates.begin(), partialCandidates.end(), [&](const auto &p) {
+            return p.text == oneSyllable->text && p.fullPinyin == oneSyllable->fullPinyin &&
+                   p.consumedInputBytes == oneSyllable->consumedInputBytes;
+        });
 
     append(*bestFullSentence);
     if (personalPrefix != nullptr) {
         append(*personalPrefix);
-    } else if (threeSyllable) {
+    } else if (isFourSyllablesWithSinglePrefix) {
+        if (twoSyllable != nullptr) append(*twoSyllable);
+    } else if (threeSyllable != nullptr) {
         append(*threeSyllable);
     }
     const core::CandidateItem *runnerUpFullSentence = nullptr;
@@ -93,10 +101,14 @@ std::vector<core::CandidateItem> mixCandidateItems(
             break;
         }
     }
-    if (personalPrefix != nullptr && threeSyllable) {
+    if (personalPrefix != nullptr && threeSyllable != nullptr) {
         append(*threeSyllable);
+    } else if (isFourSyllablesWithSinglePrefix) {
+        if (oneSyllable != nullptr) append(*oneSyllable);
+    } else if (twoSyllable != nullptr) {
+        append(*twoSyllable);
     }
-    if (twoSyllable != nullptr) {
+    if (personalPrefix != nullptr && twoSyllable != nullptr) {
         append(*twoSyllable);
     }
 

@@ -10,6 +10,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -25,7 +26,7 @@ void assertTrue(bool condition, std::string_view message) {
 int main(int argc, char **argv) {
     assertTrue(argc == 3, "test receives fake remote and fcitx executables");
     const auto directory = std::filesystem::temp_directory_path() /
-                           "modernime-runtime-controller-test";
+                           ("modernime-runtime-controller-test-" + std::to_string(::getpid()));
     const auto runningFcitxLog = directory / "running-fcitx.log";
     const auto runningRemoteLog = directory / "running-remote.log";
     const auto stoppedFcitxLog = directory / "stopped-fcitx.log";

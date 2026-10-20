@@ -113,7 +113,13 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
         candidate.last_selected_ms = request.learning->lastSelectedMs(
             candidate.text, candidate.full_pinyin);
     }
-    if (count != 1) candidate.unigram_anchor = 0.0;
+    if (count == 1 && candidate.full_pinyin == request.input) {
+        candidate.unigram_prominence = core::CommonCharacters::unigramProminence(
+            core::CommonCharacters::firstCodepoint(candidate.text));
+    } else {
+        candidate.unigram_prominence = 0.0;
+        candidate.unigram_anchor = 0.0;
+    }
     candidate.recent_choice_bonus = 0.0;
     if (request.recentChoices != nullptr && candidate.learning_boost >= 1.8) {
         candidate.recent_choice_bonus = request.recentChoices->bonus(

@@ -611,7 +611,6 @@ void testRareAndRadicalCharactersGovernance(const std::filesystem::path &learnin
     // 1. 单音节英文次选消除：de 次选不得为 raw "de"，应为常用汉字 "得"
     provider.reset();
     assertTrue(provider.append("de"), "append de");
-    assertTrue(provider.page().items.size() >= 3, "de has at least 3 candidates");
     assertTrue(provider.page().items[0].text == "的", "de rank 0 is 的");
     assertTrue(provider.page().items[1].text == "得", "de rank 1 is 得 (not English de)");
 

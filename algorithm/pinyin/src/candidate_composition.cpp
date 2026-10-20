@@ -286,17 +286,39 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
                    mixed.size() - 1, MoveReason::InitialPlacement);
         preedit = std::string(rawInput);
     } else if (preferEnglishOverChinese) {
-        if (!input.englishPredictions.empty()) {
-            core::CandidateItem predictedCandidate;
-            predictedCandidate.text = input.englishPredictions.front();
-            predictedCandidate.fullPinyin = predictedCandidate.text;
-            predictedCandidate.source = core::CandidateSource::Raw;
-            predictedCandidate.commitRole = core::CommitCandidateRole::English;
-            predictedCandidate.origins = {predictedCandidate.source};
-            predictedCandidate.consumedInputBytes = rawInput.size();
+        std::vector<std::string> preds;
+        for (const auto &p : input.englishPredictions) {
+            if (preds.size() < 3 && std::find(preds.begin(), preds.end(), p) == preds.end()) {
+                preds.push_back(p);
+            }
+        }
+        if (!preds.empty()) {
+            core::CandidateItem topPred;
+            topPred.text = preds[0];
+            topPred.fullPinyin = preds[0];
+            topPred.source = core::CandidateSource::Raw;
+            topPred.commitRole = core::CommitCandidateRole::English;
+            topPred.origins = {topPred.source};
+            topPred.consumedInputBytes = rawInput.size();
 
-            mixed.insert(mixed.begin(), std::move(rawCandidate));
-            mixed.insert(mixed.begin(), std::move(predictedCandidate));
+            for (std::size_t i = preds.size(); i > 1; --i) {
+                core::CandidateItem pItem;
+                pItem.text = preds[i - 1];
+                pItem.fullPinyin = preds[i - 1];
+                pItem.source = core::CandidateSource::Raw;
+                pItem.commitRole = core::CommitCandidateRole::English;
+                pItem.origins = {pItem.source};
+                pItem.consumedInputBytes = rawInput.size();
+                mixed.insert(mixed.begin(), std::move(pItem));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           0, MoveReason::EnglishPreferOverChinese);
+            }
+            if (rawInput != preds[0]) {
+                mixed.insert(mixed.begin(), std::move(rawCandidate));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           0, MoveReason::EnglishPreferOverChinese);
+            }
+            mixed.insert(mixed.begin(), std::move(topPred));
             recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
                        0, MoveReason::EnglishPreferOverChinese);
         } else {
@@ -306,45 +328,61 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         }
         preedit = std::string(rawInput);
     } else {
-        if (!input.englishPredictions.empty()) {
-            core::CandidateItem predictedCandidate;
-            predictedCandidate.text = input.englishPredictions.front();
-            predictedCandidate.fullPinyin = predictedCandidate.text;
-            predictedCandidate.source = core::CandidateSource::Raw;
-            predictedCandidate.commitRole = core::CommitCandidateRole::English;
-            predictedCandidate.origins = {predictedCandidate.source};
-            predictedCandidate.consumedInputBytes = rawInput.size();
-
-            const auto insertPos =
-                mixed.empty() ? mixed.begin() : std::next(mixed.begin());
-            const auto idx = static_cast<std::size_t>(std::distance(mixed.begin(), insertPos));
-            mixed.insert(insertPos, std::move(predictedCandidate));
-            recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
-                       idx, MoveReason::EnglishNormalPlacement);
-        }
-
-        if (isEnglish || !input.englishPredictions.empty()) {
-            bool isSingleSyllable = false;
-            if (!mixed.empty()) {
-                isSingleSyllable = pinyinSyllableCount(mixed.front().fullPinyin) <= 1;
+        std::vector<std::string> preds;
+        for (const auto &p : input.englishPredictions) {
+            if (preds.size() < 3 && std::find(preds.begin(), preds.end(), p) == preds.end()) {
+                preds.push_back(p);
             }
-            const bool isDualAttributeExemption = (rawInput == "can");
-            if (isSingleSyllable && !isDualAttributeExemption) {
-                mixed.push_back(std::move(rawCandidate));
-                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
-                           mixed.size() - 1, MoveReason::EnglishNormalPlacement);
-            } else {
-                const auto insertPos =
-                    mixed.empty() ? mixed.begin() : std::next(mixed.begin());
+        }
+        if (!preds.empty()) {
+            auto insertPos = mixed.empty() ? mixed.begin() : std::next(mixed.begin());
+            for (const auto &p : preds) {
+                core::CandidateItem predictedCandidate;
+                predictedCandidate.text = p;
+                predictedCandidate.fullPinyin = p;
+                predictedCandidate.source = core::CandidateSource::Raw;
+                predictedCandidate.commitRole = core::CommitCandidateRole::English;
+                predictedCandidate.origins = {predictedCandidate.source};
+                predictedCandidate.consumedInputBytes = rawInput.size();
+
                 const auto idx = static_cast<std::size_t>(std::distance(mixed.begin(), insertPos));
-                mixed.insert(insertPos, std::move(rawCandidate));
+                insertPos = std::next(mixed.insert(insertPos, std::move(predictedCandidate)));
                 recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
                            idx, MoveReason::EnglishNormalPlacement);
             }
-        } else {
-            mixed.push_back(std::move(rawCandidate));
-            recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
-                       mixed.size() - 1, MoveReason::InitialPlacement);
+        }
+
+        bool rawMatchesPred = false;
+        for (const auto &p : preds) {
+            if (p == rawInput) {
+                rawMatchesPred = true;
+                break;
+            }
+        }
+        if (!rawMatchesPred) {
+            if (isEnglish || !preds.empty()) {
+                bool isSingleSyllable = false;
+                if (!mixed.empty()) {
+                    isSingleSyllable = pinyinSyllableCount(mixed.front().fullPinyin) <= 1;
+                }
+                const bool isDualAttributeExemption = (rawInput == "can");
+                if (isSingleSyllable && !isDualAttributeExemption) {
+                    mixed.push_back(std::move(rawCandidate));
+                    recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                               mixed.size() - 1, MoveReason::EnglishNormalPlacement);
+                } else {
+                    const auto insertPos =
+                        mixed.empty() ? mixed.begin() : std::next(mixed.begin());
+                    const auto idx = static_cast<std::size_t>(std::distance(mixed.begin(), insertPos));
+                    mixed.insert(insertPos, std::move(rawCandidate));
+                    recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                               idx, MoveReason::EnglishNormalPlacement);
+                }
+            } else {
+                mixed.push_back(std::move(rawCandidate));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           mixed.size() - 1, MoveReason::InitialPlacement);
+            }
         }
         preedit = std::string(input.segmentedInput);
     }

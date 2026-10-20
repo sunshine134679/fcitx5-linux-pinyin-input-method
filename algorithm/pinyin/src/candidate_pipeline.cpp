@@ -45,7 +45,7 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin.clear();
         }
         candidate.decoder_score = nativeCandidates[index].score();
-        if (index == 0) candidate.unigram_anchor = 3.0;
+        if (index == 0) candidate.unigram_anchor = 7.0;
         seenKeys.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
     }
@@ -73,9 +73,6 @@ CandidatePipelineResult buildCandidatePipeline(
                             existing.source_index = index;
                             existing.decoder_score = typoCandidates[index].score();
                         }
-                        if (index == 0) {
-                            existing.unigram_anchor = 3.0;
-                        }
                         break;
                     }
                 }
@@ -88,7 +85,6 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = fullPinyin;
             // 容错补充候选稍加惩罚（+0.8F 解码代价），避免在原词完全合法时过度喧宾夺主
             candidate.decoder_score = typoCandidates[index].score() + 0.8F;
-            if (index == 0) candidate.unigram_anchor = 3.0;
             result.scored.push_back(std::move(candidate));
         }
     }

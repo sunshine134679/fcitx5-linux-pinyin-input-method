@@ -12,6 +12,7 @@
 #include <tuple>
 #include <vector>
 #include <unistd.h>
+#include <sys/wait.h>
 
 namespace {
 using namespace modernime;
@@ -48,6 +49,77 @@ protected:
     std::filesystem::path root;
     pinyin::PinyinDataPaths paths;
 };
+
+TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Shi) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    ASSERT_TRUE(provider.append("shi"));
+    ASSERT_FALSE(provider.page().items.empty());
+    EXPECT_EQ(provider.page().items.front().text, "是");
+    const auto shiRank = rank(provider.page(), "试");
+    EXPECT_LT(shiRank, 5u);
+}
+
+TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Jian) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    ASSERT_TRUE(provider.append("jian"));
+    ASSERT_FALSE(provider.page().items.empty());
+    EXPECT_EQ(provider.page().items.front().text, "见");
+    const auto jianRank = rank(provider.page(), "键");
+    EXPECT_LT(jianRank, 5u);
+}
+
+TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Nihaoshijie) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+    type(c, "nihaoshijie");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "你好世界");
+    const auto niRank = rank(c.page(), "你");
+    EXPECT_LT(niRank, 5u);
+    EXPECT_EQ(c.page().items[niRank].consumedInputBytes, 2u);
+    ASSERT_TRUE(c.select(niRank));
+    EXPECT_EQ(host.committed, "你");
+    EXPECT_EQ(c.page().rawInput, "haoshijie");
+}
+
+TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Generalizability32CoreAnd20Holdout) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    const std::vector<std::string> core32 = {
+        "ba", "bo", "de", "di", "du", "ge", "gu", "he", "hu", "ji",
+        "jia", "jian", "ke", "ku", "le", "lu", "ma", "mo", "mu", "na",
+        "ni", "pa", "po", "qi", "qia", "qian", "qu", "shi", "te", "ti",
+        "tu", "xi"
+    };
+    for (const auto &syl : core32) {
+        provider.reset();
+        ASSERT_TRUE(provider.append(syl));
+        ASSERT_GE(provider.page().items.size(), 5u);
+        if (syl == "shi") {
+            EXPECT_EQ(provider.page().items.front().text, "是");
+            EXPECT_LT(rank(provider.page(), "试"), 5u);
+        } else if (syl == "jian") {
+            EXPECT_EQ(provider.page().items.front().text, "见");
+            EXPECT_LT(rank(provider.page(), "键"), 5u);
+        } else if (syl == "de") {
+            EXPECT_EQ(provider.page().items[0].text, "的");
+            EXPECT_EQ(provider.page().items[1].text, "得");
+        }
+    }
+
+    const std::vector<std::string> holdout20 = {
+        "shishi", "jianpan", "nihao", "gongzuo", "xuexi",
+        "kaishi", "women", "tamen", "zhege", "yige",
+        "zhongguo", "fazhan", "shehui", "jingji", "wenhua",
+        "keji", "shijie", "guojia", "renmin", "shenghuo",
+        "gongsi", "fuwu"
+    };
+    for (const auto &pair : holdout20) {
+        provider.reset();
+        ASSERT_TRUE(provider.append(pair));
+        ASSERT_FALSE(provider.page().items.empty());
+    }
+}
 
 TEST_F(CandidateRankingRegression, RepeatedPartialChoiceReachesSecondSeatWithoutConsumingSuffix) {
     pinyin::PinyinCandidateProvider provider(paths);
@@ -100,8 +172,11 @@ TEST_F(CandidateRankingRegression, DerivedPrefixUsesItsOwnPersistedLearning) {
 }
 
 TEST(CandidateCompositionRegression, DerivedPrefixDoesNotInheritParentsLearning) {
-    core::CandidateItem full{.text="你好世界", .fullPinyin="ni'hao'shi'jie",
-                             .consumedInputBytes=11, .learningBoost=3.9};
+    core::CandidateItem full;
+    full.text = "你好世界";
+    full.fullPinyin = "ni'hao'shi'jie";
+    full.consumedInputBytes = 11;
+    full.learningBoost = 3.9;
     const auto mixed = pinyin::mixCandidateItems({full}, {}, &full, {2,5,8}, "nihaoshijie");
     for (const auto &item : mixed) {
         if (item.consumedInputBytes < 11) { EXPECT_DOUBLE_EQ(item.learningBoost, 0.0); }
@@ -109,13 +184,16 @@ TEST(CandidateCompositionRegression, DerivedPrefixDoesNotInheritParentsLearning)
 }
 
 TEST(CandidateCompositionRegression, StrongPersonalPrefixKeepsFullSentenceQuota) {
-    std::vector<core::CandidateItem> full{
-        {.text="甲乙丙丁", .fullPinyin="jia'yi'bing'ding", .consumedInputBytes=13},
-        {.text="甲乙丙钉", .fullPinyin="jia'yi'bing'ding", .consumedInputBytes=13},
-        {.text="甲乙丙订", .fullPinyin="jia'yi'bing'ding", .consumedInputBytes=13}};
-    std::vector<core::CandidateItem> partial{
-        {.text="甲", .fullPinyin="jia", .source=core::CandidateSource::Learned,
-         .consumedInputBytes=3, .learningBoost=3.9}};
+    core::CandidateItem full1, full2, full3, partialItem;
+    full1.text = "甲乙丙丁"; full1.fullPinyin = "jia'yi'bing'ding"; full1.consumedInputBytes = 13;
+    full2.text = "甲乙丙钉"; full2.fullPinyin = "jia'yi'bing'ding"; full2.consumedInputBytes = 13;
+    full3.text = "甲乙丙订"; full3.fullPinyin = "jia'yi'bing'ding"; full3.consumedInputBytes = 13;
+    std::vector<core::CandidateItem> full{full1, full2, full3};
+
+    partialItem.text = "甲"; partialItem.fullPinyin = "jia"; partialItem.source = core::CandidateSource::Learned;
+    partialItem.consumedInputBytes = 3; partialItem.learningBoost = 3.9;
+    std::vector<core::CandidateItem> partial{partialItem};
+
     const auto mixed = pinyin::mixCandidateItems(full, partial, &full.front(), {3,5,9}, "jiayibingding");
     ASSERT_GE(mixed.size(), 5u);
     EXPECT_EQ(mixed[0].text, "甲乙丙丁");
@@ -235,6 +313,72 @@ TEST_P(StrongCompetitionRegression, TenRecentChoicesSwitchPreferenceWithoutSingl
     ASSERT_NE(persisted, nullptr);
     EXPECT_EQ(persisted->frequency, 10);
 }
+
+TEST_P(StrongCompetitionRegression, FiftySelectionsRetainPreferenceCrossSessionInFreshProcess) {
+    const auto &[input, target, incumbent] = GetParam();
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.open());
+        const std::vector<core::LearningEvent> seed(200,
+            {core::LearningEvent::Kind::Selection, incumbent, input, {}, {}, nowMs()});
+        ASSERT_TRUE(store.recordBatch(seed));
+    }
+    {
+        pinyin::PinyinCandidateProvider provider(paths);
+        Host host;
+        fcitx5::ModernIMEController c(host, &provider);
+        type(c, input);
+        // 1. 单次偶发选择 target：绝对不能篡夺首选位置
+        const auto i1 = rank(c.page(), target);
+        ASSERT_LT(i1, c.page().items.size());
+        ASSERT_TRUE(c.select(i1));
+        type(c, input);
+        EXPECT_EQ(c.page().items.front().text, incumbent);
+
+        // 2. 连续选择达到 10 次：在会话内即时翻转为首位
+        for (int n = 2; n <= 10; ++n) {
+            const auto i = rank(c.page(), target);
+            ASSERT_LT(i, c.page().items.size());
+            ASSERT_TRUE(c.select(i));
+            type(c, input);
+        }
+        EXPECT_EQ(c.page().items.front().text, target);
+
+        // 3. 累计选择达到 50 次
+        for (int n = 11; n <= 50; ++n) {
+            const auto i = rank(c.page(), target);
+            ASSERT_LT(i, c.page().items.size());
+            ASSERT_TRUE(c.select(i));
+            type(c, input);
+        }
+        EXPECT_EQ(c.page().items.front().text, target);
+        ASSERT_TRUE(provider.flush());
+    }
+
+    // 4. 在全新的子进程中跨会话冷启动，读取同一数据库，target 必须稳居首位
+    const pid_t pid = ::fork();
+    ASSERT_NE(pid, -1);
+    if (pid == 0) {
+        pinyin::PinyinCandidateProvider childProvider(paths);
+        if (!childProvider.append(input)) {
+            _exit(1);
+        }
+        if (childProvider.page().items.empty() || childProvider.page().items.front().text != target) {
+            std::cerr << "Child process check failed: expected " << target
+                      << " at rank 0, got "
+                      << (childProvider.page().items.empty() ? "<empty>" : childProvider.page().items.front().text)
+                      << " for input " << input << std::endl;
+            _exit(2);
+        }
+        _exit(0);
+    }
+
+    int status = 0;
+    ASSERT_EQ(::waitpid(pid, &status, 0), pid);
+    EXPECT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+
 INSTANTIATE_TEST_SUITE_P(UserExamples, StrongCompetitionRegression, ::testing::Values(
     std::make_tuple("shi","试","是"), std::make_tuple("shi","是","试"),
     std::make_tuple("jian","键","见"), std::make_tuple("jian","见","键")));

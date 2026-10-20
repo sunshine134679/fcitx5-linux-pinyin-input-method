@@ -22,19 +22,28 @@ CandidateRanker::rank(std::string_view userInput,
         candidate.stability_bonus = 0.0;
         candidate.decoder_bonus = 0.0;
     }
-    std::unordered_map<int, std::int64_t> latestByPriority;
+    std::unordered_map<int, std::pair<std::int64_t, double>> latestByPriority;
     for (const auto &candidate : candidates) {
-        auto &latest = latestByPriority[candidate.match_priority];
-        latest = std::max(latest, candidate.last_selected_ms);
+        auto &entry = latestByPriority[candidate.match_priority];
+        if (candidate.last_selected_ms > entry.first) {
+            entry.first = candidate.last_selected_ms;
+            entry.second = candidate.learning_boost;
+        }
     }
     constexpr double kDormantHalfLifeMs = 12.0 * 3600.0 * 1000.0;
     constexpr double kDormantTauMs = kDormantHalfLifeMs / 0.6931471805599453;
     for (auto &candidate : candidates) {
-        const auto latest = latestByPriority[candidate.match_priority];
+        const auto &latestEntry = latestByPriority[candidate.match_priority];
+        const auto latest = latestEntry.first;
+        const auto latestBoost = latestEntry.second;
         if (latest > 0 && candidate.last_selected_ms > 0 && candidate.last_selected_ms < latest) {
             const auto ageSinceLatest = latest - candidate.last_selected_ms;
-            candidate.dormant_factor =
-                std::exp(-static_cast<double>(ageSinceLatest) / kDormantTauMs);
+            double dormant = std::exp(-static_cast<double>(ageSinceLatest) / kDormantTauMs);
+            if (latestBoost >= 1.8) {
+                const double discount = 1.0 - 0.30 * std::min(1.0, (latestBoost - 1.8) / (3.9 - 1.8));
+                dormant = std::min(dormant, discount);
+            }
+            candidate.dormant_factor = dormant;
         } else {
             candidate.dormant_factor = 1.0;
         }
