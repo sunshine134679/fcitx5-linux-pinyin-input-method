@@ -77,8 +77,8 @@ std::vector<core::CandidateItem> mixCandidateItems(
     };
     for (const auto &item : partialCandidates) considerPersonal(item);
     if (threeSyllable) considerPersonal(*threeSyllable);
-    const bool isFourSyllablesWithSinglePrefix =
-        (syllablePrefixEnds.size() == 3) && (personalPrefix == nullptr) && (oneSyllable != nullptr) &&
+    const bool singlePrefixQualified =
+        (personalPrefix == nullptr) && (oneSyllable != nullptr) &&
         std::any_of(partialCandidates.begin(), partialCandidates.end(), [&](const auto &p) {
             return p.text == oneSyllable->text && p.fullPinyin == oneSyllable->fullPinyin &&
                    p.consumedInputBytes == oneSyllable->consumedInputBytes;
@@ -87,8 +87,14 @@ std::vector<core::CandidateItem> mixCandidateItems(
     append(*bestFullSentence);
     if (personalPrefix != nullptr) {
         append(*personalPrefix);
-    } else if (isFourSyllablesWithSinglePrefix) {
-        if (twoSyllable != nullptr) append(*twoSyllable);
+    } else if (singlePrefixQualified) {
+        if (threeSyllable != nullptr && syllablePrefixEnds.size() >= 6) {
+            append(*threeSyllable);
+        } else if (twoSyllable != nullptr) {
+            append(*twoSyllable);
+        } else if (threeSyllable != nullptr) {
+            append(*threeSyllable);
+        }
     } else if (threeSyllable != nullptr) {
         append(*threeSyllable);
     }
@@ -103,8 +109,13 @@ std::vector<core::CandidateItem> mixCandidateItems(
     }
     if (personalPrefix != nullptr && threeSyllable != nullptr) {
         append(*threeSyllable);
-    } else if (isFourSyllablesWithSinglePrefix) {
-        if (oneSyllable != nullptr) append(*oneSyllable);
+    } else if (singlePrefixQualified) {
+        if (threeSyllable != nullptr && syllablePrefixEnds.size() >= 6) {
+            if (twoSyllable != nullptr) append(*twoSyllable);
+            if (oneSyllable != nullptr) append(*oneSyllable);
+        } else {
+            if (oneSyllable != nullptr) append(*oneSyllable);
+        }
     } else if (twoSyllable != nullptr) {
         append(*twoSyllable);
     }
@@ -126,7 +137,6 @@ std::vector<core::CandidateItem> mixCandidateItems(
         append(candidate);
         break;
     }
-
     const bool enforcesTopFiveFullSentenceQuota =
         runnerUpFullSentence != nullptr && threeSyllable != nullptr &&
         twoSyllable != nullptr;
@@ -141,6 +151,10 @@ std::vector<core::CandidateItem> mixCandidateItems(
         rawFallback.consumedInputBytes = rawPinyin.size();
         append(rawFallback);
     }
+
+    if (threeSyllable != nullptr) append(*threeSyllable);
+    if (twoSyllable != nullptr) append(*twoSyllable);
+    if (singlePrefixQualified && oneSyllable != nullptr) append(*oneSyllable);
 
     for (const auto &candidate : fullCandidates) {
         if (&candidate != runnerUpFullSentence) {

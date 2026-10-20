@@ -24,10 +24,18 @@ CandidateRanker::rank(std::string_view userInput,
     }
     std::unordered_map<int, std::pair<std::int64_t, double>> latestByPriority;
     for (const auto &candidate : candidates) {
+        if (candidate.last_selected_ms <= 0) {
+            continue;
+        }
         auto &entry = latestByPriority[candidate.match_priority];
+        const double boost = std::isfinite(candidate.learning_boost)
+                                 ? std::max(0.0, candidate.learning_boost)
+                                 : 0.0;
         if (candidate.last_selected_ms > entry.first) {
             entry.first = candidate.last_selected_ms;
-            entry.second = candidate.learning_boost;
+            entry.second = boost;
+        } else if (candidate.last_selected_ms == entry.first) {
+            entry.second = std::max(entry.second, boost);
         }
     }
     constexpr double kDormantHalfLifeMs = 12.0 * 3600.0 * 1000.0;

@@ -39,6 +39,7 @@ struct RecalledEnglishWord final {
     std::int64_t frequency = 0;
     std::int64_t lastSelectedMs = 0;
     double score = 0.0;
+    double baseBoost = 0.0;
 };
 
 std::string normalizePinyin(std::string_view pinyin);

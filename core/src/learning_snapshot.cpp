@@ -1051,7 +1051,40 @@ std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
             continue;
         }
         const double baseBoost = boostAt(phrase, phrase, nowMs);
-        const auto lower = toLowerAscii(phrase);
+        std::int64_t totalFreq = 0;
+        std::int64_t lastMs = 0;
+        for (const auto *item : collectVariants(phrase, normalizePinyin(phrase))) {
+            totalFreq += std::max<std::int64_t>(0, item->frequency);
+            lastMs = std::max(lastMs, item->lastSelectedMs);
+        }
+        results.push_back({phrase, totalFreq, lastMs, 0.0, baseBoost});
+    }
+
+    std::int64_t latestMs = 0;
+    double latestBoost = 0.0;
+    for (const auto &item : results) {
+        if (item.lastSelectedMs > latestMs) {
+            latestMs = item.lastSelectedMs;
+            latestBoost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
+        } else if (item.lastSelectedMs == latestMs) {
+            const double boost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
+            latestBoost = std::max(latestBoost, boost);
+        }
+    }
+    constexpr double kDormantHalfLifeMs = 12.0 * 3600.0 * 1000.0;
+    constexpr double kDormantTauMs = kDormantHalfLifeMs / 0.6931471805599453;
+    for (auto &item : results) {
+        double effectiveBoost = item.baseBoost;
+        if (latestMs > 0 && item.lastSelectedMs > 0 && item.lastSelectedMs < latestMs) {
+            const auto ageSinceLatest = latestMs - item.lastSelectedMs;
+            double dormant = std::exp(-static_cast<double>(ageSinceLatest) / kDormantTauMs);
+            if (latestBoost >= 1.8) {
+                const double discount = 1.0 - 0.30 * std::min(1.0, (latestBoost - 1.8) / (3.9 - 1.8));
+                dormant = std::min(dormant, discount);
+            }
+            effectiveBoost = item.baseBoost * dormant;
+        }
+        const auto lower = toLowerAscii(item.text);
         double completeness = 0.0;
         if (!lower.empty()) {
             completeness = static_cast<double>(lowerPrefix.size()) /
@@ -1060,15 +1093,7 @@ std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
         if (lower == lowerPrefix) {
             completeness += 1.0;
         }
-        const double score = baseBoost + completeness;
-
-        std::int64_t totalFreq = 0;
-        std::int64_t lastMs = 0;
-        for (const auto *item : collectVariants(phrase, normalizePinyin(phrase))) {
-            totalFreq += std::max<std::int64_t>(0, item->frequency);
-            lastMs = std::max(lastMs, item->lastSelectedMs);
-        }
-        results.push_back({phrase, totalFreq, lastMs, score});
+        item.score = effectiveBoost + completeness;
     }
 
     std::sort(results.begin(), results.end(),
@@ -1324,9 +1349,64 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
 std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(std::string_view prefix,
     std::size_t limit, std::int64_t now) const {
     std::vector<RecalledEnglishWord> result;
+    const std::size_t shardQueryLimit = std::max(limit, std::size_t{16});
     for (const auto &s : shards_) if (s) {
-        auto part = s->recallEnglishWords(prefix, limit, now);
+        auto part = s->recallEnglishWords(prefix, shardQueryLimit, now);
         result.insert(result.end(), std::make_move_iterator(part.begin()), std::make_move_iterator(part.end()));
+    }
+    std::unordered_map<std::string, RecalledEnglishWord> uniqueWords;
+    for (auto &w : result) {
+        auto it = uniqueWords.find(w.text);
+        if (it == uniqueWords.end()) {
+            uniqueWords.emplace(w.text, std::move(w));
+        } else {
+            it->second.frequency += w.frequency;
+            if (w.lastSelectedMs > it->second.lastSelectedMs) {
+                it->second.lastSelectedMs = w.lastSelectedMs;
+                it->second.baseBoost = w.baseBoost;
+            }
+        }
+    }
+    result.clear();
+    result.reserve(uniqueWords.size());
+    for (auto &pair : uniqueWords) {
+        result.push_back(std::move(pair.second));
+    }
+    std::int64_t latestMs = 0;
+    double latestBoost = 0.0;
+    for (const auto &item : result) {
+        if (item.lastSelectedMs > latestMs) {
+            latestMs = item.lastSelectedMs;
+            latestBoost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
+        } else if (item.lastSelectedMs == latestMs) {
+            const double boost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
+            latestBoost = std::max(latestBoost, boost);
+        }
+    }
+    constexpr double kDormantHalfLifeMs = 12.0 * 3600.0 * 1000.0;
+    constexpr double kDormantTauMs = kDormantHalfLifeMs / 0.6931471805599453;
+    const auto lowerPrefix = toLowerAscii(prefix);
+    for (auto &item : result) {
+        double effectiveBoost = item.baseBoost;
+        if (latestMs > 0 && item.lastSelectedMs > 0 && item.lastSelectedMs < latestMs) {
+            const auto ageSinceLatest = latestMs - item.lastSelectedMs;
+            double dormant = std::exp(-static_cast<double>(ageSinceLatest) / kDormantTauMs);
+            if (latestBoost >= 1.8) {
+                const double discount = 1.0 - 0.30 * std::min(1.0, (latestBoost - 1.8) / (3.9 - 1.8));
+                dormant = std::min(dormant, discount);
+            }
+            effectiveBoost = item.baseBoost * dormant;
+        }
+        const auto lower = toLowerAscii(item.text);
+        double completeness = 0.0;
+        if (!lower.empty()) {
+            completeness = static_cast<double>(lowerPrefix.size()) /
+                           static_cast<double>(lower.size());
+        }
+        if (lower == lowerPrefix) {
+            completeness += 1.0;
+        }
+        item.score = effectiveBoost + completeness;
     }
     std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
         const bool aFin = std::isfinite(a.score);

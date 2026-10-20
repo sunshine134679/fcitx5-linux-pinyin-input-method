@@ -83,6 +83,141 @@ TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Nihaoshijie) {
     EXPECT_EQ(c.page().rawInput, "haoshijie");
 }
 
+TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_GeneralizedPrefixes_3_5_6_7_Syllables) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 1. Three syllables: nihaoma -> "你" in top 5, consumes 2 bytes
+    {
+        type(c, "nihaoma");
+        ASSERT_FALSE(c.page().items.empty());
+        EXPECT_EQ(c.page().items.front().text, "你好吗");
+        const auto niRank = rank(c.page(), "你");
+        EXPECT_LT(niRank, 5u) << "'你' should be in top 5 for 3-syllable nihaoma";
+        EXPECT_EQ(c.page().items[niRank].consumedInputBytes, 2u);
+        ASSERT_TRUE(c.select(niRank));
+        EXPECT_EQ(host.committed, "你");
+        EXPECT_EQ(c.page().rawInput, "haoma");
+        c.reset();
+    }
+
+    // 2. Five syllables: woshizhongguoren -> "我" in top 5, consumes 2 bytes
+    {
+        type(c, "woshizhongguoren");
+        ASSERT_FALSE(c.page().items.empty());
+        EXPECT_EQ(c.page().items.front().text, "我是中国人");
+        const auto woRank = rank(c.page(), "我");
+        EXPECT_LT(woRank, 5u) << "'我' should be in top 5 for 5-syllable woshizhongguoren";
+        EXPECT_EQ(c.page().items[woRank].consumedInputBytes, 2u);
+        ASSERT_TRUE(c.select(woRank));
+        EXPECT_EQ(host.committed, "我");
+        EXPECT_EQ(c.page().rawInput, "shizhongguoren");
+        c.reset();
+    }
+
+    // 3. Six syllables: nihaoshijiepengyou -> "你" in top 5, consumes 2 bytes
+    {
+        type(c, "nihaoshijiepengyou");
+        ASSERT_FALSE(c.page().items.empty());
+        EXPECT_EQ(c.page().items.front().text, "你好世界朋友");
+        const auto niRank = rank(c.page(), "你");
+        EXPECT_LT(niRank, 5u) << "'你' should be in top 5 for 6-syllable nihaoshijiepengyou";
+        EXPECT_EQ(c.page().items[niRank].consumedInputBytes, 2u);
+        ASSERT_TRUE(c.select(niRank));
+        EXPECT_EQ(host.committed, "你");
+        EXPECT_EQ(c.page().rawInput, "haoshijiepengyou");
+        c.reset();
+    }
+
+    // 4. Seven syllables: qingbangwodakaiwenjian -> "请" in top 5, consumes 4 bytes
+    {
+        type(c, "qingbangwodakaiwenjian");
+        ASSERT_FALSE(c.page().items.empty());
+        EXPECT_EQ(c.page().items.front().text, "请帮我打开文件");
+        const auto qingRank = rank(c.page(), "请");
+        EXPECT_LT(qingRank, 5u) << "'请' should be in top 5 for 7-syllable qingbangwodakaiwenjian";
+        EXPECT_EQ(c.page().items[qingRank].consumedInputBytes, 4u);
+        ASSERT_TRUE(c.select(qingRank));
+        EXPECT_EQ(host.committed, "请");
+        EXPECT_EQ(c.page().rawInput, "bangwodakaiwenjian");
+        c.reset();
+    }
+}
+
+TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_GeneralizedPrefixes_30InputsComprehensive) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    struct Case {
+        std::string input;
+        std::string expectedFirstChar;
+        std::size_t expectedFirstBytes;
+        bool expectTop5SingleChar;
+        std::string expectedFullWord;
+    };
+    const std::vector<Case> testCases = {
+        // 2 syllables (retain native behavior without forcing long sentence slotting)
+        {"nihao", "你", 2, false, "你好"},
+        {"xiexie", "谢", 3, false, "谢谢"},
+        {"zhongguo", "中", 5, false, "中国"},
+        // 3 syllables
+        {"nihaoma", "你", 2, true, "你好吗"},
+        {"duibuqi", "对", 3, true, "对不起"},
+        {"meiguanxi", "没", 3, true, "没关系"},
+        {"chifanle", "吃", 3, true, "吃饭了"},
+        {"zaishangmian", "在", 3, true, "在上面"},
+        // 4 syllables
+        {"nihaoshijie", "你", 2, true, "你好世界"},
+        {"gongxifacai", "恭", 4, true, "恭喜发财"},
+        {"wanwuhulian", "万", 3, true, "万物互联"},
+        {"xinniankuaile", "新", 3, true, "新年快乐"},
+        {"chunjiekuaile", "春", 4, true, "春节快乐"},
+        // 5 syllables
+        {"woshizhongguoren", "我", 2, true, "我是中国人"},
+        {"jintiantianqihao", "今", 3, true, "今天天气好"},
+        {"mingtianwoyoukong", "明", 4, true, "明天我有空"},
+        {"zhelihenpiaoliang", "这", 3, true, "这里很漂亮"},
+        {"tashiyigehaoren", "他", 2, true, "他是一个好人"},
+        // 6 syllables
+        {"nihaoshijiepengyou", "你", 2, true, "你好世界朋友"},
+        {"womenshizhongguoren", "我", 2, true, "我们是中国人"},
+        {"womenyaonulixuexi", "我", 2, true, "我们要努力学习"},
+        {"dajiadouhenkaixin", "大", 2, true, "大家都很开心"},
+        {"xueshengmenzaidushu", "学", 3, true, "学生们在读书"},
+        // 7 syllables
+        {"qingbangwodakaiwenjian", "请", 4, true, "请帮我打开文件"},
+        {"woxiangyaohebeikafei", "我", 2, true, ""},
+        {"qingwenxianzaijidianle", "请", 4, true, "请问现在几点了"},
+        {"nengbunenggeiwoyidian", "能", 4, true, "能不能给我一点"},
+        // 8 syllables
+        {"womenxuyaogengduodeshijian", "我", 2, true, "我们需要更多的时间"},
+        {"ruguoniyourenheyiwenqing", "如", 2, true, "如果你有任何疑问请"},
+        {"xiwangdajiadounenggouchenggong", "希", 2, true, "希望大家都能够成功"}
+    };
+    ASSERT_EQ(testCases.size(), 30u);
+
+    for (const auto &tc : testCases) {
+        c.reset();
+        type(c, tc.input);
+        ASSERT_FALSE(c.page().items.empty()) << "Empty page for " << tc.input;
+        if (!tc.expectedFullWord.empty()) {
+            EXPECT_EQ(c.page().items.front().text, tc.expectedFullWord)
+                << "Best full conversion mismatch for " << tc.input;
+        }
+        if (tc.expectTop5SingleChar) {
+            const auto r = rank(c.page(), tc.expectedFirstChar);
+            EXPECT_LT(r, 5u) << "Failed top 5 check for input '" << tc.input
+                             << "', target '" << tc.expectedFirstChar << "'";
+            if (r < c.page().items.size()) {
+                EXPECT_EQ(c.page().items[r].consumedInputBytes, tc.expectedFirstBytes)
+                    << "Byte consumption mismatch for input '" << tc.input << "'";
+            }
+        }
+    }
+}
+
 TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Generalizability32CoreAnd20Holdout) {
     pinyin::PinyinCandidateProvider provider(paths);
     const std::vector<std::string> core32 = {
@@ -501,6 +636,386 @@ TEST(RecentChoiceRegression, RequiresRepeatedMajorityAndForgetsOverwrittenWindow
     EXPECT_DOUBLE_EQ(choices.bonus("shi", "是", "shi", false), 0.0);
 }
 
+TEST_F(CandidateRankingRegression, EnglishLearningReachability_SaturatedPreferenceTakeoverAndReverseSwitch) {
+    const auto now = nowMs();
+    // 1. Snapshot-level verification: 200 seed compute, 1 click computer -> compute #1
+    {
+        core::LearningSnapshot s1({
+            {"compute", "compute", {}, {}, 200, now - 1000, 0, false},
+            {"computer", "computer", {}, {}, 1, now, 0, false}
+        });
+        auto words1 = s1.recallEnglishWords("compu", 3, now);
+        ASSERT_GE(words1.size(), 2u);
+        EXPECT_EQ(words1[0].text, "compute");
+        EXPECT_EQ(words1[1].text, "computer");
+    }
+    // 2. Snapshot-level verification: 200 seed compute, 50 clicks computer -> computer #1!
+    {
+        core::LearningSnapshot s50({
+            {"compute", "compute", {}, {}, 200, now - 1000, 0, false},
+            {"computer", "computer", {}, {}, 50, now, 0, false}
+        });
+        auto words50 = s50.recallEnglishWords("compu", 3, now);
+        ASSERT_GE(words50.size(), 2u);
+        EXPECT_EQ(words50[0].text, "computer");
+        EXPECT_EQ(words50[1].text, "compute");
+    }
+    // 3. Snapshot-level verification: 250 and 5000 frequency saturation
+    {
+        core::LearningSnapshot s250({
+            {"compute", "compute", {}, {}, 200, now - 1000, 0, false},
+            {"computer", "computer", {}, {}, 250, now, 0, false}
+        });
+        auto words250 = s250.recallEnglishWords("compu", 3, now);
+        ASSERT_GE(words250.size(), 2u);
+        EXPECT_EQ(words250[0].text, "computer");
+
+        core::LearningSnapshot s5000({
+            {"compute", "compute", {}, {}, 200, now - 1000, 0, false},
+            {"computer", "computer", {}, {}, 5000, now, 0, false}
+        });
+        auto words5000 = s5000.recallEnglishWords("compu", 3, now);
+        ASSERT_GE(words5000.size(), 2u);
+        EXPECT_EQ(words5000[0].text, "computer");
+    }
+    // 4. Reverse switch: 250 seed computer, 50 clicks compute -> compute #1!
+    {
+        core::LearningSnapshot sRev({
+            {"computer", "computer", {}, {}, 250, now - 1000, 0, false},
+            {"compute", "compute", {}, {}, 50, now, 0, false}
+        });
+        auto wordsRev = sRev.recallEnglishWords("compu", 3, now);
+        ASSERT_GE(wordsRev.size(), 2u);
+        EXPECT_EQ(wordsRev[0].text, "compute");
+        EXPECT_EQ(wordsRev[1].text, "computer");
+    }
+    // 5. Generalization over 10 different word pairs
+    const std::vector<std::pair<std::string, std::string>> wordPairs = {
+        {"develop", "developer"},
+        {"program", "programmer"},
+        {"connect", "connection"},
+        {"system", "systematic"},
+        {"manage", "management"},
+        {"direct", "direction"},
+        {"person", "personal"},
+        {"differ", "difference"},
+        {"inform", "information"},
+        {"expect", "expectation"}
+    };
+    for (const auto &[shorter, longer] : wordPairs) {
+        std::string prefix = shorter.substr(0, std::min<std::size_t>(5, shorter.size()));
+        core::LearningSnapshot sPair({
+            {shorter, shorter, {}, {}, 200, now - 1000, 0, false},
+            {longer, longer, {}, {}, 50, now, 0, false}
+        });
+        auto recalled = sPair.recallEnglishWords(prefix, 3, now);
+        ASSERT_GE(recalled.size(), 2u);
+        EXPECT_EQ(recalled[0].text, longer) << "Failed for pair " << shorter << " -> " << longer;
+    }
+}
+
+TEST_F(CandidateRankingRegression, EnglishLearningReachability_EndToEndControllerPersistenceAndReverse) {
+    for (const bool useLmdb : {false, true}) {
+        auto testRoot = root / (useLmdb ? "lmdb_case" : "sqlite_case");
+        std::filesystem::create_directories(testRoot);
+        pinyin::PinyinDataPaths currentPaths;
+        currentPaths.learningStore = (testRoot / (useLmdb ? "learning.lmdb" : "learning.sqlite3")).string();
+        currentPaths.userDictionary = paths.userDictionary;
+
+        const auto seedTime = nowMs() - 60000;
+        // 1. Seed 200 occurrences of "compute"
+        {
+            core::LearningStore store(currentPaths.learningStore);
+            ASSERT_TRUE(store.open());
+            std::vector<core::LearningEvent> seedEvents;
+            for (int i = 0; i < 200; ++i) {
+                seedEvents.push_back({core::LearningEvent::Kind::Selection, "compute", "compute", {}, {}, seedTime + i});
+            }
+            ASSERT_TRUE(store.recordBatch(seedEvents));
+        }
+
+        // 2. Open provider & controller, type "compu"
+        {
+            pinyin::PinyinCandidateProvider provider(currentPaths);
+            Host host;
+            fcitx5::ModernIMEController c(host, &provider);
+            type(c, "compu");
+            const auto computeRank = rank(c.page(), "compute");
+            const auto computerRank = rank(c.page(), "computer");
+            ASSERT_LT(computeRank, c.page().items.size());
+            ASSERT_LT(computerRank, c.page().items.size());
+            EXPECT_LT(computeRank, computerRank) << "compute should start ahead of computer";
+
+            // 1 selection of computer: compute should still beat computer
+            ASSERT_TRUE(c.select(computerRank));
+            ASSERT_TRUE(provider.flush());
+
+            type(c, "compu");
+            const auto cRank1 = rank(c.page(), "compute");
+            const auto crRank1 = rank(c.page(), "computer");
+            EXPECT_LT(cRank1, crRank1) << "Accidental click on computer must not usurp compute as #1";
+            c.reset();
+
+            // Train computer up to 50 times
+            for (int i = 1; i < 50; ++i) {
+                type(c, "compu");
+                const auto r = rank(c.page(), "computer");
+                ASSERT_LT(r, c.page().items.size());
+                ASSERT_TRUE(c.select(r));
+            }
+            ASSERT_TRUE(provider.flush());
+
+            // Within session, computer must now beat compute
+            type(c, "compu");
+            EXPECT_LT(rank(c.page(), "computer"), rank(c.page(), "compute"));
+        }
+
+        // 3. New fresh instance reading the same store
+        {
+            pinyin::PinyinCandidateProvider freshProvider(currentPaths);
+            Host freshHost;
+            fcitx5::ModernIMEController freshC(freshHost, &freshProvider);
+            type(freshC, "compu");
+            EXPECT_LT(rank(freshC.page(), "computer"), rank(freshC.page(), "compute"))
+                << "Must persist in fresh instance (LMDB=" << useLmdb << ")";
+            freshC.reset();
+
+            // 4. Reverse switch: select compute 50 times in fresh instance
+            for (int i = 0; i < 50; ++i) {
+                type(freshC, "compu");
+                const auto r = rank(freshC.page(), "compute");
+                ASSERT_LT(r, freshC.page().items.size());
+                ASSERT_TRUE(freshC.select(r));
+            }
+            ASSERT_TRUE(freshProvider.flush());
+
+            // Within session, compute should take over again
+            type(freshC, "compu");
+            EXPECT_LT(rank(freshC.page(), "compute"), rank(freshC.page(), "computer"));
+        }
+
+        // 5. Another fresh instance to confirm reverse switch persisted
+        {
+            pinyin::PinyinCandidateProvider freshProvider2(currentPaths);
+            Host freshHost2;
+            fcitx5::ModernIMEController freshC2(freshHost2, &freshProvider2);
+            type(freshC2, "compu");
+            EXPECT_LT(rank(freshC2.page(), "compute"), rank(freshC2.page(), "computer"))
+                << "Reverse switch must persist (LMDB=" << useLmdb << ")";
+        }
+    }
+}
+
+TEST_F(CandidateRankingRegression, TiedTimestampPersistenceAndWriteOrderInvariance) {
+    for (const bool useLmdb : {false, true}) {
+        const auto now = nowMs();
+        std::vector<std::string> orderA_cands;
+        std::vector<std::string> orderB_cands;
+
+        for (int pass = 0; pass < 2; ++pass) {
+            auto testRoot = root / ((useLmdb ? "lmdb_tied_" : "sqlite_tied_") + std::to_string(pass));
+            std::filesystem::create_directories(testRoot);
+            pinyin::PinyinDataPaths currentPaths;
+            currentPaths.learningStore = (testRoot / (useLmdb ? "learning.lmdb" : "learning.sqlite3")).string();
+            currentPaths.userDictionary = paths.userDictionary;
+
+            {
+                core::LearningStore store(currentPaths.learningStore);
+                ASSERT_TRUE(store.open());
+                std::vector<core::LearningEvent> events;
+                for (int i = 0; i < 200; ++i) {
+                    events.push_back({core::LearningEvent::Kind::Selection, "是", "shi", {}, {}, now - 10000 + i});
+                }
+                if (pass == 0) {
+                    for (int i = 0; i < 50; ++i) {
+                        events.push_back({core::LearningEvent::Kind::Selection, "试", "shi", {}, {}, now});
+                    }
+                    for (int i = 0; i < 2; ++i) {
+                        events.push_back({core::LearningEvent::Kind::Selection, "时", "shi", {}, {}, now});
+                    }
+                } else {
+                    for (int i = 0; i < 2; ++i) {
+                        events.push_back({core::LearningEvent::Kind::Selection, "时", "shi", {}, {}, now});
+                    }
+                    for (int i = 0; i < 50; ++i) {
+                        events.push_back({core::LearningEvent::Kind::Selection, "试", "shi", {}, {}, now});
+                    }
+                }
+                ASSERT_TRUE(store.recordBatch(events));
+            }
+
+            pinyin::PinyinCandidateProvider provider(currentPaths);
+            Host host;
+            fcitx5::ModernIMEController c(host, &provider);
+            type(c, "shi");
+            std::vector<std::string> top3;
+            for (std::size_t i = 0; i < std::min<std::size_t>(3, c.page().items.size()); ++i) {
+                top3.push_back(c.page().items[i].text);
+            }
+            if (pass == 0) {
+                orderA_cands = top3;
+            } else {
+                orderB_cands = top3;
+            }
+        }
+        ASSERT_FALSE(orderA_cands.empty());
+        EXPECT_EQ(orderA_cands[0], "试");
+        EXPECT_EQ(orderA_cands, orderB_cands) << "Write order caused candidate mismatch (LMDB=" << useLmdb << ")";
+    }
+}
+
+TEST(CandidateRankerRegression, TiedLatestTimestampPermutationInvarianceAcrossAllSixPermutations) {
+    using namespace modernime::core;
+    CandidateScore oldCand, aCand, bCand;
+    oldCand.text = "是";
+    oldCand.full_pinyin = "shi";
+    oldCand.source_index = 0;
+    oldCand.is_lexical = true;
+    oldCand.phrase_length = 1;
+    oldCand.learning_boost = 3.9;
+    oldCand.last_selected_ms = 1000000;
+
+    aCand = oldCand;
+    aCand.text = "试";
+    aCand.source_index = 10;
+    aCand.last_selected_ms = 1000001;
+
+    bCand = oldCand;
+    bCand.text = "时";
+    bCand.source_index = 20;
+    bCand.last_selected_ms = 1000001;
+    bCand.learning_boost = 1.0;
+
+    std::vector<CandidateScore> initial = {oldCand, aCand, bCand};
+    std::vector<int> permIndices = {0, 1, 2};
+    int permCount = 0;
+    std::vector<std::string> canonicalOrder;
+    std::vector<double> canonicalDormants;
+    std::vector<double> canonicalScores;
+
+    do {
+        std::vector<CandidateScore> current = {
+            initial[permIndices[0]],
+            initial[permIndices[1]],
+            initial[permIndices[2]]
+        };
+        auto order = CandidateRanker::rank("shi", current);
+        ASSERT_EQ(order.size(), 3u);
+
+        std::vector<std::string> orderedTexts;
+        std::vector<double> orderedDormants;
+        std::vector<double> orderedScores;
+        for (auto idx : order) {
+            orderedTexts.push_back(current[idx].text);
+            orderedDormants.push_back(current[idx].dormant_factor);
+            orderedScores.push_back(current[idx].final_score());
+        }
+
+        // The top candidate MUST be "试" in all permutations!
+        EXPECT_EQ(orderedTexts[0], "试") << "Permutation #" << permCount << " failed";
+        EXPECT_EQ(orderedTexts[1], "是") << "Permutation #" << permCount << " failed";
+        EXPECT_EQ(orderedTexts[2], "时") << "Permutation #" << permCount << " failed";
+
+        // Find "是" in current and verify dormant discount is applied
+        for (const auto &c : current) {
+            if (c.text == "是") {
+                EXPECT_NEAR(c.dormant_factor, 0.70, 1e-4)
+                    << "Permutation #" << permCount << " '是' dormant discount not applied!";
+            } else {
+                EXPECT_NEAR(c.dormant_factor, 1.0, 1e-4);
+            }
+        }
+
+        if (permCount == 0) {
+            canonicalOrder = orderedTexts;
+            canonicalDormants = orderedDormants;
+            canonicalScores = orderedScores;
+        } else {
+            EXPECT_EQ(orderedTexts, canonicalOrder)
+                << "Order mismatch in permutation #" << permCount;
+            for (std::size_t i = 0; i < 3; ++i) {
+                EXPECT_NEAR(orderedDormants[i], canonicalDormants[i], 1e-6);
+                EXPECT_NEAR(orderedScores[i], canonicalScores[i], 1e-6);
+            }
+        }
+        ++permCount;
+    } while (std::next_permutation(permIndices.begin(), permIndices.end()));
+
+    EXPECT_EQ(permCount, 6);
+}
+
+TEST(CandidateRankerRegression, TiedTimestampEdgeConditions) {
+    using namespace modernime::core;
+    // 1. Older candidate with high boost vs newer candidate with low boost
+    {
+        CandidateScore oldHigh, newLow;
+        oldHigh.text = "是";
+        oldHigh.full_pinyin = "shi";
+        oldHigh.last_selected_ms = 1000;
+        oldHigh.learning_boost = 3.9;
+
+        newLow.text = "试";
+        newLow.full_pinyin = "shi";
+        newLow.last_selected_ms = 2000;
+        newLow.learning_boost = 1.0;
+
+        std::vector<CandidateScore> cands = {oldHigh, newLow};
+        CandidateRanker::rank("shi", cands);
+        // Because newLow has boost 1.0 < 1.8, oldHigh must NOT receive dormant discount!
+        for (const auto &c : cands) {
+            EXPECT_NEAR(c.dormant_factor, 1.0, 1e-4);
+        }
+    }
+    // 2. Zero timestamp and negative/non-finite values
+    {
+        CandidateScore zeroCand, nanCand, validCand;
+        zeroCand.text = "零";
+        zeroCand.full_pinyin = "ling";
+        zeroCand.last_selected_ms = 0;
+        zeroCand.learning_boost = 3.0;
+
+        nanCand.text = "南";
+        nanCand.full_pinyin = "ling";
+        nanCand.last_selected_ms = 5000;
+        nanCand.learning_boost = std::numeric_limits<double>::quiet_NaN();
+
+        validCand.text = "另";
+        validCand.full_pinyin = "ling";
+        validCand.last_selected_ms = 6000;
+        validCand.learning_boost = 2.5;
+
+        std::vector<CandidateScore> cands = {zeroCand, nanCand, validCand};
+        auto order = CandidateRanker::rank("ling", cands);
+        ASSERT_EQ(order.size(), 3u);
+        // Finite candidates must sort before NaN candidate
+        EXPECT_TRUE(std::isfinite(cands[order[0]].final_score()));
+        EXPECT_TRUE(std::isfinite(cands[order[1]].final_score()));
+        EXPECT_FALSE(std::isfinite(cands[order[2]].final_score()));
+        EXPECT_EQ(cands[order[2]].text, "南");
+    }
+    // 3. Independent priority groups
+    {
+        CandidateScore exactMatch, prefixMatch;
+        exactMatch.text = "好";
+        exactMatch.full_pinyin = "hao";
+        exactMatch.match_priority = 2; // exact
+        exactMatch.last_selected_ms = 10000;
+        exactMatch.learning_boost = 3.9;
+
+        prefixMatch.text = "豪迈";
+        prefixMatch.full_pinyin = "hao'mai";
+        prefixMatch.match_priority = 1; // prefix/abbreviation
+        prefixMatch.last_selected_ms = 1000;
+        prefixMatch.learning_boost = 3.9;
+
+        std::vector<CandidateScore> cands = {exactMatch, prefixMatch};
+        CandidateRanker::rank("hao", cands);
+        // Prefix match is in a different priority group, so exactMatch's recent timestamp does not discount it
+        EXPECT_DOUBLE_EQ(prefixMatch.dormant_factor, 1.0);
+        EXPECT_DOUBLE_EQ(exactMatch.dormant_factor, 1.0);
+    }
+}
+
 TEST(RecentChoiceRegression, BoundedInputHistoryEvictsLeastRecentlySelectedGroup) {
     pinyin::RecentChoices choices;
     for (int n = 0; n < 3; ++n) choices.record("shi", "试", "shi", false);
@@ -512,3 +1027,5 @@ TEST(RecentChoiceRegression, BoundedInputHistoryEvictsLeastRecentlySelectedGroup
     EXPECT_GT(choices.bonus("fixture63", "甲", "jia", false), 0.0);
 }
 } // namespace
+
+
