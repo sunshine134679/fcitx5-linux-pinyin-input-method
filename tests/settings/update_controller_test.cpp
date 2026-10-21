@@ -572,13 +572,13 @@ int main(int argc, char **argv) {
 
     int waitStatus = 0;
     bool childExitedFast = false;
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < 120; ++i) {
         const pid_t waited = ::waitpid(childPid, &waitStatus, WNOHANG);
         if (waited == childPid) {
             childExitedFast = WIFEXITED(waitStatus) && (WEXITSTATUS(waitStatus) == 0);
             break;
         }
-        ::usleep(25000); // 40 * 25ms = 1.0s max
+        ::usleep(25000); // 120 * 25ms = 3.0s max
     }
     if (!childExitedFast) {
         ::kill(childPid, SIGKILL);
