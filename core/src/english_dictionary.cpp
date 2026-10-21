@@ -74075,6 +74075,79 @@ constexpr bool hasEnglishVowel(std::string_view word) noexcept {
     return false;
 }
 
+static constexpr std::string_view kTier1ModernWords[] = {
+    "apple",
+    "application",
+    "business",
+    "company",
+    "compute",
+    "computer",
+    "development",
+    "different",
+    "government",
+    "important",
+    "information",
+    "number",
+    "problem",
+    "product",
+    "program",
+    "project",
+    "question",
+    "service",
+    "support",
+    "system",
+    "technology",
+};
+static_assert(std::is_sorted(std::begin(kTier1ModernWords), std::end(kTier1ModernWords)));
+
+static constexpr std::string_view kTier2ModernWords[] = {
+    "communication",
+    "community",
+    "component",
+    "configuration",
+    "database",
+    "documentation",
+    "engineering",
+    "environment",
+    "experience",
+    "framework",
+    "function",
+    "implementation",
+    "infrastructure",
+    "interface",
+    "international",
+    "javascript",
+    "knowledge",
+    "management",
+    "operation",
+    "performance",
+    "programming",
+    "repository",
+    "security",
+    "software",
+    "solution",
+    "standard",
+    "typescript",
+    "understand",
+    "university",
+    "website",
+};
+static_assert(std::is_sorted(std::begin(kTier2ModernWords), std::end(kTier2ModernWords)));
+
+static double englishWordPopularityWeight(std::string_view word) noexcept {
+    if (std::binary_search(std::begin(kTier1ModernWords), std::end(kTier1ModernWords), word)) {
+        return 25.0;
+    }
+    if (std::binary_search(std::begin(kTier2ModernWords), std::end(kTier2ModernWords), word)) {
+        return 18.0;
+    }
+    if (std::binary_search(std::begin(kCommonEnglishWords), std::end(kCommonEnglishWords), word) ||
+        std::binary_search(std::begin(kCommonShortEnglishWords), std::end(kCommonShortEnglishWords), word)) {
+        return 10.0;
+    }
+    return 0.0;
+}
+
 bool isAllowedShortEnglishWord(std::string_view lowerWord) noexcept {
     return std::binary_search(std::begin(kCommonEnglishWords),
                               std::end(kCommonEnglishWords), lowerWord) ||
@@ -74177,6 +74250,11 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
         const bool bExact = (b == lowerPrefix);
         if (aExact != bExact) {
             return aExact;
+        }
+        const double aScore = englishWordPopularityWeight(a) - 0.1 * static_cast<double>(a.size());
+        const double bScore = englishWordPopularityWeight(b) - 0.1 * static_cast<double>(b.size());
+        if (aScore != bScore) {
+            return aScore > bScore;
         }
         if (a.size() != b.size()) {
             return a.size() < b.size();

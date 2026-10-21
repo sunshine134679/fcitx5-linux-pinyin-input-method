@@ -577,6 +577,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
         target_include_directories(modernime_personal_engine_gtest PRIVATE
             ${GTEST_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
         )
         target_link_libraries(modernime_personal_engine_gtest PRIVATE
             modernime_pinyin
@@ -586,7 +587,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             Threads::Threads
         )
         if(MODERNIME_BUILD_FCITX5)
-            target_link_libraries(modernime_personal_engine_gtest PRIVATE Fcitx5::Core Fcitx5::Utils)
+            target_link_libraries(modernime_personal_engine_gtest PRIVATE Fcitx5::Core Fcitx5::Utils modernime_ui_layout)
             target_compile_definitions(modernime_personal_engine_gtest PRIVATE MODERNIME_HAS_FCITX5=1)
         endif()
         add_test(NAME modernime_personal_engine_gtest

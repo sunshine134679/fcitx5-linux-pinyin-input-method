@@ -1,9 +1,14 @@
 #include "modernime/core/candidate_ranker.h"
+#include "modernime/core/english_dictionary.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/fcitx5/engine.h"
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/recent_choice.h"
+#if defined(MODERNIME_HAS_FCITX5)
+#include "modernime/ui/candidate_bar_layout.h"
+#include "modernime/ui/candidate_pagination.h"
+#endif
 
 #include <gtest/gtest.h>
 #include <chrono>
@@ -46,6 +51,27 @@ protected:
         for (char key : input) ASSERT_TRUE(c.handle({fcitx5::KeyKind::Character, key}));
         ASSERT_EQ(c.page().rawInput, input);
     }
+#if defined(MODERNIME_HAS_FCITX5)
+    static double textWidth(std::string_view text, double font) {
+        double result = 0;
+        for (unsigned char ch : text) {
+            if ((ch & 0xc0) != 0x80) result += (ch < 128 ? 0.55 : 1.0) * font;
+        }
+        return result;
+    }
+    static std::pair<std::size_t, std::size_t> physicalPosition(
+        const core::CandidatePage &page, std::size_t global, double font = 20, double panel = 610) {
+        auto metrics = ui::CandidateBarMetrics::reference(font, 9);
+        metrics.panelWidth = panel;
+        const auto boundaries = ui::CandidatePagination::partition(page.items, metrics,
+            [font](std::string_view text) { return textWidth(text, font); });
+        for (std::size_t n = 0; n < boundaries.size(); ++n) {
+            const auto b = boundaries[n];
+            if (global >= b.begin && global < b.end) return {n, global - b.begin};
+        }
+        throw std::runtime_error("candidate lost during pagination");
+    }
+#endif
     std::filesystem::path root;
     pinyin::PinyinDataPaths paths;
 };
@@ -1026,6 +1052,122 @@ TEST(RecentChoiceRegression, BoundedInputHistoryEvictsLeastRecentlySelectedGroup
     EXPECT_DOUBLE_EQ(choices.bonus("shi", "试", "shi", false), 0.0);
     EXPECT_GT(choices.bonus("fixture63", "甲", "jia", false), 0.0);
 }
+
+// -----------------------------------------------------------------------------
+// 17,430-Run Deep Boundary Tests
+// -----------------------------------------------------------------------------
+
+TEST_F(CandidateRankingRegression, EnglishDictionary_LongWordPrefixPrediction_Programming_Application_Typescript) {
+    // Issue 1: High-frequency long words (programming, application, typescript) must appear in top 3 predictions
+    {
+        const auto progMatches = core::EnglishDictionary::predictWords("prog", 3);
+        ASSERT_GE(progMatches.size(), 1u);
+        EXPECT_EQ(progMatches.front(), "program");
+        EXPECT_TRUE(std::find(progMatches.begin(), progMatches.end(), "programming") != progMatches.end())
+            << "Unlearned static predictWords for 'prog' must contain 'programming' in top 3";
+    }
+    {
+        const auto applMatches = core::EnglishDictionary::predictWords("appl", 3);
+        ASSERT_GE(applMatches.size(), 1u);
+        EXPECT_EQ(applMatches.front(), "apple");
+        EXPECT_TRUE(std::find(applMatches.begin(), applMatches.end(), "application") != applMatches.end())
+            << "Unlearned static predictWords for 'appl' must contain 'application' in top 3";
+    }
+    {
+        const auto typeMatches = core::EnglishDictionary::predictWords("type", 3);
+        ASSERT_GE(typeMatches.size(), 1u);
+        EXPECT_EQ(typeMatches.front(), "type");
+        EXPECT_TRUE(std::find(typeMatches.begin(), typeMatches.end(), "typescript") != typeMatches.end())
+            << "Unlearned static predictWords for 'type' must contain 'typescript' in top 3";
+    }
+
+    // Verify in end-to-end controller with clean unlearned provider
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+    type(c, "prog");
+    ASSERT_FALSE(c.page().items.empty());
+    const auto progRank = rank(c.page(), "programming");
+    EXPECT_LT(progRank, 5u) << "'programming' must appear in top 5 candidates for 'prog'";
+}
+
+TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_7SyllableSingleCharOnPhysicalPageOne) {
+    // Issue 2: For 7+ syllable input 'qingbangwodakaiwenjian', single char '请' must be on physical page 1
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+    type(c, "qingbangwodakaiwenjian");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "请帮我打开文件");
+
+    const auto qingRank = rank(c.page(), "请");
+    EXPECT_LT(qingRank, 5u) << "'请' should be in top 5 for 7-syllable qingbangwodakaiwenjian";
+
+#if defined(MODERNIME_HAS_FCITX5)
+    const auto [physicalPage, slot] = physicalPosition(c.page(), qingRank, 20.0, 610.0);
+    EXPECT_EQ(physicalPage, 0u) << "Single character '请' must be on physical page 1 (0-indexed page 0)";
+#endif
+
+    EXPECT_EQ(c.page().items[qingRank].consumedInputBytes, 4u);
+    ASSERT_TRUE(c.select(qingRank));
+    EXPECT_EQ(host.committed, "请");
+    EXPECT_EQ(c.page().rawInput, "bangwodakaiwenjian");
+}
+
+TEST_F(CandidateRankingRegression, MacroNumericInput_VModeCurrencyAmounts) {
+    // Issue 3: In Controller, KeyKind::Character must accept digits and '.' in 'v' mode
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // Test v12345
+    type(c, "v12345");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "壹万贰仟叁佰肆拾伍元整");
+    ASSERT_TRUE(c.select(0));
+    EXPECT_EQ(host.committed, "壹万贰仟叁佰肆拾伍元整");
+
+    // Test v88.5
+    c.reset();
+    type(c, "v88.5");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "捌拾捌元伍角整");
+    ASSERT_TRUE(c.select(0));
+    EXPECT_EQ(host.committed, "捌拾捌元伍角整");
+}
+
+TEST_F(CandidateRankingRegression, MultiSyllableShortPinyin_PytTieBreakingStability) {
+    // Issue 4: Deterministic tie-breaking for equal decoder score and match priority
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    std::set<std::string> variants;
+    for (int n = 0; n < 30; ++n) {
+        c.reset();
+        type(c, "pyt");
+        if (n % 3 == 1) {
+            ASSERT_TRUE(c.handle({fcitx5::KeyKind::Backspace}));
+            ASSERT_TRUE(c.handle({fcitx5::KeyKind::Character, 't'}));
+        }
+        if (n % 3 == 2) {
+            ASSERT_TRUE(c.handle({fcitx5::KeyKind::MoveCompositionLeft}));
+            ASSERT_TRUE(c.handle({fcitx5::KeyKind::Character, 'n'}));
+            ASSERT_TRUE(c.handle({fcitx5::KeyKind::Backspace}));
+            ASSERT_TRUE(c.handle({fcitx5::KeyKind::MoveCompositionRight}));
+        }
+        std::string top;
+        for (std::size_t j = 0; j < std::min(std::size_t(10), c.page().items.size()); ++j) {
+            top += (j ? "|" : "") + c.page().items[j].text;
+        }
+        variants.insert(top);
+        auto expected = c.page().items.front().text;
+        ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+        EXPECT_EQ(host.committed, expected);
+    }
+    EXPECT_EQ(variants.size(), 1u) << "Candidate ordering for 'pyt' must have exactly 1 variant across 30 repeats";
+}
+
 } // namespace
 
 

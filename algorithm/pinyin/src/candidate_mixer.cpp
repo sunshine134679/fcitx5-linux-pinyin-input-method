@@ -111,8 +111,8 @@ std::vector<core::CandidateItem> mixCandidateItems(
         append(*threeSyllable);
     } else if (singlePrefixQualified) {
         if (threeSyllable != nullptr && syllablePrefixEnds.size() >= 6) {
-            if (twoSyllable != nullptr) append(*twoSyllable);
             if (oneSyllable != nullptr) append(*oneSyllable);
+            if (twoSyllable != nullptr) append(*twoSyllable);
         } else {
             if (oneSyllable != nullptr) append(*oneSyllable);
         }

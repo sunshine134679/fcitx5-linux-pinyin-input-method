@@ -11,6 +11,7 @@
 #include <libime/pinyin/pinyindictionary.h>
 
 #include <algorithm>
+#include <cmath>
 #include <string_view>
 
 namespace modernime::pinyin {
@@ -32,19 +33,59 @@ CandidatePipelineResult buildCandidatePipeline(
         nativeCandidates.size() < kMaxScoredCandidates
             ? nativeCandidates.size()
             : kMaxScoredCandidates;
+
+    struct NativeCandidateEntry {
+        std::string text;
+        std::string full_pinyin;
+        float decoder_score = 0.0F;
+        int match_priority = 0;
+    };
+    std::vector<NativeCandidateEntry> nativeEntries;
+    nativeEntries.reserve(scoreLimit);
+    for (std::size_t index = 0; index < scoreLimit; ++index) {
+        NativeCandidateEntry entry;
+        entry.text = nativeCandidates[index].toString();
+        try {
+            entry.full_pinyin = context.candidateFullPinyin(index);
+        } catch (const std::exception &) {
+            entry.full_pinyin.clear();
+        }
+        entry.decoder_score = nativeCandidates[index].score();
+        entry.match_priority =
+            core::PinyinMatchPolicy::priority(context.userInput(), entry.full_pinyin);
+        nativeEntries.push_back(std::move(entry));
+    }
+
+    // 对解码分数完全相等（差值小于 10^-6）且匹配优先级相同的同等级候选，
+    // 使用词汇文本的 Unicode 码点顺序进行确定性决胜（Tie-Breaking），消除编辑回退抖动
+    for (std::size_t i = 0; i < nativeEntries.size();) {
+        std::size_t j = i + 1;
+        while (j < nativeEntries.size() &&
+               std::abs(nativeEntries[j].decoder_score - nativeEntries[i].decoder_score) < 1e-6F) {
+            ++j;
+        }
+        if (j > i + 1) {
+            std::stable_sort(nativeEntries.begin() + i, nativeEntries.begin() + j,
+                             [](const NativeCandidateEntry &a, const NativeCandidateEntry &b) {
+                                 if (a.match_priority != b.match_priority) {
+                                     return a.match_priority > b.match_priority;
+                                 }
+                                 return a.text < b.text;
+                             });
+        }
+        i = j;
+    }
+
     result.scored.reserve(scoreLimit + 16);
     std::unordered_set<std::string> seenKeys;
     seenKeys.reserve(scoreLimit + 16);
-    for (std::size_t index = 0; index < scoreLimit; ++index) {
+    for (std::size_t index = 0; index < nativeEntries.size(); ++index) {
+        auto &entry = nativeEntries[index];
         core::CandidateScore candidate;
         candidate.source_index = index;
-        candidate.text = nativeCandidates[index].toString();
-        try {
-            candidate.full_pinyin = context.candidateFullPinyin(index);
-        } catch (const std::exception &) {
-            candidate.full_pinyin.clear();
-        }
-        candidate.decoder_score = nativeCandidates[index].score();
+        candidate.text = std::move(entry.text);
+        candidate.full_pinyin = std::move(entry.full_pinyin);
+        candidate.decoder_score = entry.decoder_score;
         if (index == 0) candidate.unigram_anchor = 7.0;
         seenKeys.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
