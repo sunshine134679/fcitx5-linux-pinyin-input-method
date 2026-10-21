@@ -12,6 +12,7 @@
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx/statusarea.h>
 #include <fcitx/surroundingtext.h>
 #include <fcitx-utils/keysymgen.h>
 #include <fcitx-utils/log.h>
@@ -456,6 +457,19 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
         FCITX_ERROR() << "Failed to load ModernIME clipboard history: "
                       << historyError;
     }
+    subModeAction_.setShortText("中");
+    subModeAction_.setLongText("中文输入法");
+    subModeAction_.setIcon("input-keyboard-symbolic");
+    subModeAction_.connect<fcitx::SimpleAction::Activated>([this](fcitx::InputContext *ic) {
+        if (auto *contextState = state(ic)) {
+            contextState->controller().handle({KeyKind::Toggle, 0, 0});
+            const bool active = contextState->controller().active();
+            subModeAction_.setShortText(active ? "中" : "英");
+            subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
+            subModeAction_.update(ic);
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+        }
+    });
     readyEndpoint_ = std::make_shared<ReadyNotificationEndpoint>();
     readyEndpoint_->dispatcher = &dispatcher_;
     readyEndpoint_->owner = this;
@@ -905,6 +919,13 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                         contextState->controller().handle({KeyKind::Enter, 0, 0});
                     }
                     if (contextState->controller().handle({KeyKind::Toggle, 0, 0})) {
+                        const bool active = contextState->controller().active();
+                        subModeAction_.setShortText(active ? "中" : "英");
+                        subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
+                        if (auto *ic = event.inputContext()) {
+                            subModeAction_.update(ic);
+                            ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+                        }
                         event.filterAndAccept();
                         return;
                     }
@@ -979,6 +1000,15 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         }
 
         if (contextState->controller().handle(*modernEvent)) {
+            if (modernEvent->kind == KeyKind::Toggle) {
+                const bool active = contextState->controller().active();
+                subModeAction_.setShortText(active ? "中" : "英");
+                subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
+                if (auto *ic = event.inputContext()) {
+                    subModeAction_.update(ic);
+                    ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+                }
+            }
             event.filterAndAccept();
         }
     } catch (const std::exception &error) {
@@ -994,8 +1024,15 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
         if (contextState->settingsGeneration() != settingsGeneration_) {
             contextState->applySettings(settings_, settingsGeneration_);
         }
-        contextState->controller().setActive(
-            settings_.defaultMode == core::InputMode::Chinese);
+        const bool active = (settings_.defaultMode == core::InputMode::Chinese);
+        contextState->controller().setActive(active);
+        subModeAction_.setShortText(active ? "中" : "英");
+        subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
+        if (auto *ic = event.inputContext()) {
+            ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, &subModeAction_);
+            subModeAction_.update(ic);
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+        }
     }
 }
 

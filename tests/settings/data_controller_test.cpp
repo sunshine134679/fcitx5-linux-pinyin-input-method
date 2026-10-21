@@ -210,9 +210,9 @@ void testDictionaryImportPreviewAndMerge() {
     using namespace modernime::pinyin;
 
     const std::vector<UserDictionaryEntry> currentEntries = {
-        {"nihao", "你好", 10.0F},
+        {"nihao", "你好", 24.0F},
         {"xing", "行", 20.0F},
-        {"hang", "行", 30.0F},
+        {"hang", "行", 34.0F},
         {"nihao", "拟好", 15.0F},
     };
 
@@ -246,7 +246,7 @@ void testDictionaryImportPreviewAndMerge() {
             foundXing = true;
         }
         if (entry.pinyin == "shijie" && entry.phrase == "世界") {
-            assertTrue(entry.weight == 50.0F, "shijie added with 50.0");
+            assertTrue(entry.weight == 39.0F, "shijie added with normalized weight 39.0");
             foundShijie = true;
         }
     }
@@ -259,11 +259,25 @@ void testDictionaryImportPreviewAndMerge() {
     foundXing = false;
     for (const auto &entry : mergedOverwrite) {
         if (entry.pinyin == "xing" && entry.phrase == "行") {
-            assertTrue(entry.weight == 25.0F, "xing weight overwritten with 25.0");
+            assertTrue(entry.weight == 33.0F, "xing weight overwritten with normalized 33.0");
             foundXing = true;
         }
     }
     assertTrue(foundXing, "xing overwritten in OverwriteWithImport merge");
+}
+
+void testExternalDictionaryFrequencyNormalization() {
+    using namespace modernime::settings;
+    assertTrue(DataController::normalizeImportedWeight(1400.0F) == 50.0F,
+               "1400 external count saturates at 50");
+    assertTrue(DataController::normalizeImportedWeight(100.0F) == 46.0F,
+               "100 external count smooths to 46");
+    assertTrue(DataController::normalizeImportedWeight(10.0F) == 24.0F,
+               "10 external count smooths to 24");
+    assertTrue(DataController::normalizeImportedWeight(1.0F) == 7.0F,
+               "1 external count smooths to 7");
+    assertTrue(DataController::normalizeImportedWeight(0.0F) == 0.0F,
+               "0 external count smooths to 0");
 }
 
 void testDictionaryBackupCreationAndVerification() {
@@ -373,6 +387,7 @@ int main() {
     testDictionaryImportExportUsesValidatedRows();
     testDictionaryImportIsStrictAndNonDestructive();
     testDictionaryImportPreviewAndMerge();
+    testExternalDictionaryFrequencyNormalization();
     testDictionaryBackupCreationAndVerification();
     testLearningBackupThenClear();
     testFailedBackupDoesNotClearLearning();

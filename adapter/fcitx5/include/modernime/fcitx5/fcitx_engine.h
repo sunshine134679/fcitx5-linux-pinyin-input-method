@@ -7,6 +7,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #endif
 
+#include <fcitx/action.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx-utils/event.h>
@@ -131,6 +132,9 @@ public:
     }
 
     std::size_t pageBegin() const { return currentBoundary().begin; }
+    const std::vector<core::PageBoundary> &pageBoundaries() const noexcept {
+        return boundaries_;
+    }
 
     const fcitx::CandidateWord &candidate(int index) const override {
         return candidateFromAll(
@@ -469,6 +473,7 @@ private:
     bool pinyinResourcesResolved_ = false;
 #endif
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
+    fcitx::SimpleAction subModeAction_;
 };
 
 } // namespace modernime::fcitx5

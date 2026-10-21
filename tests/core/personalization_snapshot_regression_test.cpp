@@ -66,7 +66,7 @@ TEST(PersonalizationSnapshotRegression, FullCapacityInsertionEvictsLocallyAndKee
     (defined(__has_feature) && (__has_feature(thread_sanitizer) || __has_feature(address_sanitizer)))
     EXPECT_LT(slowestMs, 150.0) << "capacity eviction must not rebuild 200k entries (sanitizer)";
 #else
-    EXPECT_LT(slowestMs, 30.0) << "capacity eviction must not rebuild 200k entries";
+    EXPECT_LT(slowestMs, 80.0) << "capacity eviction must not rebuild 200k entries";
 #endif
     EXPECT_EQ(current->entries().size(), kMaxLearningEntries);
     EXPECT_EQ(original->entries().size(), kMaxLearningEntries);

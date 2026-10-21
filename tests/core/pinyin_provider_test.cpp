@@ -764,7 +764,12 @@ void testPinyinDataPathsDetectionAndDiagnostics() {
 } // namespace
 
 void testVCommandMenuAndDeduplication() {
-    modernime::pinyin::PinyinCandidateProvider provider;
+    modernime::pinyin::PinyinDataPaths vPaths;
+    const auto vLearningPath = testPath("v-command-learning.sqlite3");
+    std::error_code error;
+    std::filesystem::remove(vLearningPath, error);
+    vPaths.learningStore = vLearningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(vPaths);
     assertTrue(provider.append("v"), "v input accepted");
     auto page = provider.page();
     assertTrue(page.items.size() == 2, "v produces exactly 2 candidates (raw + clipboard command)");
@@ -1278,7 +1283,12 @@ int main() {
     testInternetHotwordsTopRanking();
     testAbbreviationInputIsAutomaticallySegmentedInPreedit();
     testFullPinyinInputIsAutomaticallySegmentedInPreedit();
-    modernime::pinyin::PinyinCandidateProvider provider;
+    modernime::pinyin::PinyinDataPaths basicPaths;
+    const auto basicLearningPath = testPath("basic-full-pinyin-learning.sqlite3");
+    std::error_code basicError;
+    std::filesystem::remove(basicLearningPath, basicError);
+    basicPaths.learningStore = basicLearningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(basicPaths);
     assertTrue(provider.append("nihao"), "ASCII pinyin is accepted");
     assertTrue(provider.page().preedit == "ni'hao",
                "full pinyin preedit uses the candidate syllable boundary");

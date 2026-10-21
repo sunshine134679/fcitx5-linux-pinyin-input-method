@@ -87,6 +87,14 @@ std::vector<pinyin::UserDictionaryEntry> DataController::loadDictionary(
     return pinyin::UserDictionary::loadText(path).entries();
 }
 
+float DataController::normalizeImportedWeight(float rawWeight) noexcept {
+    if (!std::isfinite(rawWeight) || rawWeight <= 0.0F) {
+        return 0.0F;
+    }
+    const float smoothed = std::round(10.0F * std::log(1.0F + rawWeight));
+    return std::min(50.0F, smoothed);
+}
+
 DictionaryImportPreview DataController::previewDictionaryImport(
     const std::filesystem::path &path,
     const std::vector<pinyin::UserDictionaryEntry> &currentEntries) {
@@ -135,9 +143,9 @@ DictionaryImportPreview DataController::previewDictionaryImport(
 
         try {
             std::size_t consumed = 0;
-            const auto weight = std::stof(weightText, &consumed);
-            if (consumed != weightText.size() || !std::isfinite(weight) ||
-                weight < 0.0F) {
+            const auto rawWeight = std::stof(weightText, &consumed);
+            if (consumed != weightText.size() || !std::isfinite(rawWeight) ||
+                rawWeight < 0.0F) {
                 ++preview.invalidLines;
                 if (preview.error.empty()) {
                     preview.error = "用户词典第 " + std::to_string(lineNumber) +
@@ -145,6 +153,8 @@ DictionaryImportPreview DataController::previewDictionaryImport(
                 }
                 continue;
             }
+
+            const auto weight = normalizeImportedWeight(rawWeight);
 
             pinyin::UserDictionary rowChecker;
             if (!rowChecker.upsert(pinyin, phrase, weight)) {

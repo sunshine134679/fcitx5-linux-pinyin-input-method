@@ -74075,6 +74075,84 @@ constexpr bool hasEnglishVowel(std::string_view word) noexcept {
     return false;
 }
 
+static constexpr std::string_view kTier1ModernWords[] = {
+    "apple",
+    "application",
+    "business",
+    "company",
+    "compute",
+    "computer",
+    "context",
+    "development",
+    "different",
+    "document",
+    "government",
+    "important",
+    "information",
+    "number",
+    "problem",
+    "product",
+    "program",
+    "project",
+    "python",
+    "question",
+    "service",
+    "support",
+    "system",
+    "technology",
+    "translate",
+};
+static_assert(std::is_sorted(std::begin(kTier1ModernWords), std::end(kTier1ModernWords)));
+
+static constexpr std::string_view kTier2ModernWords[] = {
+    "communication",
+    "community",
+    "component",
+    "configuration",
+    "database",
+    "documentation",
+    "engineering",
+    "environment",
+    "experience",
+    "framework",
+    "function",
+    "implementation",
+    "infrastructure",
+    "interface",
+    "international",
+    "javascript",
+    "knowledge",
+    "linux",
+    "management",
+    "operation",
+    "performance",
+    "programming",
+    "repository",
+    "security",
+    "software",
+    "solution",
+    "standard",
+    "typescript",
+    "understand",
+    "university",
+    "website",
+};
+static_assert(std::is_sorted(std::begin(kTier2ModernWords), std::end(kTier2ModernWords)));
+
+static double englishWordPopularityWeight(std::string_view word) noexcept {
+    if (std::binary_search(std::begin(kTier1ModernWords), std::end(kTier1ModernWords), word)) {
+        return 25.0;
+    }
+    if (std::binary_search(std::begin(kTier2ModernWords), std::end(kTier2ModernWords), word)) {
+        return 18.0;
+    }
+    if (std::binary_search(std::begin(kCommonEnglishWords), std::end(kCommonEnglishWords), word) ||
+        std::binary_search(std::begin(kCommonShortEnglishWords), std::end(kCommonShortEnglishWords), word)) {
+        return 10.0;
+    }
+    return 0.0;
+}
+
 bool isAllowedShortEnglishWord(std::string_view lowerWord) noexcept {
     return std::binary_search(std::begin(kCommonEnglishWords),
                               std::end(kCommonEnglishWords), lowerWord) ||
@@ -74156,14 +74234,11 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
     }
 
     std::vector<std::string_view> matches;
-    matches.reserve(16);
+    matches.reserve(64);
     while (it != std::end(kEnglishWords) && it->starts_with(lowerPrefix)) {
         if (it->size() >= 4 && hasEnglishVowel(*it) &&
             (it->size() >= 5 || isAllowedShortEnglishWord(*it))) {
             matches.push_back(*it);
-            if (matches.size() >= 128) {
-                break;
-            }
         }
         ++it;
     }
@@ -74178,6 +74253,11 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
         if (aExact != bExact) {
             return aExact;
         }
+        const double aScore = englishWordPopularityWeight(a) - 0.1 * static_cast<double>(a.size());
+        const double bScore = englishWordPopularityWeight(b) - 0.1 * static_cast<double>(b.size());
+        if (aScore != bScore) {
+            return aScore > bScore;
+        }
         if (a.size() != b.size()) {
             return a.size() < b.size();
         }
@@ -74188,6 +74268,14 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
         matches.resize(maxCount);
     }
     return matches;
+}
+
+double EnglishDictionary::wordPopularityWeight(std::string_view word) noexcept {
+    return englishWordPopularityWeight(word);
+}
+
+bool EnglishDictionary::isModernTechWord(std::string_view word) noexcept {
+    return englishWordPopularityWeight(word) >= 18.0;
 }
 
 } // namespace modernime::core

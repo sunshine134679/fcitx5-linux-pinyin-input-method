@@ -316,5 +316,43 @@ int main() {
     assertTrue(remeasuredLayout.candidates[2].displayText == hitTestHLayout.candidates[2].displayText,
                "candidate 2 semantic displayText unchanged after re-measure");
 
+    // Multi-page layout with visual page indicator test
+    modernime::core::CandidatePage multiPage;
+    multiPage.preedit = "qingbangwodakaiwenjian";
+    for (std::size_t i = 0; i < 14; ++i) {
+        multiPage.items.push_back({"词" + std::to_string(i), "qing", i});
+    }
+    multiPage.pageBoundaries = {{0, 7}, {7, 14}};
+    multiPage.cursor = 0;
+
+    const auto multiPageLayoutP1 = modernime::ui::CandidateBarLayout::measure(
+        multiPage, metrics, [](std::string_view) { return 40.0; });
+    assertTrue(!multiPageLayoutP1.pageIndicatorText.empty(),
+               "multi-page layout generates non-empty page indicator text");
+    assertTrue(multiPageLayoutP1.pageIndicatorText == "1/2 ►",
+               "page 1 indicator displays 1/2 ►");
+    assertTrue(multiPageLayoutP1.pageIndicator.width >= 36.0,
+               "page indicator reserves >= 36px width");
+    assertTrue(multiPageLayoutP1.pageIndicator.x + multiPageLayoutP1.pageIndicator.width <=
+                   metrics.panelX + metrics.panelWidth,
+               "page indicator stays within panel right edge");
+    if (!multiPageLayoutP1.candidates.empty()) {
+        const auto &lastCand = multiPageLayoutP1.candidates.back().bounds;
+        assertTrue(lastCand.x + lastCand.width <= multiPageLayoutP1.pageIndicator.x,
+                   "candidates do not overlap page indicator");
+    }
+    // Hit test on indicator area must return -1
+    const double indX = multiPageLayoutP1.pageIndicator.x + multiPageLayoutP1.pageIndicator.width / 2.0;
+    const double indY = multiPageLayoutP1.pageIndicator.y + multiPageLayoutP1.pageIndicator.height / 2.0;
+    assertTrue(modernime::ui::hitTestCandidate(multiPageLayoutP1, metrics, indX, indY) == -1,
+               "hit test on page indicator returns -1 to avoid false candidate selection");
+
+    // Test page 2 indicator text
+    multiPage.cursor = 7;
+    const auto multiPageLayoutP2 = modernime::ui::CandidateBarLayout::measure(
+        multiPage, metrics, [](std::string_view) { return 40.0; });
+    assertTrue(multiPageLayoutP2.pageIndicatorText == "◄ 2/2",
+               "page 2 indicator displays ◄ 2/2");
+
     return EXIT_SUCCESS;
 }

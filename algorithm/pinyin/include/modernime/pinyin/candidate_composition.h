@@ -58,6 +58,7 @@ struct CandidateCompositionInput {
 
     std::vector<std::string> macroCandidates;
     std::vector<std::string> englishPredictions;
+    std::size_t learnedEnglishCount = 0;
     bool isEnglishWord = false;
     bool hasPinyinCoverage = true;
     bool hasInvalidInternalPinyinSegment = false;

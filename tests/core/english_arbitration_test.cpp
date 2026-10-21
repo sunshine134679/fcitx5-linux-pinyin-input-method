@@ -413,6 +413,96 @@ void testRawPinyinCommitDoesNotPolluteEnglishPrediction() {
     std::filesystem::remove(learningPath, error);
 }
 
+void testMultiItemEnglishCompletions() {
+    std::error_code error;
+    const auto learningPath = testPath("english-arbitration-compu.sqlite3");
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+        // 1. 测试 compu：3 个英文补全词 compute, computed, computer 均必须出现在候选列表中
+        provider.reset();
+        assertTrue(provider.append("compu"), "append compu");
+        const auto &pageCompu = provider.page();
+        assertTrue(!pageCompu.items.empty(), "compu has candidates");
+
+        const auto idxCompute = indexOf(pageCompu, "compute");
+        const auto idxComputed = indexOf(pageCompu, "computed");
+        const auto idxComputer = indexOf(pageCompu, "computer");
+        assertTrue(idxCompute < pageCompu.items.size(), "compu contains 'compute'");
+        assertTrue(idxComputed < pageCompu.items.size(), "compu contains 'computed'");
+        assertTrue(idxComputer < pageCompu.items.size(), "compu contains 'computer'");
+
+        // 验证结构契约：前缀优先时，结构应为 [topPrediction (compute), rawCandidate (compu), nextPredictions (computed, computer)...]
+        assertTrue(pageCompu.items[0].text == "compute", "compu rank 0 is compute");
+        assertTrue(pageCompu.items[1].text == "compu", "compu rank 1 is raw compu");
+        assertTrue(indexOf(pageCompu, "computed") < 5, "computed is within top 5");
+        assertTrue(indexOf(pageCompu, "computer") < 5, "computer is within top 5");
+
+        // 2. 选择 computer：验证上屏消耗按键 5 字节
+        assertTrue(pageCompu.items[idxComputer].consumedInputBytes == 5,
+                   "computer on compu consumedInputBytes == 5");
+        assertTrue(provider.select(idxComputer), "select computer for compu");
+
+        // 3. 测试 comput：3 个英文补全词 compute, computed, computer 均必须出现
+        provider.reset();
+        assertTrue(provider.append("comput"), "append comput");
+        const auto &pageComput = provider.page();
+        assertTrue(!pageComput.items.empty(), "comput has candidates");
+
+        const auto idxCompute2 = indexOf(pageComput, "compute");
+        const auto idxComputed2 = indexOf(pageComput, "computed");
+        const auto idxComputer2 = indexOf(pageComput, "computer");
+        assertTrue(idxCompute2 < pageComput.items.size(), "comput contains 'compute'");
+        assertTrue(idxComputed2 < pageComput.items.size(), "comput contains 'computed'");
+        assertTrue(idxComputer2 < pageComput.items.size(), "comput contains 'computer'");
+        assertTrue(pageComput.items[idxComputer2].consumedInputBytes == 6,
+                   "computer on comput consumedInputBytes == 6");
+        assertTrue(provider.select(idxComputer2), "select computer for comput");
+
+        // 4. 短拼音中文保护与双属性词规则
+        // de: 的 #1, 得 #2
+        provider.reset();
+        assertTrue(provider.append("de"), "append de");
+        assertTrue(provider.page().items[0].text == "的", "de rank 0 is '的'");
+        assertTrue(provider.page().items[1].text == "得", "de rank 1 is '得'");
+
+        // shi: 是 #1
+        provider.reset();
+        assertTrue(provider.append("shi"), "append shi");
+        assertTrue(provider.page().items[0].text == "是", "shi rank 0 is '是'");
+
+        // ni: 你 #1
+        provider.reset();
+        assertTrue(provider.append("ni"), "append ni");
+        assertTrue(provider.page().items[0].text == "你", "ni rank 0 is '你'");
+
+        // qu: 去 #1
+        provider.reset();
+        assertTrue(provider.append("qu"), "append qu");
+        assertTrue(provider.page().items[0].text == "去", "qu rank 0 is '去'");
+
+        // can: 中文优先，次选为英文 can
+        provider.reset();
+        assertTrue(provider.append("can"), "append can");
+        assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().source != modernime::core::CandidateSource::Raw,
+                   "can rank 0 is Chinese");
+        assertTrue(provider.page().items.size() > 1 && provider.page().items[1].text == "can",
+                   "can rank 1 is English word can");
+    }
+    std::filesystem::remove(learningPath, error);
+}
+
 } // namespace
 
 int main() {
@@ -422,5 +512,6 @@ int main() {
     testDoubleLetterFaultTolerance();
     testChinesePersonalizationBeatsEnglishWord();
     testRawPinyinCommitDoesNotPolluteEnglishPrediction();
+    testMultiItemEnglishCompletions();
     return EXIT_SUCCESS;
 }

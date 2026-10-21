@@ -24,6 +24,13 @@ public:
         return (kLevel2Bitmap[offset / 64] & (1ULL << (offset % 64))) != 0;
     }
 
+    static inline double unigramProminence(char32_t cp) {
+        if (cp < 0x4E00 || cp > 0x9FA5) {
+            return 0.0;
+        }
+        return static_cast<double>(kUnigramProminence[cp - 0x4E00]) * (1.0 / 15.0);
+    }
+
     static inline bool isRadicalOrStroke(char32_t cp) {
         if ((cp >= 0x2E80 && cp <= 0x2FD5) ||
             (cp >= 0x2F00 && cp <= 0x2FDF) ||
@@ -370,6 +377,8 @@ private:
         0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
         0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
     };
+
+#include "unigram_prominence.inc"
 
 };
 

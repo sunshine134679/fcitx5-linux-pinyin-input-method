@@ -51,6 +51,7 @@ public:
         const std::filesystem::path &path,
         std::vector<pinyin::UserDictionaryEntry> &entries,
         std::string *error = nullptr);
+    static float normalizeImportedWeight(float rawWeight) noexcept;
     static DictionaryImportPreview previewDictionaryImport(
         const std::filesystem::path &path,
         const std::vector<pinyin::UserDictionaryEntry> &currentEntries);

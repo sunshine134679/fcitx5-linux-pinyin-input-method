@@ -470,9 +470,11 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     }
 
     switch (event.kind) {
-    case KeyKind::Character:
-        if ((event.character < 'a' || event.character > 'z') &&
-            event.character != '\'') {
+    case KeyKind::Character: {
+        const bool isVMode = !compositionInput_.empty() && compositionInput_.front() == 'v';
+        const bool isLegalChar = (event.character >= 'a' && event.character <= 'z') || event.character == '\'';
+        const bool isLegalVChar = isVMode && ((event.character >= '0' && event.character <= '9') || event.character == '.');
+        if (!isLegalChar && !isLegalVChar) {
             return false;
         }
         {
@@ -499,6 +501,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         }
         refreshPage();
         return true;
+    }
     case KeyKind::Backspace:
         if (clipboardMode_) {
             clearComposition();

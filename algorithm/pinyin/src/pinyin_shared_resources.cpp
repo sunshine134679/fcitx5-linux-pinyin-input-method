@@ -95,7 +95,12 @@ std::filesystem::path defaultUserDictionaryPath() {
 std::filesystem::path extensionDictionaryPath(
     std::string_view configuredPath) {
     if (!configuredPath.empty()) {
-        return std::filesystem::path(configuredPath);
+        const std::filesystem::path path(configuredPath);
+        if (isRegularFile(path)) {
+            return path;
+        }
+        std::cerr << "Warning: configured extension dictionary path does not exist: "
+                  << configuredPath << ", falling back to default search paths.\n";
     }
 
     std::vector<std::filesystem::path> candidates;
@@ -137,7 +142,12 @@ std::filesystem::path extensionDictionaryPath(
 
 std::filesystem::path hotwordDictionaryPath(std::string_view configuredPath) {
     if (!configuredPath.empty()) {
-        return std::filesystem::path(configuredPath);
+        const std::filesystem::path path(configuredPath);
+        if (isRegularFile(path)) {
+            return path;
+        }
+        std::cerr << "Warning: configured hotword dictionary path does not exist: "
+                  << configuredPath << ", falling back to default search paths.\n";
     }
 
     std::vector<std::filesystem::path> candidates;
@@ -180,7 +190,12 @@ std::filesystem::path hotwordDictionaryPath(std::string_view configuredPath) {
 std::filesystem::path englishDefinitionDictionaryPath(
     std::string_view configuredPath) {
     if (!configuredPath.empty()) {
-        return std::filesystem::path(configuredPath);
+        const std::filesystem::path path(configuredPath);
+        if (isRegularFile(path)) {
+            return path;
+        }
+        std::cerr << "Warning: configured english definition dictionary path does not exist: "
+                  << configuredPath << ", falling back to default search paths.\n";
     }
 
     std::vector<std::filesystem::path> candidates;

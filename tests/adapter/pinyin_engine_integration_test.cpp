@@ -43,7 +43,13 @@ std::size_t indexOf(const modernime::core::CandidatePage &page,
 } // namespace
 
 int main() {
-    modernime::pinyin::PinyinCandidateProvider provider;
+    const auto mainLearningDbPath = "/tmp/integration_main_learn.sqlite3";
+    std::filesystem::remove(mainLearningDbPath);
+    std::filesystem::remove(std::string(mainLearningDbPath) + "-wal");
+    std::filesystem::remove(std::string(mainLearningDbPath) + "-shm");
+    modernime::pinyin::PinyinDataPaths mainPaths;
+    mainPaths.learningStore = mainLearningDbPath;
+    modernime::pinyin::PinyinCandidateProvider provider(mainPaths);
     RecordingHost host;
     modernime::fcitx5::ModernIMEController controller(host, &provider);
 

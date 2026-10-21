@@ -134,7 +134,7 @@ std::vector<core::CandidateItem> buildPrefixEvidence(
     const core::LearningSnapshot *learning, std::int64_t nowMs,
     const RecentChoices *recentChoices) {
     std::vector<core::CandidateItem> result;
-    for (const auto count : {std::size_t{3}, std::size_t{2}}) {
+    for (const auto count : {std::size_t{3}, std::size_t{2}, std::size_t{1}}) {
         auto item = derivedPrefix(best, ends, input, count, partial, learning, nowMs);
         if (item && (learning == nullptr || !learning->isSuppressed(item->text, item->fullPinyin))) {
             if (recentChoices != nullptr && item->learningBoost >= 1.8) {

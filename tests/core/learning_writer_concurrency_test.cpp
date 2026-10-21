@@ -729,7 +729,7 @@ TEST_F(ArchitectureWriterRegression, RevisionAtomicPublicationWithWorkerRebase) 
     }
 
     // Repeated writer rebase cycles with external clear
-    for (int cycle = 0; cycle < 8; ++cycle) {
+    for (int cycle = 0; cycle < 10; ++cycle) {
         writer.enqueueSelection("词_" + std::to_string(cycle), "ci", "", "", 1000 + cycle);
         {
             LearningStore externalStore(dbPath());
@@ -740,7 +740,7 @@ TEST_F(ArchitectureWriterRegression, RevisionAtomicPublicationWithWorkerRebase) 
         }
         writer.reloadIfChanged();
         writer.flush();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     stop.store(true, std::memory_order_relaxed);

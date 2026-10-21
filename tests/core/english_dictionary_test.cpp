@@ -93,6 +93,24 @@ int main() {
         assertTrue(!progrPred.empty(), "progr yields predictions");
         assertTrue(progrPred.front() == "program", "progr predicts program as first candidate");
     }
+    {
+        const auto contPred = EnglishDictionary::predictWords("cont", 3);
+        assertTrue(!contPred.empty(), "cont yields predictions");
+        bool hasContext = false;
+        for (const auto &w : contPred) {
+            if (w == "context") hasContext = true;
+        }
+        assertTrue(hasContext, "cont predicts context in top 3 despite being beyond alphabetical position 128");
+    }
+    {
+        const auto transPred = EnglishDictionary::predictWords("trans", 3);
+        assertTrue(!transPred.empty(), "trans yields predictions");
+        bool hasTranslate = false;
+        for (const auto &w : transPred) {
+            if (w == "translate") hasTranslate = true;
+        }
+        assertTrue(hasTranslate, "trans predicts translate in top 3 despite being beyond alphabetical position 128");
+    }
 
     // Boundary conditions for predictWords
     assertTrue(EnglishDictionary::predictWords("", 3).empty(), "empty prefix yields empty");
