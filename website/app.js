@@ -44,12 +44,15 @@ function updateDebDownload() {
 document.querySelectorAll("input[name=deb-system]").forEach(option => option.addEventListener("change", updateDebDownload));
 
 document.getElementById("copy-install").addEventListener("click", async () => {
+  const button = document.getElementById("copy-install");
   const text = document.getElementById("install-command").textContent;
   const status = document.getElementById("copy-status");
   try {
     await navigator.clipboard.writeText(text);
+    button.dataset.copied = "true";
     status.textContent = "命令已复制。请先按文档准备构建依赖。";
   } catch {
+    delete button.dataset.copied;
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(document.getElementById("install-command"));
