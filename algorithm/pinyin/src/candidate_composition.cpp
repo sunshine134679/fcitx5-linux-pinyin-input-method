@@ -160,10 +160,10 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         (rawInput == "sh" || rawInput == "ch" || rawInput == "zh");
     const bool isConsonantAbbreviation =
         rawInput.size() >= 2 && !mixed.empty() &&
-        std::all_of(rawInput.begin(), rawInput.end(), [](char c) {
+        std::all_of(rawInput.begin(), rawInput.end(), [len = rawInput.size()](char c) {
             return c >= 'a' && c <= 'z' &&
                    c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' &&
-                   c != 'v' && c != 'y';
+                   c != 'v' && (c != 'y' || len == 3);
         }) &&
         (rawInput.size() == 2 ||
          core::PinyinMatchPolicy::abbreviationKey(mixed.front().fullPinyin) == rawInput ||
@@ -292,7 +292,25 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
                 preds.push_back(p);
             }
         }
-        if (!preds.empty()) {
+
+        std::vector<core::CandidateItem> macros;
+        if (!input.macroCandidates.empty()) {
+            std::vector<core::CandidateItem> nonMacros;
+            for (auto &item : mixed) {
+                if (std::find(input.macroCandidates.begin(), input.macroCandidates.end(), item.text) !=
+                    input.macroCandidates.end()) {
+                    macros.push_back(std::move(item));
+                } else {
+                    nonMacros.push_back(std::move(item));
+                }
+            }
+            mixed = std::move(nonMacros);
+        }
+
+        const bool hasLearnedEnglish = input.learnedEnglishCount > 0 && !preds.empty();
+
+        if (hasLearnedEnglish) {
+            std::vector<core::CandidateItem> englishItems;
             core::CandidateItem topPred;
             topPred.text = preds[0];
             topPred.fullPinyin = preds[0];
@@ -300,31 +318,127 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
             topPred.commitRole = core::CommitCandidateRole::English;
             topPred.origins = {topPred.source};
             topPred.consumedInputBytes = rawInput.size();
+            englishItems.push_back(std::move(topPred));
+            recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                       0, MoveReason::EnglishPreferOverChinese);
 
-            for (std::size_t i = preds.size(); i > 1; --i) {
+            if (rawInput != preds[0]) {
+                englishItems.push_back(std::move(rawCandidate));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           1, MoveReason::EnglishPreferOverChinese);
+            }
+
+            for (std::size_t i = 1; i < preds.size(); ++i) {
+                if (preds[i] != rawInput) {
+                    core::CandidateItem pItem;
+                    pItem.text = preds[i];
+                    pItem.fullPinyin = preds[i];
+                    pItem.source = core::CandidateSource::Raw;
+                    pItem.commitRole = core::CommitCandidateRole::English;
+                    pItem.origins = {pItem.source};
+                    pItem.consumedInputBytes = rawInput.size();
+                    englishItems.push_back(std::move(pItem));
+                    recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                               englishItems.size() - 1, MoveReason::EnglishPreferOverChinese);
+                }
+            }
+
+            for (auto &m : macros) {
+                englishItems.push_back(std::move(m));
+                recordMove(core::CandidateSource::Engine, CompositionStage::MacroInsert,
+                           englishItems.size() - 1, MoveReason::MacroInsertPos);
+            }
+
+            mixed.insert(mixed.begin(),
+                         std::make_move_iterator(englishItems.begin()),
+                         std::make_move_iterator(englishItems.end()));
+        } else if (isEnglish) {
+            std::vector<core::CandidateItem> englishItems;
+            englishItems.push_back(std::move(rawCandidate));
+            recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                       0, MoveReason::EnglishPreferOverChinese);
+
+            for (auto &m : macros) {
+                englishItems.push_back(std::move(m));
+                recordMove(core::CandidateSource::Engine, CompositionStage::MacroInsert,
+                           englishItems.size() - 1, MoveReason::MacroInsertPos);
+            }
+
+            const std::size_t macroCount = macros.size();
+            mixed.insert(mixed.begin(),
+                         std::make_move_iterator(englishItems.begin()),
+                         std::make_move_iterator(englishItems.end()));
+
+            auto predInsertPos = mixed.begin() + std::min(mixed.size(), 1 + macroCount + (mixed.size() > 1 + macroCount ? 1 : 0));
+            for (const auto &p : preds) {
+                if (p != rawInput) {
+                    core::CandidateItem pItem;
+                    pItem.text = p;
+                    pItem.fullPinyin = p;
+                    pItem.source = core::CandidateSource::Raw;
+                    pItem.commitRole = core::CommitCandidateRole::English;
+                    pItem.origins = {pItem.source};
+                    pItem.consumedInputBytes = rawInput.size();
+                    const auto idx = static_cast<std::size_t>(std::distance(mixed.begin(), predInsertPos));
+                    predInsertPos = std::next(mixed.insert(predInsertPos, std::move(pItem)));
+                    recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                               idx, MoveReason::EnglishPreferOverChinese);
+                }
+            }
+        } else if (!preds.empty()) {
+            std::vector<core::CandidateItem> englishItems;
+            core::CandidateItem topPred;
+            topPred.text = preds[0];
+            topPred.fullPinyin = preds[0];
+            topPred.source = core::CandidateSource::Raw;
+            topPred.commitRole = core::CommitCandidateRole::English;
+            topPred.origins = {topPred.source};
+            topPred.consumedInputBytes = rawInput.size();
+            englishItems.push_back(std::move(topPred));
+            recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                       0, MoveReason::EnglishPreferOverChinese);
+
+            if (rawInput != preds[0]) {
+                englishItems.push_back(std::move(rawCandidate));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           1, MoveReason::EnglishPreferOverChinese);
+            }
+
+            for (std::size_t i = 1; i < preds.size(); ++i) {
                 core::CandidateItem pItem;
-                pItem.text = preds[i - 1];
-                pItem.fullPinyin = preds[i - 1];
+                pItem.text = preds[i];
+                pItem.fullPinyin = preds[i];
                 pItem.source = core::CandidateSource::Raw;
                 pItem.commitRole = core::CommitCandidateRole::English;
                 pItem.origins = {pItem.source};
                 pItem.consumedInputBytes = rawInput.size();
-                mixed.insert(mixed.begin(), std::move(pItem));
+                englishItems.push_back(std::move(pItem));
                 recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
-                           0, MoveReason::EnglishPreferOverChinese);
+                           englishItems.size() - 1, MoveReason::EnglishPreferOverChinese);
             }
-            if (rawInput != preds[0]) {
-                mixed.insert(mixed.begin(), std::move(rawCandidate));
-                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
-                           0, MoveReason::EnglishPreferOverChinese);
+
+            for (auto &m : macros) {
+                englishItems.push_back(std::move(m));
+                recordMove(core::CandidateSource::Engine, CompositionStage::MacroInsert,
+                           englishItems.size() - 1, MoveReason::MacroInsertPos);
             }
-            mixed.insert(mixed.begin(), std::move(topPred));
-            recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
-                       0, MoveReason::EnglishPreferOverChinese);
+
+            mixed.insert(mixed.begin(),
+                         std::make_move_iterator(englishItems.begin()),
+                         std::make_move_iterator(englishItems.end()));
         } else {
-            mixed.insert(mixed.begin(), std::move(rawCandidate));
+            std::vector<core::CandidateItem> englishItems;
+            englishItems.push_back(std::move(rawCandidate));
             recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
                        0, MoveReason::EnglishPreferOverChinese);
+            for (auto &m : macros) {
+                englishItems.push_back(std::move(m));
+                recordMove(core::CandidateSource::Engine, CompositionStage::MacroInsert,
+                           englishItems.size() - 1, MoveReason::MacroInsertPos);
+            }
+            mixed.insert(mixed.begin(),
+                         std::make_move_iterator(englishItems.begin()),
+                         std::make_move_iterator(englishItems.end()));
         }
         preedit = std::string(rawInput);
     } else {

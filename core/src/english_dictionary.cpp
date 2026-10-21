@@ -74082,8 +74082,10 @@ static constexpr std::string_view kTier1ModernWords[] = {
     "company",
     "compute",
     "computer",
+    "context",
     "development",
     "different",
+    "document",
     "government",
     "important",
     "information",
@@ -74092,11 +74094,13 @@ static constexpr std::string_view kTier1ModernWords[] = {
     "product",
     "program",
     "project",
+    "python",
     "question",
     "service",
     "support",
     "system",
     "technology",
+    "translate",
 };
 static_assert(std::is_sorted(std::begin(kTier1ModernWords), std::end(kTier1ModernWords)));
 
@@ -74118,6 +74122,7 @@ static constexpr std::string_view kTier2ModernWords[] = {
     "international",
     "javascript",
     "knowledge",
+    "linux",
     "management",
     "operation",
     "performance",
@@ -74229,14 +74234,11 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
     }
 
     std::vector<std::string_view> matches;
-    matches.reserve(16);
+    matches.reserve(64);
     while (it != std::end(kEnglishWords) && it->starts_with(lowerPrefix)) {
         if (it->size() >= 4 && hasEnglishVowel(*it) &&
             (it->size() >= 5 || isAllowedShortEnglishWord(*it))) {
             matches.push_back(*it);
-            if (matches.size() >= 128) {
-                break;
-            }
         }
         ++it;
     }
@@ -74266,6 +74268,14 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
         matches.resize(maxCount);
     }
     return matches;
+}
+
+double EnglishDictionary::wordPopularityWeight(std::string_view word) noexcept {
+    return englishWordPopularityWeight(word);
+}
+
+bool EnglishDictionary::isModernTechWord(std::string_view word) noexcept {
+    return englishWordPopularityWeight(word) >= 18.0;
 }
 
 } // namespace modernime::core

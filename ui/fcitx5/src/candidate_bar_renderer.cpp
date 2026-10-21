@@ -167,6 +167,18 @@ void CandidateBarRenderer::render(RenderSurface &surface,
                          baseline, style.annotationText, annotationColor);
         }
     }
+
+    if (!layout.pageIndicatorText.empty() && layout.pageIndicator.width > 0.0) {
+        const auto indicatorMetrics =
+            surface.textMetrics(layout.pageIndicatorText, style.annotationText);
+        const auto textX = layout.pageIndicator.x +
+                           std::max(0.0, (layout.pageIndicator.width - indicatorMetrics.width) / 2.0);
+        const auto baseline = layout.pageIndicator.y +
+                              (layout.pageIndicator.height - indicatorMetrics.height) / 2.0 +
+                              indicatorMetrics.baseline;
+        surface.text(layout.pageIndicatorText, textX, baseline, style.annotationText,
+                     style.annotation);
+    }
 }
 
 } // namespace modernime::ui

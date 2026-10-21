@@ -507,6 +507,9 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
                     : core::CandidatePageMode::Pinyin;
     const auto *variableCandidates =
         dynamic_cast<const fcitx5::FcitxCandidateList *>(candidates.get());
+    if (variableCandidates != nullptr) {
+        page.pageBoundaries = variableCandidates->pageBoundaries();
+    }
     const auto pageBegin = variableCandidates == nullptr
                                ? std::size_t{0}
                                : variableCandidates->pageBegin();

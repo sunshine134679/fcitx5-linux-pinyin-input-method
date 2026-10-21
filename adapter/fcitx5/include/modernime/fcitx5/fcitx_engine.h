@@ -132,6 +132,9 @@ public:
     }
 
     std::size_t pageBegin() const { return currentBoundary().begin; }
+    const std::vector<core::PageBoundary> &pageBoundaries() const noexcept {
+        return boundaries_;
+    }
 
     const fcitx::CandidateWord &candidate(int index) const override {
         return candidateFromAll(

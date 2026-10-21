@@ -147,5 +147,19 @@ int main() {
                          annotatedSurface.operations.end(), "text: (马具；电极)") !=
                    annotatedSurface.operations.end(),
                "annotated candidate renders annotation as secondary text");
+
+    modernime::core::CandidatePage indicatorPage;
+    indicatorPage.items = {{"第一项", "dyx", 0}, {"第二项", "dex", 1}};
+    indicatorPage.pageBoundaries = {{0, 2}, {2, 4}};
+    indicatorPage.cursor = 0;
+    const auto indicatorLayout = modernime::ui::CandidateBarLayout::measure(
+        indicatorPage, modernime::ui::CandidateBarMetrics::reference());
+    RecordingSurface indicatorSurface;
+    modernime::ui::CandidateBarRenderer::render(indicatorSurface, indicatorLayout, style);
+    assertTrue(std::find(indicatorSurface.operations.begin(),
+                         indicatorSurface.operations.end(), "text:1/2 ►") !=
+                   indicatorSurface.operations.end(),
+               "renderer renders page indicator text when multi-page layout has page indicator");
+
     return EXIT_SUCCESS;
 }

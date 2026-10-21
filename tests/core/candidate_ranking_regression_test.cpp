@@ -1168,6 +1168,123 @@ TEST_F(CandidateRankingRegression, MultiSyllableShortPinyin_PytTieBreakingStabil
     EXPECT_EQ(variants.size(), 1u) << "Candidate ordering for 'pyt' must have exactly 1 variant across 30 repeats";
 }
 
+TEST_F(CandidateRankingRegression, EnglishDictionary_Prefix128Truncation_RecoversContextAndTranslate) {
+    const auto contPred = core::EnglishDictionary::predictWords("cont", 3);
+    EXPECT_FALSE(contPred.empty());
+    bool hasContext = false;
+    for (const auto &w : contPred) {
+        if (w == "context") hasContext = true;
+    }
+    EXPECT_TRUE(hasContext) << "cont must predict 'context' in top 3 without 128-word alphabetical truncation";
+
+    const auto transPred = core::EnglishDictionary::predictWords("trans", 3);
+    EXPECT_FALSE(transPred.empty());
+    bool hasTranslate = false;
+    for (const auto &w : transPred) {
+        if (w == "translate") hasTranslate = true;
+    }
+    EXPECT_TRUE(hasTranslate) << "trans must predict 'translate' in top 3 without 128-word alphabetical truncation";
+}
+
+TEST_F(CandidateRankingRegression, EnglishPrediction_RelaxedThreshold_3LetterAndExtension) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 3-letter prefix app -> apple / application
+    c.reset();
+    type(c, "app");
+    bool hasApple = false;
+    for (const auto &item : c.page().items) {
+        if (item.text == "apple" || item.text == "application") hasApple = true;
+    }
+    EXPECT_TRUE(hasApple) << "Relaxed 3-letter threshold predicts 'apple' or 'application' for 'app'";
+
+    // 3-letter prefix doc -> document
+    c.reset();
+    type(c, "doc");
+    bool hasDocument = false;
+    for (const auto &item : c.page().items) {
+        if (item.text == "document") hasDocument = true;
+    }
+    EXPECT_TRUE(hasDocument) << "Relaxed 3-letter threshold predicts 'document' for 'doc'";
+
+    // Word extension: compute -> computer
+    c.reset();
+    type(c, "compute");
+    bool hasComputer = false;
+    for (const auto &item : c.page().items) {
+        if (item.text == "computer") hasComputer = true;
+    }
+    EXPECT_TRUE(hasComputer) << "Allow predicting 'computer' when input is valid word 'compute'";
+}
+
+TEST_F(CandidateRankingRegression, CrossArbitration_ShortPinyinPytPromotesPythonToTop3) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    c.reset();
+    type(c, "pyt");
+    ASSERT_GE(c.page().items.size(), 2u);
+
+    // Chinese #1 must be preserved
+    EXPECT_NE(c.page().items[0].text, "python") << "Chinese #1 must be preserved for 'pyt'";
+    EXPECT_EQ(c.page().items[0].commitRole, core::CommitCandidateRole::Chinese);
+
+    // Python should be promoted to slot 2 (index 1) or at least top 3
+    bool pythonInTop3 = false;
+    for (std::size_t i = 0; i < std::min(std::size_t(3), c.page().items.size()); ++i) {
+        if (c.page().items[i].text == "python") {
+            pythonInTop3 = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(pythonInTop3) << "'python' should enter top 3 for consonant abbreviation 'pyt'";
+}
+
+TEST_F(CandidateRankingRegression, SharedResources_HotwordPathFallbackOnMissingFile) {
+    auto fallbackPaths = paths;
+    fallbackPaths.hotwordDictionary = (root / "nonexistent-hotwords.dict").string();
+    pinyin::PinyinCandidateProvider provider(fallbackPaths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    c.reset();
+    type(c, "yyds");
+    bool hasYyds = false;
+    for (const auto &item : c.page().items) {
+        if (item.text == "永远滴神") {
+            hasYyds = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(hasYyds) << "Fallback to default hotword candidates preserves hotwords like '永远滴神'";
+}
+
+#if defined(MODERNIME_HAS_FCITX5)
+TEST_F(CandidateRankingRegression, CandidateBarLayout_PageIndicatorMultiPage) {
+    core::CandidatePage page;
+    page.preedit = "qingbangwodakaiwenjian";
+    for (std::size_t i = 0; i < 16; ++i) {
+        core::CandidateItem item;
+        item.text = "选项" + std::to_string(i);
+        item.fullPinyin = "qing";
+        item.sourceIndex = i;
+        page.items.push_back(std::move(item));
+    }
+    page.pageBoundaries = {{0, 8}, {8, 16}};
+    page.cursor = 0;
+
+    const auto metrics = ui::CandidateBarMetrics::reference();
+    const auto layout = ui::CandidateBarLayout::measure(page, metrics);
+    EXPECT_EQ(layout.pageIndicatorText, "1/2 ►");
+    EXPECT_GE(layout.pageIndicator.width, 36.0);
+    EXPECT_LE(layout.pageIndicator.x + layout.pageIndicator.width,
+              metrics.panelX + metrics.panelWidth);
+}
+#endif
+
 } // namespace
 
 
