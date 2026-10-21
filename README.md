@@ -18,10 +18,10 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.17_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.17_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.17-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.17-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.18_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.18_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.18-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.18-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -649,6 +649,16 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
 ## 版本更新记录
+
+### v0.1.18 (2026-10-21)
+
+- **消除英文静态前缀补全 128 条截断缺陷**：重构 `core/src/english_dictionary.cpp`，按长词/高频/词性权重多维度进行全局优先队列 Top-K 挑选（最多扩展收集至 512 项候选并精确截取），彻底解决 `con-`、`trans-`、`pro-` 等多词前缀下高频词被字母序早早截断的问题（例如 `configuration`、`translation`、`protocol` 顺畅入选）。
+- **放宽 3 字母前缀英文单词补全门槛与输入预测**：在 `algorithm/pinyin/src/pinyin_candidate_provider.cpp` 中放宽英文候选提取门槛，允许如 `app`、`con`、`pro` 等 3 字母有效前缀正常触发长词英文补全。
+- **拼音词典路径自愈机制**：增强 `algorithm/pinyin/src/pinyin_shared_resources.cpp`，在标准路径未找到系统或用户词典时自动回退扫描 `/usr/share/modernime/pinyin/`、`~/.local/share/modernime/pinyin/` 等多重路径，杜绝词典缺失导致的召回降级。
+- **候选条多页状态直观提示**：在水平候选条右侧增设优雅的分页指示符（例如 `1/2 ►`），让用户直观掌握候选总页数与当前翻页状态，大幅优化多页候选浏览质感。
+- **纯声母简拼技术词中英跨维度智能仲裁**：在 `algorithm/pinyin/src/candidate_composition.cpp` 引入纯声母/缩写跨领域仲裁，当输入 `pyt` 时第一位保持高质量中文候选（如「普通话/拼音/平台」），第二位精准保留首位高频技术英文词（如 `python`），兼顾中文习惯与程序员技术词打字流畅度。
+- **外部词频对数平滑与导入保护**：在 `tools/settings/data_controller.cpp` 引入 `normalizeImportedWeight` 对数平滑算法，对导入的外部用户词库原始频次进行科学归一化，防止外部畸高频次冲击并破坏本地学习衰减体系。
+- 完整发布说明见 [v0.1.18](docs/releases/v0.1.18.md)。
 
 ### v0.1.17 (2026-10-19)
 
