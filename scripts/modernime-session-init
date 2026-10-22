@@ -151,7 +151,57 @@ else
     printf 'Created initial Fcitx5 profile:  %s\n' "$fcitx5_profile"
 fi
 
-# 5. Reload or restart Fcitx5 in graphical session
+# 5. GNOME Shell integration for Overview search and native candidate popups
+is_gnome=false
+current_desktop="${XDG_CURRENT_DESKTOP:-}"
+if [[ "$current_desktop" =~ [Gg][Nn][Oo][Mm][Ee] ]] || command -v gnome-shell >/dev/null 2>&1; then
+    is_gnome=true
+fi
+
+if [[ "$is_gnome" == true ]]; then
+    gnome_ext_uuid="kimpanel@kde.org"
+    user_ext_dir="$data_home/gnome-shell/extensions/$gnome_ext_uuid"
+    bundled_ext_dir=""
+    for ext_candidate in \
+        "$prefix/share/modernime/extensions/$gnome_ext_uuid" \
+        "$script_dir/../data/extensions/$gnome_ext_uuid" \
+        "/usr/share/modernime/extensions/$gnome_ext_uuid" \
+        "/usr/local/share/modernime/extensions/$gnome_ext_uuid"; do
+        if [[ -d "$ext_candidate" && -f "$ext_candidate/metadata.json" ]]; then
+            bundled_ext_dir="$ext_candidate"
+            break
+        fi
+    done
+
+    if [[ -n "$bundled_ext_dir" ]]; then
+        if [[ ! -d "$user_ext_dir" ]]; then
+            printf 'Deploying GNOME Shell extension for Overview search: %s\n' "$gnome_ext_uuid"
+            mkdir -p "$data_home/gnome-shell/extensions"
+            cp -r "$bundled_ext_dir" "$user_ext_dir"
+        fi
+        if command -v glib-compile-schemas >/dev/null 2>&1 && [[ -d "$user_ext_dir/schemas" && ! -f "$user_ext_dir/schemas/gschemas.compiled" ]]; then
+            glib-compile-schemas "$user_ext_dir/schemas" 2>/dev/null || true
+        fi
+    fi
+
+    # Ensure extension is enabled if gnome-extensions or gsettings is available
+    if command -v gnome-extensions >/dev/null 2>&1; then
+        gnome-extensions enable "$gnome_ext_uuid" 2>/dev/null || true
+    fi
+    if command -v gsettings >/dev/null 2>&1; then
+        current_exts=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "")
+        if [[ -n "$current_exts" && "$current_exts" != *"'$gnome_ext_uuid'"* && "$current_exts" != *"\"$gnome_ext_uuid\""* ]]; then
+            if [[ "$current_exts" == "@as []" || "$current_exts" == "[]" ]]; then
+                new_exts="['$gnome_ext_uuid']"
+            else
+                new_exts="${current_exts%\]}, '$gnome_ext_uuid']"
+            fi
+            gsettings set org.gnome.shell enabled-extensions "$new_exts" 2>/dev/null || true
+        fi
+    fi
+fi
+
+# 6. Reload or restart Fcitx5 in graphical session
 skip_restart=false
 case "${MODERNIME_SKIP_FCITX_RESTART:-}" in
     1|true|TRUE|yes|YES)

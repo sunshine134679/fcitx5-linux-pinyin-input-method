@@ -374,6 +374,9 @@ EOF
         printf '%s\n' "$prefix/share/doc/modernime/copyright"
         printf '%s\n' "$prefix/share/doc/modernime/THIRD_PARTY_NOTICES.md"
         printf '%s\n' "$prefix/share/doc/modernime/SOURCES.json"
+        if [[ -d "$prefix/share/modernime/extensions" ]]; then
+            find "$prefix/share/modernime/extensions" -type f | sort
+        fi
         if [[ "$is_system_prefix" != true ]]; then
             printf '%s\n' "$desktop_dir/modernime-settings.desktop"
             printf '%s\n' "$config_home/environment.d/90-modernime.conf"

@@ -18,10 +18,10 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.18_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.18_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.18-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.18-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.19_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.19_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.19-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.19-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -649,6 +649,14 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
 ## 版本更新记录
+
+### v0.1.19 (2026-10-22)
+
+- **GNOME Shell Overview (Super 键概览搜索栏) 中文输入与候选框深度支持**：彻底解决在 GNOME Shell 46+ 环境下按下 Super 键后 Overview 概览搜索栏中中文输入法无法调出候选框的问题。系统内置集成 `kimpanel@kde.org` 原生 Clutter 扩展资产，通过 `/org/kde/impanel` 协议直接在 GNOME Shell 舞台内部实时渲染跟随光标的候选框。
+- **开箱即用会话自动化集成与激活**：在 `modernime-session-init` 与 `install.sh` 部署链中实现智能桌面探测，检测到 GNOME 会话时自动部署扩展至用户目录、编译 GSchema 并无缝启用，无需用户手动寻找或编译安装扩展。
+- **安装生命周期与对称卸载规范化**：将扩展资产深度纳入 `install_lifecycle.sh` 的清单管理 (`install-manifest.txt`)，并在 `uninstall.sh` 中实现完全对称的受控白名单校验与目录递归收敛，杜绝任何卸载残留。
+- **打包流水线与测试门禁适配**：适配 DEB/RPM 打包逻辑与包仓库门禁测试 (`verify_package_repo_gate.sh`)、升级安装回退验证 (`verify_release_install_upgrade.sh`)，保障一键升级与系统包管理器升级链路绝对稳固。
+- 完整发布说明见 [v0.1.19](docs/releases/v0.1.19.md)。
 
 ### v0.1.18 (2026-10-21)
 

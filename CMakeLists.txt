@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ModernIME VERSION 0.1.18 LANGUAGES CXX)
+project(ModernIME VERSION 0.1.19 LANGUAGES CXX)
 
 option(MODERNIME_BUILD_FCITX5 "Build the Fcitx5 addon targets" OFF)
 option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" OFF)
@@ -81,6 +81,10 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/copyright"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/modernime"
+)
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions"
 )
 
 if(MODERNIME_PACKAGE_CHANNEL)
