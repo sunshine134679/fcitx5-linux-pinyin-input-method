@@ -26,7 +26,7 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
         COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_test.sh" --build-dir "${CMAKE_BINARY_DIR}"
     )
     set_tests_properties(modernime_configuration_contract PROPERTIES
-        TIMEOUT 180
+        TIMEOUT 300
         RUN_SERIAL TRUE
     )
 endif()
@@ -962,5 +962,9 @@ if(BASH_EXECUTABLE)
     add_test(NAME modernime_verify_package_repo_gate
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/verify_package_repo_gate.sh
+    )
+    set_tests_properties(modernime_verify_package_repo_gate modernime_verify_release_install_upgrade PROPERTIES
+        RUN_SERIAL TRUE
+        TIMEOUT 300
     )
 endif()

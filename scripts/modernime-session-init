@@ -174,12 +174,10 @@ if [[ "$is_gnome" == true ]]; then
     done
 
     if [[ -n "$bundled_ext_dir" ]]; then
-        if [[ ! -d "$user_ext_dir" ]]; then
-            printf 'Deploying GNOME Shell extension for Overview search: %s\n' "$gnome_ext_uuid"
-            mkdir -p "$data_home/gnome-shell/extensions"
-            cp -r "$bundled_ext_dir" "$user_ext_dir"
-        fi
-        if command -v glib-compile-schemas >/dev/null 2>&1 && [[ -d "$user_ext_dir/schemas" && ! -f "$user_ext_dir/schemas/gschemas.compiled" ]]; then
+        printf 'Deploying GNOME Shell extension for Overview search: %s\n' "$gnome_ext_uuid"
+        mkdir -p "$user_ext_dir"
+        cp -rf "$bundled_ext_dir"/. "$user_ext_dir"/
+        if command -v glib-compile-schemas >/dev/null 2>&1 && [[ -d "$user_ext_dir/schemas" ]]; then
             glib-compile-schemas "$user_ext_dir/schemas" 2>/dev/null || true
         fi
     fi
