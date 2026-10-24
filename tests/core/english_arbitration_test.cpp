@@ -503,6 +503,65 @@ void testMultiItemEnglishCompletions() {
     std::filesystem::remove(learningPath, error);
 }
 
+void testSingleSyllablePinyinSuppressesStaticEnglishPredictions() {
+    std::error_code error;
+    const auto learningPath = testPath("english-arbitration-syllable.sqlite3");
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+        // you：既是合法单音节拼音（有/又/友…）又是英文单词。
+        // 单音节契约要求前排全部为地道中文：静态英文补全（your/young/yours）
+        // 不得出现，原始英文 you 仍按既有规则沉底可及。
+        provider.reset();
+        assertTrue(provider.append("you"), "append you");
+        const auto &pageYou = provider.page();
+        assertTrue(!pageYou.items.empty() && pageYou.items.front().text == "有",
+                   "you rank 0 is '有'");
+        assertTrue(indexOf(pageYou, "your") == pageYou.items.size(),
+                   "static completion 'your' must not appear for single-syllable pinyin input");
+        assertTrue(indexOf(pageYou, "young") == pageYou.items.size(),
+                   "static completion 'young' must not appear for single-syllable pinyin input");
+        assertTrue(indexOf(pageYou, "yours") == pageYou.items.size(),
+                   "static completion 'yours' must not appear for single-syllable pinyin input");
+        assertTrue(indexOf(pageYou, "又") < 10, "'又' back within top 10 for you");
+
+        // can：双属性豁免只保留英文原词次选；补全（cannot/canal/candy）不得
+        // 把一级常用中文挤出前排（参 回到前 5）。
+        provider.reset();
+        assertTrue(provider.append("can"), "append can");
+        const auto &pageCan = provider.page();
+        assertTrue(!pageCan.items.empty() &&
+                       pageCan.items.front().source != modernime::core::CandidateSource::Raw,
+                   "can rank 0 is Chinese");
+        assertTrue(indexOf(pageCan, "cannot") == pageCan.items.size(),
+                   "static completion 'cannot' must not appear for single-syllable pinyin input");
+        assertTrue(indexOf(pageCan, "canal") == pageCan.items.size(),
+                   "static completion 'canal' must not appear for single-syllable pinyin input");
+        assertTrue(indexOf(pageCan, "can") == 1, "raw English 'can' keeps rank 1 exemption");
+        assertTrue(indexOf(pageCan, "参") < 5, "'参' back within top 5 for can");
+
+        // app 不是合法拼音串：v0.1.18 的 3 字母英文补全放宽必须继续生效。
+        provider.reset();
+        assertTrue(provider.append("app"), "append app");
+        const auto &pageApp = provider.page();
+        assertTrue(indexOf(pageApp, "apple") < pageApp.items.size(),
+                   "app still predicts 'apple'");
+        assertTrue(indexOf(pageApp, "application") < pageApp.items.size(),
+                   "app still predicts 'application'");
+    }
+    std::filesystem::remove(learningPath, error);
+}
+
 } // namespace
 
 int main() {
@@ -513,5 +572,6 @@ int main() {
     testChinesePersonalizationBeatsEnglishWord();
     testRawPinyinCommitDoesNotPolluteEnglishPrediction();
     testMultiItemEnglishCompletions();
+    testSingleSyllablePinyinSuppressesStaticEnglishPredictions();
     return EXIT_SUCCESS;
 }

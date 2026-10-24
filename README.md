@@ -660,7 +660,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ### v0.1.18 (2026-10-21)
 
-- **消除英文静态前缀补全 128 条截断缺陷**：重构 `core/src/english_dictionary.cpp`，按长词/高频/词性权重多维度进行全局优先队列 Top-K 挑选（最多扩展收集至 512 项候选并精确截取），彻底解决 `con-`、`trans-`、`pro-` 等多词前缀下高频词被字母序早早截断的问题（例如 `configuration`、`translation`、`protocol` 顺畅入选）。
+- **消除英文静态前缀补全 128 条截断缺陷**：重构 `core/src/english_dictionary.cpp`，移除字母序 128 条硬截断，对当前前缀的全部词条按长词/高频/词性权重多维度评分排序后截取 Top-3，彻底解决 `con-`、`trans-`、`pro-` 等多词前缀下高频词被字母序早早截断的问题（例如 `configuration`、`translation`、`protocol` 顺畅入选）。
 - **放宽 3 字母前缀英文单词补全门槛与输入预测**：在 `algorithm/pinyin/src/pinyin_candidate_provider.cpp` 中放宽英文候选提取门槛，允许如 `app`、`con`、`pro` 等 3 字母有效前缀正常触发长词英文补全。
 - **拼音词典路径自愈机制**：增强 `algorithm/pinyin/src/pinyin_shared_resources.cpp`，在标准路径未找到系统或用户词典时自动回退扫描 `/usr/share/modernime/pinyin/`、`~/.local/share/modernime/pinyin/` 等多重路径，杜绝词典缺失导致的召回降级。
 - **候选条多页状态直观提示**：在水平候选条右侧增设优雅的分页指示符（例如 `1/2 ►`），让用户直观掌握候选总页数与当前翻页状态，大幅优化多页候选浏览质感。

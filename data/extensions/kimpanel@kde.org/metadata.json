@@ -3,11 +3,9 @@
   "description": "Input Method Panel using KDE's kimpanel protocol for Gnome-Shell",
   "extension-id": "kimpanel",
   "gettext-domain": "gnome-shell-extensions-kimpanel",
-  "locale": "/usr/local/share/locale",
   "name": "Input Method Panel",
   "settings-schema": "org.gnome.shell.extensions.kimpanel",
   "shell-version": [
-    "45",
     "46",
     "47"
   ],

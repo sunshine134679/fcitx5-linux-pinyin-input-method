@@ -1751,10 +1751,21 @@ private:
             (hasTrustedShortAbbreviation || isConsonantAbbreviation ||
              (hasExactFullPinyinMatch && isTopChineseLexical));
 
+        // 单音节完整拼音输入（you/can/she 等）在存在精确匹配的高置信中文时，
+        // 不注入静态英文补全：单音节前排必须保持全部地道中文（既有单音节
+        // 英文沉底契约）。已学英文召回与纯声母缩写（pyt→python）不受此限制。
+        const bool singleSyllableChineseProtected =
+            rawInput.find('\'') == std::string::npos &&
+            core::PinyinMatchPolicy::isValidPinyinSequence(rawInput) &&
+            core::PinyinMatchPolicy::segmentPinyin(rawInput).find('\'') ==
+                std::string::npos &&
+            hasExactFullPinyinMatch && isTopChineseLexical;
+
         const bool shouldPredictEnglish =
             (rawInput.empty() || rawInput.front() != 'v') &&
             !hasTrustedShortAbbreviation &&
             rawInput.size() >= 3 &&
+            !singleSyllableChineseProtected &&
             (isEnglish ||
              (isConsonantAbbreviation && rawInput.size() <= 3) ||
              (!hasHighConfidenceChinese && !hasExactFullPinyinMatch &&
