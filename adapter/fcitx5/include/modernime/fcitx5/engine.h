@@ -200,6 +200,9 @@ private:
         std::string contextAfter;
         std::chrono::steady_clock::time_point timestamp;
         bool valid = false;
+        // 提交后是否观测到过非空文档窗口。真实"删光"必然先经过非空阶段；
+        // 首次观测即为空只可能是窗口跳转（如切到空输入框），不构成删光证据。
+        bool sawDocumentText = false;
         std::vector<std::string> originalChars;
         std::vector<std::string> originalSyllables;
     };

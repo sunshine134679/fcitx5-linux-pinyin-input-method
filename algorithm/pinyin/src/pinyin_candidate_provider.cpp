@@ -1588,10 +1588,30 @@ private:
                 typoContext.reset();
             }
         }
+        // 容错变体上下文（2026-10-24 容错专项 F3/F4/F6/F8）：对有效拼音串
+        // 构造近音变体解码。门槛：无隔音符、长度 >= 3、且不是单个合法音节
+        // （de/qu/zhang 等单音节不做变体，避免高频输入的噪声与额外解码）。
+        std::unique_ptr<libime::PinyinContext> variantContext;
+        std::string variantInput;
+        if (rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
+            !core::PinyinMatchPolicy::isStandardSyllable(rawInput)) {
+            variantInput = core::PinyinMatchPolicy::rhymeVariantInput(rawInput);
+            if (variantInput != rawInput) {
+                try {
+                    variantContext =
+                        std::make_unique<libime::PinyinContext>(shared_->ime.get());
+                    variantContext->type(variantInput);
+                } catch (const std::exception &) {
+                    variantContext.reset();
+                    variantInput.clear();
+                }
+            }
+        }
         const auto requestNowMs = nowMilliseconds();
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
-            contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_);
+            contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
+            variantContext.get());
         const auto segmentedInput =
             automaticallySegmentedPreedit(rawInput, result);
         const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);
@@ -1807,6 +1827,21 @@ private:
                                   partialPool, learning.get(), requestNowMs, &recentChoices_)
             : std::vector<core::CandidateItem>{};
 
+        // 变体召回的最佳候选交给组合器占第 2 位可见席位（含读音标注依据）。
+        std::optional<core::CandidateItem> compInputVariantTop;
+        if (variantContext != nullptr && !variantInput.empty()) {
+            const auto variantCanonical =
+                core::PinyinMatchPolicy::canonical(variantInput);
+            for (const auto &item : fullItems) {
+                if (item.isLexical && item.consumedInputBytes == rawInput.size() &&
+                    core::PinyinMatchPolicy::canonical(item.fullPinyin) ==
+                        variantCanonical) {
+                    compInputVariantTop = item;
+                    break;
+                }
+            }
+        }
+
         CandidateCompositionInput compInput;
         compInput.rawInput = rawInput;
         compInput.canonicalInput = canonicalInput;
@@ -1815,6 +1850,7 @@ private:
         compInput.partialCandidates = std::move(partialPool);
         compInput.prefixEnds = prefixEnds;
         compInput.prefixEvidence = std::move(prefixEvidence);
+        compInput.variantTopCandidate = std::move(compInputVariantTop);
         compInput.macroCandidates = generateMacroCandidates(rawInput, canonicalInput);
         compInput.englishPredictions = std::move(predictedWords);
         compInput.learnedEnglishCount = learnedEnglishCount;
@@ -1873,6 +1909,33 @@ private:
         auto compResult = composeCandidates(compInput);
         page_.items = std::move(compResult.items);
         page_.preedit = std::move(compResult.preedit);
+        // L1 读音标注（2026-10-24 容错专项，用户门槛：只标高频读音歧义词）：
+        // 仅当本轮存在近音变体召回时，为前 3 位内"读音来自变体"的词典成词
+        // 候选标注实际读音（kazhu -> 卡着 [ka zhe]）。简拼、错位拼与字面一致
+        // 候选一律不标注。标注只改展示，不改身份、排序与消费范围。
+        if (variantContext != nullptr && !variantInput.empty()) {
+            const auto variantCanonical =
+                core::PinyinMatchPolicy::canonical(variantInput);
+            const auto rawCanonical = core::PinyinMatchPolicy::canonical(rawInput);
+            std::size_t annotated = 0;
+            for (std::size_t i = 0; i < page_.items.size() && i < 3 && annotated < 2; ++i) {
+                auto &item = page_.items[i];
+                if (!item.isLexical || !item.annotation.empty() ||
+                    item.consumedInputBytes != rawInput.size()) {
+                    continue;
+                }
+                const auto itemCanonical =
+                    core::PinyinMatchPolicy::canonical(item.fullPinyin);
+                if (itemCanonical.empty() || itemCanonical == rawCanonical ||
+                    itemCanonical != variantCanonical) {
+                    continue;
+                }
+                std::string reading = item.fullPinyin;
+                std::replace(reading.begin(), reading.end(), '\'', ' ');
+                item.annotation = std::move(reading);
+                ++annotated;
+            }
+        }
         pageAuthorized_ = !page_.items.empty();
     }
 

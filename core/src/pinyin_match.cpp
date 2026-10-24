@@ -141,6 +141,143 @@ bool PinyinMatchPolicy::isCoreChineseWord(std::string_view text, std::string_vie
     return isProtectedCoreDefault(text, pinyin);
 }
 
+bool PinyinMatchPolicy::isStandardSyllable(std::string_view syllable) {
+    if (syllable.empty() || syllable.size() > 7) {
+        return false;
+    }
+    std::array<char, 8> lowerBuf{};
+    for (std::size_t i = 0; i < syllable.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(syllable[i]);
+        if (!std::isalpha(ch)) {
+            return false;
+        }
+        lowerBuf[i] = static_cast<char>(std::tolower(ch));
+    }
+    return isValidMandarinSyllable(std::string_view(lowerBuf.data(), syllable.size()));
+}
+
+namespace {
+
+// 对单个音节尝试近音变体替换；返回空串表示该音节无可行变体。
+// 每个方向都必须产出合法标准音节，且要求原音节与新音节不同。
+std::string_view variantForSyllable(std::string_view syllable, bool requireOriginalInvalid) {
+    if (syllable.size() < 2 || syllable.size() > 6) {
+        return {};
+    }
+    const auto accept = [&](std::string_view candidate) {
+        return candidate != syllable &&
+               modernime::core::PinyinMatchPolicy::isStandardSyllable(candidate) &&
+               (!requireOriginalInvalid ||
+                !modernime::core::PinyinMatchPolicy::isStandardSyllable(syllable));
+    };
+    const auto emit = [&](std::string &&candidate) -> std::string_view {
+        static thread_local std::string buffer;
+        buffer = std::move(candidate);
+        return buffer;
+    };
+    // 注意：不引入 *ang -> *an 方向的变体。an/ang 是 matchTypoSyllable 的
+    // 容错容忍对，该方向变体会被 priority() 判为 prio=2 与真首选同组竞争
+    //（2026-10-24 实测把 qingbangwodakaiwenjian 的首选挤掉）。an/ang 多打 g
+    // 的正确解法是解码层 AN_ANG 模糊音，属独立行为变更另行评审。
+    // 介音删除：声母 {b p m d t n l j q x} + ao -> iao（baoyan -> biaoyan）
+    if (syllable.size() == 3 && syllable.ends_with("ao")) {
+        const char initial = syllable.front();
+        const bool medialInitial = initial == 'b' || initial == 'p' ||
+                                   initial == 'm' || initial == 'd' ||
+                                   initial == 't' || initial == 'n' ||
+                                   initial == 'l' || initial == 'j' ||
+                                   initial == 'q' || initial == 'x';
+        if (medialInitial) {
+            std::string expanded = std::string(1, syllable.front()) + "iao";
+            if (accept(expanded)) {
+                return emit(std::move(expanded));
+            }
+        }
+    }
+    // 韵尾 u <-> e（kazhu -> kazhe；kazhe -> kazhu）
+    if (syllable.size() >= 3 &&
+        (syllable.back() == 'u' || syllable.back() == 'e')) {
+        std::string swapped(syllable);
+        swapped.back() = swapped.back() == 'u' ? 'e' : 'u';
+        if (accept(swapped)) {
+            return emit(std::move(swapped));
+        }
+    }
+    // ui <-> iu（lui -> liu；shiu -> shui）
+    if (syllable.size() >= 3 && syllable.ends_with("ui")) {
+        std::string swapped = std::string(syllable.substr(0, syllable.size() - 2)) + "iu";
+        if (accept(swapped)) {
+            return emit(std::move(swapped));
+        }
+    }
+    if (syllable.size() >= 3 && syllable.ends_with("iu")) {
+        std::string swapped = std::string(syllable.substr(0, syllable.size() - 2)) + "ui";
+        if (accept(swapped)) {
+            return emit(std::move(swapped));
+        }
+    }
+    // 无效单音节的声母混淆（最后兜底）：r <-> l（rai -> lai）
+    if (requireOriginalInvalid &&
+        (syllable.front() == 'r' || syllable.front() == 'l')) {
+        std::string swapped(syllable);
+        swapped.front() = syllable.front() == 'r' ? 'l' : 'r';
+        if (accept(swapped)) {
+            return emit(std::move(swapped));
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+std::string PinyinMatchPolicy::rhymeVariantInput(std::string_view input) {
+    if (input.size() < 2 || input.size() > 32) {
+        return std::string(input);
+    }
+    for (const char character : input) {
+        if (character == '\'' || !(character >= 'a' && character <= 'z')) {
+            return std::string(input);
+        }
+    }
+    // 整串不是合法拼音（如 rai/lui/wie）：按单音节规则尝试一次替换。
+    if (!isValidPinyinSequence(input)) {
+        const auto variant = variantForSyllable(input, true);
+        return variant.empty() ? std::string(input) : std::string(variant);
+    }
+    // 合法拼音串：切分后从左到右找第一个"可变"音节，至多修改一个。
+    const auto segmented = segmentPinyin(input);
+    if (segmented.empty() || segmented == input) {
+        return std::string(input);
+    }
+    std::vector<std::string> syllables;
+    std::size_t start = 0;
+    while (start < segmented.size()) {
+        const auto pos = segmented.find('\'', start);
+        const auto end = pos == std::string::npos ? segmented.size() : pos;
+        if (end > start) {
+            syllables.emplace_back(segmented.substr(start, end - start));
+        }
+        if (pos == std::string::npos) {
+            break;
+        }
+        start = pos + 1;
+    }
+    for (std::size_t index = 0; index < syllables.size(); ++index) {
+        const auto variant = variantForSyllable(syllables[index], false);
+        if (!variant.empty()) {
+            std::string result;
+            for (std::size_t j = 0; j < syllables.size(); ++j) {
+                if (j) {
+                    result.push_back('\'');
+                }
+                result += j == index ? std::string(variant) : syllables[j];
+            }
+            return result;
+        }
+    }
+    return std::string(input);
+}
+
 std::string PinyinMatchPolicy::canonical(std::string_view fullPinyin) {
     if (fullPinyin.starts_with("!u!") || fullPinyin.starts_with("!U!")) {
         fullPinyin.remove_prefix(3);
@@ -480,24 +617,28 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
         return "xi'an";
     }
 
-    // 仅对较长且非明显拼音换位的明确长英文前缀（如 garag -> garage, appl -> apple）保护，
-    // 避免短拼音换位（如 jai -> jia, xai -> xia, sna -> san）被生僻英文（如 jail）截断。
+    // F7（2026-10-24 容错专项）：英文预测保护只让位于"已知换位族"的拼音
+    // 修复（jaili -> jiali 家里）；其余长英文前缀（garag -> garage）保持原样，
+    // 避免漏击补全规则（*ag -> *ang 等）误改英文。
     const bool isPotentialTypo =
-        (input == "jai" || input == "xai" || input == "qai" ||
-         input.starts_with("sna") || input.starts_with("zna") ||
-         input.starts_with("cna") || input.starts_with("jain") ||
-         input.starts_with("xain") || input.starts_with("qain") ||
-         input.starts_with("tain") || input.starts_with("dain") ||
-         input.starts_with("lain") || input.starts_with("gaun") ||
-         input.starts_with("kaun") || input.starts_with("haun") ||
-         input.starts_with("taio") || input.starts_with("xaio") ||
-         input.starts_with("jaio") || input.starts_with("daio") ||
-         input.starts_with("qaio") || input.starts_with("laio") ||
-         input.starts_with("naio") || input.starts_with("baio") ||
-         input.starts_with("paio") || input.starts_with("maio") ||
-         input.starts_with("gaung") || input.starts_with("haung") ||
-         input.starts_with("kaung") || input.starts_with("zhaung") ||
-         input.starts_with("shaung") || input.starts_with("chaung"));
+        (input.starts_with("jai") || input.starts_with("xai") ||
+         input.starts_with("qai") || input.starts_with("wie") ||
+         input.starts_with("xei") || input.starts_with("jei") ||
+         input.starts_with("qei") || input.starts_with("sna") ||
+         input.starts_with("zna") || input.starts_with("cna") ||
+         input.starts_with("jain") || input.starts_with("xain") ||
+         input.starts_with("qain") || input.starts_with("tain") ||
+         input.starts_with("dain") || input.starts_with("lain") ||
+         input.starts_with("gaun") || input.starts_with("kaun") ||
+         input.starts_with("haun") || input.starts_with("taio") ||
+         input.starts_with("xaio") || input.starts_with("jaio") ||
+         input.starts_with("daio") || input.starts_with("qaio") ||
+         input.starts_with("laio") || input.starts_with("naio") ||
+         input.starts_with("baio") || input.starts_with("paio") ||
+         input.starts_with("maio") || input.starts_with("gaung") ||
+         input.starts_with("haung") || input.starts_with("kaung") ||
+         input.starts_with("zhaung") || input.starts_with("shaung") ||
+         input.starts_with("chaung"));
     if (!isPotentialTypo && input.size() >= 5) {
         const auto englishPredictions = EnglishDictionary::predictWords(input, 1);
         if (!englishPredictions.empty() && englishPredictions.front() != input) {
@@ -617,10 +758,16 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
         }
     }
 
-    // 3.3 介音主元音反转: jai -> jia, xai -> xia, qai -> qia
+    // 3.3 介音主元音反转: jai -> jia, xai -> xia, qai -> qia；
+    // F5（2026-10-24 容错专项）：补充元音换位 wie/xei/jei/qei——wie 均为非法
+    // 音节且换位后合法，支持 wie s m（为什么 打快）一类的换位+简拼混合。
     for (const auto &pair : {std::pair<std::string_view, std::string_view>{"jai", "jia"},
                              std::pair<std::string_view, std::string_view>{"xai", "xia"},
-                             std::pair<std::string_view, std::string_view>{"qai", "qia"}}) {
+                             std::pair<std::string_view, std::string_view>{"qai", "qia"},
+                             std::pair<std::string_view, std::string_view>{"wie", "wei"},
+                             std::pair<std::string_view, std::string_view>{"xei", "xie"},
+                             std::pair<std::string_view, std::string_view>{"jei", "jie"},
+                             std::pair<std::string_view, std::string_view>{"qei", "qie"}}) {
         pos = 0;
         while ((pos = s.find(pair.first, pos)) != std::string::npos) {
             const bool atEndOrConsonant = (pos + 3 == s.size() || s[pos + 3] == '\'' || isConsonant(s[pos + 3]));

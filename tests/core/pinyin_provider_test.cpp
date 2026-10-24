@@ -1272,6 +1272,8 @@ void testExplicitCharacterExtractionAndLearning() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testKeystrokeVariantRecallAndReadingAnnotation();
+
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
@@ -1586,5 +1588,90 @@ int main() {
     testInterCompositionPhraseFormationAndRestart();
     testHouxuanlanPhraseFormation();
     testExplicitCharacterExtractionAndLearning();
+    testKeystrokeVariantRecallAndReadingAnnotation();
+    assertTrue(modernime::core::PinyinMatchPolicy::rhymeVariantInput("kazhu") == "ka'zhe",
+               "rhymeVariantInput maps kazhu to ka'zhe");
+    assertTrue(modernime::core::PinyinMatchPolicy::rhymeVariantInput("angquan") == "angquan",
+               "rhymeVariantInput never promotes typo-tolerated nasal pairs");
+    assertTrue(modernime::core::PinyinMatchPolicy::rhymeVariantInput("nihao") == "nihao",
+               "rhymeVariantInput leaves ordinary input unchanged");
+    assertTrue(modernime::core::PinyinMatchPolicy::rhymeVariantInput("rai") == "lai",
+               "rhymeVariantInput fixes initial confusion rai->lai");
+    assertTrue(modernime::core::PinyinMatchPolicy::isStandardSyllable("zhe"),
+               "isStandardSyllable accepts zhe");
+    assertTrue(!modernime::core::PinyinMatchPolicy::isStandardSyllable("wie"),
+               "isStandardSyllable rejects wie");
     return EXIT_SUCCESS;
 }
+
+void testKeystrokeVariantRecallAndReadingAnnotation() {
+    // 2026-10-24 容错专项 F3/F4/F5/F6/F7/F8：有效拼音的近韵尾/多打 g/介音删除/
+    // 换位+简拼混合/英文保护误伤/纯英文霸顶。变体候选只保证可达（不高位、
+    // 不篡合法首选），并为韵尾变体类附读音标注（用户门槛：仅高频读音歧义词
+    // 标注，简拼与错位拼不标注）。
+    const auto learningPath = testPath("keystroke-variant-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+
+    // F4：kazhu 合法读作 ka'zhu（卡住 居首不动），卡着 经 u→e 变体可达且带读音标注
+    assertTrue(provider.append("kazhu"), "kazhu accepted");
+    assertTrue(provider.page().items.front().text == "卡住",
+               "kazhu legal reading 卡住 stays rank 0");
+    const auto kazheIdx = indexOf(provider.page(), "卡着");
+    assertTrue(kazheIdx < provider.page().items.size(),
+               "kazhu variant recalls 卡着");
+    assertTrue(kazheIdx < 15, "卡着 reachable within top 15");
+    assertTrue(provider.page().items[kazheIdx].annotation.find("zhe") !=
+                   std::string::npos,
+               "卡着 carries reading annotation zhe");
+    assertTrue(provider.page().items.front().annotation.empty(),
+               "literal reading 卡住 carries no annotation");
+    provider.reset();
+
+    // F3（an/ang 多打 g）按回归结论移出本轮：an/ang 为容错容忍对，变体方向
+    // 会侵入 prio=2 组挤掉真首选；正确解法为解码层 AN_ANG 模糊音，另行评审。
+
+    // F6：介音删除 —— baoyan 召回 表演
+    assertTrue(provider.append("baoyan"), "baoyan accepted");
+    assertTrue(indexOf(provider.page(), "表演") < 10, "baoyan recalls 表演 in top 10");
+    provider.reset();
+
+    // F5：换位+简拼混合 —— wiesm 召回 为什么（仅消费 wie 段）
+    assertTrue(provider.append("wiesm"), "wiesm accepted");
+    const auto wsmIdx = indexOf(provider.page(), "为什么");
+    assertTrue(wsmIdx < 5, "wiesm recalls 为什么 in top 5");
+    provider.reset();
+
+    // F7：英文前缀保护不得误伤拼音换位 —— jaili 召回 家里
+    assertTrue(provider.append("jaili"), "jaili accepted");
+    assertTrue(indexOf(provider.page(), "家里") < 5, "jaili recalls 家里 in top 5");
+    provider.reset();
+
+    // F8：纯英文霸顶 —— rai/lui 的中文目标经变体召回可达。rai 本身是受
+    // ALG-ZHEN 保护的英文预测场景（rail/rain），不降权英文，只保证可达。
+    assertTrue(provider.append("rai"), "rai accepted");
+    assertTrue(indexOf(provider.page(), "来") < 10, "rai recalls 来 in top 10");
+    provider.reset();
+    assertTrue(provider.append("lui"), "lui accepted");
+    assertTrue(indexOf(provider.page(), "六") < 10, "lui recalls 六 in top 10");
+    provider.reset();
+
+    // 标注门槛负例：简拼与错位拼不得产生读音标注
+    assertTrue(provider.append("wsm"), "wsm accepted");
+    for (std::size_t i = 0; i < 3 && i < provider.page().items.size(); ++i) {
+        assertTrue(provider.page().items[i].annotation.empty(),
+                   "abbreviation input carries no reading annotation");
+    }
+    provider.reset();
+    assertTrue(provider.append("snaqian"), "snaqian accepted");
+    for (std::size_t i = 0; i < 3 && i < provider.page().items.size(); ++i) {
+        assertTrue(provider.page().items[i].annotation.empty(),
+                   "transposition correction carries no reading annotation");
+    }
+    provider.reset();
+
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+}
+

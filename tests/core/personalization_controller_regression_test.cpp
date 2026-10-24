@@ -89,6 +89,37 @@ TEST_F(PersonalizationControllerRegression, FullDeletionDiscardsIntermediateSing
     EXPECT_EQ(word->negativeFeedback, 1);
 }
 
+TEST_F(PersonalizationControllerRegression, EmptyWindowJumpAfterCommitDoesNotPunishLearning) {
+    // F2（2026-10-24 容错专项实测发现）：提交后宿主首次上报的周边窗口即为空
+    // （窗口跳转/空输入框），并非"删光"。真实删除必然先经过非空窗口阶段；
+    // 首次观测为空只视为窗口跳转，不得对原词触发负反馈，学习频次正常累积。
+    for (int n = 0; n < 3; ++n) {
+        commit("nihao", "你好");
+        controller->setContext("", "");
+    }
+    const auto state = snapshot();
+    const auto *word = state->entry("你好", "nihao", "", "");
+    ASSERT_NE(word, nullptr);
+    EXPECT_EQ(word->negativeFeedback, 0);
+    EXPECT_GT(word->frequency, 0);
+}
+
+TEST_F(PersonalizationControllerRegression, LearnedFuzzyInitialVariantCanReachTopRank) {
+    // F1（2026-10-24 容错专项实测发现）：LibIME 模糊解码把"击键形读音"候选
+    // （zongwen 输入下的 纵纹 zong'wen）置于 prio=2 组，把"规范读音"候选
+    // （中文 zhong'wen）置于 prio=0 组；组间排序不受学习影响，导致经错串
+    // 反复选择建立的成熟偏好（boost >= 1.8）永远无法越过一次声母误差。
+    // 未学习时保持原排序：中文 不得凭空居首。
+    type("zongwen");
+    EXPECT_NE(controller->page().items.front().text, "中文");
+    controller->reset();
+    for (int n = 0; n < 20; ++n) {
+        commit("zongwen", "中文");
+    }
+    type("zongwen");
+    EXPECT_EQ(controller->page().items.front().text, "中文");
+}
+
 TEST_F(PersonalizationControllerRegression, ValidEmptyContextReplacesFallbackAfterDeletion) {
     commit("nihao", "你好");
     controller->setContext("你好", "");

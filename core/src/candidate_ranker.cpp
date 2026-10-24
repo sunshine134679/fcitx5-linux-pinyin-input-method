@@ -147,13 +147,44 @@ CandidateRanker::rank(std::string_view userInput,
                 candidate.match_priority == 1 && !abbreviationPromoted[i]
             ? candidate.abbreviation_admission_score() : candidate.final_score());
     }
+    // F1（2026-10-24 容错专项）：LibIME 模糊解码把击键形读音候选（如
+    // zongwen 输入下的 zong'wen）判为 prio=2、规范读音候选（zhong'wen）判为
+    // prio=0，组间排序不受学习影响，成熟偏好永远无法越过一次声母误差。
+    // 与简拼晋升同构：prio=0（全覆盖模糊变体）候选在学习增益达到既有
+    // 成熟学习者阈值 1.8 后，可与 prio=2 直接匹配组按最终分数竞争。
+    // 门槛收紧：候选读音必须与输入音节数一致（模糊变体天然保持音节结构），
+    // 排除"王绍龙王"类分段造词产生的音节数不符学习词条越组晋升。
+    std::size_t inputSyllables = 0;
+    {
+        const auto segmented = PinyinMatchPolicy::segmentPinyin(userInput);
+        if (!segmented.empty()) {
+            inputSyllables = static_cast<std::size_t>(
+                                 std::count(segmented.begin(), segmented.end(), '\'')) +
+                             1;
+        }
+    }
+    const auto effectivePriority = [&candidates, inputSyllables](std::size_t index) {
+        const auto &candidate = candidates[index];
+        if (candidate.match_priority != 0 || !std::isfinite(candidate.learning_boost) ||
+            candidate.learning_boost < 1.8 || inputSyllables == 0 ||
+            candidate.full_pinyin.empty()) {
+            return candidate.match_priority;
+        }
+        const auto candidateSyllables =
+            static_cast<std::size_t>(
+                std::count(candidate.full_pinyin.begin(), candidate.full_pinyin.end(), '\'')) +
+            1;
+        return candidateSyllables == inputSyllables ? 2 : candidate.match_priority;
+    };
     std::stable_sort(order.begin(), order.end(),
-                     [&candidates, &abbreviationPromoted, &preferenceCosts](std::size_t left,
-                                                        std::size_t right) -> bool {
+                     [&candidates, &abbreviationPromoted, &preferenceCosts,
+                      &effectivePriority](std::size_t left, std::size_t right) -> bool {
         const auto &a = candidates[left];
         const auto &b = candidates[right];
-        if (a.match_priority != b.match_priority) {
-            return a.match_priority > b.match_priority;
+        const auto aPriority = effectivePriority(left);
+        const auto bPriority = effectivePriority(right);
+        if (aPriority != bPriority) {
+            return aPriority > bPriority;
         }
         if (abbreviationPromoted[left] != abbreviationPromoted[right]) {
             return abbreviationPromoted[left];

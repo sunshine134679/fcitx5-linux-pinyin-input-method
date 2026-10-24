@@ -252,6 +252,7 @@ void ModernIMEController::initRecentCommit(
     recentCommit_.timestamp = std::chrono::steady_clock::now();
     recentCommit_.originalChars = std::move(utf8Chars);
     recentCommit_.originalSyllables = std::move(syllables);
+    recentCommit_.sawDocumentText = !basePrefix.empty() || !contextAfter.empty();
     recentCommit_.valid = true;
 }
 
@@ -282,6 +283,9 @@ bool ModernIMEController::checkRecentCommitDeletionFeedback(
     // A shorter "before" alone proves no deletion: the missing text may simply
     // have moved to "after". Only an otherwise unchanged window is evidence.
     const std::string document = before + after;
+    if (!document.empty()) {
+        recentCommit_.sawDocumentText = true;
+    }
     const auto matchesWindow = [&](std::string_view remaining) {
         const std::string expected = recentCommit_.basePrefix +
                                      std::string(remaining) +
@@ -298,6 +302,15 @@ bool ModernIMEController::checkRecentCommitDeletionFeedback(
         return false;
     }
     if (matchesWindow("")) {
+        // An empty document is only evidence of "deleted everything" when the
+        // committed text was actually observed in the document first. A first
+        // observation that is already empty is a window jump (for example the
+        // caret moved to a fresh empty field): drop tracking without punishing
+        // the word (F2, 2026-10-24 容错专项).
+        if (!recentCommit_.sawDocumentText) {
+            recentCommit_.valid = false;
+            return false;
+        }
         provider_->onNegativeFeedback(recentCommit_.originalText,
                                      recentCommit_.originalPinyin);
         provider_->resetCommitHistory();

@@ -15,6 +15,7 @@ namespace modernime::pinyin {
 enum class CompositionStage {
     FuzzyInterleave,
     ChineseMultiGranularity,
+    VariantRecallPlacement,
     MacroInsert,
     EnglishAndRawPlacement,
     CommandPlacement,
@@ -27,6 +28,7 @@ enum class CompositionStage {
 enum class MoveReason {
     InitialPlacement,
     FuzzyInterleaveHigherRank,
+    VariantRecallVisible,
     MacroInsertPos,
     EnglishPreferOverChinese,
     EnglishNormalPlacement,
@@ -67,6 +69,11 @@ struct CandidateCompositionInput {
     std::string clipboardTrigger = "v";
 
     double topChineseLearningBoost = 0.0;
+
+    // 近音变体召回的最佳候选（2026-10-24 容错专项）：来自 rhymeVariantInput
+    // 派生解码（如 kazhu -> 卡着 ka'zhe）。组合器将其置于第 2 位可见席位，
+    // 不改变既有语义顺序的所有权；为空表示本轮无变体召回。
+    std::optional<core::CandidateItem> variantTopCandidate;
 
     std::optional<std::string> englishDefinition;
     std::function<std::string(std::string_view word)> resolveEnglishDefinition;

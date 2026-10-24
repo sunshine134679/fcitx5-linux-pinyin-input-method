@@ -124,6 +124,22 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
                    MoveReason::InitialPlacement);
     }
 
+    // Stage 2.5: Variant Recall Placement（2026-10-24 容错专项）
+    // 近音变体候选（kazhu 输入下经 ka'zhe 解码召回的 卡着）默认沉在
+    // prio=0 组尾部不可见；组合器将其置入第 2 位可见席位，保留既有
+    // 首选与语义顺序。后续 Deduplication 阶段按身份合并重复项。
+    if (input.variantTopCandidate.has_value() &&
+        !input.variantTopCandidate->text.empty()) {
+        core::CandidateItem variantItem = *input.variantTopCandidate;
+        const auto insertPos = mixed.empty() ? mixed.begin()
+                                             : std::next(mixed.begin());
+        const auto index = static_cast<std::size_t>(std::distance(mixed.begin(), insertPos));
+        mixed.insert(insertPos, std::move(variantItem));
+        recordMove(input.variantTopCandidate->source,
+                   CompositionStage::VariantRecallPlacement, index,
+                   MoveReason::VariantRecallVisible);
+    }
+
     // Stage 3: Macro Insertion
     if (!input.macroCandidates.empty()) {
         std::size_t insertPos =

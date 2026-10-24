@@ -21,7 +21,8 @@ CandidatePipelineResult buildCandidatePipeline(
     const core::LearningSnapshot *learning, std::int64_t nowMs,
     std::string_view contextBefore, std::string_view contextAfter,
     const std::vector<std::string> &previousOrder,
-    const libime::PinyinContext *typoContext, const RecentChoices *recentChoices) {
+    const libime::PinyinContext *typoContext, const RecentChoices *recentChoices,
+    const libime::PinyinContext *variantContext) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
     // libime 的候选已按解码代价升序排列。简拼输入（如 yyds）会展开出
@@ -126,6 +127,37 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = fullPinyin;
             // 容错补充候选稍加惩罚（+0.8F 解码代价），避免在原词完全合法时过度喧宾夺主
             candidate.decoder_score = typoCandidates[index].score() + 0.8F;
+            result.scored.push_back(std::move(candidate));
+        }
+    }
+
+    if (variantContext != nullptr) {
+        const auto &variantCandidates = variantContext->candidates();
+        const std::size_t variantLimit =
+            std::min<std::size_t>(variantCandidates.size(), 16);
+        for (std::size_t index = 0; index < variantLimit; ++index) {
+            const auto text = variantCandidates[index].toString();
+            std::string fullPinyin;
+            try {
+                fullPinyin = variantContext->candidateFullPinyin(index);
+            } catch (const std::exception &) {
+                fullPinyin.clear();
+            }
+            if (fullPinyin.empty()) {
+                continue;
+            }
+            const auto key = core::candidateOrderKey(text, fullPinyin);
+            if (seenKeys.contains(key)) {
+                continue;
+            }
+            seenKeys.insert(key);
+            core::CandidateScore candidate;
+            candidate.source_index = index;
+            candidate.text = text;
+            candidate.full_pinyin = fullPinyin;
+            // 近音变体是最低位的补充召回来源：惩罚显著高于纠错候选（+0.8），
+            // 且只依赖 F1 的成熟学习提升或既有混排插位获得可见性。
+            candidate.decoder_score = variantCandidates[index].score() + 2.0F;
             result.scored.push_back(std::move(candidate));
         }
     }
