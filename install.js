@@ -2,7 +2,7 @@
 // Repository guidance and copying remain independent of release API requests.
 (() => {
   const base = "https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method";
-  const systems = {noble: "Ubuntu 24.04 LTS", jammy: "Ubuntu 22.04 LTS", bookworm: "Debian 12"};
+  const systems = {noble: "Ubuntu 24.04 LTS"};
   function updateSource() {
     const option = document.querySelector("input[name=deb-system]:checked");
     const suite = option?.dataset.suite;
