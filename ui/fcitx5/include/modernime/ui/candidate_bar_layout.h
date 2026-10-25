@@ -73,6 +73,10 @@ struct CandidateGeometry final {
     std::string displayText;
     std::string annotation;
     bool selected = false;
+    // 易错音内联读音提示（如 卡qiǎ住）：hintAfterChar 为 displayText 的词
+    // 部分（不含序号）第几个 UTF-8 码点之后插入 hint。
+    std::string hint;
+    std::size_t hintAfterChar = 0;
 
     CandidateGeometry() = default;
     CandidateGeometry(Rect boundsVal, std::string displayVal,

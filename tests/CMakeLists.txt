@@ -834,6 +834,18 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     target_link_libraries(modernime_candidate_bar_renderer_tests PRIVATE modernime_core)
     add_test(NAME modernime_candidate_bar_renderer COMMAND modernime_candidate_bar_renderer_tests)
 
+    add_executable(modernime_candidate_reading_hint_tests ui/candidate_reading_hint_test.cpp)
+    target_include_directories(modernime_candidate_reading_hint_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
+    )
+    target_sources(modernime_candidate_reading_hint_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_renderer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_bar_layout.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
+    )
+    target_link_libraries(modernime_candidate_reading_hint_tests PRIVATE modernime_core)
+    add_test(NAME modernime_candidate_reading_hint COMMAND modernime_candidate_reading_hint_tests)
+
     add_executable(modernime_cairo_surface_tests ui/cairo_surface_test.cpp)
     target_include_directories(modernime_cairo_surface_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include

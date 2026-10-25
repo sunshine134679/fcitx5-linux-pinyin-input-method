@@ -317,7 +317,11 @@ CandidateBarLayout CandidateBarLayout::measure(
         if (!page.items[index].annotation.empty()) {
             candidateAnnotation = " (" + page.items[index].annotation + ")";
         }
-        const std::string measuredText = displayText + candidateAnnotation;
+        // 易错音内联读音提示宽度按候选正文字体估算（布局回调只有一种字号，
+        // 渲染用更小的注音字体，估宽只会偏保守，不会溢出）。
+        std::string hintText = page.items[index].readingHint;
+        const std::string measuredText =
+            displayText + hintText + candidateAnnotation;
         double slotWidth = metrics.candidateWidth;
         double selectedWidth = metrics.selectedWidth;
         if (textWidth) {
@@ -336,8 +340,9 @@ CandidateBarLayout CandidateBarLayout::measure(
             }
             const auto textPadding = std::max(metrics.candidateTextPadding,
                                               metrics.selectedTextPadding);
-            if (!candidateAnnotation.empty()) {
+            if (!candidateAnnotation.empty() || !hintText.empty()) {
                 candidateAnnotation.clear();
+                hintText.clear();
                 const auto measuredWidth = std::max(0.0, textWidth(displayText));
                 slotWidth = std::max(
                     metrics.candidateWidth,
@@ -372,6 +377,11 @@ CandidateBarLayout CandidateBarLayout::measure(
                        (metrics.panelHeight - metrics.candidateHeight) / 2.0;
         layout.candidates.push_back(
             {{x, y, slotWidth, metrics.candidateHeight}, displayText, candidateAnnotation, selected});
+        if (!hintText.empty()) {
+            auto &geometry = layout.candidates.back();
+            geometry.hint = std::move(hintText);
+            geometry.hintAfterChar = page.items[index].readingHintAfterCharIndex;
+        }
         if (selected) {
             layout.selectedPill = {x, y, selectedWidth, metrics.selectedHeight};
         }

@@ -40,6 +40,13 @@ struct CandidateItem final {
     double recentChoiceBonus = 0.0;
     std::optional<CommitCandidateRole> commitRole;
     std::vector<CandidateSource> origins = {};
+    // 易错音内联读音提示（2026-10-25，调研后按"读音有误才标注"规则）：
+    // 仅当用户输入的无声调节节与该字在本词中的规范读音不一致（如把 卡住
+    // 记成 kazhu，规范为 qiǎ）时，在该字后内联标注正确读音，渲染为
+    // "卡qiǎ住"。readingHintAfterCharIndex 是 item.text 内第几个 UTF-8
+    // 码点之后插入提示。提示只属展示层，不进入身份、排序与消费范围。
+    std::string readingHint = {};
+    std::size_t readingHintAfterCharIndex = 0;
 };
 
 struct CandidateIdentity {

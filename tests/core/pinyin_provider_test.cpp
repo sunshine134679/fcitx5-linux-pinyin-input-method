@@ -1607,26 +1607,40 @@ int main() {
 void testKeystrokeVariantRecallAndReadingAnnotation() {
     // 2026-10-24 容错专项 F3/F4/F5/F6/F7/F8：有效拼音的近韵尾/多打 g/介音删除/
     // 换位+简拼混合/英文保护误伤/纯英文霸顶。变体候选只保证可达（不高位、
-    // 不篡合法首选），并为韵尾变体类附读音标注（用户门槛：仅高频读音歧义词
-    // 标注，简拼与错位拼不标注）。
+    // 不篡合法首选）。
+    // 2026-10-25 读音提示按调研结论重做：卡住 的规范读音是 qiǎ（《现代汉语
+    // 词典》第七版）；仅当用户输入的无声调节节与该字规范读音不一致（如把
+    // 卡住 记成 kazhu）时，才在该字后内联标注正确读音（卡qiǎ住）。卡着、
+    // 简拼、错位拼、正确读音输入一律不标注。
     const auto learningPath = testPath("keystroke-variant-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
     paths.learningStore = learningPath.string();
     modernime::pinyin::PinyinCandidateProvider provider(paths);
 
-    // F4：kazhu 合法读作 ka'zhu（卡住 居首不动），卡着 经 u→e 变体可达且带读音标注
+    // F4：kazhu 打错读音（卡 应读 qia）—— 卡住 居首且内联标注 qiǎ；
+    // 卡着 经 u→e 变体可达，但不再携带任何读音标注。
     assertTrue(provider.append("kazhu"), "kazhu accepted");
     assertTrue(provider.page().items.front().text == "卡住",
                "kazhu legal reading 卡住 stays rank 0");
+    assertTrue(provider.page().items.front().readingHint == "qiǎ",
+               "misread kazhu gives 卡住 inline reading hint qiǎ");
+    assertTrue(provider.page().items.front().readingHintAfterCharIndex == 0,
+               "卡住 hint attaches after the first character");
     const auto kazheIdx = indexOf(provider.page(), "卡着");
     assertTrue(kazheIdx < provider.page().items.size(),
                "kazhu variant recalls 卡着");
     assertTrue(kazheIdx < 15, "卡着 reachable within top 15");
-    assertTrue(provider.page().items[kazheIdx].annotation.find("zhe") !=
-                   std::string::npos,
-               "卡着 carries reading annotation zhe");
-    assertTrue(provider.page().items.front().annotation.empty(),
-               "literal reading 卡住 carries no annotation");
+    assertTrue(provider.page().items[kazheIdx].annotation.empty() &&
+                   provider.page().items[kazheIdx].readingHint.empty(),
+               "卡着 carries no annotation of any kind");
+    provider.reset();
+
+    // 正确读音输入（qiazhu）不提示：用户已读对，无需教学。
+    assertTrue(provider.append("qiazhu"), "qiazhu accepted");
+    const auto qiazhuIdx = indexOf(provider.page(), "卡住");
+    assertTrue(qiazhuIdx < 3, "qiazhu correct reading 卡住 in top 3");
+    assertTrue(provider.page().items[qiazhuIdx].readingHint.empty(),
+               "correctly typed reading carries no hint");
     provider.reset();
 
     // F3（an/ang 多打 g）按回归结论移出本轮：an/ang 为容错容忍对，变体方向
@@ -1657,16 +1671,18 @@ void testKeystrokeVariantRecallAndReadingAnnotation() {
     assertTrue(indexOf(provider.page(), "六") < 10, "lui recalls 六 in top 10");
     provider.reset();
 
-    // 标注门槛负例：简拼与错位拼不得产生读音标注
+    // 标注门槛负例：简拼与错位拼不得产生读音提示
     assertTrue(provider.append("wsm"), "wsm accepted");
     for (std::size_t i = 0; i < 3 && i < provider.page().items.size(); ++i) {
-        assertTrue(provider.page().items[i].annotation.empty(),
+        assertTrue(provider.page().items[i].annotation.empty() &&
+                       provider.page().items[i].readingHint.empty(),
                    "abbreviation input carries no reading annotation");
     }
     provider.reset();
     assertTrue(provider.append("snaqian"), "snaqian accepted");
     for (std::size_t i = 0; i < 3 && i < provider.page().items.size(); ++i) {
-        assertTrue(provider.page().items[i].annotation.empty(),
+        assertTrue(provider.page().items[i].annotation.empty() &&
+                       provider.page().items[i].readingHint.empty(),
                    "transposition correction carries no reading annotation");
     }
     provider.reset();

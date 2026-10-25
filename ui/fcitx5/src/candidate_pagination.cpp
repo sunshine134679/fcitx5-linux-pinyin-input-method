@@ -32,6 +32,9 @@ std::vector<core::PageBoundary> CandidatePagination::partition(
             const auto localIndex = end - begin;
             auto displayText = std::to_string(localIndex + 1) + "." +
                                      items[end].text;
+            // 度量串必须与 CandidateBarLayout::measure 完全一致（含易错音
+            // 内联读音提示宽度），否则分页与布局可见数失配（CAND-PAGES）。
+            displayText += items[end].readingHint;
             if (!items[end].annotation.empty()) {
                 displayText += " (" + items[end].annotation + ")";
             }

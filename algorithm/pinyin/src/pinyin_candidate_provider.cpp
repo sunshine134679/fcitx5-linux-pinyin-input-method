@@ -9,6 +9,7 @@
 #include "modernime/pinyin/user_dictionary.h"
 
 #include "modernime/core/pinyin_match.h"
+#include "modernime/core/reading_hints.h"
 #include "modernime/core/english_dictionary.h"
 #include "modernime/core/english_definition_dictionary.h"
 #include "modernime/core/learning_writer.h"
@@ -1909,31 +1910,93 @@ private:
         auto compResult = composeCandidates(compInput);
         page_.items = std::move(compResult.items);
         page_.preedit = std::move(compResult.preedit);
-        // L1 读音标注（2026-10-24 容错专项，用户门槛：只标高频读音歧义词）：
-        // 仅当本轮存在近音变体召回时，为前 3 位内"读音来自变体"的词典成词
-        // 候选标注实际读音（kazhu -> 卡着 [ka zhe]）。简拼、错位拼与字面一致
-        // 候选一律不标注。标注只改展示，不改身份、排序与消费范围。
-        if (variantContext != nullptr && !variantInput.empty()) {
-            const auto variantCanonical =
-                core::PinyinMatchPolicy::canonical(variantInput);
-            const auto rawCanonical = core::PinyinMatchPolicy::canonical(rawInput);
-            std::size_t annotated = 0;
-            for (std::size_t i = 0; i < page_.items.size() && i < 3 && annotated < 2; ++i) {
+        // 内联读音提示（2026-10-25 调研后重做，规则同主流输入法"读音有误
+        // 才标注"）：仅当用户以全拼逐字输入、且标注位的实际读音与该字在
+        // 本词中的规范读音不一致（如把 卡住 记成 kazhu，规范为 qia）时，
+        // 在该字后内联标注正确读音（渲染为 卡qiǎ住）。词表离线经 Unihan
+        // 逐字校验；简拼、错位拼、正确读音输入一律不提示；标注只属展示层，
+        // 不改身份、排序与消费范围。
+        {
+            // 持有拷贝而非 string_view：segmented 是临时串，视图会悬垂。
+            std::vector<std::string> rawSyllables;
+            {
+                const auto segmented =
+                    core::PinyinMatchPolicy::segmentPinyin(rawInput);
+                for (std::size_t start = 0; start < segmented.size();) {
+                    const auto sep = segmented.find('\'', start);
+                    const auto stop = sep == std::string::npos ? segmented.size() : sep;
+                    if (stop > start) {
+                        rawSyllables.emplace_back(segmented.substr(start, stop - start));
+                    }
+                    if (sep == std::string::npos) break;
+                    start = sep + 1;
+                }
+            }
+            bool rawIsFullPinyin = !rawSyllables.empty();
+            for (const auto &syllable : rawSyllables) {
+                if (!core::PinyinMatchPolicy::isStandardSyllable(syllable)) {
+                    rawIsFullPinyin = false;
+                    break;
+                }
+            }
+            std::size_t hinted = 0;
+            for (std::size_t i = 0; i < page_.items.size() && i < 3 && hinted < 2; ++i) {
                 auto &item = page_.items[i];
-                if (!item.isLexical || !item.annotation.empty() ||
-                    item.consumedInputBytes != rawInput.size()) {
+                if (!rawIsFullPinyin || !item.isLexical ||
+                    item.source == core::CandidateSource::Raw ||
+                    item.source == core::CandidateSource::Command ||
+                    item.source == core::CandidateSource::EnglishDefinition) {
                     continue;
                 }
-                const auto itemCanonical =
-                    core::PinyinMatchPolicy::canonical(item.fullPinyin);
-                if (itemCanonical.empty() || itemCanonical == rawCanonical ||
-                    itemCanonical != variantCanonical) {
+                const auto *hint = core::readingHintFor(item.text);
+                if (hint == nullptr) {
                     continue;
                 }
-                std::string reading = item.fullPinyin;
-                std::replace(reading.begin(), reading.end(), '\'', ' ');
-                item.annotation = std::move(reading);
-                ++annotated;
+                std::size_t charCount = 0;
+                for (const char c : item.text) {
+                    if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) ++charCount;
+                }
+                if (charCount == 0 || rawSyllables.size() != charCount ||
+                    hint->afterCharIndex >= charCount) {
+                    continue; // 输入音节与整词字数不对应（简拼/部分消费）
+                }
+                std::vector<std::string_view> wordSyllables;
+                {
+                    std::string_view pinyin = item.fullPinyin;
+                    if (pinyin.starts_with("!u!") || pinyin.starts_with("!U!")) {
+                        pinyin.remove_prefix(3);
+                    }
+                    for (std::size_t start = 0; start < pinyin.size();) {
+                        const auto sep = pinyin.find('\'', start);
+                        const auto stop = sep == std::string_view::npos ? pinyin.size() : sep;
+                        if (stop > start) {
+                            wordSyllables.emplace_back(pinyin.substr(start, stop - start));
+                        }
+                        if (sep == std::string_view::npos) break;
+                        start = sep + 1;
+                    }
+                }
+                if (wordSyllables.size() != charCount) {
+                    continue;
+                }
+                bool sameWordTyping = true;
+                for (std::size_t s = 0; s < charCount; ++s) {
+                    if (s == hint->afterCharIndex) continue;
+                    if (rawSyllables[s] != wordSyllables[s]) {
+                        sameWordTyping = false;
+                        break;
+                    }
+                }
+                if (!sameWordTyping) {
+                    continue;
+                }
+                if (rawSyllables[hint->afterCharIndex] ==
+                    std::string_view(hint->canonicalToneless)) {
+                    continue; // 该字读音输入正确，不提示
+                }
+                item.readingHint = hint->reading;
+                item.readingHintAfterCharIndex = hint->afterCharIndex;
+                ++hinted;
             }
         }
         pageAuthorized_ = !page_.items.empty();

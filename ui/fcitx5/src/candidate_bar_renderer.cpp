@@ -130,41 +130,85 @@ void CandidateBarRenderer::render(RenderSurface &surface,
         const auto valueText = separator != std::string_view::npos
                                    ? displayText.substr(separator + 1)
                                    : displayText;
+        // 易错音内联读音提示：在词部分第 hintAfterChar 个 UTF-8 码点之后切分
+        // （前缀含 hintAfterChar+1 个字），以小号注音字体绘制该字正确读音
+        // （如 卡qiǎ住）。
+        std::size_t hintBytes = 0;
+        std::size_t chars = 0;
+        while (!candidate.hint.empty() && hintBytes < valueText.size() &&
+               chars <= candidate.hintAfterChar) {
+            const auto lead = static_cast<unsigned char>(valueText[hintBytes]);
+            hintBytes += lead < 0x80 ? 1
+                        : (lead & 0xE0) == 0xC0 ? 2
+                        : (lead & 0xF0) == 0xE0 ? 3
+                        : (lead & 0xF8) == 0xF0 ? 4 : 1;
+            ++chars;
+        }
+        const auto valuePrefix =
+            candidate.hint.empty() ? valueText : valueText.substr(0, hintBytes);
+        const auto valueSuffix =
+            candidate.hint.empty() ? std::string_view{}
+                                   : valueText.substr(hintBytes);
         const auto indexMetrics =
             surface.textMetrics(indexText, style.candidateNumberText);
-        const auto valueMetrics =
-            surface.textMetrics(valueText, style.candidateText);
+        const auto prefixMetrics =
+            surface.textMetrics(valuePrefix, style.candidateText);
+        const auto suffixMetrics =
+            valueSuffix.empty()
+                ? TextMetrics{}
+                : surface.textMetrics(valueSuffix, style.candidateText);
+        const auto hintMetrics =
+            candidate.hint.empty()
+                ? TextMetrics{}
+                : surface.textMetrics(candidate.hint, style.annotationText);
         const auto annotationMetrics =
             candidate.annotation.empty()
                 ? TextMetrics{}
                 : surface.textMetrics(candidate.annotation, style.annotationText);
-        const auto textWidth = indexMetrics.width + valueMetrics.width +
+        const auto valueWidth = prefixMetrics.width + hintMetrics.width +
+                                suffixMetrics.width;
+        const auto textWidth = indexMetrics.width + valueWidth +
                                (candidate.annotation.empty() ? 0.0 : annotationMetrics.width);
         const auto textX = textWidth <= textBounds.width
                                ? textBounds.x +
                                      (textBounds.width - textWidth) / 2.0
                                : textBounds.x;
+        const auto valueHeight = std::max(
+            {prefixMetrics.height, hintMetrics.height, suffixMetrics.height});
+        const auto valueBaseline = std::max(
+            {prefixMetrics.baseline, hintMetrics.baseline, suffixMetrics.baseline});
         const auto textHeight =
             candidate.annotation.empty()
-                ? std::max(indexMetrics.height, valueMetrics.height)
-                : std::max({indexMetrics.height, valueMetrics.height,
+                ? std::max(indexMetrics.height, valueHeight)
+                : std::max({indexMetrics.height, valueHeight,
                             annotationMetrics.height});
         const auto baseline =
             textBounds.y + (textBounds.height - textHeight) / 2.0 +
             (candidate.annotation.empty()
-                 ? std::max(indexMetrics.baseline, valueMetrics.baseline)
-                 : std::max({indexMetrics.baseline, valueMetrics.baseline,
+                 ? std::max(indexMetrics.baseline, valueBaseline)
+                 : std::max({indexMetrics.baseline, valueBaseline,
                              annotationMetrics.baseline}));
         const auto color = candidate.selected ? style.selectedText : style.text;
         const auto annotationColor =
             candidate.selected ? style.selectedAnnotation : style.annotation;
-        surface.text(indexText, textX, baseline, style.candidateNumberText, color);
-        surface.text(valueText, textX + indexMetrics.width, baseline,
-                     style.candidateText, color);
+        surface.text(indexText, textX, baseline, style.candidateNumberText,
+                     color);
+        double valueX = textX + indexMetrics.width;
+        surface.text(valuePrefix, valueX, baseline, style.candidateText, color);
+        valueX += prefixMetrics.width;
+        if (!candidate.hint.empty()) {
+            surface.text(candidate.hint, valueX, baseline,
+                         style.annotationText, annotationColor);
+            valueX += hintMetrics.width;
+        }
+        if (!valueSuffix.empty()) {
+            surface.text(valueSuffix, valueX, baseline, style.candidateText,
+                         color);
+            valueX += suffixMetrics.width;
+        }
         if (!candidate.annotation.empty()) {
-            surface.text(candidate.annotation,
-                         textX + indexMetrics.width + valueMetrics.width,
-                         baseline, style.annotationText, annotationColor);
+            surface.text(candidate.annotation, valueX, baseline,
+                         style.annotationText, annotationColor);
         }
     }
 
