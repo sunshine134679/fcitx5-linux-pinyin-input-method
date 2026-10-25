@@ -53,8 +53,6 @@ jobs:
         include:
           - os: ubuntu-24.04
             distro_tag: ubuntu24.04
-          - os: ubuntu-22.04
-            distro_tag: ubuntu22.04
     steps:
       - name: Checkout bound product source SHA
         uses: actions/checkout@v4
@@ -455,7 +453,6 @@ jobs:
           cd release-assets
           echo "=== 1. 检查发布产物完整性与命名规范 ==="
           ls -la
-          test $(ls -1 modernime_*_amd64_ubuntu22.04.deb 2>/dev/null | wc -l) -eq 1
           test $(ls -1 modernime_*_amd64_ubuntu24.04.deb 2>/dev/null | wc -l) -eq 1
           test $(ls -1 modernime-*.oe24.x86_64.rpm 2>/dev/null | wc -l) -eq 1
           test $(ls -1 *.tar.gz 2>/dev/null | wc -l) -eq 1

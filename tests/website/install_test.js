@@ -10,7 +10,7 @@ async function tests() {
   async function run(denied = false) {
     const elements = {};
     function element(id) {return elements[id] ||= {textContent: "", dataset: {}, events: {}, focus() {this.focused = true;}, addEventListener(name, action) {this.events[name] = action;}};}
-    const options = ["noble", "jammy", "bookworm"].map(suite => ({...element(suite), dataset: {suite}, checked: suite === "noble"}));
+    const options = ["noble"].map(suite => ({...element(suite), dataset: {suite}, checked: suite === "noble"}));
     const copy = element("copy"); copy.dataset.copy = "apt-source-command"; copy.dataset.status = "apt-copy-status";
     const open = element("open"); open.dataset.openInstall = "apt-install";
     const mobileLink = element("mobile-link");
@@ -23,12 +23,9 @@ async function tests() {
     return {elements, options, copy, open, mobileLink, keyboard, copied: () => copied, selected: () => selected};
   }
   const app = await run();
-  assert.match(app.elements["apt-source-command"].textContent, /apt\/client\/modernime-noble\.sources/);
-  app.options[0].checked = false; app.options[2].checked = true;
-  app.options[2].events.change();
-  assert.match(app.elements["apt-source-command"].textContent, /apt\/client\/modernime-bookworm\.sources/);
-  assert.match(app.elements["apt-system-name"].textContent, /Debian 12/);
-  await app.copy.events.click();
+assert.match(app.elements["apt-source-command"].textContent, /apt\/client\/modernime-noble\.sources/);
+assert.match(app.elements["apt-system-name"].textContent, /Ubuntu 24\.04/);
+await app.copy.events.click();
   assert.equal(app.copied(), app.elements["apt-source-command"].textContent);
   app.open.events.click();
   assert.equal(app.elements["apt-install"].open, true);
@@ -45,8 +42,8 @@ async function tests() {
   app.keyboard.pointerdown({target: {}});
   assert.equal(app.elements["mobile-menu"].open, false, "outside clicks must dismiss the menu");
   const existing = app.elements["apt-source-command"].textContent;
-  app.options[2].dataset.suite = "../../unsafe";
-  app.options[2].events.change();
+  app.options[0].dataset.suite = "../../unsafe";
+  app.options[0].events.change();
   assert.equal(app.elements["apt-source-command"].textContent, existing, "unrecognized suites must not enter copied commands");
   const denied = await run(true);
   await denied.copy.events.click();

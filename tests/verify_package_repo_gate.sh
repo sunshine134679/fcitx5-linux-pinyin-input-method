@@ -355,13 +355,10 @@ ci_assets_dir="${work_dir}/ci-release-assets"
 prev_pages_dir="${work_dir}/prev-pages"
 pages_site_dir="${work_dir}/pages-site"
 mkdir -p "${ci_assets_dir}" \
-    "${prev_pages_dir}/apt/pool/jammy/main/m/modernime" \
     "${prev_pages_dir}/apt/pool/noble/main/m/modernime" \
-    "${prev_pages_dir}/apt/pool/bookworm/main/m/modernime" \
     "${prev_pages_dir}/rpm/oe2409/x86_64/Packages"
 
 # Copy current DEB/RPM using the exact filenames produced by .github/workflows/release.yml
-cp -f "${deb_file}" "${ci_assets_dir}/modernime_${expected_version}_amd64_ubuntu22.04.deb"
 cp -f "${deb_file}" "${ci_assets_dir}/modernime_${expected_version}_amd64_ubuntu24.04.deb"
 cp -f "${rpm_file}" "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm"
 
@@ -379,9 +376,7 @@ chmod 0755 "${deb_018_stage}/DEBIAN/"* 2>/dev/null || true
 chmod 0644 "${deb_018_stage}/DEBIAN/control" 2>/dev/null || true
 deb_018_file="${work_dir}/modernime_0.1.8_amd64.deb"
 dpkg-deb --build "${deb_018_stage}" "${deb_018_file}" >/dev/null
-cp -f "${deb_018_file}" "${prev_pages_dir}/apt/pool/jammy/main/m/modernime/modernime_0.1.8_amd64_ubuntu22.04.deb"
 cp -f "${deb_018_file}" "${prev_pages_dir}/apt/pool/noble/main/m/modernime/modernime_0.1.8_amd64_ubuntu24.04.deb"
-cp -f "${deb_018_file}" "${prev_pages_dir}/apt/pool/bookworm/main/m/modernime/modernime_0.1.8_amd64_debian12.deb"
 
 rpm_018_file="${prev_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-0.1.8-1.oe24.x86_64.rpm"
 python3 - "${rpm_file}" "${rpm_018_file}" "${expected_version}" <<'PYEOF'
@@ -532,7 +527,7 @@ cp -f "${ephemeral_repo_dir}/oe2409/x86_64/Packages/modernime-${expected_version
     "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm"
 
 # Include the current version in prior Pages to exercise release retry idempotency.
-for suite in jammy noble bookworm; do
+for suite in noble; do
     cp -f "${inaugural_pages_dir}/apt/pool/${suite}/main/m/modernime/modernime_${expected_version}_amd64.deb" \
         "${prev_pages_dir}/apt/pool/${suite}/main/m/modernime/"
 done
@@ -566,7 +561,7 @@ printf '==> [Gate 3b] Subsequent release multi-version retention & production RP
 grep -Fq "${primary_fpr}" "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" || fail "primary fingerprint missing from KEY-FINGERPRINTS.txt"
 grep -Fq "${rotation_fpr}" "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" || fail "rotation fingerprint missing from KEY-FINGERPRINTS.txt"
 
-for suite in jammy noble bookworm; do
+for suite in noble; do
     [ -f "${pages_site_dir}/apt/dists/${suite}/main/binary-amd64/Packages" ] ||
         fail "APT Packages missing for ${suite}"
     [ -f "${pages_site_dir}/apt/dists/${suite}/main/binary-amd64/Packages.gz" ] ||
@@ -591,8 +586,8 @@ for suite in jammy noble bookworm; do
         fail "APT modernime-${suite}.sources missing"
 done
 
-printf '=== [4/7] Running REAL apt-get update & apt-cache policy against signed local APT repository (jammy, noble, bookworm) ===\n'
-for suite in jammy noble bookworm; do
+printf '=== [4/7] Running REAL apt-get update & apt-cache policy against signed local APT repository (noble) ===\n'
+for suite in noble; do
     apt_root="${work_dir}/apt-client-${suite}"
     mkdir -p \
         "${apt_root}/etc/apt/sources.list.d" \

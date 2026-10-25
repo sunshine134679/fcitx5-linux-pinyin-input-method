@@ -18,17 +18,16 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.22_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.22_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.22-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.22-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.23_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.23-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.23-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
 
 **方式 A：配置签名 APT 仓库（推荐，支持 `apt upgrade` 持续升级与版本回退）**
 
-ModernIME 采用符合现代 Debian 安全规范的 **Deb822 `.sources` 格式**与独立 `Signed-By` 密钥环（不使用已废弃的 `apt-key` 或全局信任锚），按发行版代号（Ubuntu 22.04 `jammy`、Ubuntu 24.04 `noble`、Debian 12 `bookworm`）与架构（`amd64`）严格隔离，并提供持久化签名密钥指纹核验与双密钥平滑轮换机制（详见 [`packaging/keys/README.md`](packaging/keys/README.md)）：
+ModernIME 采用符合现代 Debian 安全规范的 **Deb822 `.sources` 格式**与独立 `Signed-By` 密钥环（不使用已废弃的 `apt-key` 或全局信任锚），当前仅提供 Ubuntu 24.04 LTS（`noble`）与 `amd64` 架构的预编译软件源；Ubuntu 22.04 / Debian 12 已停止支持，请升级系统或使用源码构建。仓库提供持久化签名密钥指纹核验与双密钥平滑轮换机制（详见 [`packaging/keys/README.md`](packaging/keys/README.md)）：
 
 ```bash
 # 1. 下载并核验独立 GPG 签名密钥环（二进制 OpenPGP 格式，仅授权给 ModernIME 源）
@@ -41,11 +40,11 @@ sudo chmod 0644 /usr/share/keyrings/modernime-archive-keyring.gpg
 gpg --show-keys --with-fingerprint /usr/share/keyrings/modernime-archive-keyring.gpg
 curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/KEY-FINGERPRINTS.txt
 
-# 2. 写入 Deb822 仓库配置（自动匹配 jammy、noble 或 bookworm）
+# 2. 写入 Deb822 仓库配置（仅支持 Ubuntu 24.04 noble）
 SUITE="$(. /etc/os-release && echo "${VERSION_CODENAME:-noble}")"
 case "${SUITE}" in
-  jammy|noble|bookworm) ;;
-  *) echo "当前发行版代号 (${SUITE}) 未在预编译 APT 仓库列表中，请改用源码构建 ./install.sh" >&2 ;;
+  noble) ;;
+  *) echo "当前发行版代号 (${SUITE}) 不在预编译 APT 仓库支持范围内（仅 Ubuntu 24.04 noble），请改用源码构建 ./install.sh" >&2 ;;
 esac
 sudo tee /etc/apt/sources.list.d/modernime.sources >/dev/null <<EOF
 Types: deb
@@ -86,8 +85,8 @@ sudo apt update
 
 **方式 B：离线安装单文件 `.deb` 包**
 ```bash
-# Ubuntu 24.04 选择 *_ubuntu24.04.deb；Ubuntu 22.04 或 Debian 12 选择 *_ubuntu22.04.deb：
-sudo dpkg -i modernime_*_amd64*.deb
+# 仅提供 Ubuntu 24.04 预编译包（*_ubuntu24.04.deb）：
+sudo dpkg -i modernime_*_amd64_ubuntu24.04.deb
 # 若系统提示缺失运行库依赖，一键自动修复补全：
 sudo apt-get install -f
 ```
@@ -604,7 +603,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ### 1. Ubuntu / Debian (DEB 原生包)
 
-- **升级**：下载与当前操作系统版本严格匹配的 DEB 包（如 `ubuntu22.04` 或 `ubuntu24.04`），使用 APT 执行事务升级以自动校验并补齐可能的新依赖：
+- **升级**：下载与当前操作系统版本严格匹配的 DEB 包（`ubuntu24.04`），使用 APT 执行事务升级以自动校验并补齐可能的新依赖：
   ```bash
   sudo apt-get install --reinstall ./modernime_<new_version>_amd64_<distro>.deb
   ```
@@ -651,11 +650,16 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ## 版本更新记录
 
-### v0.1.22 (2026-10-25)
+### v0.1.23 (2026-10-25)
 
-- **简拼被学习单字越组劫持修复（ALG-RANK）**：v0.1.20/v0.1.21 的 Ubuntu 22.04 发布门禁失败的真实根因——模糊音组间晋升把“简拼段数”误当“音节数”，使学习过的单字「你」(ni) 在 `nh` 下越过 trusted 简拼「你好」。修复后晋升仅作用于全拼输入；全拼模糊音学习上位（`zongwen→中文`）与单音节行为不变。新增模型无关回归 `LearnedSingleCharCannotHijackAbbreviationInput`，并在 Ubuntu 22.04 官方容器内验证。
-- **发布门禁基线标定（Legacy LibIME 1.0.11）**：旧模型的「试/键」索引 6、「破折号」索引 16 以实测基线断言并打印实际值；现代模型保持前 5 与索引 0 的严格门禁。
-- **功能内容与 v0.1.20 一致**：高频易错音内联读音提示（卡qiǎ住）、简拼部分消费范围修复、读音提示跨 fcitx5 链路传递修复，以及 2026-10-24 容错专项的模糊音/变体召回改进。
+- **停止 Ubuntu 22.04 / Debian 12 支持**：发布门禁只保留 Ubuntu 24.04、openEuler RPM 与便携归档；APT 软件源只保留 `noble` 套件，官网下载区与 README 兼容矩阵同步移除旧选项。源码构建与便携包（glibc ≥ 2.34）继续支持其它发行版。
+- **简拼被学习单字越组劫持修复（ALG-RANK）**：模糊音组间晋升把“简拼段数”误当“音节数”，使学习过的单字「你」(ni) 在 `nh` 下越过 trusted 简拼「你好」。修复后晋升仅作用于全拼输入；全拼模糊音学习上位（`zongwen→中文`）与单音节行为不变。新增模型无关回归 `LearnedSingleCharCannotHijackAbbreviationInput`。
+- **功能内容同 v0.1.20**：高频易错音内联读音提示（卡qiǎ住）、简拼部分消费范围修复、读音提示跨 fcitx5 链路传递修复，以及 2026-10-24 容错专项的模糊音/变体召回改进。
+- 完整发布说明见 [v0.1.23](docs/releases/v0.1.23.md)。
+
+### v0.1.22 (2026-10-25，未发布)
+
+- **简拼被学习单字越组劫持修复（ALG-RANK）**：定位并修复上述根因；本标签因发布门禁调整未产出资产，功能由 v0.1.23 正式发布。
 - 完整发布说明见 [v0.1.22](docs/releases/v0.1.22.md)。
 
 ### v0.1.21 (2026-10-25，未发布)
@@ -664,7 +668,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 - **功能内容与 v0.1.20 一致**：高频易错音内联读音提示（卡qiǎ住）、简拼部分消费范围修复、读音提示跨 fcitx5 链路传递修复，以及 2026-10-24 容错专项的模糊音/变体召回改进。
 - 完整发布说明见 [v0.1.21](docs/releases/v0.1.21.md)。
 
-### v0.1.20 (2026-10-25)
+### v0.1.20 (2026-10-25，未发布)
 
 - **高频易错音内联读音提示（卡qiǎ住）**：把多音字词记混读音时自动教学——输入 `kazhu`（`卡` 记成 kǎ），首选以「卡qiǎ住」形式在字后内联标注规范读音 qiǎ（《现代汉语词典》第七版）；离线词表收录 卡住/角色(jué)/睡觉(jiào)/银行(háng)/说服(shuō)/血液(xuè)/粗犷(guǎng) 等 32 个高频易错音词，逐字经 Unicode Unihan 校验随仓库发布。读音输入正确（`qiazhu`）、简拼（`kzhu`）与错位拼不打扰；提示只改展示，不影响候选排序、身份与学习。
 - **简拼部分消费范围修复**：修复多音节简拼下原生候选冒充全消费的问题（实测 `z'm'hui'shi` 曾因高频学习的「怎么」越过整句篡位），全消费整句「怎么回事」重回首选，学习前缀词以真实部分消费居次席，选中后未消费后缀正确保留。

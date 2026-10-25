@@ -5,7 +5,6 @@
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/recent_choice.h"
-#include "native_pinyin_test_baseline.h"
 #if defined(MODERNIME_HAS_FCITX5)
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_pagination.h"
@@ -25,18 +24,6 @@ using namespace modernime;
 std::int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
-}
-// 冷启动常用字可发现性上限：旧版 LibIME 模型（1.0.11，Ubuntu 22.04/24.03）
-// 的单字原生位次更深，试/键 在该模型上实测位于索引 6（仍在首页），现代模型
-// （1.1.5）实测位于前 5。仅遗产模型使用实测上限，现代模型保持严格门禁；
-// 判定复用既有 native baseline 的行为探测，见不变量 #51。
-bool legacyLibimeProfile() {
-    static const bool legacy =
-        NativePinyinTestBaseline{}.hasAuditedLegacyProfile();
-    return legacy;
-}
-std::size_t coldStartSingleCharMaxRank() {
-    return legacyLibimeProfile() ? 6u : 4u;
 }
 struct Host final : fcitx5::EngineHost {
     std::string committed;
@@ -95,8 +82,7 @@ TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Shi) {
     ASSERT_FALSE(provider.page().items.empty());
     EXPECT_EQ(provider.page().items.front().text, "是");
     const auto shiRank = rank(provider.page(), "试");
-    EXPECT_LE(shiRank, coldStartSingleCharMaxRank())
-        << "legacy model=" << legacyLibimeProfile() << " actual rank=" << shiRank;
+    EXPECT_LT(shiRank, 5u);
 }
 
 TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Jian) {
@@ -105,8 +91,7 @@ TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Jian) {
     ASSERT_FALSE(provider.page().items.empty());
     EXPECT_EQ(provider.page().items.front().text, "见");
     const auto jianRank = rank(provider.page(), "键");
-    EXPECT_LE(jianRank, coldStartSingleCharMaxRank())
-        << "legacy model=" << legacyLibimeProfile() << " actual rank=" << jianRank;
+    EXPECT_LT(jianRank, 5u);
 }
 
 TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Nihaoshijie) {
@@ -273,14 +258,10 @@ TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Generalizability32Core
         ASSERT_GE(provider.page().items.size(), 5u);
         if (syl == "shi") {
             EXPECT_EQ(provider.page().items.front().text, "是");
-            const auto r = rank(provider.page(), "试");
-            EXPECT_LE(r, coldStartSingleCharMaxRank())
-                << "legacy model=" << legacyLibimeProfile() << " actual rank=" << r;
+            EXPECT_LT(rank(provider.page(), "试"), 5u);
         } else if (syl == "jian") {
             EXPECT_EQ(provider.page().items.front().text, "见");
-            const auto r = rank(provider.page(), "键");
-            EXPECT_LE(r, coldStartSingleCharMaxRank())
-                << "legacy model=" << legacyLibimeProfile() << " actual rank=" << r;
+            EXPECT_LT(rank(provider.page(), "键"), 5u);
         } else if (syl == "de") {
             EXPECT_EQ(provider.page().items[0].text, "的");
             EXPECT_EQ(provider.page().items[1].text, "得");

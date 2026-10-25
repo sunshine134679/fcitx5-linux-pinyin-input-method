@@ -37,7 +37,7 @@ Repository: https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
 Requirements:
   - Architecture: x86_64 / amd64
     (For aarch64 / ARM64 or other architectures, build from source using ./install.sh)
-  - Linux distribution with glibc >= 2.34 (Ubuntu 22.04+, openEuler 24.03+, Debian 12+, Fedora 38+)
+  - Linux distribution with glibc >= 2.34 (Ubuntu 24.04+, openEuler 24.03+, Fedora 38+)
   - Fcitx5 input method framework installed and configured
 
 Installation:

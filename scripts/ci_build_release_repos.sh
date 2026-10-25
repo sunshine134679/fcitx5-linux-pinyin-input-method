@@ -109,7 +109,7 @@ if [[ "$require_persistent_gpg" == true ]]; then
     fi
 fi
 
-# Discover DEB artifacts (supporting ubuntu22.04, ubuntu2204, jammy, ubuntu24.04, ubuntu2404, noble, bookworm, or generic Linux.deb)
+# Discover DEB artifacts (Ubuntu 24.04 / noble only; 22.04 support removed)
 find_first_match() {
     local dir=$1
     shift
@@ -124,15 +124,10 @@ find_first_match() {
     return 1
 }
 
-jammy_deb=$(find_first_match "$assets_dir" "modernime_*_amd64_ubuntu22.04.deb" "*ubuntu22.04.deb" || true)
 noble_deb=$(find_first_match "$assets_dir" "modernime_*_amd64_ubuntu24.04.deb" "*ubuntu24.04.deb" || true)
-bookworm_deb=$(find_first_match "$assets_dir" "modernime_*_amd64_debian12.deb" "*bookworm*.deb" || true)
-if [[ -z "$bookworm_deb" ]]; then
-    bookworm_deb="$jammy_deb"
-fi
 
-if [[ -z "$jammy_deb" || -z "$noble_deb" ]]; then
-    printf 'Error: Could not locate canonical *ubuntu22.04.deb or *ubuntu24.04.deb packages in %s\n' "$assets_dir" >&2
+if [[ -z "$noble_deb" ]]; then
+    printf 'Error: Could not locate canonical *ubuntu24.04.deb package in %s\n' "$assets_dir" >&2
     exit 1
 fi
 
@@ -156,19 +151,11 @@ declare -a rpm_args=(
 
 # A retry replaces the current version once, while preserving other released versions.
 cand_ver=$(dpkg-deb -f "$noble_deb" Version)
-for current_deb in "$jammy_deb" "$bookworm_deb"; do
-    if [[ "$(dpkg-deb -f "$current_deb" Version)" != "$cand_ver" ]]; then
-        printf 'Error: Release DEB artifacts must share version %s.\n' "$cand_ver" >&2
-        exit 1
-    fi
-done
 if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
-    for suite in jammy noble bookworm; do
-        for old_deb in "$previous_pages_dir"/apt/pool/"$suite"/main/m/modernime/*.deb; do
-            [[ -f "$old_deb" ]] || continue
-            [[ "$(dpkg-deb -f "$old_deb" Version)" != "$cand_ver" ]] || continue
-            apt_args+=("--${suite}-deb" "$old_deb")
-        done
+    for old_deb in "$previous_pages_dir"/apt/pool/noble/main/m/modernime/*.deb; do
+        [[ -f "$old_deb" ]] || continue
+        [[ "$(dpkg-deb -f "$old_deb" Version)" != "$cand_ver" ]] || continue
+        apt_args+=("--noble-deb" "$old_deb")
     done
     for old_rpm in "$previous_pages_dir"/rpm/oe2409/x86_64/Packages/*.rpm; do
         [[ -f "$old_rpm" ]] || continue
@@ -177,7 +164,7 @@ if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
     done
 fi
 
-apt_args+=(--jammy-deb "$jammy_deb" --noble-deb "$noble_deb" --bookworm-deb "$bookworm_deb")
+apt_args+=(--noble-deb "$noble_deb")
 rpm_args+=(--rpm "$rpm_pkg")
 
 if [[ -n "$gpg_private_key_file" ]]; then
@@ -291,9 +278,7 @@ fi
 cp -f "$pages_dir/apt/modernime-archive-keyring.gpg" "$assets_dir/"
 cp -f "$pages_dir/apt/modernime-archive-keyring.asc" "$assets_dir/"
 cp -f "$pages_dir/apt/KEY-FINGERPRINTS.txt" "$assets_dir/"
-cp -f "$pages_dir/apt/client/modernime-jammy.sources" "$assets_dir/"
 cp -f "$pages_dir/apt/client/modernime-noble.sources" "$assets_dir/"
-cp -f "$pages_dir/apt/client/modernime-bookworm.sources" "$assets_dir/"
 cp -f "$pages_dir/apt/client/99-modernime.pref" "$assets_dir/"
 cp -f "$pages_dir/rpm/RPM-GPG-KEY-modernime" "$assets_dir/"
 cp -f "$pages_dir/rpm/client/modernime-openeuler-24.09.repo" "$assets_dir/"

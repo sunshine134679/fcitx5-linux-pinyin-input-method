@@ -177,23 +177,12 @@ for cmd in dpkg-deb dpkg-scanpackages apt-ftparchive gpg gpgv sha256sum gzip; do
     fi
 done
 
-if [[ ${#common_debs[@]} -gt 0 ]]; then
-    if [[ ${#jammy_debs[@]} -eq 0 ]]; then
-        jammy_debs+=("${common_debs[@]}")
-    fi
-    if [[ ${#noble_debs[@]} -eq 0 ]]; then
-        noble_debs+=("${common_debs[@]}")
-    fi
-    if [[ ${#bookworm_debs[@]} -eq 0 ]]; then
-        bookworm_debs+=("${common_debs[@]}")
-    fi
-elif [[ ${#jammy_debs[@]} -gt 0 && ${#bookworm_debs[@]} -eq 0 ]]; then
-    # Debian 12 Bookworm (glibc 2.36) is ABI-compatible with the Ubuntu 22.04 (glibc 2.35) baseline package
-    bookworm_debs+=("${jammy_debs[@]}")
+if [[ ${#common_debs[@]} -gt 0 && ${#noble_debs[@]} -eq 0 ]]; then
+    noble_debs+=("${common_debs[@]}")
 fi
 
-if [[ ${#jammy_debs[@]} -eq 0 && ${#noble_debs[@]} -eq 0 && ${#bookworm_debs[@]} -eq 0 ]]; then
-    printf 'Error: At least one .deb file must be supplied via --deb, --jammy-deb, --noble-deb, or --bookworm-deb\n' >&2
+if [[ ${#noble_debs[@]} -eq 0 ]]; then
+    printf 'Error: At least one .deb file must be supplied via --noble-deb (Ubuntu 24.04)\n' >&2
     exit 1
 fi
 
@@ -405,9 +394,14 @@ EOF
         "$project_root/packaging/apt/modernime.sources.in" > "$output_dir/client/modernime-$suite.sources"
 }
 
-build_suite "jammy" "22.04" "ModernIME APT Repository for Ubuntu 22.04 LTS (Jammy Jellyfish)" "${jammy_debs[@]}"
+# 仅构建实际提供包的发行版套件；Ubuntu 22.04 / Debian 12 已停止支持。
+if [[ ${#jammy_debs[@]} -gt 0 ]]; then
+    build_suite "jammy" "22.04" "ModernIME APT Repository for Ubuntu 22.04 LTS (Jammy Jellyfish)" "${jammy_debs[@]}"
+fi
 build_suite "noble" "24.04" "ModernIME APT Repository for Ubuntu 24.04 LTS (Noble Numbat)" "${noble_debs[@]}"
-build_suite "bookworm" "12" "ModernIME APT Repository for Debian 12 (Bookworm)" "${bookworm_debs[@]}"
+if [[ ${#bookworm_debs[@]} -gt 0 ]]; then
+    build_suite "bookworm" "12" "ModernIME APT Repository for Debian 12 (Bookworm)" "${bookworm_debs[@]}"
+fi
 
 cp -f -- "$project_root/packaging/apt/99-modernime.pref" "$output_dir/client/99-modernime.pref"
 

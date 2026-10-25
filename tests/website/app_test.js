@@ -85,7 +85,7 @@ async function run(release, options = {}) {
 }
 const tag = "v9.8.7";
 const base = `https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/download/${tag}/`;
-const names = ["modernime_9.8.7_amd64_ubuntu24.04.deb", "modernime_9.8.7_amd64_ubuntu22.04.deb", "modernime-9.8.7-1.oe24.x86_64.rpm", "modernime-9.8.7-linux-x86_64.tar.gz", "SHA256SUMS.txt"];
+const names = ["modernime_9.8.7_amd64_ubuntu24.04.deb", "modernime-9.8.7-1.oe24.x86_64.rpm", "modernime-9.8.7-linux-x86_64.tar.gz", "SHA256SUMS.txt"];
 const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_download_url: base + name}))};
 (async () => {
   await require("./install_test.js")();
@@ -160,16 +160,9 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   const e = app.elements;
   assert.equal(e["release-version"].textContent, `最新发布 ${tag}`);
   assert.equal(e["deb-download"].href, base + names[0]);
-  app.systemOptions[0].checked = false;
-  app.systemOptions[1].checked = true;
-  await app.systemOptions[1].events.change();
-  assert.equal(e["deb-download"].href, base + names[1]);
-  app.systemOptions[1].checked = false; app.systemOptions[2].checked = true;
-  await app.systemOptions[2].events.change();
-  assert.equal(e["deb-download"].href, base + names[1], "Debian 12 must retain the compatible package while using its own Bookworm source");
-  assert.equal(e["rpm-download"].href, base + names[2]);
-  assert.equal(e["portable-download"].href, base + names[3]);
-  assert.equal(e["checksum-link"].href, base + names[4]);
+  assert.equal(e["rpm-download"].href, base + names[1]);
+  assert.equal(e["portable-download"].href, base + names[2]);
+  assert.equal(e["checksum-link"].href, base + names[3]);
   await app.workflowButtons[1].events.click();
   assert.equal(app.workflowPanels[1].hidden, false);
   assert.equal(app.workflowPanels[0].hidden, true);
