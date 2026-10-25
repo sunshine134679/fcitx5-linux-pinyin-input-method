@@ -18,10 +18,10 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.19_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.19_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.19-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.19-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.20_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.20_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.20-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.20-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -650,6 +650,15 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
 ## 版本更新记录
+
+### v0.1.20 (2026-10-25)
+
+- **高频易错音内联读音提示（卡qiǎ住）**：把多音字词记混读音时自动教学——输入 `kazhu`（`卡` 记成 kǎ），首选以「卡qiǎ住」形式在字后内联标注规范读音 qiǎ（《现代汉语词典》第七版）；离线词表收录 卡住/角色(jué)/睡觉(jiào)/银行(háng)/说服(shuō)/血液(xuè)/粗犷(guǎng) 等 32 个高频易错音词，逐字经 Unicode Unihan 校验随仓库发布。读音输入正确（`qiazhu`）、简拼（`kzhu`）与错位拼不打扰；提示只改展示，不影响候选排序、身份与学习。
+- **简拼部分消费范围修复**：修复多音节简拼下原生候选冒充全消费的问题（实测 `z'm'hui'shi` 曾因高频学习的「怎么」越过整句篡位），全消费整句「怎么回事」重回首选，学习前缀词以真实部分消费居次席，选中后未消费后缀正确保留。
+- **读音提示跨 fcitx5 链路传递修复**：候选展示字段完整穿过 Provider→引擎→fcitx5 候选列表→UI 重建全链路，修复实机候选条不显示读音提示的问题（新增跨链路回归断言）。
+- **简拼/模糊音与学习链路强化（2026-10-24 容错专项）**：近音变体召回（`baoyan→表演`、`lui→六`）、换位+简拼混合修复（`wiesm→为什么`）、模糊音组间压制修复（`zongwen` 经学习可升首）、提交后空有效窗口不再误扣词频；新增不变量矩阵 #47~#50。
+- 验证：全量 CTest 79/79；双套件隔离冒烟 33,787 次真实提交全绿（0 篡位，宿主学习库字节级零变化）；击键延迟 P50 约 5.7ms / P99 约 12.2ms，与上一版持平。
+- 完整发布说明见 [v0.1.20](docs/releases/v0.1.20.md)。
 
 ### v0.1.19 (2026-10-22)
 

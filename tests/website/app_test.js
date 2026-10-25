@@ -5,6 +5,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../../website/app.js"), "utf8");
+// Fallback 版本以 index.html 的 JSON-LD 为唯一事实来源，避免每次发版
+// 在测试里再硬编码一处版本号（曾漏改导致发布前红灯）。
+const siteHtml = fs.readFileSync(path.join(__dirname, "../../website/index.html"), "utf8");
+const siteVersion = JSON.parse(siteHtml.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]).softwareVersion;
+const siteVersionPattern = siteVersion.replace(/\./g, "\\.");
 class Element {
   constructor(text = "") { this.textContent = text; this.children = []; this.events = {}; this.attributes = {}; this.dataset = {}; this.firstChild = {textContent: text}; this.style = {setProperty: (name, value) => {this.attributes[name] = value;}}; this.classList = {toggle: (name, value) => {this.attributes[name] = value;}, add: name => {this.attributes[name] = true;}, remove: name => {delete this.attributes[name];}}; }
   addEventListener(name, action) { const previous = this.events[name]; this.events[name] = (...args) => {const first = previous ? previous(...args) : undefined; return Promise.all([first, action(...args)]);}; }
@@ -192,7 +197,7 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(app.copied(), e["install-command"].textContent);
   const offline = await run(null, {copyFailure: true});
   await offline.systemOptions[0].events.change();
-  assert.match(offline.elements["deb-download"].href, /v0\.1\.18\/.*ubuntu24\.04\.deb$/);
+  assert.match(offline.elements["deb-download"].href, new RegExp(`v${siteVersionPattern}/.*ubuntu24\\.04\\.deb$`));
   assert.match(offline.elements["release-status"].textContent, /暂时无法/);
   await offline.elements["copy-install"].events.click();
   assert.equal(offline.selected(), true);
