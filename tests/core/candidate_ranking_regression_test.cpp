@@ -394,6 +394,18 @@ TEST(CandidatePriorRegression, SaturatedLearningCanOvercomeUnlearnedStaticPrior)
     EXPECT_EQ(candidates[order.front()].text,"实事");
 }
 
+TEST(CandidatePriorRegression, LearnedSingleCharCannotHijackAbbreviationInput) {
+    core::CandidateScore hijacker, trusted;
+    hijacker.text = "你";
+    hijacker.full_pinyin = "ni";
+    hijacker.learning_boost = 3.0;
+    trusted.text = "你好";
+    trusted.full_pinyin = "ni'hao";
+    std::vector<core::CandidateScore> candidates{hijacker, trusted};
+    const auto order = core::CandidateRanker::rank("nh", candidates);
+    EXPECT_EQ(candidates[order.front()].text, "你好");
+}
+
 TEST_F(CandidateRankingRegression, NativeCandidatePreservesNegativeLearningEvidence) {
     {
         core::LearningStore store(paths.learningStore);

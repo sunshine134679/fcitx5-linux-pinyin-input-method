@@ -694,8 +694,10 @@ void testRareAndRadicalCharactersGovernance(const std::filesystem::path &learnin
     // 10. 高频问候简拼：nh 首选必为 你好
     provider.reset();
     assertTrue(provider.append("nh"), "append nh");
-    assertTrue(!provider.page().items.empty() && provider.page().items.front().text == "你好",
-               "nh top candidate must be 你好");
+    const std::string nhTop =
+        provider.page().items.empty() ? std::string{} : provider.page().items.front().text;
+    assertTrue(nhTop == "你好",
+               "nh top candidate must be 你好 (actual: " + nhTop + ")");
 
     // 11. 城市简拼：xa 首选必为 西安
     provider.reset();

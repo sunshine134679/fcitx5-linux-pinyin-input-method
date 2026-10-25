@@ -155,19 +155,38 @@ CandidateRanker::rank(std::string_view userInput,
     // 门槛收紧：候选读音必须与输入音节数一致（模糊变体天然保持音节结构），
     // 排除"王绍龙王"类分段造词产生的音节数不符学习词条越组晋升。
     std::size_t inputSyllables = 0;
+    bool inputIsFullPinyin = false;
     {
         const auto segmented = PinyinMatchPolicy::segmentPinyin(userInput);
         if (!segmented.empty()) {
             inputSyllables = static_cast<std::size_t>(
                                  std::count(segmented.begin(), segmented.end(), '\'')) +
                              1;
+            // 2026-10-25 发布门禁回归：简拼/混拼的“段数”不是音节数，
+            // 不能作为模糊音组间晋升的音节结构依据。例如 nh 下学习到的
+            // 单字「你」(ni) 会因段数相同被误抬到 trusted 简拼「你好」
+            // 之上。仅当每个输入段都是标准音节（全拼）时才允许该晋升。
+            inputIsFullPinyin = true;
+            for (std::size_t start = 0; start < segmented.size();) {
+                const auto sep = segmented.find('\'', start);
+                const auto stop = sep == std::string::npos ? segmented.size() : sep;
+                if (stop <= start ||
+                    !PinyinMatchPolicy::isStandardSyllable(
+                        std::string_view(segmented).substr(start, stop - start))) {
+                    inputIsFullPinyin = false;
+                    break;
+                }
+                if (sep == std::string::npos) break;
+                start = sep + 1;
+            }
         }
     }
-    const auto effectivePriority = [&candidates, inputSyllables](std::size_t index) {
+    const auto effectivePriority = [&candidates, inputSyllables,
+                                    inputIsFullPinyin](std::size_t index) {
         const auto &candidate = candidates[index];
         if (candidate.match_priority != 0 || !std::isfinite(candidate.learning_boost) ||
             candidate.learning_boost < 1.8 || inputSyllables == 0 ||
-            candidate.full_pinyin.empty()) {
+            !inputIsFullPinyin || candidate.full_pinyin.empty()) {
             return candidate.match_priority;
         }
         const auto candidateSyllables =

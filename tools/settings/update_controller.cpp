@@ -26,7 +26,7 @@ namespace modernime::settings {
 namespace {
 
 #ifndef MODERNIME_VERSION
-#define MODERNIME_VERSION "0.1.21"
+#define MODERNIME_VERSION "0.1.22"
 #endif
 
 #ifndef MODERNIME_INSTALL_PREFIX
