@@ -42,9 +42,13 @@ await app.copy.events.click();
   app.keyboard.pointerdown({target: {}});
   assert.equal(app.elements["mobile-menu"].open, false, "outside clicks must dismiss the menu");
   const existing = app.elements["apt-source-command"].textContent;
-  app.options[0].dataset.suite = "../../unsafe";
-  app.options[0].events.change();
-  assert.equal(app.elements["apt-source-command"].textContent, existing, "unrecognized suites must not enter copied commands");
+  for (const suite of ["jammy", "bookworm", "../../unsafe"]) {
+    app.options[0].dataset.suite = suite;
+    app.options[0].events.change();
+    await app.copy.events.click();
+    assert.equal(app.copied(), existing, "unsupported suites must not enter copied APT commands");
+    assert.equal(app.elements["apt-system-name"].textContent, "Ubuntu 24.04 LTS");
+  }
   const denied = await run(true);
   await denied.copy.events.click();
   assert.equal(denied.selected(), true);
