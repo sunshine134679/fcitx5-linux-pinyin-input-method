@@ -58,17 +58,25 @@ public:
     FcitxCandidateWord(std::string text,
                        std::weak_ptr<core::SelectionEndpoint> endpoint,
                        core::CandidateSelectionRequest request,
-                       std::string annotation = {})
+                       std::string annotation = {},
+                       std::string readingHint = {},
+                       std::size_t readingHintAfterCharIndex = 0)
         : CandidateWord(fcitx::Text(std::move(text))),
           endpoint_(std::move(endpoint)),
           request_(std::move(request)),
-          annotation_(std::move(annotation)) {}
+          annotation_(std::move(annotation)),
+          readingHint_(std::move(readingHint)),
+          readingHintAfterCharIndex_(readingHintAfterCharIndex) {}
 
     FcitxCandidateWord(std::string text, ModernIMEController *controller,
-                       std::size_t index, std::string annotation = {})
+                       std::size_t index, std::string annotation = {},
+                       std::string readingHint = {},
+                       std::size_t readingHintAfterCharIndex = 0)
         : CandidateWord(fcitx::Text(std::move(text))),
           endpoint_(controller ? controller->endpoint() : std::weak_ptr<core::SelectionEndpoint>{}),
-          annotation_(std::move(annotation)) {
+          annotation_(std::move(annotation)),
+          readingHint_(std::move(readingHint)),
+          readingHintAfterCharIndex_(readingHintAfterCharIndex) {
         if (controller != nullptr) {
             request_.sessionId = controller->sessionId();
             request_.displayGeneration = controller->displayGeneration();
@@ -87,12 +95,20 @@ public:
     }
 
     const std::string &annotation() const noexcept { return annotation_; }
+    // 易错音内联读音提示（卡qiǎ住）：纯展示数据，必须随候选词跨过
+    // engine→fcitx5 候选列表→UI 重建链路（2026-10-25 实机事故教训）。
+    const std::string &readingHint() const noexcept { return readingHint_; }
+    std::size_t readingHintAfterCharIndex() const noexcept {
+        return readingHintAfterCharIndex_;
+    }
     const core::CandidateSelectionRequest &request() const noexcept { return request_; }
 
 private:
     std::weak_ptr<core::SelectionEndpoint> endpoint_;
     core::CandidateSelectionRequest request_;
     std::string annotation_;
+    std::string readingHint_;
+    std::size_t readingHintAfterCharIndex_ = 0;
 };
 
 // CommonCandidateList stores every candidate, while this subclass exposes the

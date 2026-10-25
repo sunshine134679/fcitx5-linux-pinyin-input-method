@@ -319,7 +319,9 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
             page.items[index].text,
             controller_ ? controller_->endpoint() : std::weak_ptr<core::SelectionEndpoint>{},
             std::move(req),
-            page.items[index].annotation);
+            page.items[index].annotation,
+            page.items[index].readingHint,
+            page.items[index].readingHintAfterCharIndex);
     }
     // Fcitx5's size() is page-local, so clamp against the full published list
     // before selecting the requested page.

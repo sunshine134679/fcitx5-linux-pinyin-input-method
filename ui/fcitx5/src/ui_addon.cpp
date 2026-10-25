@@ -520,6 +520,10 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
         if (const auto *word =
                 dynamic_cast<const fcitx5::FcitxCandidateWord *>(&candidate)) {
             item.annotation = word->annotation();
+            // 易错音内联读音提示（卡qiǎ住）必须随候选词重建回页面
+            // （2026-10-25 实机事故：该字段曾在此丢失导致提示不显示）。
+            item.readingHint = word->readingHint();
+            item.readingHintAfterCharIndex = word->readingHintAfterCharIndex();
         }
         item.sourceIndex = pageBegin + static_cast<std::size_t>(index);
         page.items.push_back(std::move(item));

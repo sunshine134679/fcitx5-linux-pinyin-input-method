@@ -1273,6 +1273,7 @@ void testExplicitCharacterExtractionAndLearning() {
 }
 
 void testKeystrokeVariantRecallAndReadingAnnotation();
+void testLearnedPartialPrefixDoesNotUsurpAbbreviationSentence();
 
 int main() {
     testPinyinDataPathsDetectionAndDiagnostics();
@@ -1589,6 +1590,7 @@ int main() {
     testHouxuanlanPhraseFormation();
     testExplicitCharacterExtractionAndLearning();
     testKeystrokeVariantRecallAndReadingAnnotation();
+    testLearnedPartialPrefixDoesNotUsurpAbbreviationSentence();
     assertTrue(modernime::core::PinyinMatchPolicy::rhymeVariantInput("kazhu") == "ka'zhe",
                "rhymeVariantInput maps kazhu to ka'zhe");
     assertTrue(modernime::core::PinyinMatchPolicy::rhymeVariantInput("angquan") == "angquan",
@@ -1602,6 +1604,65 @@ int main() {
     assertTrue(!modernime::core::PinyinMatchPolicy::isStandardSyllable("wie"),
                "isStandardSyllable rejects wie");
     return EXIT_SUCCESS;
+}
+
+void testLearnedPartialPrefixDoesNotUsurpAbbreviationSentence() {
+    // 2026-10-25 用户实机事故（输入 z'm'hui'shi 时 1.怎么 2.怎么回事）：
+    // 原生部分消费候选在匹配等级为 0 时被默认标成全消费，高频学习的
+    // 「怎么」(zen'me) 借加成越过整句「怎么回事」。修复后部分消费候选
+    // 还原真实前缀（怎么 只消费 zm 两字节），混排恢复「整句第 1、个人
+    // 前缀第 2」，且选词后保留未消费后缀（消费范围契约）。
+    const auto learningPath = testPath("learned-partial-prefix-learning.sqlite3");
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
+    {
+        modernime::core::LearningStore store(learningPath);
+        assertTrue(store.open(), "open store for learned partial prefix seed");
+        for (int i = 0; i < 30; ++i) {
+            assertTrue(store.recordSelection("怎么", "zen'me", "", "", 1000 + i),
+                       "record highly learned prefix word");
+        }
+        for (int i = 0; i < 3; ++i) {
+            assertTrue(store.recordSelection("怎么回事", "zen'me'hui'shi", "", "", 1000 + i),
+                       "record learned abbreviation sentence");
+        }
+        store.close();
+    }
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = true;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    assertTrue(provider.append("zmhuishi"), "zmhuishi abbreviation accepted");
+    const auto &page = provider.page();
+    assertTrue(!page.items.empty() && page.items.front().text == "怎么回事",
+               "full-coverage abbreviation sentence stays rank 0");
+    const auto partialRank = indexOf(page, "怎么");
+    assertTrue(partialRank > 0 && partialRank < 5,
+               "learned partial prefix follows the full sentence");
+    bool partialClaimedFull = false;
+    for (std::size_t i = 0; i < page.items.size(); ++i) {
+        if (page.items[i].text == "怎么" &&
+            page.items[i].fullPinyin == "zen'me" &&
+            page.items[i].consumedInputBytes >= page.rawInput.size()) {
+            partialClaimedFull = true;
+        }
+    }
+    assertTrue(!partialClaimedFull,
+               "partial word consumes only its own prefix syllables");
+    assertTrue(provider.select(partialRank),
+               "learned partial prefix can be selected");
+    assertTrue(provider.page().rawInput == "huishi" &&
+                   provider.page().preedit == "hui'shi",
+               "partial selection preserves the unconsumed pinyin suffix");
+
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
 void testKeystrokeVariantRecallAndReadingAnnotation() {

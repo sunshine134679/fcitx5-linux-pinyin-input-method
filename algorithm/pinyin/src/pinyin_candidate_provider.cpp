@@ -1628,6 +1628,18 @@ private:
         // 避免每个候选重复做一次规范化字符串分配。
         const auto canonicalInput =
             core::PinyinMatchPolicy::canonical(rawInput);
+        // 简拼/混拼消费范围还原（2026-10-25 用户实机 z'm'hui'shi 事故）：
+        // 输入音节段与候选音节的逐段对齐依据，循环外切好一次。
+        std::vector<std::string> inputSegments;
+        for (std::size_t start = 0; start < segmentedInput.size();) {
+            const auto sep = segmentedInput.find('\'', start);
+            const auto stop = sep == std::string::npos ? segmentedInput.size() : sep;
+            if (stop > start) {
+                inputSegments.emplace_back(segmentedInput.substr(start, stop - start));
+            }
+            if (sep == std::string::npos) break;
+            start = sep + 1;
+        }
         const bool hasPinyinCoverage = std::any_of(
             result.scored.begin(), result.scored.end(),
             [&rawInput, &canonicalInput](const auto &candidate) {
@@ -1682,14 +1694,55 @@ private:
                 ++manualCount;
             }
             item.consumedInputBytes = rawInput.size();
-            if (core::PinyinMatchPolicy::priority(
-                    rawInput, candidate.full_pinyin) == -1) {
+            const auto candidatePriority = core::PinyinMatchPolicy::priority(
+                rawInput, candidate.full_pinyin);
+            if (candidatePriority == -1) {
                 const auto candidatePinyin =
                     core::PinyinMatchPolicy::canonical(candidate.full_pinyin);
                 for (const auto &[prefixEnd, canonicalPrefix] : canonicalPrefixes) {
                     if (canonicalPrefix == candidatePinyin) {
                         item.consumedInputBytes = prefixEnd;
                         break;
+                    }
+                }
+            } else if (candidatePriority == 0 && !inputSegments.empty() &&
+                       !prefixEnds.empty()) {
+                // 简拼/混拼下的部分消费候选（如 zmhuishi 下的 怎么=zm）此前
+                // 被默认标成全消费：高频学习词条借加成越过整句篡位，且选词
+                // 会吞掉未消费后缀。按"输入音节段是候选音节的前缀（声母、
+                // zh/ch/sh 双字母声母或全音节）"逐段对齐求最大前缀；候选音
+                // 节全部对齐且仍短于输入时，还原为真实前缀消费。整词覆盖
+                // （对齐到输入末尾）保持全消费不变，-1 精确前缀路径不变。
+                // 持有拷贝：full_pinyin.substr 返回临时 std::string，转
+                // string_view 存向量会悬垂（本轮实测教训）。
+                std::vector<std::string> candidateSyllables;
+                for (std::size_t start = 0; start < candidate.full_pinyin.size();) {
+                    const auto sep = candidate.full_pinyin.find('\'', start);
+                    const auto stop = sep == std::string::npos
+                                          ? candidate.full_pinyin.size() : sep;
+                    if (stop > start) {
+                        candidateSyllables.emplace_back(
+                            candidate.full_pinyin.substr(start, stop - start));
+                    }
+                    if (sep == std::string::npos) break;
+                    start = sep + 1;
+                }
+                if (!candidateSyllables.empty() &&
+                    candidateSyllables.size() <= inputSegments.size()) {
+                    std::size_t matched = 0;
+                    for (; matched < candidateSyllables.size(); ++matched) {
+                        if (matched >= inputSegments.size() ||
+                            !candidateSyllables[matched].starts_with(
+                                inputSegments[matched])) {
+                            break;
+                        }
+                    }
+                    if (matched == candidateSyllables.size() &&
+                        matched < inputSegments.size() &&
+                        matched <= prefixEnds.size()) {
+                        item.consumedInputBytes = matched == 0
+                                                      ? 0
+                                                      : prefixEnds[matched - 1];
                     }
                 }
             }

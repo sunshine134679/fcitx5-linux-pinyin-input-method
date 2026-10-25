@@ -379,6 +379,39 @@ int main() {
     assertTrue(inputContext.preeditUpdates == 3,
                "clearing preedit sends an update");
 
+    // 易错音内联读音提示（卡qiǎ住）必须穿过 FcitxCandidateWord 到达 UI
+    // 侧重建的候选页（2026-10-25 实机事故：该字段在 engine→fcitx5 候选
+    // 列→UI 的链路上丢失，导致实机不显示提示）。
+    page.clear();
+    page.preedit = "kazhu";
+    modernime::core::CandidateItem hintItem;
+    hintItem.text = "卡住";
+    hintItem.fullPinyin = "ka'zhu";
+    hintItem.readingHint = "qiǎ";
+    hintItem.readingHintAfterCharIndex = 0;
+    page.items.push_back(hintItem);
+    modernime::core::CandidateItem plainItem;
+    plainItem.text = "卡着";
+    plainItem.fullPinyin = "ka'zhe";
+    page.items.push_back(plainItem);
+    host.publishPage(page);
+    const auto hintList = inputContext.inputPanel().candidateList();
+    assertTrue(hintList != nullptr && hintList->size() == 2,
+               "hinted page publishes two candidates");
+    const auto *hintedWord = dynamic_cast<const modernime::fcitx5::FcitxCandidateWord *>(
+        &hintList->candidate(0));
+    assertTrue(hintedWord != nullptr,
+               "published candidates keep the ModernIME word type");
+    assertTrue(hintedWord->readingHint() == "qiǎ" &&
+                   hintedWord->readingHintAfterCharIndex() == 0,
+               "reading hint crosses the engine to candidate list seam");
+    const auto *plainWord = dynamic_cast<const modernime::fcitx5::FcitxCandidateWord *>(
+        &hintList->candidate(1));
+    assertTrue(plainWord != nullptr && plainWord->readingHint().empty(),
+               "unhinted candidate carries no reading hint");
+    page.clear();
+    host.publishPage(page);
+
     modernime::fcitx5::ModernIMEController controller(host);
     host.setController(controller);
     controller.setClipboardEntries({"first clipboard", "second clipboard",
