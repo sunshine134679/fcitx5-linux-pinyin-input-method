@@ -18,7 +18,7 @@ namespace modernime::settings {
 namespace {
 
 #ifndef MODERNIME_VERSION
-#define MODERNIME_VERSION "0.1.20"
+#define MODERNIME_VERSION "0.1.21"
 #endif
 
 void addStyleClass(GtkWidget *widget, std::string_view className) {

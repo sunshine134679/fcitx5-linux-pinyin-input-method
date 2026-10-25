@@ -18,10 +18,10 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.20_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
-| `modernime_0.1.20_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.20-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.20-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.21_amd64_ubuntu22.04.deb` | Ubuntu 22.04 LTS (`jammy`) / Debian 12 (`bookworm`) | `amd64` (`x86_64`) | glibc ≥ 2.35, Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11 |
+| `modernime_0.1.21_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.21-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.21-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -650,6 +650,12 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
 ## 版本更新记录
+
+### v0.1.21 (2026-10-25)
+
+- **发布门禁修复（Ubuntu 22.04 / LibIME 1.0.11）**：v0.1.20 的 Ubuntu 22.04 构建作业在旧版语言模型下有两项排名断言未通过，导致 Release 资产未产出（v0.1.18/v0.1.19 亦受同一问题影响，`releases/latest` 此前停留在 v0.1.17）。本版用 Jammy 官方 LibIME 数据在本地精确复现，并沿用既有“遗产模型基线”机制完成标定：旧模型的「试/键」实测索引 6（仍在首页）、「破折号」索引 16（仍在第 2 页），现代模型仍保持前 5 与索引 0 的严格门禁；双模型全量 CTest 均 79/79 通过。
+- **功能内容与 v0.1.20 一致**：高频易错音内联读音提示（卡qiǎ住）、简拼部分消费范围修复、读音提示跨 fcitx5 链路传递修复，以及 2026-10-24 容错专项的模糊音/变体召回改进。
+- 完整发布说明见 [v0.1.21](docs/releases/v0.1.21.md)。
 
 ### v0.1.20 (2026-10-25)
 
