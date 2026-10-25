@@ -27,6 +27,38 @@ void assertTrue(bool condition, std::string_view message) {
     }
 }
 
+void execSqlWithRetry(sqlite3 *db, const char *sql, std::string_view message, int timeoutMs = 5000) {
+    if (db == nullptr) {
+        assertTrue(false, std::string(message) + " (db is null)");
+        return;
+    }
+    sqlite3_busy_timeout(db, timeoutMs);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    int rc = SQLITE_BUSY;
+    char *error = nullptr;
+    while (std::chrono::steady_clock::now() <= deadline) {
+        if (error) {
+            sqlite3_free(error);
+            error = nullptr;
+        }
+        rc = sqlite3_exec(db, sql, nullptr, nullptr, &error);
+        if (rc == SQLITE_OK) {
+            return;
+        }
+        if (rc != SQLITE_BUSY && rc != SQLITE_LOCKED) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    std::string detail = std::string(message) + " (sqlite error " +
+                         std::to_string(rc) + ": " +
+                         (error ? error : sqlite3_errmsg(db)) + ")";
+    if (error) {
+        sqlite3_free(error);
+    }
+    assertTrue(rc == SQLITE_OK, detail);
+}
+
 std::filesystem::path testPath(std::string_view name) {
     const auto path = std::filesystem::temp_directory_path() /
                       ("modernime-" + std::string(name));
@@ -47,10 +79,11 @@ void testExternalClearDiscardsRetainedDeltas() {
         sqlite3 *fault = nullptr;
         assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK,
                    "fault injection connection opens");
-        assertTrue(sqlite3_exec(fault,
+        sqlite3_busy_timeout(fault, 5000);
+        execSqlWithRetry(fault,
             "CREATE TRIGGER fail_clear_queue BEFORE INSERT ON learning_entries "
             "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
-            nullptr, nullptr, nullptr) == SQLITE_OK, "queued write fails deterministically");
+            "queued write fails deterministically");
         assertTrue(writer.enqueueSelection("待写旧词", "daixiejiuci", {}, {}, 1001),
                    "selection is queued before settings clear");
         assertTrue(!writer.flush(), "old selection remains queued after storage failure");
@@ -59,9 +92,8 @@ void testExternalClearDiscardsRetainedDeltas() {
                    "settings backup and clear completes while engine remains active");
         assertTrue(std::filesystem::last_write_time(path) == before,
                    "WAL clear does not change the main database mtime");
-        assertTrue(sqlite3_exec(fault, "DROP TRIGGER fail_clear_queue;",
-                               nullptr, nullptr, nullptr) == SQLITE_OK,
-                   "queued writes can resume after clear");
+        execSqlWithRetry(fault, "DROP TRIGGER fail_clear_queue;",
+                         "queued writes can resume after clear");
         sqlite3_close(fault);
         assertTrue(writer.reload(), "active writer reload completes after clear");
         assertTrue(writer.snapshot()->entries().empty() && settings.snapshot()->entries().empty(),
@@ -88,21 +120,21 @@ void testWalClearResumesNewWritesAfterRetryExhaustion() {
         modernime::core::LearningStore settings(path);
         assertTrue(settings.open(), "clear-resume settings store opens");
         sqlite3 *fault = nullptr;
-        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK &&
-                       sqlite3_exec(fault,
-                           "CREATE TRIGGER fail_resume BEFORE INSERT ON learning_entries "
-                           "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
-                           nullptr, nullptr, nullptr) == SQLITE_OK,
-                   "clear-resume test injects a temporary write failure");
+        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK,
+                   "clear-resume fault injector opens");
+        sqlite3_busy_timeout(fault, 5000);
+        execSqlWithRetry(fault,
+            "CREATE TRIGGER fail_resume BEFORE INSERT ON learning_entries "
+            "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
+            "clear-resume test injects a temporary write failure");
         assertTrue(writer.enqueueSelection("旧事件", "jiushijian", {}, {}, 1000),
                    "a pre-clear event is queued");
         assertTrue(!writer.flush(), "failed event is retained for retries");
         // Allow the writer's one automatic 250ms retry cycle to exhaust.
         std::this_thread::sleep_for(400ms);
         assertTrue(settings.clear(), "settings clears the failed queue generation");
-        assertTrue(sqlite3_exec(fault, "DROP TRIGGER fail_resume;", nullptr,
-                               nullptr, nullptr) == SQLITE_OK,
-                   "new generation writes can succeed");
+        execSqlWithRetry(fault, "DROP TRIGGER fail_resume;",
+                         "new generation writes can succeed");
         sqlite3_close(fault);
         assertTrue(writer.reloadIfChanged(), "timer applies the WAL clear");
         assertTrue(writer.enqueueSelection("新事件", "xinshijian", {}, {}, 1001),
@@ -128,24 +160,23 @@ void testFailedWriterPollDoesNotReopenWritableConnection() {
     {
         modernime::core::LearningWriter writer(path);
         sqlite3 *fault = nullptr;
-        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK &&
-                       sqlite3_exec(fault,
-                           "CREATE TRIGGER fail_poll BEFORE INSERT ON learning_entries "
-                           "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
-                           nullptr, nullptr, nullptr) == SQLITE_OK,
-                   "poll test injects a persistent write failure");
+        assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK,
+                   "poll fault injector opens");
+        sqlite3_busy_timeout(fault, 5000);
+        execSqlWithRetry(fault,
+            "CREATE TRIGGER fail_poll BEFORE INSERT ON learning_entries "
+            "BEGIN SELECT RAISE(FAIL, 'temporary failure'); END;",
+            "poll test injects a persistent write failure");
         writer.enqueueSelection("旧词", "jiuci", {}, {}, 1000);
         assertTrue(!writer.flush(), "writer closes its failed writable connection");
         std::this_thread::sleep_for(600ms);
-        assertTrue(sqlite3_exec(fault, "BEGIN IMMEDIATE;", nullptr, nullptr,
-                               nullptr) == SQLITE_OK,
-                   "external transaction holds a write lock after retry exhaustion");
+        execSqlWithRetry(fault, "BEGIN IMMEDIATE;",
+                         "external transaction holds a write lock after retry exhaustion");
         auto polling = std::async(std::launch::async,
                                    [&writer] { return writer.reloadIfChanged(); });
         const auto status = polling.wait_for(200ms);
-        assertTrue(sqlite3_exec(fault, "ROLLBACK; DROP TRIGGER fail_poll;",
-                               nullptr, nullptr, nullptr) == SQLITE_OK,
-                   "poll test releases the competing writer");
+        execSqlWithRetry(fault, "ROLLBACK; DROP TRIGGER fail_poll;",
+                         "poll test releases the competing writer");
         polling.get();
         sqlite3_close(fault);
         assertTrue(status == std::future_status::ready,
@@ -575,6 +606,7 @@ void testWriterRetainsFailedBatchAndRecoversAfterStoreUnlocks() {
         sqlite3 *locker = nullptr;
         assertTrue(sqlite3_open(path.c_str(), &locker) == SQLITE_OK,
                    "retry test opens a competing database connection");
+        sqlite3_busy_timeout(locker, 5000);
         char *error = nullptr;
         assertTrue(sqlite3_exec(locker, "BEGIN IMMEDIATE;", nullptr, nullptr,
                                 &error) == SQLITE_OK,
@@ -587,11 +619,8 @@ void testWriterRetainsFailedBatchAndRecoversAfterStoreUnlocks() {
         assertTrue(!writer.flush(),
                    "flush reports failure after a bounded retry cycle");
 
-        error = nullptr;
-        assertTrue(sqlite3_exec(locker, "ROLLBACK;", nullptr, nullptr,
-                                &error) == SQLITE_OK,
-                   "retry test releases the database write lock");
-        sqlite3_free(error);
+        execSqlWithRetry(locker, "ROLLBACK;",
+                         "retry test releases the database write lock");
         sqlite3_close(locker);
 
         bool recoveredWithoutAnotherEnqueue = false;
@@ -640,6 +669,7 @@ void testWriterAutomaticallyRecoversFromTemporaryWriteLock() {
         sqlite3 *locker = nullptr;
         assertTrue(sqlite3_open(path.c_str(), &locker) == SQLITE_OK,
                    "automatic retry test opens a competing connection");
+        sqlite3_busy_timeout(locker, 5000);
         char *error = nullptr;
         assertTrue(sqlite3_exec(locker, "BEGIN IMMEDIATE;", nullptr, nullptr,
                                 &error) == SQLITE_OK,
@@ -658,11 +688,8 @@ void testWriterAutomaticallyRecoversFromTemporaryWriteLock() {
         assertTrue(polling.wait_for(200ms) == std::future_status::ready,
                    "settings polling does not block the input loop on a busy learning writer");
         assertTrue(!polling.get(), "busy polling retries at the next timer tick");
-        error = nullptr;
-        assertTrue(sqlite3_exec(locker, "ROLLBACK;", nullptr, nullptr,
-                                &error) == SQLITE_OK,
-                   "automatic retry test releases the temporary lock");
-        sqlite3_free(error);
+        execSqlWithRetry(locker, "ROLLBACK;",
+                         "automatic retry test releases the temporary lock");
         sqlite3_close(locker);
 
         assertTrue(flushResult.wait_for(4s) == std::future_status::ready,
@@ -693,15 +720,13 @@ void testWriterQueuesSelectionsArrivingDuringRecovery() {
         sqlite3 *faultInjector = nullptr;
         assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
                    "recovery-window test opens its fault injector");
-        char *error = nullptr;
+        sqlite3_busy_timeout(faultInjector, 5000);
         const auto trigger =
             "CREATE TRIGGER fail_writer_insert BEFORE INSERT ON "
             "learning_entries BEGIN SELECT RAISE(ABORT, 'temporary writer "
             "failure'); END;";
-        assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr,
-                                &error) == SQLITE_OK,
-                   "recovery-window test injects a write failure");
-        sqlite3_free(error);
+        execSqlWithRetry(faultInjector, trigger,
+                         "recovery-window test injects a write failure");
 
         assertTrue(writer.enqueueSelection("故障前词", "guzhangqian", {}, {},
                                            1000),
@@ -714,12 +739,9 @@ void testWriterQueuesSelectionsArrivingDuringRecovery() {
                                             2000),
                    "enqueue reports that durability is not yet restored");
 
-        error = nullptr;
-        assertTrue(sqlite3_exec(faultInjector,
-                                "DROP TRIGGER fail_writer_insert;", nullptr,
-                                nullptr, &error) == SQLITE_OK,
-                   "recovery-window test clears the write failure");
-        sqlite3_free(error);
+        execSqlWithRetry(faultInjector,
+                         "DROP TRIGGER fail_writer_insert;",
+                         "recovery-window test clears the write failure");
         sqlite3_close(faultInjector);
 
         assertTrue(writer.flush(),
@@ -749,15 +771,13 @@ void testWriterDestructorRetriesRetainedBatchAfterFaultClears() {
         sqlite3 *faultInjector = nullptr;
         assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
                    "destructor recovery test opens its fault injector");
-        char *error = nullptr;
+        sqlite3_busy_timeout(faultInjector, 5000);
         const auto trigger =
             "CREATE TRIGGER fail_destructor_insert BEFORE INSERT ON "
             "learning_entries BEGIN SELECT RAISE(ABORT, 'temporary writer "
             "failure'); END;";
-        assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr,
-                                &error) == SQLITE_OK,
-                   "destructor recovery test injects a write failure");
-        sqlite3_free(error);
+        execSqlWithRetry(faultInjector, trigger,
+                         "destructor recovery test injects a write failure");
 
         assertTrue(writer.enqueueSelection("析构恢复词", "xigouhuifu", {}, {},
                                            1000),
@@ -766,12 +786,9 @@ void testWriterDestructorRetriesRetainedBatchAfterFaultClears() {
                    "destructor recovery test observes a bounded failure");
         std::this_thread::sleep_for(500ms);
 
-        error = nullptr;
-        assertTrue(sqlite3_exec(faultInjector,
-                                "DROP TRIGGER fail_destructor_insert;",
-                                nullptr, nullptr, &error) == SQLITE_OK,
-                   "destructor recovery test clears the write failure");
-        sqlite3_free(error);
+        execSqlWithRetry(faultInjector,
+                         "DROP TRIGGER fail_destructor_insert;",
+                         "destructor recovery test clears the write failure");
         sqlite3_close(faultInjector);
     }
 
@@ -797,15 +814,13 @@ void testWriterDestructorReturnsUnderPermanentFailure() {
         modernime::core::LearningWriter writer(path);
         assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
                    "permanent-failure test opens its fault injector");
-        char *error = nullptr;
+        sqlite3_busy_timeout(faultInjector, 5000);
         const auto trigger =
             "CREATE TRIGGER fail_permanent_insert BEFORE INSERT ON "
             "learning_entries BEGIN SELECT RAISE(ABORT, 'permanent writer "
             "failure'); END;";
-        assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr,
-                                &error) == SQLITE_OK,
-                   "permanent-failure test injects a persistent write failure");
-        sqlite3_free(error);
+        execSqlWithRetry(faultInjector, trigger,
+                         "permanent-failure test injects a persistent write failure");
         assertTrue(writer.enqueueSelection("永久故障词", "yongjiuguzhang", {},
                                            {}, 1000),
                    "writer accepts the selection before permanent failure");
@@ -816,12 +831,9 @@ void testWriterDestructorReturnsUnderPermanentFailure() {
     assertTrue(std::chrono::steady_clock::now() - started < 3s,
                "destructor remains bounded under a permanent storage failure");
 
-    char *error = nullptr;
-    assertTrue(sqlite3_exec(faultInjector,
-                            "DROP TRIGGER fail_permanent_insert;", nullptr,
-                            nullptr, &error) == SQLITE_OK,
-               "permanent-failure test clears its injected trigger");
-    sqlite3_free(error);
+    execSqlWithRetry(faultInjector,
+                     "DROP TRIGGER fail_permanent_insert;",
+                     "permanent-failure test clears its injected trigger");
     sqlite3_close(faultInjector);
 
     std::error_code errorCode;
@@ -860,15 +872,13 @@ void testFailedBatchCanBeRetriedWithoutDuplicatingCommittedSelections() {
     sqlite3 *faultInjector = nullptr;
     assertTrue(sqlite3_open(path.c_str(), &faultInjector) == SQLITE_OK,
                "batch retry test opens its fault-injection connection");
-    char *error = nullptr;
+    sqlite3_busy_timeout(faultInjector, 5000);
     const auto trigger =
         "CREATE TRIGGER fail_learning_prune BEFORE DELETE ON "
         "learning_entries BEGIN SELECT RAISE(ABORT, 'injected prune "
         "failure'); END;";
-    assertTrue(sqlite3_exec(faultInjector, trigger, nullptr, nullptr, &error) ==
-                   SQLITE_OK,
-               "batch retry test injects a deterministic prune failure");
-    sqlite3_free(error);
+    execSqlWithRetry(faultInjector, trigger,
+                     "batch retry test injects a deterministic prune failure");
 
     std::vector<modernime::core::LearningEvent> events;
     for (int index = 0; index < 9; ++index) {
@@ -879,11 +889,8 @@ void testFailedBatchCanBeRetriedWithoutDuplicatingCommittedSelections() {
     assertTrue(!store.recordBatch(events),
                "injected housekeeping failure fails the whole batch");
 
-    error = nullptr;
-    assertTrue(sqlite3_exec(faultInjector, "DROP TRIGGER fail_learning_prune;",
-                            nullptr, nullptr, &error) == SQLITE_OK,
-               "batch retry test clears the injected failure");
-    sqlite3_free(error);
+    execSqlWithRetry(faultInjector, "DROP TRIGGER fail_learning_prune;",
+                     "batch retry test clears the injected failure");
     sqlite3_close(faultInjector);
 
     assertTrue(store.recordBatch(events), "the same batch succeeds on retry");
@@ -1390,10 +1397,10 @@ void testFailedWriterQueueRetainsOnlyRecentEvents() {
         sqlite3 *fault = nullptr;
         assertTrue(sqlite3_open(path.c_str(), &fault) == SQLITE_OK,
                    "bounded failure test opens storage fault injector");
-        assertTrue(sqlite3_exec(fault,
+        sqlite3_busy_timeout(fault, 5000);
+        execSqlWithRetry(fault,
             "CREATE TRIGGER fail_bounded_queue BEFORE INSERT ON learning_entries "
             "BEGIN SELECT RAISE(ABORT, 'disk failure'); END;",
-            nullptr, nullptr, nullptr) == SQLITE_OK,
             "bounded queue test injects persistent write failure");
         writer.enqueueSelection("故障首词", "guzhang", {}, {}, 1);
         assertTrue(!writer.flush(), "initial fault leaves pending learning");
@@ -1402,9 +1409,8 @@ void testFailedWriterQueueRetainsOnlyRecentEvents() {
                                      "ceshi", {}, {}, index + 2);
         }
         assertTrue(!writer.flush(), "storage remains unavailable after many selections");
-        assertTrue(sqlite3_exec(fault, "DROP TRIGGER fail_bounded_queue;",
-                                nullptr, nullptr, nullptr) == SQLITE_OK,
-                   "bounded queue test restores storage");
+        execSqlWithRetry(fault, "DROP TRIGGER fail_bounded_queue;",
+                         "bounded queue test restores storage");
         sqlite3_close(fault);
         assertTrue(writer.flush(), "recent retained events persist after recovery");
     }
