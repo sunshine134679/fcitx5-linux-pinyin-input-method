@@ -20,7 +20,7 @@ node tests/website/install_test.js
 
 `website.yml` 在官网相关代码推送到 `main` 时运行：读取既有 `gh-pages` 分支，通过 `scripts/prepare_website.py` 覆盖首页文件和 `assets/`，完整保留 `/apt`、`/rpm` 的路径和内容，再部署并保存回 `gh-pages`。脚本校验覆盖前后全部软件源文件的 SHA256，不会重新签名或生成软件源。
 
-`release.yml` 也会取 `main` 上的官网覆盖到发布产物，因此重新发布旧产品标签也会保留官网。两个发布任务共用 `modernime-github-pages` 串行组，避免并发覆盖软件源历史。
+`release.yml` 也会取 `main` 上的官网覆盖到发布产物，因此重新发布旧产品标签也会保留官网。两个发布任务共用 `modernime-pages-sync` 串行组，避免并发覆盖软件源历史。
 
 客户端截图是当前源码的界面示例，不承诺已发布的安装包包含源码之后的所有界面更新。网页候选栏是明确标注的交互示意，不收集键盘输入，不模拟真实输入法转换。
 

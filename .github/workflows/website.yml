@@ -32,7 +32,7 @@ jobs:
     if: needs.resolve-deployment.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     concurrency:
-      group: modernime-github-pages
+      group: modernime-pages-sync
       cancel-in-progress: false
     environment:
       name: github-pages
