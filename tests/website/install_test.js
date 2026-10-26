@@ -7,22 +7,24 @@ async function tests() {
   const file = path.join(__dirname, "../../website/install.js");
   assert.ok(fs.existsSync(file), "recommended repository installation needs an independent copy/selection controller");
   const source = fs.readFileSync(file, "utf8");
-  async function run(denied = false) {
+  async function run(denied = false, deferred = false) {
     const elements = {};
     function element(id) {return elements[id] ||= {textContent: "", dataset: {}, events: {}, focus() {this.focused = true;}, addEventListener(name, action) {this.events[name] = action;}};}
     const options = ["ubuntu24.04", "openeuler", "other"].map(value => ({...element(value), value, checked: value === "ubuntu24.04"}));
     const panels = options.map(option => ({...element("panel-" + option.value), dataset: {installPanel: option.value}, hidden: false}));
     element("apt-source-command").textContent = "curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/client/modernime-noble.sources";
     const copy = element("copy"); copy.dataset.copy = "apt-source-command"; copy.dataset.status = "apt-copy-status";
+    const copyTwo = element("copy-two"); copyTwo.dataset.copy = "apt-package-command"; copyTwo.dataset.status = "apt-copy-status";
+    element("apt-package-command").textContent = "sudo apt update && sudo apt install modernime";
     const open = element("open"); open.dataset.openInstall = "apt-install";
     const mobileLink = element("mobile-link");
     element("mobile-menu").contains = target => target === mobileLink; element("mobile-menu-toggle");
     const keyboard = {};
-    let copied, selected = false;
-    const document = {getElementById: element, addEventListener: (name, action) => {keyboard[name] = action;}, querySelector: () => options.find(item => item.checked), querySelectorAll: selector => selector === "input[name=install-system]" ? options : selector === "[data-install-panel]" ? panels : selector === "[data-copy]" ? [copy] : selector === "[data-open-install]" ? [open] : selector === "[data-mobile-link]" ? [mobileLink] : [], createRange: () => ({selectNodeContents: () => {selected = true;}})};
+    let copied, selected = false; const pending=[];
+    const document = {getElementById: element, addEventListener: (name, action) => {keyboard[name] = action;}, querySelector: () => null, querySelectorAll: selector => selector === "input[name=install-system]" ? options : selector === "[data-install-panel]" ? panels : selector === "[data-copy]" ? [copy, copyTwo] : selector === "[data-open-install]" ? [open] : selector === "[data-mobile-link]" ? [mobileLink] : [], createRange: () => ({selectNodeContents: () => {selected = true;}})};
     const window = {getSelection: () => ({removeAllRanges() {}, addRange() {}})};
-    vm.runInNewContext(source, {document, window, navigator: {clipboard: {writeText: async text => {if (denied) throw Error("denied"); copied = text;}}}});
-    return {elements, options, panels, copy, open, mobileLink, keyboard, copied: () => copied, selected: () => selected};
+    vm.runInNewContext(source, {document, window, navigator: {clipboard: {writeText: async text => {if (deferred) await new Promise((resolve,reject)=>pending.push({resolve,reject})); if (denied) throw Error("denied"); copied = text;}}}});
+    return {elements, options, panels, copy, copyTwo, pending, open, mobileLink, keyboard, copied: () => copied, selected: () => selected};
   }
   const app = await run();
   assert.deepEqual(app.panels.map(panel => panel.hidden), [false, true, true]);
@@ -57,6 +59,15 @@ await app.copy.events.click();
   await denied.copy.events.click();
   assert.equal(denied.selected(), true);
   assert.match(denied.elements["apt-copy-status"].textContent, /Ctrl\+C/);
+  const racing = await run(false, true);
+  const oldCopy = racing.copy.events.click();
+  const newCopy = racing.copyTwo.events.click();
+  racing.pending[1].resolve(); await newCopy;
+  racing.pending[0].reject(Error("stale denial")); await oldCopy;
+  assert.equal(racing.copyTwo.dataset.copied, "true");
+  assert.equal(racing.copy.dataset.copied, undefined);
+  assert.equal(racing.selected(), false, "stale copy failure must not select an earlier command");
+  assert.match(racing.elements["apt-copy-status"].textContent, /命令已复制/);
   console.log("Repository installation passed: suite mapping, copy/fallback, native disclosure, invalid-suite rejection.");
 }
 module.exports = tests;

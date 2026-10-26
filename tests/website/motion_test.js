@@ -1,7 +1,8 @@
 "use strict";
 const assert = require("node:assert/strict");
 const {test} = require("node:test");
-const {createDemo} = require("../../website/motion.js");
+const fs = require("node:fs"), vm = require("node:vm");
+const {createDemo, createMotion} = require("../../website/motion.js");
 class Target {
   constructor() {this.listeners = {}; this.children = {}; this.hidden = false; this.matches = false; this.textContent = ""; this.attributes = {};}
   addEventListener(name, fn) {(this.listeners[name] ||= []).push(fn);}
@@ -14,6 +15,7 @@ function setup({reduced = false, observer = false} = {}) {
   const replay = new Target(), pause = new Target(); pause.hidden = true;
   root.children["[data-ime-replay]"] = replay; root.children["[data-ime-pause]"] = pause;
   const controller = {kind: "hero", root, input: "nihao", output: "", takeover: null,
+    prepared: 0, prepareReplay() {this.prepared++; this.output = "";},
     setInput(value) {this.input = value;}, commitFirst() {this.output = "你好"; this.input = "";}, onTakeover(fn) {this.takeover = fn;}};
   let time = 0, nextId = 0, watcher; const timers = new Map();
   const env = {document, media, setTimeout: (fn, ms) => {timers.set(++nextId, {fn, at: time + ms}); return nextId;}, clearTimeout: id => timers.delete(id)};
@@ -63,4 +65,36 @@ test("initially offscreen demo plays on first entry and does not restart after l
   app.watcher([{isIntersecting: true}]);
   app.advance(3000);
   assert.equal(app.controller.input, "mine");
+});
+
+test("replay prepares a fresh input demonstration", () => {
+  const app=setup({reduced:true}); app.controller.output="旧结果";
+  app.replay.emit("click"); assert.equal(app.controller.prepared,1);
+});
+
+test("local animation lifecycle cancels superseded, reduced and background motion", () => {
+  const document=new Target(), media=new Target();
+  const motion=createMotion({document,media});
+  const made=[];
+  const node={animate(frames,options) {const a={frames,options,cancelled:false,cancel(){this.cancelled=true;}}; made.push(a); return a;}};
+  const first=motion.animate(node,[{opacity:0},{opacity:1}]);
+  motion.animate(node,[{opacity:.5},{opacity:1}]); assert.equal(first.cancelled,true);
+  media.matches=true; media.emit("change"); assert.equal(made[1].cancelled,true);
+  assert.equal(motion.animate(node,[{opacity:0},{opacity:1}]),null);
+  media.matches=false; document.hidden=false;
+  const last=motion.animate(node,[{opacity:0},{opacity:1}]);
+  document.hidden=true; document.emit("visibilitychange"); assert.equal(last.cancelled,true);
+});
+
+test("deferred motion waits for the following experience script while document is interactive", () => {
+  const document=new Target(), media=new Target(), root=new Target(), replay=new Target();
+  document.readyState="interactive"; document.querySelectorAll=()=>[]; media.matches=true;
+  root.children["[data-ime-replay]"]=replay;
+  let committed=0;
+  const controller={kind:"hero",root,setInput(){},prepareReplay(){},commitFirst(){committed++;},onTakeover(){}};
+  const window={matchMedia:()=>media};
+  vm.runInNewContext(fs.readFileSync(require.resolve("../../website/motion.js"),"utf8"),{window,document,setTimeout,clearTimeout});
+  window.ModernIMEExperience={controllers:[controller]};
+  document.emit("DOMContentLoaded"); replay.emit("click");
+  assert.equal(committed,1,"replay must be wired after both deferred scripts finish");
 });

@@ -16,7 +16,8 @@ class Element {
   querySelectorAll(name) {return this.groups?.[name] || [];}
   setAttribute(name, value) {this.attributes[name] = value;}
   append(...nodes) {this.children.push(...nodes);}
-  replaceChildren(...nodes) {this.children = nodes;}
+  replaceChildren(...nodes) {this.children = nodes; for (const node of nodes) node.parentElement = this;}
+  getBoundingClientRect() {return {left: Math.max(0,this.parentElement?.children.indexOf(this) || 0)*80,top:0,width:70,height:38};}
   focus() {this.focused = true; this.emit("focus");}
 }
 function fixture(kind = "lab") {
@@ -144,4 +145,61 @@ test("choosing a sample restores Chinese candidates after English mode", () => {
   assert.equal(model.candidates[4].text, "实践");
   model.toggleMode(); model.setDomain("medical");
   assert.equal(model.candidates[0].text, "磁共振成像");
+});
+
+test("returning to domains preserves the selected domain and its matching input", () => {
+  const model = experience.createModel();
+  model.setDomain("medical"); model.setExample("typo"); model.setExample("domain");
+  assert.equal(model.domain, "medical");
+  assert.equal(model.input, experience.DOMAINS.medical);
+  assert.equal(model.candidates[0].text, "磁共振成像");
+});
+
+test("reset learning restores a clean selectable Chinese example after mode changes", () => {
+  const model=experience.createModel(); model.setExample("learning"); model.select(4); model.toggleMode();
+  model.resetLearning();
+  assert.equal(model.mode,"zh"); assert.equal(model.output,"");
+  assert.equal(model.candidates[4].text,"实践");
+});
+
+test("mouse selection and paging return focus to input for continuous typing", () => {
+  const app = fixture(); app.controller.setInput("nihao");
+  app.fields.candidates.children[0].emit("click");
+  assert.equal(app.fields.input.focused, true);
+  app.fields.input.focused = false; app.fields.candidates.clientWidth = 75;
+  app.controller.setInput("shijian"); app.fields.next.emit("click");
+  assert.equal(app.fields.input.focused, true);
+});
+
+test("Shift released outside the input does not change mode on next visit", () => {
+  const {fields, controller} = fixture();
+  fields.input.emit("keydown", {key:"Shift"}); fields.input.emit("blur");
+  fields.input.emit("keyup", {key:"Shift"});
+  assert.equal(controller.model.mode, "zh");
+});
+
+test("replay preparation clears stale output and restores Chinese without stealing focus", () => {
+  const {controller, fields} = fixture("hero");
+  controller.model.output = "旧结果"; controller.model.toggleMode();
+  controller.prepareReplay();
+  assert.equal(controller.model.mode,"zh"); assert.equal(fields.output.textContent, "");
+  assert.equal(fields.input.focused, undefined);
+});
+
+test("unchanged layout notifications preserve active reorder and reduced motion cancels it", () => {
+  const oldWindow=global.window, oldAnimate=Element.prototype.animate;
+  const media=new Element(), document=new Element(); media.matches=false;
+  const {createMotion}=require("../../website/motion.js"); const motion=createMotion({document,media});
+  const made=[];
+  Element.prototype.animate=function(frames,options) {const animation={frames,options,cancelled:false,cancel(){this.cancelled=true;this.oncancel?.();}}; made.push(animation); return animation;};
+  global.window={ModernIMEMotion:{transitions:motion,moveIndicator(){}},addEventListener(){}};
+  try {
+    const app=fixture(); app.examples[1].emit("click");
+    app.fields.candidates.children[4].emit("click");
+    const reorder=made.filter(item=>item.frames[0].transform?.startsWith("translate(")).at(-1);
+    assert.ok(reorder,"selecting 实践 must animate existing candidate movement");
+    app.controller.refresh();
+    assert.equal(reorder.cancelled,false,"same geometry notifications must not interrupt movement");
+    media.matches=true; media.emit("change"); assert.equal(reorder.cancelled,true);
+  } finally {global.window=oldWindow; Element.prototype.animate=oldAnimate;}
 });
