@@ -111,17 +111,18 @@ class WebsiteTests(unittest.TestCase):
 
     def test_scene_and_system_controls_match_their_content(self):
         html = (ROOT / "website/index.html").read_text()
-        controls = re.findall(r'<input[^>]+name="install-system"[^>]*>', html)
-        self.assertEqual(len(controls), 3)
+        controls = re.findall(r'<input[^>]+name="deb-system"[^>]*>', html)
+        self.assertEqual(len(controls), 1)
         self.assertEqual(sum("checked" in tag for tag in controls), 1)
         self.assertTrue(all('type="radio"' in tag for tag in controls))
-        values = re.findall(r'value="([^"]+)"', "".join(controls))
-        self.assertEqual(values, ["ubuntu24.04", "openeuler", "other"])
-        self.assertEqual(values, re.findall(r'data-install-panel="([^"]+)"', html))
-        self.assertEqual(re.findall(r'data-ime-demo="([^"]+)"', html), ["hero", "lab", "settings"])
-        self.assertEqual(len(re.findall(r'data-ime-input\b', html)), 3)
-        self.assertEqual(len(re.findall(r'data-ime-candidates\b', html)), 3)
-        self.assertEqual(len(re.findall(r'data-domain="([^"]+)"', html)), 6)
+        self.assertEqual(set(re.findall(r'value="(ubuntu[^"]+)"', "".join(controls))), {"ubuntu24.04"})
+        buttons = re.findall(r'data-workflow="([^"]+)"', html)
+        panels = re.findall(r'data-workflow-panel="([^"]+)"', html)
+        self.assertEqual(buttons, panels)
+        self.assertEqual(len(set(buttons)), 3)
+        for name in buttons:
+            self.assertIn(f'aria-controls="workflow-{name}"', html)
+            self.assertIn(f'id="workflow-{name}"', html)
         previous = re.search(r'<img[^>]+id="gallery-previous"[^>]*>', html).group()
         self.assertNotIn('src=', previous, "hidden transition layer must not trigger eager image download")
         self.assertIn('aria-hidden="true"', previous)
@@ -205,7 +206,7 @@ class WebsiteTests(unittest.TestCase):
             destination = Path(temp) / "pages"
             overlay.prepare(ROOT / "website", destination)
             html = (destination / "index.html").read_text()
-            for name in ("app.js", "experience.js", "motion.js", "gallery.js", "install.js", "styles.css"):
+            for name in ("app.js", "motion.js", "gallery.js", "install.js", "styles.css"):
                 digest = hashlib.sha256((ROOT / "website" / name).read_bytes()).hexdigest()[:12]
                 self.assertIn(f'{name}?v={digest}', html)
 

@@ -1,10 +1,38 @@
 "use strict";
 const repository = "sunshine134679/fcitx5-linux-pinyin-input-method";
 const releasePage = `https://github.com/${repository}/releases/latest`;
+const samples = {
+  single: {pinyin: "ni", words: ["你", "尼", "呢", "泥", "拟", "逆", "妮", "倪", "霓"]},
+  double: {pinyin: "ni'hao", words: ["你好", "你号", "拟好", "拟合", "霓虹", "倪皓", "逆号"]}
+};
+document.querySelectorAll("[data-demo]").forEach(button => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("[data-demo]").forEach(item => {
+      const selected = item === button;
+      item.classList.toggle("active", selected);
+      item.setAttribute("aria-pressed", String(selected));
+    });
+    const sample = samples[button.dataset.demo];
+    const pinyin = document.getElementById("demo-pinyin");
+    pinyin.replaceChildren(document.createTextNode(sample.pinyin));
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.setAttribute("aria-hidden", "true");
+    pinyin.append(caret);
+    document.getElementById("demo-candidates").replaceChildren(...sample.words.map((word, index) => {
+      const candidate = document.createElement("span");
+      const number = document.createElement("small");
+      number.textContent = String(index + 1);
+      candidate.append(number, document.createTextNode(word));
+      return candidate;
+    }));
+  });
+});
+
 let releaseAssets = null;
 function updateDebDownload() {
   const button = document.getElementById("deb-download");
-  const distro = "ubuntu24.04";
+  const distro = document.querySelector("input[name=deb-system]:checked").value;
   if (!releaseAssets) {
     button.href = `https://github.com/${repository}/releases/download/v0.1.23/modernime_0.1.23_amd64_${distro}.deb`;
     return;
@@ -13,6 +41,7 @@ function updateDebDownload() {
   button.href = asset ? asset.browser_download_url : releasePage;
   button.firstChild.textContent = asset ? "下载 .deb " : "查看可用安装包 ";
 }
+document.querySelectorAll("input[name=deb-system]").forEach(option => option.addEventListener("change", updateDebDownload));
 
 document.getElementById("copy-install").addEventListener("click", async () => {
   const button = document.getElementById("copy-install");

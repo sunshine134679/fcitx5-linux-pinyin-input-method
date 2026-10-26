@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 import shutil
 
-FILES = ("index.html", "styles.css", "app.js", "experience.js", "motion.js", "gallery.js", "install.js", "sitemap.xml", "robots.txt")
+FILES = ("index.html", "styles.css", "app.js", "motion.js", "gallery.js", "install.js", "sitemap.xml", "robots.txt")
 
 
 def repository_digest(root):
@@ -54,7 +54,7 @@ def prepare(source, destination):
         shutil.copyfile(source / name, destination / name)
     # A new page must never reuse the previous release's cached scripts/styles.
     html = (source / "index.html").read_text(encoding="utf-8")
-    for name in ("styles.css", "app.js", "experience.js", "motion.js", "gallery.js", "install.js"):
+    for name in ("styles.css", "app.js", "motion.js", "gallery.js", "install.js"):
         digest = hashlib.sha256((source / name).read_bytes()).hexdigest()[:12]
         html = html.replace(f'"{name}"', f'"{name}?v={digest}"')
     (destination / "index.html").write_text(html, encoding="utf-8")
