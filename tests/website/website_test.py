@@ -122,6 +122,12 @@ class WebsiteTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r'data-ime-input\b', html)), 3)
         self.assertEqual(len(re.findall(r'data-ime-candidates\b', html)), 3)
         self.assertEqual(len(re.findall(r'data-domain="([^"]+)"', html)), 6)
+        spacing = re.search(r'<input[^>]+id="candidate-spacing"[^>]*>', html).group()
+        self.assertIn('data-ime-spacing', spacing)
+        self.assertIn('min="0"', spacing)
+        self.assertIn('max="12"', spacing)
+        self.assertEqual(re.findall(r'<a[^>]+href="#([^"]+)"[^>]*data-section-link', html),
+                         ["experience", "client", "download"] * 2)
         previous = re.search(r'<img[^>]+id="gallery-previous"[^>]*>', html).group()
         self.assertNotIn('src=', previous, "hidden transition layer must not trigger eager image download")
         self.assertIn('aria-hidden="true"', previous)

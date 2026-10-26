@@ -98,3 +98,21 @@ test("deferred motion waits for the following experience script while document i
   document.emit("DOMContentLoaded"); replay.emit("click");
   assert.equal(committed,1,"replay must be wired after both deferred scripts finish");
 });
+
+test("reading navigation follows sections, preserves other links and coalesces scroll frames", () => {
+  const {createNavigation}=require("../../website/motion.js");
+  const links=["experience","client","download"].map(id=>({attributes:{href:"#"+id},getAttribute(name){return this.attributes[name]??null;},setAttribute(name,value){this.attributes[name]=value;},removeAttribute(name){delete this.attributes[name];}}));
+  const mobile={...links[1],attributes:{href:"#client"}}; links.push(mobile);
+  const tops={experience:800,client:1600,download:2400};
+  const document={querySelectorAll:()=>links,querySelector:()=>null,getElementById:id=>({id,getBoundingClientRect:()=>({top:tops[id]})})};
+  const listeners={}, frames=[];
+  const view={innerHeight:800,addEventListener(name,fn){listeners[name]=fn;},requestAnimationFrame(fn){frames.push(fn);}};
+  createNavigation(document,view);
+  assert.ok(links.every(link=>!link.attributes["aria-current"]));
+  tops.experience=-900;tops.client=150;tops.download=1000;
+  listeners.scroll();listeners.scroll();assert.equal(frames.length,1);frames.shift()();
+  assert.equal(links[1].attributes["aria-current"],"location");assert.equal(mobile.attributes["aria-current"],"location");
+  assert.equal(links[0].attributes["aria-current"],undefined);
+  tops.experience=800;tops.client=1600;listeners.scroll();frames.shift()();
+  assert.ok(links.every(link=>!link.attributes["aria-current"]));
+});
