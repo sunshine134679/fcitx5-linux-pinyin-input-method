@@ -27,7 +27,7 @@
 
   function createModel(initial = "") {
     return {
-      input: initial, output: "", mode: "zh", example: "typo", domain: "it", learningSelections: 0, font: 18, capacity: 9, spacing: 4, theme: "light",
+      input: initial, output: "", mode: "zh", example: "typo", domain: "it", learningSelections: 0, font: 18, capacity: 9, theme: "light",
       get candidates() {
         if (!this.input || this.mode === "en") return [];
         const key = this.input.trim().toLowerCase();
@@ -53,8 +53,8 @@
       clear() {this.input = ""; this.output = "";},
       resetLearning() {this.learningSelections = 0; if (this.example === "learning") {this.mode = "zh"; this.input = "shijian"; this.output = "";}},
       toggleMode() {this.mode = this.mode === "zh" ? "en" : "zh";},
-      setSettings({font = this.font, capacity = this.capacity, spacing = this.spacing, theme = this.theme}) {
-        this.font = clamp(font, 14, 28); this.capacity = clamp(capacity, 3, 9); this.spacing = clamp(spacing, 0, 12); this.theme = theme === "dark" ? "dark" : "light";
+      setSettings({font = this.font, capacity = this.capacity, theme = this.theme}) {
+        this.font = clamp(font, 14, 28); this.capacity = clamp(capacity, 3, 9); this.theme = theme === "dark" ? "dark" : "light";
       }
     };
   }
@@ -71,7 +71,6 @@
     const pageLabel = one("[data-ime-page]"), clear = one("[data-ime-clear]");
     const font = one("[data-ime-font]"), capacity = one("[data-ime-capacity]"), theme = one("[data-ime-theme]");
     const fontValue = one("[data-ime-font-value]"), capacityValue = one("[data-ime-capacity-value]");
-    const spacing = one("[data-ime-spacing]"), spacingValue = one("[data-ime-spacing-value]");
     const exampleTitle = one("[data-example-title]"), exampleCaption = one("[data-example-caption]");
     const domainOptions = one("[data-domain-options]"), learningReset = one("[data-learning-reset]");
     const learningRank = one("[data-learning-rank]");
@@ -87,21 +86,19 @@
       if (!items.length) return [];
       if (model.input.trim().toLowerCase() === "v2" && model.mode === "zh") return [items];
       const width = Math.max(1, candidates.clientWidth || root.clientWidth || 320);
-      const style = typeof getComputedStyle === "function" ? getComputedStyle(candidates) : null;
-      const computed = Number.parseFloat(style?.fontSize), computedGap = Number.parseFloat(style?.columnGap);
+      const computed = typeof getComputedStyle === "function" ? Number.parseFloat(getComputedStyle(candidates).fontSize) : 0;
       const fontPx = computed > 0 ? computed : kind === "settings" ? model.font * 4 / 3 : 15;
-      const gap = computedGap >= 0 ? computedGap : model.spacing;
       const result = []; let current = [], used = 0;
       for (const item of items) {
         // Includes the number, button padding and gap. Long words wrap in their one full-width button.
-        const amount = Math.min(width, 30 + Array.from(item.text).length * fontPx);
-        if (current.length && (current.length >= model.capacity || used + gap + amount > width)) {result.push(current); current = []; used = 0;}
-        used += amount + (current.length ? gap : 0); current.push(item);
+        const amount = Math.min(width, 34 + Array.from(item.text).length * fontPx);
+        if (current.length && (current.length >= model.capacity || used + amount > width)) {result.push(current); current = []; used = 0;}
+        current.push(item); used += amount;
       }
       if (current.length) result.push(current);
       return result;
     }
-    function refresh({animate = true} = {}) {
+    function refresh() {
       if (!composing) input.value = model.input;
       if (output && output.textContent !== model.output) {
         output.textContent = model.output;
@@ -111,10 +108,8 @@
       if (mode) {mode.textContent = model.mode === "zh" ? "中" : "英"; mode.setAttribute("aria-pressed", String(model.mode === "en"));}
       if (kind === "settings") {
         root.style.setProperty("--ime-font", `${model.font}pt`); root.style.setProperty("--ime-capacity", String(model.capacity)); root.dataset.theme = model.theme;
-        root.style.setProperty("--ime-gap", `${model.spacing}px`);
         if (fontValue) fontValue.textContent = `${model.font} pt`;
         if (capacityValue) capacityValue.textContent = `${model.capacity} 个`;
-        if (spacingValue) spacingValue.textContent = `${model.spacing} px`;
       }
       if (exampleTitle) exampleTitle.textContent = EXAMPLES[model.example].title;
       if (exampleCaption) exampleCaption.textContent = EXAMPLES[model.example].caption;
@@ -127,7 +122,7 @@
 
       const items = model.candidates; pages = pageLayout(items); page = Math.min(page, Math.max(0, pages.length - 1));
       const shown = pages[page] || [];
-      const signature = JSON.stringify([shown.map(item => item.id), model.font, model.capacity, model.spacing, model.theme]);
+      const signature = JSON.stringify([shown.map(item => item.id), model.font, model.capacity, model.theme]);
       const changed = signature !== rendered;
       const oldRects = new Map();
       if (changed) for (const node of candidates.children) {
@@ -151,7 +146,7 @@
       if (changed) candidates.replaceChildren(...shownNodes);
       // Read all final geometry before starting animations; unchanged observer notifications do nothing.
       const positions = changed ? shownNodes.map(node => node.getBoundingClientRect?.()) : [];
-      if (changed && initialized && animate) shownNodes.forEach((node, index) => {
+      if (changed && initialized) shownNodes.forEach((node, index) => {
         const before = oldRects.get(node.dataset.candidateId), after = positions[index];
         if (!before) {
           motion?.animate(node, [{opacity: 0, transform: "translateY(6px)"}, {opacity: 1, transform: "none"}], {duration: 200, delay: model.input === "v2" ? index * 25 : 0, fill: "backwards"});
@@ -217,11 +212,11 @@
     prev?.addEventListener("click", () => {movePage(-1); input.focus();}); next?.addEventListener("click", () => {movePage(1); input.focus();});
     clear?.addEventListener("click", () => {model.clear(); page = 0; refresh(); input.focus();});
     if (kind === "hero") (one("[data-start-demo]") || root.ownerDocument.querySelector?.("[data-start-demo]"))?.addEventListener("click", () => input.focus());
-    for (const button of many("[data-example]")) button.addEventListener("click", () => {model.setExample(button.dataset.example); page = 0; refresh(); motion?.animate(one(".workbench-heading"), [{opacity: .35, transform: "translateY(5px)"}, {opacity: 1, transform: "none"}]);});
-    for (const button of many("[data-domain]")) button.addEventListener("click", () => {model.setDomain(button.dataset.domain); page = 0; refresh();});
+    for (const button of many("[data-example]")) button.addEventListener("click", () => {model.setExample(button.dataset.example); page = 0; refresh(); motion?.animate(one(".workbench-heading"), [{opacity: .35, transform: "translateY(5px)"}, {opacity: 1, transform: "none"}]); input.focus();});
+    for (const button of many("[data-domain]")) button.addEventListener("click", () => {model.setDomain(button.dataset.domain); page = 0; refresh(); input.focus();});
     learningReset?.addEventListener("click", () => {model.resetLearning(); page = 0; refresh(); input.focus();});
-    function updateSettings() {model.setSettings({font: font?.value ?? model.font, capacity: capacity?.value ?? model.capacity, spacing: spacing?.value ?? model.spacing, theme: theme?.checked ? "dark" : "light"}); page = 0; refresh({animate: false});}
-    font?.addEventListener("input", updateSettings); capacity?.addEventListener("input", updateSettings); spacing?.addEventListener("input", updateSettings); theme?.addEventListener("change", updateSettings);
+    function updateSettings() {model.setSettings({font: font?.value ?? model.font, capacity: capacity?.value ?? model.capacity, theme: theme?.checked ? "dark" : "light"}); page = 0; refresh();}
+    font?.addEventListener("input", updateSettings); capacity?.addEventListener("input", updateSettings); theme?.addEventListener("change", updateSettings);
     if (typeof ResizeObserver !== "undefined") {
       try {new ResizeObserver(refresh).observe(candidates);}
       catch {if (typeof window !== "undefined") window.addEventListener("resize", refresh);}

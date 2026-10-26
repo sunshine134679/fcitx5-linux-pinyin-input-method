@@ -31,40 +31,6 @@
     for (const [name, value] of Object.entries({x: to.left - from.left + group.scrollLeft, y: to.top - from.top + group.scrollTop, width: to.width, height: to.height})) group.style.setProperty(`--active-${name}`, `${value}px`);
     group.dataset.indicator = "ready";
   }
-  function createNavigation(scope, view) {
-    const links = [...scope.querySelectorAll("[data-section-link]")];
-    const sections = [...new Map(links.map(link => {
-      const id = link.getAttribute("href").slice(1);
-      return [id, scope.getElementById(id)];
-    })).entries()].filter(([, section]) => section);
-    if (!sections.length) return null;
-    const nav = scope.querySelector(".primary-nav");
-    let scheduled = false;
-    function refresh() {
-      const offset = Math.min(view.innerHeight * .3, 220);
-      let current = null;
-      for (const [id, section] of sections) if (section.getBoundingClientRect().top <= offset) current = id;
-      for (const link of links) {
-        if (link.getAttribute("href") === `#${current}`) link.setAttribute("aria-current", "location");
-        else link.removeAttribute("aria-current");
-      }
-      const selected = nav?.querySelector("[aria-current=location]");
-      if (selected) moveIndicator(nav, selected);
-      else if (nav) delete nav.dataset.indicator;
-    }
-    const schedule = () => {
-      if (scheduled) return;
-      scheduled = true;
-      const run = () => {scheduled = false; refresh();};
-      if (view.requestAnimationFrame) view.requestAnimationFrame(run);
-      else run();
-    };
-    view.addEventListener("scroll", schedule, {passive: true});
-    view.addEventListener("resize", schedule);
-    if (typeof ResizeObserver !== "undefined" && scope.body) new ResizeObserver(schedule).observe(scope.body);
-    refresh();
-    return {refresh};
-  }
   function createDemo(controller, options = {}) {
     if (!controller || controller.kind !== "hero") return null;
     const doc = options.document || (typeof document !== "undefined" ? document : null);
@@ -126,13 +92,12 @@
     }
     return {cancel, replay: () => play(true)};
   }
-  const api = {createDemo, createMotion, moveIndicator, createNavigation};
+  const api = {createDemo, createMotion, moveIndicator};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined" && typeof document !== "undefined") {
     api.transitions = createMotion();
     window.ModernIMEMotion = api;
     const start = () => {
-      api.navigation = createNavigation(document, window);
       const experience = window.ModernIMEExperience;
       if (!experience) return;
       const controllers = experience.controllers || experience.init?.() || [];
