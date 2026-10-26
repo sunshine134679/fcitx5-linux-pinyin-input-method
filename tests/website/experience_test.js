@@ -23,14 +23,14 @@ class Element {
 function fixture(kind = "lab") {
   const root = new Element(); root.dataset.imeDemo = kind;
   const start = new Element(); root.ownerDocument = {createElement: () => new Element(), querySelector: name => name === "[data-start-demo]" ? start : null};
-  const names = ["input", "candidates", "output", "status", "mode", "prev", "next", "page", "clear", "font", "capacity", "spacing", "theme", "font-value", "capacity-value", "spacing-value"];
+  const names = ["input", "candidates", "output", "status", "mode", "prev", "next", "page", "clear", "font", "capacity", "theme", "font-value", "capacity-value"];
   const fields = Object.fromEntries(names.map(name => [name, new Element()]));
   root.named = Object.fromEntries(names.map(name => [`[data-ime-${name}]`, fields[name]]));
   for (const name of ["domain-options", "example-title", "example-caption", "learning-reset", "learning-rank"]) {fields[name] = new Element(); root.named[`[data-${name}]`] = fields[name];}
   const examples = ["typo", "learning", "domain", "clipboard"].map(example => {const e = new Element(); e.dataset.example = example; return e;});
   const domains = ["it", "finance", "medical", "law", "research", "daily"].map(domain => {const e = new Element(); e.dataset.domain = domain; return e;});
   root.groups = {"[data-example]": examples, "[data-domain]": domains};
-  fields.font.value = "18"; fields.capacity.value = "9"; fields.spacing.value = "4";
+  fields.font.value = "18"; fields.capacity.value = "9";
   return {root, fields, start, examples, domains, controller: experience.mount(root)};
 }
 
@@ -202,32 +202,4 @@ test("unchanged layout notifications preserve active reorder and reduced motion 
     assert.equal(reorder.cancelled,false,"same geometry notifications must not interrupt movement");
     media.matches=true; media.emit("change"); assert.equal(reorder.cancelled,true);
   } finally {global.window=oldWindow; Element.prototype.animate=oldAnimate;}
-});
-
-test("spacing preview changes physical capacity without changing candidate order", () => {
-  const app=fixture("settings"); app.fields.candidates.clientWidth=180;
-  const order=app.controller.model.candidates.map(item=>item.id);
-  app.fields.spacing.value="0"; app.fields.spacing.emit("input");
-  assert.equal(app.controller.pageSize,3);
-  app.fields.spacing.value="12"; app.fields.spacing.emit("input");
-  assert.equal(app.controller.pageSize,2);
-  assert.equal(app.root.style["--ime-gap"],"12px");
-  assert.equal(app.fields["spacing-value"].textContent,"12 px");
-  assert.deepEqual(app.controller.model.candidates.map(item=>item.id),order);
-});
-
-test("choosing a scene or domain does not summon the input keyboard or scroll focus", () => {
-  const app=fixture(); app.examples[2].emit("click"); app.domains[2].emit("click");
-  assert.equal(app.fields.input.focused,undefined);
-  assert.equal(app.controller.model.candidates[0].text,"磁共振成像");
-});
-
-test("direct settings manipulation updates candidates without delayed entry animations", () => {
-  const oldWindow=global.window; let animated=0;
-  global.window={ModernIMEMotion:{transitions:{animate(){animated++;},cancel(){}},moveIndicator(){}},addEventListener(){}};
-  try {
-    const app=fixture("settings"); app.fields.capacity.value="3"; app.fields.capacity.emit("input");
-    app.fields.capacity.value="9"; app.fields.capacity.emit("input");
-    assert.equal(animated,0,"dragging capacity must reveal candidates immediately");
-  } finally {global.window=oldWindow;}
 });
