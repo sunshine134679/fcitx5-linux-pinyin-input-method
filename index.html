@@ -21,12 +21,12 @@
   <script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "ModernIME", "url": "https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/", "operatingSystem": "Linux", "applicationCategory": "UtilitiesApplication", "softwareVersion": "0.1.23", "description": "基于 Fcitx5 与 LibIME 的现代拼音输入法，提供拼音容错、本地习惯学习、专业词库、V 模式与独立设置客户端。", "downloadUrl": "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest", "screenshot": "https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/assets/client-overview-3x.png", "license": "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/LICENSE", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}</script>
   <title>ModernIME · 为 Linux 而生的现代拼音输入法</title>
   <link rel="icon" href="assets/favicon.png" type="image/png" sizes="32x32">
-  <link rel="stylesheet" href="styles.css?v=b486d1efa2ea">
+  <link rel="stylesheet" href="styles.css?v=1b112a56f7f2">
   <script src="app.js?v=6a904d6affc1" defer></script>
-  <script src="experience.js?v=fcb9e34b1061" defer></script>
-  <script src="motion.js?v=1011a0865988" defer></script>
+  <script src="motion.js?v=e89426788382" defer></script>
+  <script src="experience.js?v=8584a363429f" defer></script>
   <script src="gallery.js?v=f02d92789f4a" defer></script>
-  <script src="install.js?v=5bfceb204ea2" defer></script>
+  <script src="install.js?v=233803922bfd" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳到主要内容</a>
@@ -48,7 +48,7 @@
       <div class="ime-window"><div class="ime-composition"><label class="sr-only" for="hero-input">试着输入拼音</label><input id="hero-input" data-ime-input name="hero-pinyin" type="text" value="nihao" placeholder="试试 nihao…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="80" aria-describedby="hero-hint"><button type="button" class="ime-mode" data-ime-mode aria-label="切换中英文模式">中</button></div><div data-ime-candidates class="ime-candidates" role="group" aria-label="候选词"><span class="ime-candidate chosen"><small>1</small><span>你好</span></span><span class="ime-candidate"><small>2</small><span>你号</span></span><span class="ime-candidate"><small>3</small><span>拟好</span></span></div><div class="ime-pagination"><span data-ime-page>1 / 1</span><button type="button" data-ime-prev aria-label="上一页候选">‹</button><button type="button" data-ime-next aria-label="下一页候选">›</button></div></div>
       <p class="demo-feedback" data-ime-status role="status" aria-live="polite">点击输入框，接着输入。</p>
       <p class="keyboard-hint" id="hero-hint"><kbd>Space</kbd> 选首词 <span>·</span> <kbd>1–9</kbd> 选词 <span>·</span> <kbd>Shift</kbd> 中 / 英</p>
-    </div><div class="demo-actions hero-motion-controls"><span>输入 → 候选 → 上屏</span><div><button type="button" class="quiet-button" data-ime-pause hidden>暂停演示</button><button type="button" class="quiet-button" data-ime-replay>重播一次</button></div></div></div>
+    </div><div class="demo-actions hero-motion-controls"><span>输入 → 候选 → 上屏</span><div><button type="button" class="quiet-button" data-ime-pause hidden>停止演示</button><button type="button" class="quiet-button" data-ime-replay>重播一次</button></div></div></div>
       </div>
       <p class="container demonstration-note">网页交互示意，使用有限示例词库；输入仅用于本页演示，不上传。<noscript>启用 JavaScript 可操作演示；下载安装与文档仍可访问。</noscript></p>
     </section>
@@ -62,7 +62,7 @@
       <div class="ime-window"><div class="ime-composition"><label class="sr-only" for="lab-input">示例拼音</label><input id="lab-input" data-ime-input name="lab-pinyin" type="text" value="zongwen" placeholder="试试 nihao…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="80" aria-describedby="lab-hint"><button type="button" class="ime-mode" data-ime-mode aria-label="切换中英文模式">中</button></div><div data-ime-candidates class="ime-candidates" role="group" aria-label="候选词"><span class="ime-candidate chosen"><small>1</small><span>中文</span></span><span class="ime-candidate"><small>2</small><span>重温</span></span><span class="ime-candidate"><small>3</small><span>正文</span></span></div><div class="ime-pagination"><span data-ime-page>1 / 1</span><button type="button" data-ime-prev aria-label="上一页候选">‹</button><button type="button" data-ime-next aria-label="下一页候选">›</button></div></div>
       <p class="demo-feedback" data-ime-status role="status" aria-live="polite">选择候选，看看会发生什么。</p>
       <p class="keyboard-hint" id="lab-hint"><kbd>Space</kbd> 选首词 <span>·</span> <kbd>1–9</kbd> 选词 <span>·</span> <kbd>Shift</kbd> 中 / 英</p>
-    </div><div class="learning-progress"><span data-learning-rank></span><button type="button" class="quiet-button" data-learning-reset hidden>重置示例学习</button></div></div>
+    </div><div class="learning-progress"><span data-learning-rank role="status" aria-live="polite"></span><button type="button" class="quiet-button" data-learning-reset hidden>重置示例学习</button></div></div>
       </div>
       <p class="section-note">学习与剪贴板均为可重置的样例，不读取你的词典或系统剪贴板。实际输入由本地 ModernIME 引擎处理。</p>
     </section>

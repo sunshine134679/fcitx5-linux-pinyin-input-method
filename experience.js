@@ -39,7 +39,7 @@
         return words.map(text => ({id: `${key}:${text}`, text}));
       },
       setInput(value) {this.input = String(value);},
-      setExample(name) {if (!Object.hasOwn(EXAMPLES, name)) return; this.mode = "zh"; this.example = name; this.input = EXAMPLES[name].input; this.output = "";},
+      setExample(name) {if (!Object.hasOwn(EXAMPLES, name)) return; this.mode = "zh"; this.example = name; this.input = name === "domain" ? DOMAINS[this.domain] : EXAMPLES[name].input; this.output = "";},
       setDomain(name) {if (!Object.hasOwn(DOMAINS, name)) return; this.mode = "zh"; this.domain = name; this.example = "domain"; this.input = DOMAINS[name]; this.output = "";},
       select(index) {
         const item = this.candidates[index]; if (!item) return false;
@@ -51,7 +51,7 @@
       },
       commitRaw() {if (!this.input) return false; this.output = this.input; this.input = ""; return true;},
       clear() {this.input = ""; this.output = "";},
-      resetLearning() {this.learningSelections = 0; if (this.example === "learning") this.input = "shijian";},
+      resetLearning() {this.learningSelections = 0; if (this.example === "learning") {this.mode = "zh"; this.input = "shijian"; this.output = "";}},
       toggleMode() {this.mode = this.mode === "zh" ? "en" : "zh";},
       setSettings({font = this.font, capacity = this.capacity, theme = this.theme}) {
         this.font = clamp(font, 14, 28); this.capacity = clamp(capacity, 3, 9); this.theme = theme === "dark" ? "dark" : "light";
@@ -74,7 +74,11 @@
     const exampleTitle = one("[data-example-title]"), exampleCaption = one("[data-example-caption]");
     const domainOptions = one("[data-domain-options]"), learningReset = one("[data-learning-reset]");
     const learningRank = one("[data-learning-rank]");
-    const nodes = new Map(), animations = new Map(), takeoverListeners = new Set();
+    const nodes = new Map(), takeoverListeners = new Set();
+    const motionAPI = typeof window !== "undefined" ? window.ModernIMEMotion : null;
+    const motion = motionAPI?.transitions;
+    const scenarioNav = one(".scenario-nav");
+    let rendered = "", initialized = false;
     let pages = [], page = 0, composing = false, bareShift = false, shiftChord = false;
     function signalTakeover() {for (const listener of takeoverListeners) listener();}
 
@@ -94,10 +98,13 @@
       if (current.length) result.push(current);
       return result;
     }
-    function cancelAnimations() {for (const animation of animations.values()) animation.cancel(); animations.clear();}
     function refresh() {
       if (!composing) input.value = model.input;
-      if (output) output.textContent = model.output;
+      if (output && output.textContent !== model.output) {
+        output.textContent = model.output;
+        if (model.output) motion?.animate(output, [{opacity: .25, transform: "translateY(7px)"}, {opacity: 1, transform: "none"}], {duration: 200});
+        else motion?.cancel(output);
+      }
       if (mode) {mode.textContent = model.mode === "zh" ? "中" : "英"; mode.setAttribute("aria-pressed", String(model.mode === "en"));}
       if (kind === "settings") {
         root.style.setProperty("--ime-font", `${model.font}pt`); root.style.setProperty("--ime-capacity", String(model.capacity)); root.dataset.theme = model.theme;
@@ -111,12 +118,17 @@
       if (learningRank) {learningRank.hidden = model.example !== "learning"; learningRank.textContent = `实践：第 ${[5, 3, 1][model.learningSelections]} 位`;}
       for (const button of many("[data-example]")) button.setAttribute("aria-pressed", String(button.dataset.example === model.example));
       for (const button of many("[data-domain]")) button.setAttribute("aria-pressed", String(button.dataset.domain === model.domain));
+      motionAPI?.moveIndicator(scenarioNav, one("[data-example][aria-pressed=true]"));
 
       const items = model.candidates; pages = pageLayout(items); page = Math.min(page, Math.max(0, pages.length - 1));
       const shown = pages[page] || [];
+      const signature = JSON.stringify([shown.map(item => item.id), model.font, model.capacity, model.theme]);
+      const changed = signature !== rendered;
       const oldRects = new Map();
-      for (const node of candidates.children) if (node.dataset?.candidateId && node.getBoundingClientRect) oldRects.set(node.dataset.candidateId, node.getBoundingClientRect());
-      cancelAnimations();
+      if (changed) for (const node of candidates.children) {
+        if (node.dataset?.candidateId && node.getBoundingClientRect) oldRects.set(node.dataset.candidateId, node.getBoundingClientRect());
+        motion?.cancel(node);
+      }
       const shownNodes = shown.map((item, local) => {
         let node = nodes.get(item.id);
         if (!node) {
@@ -124,21 +136,27 @@
           node.classList.add("ime-candidate"); node.dataset.candidateId = item.id;
           const number = root.ownerDocument.createElement("small"), word = root.ownerDocument.createElement("span");
           word.textContent = item.text; node.append(number, word); nodes.set(item.id, node);
-          node.addEventListener("click", () => selectId(item.id));
+          node.addEventListener("click", () => {if (selectId(item.id)) input.focus();});
         }
         node.children[0].textContent = String(local + 1);
         node.classList.toggle("chosen", local === 0);
         return node;
       });
-      candidates.replaceChildren(...shownNodes);
-      const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      if (!reduced) for (const node of shownNodes) {
-        const before = oldRects.get(node.dataset.candidateId), after = node.getBoundingClientRect?.();
-        if (!before || !after || !node.animate) continue;
-        const dx = before.left - after.left, dy = before.top - after.top;
-        if (Math.abs(dx) + Math.abs(dy) >= 1) animations.set(node.dataset.candidateId, node.animate([{transform: `translate(${dx}px, ${dy}px)`}, {transform: "translate(0, 0)"}], {duration: 180, easing: "cubic-bezier(.2,.8,.2,1)"}));
-      }
       candidates.classList.toggle("clipboard-candidates", model.input.trim().toLowerCase() === "v2" && model.mode === "zh");
+      if (changed) candidates.replaceChildren(...shownNodes);
+      // Read all final geometry before starting animations; unchanged observer notifications do nothing.
+      const positions = changed ? shownNodes.map(node => node.getBoundingClientRect?.()) : [];
+      if (changed && initialized) shownNodes.forEach((node, index) => {
+        const before = oldRects.get(node.dataset.candidateId), after = positions[index];
+        if (!before) {
+          motion?.animate(node, [{opacity: 0, transform: "translateY(6px)"}, {opacity: 1, transform: "none"}], {duration: 200, delay: model.input === "v2" ? index * 25 : 0, fill: "backwards"});
+          return;
+        }
+        if (!after) return;
+        const dx = before.left - after.left, dy = before.top - after.top;
+        if (Math.abs(dx) + Math.abs(dy) >= 1) motion?.animate(node, [{transform: `translate(${dx}px, ${dy}px)`}, {transform: "translate(0, 0)"}]);
+      });
+      rendered = signature; initialized = true;
       if (pageLabel) pageLabel.textContent = pages.length ? `${page + 1} / ${pages.length}` : "0 / 0";
       if (prev) prev.disabled = page === 0;
       if (next) next.disabled = page >= pages.length - 1;
@@ -148,9 +166,10 @@
       }
     }
     function selectId(id) {
-      if (!(pages[page] || []).some(item => item.id === id)) return;
+      if (!(pages[page] || []).some(item => item.id === id)) return false;
       const index = model.candidates.findIndex(item => item.id === id);
-      if (index >= 0 && model.select(index)) {page = 0; refresh();}
+      if (index >= 0 && model.select(index)) {page = 0; refresh(); return true;}
+      return false;
     }
     function selectVisible(index) {const item = (pages[page] || [])[index]; if (item) selectId(item.id);}
     function movePage(delta) {if (!pages.length) return; page = Math.max(0, Math.min(pages.length - 1, page + delta)); refresh();}
@@ -159,12 +178,14 @@
       kind, root, model, setInput, refresh, selectVisible, movePage,
       get pageCount() {return pages.length;}, get pageSize() {return (pages[page] || []).length;},
       onTakeover(listener) {takeoverListeners.add(listener); return () => takeoverListeners.delete(listener);},
+      prepareReplay() {model.mode = "zh"; model.clear(); page = 0; refresh();},
       commitFirst() {if (pages[page]?.length) selectVisible(0); else {model.commitRaw(); page = 0; refresh();}},
       commitRaw() {model.commitRaw(); page = 0; refresh();}
     };
     root._imeController = controller;
     input.addEventListener("input", () => {signalTakeover(); if (!composing) setInput(input.value);});
     input.addEventListener("focus", signalTakeover); root.addEventListener("pointerdown", signalTakeover);
+    input.addEventListener("blur", () => {bareShift = false; shiftChord = false;});
     input.addEventListener("compositionstart", () => {signalTakeover(); composing = true; bareShift = false;});
     input.addEventListener("compositionend", () => {composing = false; setInput(input.value);});
     input.addEventListener("keydown", event => {
@@ -187,13 +208,13 @@
       if (!composing && !event.isComposing && bareShift && !shiftChord && !event.ctrlKey && !event.altKey && !event.metaKey) {model.toggleMode(); refresh();}
       bareShift = false; shiftChord = false;
     });
-    mode?.addEventListener("click", () => {model.toggleMode(); refresh();});
-    prev?.addEventListener("click", () => movePage(-1)); next?.addEventListener("click", () => movePage(1));
+    mode?.addEventListener("click", () => {model.toggleMode(); refresh(); input.focus();});
+    prev?.addEventListener("click", () => {movePage(-1); input.focus();}); next?.addEventListener("click", () => {movePage(1); input.focus();});
     clear?.addEventListener("click", () => {model.clear(); page = 0; refresh(); input.focus();});
     if (kind === "hero") (one("[data-start-demo]") || root.ownerDocument.querySelector?.("[data-start-demo]"))?.addEventListener("click", () => input.focus());
-    for (const button of many("[data-example]")) button.addEventListener("click", () => {model.setExample(button.dataset.example); page = 0; refresh(); input.focus();});
+    for (const button of many("[data-example]")) button.addEventListener("click", () => {model.setExample(button.dataset.example); page = 0; refresh(); motion?.animate(one(".workbench-heading"), [{opacity: .35, transform: "translateY(5px)"}, {opacity: 1, transform: "none"}]); input.focus();});
     for (const button of many("[data-domain]")) button.addEventListener("click", () => {model.setDomain(button.dataset.domain); page = 0; refresh(); input.focus();});
-    learningReset?.addEventListener("click", () => {model.resetLearning(); page = 0; refresh();});
+    learningReset?.addEventListener("click", () => {model.resetLearning(); page = 0; refresh(); input.focus();});
     function updateSettings() {model.setSettings({font: font?.value ?? model.font, capacity: capacity?.value ?? model.capacity, theme: theme?.checked ? "dark" : "light"}); page = 0; refresh();}
     font?.addEventListener("input", updateSettings); capacity?.addEventListener("input", updateSettings); theme?.addEventListener("change", updateSettings);
     if (typeof ResizeObserver !== "undefined") {
