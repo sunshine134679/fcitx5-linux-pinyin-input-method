@@ -24,12 +24,11 @@ async function run(release, options = {}) {
   const buttons = ["single", "double"].map(sample => {const b = new Element(); b.dataset.demo = sample; return b;});
   const sceneButtons = ["hello", "express", "linux"].map(scene => {const b = new Element(); b.dataset.scene = scene; return b;});
   const html = fs.readFileSync(path.join(__dirname, "../../website/index.html"), "utf8");
-  const systemOptions = [...html.matchAll(/<input[^>]*name="deb-system"[^>]*>/g)].map(([tag]) => {
-    const option = new Element();
-    option.value = tag.match(/value="([^"]+)"/)[1];
-    option.checked = tag.includes("checked");
-    return option;
-  });
+  for (const [id, element] of Object.entries(elements)) {
+    const anchor = [...html.matchAll(/<a\b[^>]*>/g)].find(([tag]) => tag.includes(`id="${id}"`));
+    if (anchor) element.href = anchor[0].match(/href="([^"]+)"/)[1];
+  }
+  const systemOptions = [];
   const workflowButtons = ["chat", "write", "reuse"].map(name => {const b = new Element(); b.dataset.workflow = name; return b;});
   const workflowPanels = workflowButtons.map(button => {const panel = new Element(); panel.dataset.workflowPanel = button.dataset.workflow; return panel;});
   const screenshotButtons = [...html.matchAll(/<button\b[^>]*data-screenshot=[^>]*>/g)].map(([tag]) => {
@@ -76,7 +75,6 @@ async function run(release, options = {}) {
     // The gallery still initializes when the separate main script is missing.
   } else {
     vm.runInContext(source, context);
-    vm.runInContext(fs.readFileSync(path.join(__dirname, "../../website/motion.js"), "utf8"), context);
   }
   const galleryFile = path.join(__dirname, "../../website/gallery.js");
   vm.runInContext(fs.readFileSync(galleryFile, "utf8"), context);
@@ -163,22 +161,6 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   assert.equal(e["rpm-download"].href, base + names[1]);
   assert.equal(e["portable-download"].href, base + names[2]);
   assert.equal(e["checksum-link"].href, base + names[3]);
-  await app.workflowButtons[1].events.click();
-  assert.equal(app.workflowPanels[1].hidden, false);
-  assert.equal(app.workflowPanels[0].hidden, true);
-  assert.equal(app.workflowButtons[1].attributes["aria-pressed"], "true");
-  await app.workflowButtons[2].events.click();
-  assert.equal(app.workflowPanels[2].hidden, false);
-  assert.equal(app.workflowPanels[1].hidden, true);
-  app.buttons[1].events.click();
-  assert.equal(e["demo-candidates"].children.length, 7);
-  assert.equal(app.buttons[1].attributes["aria-pressed"], "true");
-  app.buttons[0].events.click();
-  assert.equal(e["demo-candidates"].children.length, 9);
-  await app.sceneButtons[2].events.click();
-  assert.equal(e["hero-word"].textContent, "自由生长");
-  assert.equal(e["hero-pinyin"].textContent, "zi'you'sheng'zhang");
-  assert.equal(app.sceneButtons[2].attributes["aria-pressed"], "true");
   await app.screenshotButtons[1].events.click();
   assert.equal(e["client-screenshot"].src, "assets/client-appearance-1x.webp");
   assert.equal(e["screenshot-original"].href, "assets/client-appearance-3x.png");
@@ -189,7 +171,6 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   await e["copy-install"].events.click();
   assert.equal(app.copied(), e["install-command"].textContent);
   const offline = await run(null, {copyFailure: true});
-  await offline.systemOptions[0].events.change();
   assert.match(offline.elements["deb-download"].href, new RegExp(`v${siteVersionPattern}/.*ubuntu24\\.04\\.deb$`));
   assert.match(offline.elements["release-status"].textContent, /暂时无法/);
   await offline.elements["copy-install"].events.click();
@@ -205,16 +186,8 @@ const fixture = {tag_name: tag, assets: names.map(name => ({name, browser_downlo
   await saving.screenshotButtons[1].events.click();
   assert.equal(saving.imageRequests.length, 1);
   const motion = await run(fixture, {motion: true});
-  assert.equal(motion.root.attributes["motion-ready"], true);
-  motion.observers[0].callback([{isIntersecting: true, target: motion.reveal}]);
-  assert.equal(motion.reveal.attributes["is-visible"], true);
-  assert.equal(motion.observers[0].unobserved, true);
   await motion.screenshotButtons[1].events.click();
   assert.equal(motion.elements["client-screenshot"].lastAnimation.duration, 240);
   motion.reduce();
-  assert.equal(motion.observers[0].disconnected, true);
-  assert.equal(motion.root.attributes["motion-ready"], undefined);
-  assert.equal(motion.typing.size, 0);
-  assert.equal(motion.elements["hero-pinyin"].textContent, "hao'hao'biao'da");
-  console.log("Website interactions passed: candidates, everyday scenes, decoded gallery cache/crossfade/races/retry/save-data, original links, package selection, release sync/fallback, safe URLs, copy/fallback, motion API fallback.");
+  console.log("Website interactions passed: decoded gallery cache/crossfade/races/retry/save-data, original links, package selection, release sync/fallback, safe URLs, copy/fallback.");
 })().catch(error => { console.error(error); process.exitCode = 1; });

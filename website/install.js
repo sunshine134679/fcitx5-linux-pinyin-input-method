@@ -1,17 +1,15 @@
 "use strict";
 // Repository guidance and copying remain independent of release API requests.
 (() => {
-  const base = "https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method";
-  const systems = {noble: "Ubuntu 24.04 LTS"};
-  function updateSource() {
-    const option = document.querySelector("input[name=deb-system]:checked");
-    const suite = option?.dataset.suite;
-    if (!Object.hasOwn(systems, suite)) return;
-    document.getElementById("apt-system-name").textContent = systems[suite];
-    document.getElementById("apt-source-command").textContent = `curl -fsSL ${base}/apt/client/modernime-${suite}.sources -o modernime.sources &&\nsudo install -D -m 0644 modernime.sources /etc/apt/sources.list.d/modernime.sources`;
+  const options = [...document.querySelectorAll("input[name=install-system]")];
+  const panels = [...document.querySelectorAll("[data-install-panel]")];
+  function updatePlatform() {
+    const value = options.find(option => option.checked)?.value;
+    if (!panels.some(panel => panel.dataset.installPanel === value)) return;
+    panels.forEach(panel => { panel.hidden = panel.dataset.installPanel !== value; });
   }
-  document.querySelectorAll("input[name=deb-system]").forEach(option => option.addEventListener("change", updateSource));
-  updateSource();
+  options.forEach(option => option.addEventListener("change", updatePlatform));
+  updatePlatform();
   document.querySelectorAll("[data-open-install]").forEach(link => link.addEventListener("click", () => {
     document.getElementById(link.dataset.openInstall).open = true;
   }));
