@@ -878,6 +878,7 @@ void LearningSnapshotShard::consolidate() {
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(combined));
     baseIndex_ = std::move(newIndex);
     baseRecallIndex_ = std::make_shared<RecallIndexCache>();
+    ensureRecallIndex();
     delta_.clear();
     deltaIndex_.clear();
     deltaNewCount_ = 0;

@@ -707,7 +707,7 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     )
     add_test(NAME modernime_candidate_bar_layout COMMAND modernime_ui_tests)
     if(NOT TARGET modernime_candidate_bar_layout_tests)
-        add_custom_target(modernime_candidate_bar_layout_tests
+        add_custom_target(modernime_candidate_bar_layout_tests ALL
             DEPENDS modernime_ui_tests
             COMMAND ${CMAKE_COMMAND} -E create_symlink
                 $<TARGET_FILE:modernime_ui_tests>
