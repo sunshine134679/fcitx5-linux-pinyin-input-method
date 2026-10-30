@@ -254,6 +254,14 @@ MODERNIME_INSTALLED_VERSION="0.1.8" \
 
 assert_true "User edit to desktop shortcut preserved against re-integration" grep -qF '# User modified custom setting' "$desktop_dir/modernime-settings.desktop"
 
+# Simulate icon change on existing user-modified desktop file
+sed -i 's|^Icon=.*|Icon=/old/legacy-icon.png|' "$desktop_dir/modernime-settings.desktop"
+MODERNIME_INSTALLED_VERSION="0.1.9" \
+    modernime_integrate "$prefix" "$XDG_CONFIG_HOME" "$desktop_dir" "$managed_state_dir"
+
+assert_true "Icon updated to new prefix icon on re-integration" grep -qF "Icon=$prefix/share/icons/hicolor/512x512/apps/modernime.png" "$desktop_dir/modernime-settings.desktop"
+assert_true "User custom setting still preserved after icon update" grep -qF '# User modified custom setting' "$desktop_dir/modernime-settings.desktop"
+
 # ==============================================================================
 # TEST 5: Prefix Lock Mutual Exclusion & Canonicalization (A12)
 # ==============================================================================

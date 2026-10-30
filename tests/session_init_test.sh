@@ -89,3 +89,34 @@ if command -v gio >/dev/null 2>&1; then
     test -f "$FAKE_RUNNING"
     grep -F "|$MODERNIME_PREFIX/share:/usr/local/share:/usr/share|$MODERNIME_CONFIG_HOME" "$FAKE_LOG" >/dev/null
 fi
+
+# Verify desktop shortcut auto-creation and icon synchronization
+desktop_shortcut="$HOME/Desktop/modernime-settings.desktop"
+test -f "$desktop_shortcut"
+test -x "$desktop_shortcut"
+grep -F 'Name=ModernIME 设置' "$desktop_shortcut" >/dev/null
+
+# Verify icon updates upon icon change while preserving user edits
+cat > "$desktop_shortcut" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=ModernIME 设置
+Comment=Custom user comment
+Exec="/old/bin/modernime-settings"
+Icon=/old/share/icons/old-icon.png
+Terminal=false
+Categories=Settings;Utility;
+X-User-Custom=preserved
+EOF
+
+export MODERNIME_DESKTOP_ICON="$test_root/new-icons/modernime.png"
+MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/scripts/modernime-session-init" >/dev/null
+grep -F "Icon=$test_root/new-icons/modernime.png" "$desktop_shortcut" >/dev/null
+grep -F 'Comment=Custom user comment' "$desktop_shortcut" >/dev/null
+grep -F 'X-User-Custom=preserved' "$desktop_shortcut" >/dev/null
+test -x "$desktop_shortcut"
+
+# Verify skip flag
+rm -f "$desktop_shortcut"
+MODERNIME_SKIP_DESKTOP_SHORTCUT=1 MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/scripts/modernime-session-init" >/dev/null
+test ! -e "$desktop_shortcut"

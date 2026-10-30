@@ -567,6 +567,23 @@ modernime_integrate() {
             if command -v gio >/dev/null 2>&1; then
                 gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
             fi
+        elif [[ -f "$desktop_shortcut" && ! -L "$desktop_shortcut" && -w "$desktop_shortcut" ]]; then
+            local current_icon target_icon
+            target_icon="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
+            current_icon=$(grep -m1 '^Icon=' "$desktop_shortcut" 2>/dev/null | cut -d= -f2- || true)
+            if [[ "$current_icon" != "$target_icon" ]]; then
+                awk -v new_icon="$target_icon" '
+                    BEGIN { replaced = 0 }
+                    /^Icon=/ { print "Icon=" new_icon; replaced = 1; next }
+                    { print }
+                    END { if (!replaced) print "Icon=" new_icon }
+                ' "$desktop_shortcut" > "$desktop_tmp" || return 1
+                cp -f -- "$desktop_tmp" "$desktop_shortcut" || return 1
+                chmod +x "$desktop_shortcut" 2>/dev/null || true
+                if command -v gio >/dev/null 2>&1; then
+                    gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+                fi
+            fi
         fi
 
         # 2. Update installed desktop entry under share/applications

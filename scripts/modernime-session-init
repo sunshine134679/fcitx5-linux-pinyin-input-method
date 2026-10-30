@@ -199,7 +199,103 @@ if [[ "$is_gnome" == true ]]; then
     fi
 fi
 
-# 6. Reload or restart Fcitx5 in graphical session
+# 6. Ensure desktop shortcut exists and icon is kept up-to-date upon online updates/sessions
+skip_desktop_shortcut=false
+case "${MODERNIME_SKIP_DESKTOP_SHORTCUT:-}" in
+    1|true|TRUE|yes|YES)
+        skip_desktop_shortcut=true
+        ;;
+esac
+
+if [[ "$skip_desktop_shortcut" != true ]]; then
+    desktop_dir=${MODERNIME_DESKTOP_DIR:-${XDG_DESKTOP_DIR:-}}
+    if [[ -z "$desktop_dir" ]] && command -v xdg-user-dir >/dev/null 2>&1; then
+        desktop_dir=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+    fi
+    if [[ -z "$desktop_dir" ]]; then
+        if [[ -d "$HOME/Desktop" ]]; then
+            desktop_dir="$HOME/Desktop"
+        elif [[ -d "$HOME/桌面" ]]; then
+            desktop_dir="$HOME/桌面"
+        else
+            desktop_dir="$HOME/Desktop"
+        fi
+    fi
+
+    desktop_icon=${MODERNIME_DESKTOP_ICON:-}
+    if [[ -z "$desktop_icon" ]]; then
+        if [[ -f "$prefix/share/icons/hicolor/512x512/apps/modernime.png" ]]; then
+            desktop_icon="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
+        elif [[ -f "/usr/share/icons/hicolor/512x512/apps/modernime.png" ]]; then
+            desktop_icon="$(modernime_desktop_string "/usr/share/icons/hicolor/512x512/apps/modernime.png")"
+        else
+            desktop_icon="modernime"
+        fi
+    fi
+
+    settings_desktop_exec=""
+    if [[ -n "${MODERNIME_CONFIG_HOME:-}" || -n "${MODERNIME_DATA_HOME:-}" ]]; then
+        settings_desktop_exec="env"
+        if [[ -n "${MODERNIME_CONFIG_HOME:-}" ]]; then
+            settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home")"
+        fi
+        if [[ -n "${MODERNIME_DATA_HOME:-}" ]]; then
+            settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "XDG_DATA_HOME=$data_home")"
+        fi
+        settings_desktop_exec="$settings_desktop_exec $(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+    else
+        settings_desktop_exec="$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
+    fi
+
+    desktop_shortcut="$desktop_dir/modernime-settings.desktop"
+    if [[ -n "$desktop_dir" ]]; then
+        if [[ ! -e "$desktop_shortcut" && ! -L "$desktop_shortcut" ]]; then
+            mkdir -p "$desktop_dir" 2>/dev/null || true
+            if [[ -w "$desktop_dir" ]]; then
+                desktop_tmp=$(mktemp "${TMPDIR:-/tmp}/modernime-desktop.XXXXXX" 2>/dev/null || mktemp "$desktop_dir/.modernime-desktop.XXXXXX")
+                {
+                    printf '%s\n' '[Desktop Entry]'
+                    printf '%s\n' 'Type=Application'
+                    printf '%s\n' 'Name=ModernIME 设置'
+                    printf '%s\n' 'Comment=Configure ModernIME input method'
+                    printf 'Exec=%s\n' "$settings_desktop_exec"
+                    printf 'Icon=%s\n' "$desktop_icon"
+                    printf '%s\n' 'Terminal=false'
+                    printf '%s\n' 'Categories=Settings;Utility;'
+                } > "$desktop_tmp"
+                cp -f -- "$desktop_tmp" "$desktop_shortcut" 2>/dev/null || mv -f -- "$desktop_tmp" "$desktop_shortcut"
+                rm -f -- "$desktop_tmp" 2>/dev/null || true
+                chmod +x "$desktop_shortcut" 2>/dev/null || true
+                if command -v gio >/dev/null 2>&1; then
+                    gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+                fi
+                printf 'Created desktop shortcut: %s\n' "$desktop_shortcut"
+            fi
+        elif [[ -f "$desktop_shortcut" && ! -L "$desktop_shortcut" && -w "$desktop_shortcut" ]]; then
+            current_icon=$(grep -m1 '^Icon=' "$desktop_shortcut" 2>/dev/null | cut -d= -f2- || true)
+            if [[ "$current_icon" != "$desktop_icon" ]]; then
+                desktop_tmp=$(mktemp "${TMPDIR:-/tmp}/modernime-desktop.XXXXXX" 2>/dev/null || mktemp "$desktop_dir/.modernime-desktop.XXXXXX")
+                awk -v new_icon="$desktop_icon" '
+                    BEGIN { replaced = 0 }
+                    /^Icon=/ { print "Icon=" new_icon; replaced = 1; next }
+                    { print }
+                    END { if (!replaced) print "Icon=" new_icon }
+                ' "$desktop_shortcut" > "$desktop_tmp"
+                cp -f -- "$desktop_tmp" "$desktop_shortcut" 2>/dev/null || mv -f -- "$desktop_tmp" "$desktop_shortcut"
+                rm -f -- "$desktop_tmp" 2>/dev/null || true
+                chmod +x "$desktop_shortcut" 2>/dev/null || true
+                if command -v gio >/dev/null 2>&1; then
+                    gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+                fi
+                printf 'Updated desktop shortcut icon in: %s\n' "$desktop_shortcut"
+            else
+                touch "$desktop_shortcut" 2>/dev/null || true
+            fi
+        fi
+    fi
+fi
+
+# 7. Reload or restart Fcitx5 in graphical session
 skip_restart=false
 case "${MODERNIME_SKIP_FCITX_RESTART:-}" in
     1|true|TRUE|yes|YES)

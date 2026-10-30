@@ -40,6 +40,14 @@ void writeTextFile(const std::filesystem::path &path, const std::string &content
     out.close();
 }
 
+std::string readFile(const std::filesystem::path &path) {
+    std::ifstream in(path);
+    assert(in.good());
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1289,6 +1297,143 @@ int main(int argc, char **argv) {
             *activeId, RuntimeResult{false, "Manual recovery"}, {}, {}, false));
         assert(!UpdateController::hasActivePackageOperation());
         assert(UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Idle);
+    }
+
+    // 18. Ensure Desktop Shortcut Creation and Icon Synchronization
+    {
+        const auto deskTestDir = tempRoot / "desktop-tests";
+        std::filesystem::create_directories(deskTestDir);
+        const auto mockDesktop = deskTestDir / "Desktop";
+        const auto mockPrefix = deskTestDir / "prefix";
+        const auto mockBin = mockPrefix / "bin";
+        const auto mockIcons = mockPrefix / "share/icons/hicolor/512x512/apps";
+        std::filesystem::create_directories(mockBin);
+        std::filesystem::create_directories(mockIcons);
+        writeExecutable(mockBin / "modernime-settings", "#!/bin/sh\nexit 0\n");
+        writeTextFile(mockIcons / "modernime.png", "png-v1-bytes");
+
+        const auto shortcutFile = mockDesktop / "modernime-settings.desktop";
+
+        Environment env{
+            {"MODERNIME_DESKTOP_DIR", mockDesktop.string()},
+            {"MODERNIME_PREFIX", mockPrefix.string()},
+            {"MODERNIME_DESKTOP_ICON", (mockIcons / "modernime.png").string()},
+        };
+
+        // 18.1 Creates fresh desktop shortcut when none exists
+        assert(!std::filesystem::exists(shortcutFile));
+        assert(UpdateController::ensureDesktopShortcut(env));
+        assert(std::filesystem::exists(shortcutFile));
+        const auto content1 = readFile(shortcutFile);
+        assert(content1.find("[Desktop Entry]") != std::string::npos);
+        assert(content1.find("Name=ModernIME 设置") != std::string::npos);
+        assert(content1.find("Icon=" + (mockIcons / "modernime.png").string()) != std::string::npos);
+        assert(content1.find("Terminal=false") != std::string::npos);
+
+        // Permissions should be 0755
+        struct stat st1{};
+        assert(::stat(shortcutFile.c_str(), &st1) == 0);
+        assert((st1.st_mode & 0777) == 0755);
+
+        // 18.2 Automatically synchronizes icon when icon path changes, preserving custom user edits
+        const std::string customized =
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=ModernIME 设置\n"
+            "Comment=Configure ModernIME input method\n"
+            "Comment[zh_CN]=用户自定义配置中文说明\n"
+            "Exec=\"" + (mockBin / "modernime-settings").string() + "\"\n"
+            "Icon=" + (mockIcons / "modernime.png").string() + "\n"
+            "Terminal=false\n"
+            "Categories=Settings;Utility;\n"
+            "X-User-Custom-Key=keep-this-value\n";
+        writeTextFile(shortcutFile, customized);
+
+        // Simulate an online update where the icon is updated to a new theme/path
+        const auto newIconPath = mockIcons / "modernime-v2.png";
+        writeTextFile(newIconPath, "png-v2-bytes");
+        Environment envV2{
+            {"MODERNIME_DESKTOP_DIR", mockDesktop.string()},
+            {"MODERNIME_PREFIX", mockPrefix.string()},
+            {"MODERNIME_DESKTOP_ICON", newIconPath.string()},
+        };
+
+        assert(UpdateController::ensureDesktopShortcut(envV2));
+        const auto content2 = readFile(shortcutFile);
+        assert(content2.find("Icon=" + newIconPath.string()) != std::string::npos);
+        assert(content2.find("Icon=" + (mockIcons / "modernime.png").string()) == std::string::npos);
+        assert(content2.find("Comment[zh_CN]=用户自定义配置中文说明") != std::string::npos);
+        assert(content2.find("X-User-Custom-Key=keep-this-value") != std::string::npos);
+        struct stat st2{};
+        assert(::stat(shortcutFile.c_str(), &st2) == 0);
+        assert((st2.st_mode & 0777) == 0755);
+
+        // 18.3 When icon is unchanged, preserves content and updates timestamp
+        const auto mtimeBefore = std::filesystem::last_write_time(shortcutFile);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        assert(UpdateController::ensureDesktopShortcut(envV2));
+        const auto content3 = readFile(shortcutFile);
+        assert(content3 == content2);
+        const auto mtimeAfter = std::filesystem::last_write_time(shortcutFile);
+        assert(mtimeAfter >= mtimeBefore);
+
+        // 18.4 Inserts Icon when completely missing
+        const std::string missingIconDesktop =
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=ModernIME 设置\n"
+            "Exec=\"/usr/bin/modernime-settings\"\n";
+        writeTextFile(shortcutFile, missingIconDesktop);
+        assert(UpdateController::ensureDesktopShortcut(envV2));
+        const auto content4 = readFile(shortcutFile);
+        assert(content4.find("Icon=" + newIconPath.string()) != std::string::npos);
+        assert(content4.find("Name=ModernIME 设置") != std::string::npos);
+
+        // 18.5 Preserves symlinks
+        std::filesystem::remove(shortcutFile);
+        const auto symlinkTarget = deskTestDir / "real-desktop.desktop";
+        writeTextFile(symlinkTarget, missingIconDesktop);
+        std::filesystem::create_symlink(symlinkTarget, shortcutFile);
+        assert(UpdateController::ensureDesktopShortcut(envV2));
+        assert(std::filesystem::is_symlink(shortcutFile));
+
+        // 18.6 MODERNIME_SKIP_DESKTOP_SHORTCUT skips shortcut creation
+        std::filesystem::remove(shortcutFile);
+        Environment envSkip{
+            {"MODERNIME_DESKTOP_DIR", mockDesktop.string()},
+            {"MODERNIME_SKIP_DESKTOP_SHORTCUT", "1"},
+        };
+        assert(UpdateController::ensureDesktopShortcut(envSkip));
+        assert(!std::filesystem::exists(shortcutFile));
+
+        // 18.7 Online update via runSystemUpgrade automatically triggers ensureDesktopShortcut
+        const auto upgradeTestDir = tempRoot / "upgrade-shortcut-sync";
+        std::filesystem::create_directories(upgradeTestDir);
+        const auto upgradeDesktop = upgradeTestDir / "Desktop";
+        const auto upgradeShortcut = upgradeDesktop / "modernime-settings.desktop";
+        writeExecutable(upgradeTestDir / "pkexec", "#!/bin/sh\nexit 0\n");
+        writeExecutable(upgradeTestDir / "apt-get", "#!/bin/sh\nexit 0\n");
+
+        UpdateStatus upgradeStatus;
+        upgradeStatus.updateAvailable = true;
+        upgradeStatus.manager = PackageManagerKind::Apt;
+        upgradeStatus.installChannel = "deb";
+        upgradeStatus.upgradeCommand = "fake upgrade";
+
+        Environment upgradeEnv{
+            {"PATH", upgradeTestDir.string()},
+            {"MODERNIME_DESKTOP_DIR", upgradeDesktop.string()},
+            {"MODERNIME_DESKTOP_ICON", newIconPath.string()},
+            {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
+        };
+
+        UpdateController::resetPackageOperationStateForTesting();
+        assert(!std::filesystem::exists(upgradeShortcut));
+        const auto directUpgradeRes = UpdateController::runSystemUpgrade(upgradeStatus, upgradeEnv);
+        assert(directUpgradeRes.success);
+        assert(std::filesystem::exists(upgradeShortcut));
+        const auto upgradeContent = readFile(upgradeShortcut);
+        assert(upgradeContent.find("Icon=" + newIconPath.string()) != std::string::npos);
     }
 
     std::filesystem::remove_all(tempRoot);

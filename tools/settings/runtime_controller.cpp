@@ -1,4 +1,5 @@
 #include "modernime/settings/runtime_controller.h"
+#include "modernime/settings/update_controller.h"
 #include "modernime/settings/detail/process_runner.h"
 
 #include <gio/gio.h>
@@ -380,6 +381,7 @@ RuntimeResult RuntimeController::reload(
         const auto status = probe(remoteExecutable, environment);
         if (select.successful && enable.successful &&
             modernimeReady(status)) {
+            UpdateController::ensureDesktopShortcut(environment);
             return {true, "ModernIME 已重新加载并激活"};
         }
 

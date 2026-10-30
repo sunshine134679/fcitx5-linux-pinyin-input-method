@@ -192,9 +192,11 @@ void initPackageTrackingShutdownHandler() {
 
 void startBackgroundPackageTracking(std::uint64_t operationId,
                                     PackageOperationKind opKind,
-                                    std::string fallbackCmd) {
+                                    std::string fallbackCmd,
+                                    Environment environment = {}) {
     initPackageTrackingShutdownHandler();
-    std::thread([operationId, opKind, fallbackCmd = std::move(fallbackCmd)]() {
+    std::thread([operationId, opKind, fallbackCmd = std::move(fallbackCmd),
+                 environment = std::move(environment)]() {
         detail::CommandResult out;
         while (!g_packageTrackingShuttingDown.load()) {
             out = detail::waitForOperation(operationId, 200);
@@ -211,6 +213,9 @@ void startBackgroundPackageTracking(std::uint64_t operationId,
             RuntimeResult finalRes;
             finalRes.success = exitedZero;
             if (opKind == PackageOperationKind::SystemUpgrade) {
+                if (exitedZero) {
+                    UpdateController::ensureDesktopShortcut(environment);
+                }
                 finalRes.message =
                     exitedZero
                         ? "后台系统包管理器升级已完成，请点击“重新加载 ModernIME”使其生效。"
@@ -688,7 +693,7 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
 
     if (out.state == detail::CommandState::Continuing) {
         advancePackageOperation(*opId, PackageOperationPhase::Running, PackageOperationPhase::Continuing);
-        startBackgroundPackageTracking(*opId, PackageOperationKind::SystemUpgrade, status.upgradeCommand);
+        startBackgroundPackageTracking(*opId, PackageOperationKind::SystemUpgrade, status.upgradeCommand, environment);
         if (status.manager == PackageManagerKind::Dnf) {
             return {false,
                     "系统包管理器升级等待超时（检测到 dnf/rpm 子进程仍在运行或等待锁，为避免中断升级事务未强制终止进程；后台将继续读取输出并跟踪该进程直至结束，期间已锁定重复升级触发）。请在终端通过 ps aux | grep -E 'dnf|rpm' 检查进度；待后台事务完成后再重新检查，或手动执行：" +
@@ -711,10 +716,216 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
         return res;
     }
 
+    ensureDesktopShortcut(environment);
+
     RuntimeResult res{true,
             "已通过系统包管理器完成 ModernIME 升级，请点击“重新加载 ModernIME”使其生效。"};
     finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
     return res;
+}
+
+bool UpdateController::ensureDesktopShortcut(const Environment &environment) {
+    if (lookupEnv(environment, "MODERNIME_SKIP_DESKTOP_SHORTCUT") == "1") {
+        return true;
+    }
+
+    std::string desktopDirStr = lookupEnv(environment, "MODERNIME_DESKTOP_DIR");
+    if (desktopDirStr.empty()) {
+        desktopDirStr = lookupEnv(environment, "XDG_DESKTOP_DIR");
+    }
+    if (desktopDirStr.empty()) {
+        const auto xdgUserDir = findExecutableInPath("xdg-user-dir", environment);
+        if (!xdgUserDir.empty()) {
+            detail::CommandSpec spec;
+            spec.mode = detail::CommandMode::Query;
+            spec.timeoutMs = 1000;
+            spec.argv = {xdgUserDir.string(), "DESKTOP"};
+            spec.environment = environment;
+            const auto res = detail::runCommand(spec);
+            if (res.exitStatus == 0 && !res.stdoutText.empty()) {
+                desktopDirStr = trim(res.stdoutText);
+            }
+        }
+    }
+    if (desktopDirStr.empty()) {
+        const std::string home = lookupEnv(environment, "HOME");
+        if (!home.empty()) {
+            const auto deskEn = std::filesystem::path(home) / "Desktop";
+            const auto deskZh = std::filesystem::path(home) / "桌面";
+            std::error_code ec;
+            if (std::filesystem::is_directory(deskZh, ec)) {
+                desktopDirStr = deskZh.string();
+            } else {
+                desktopDirStr = deskEn.string();
+            }
+        }
+    }
+    if (desktopDirStr.empty()) {
+        return false;
+    }
+
+    const std::filesystem::path desktopDir(desktopDirStr);
+    std::error_code ec;
+    std::filesystem::create_directories(desktopDir, ec);
+    if (ec && !std::filesystem::is_directory(desktopDir, ec)) {
+        return false;
+    }
+
+    std::string prefix = lookupEnv(environment, "MODERNIME_PREFIX");
+    if (prefix.empty()) {
+        prefix = MODERNIME_INSTALL_PREFIX;
+    }
+
+    std::string expectedIcon = lookupEnv(environment, "MODERNIME_DESKTOP_ICON");
+    if (expectedIcon.empty()) {
+        const auto p512 = std::filesystem::path(prefix) / "share/icons/hicolor/512x512/apps/modernime.png";
+        const auto sys512 = std::filesystem::path("/usr/share/icons/hicolor/512x512/apps/modernime.png");
+        if (std::filesystem::is_regular_file(p512, ec)) {
+            expectedIcon = p512.string();
+        } else if (std::filesystem::is_regular_file(sys512, ec)) {
+            expectedIcon = sys512.string();
+        } else {
+            expectedIcon = (std::filesystem::path(prefix) / "share/icons/hicolor/512x512/apps/modernime.png").string();
+        }
+    }
+
+    std::string expectedExec = lookupEnv(environment, "MODERNIME_DESKTOP_EXEC");
+    if (expectedExec.empty()) {
+        const std::string configHome = lookupEnv(environment, "MODERNIME_CONFIG_HOME");
+        const std::string dataHome = lookupEnv(environment, "MODERNIME_DATA_HOME");
+        const auto binPath = std::filesystem::path(prefix) / "bin/modernime-settings";
+        if (!configHome.empty() || !dataHome.empty()) {
+            expectedExec = "env";
+            if (!configHome.empty()) {
+                expectedExec += " XDG_CONFIG_HOME=" + configHome;
+            }
+            if (!dataHome.empty()) {
+                expectedExec += " XDG_DATA_HOME=" + dataHome;
+            }
+            expectedExec += " \"" + binPath.string() + "\"";
+        } else {
+            expectedExec = "\"" + binPath.string() + "\"";
+        }
+    }
+
+    const auto targetShortcut = desktopDir / "modernime-settings.desktop";
+    static std::atomic<std::uint64_t> s_desktopTmpCounter{0};
+
+    if (!std::filesystem::exists(targetShortcut, ec)) {
+        std::ostringstream oss;
+        oss << "[Desktop Entry]\n"
+            << "Type=Application\n"
+            << "Name=ModernIME 设置\n"
+            << "Comment=Configure ModernIME input method\n"
+            << "Exec=" << expectedExec << "\n"
+            << "Icon=" << expectedIcon << "\n"
+            << "Terminal=false\n"
+            << "Categories=Settings;Utility;\n";
+
+        const auto tmpPath = desktopDir / (".modernime-desktop-" + std::to_string(::getpid()) + "-" +
+                                           std::to_string(s_desktopTmpCounter.fetch_add(1)) + ".tmp");
+        {
+            std::ofstream out(tmpPath);
+            if (!out) {
+                return false;
+            }
+            out << oss.str();
+        }
+        ::chmod(tmpPath.c_str(), 0755);
+        std::filesystem::rename(tmpPath, targetShortcut, ec);
+        if (ec) {
+            std::filesystem::remove(tmpPath, ec);
+            return false;
+        }
+        ::chmod(targetShortcut.c_str(), 0755);
+        const auto gioBin = findExecutableInPath("gio", environment);
+        if (!gioBin.empty()) {
+            detail::CommandSpec gioSpec;
+            gioSpec.mode = detail::CommandMode::Query;
+            gioSpec.timeoutMs = 1000;
+            gioSpec.argv = {gioBin.string(), "set", targetShortcut.string(), "metadata::trusted", "true"};
+            gioSpec.environment = environment;
+            detail::runCommand(gioSpec);
+        }
+        return true;
+    }
+
+    if (std::filesystem::is_symlink(targetShortcut, ec)) {
+        return true;
+    }
+
+    std::ifstream in(targetShortcut);
+    if (!in) {
+        return false;
+    }
+
+    std::string line;
+    std::vector<std::string> lines;
+    bool iconFound = false;
+    bool iconChanged = false;
+
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.starts_with("Icon=")) {
+            iconFound = true;
+            const auto currentIcon = line.substr(5);
+            if (currentIcon != expectedIcon) {
+                lines.push_back("Icon=" + expectedIcon);
+                iconChanged = true;
+            } else {
+                lines.push_back(line);
+            }
+        } else {
+            lines.push_back(line);
+        }
+    }
+    in.close();
+
+    if (!iconFound) {
+        auto it = std::find(lines.begin(), lines.end(), "[Desktop Entry]");
+        if (it != lines.end()) {
+            lines.insert(it + 1, "Icon=" + expectedIcon);
+        } else {
+            lines.push_back("Icon=" + expectedIcon);
+        }
+        iconChanged = true;
+    }
+
+    if (iconChanged) {
+        const auto tmpPath = desktopDir / (".modernime-desktop-" + std::to_string(::getpid()) + "-" +
+                                           std::to_string(s_desktopTmpCounter.fetch_add(1)) + ".tmp");
+        {
+            std::ofstream out(tmpPath);
+            if (!out) {
+                return false;
+            }
+            for (const auto &l : lines) {
+                out << l << "\n";
+            }
+        }
+        ::chmod(tmpPath.c_str(), 0755);
+        std::filesystem::rename(tmpPath, targetShortcut, ec);
+        if (ec) {
+            std::filesystem::remove(tmpPath, ec);
+            return false;
+        }
+        ::chmod(targetShortcut.c_str(), 0755);
+        const auto gioBin = findExecutableInPath("gio", environment);
+        if (!gioBin.empty()) {
+            detail::CommandSpec gioSpec;
+            gioSpec.mode = detail::CommandMode::Query;
+            gioSpec.timeoutMs = 1000;
+            gioSpec.argv = {gioBin.string(), "set", targetShortcut.string(), "metadata::trusted", "true"};
+            gioSpec.environment = environment;
+            detail::runCommand(gioSpec);
+        }
+    } else {
+        std::filesystem::last_write_time(targetShortcut, std::filesystem::file_time_type::clock::now(), ec);
+    }
+
+    return true;
 }
 
 bool UpdateController::hasActivePackageOperation() {

@@ -1,5 +1,6 @@
 #include "modernime/settings/page_registry.h"
 #include "modernime/settings/settings_window.h"
+#include "modernime/settings/update_controller.h"
 #include "modernime/settings/detail/process_runner.h"
 
 #include <gtk/gtk.h>
@@ -187,6 +188,7 @@ void dumpSettingsStateIfConfigured(ApplicationState *state) {
 }
 
 void activate(GtkApplication *application, gpointer data) {
+    modernime::settings::UpdateController::ensureDesktopShortcut();
     auto *state = static_cast<ApplicationState *>(data);
     if (state->window == nullptr) {
         state->window = std::make_unique<modernime::settings::SettingsWindow>(
@@ -211,6 +213,8 @@ int commandLine(GApplication *application,
             cmdline, "ModernIME settings %s\n", MODERNIME_VERSION);
         return EXIT_SUCCESS;
     }
+
+    modernime::settings::UpdateController::ensureDesktopShortcut();
 
     std::optional<modernime::settings::SettingsPageId> parsedPage;
     if (!req.pageName.empty()) {

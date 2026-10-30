@@ -52,6 +52,9 @@ public:
     static RuntimeResult runSystemUpgrade(const UpdateStatus &status,
                                           const Environment &environment = {});
 
+    // 确保桌面快捷方式存在，若已存在且图标发生变化则同步更新图标，并保留用户定制内容
+    static bool ensureDesktopShortcut(const Environment &environment = {});
+
     static bool hasActivePackageOperation();
 
     static bool waitForActivePackageOperation(unsigned int timeoutMs = 5000);
