@@ -39,9 +39,11 @@ int g_failCount = 0;
 
 #define RUN_TEST(fn)                                                               \
     do {                                                                           \
+        resetPackageOperationStateForTesting();                                    \
         const int before = g_failCount;                                            \
         std::cout << "[RUN ] " << #fn << " ...\n";                                 \
         fn();                                                                      \
+        resetPackageOperationStateForTesting();                                    \
         if (g_failCount == before) {                                               \
             std::cout << "[PASS] " << #fn << "\n";                                 \
             ++g_passCount;                                                         \
@@ -164,13 +166,13 @@ void test_T13_A04_ResourceBudgetMeasurement() {
     const std::string tmpDir = getTempDir();
     CommandSpec spec;
     spec.mode = CommandMode::PackageTransaction;
-    spec.timeoutMs = 150; // Times out so we can inspect while in Continuing
+    spec.timeoutMs = 350; // Times out so we can inspect while in Continuing
     spec.operationId = 104;
     spec.limits.perStreamBufferBytes = 1048576;
     spec.limits.perStreamResultBytes = 65536;
     spec.limits.perStreamFileBytes = 1048576;
     // Writes large output then sleeps slightly
-    spec.argv = {"python3", "-c", "import sys, time; sys.stdout.write('A' * 200000); sys.stderr.write('B' * 200000); sys.stdout.flush(); sys.stderr.flush(); time.sleep(0.6)"};
+    spec.argv = {"python3", "-c", "import sys, time; sys.stdout.write('A' * 200000); sys.stderr.write('B' * 200000); sys.stdout.flush(); sys.stderr.flush(); time.sleep(2.0)"};
 
     const auto res = runCommand(spec);
     TEST_ASSERT(res.state == CommandState::Continuing);
@@ -586,21 +588,33 @@ void test_T13_R03_MultiRoundContinuingEventuallyCompletesUnderSameId() {
     auto opId = tryBeginPackageOperation(PackageOperationKind::RefreshCache);
     TEST_ASSERT(opId.has_value());
 
+    struct CleanupGuard {
+        std::uint64_t id;
+        bool active = true;
+        ~CleanupGuard() {
+            if (active) {
+                cleanupOperation(id);
+                finishPackageOperation(id, {false, "cleanup"}, "", "", false);
+                resetPackageOperationStateForTesting();
+            }
+        }
+    } guard{*opId};
+
     CommandSpec spec;
     spec.mode = CommandMode::PackageTransaction;
-    spec.timeoutMs = 150;
+    spec.timeoutMs = 400;
     spec.operationId = *opId;
     spec.limits.perStreamResultBytes = 65536;
-    spec.argv = {"python3", "-c", "import time; time.sleep(0.6)"};
+    spec.argv = {"python3", "-c", "import time; time.sleep(2.5)"};
 
     advancePackageOperation(*opId, PackageOperationPhase::Starting, PackageOperationPhase::Running);
     const auto r1 = runCommand(spec);
     TEST_ASSERT(r1.state == CommandState::Continuing);
 
     // Second round observation with short timeout: still Continuing
-    const auto r2 = waitForOperation(*opId, 100);
+    const auto r2 = waitForOperation(*opId, 150);
     if (r2.state == CommandState::Continuing) {
-        const auto r3 = waitForOperation(*opId, 3000);
+        const auto r3 = waitForOperation(*opId, 5000);
         TEST_ASSERT(r3.state == CommandState::Exited);
         TEST_ASSERT(r3.exitStatus == 0);
         TEST_ASSERT(r3.operationId == *opId);
@@ -611,6 +625,7 @@ void test_T13_R03_MultiRoundContinuingEventuallyCompletesUnderSameId() {
     }
 
     finishPackageOperation(*opId, {true, "Done"}, "", "", false);
+    guard.active = false;
 }
 
 // T13-R04: Operation identity, stale directory, and malformed state rejection
@@ -764,6 +779,7 @@ void test_T13_R05_LateWritingDescendantsReceiveZeroEpipe() {
 
 // T13-R06: Resource bounded retention and zero zombies
 void test_T13_R06_ResourceBoundedRetentionAndZeroZombies() {
+    resetPackageOperationStateForTesting();
     const std::string origTmp = getTempDir();
     const std::string r06Tmp = origTmp + "/modernime_r06_isolated_" + std::to_string(::getpid());
     std::filesystem::create_directories(r06Tmp);
