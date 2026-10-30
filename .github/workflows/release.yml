@@ -88,23 +88,33 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build/release-tests -DCMAKE_BUILD_TYPE=Release \
+            -DMODERNIME_REQUIRE_FULL_TESTS=ON \
             -DMODERNIME_BUILD_FCITX5=ON \
             -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
             -DMODERNIME_BUILD_SETTINGS=ON \
+            -DMODERNIME_BUILD_UI_LAYOUT_TESTS=ON \
             -DMODERNIME_BUILD_TESTS=ON
           cmake --build build/release-tests --parallel 2
           ctest --test-dir build/release-tests --show-only=json-v1 > build/release-tests/registered-tests.json
-          python3 - <<'PYEOF'
-          import json
-          from pathlib import Path
-          tests = {t['name'] for t in json.loads(Path('build/release-tests/registered-tests.json').read_text())['tests']}
-          required = {'modernime_personal_engine_gtest', 'modernime_personal_engine_benchmark',
-                      'modernime_install_runtime', 'modernime_install_environment', 'modernime_settings_install'}
-          missing = required - tests
-          assert not missing, f'Required release tests not registered: {sorted(missing)}'
-          PYEOF
+          python3 tests/verify_required_tests.py \
+            --check registration \
+            --registered build/release-tests/registered-tests.json \
+            --profile full \
+            --stage final
           unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
-          ctest --test-dir build/release-tests --output-on-failure --parallel 2
+          mkdir -p "$PWD/build/release-tests/gtest_output"
+          GTEST_OUTPUT="xml:$PWD/build/release-tests/gtest_output/personal_engine.xml" \
+          ctest --test-dir build/release-tests --output-on-failure \
+            --output-junit "$PWD/build/release-tests/junit.xml" \
+            --parallel 2
+          python3 tests/verify_required_tests.py \
+            --check execution \
+            --registered build/release-tests/registered-tests.json \
+            --profile full \
+            --stage final \
+            --junit build/release-tests/junit.xml \
+            --gtest-xml build/release-tests/gtest_output \
+            --execution headless
 
       - name: Build and package DEB
         run: |

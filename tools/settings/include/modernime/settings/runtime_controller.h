@@ -22,6 +22,8 @@ struct RuntimeStatus final {
     bool appliedHashAvailable = false;
     std::string appliedContentHash;
     std::uint64_t settingsGeneration = 0;
+    pid_t runtimePid = 0;
+    bool instanceBound = false;
 };
 
 struct RuntimeResult final {

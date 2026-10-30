@@ -217,6 +217,9 @@ public:
         std::int64_t nowMs = 0) const;
 
     const std::vector<LearningEntry> &entries() const;
+    std::size_t entryCount() const {
+        return (baseEntries_ ? baseEntries_->size() : 0) + deltaNewCount_;
+    }
     const LearningEntry *weakestEntry() const;
 
     void recordSelection(std::string_view phrase, std::string_view pinyin,
@@ -245,11 +248,15 @@ private:
     std::unordered_map<std::string, LearningEntry> delta_;
     std::unordered_map<std::string, std::vector<std::string>> deltaIndex_;
     std::size_t totalEntryLimit_ = kMaxLearningEntries;
+    std::size_t deltaNewCount_ = 0;
     std::uint32_t selectionsSincePrune_ = 0;
-    mutable std::vector<LearningEntry> materializedEntries_;
-    mutable bool materializedDirty_ = true;
-    mutable std::size_t weakestIndex_ = 0;
-    mutable bool weakestDirty_ = true;
+    struct MaterializedCache final {
+        std::once_flag initialized;
+        std::vector<LearningEntry> entries;
+        std::size_t weakestIndex = 0;
+        bool hasWeakest = false;
+    };
+    std::shared_ptr<MaterializedCache> materializedCache_;
 };
 
 
@@ -334,13 +341,17 @@ const LearningSnapshotShard::RecallIndex &LearningSnapshotShard::ensureRecallInd
 LearningSnapshotShard::LearningSnapshotShard()
     : baseEntries_(std::make_shared<const std::vector<LearningEntry>>()),
       baseIndex_(std::make_shared<const std::unordered_map<std::string, std::vector<std::size_t>>>()),
-      baseRecallIndex_(std::make_shared<RecallIndexCache>()) {
+      baseRecallIndex_(std::make_shared<RecallIndexCache>()),
+      deltaNewCount_(0),
+      materializedCache_(std::make_shared<MaterializedCache>()) {
     ensureRecallIndex();
 }
 
 LearningSnapshotShard::LearningSnapshotShard(std::vector<LearningEntry> entries,
                                    std::size_t totalEntryLimit)
-    : totalEntryLimit_(totalEntryLimit == 0 ? kMaxLearningEntries : totalEntryLimit) {
+    : totalEntryLimit_(totalEntryLimit == 0 ? kMaxLearningEntries : totalEntryLimit),
+      deltaNewCount_(0),
+      materializedCache_(std::make_shared<MaterializedCache>()) {
     pruneContextVariants(entries);
     pruneTotalEntries(entries, totalEntryLimit_);
     auto newIndex = std::make_shared<std::unordered_map<std::string, std::vector<std::size_t>>>();
@@ -364,8 +375,9 @@ LearningSnapshotShard::LearningSnapshotShard(const LearningSnapshotShard &other)
       delta_(other.delta_),
       deltaIndex_(other.deltaIndex_),
       totalEntryLimit_(other.totalEntryLimit_),
+      deltaNewCount_(other.deltaNewCount_),
       selectionsSincePrune_(other.selectionsSincePrune_),
-      materializedDirty_(true) {}
+      materializedCache_(other.materializedCache_) {}
 
 LearningSnapshotShard &LearningSnapshotShard::operator=(const LearningSnapshotShard &other) {
     if (this != &other) {
@@ -375,9 +387,9 @@ LearningSnapshotShard &LearningSnapshotShard::operator=(const LearningSnapshotSh
         delta_ = other.delta_;
         deltaIndex_ = other.deltaIndex_;
         totalEntryLimit_ = other.totalEntryLimit_;
+        deltaNewCount_ = other.deltaNewCount_;
         selectionsSincePrune_ = other.selectionsSincePrune_;
-        materializedDirty_ = true;
-        weakestDirty_ = true;
+        materializedCache_ = other.materializedCache_;
     }
     return *this;
 }
@@ -686,6 +698,7 @@ void LearningSnapshotShard::recordSelection(
     // 2. Insert or update targeted variant
     const auto targetVKey = variantKey(phrase, normalized, contextBefore, contextAfter);
     auto it = delta_.find(targetVKey);
+    bool isNewEntry = false;
     if (it != delta_.end()) {
         it->second.suppressed = false;
         it->second.frequency = saturatingIncrement(it->second.frequency);
@@ -712,6 +725,8 @@ void LearningSnapshotShard::recordSelection(
             newEntry.pinyin = pinyin;
             newEntry.contextBefore = contextBefore;
             newEntry.contextAfter = contextAfter;
+            isNewEntry = true;
+            ++deltaNewCount_;
         }
         newEntry.suppressed = false;
         newEntry.frequency = saturatingIncrement(newEntry.frequency);
@@ -723,12 +738,11 @@ void LearningSnapshotShard::recordSelection(
         }
     }
 
-    materializedDirty_ = true;
-    weakestDirty_ = true;
+    materializedCache_ = std::make_shared<MaterializedCache>();
     ++selectionsSincePrune_;
-    // Only this small shard is rebuilt. Published shards have no unindexed
-    // delta, so queries never scan accumulating overlays across all shards.
-    consolidate();
+    if (isNewEntry || delta_.size() >= 32) {
+        consolidate();
+    }
 }
 
 void LearningSnapshotShard::recordNegativeFeedback(std::string_view phrase,
@@ -737,6 +751,7 @@ void LearningSnapshotShard::recordNegativeFeedback(std::string_view phrase,
     const auto cKey = candidateKey(phrase, normalized);
     const auto targetVKey = variantKey(phrase, normalized, {}, {});
     auto it = delta_.find(targetVKey);
+    bool isNewEntry = false;
     if (it != delta_.end()) {
         it->second.negativeFeedback = saturatingIncrement(it->second.negativeFeedback);
     } else {
@@ -759,6 +774,8 @@ void LearningSnapshotShard::recordNegativeFeedback(std::string_view phrase,
         } else {
             newEntry.phrase = phrase;
             newEntry.pinyin = normalized;
+            isNewEntry = true;
+            ++deltaNewCount_;
         }
         newEntry.negativeFeedback = saturatingIncrement(newEntry.negativeFeedback);
         delta_[targetVKey] = std::move(newEntry);
@@ -767,9 +784,10 @@ void LearningSnapshotShard::recordNegativeFeedback(std::string_view phrase,
             dList.push_back(targetVKey);
         }
     }
-    materializedDirty_ = true;
-    weakestDirty_ = true;
-    consolidate();
+    materializedCache_ = std::make_shared<MaterializedCache>();
+    if (isNewEntry || delta_.size() >= 32) {
+        consolidate();
+    }
 }
 
 void LearningSnapshotShard::recordSuppression(std::string_view phrase,
@@ -778,6 +796,7 @@ void LearningSnapshotShard::recordSuppression(std::string_view phrase,
     const auto cKey = candidateKey(phrase, normalized);
     const auto targetVKey = variantKey(phrase, normalized, {}, {});
     auto it = delta_.find(targetVKey);
+    bool isNewEntry = false;
     if (it != delta_.end()) {
         it->second.suppressed = true;
         it->second.negativeFeedback = saturatingIncrement(it->second.negativeFeedback);
@@ -801,6 +820,8 @@ void LearningSnapshotShard::recordSuppression(std::string_view phrase,
         } else {
             newEntry.phrase = phrase;
             newEntry.pinyin = normalized;
+            isNewEntry = true;
+            ++deltaNewCount_;
         }
         newEntry.suppressed = true;
         newEntry.negativeFeedback = saturatingIncrement(newEntry.negativeFeedback);
@@ -810,31 +831,39 @@ void LearningSnapshotShard::recordSuppression(std::string_view phrase,
             dList.push_back(targetVKey);
         }
     }
-    materializedDirty_ = true;
-    weakestDirty_ = true;
-    consolidate();
+    materializedCache_ = std::make_shared<MaterializedCache>();
+    if (isNewEntry || delta_.size() >= 32) {
+        consolidate();
+    }
 }
 
 void LearningSnapshotShard::consolidate() {
+    if (delta_.empty()) {
+        return;
+    }
     std::vector<LearningEntry> combined;
-    std::unordered_set<std::string> seenKeys;
+    std::unordered_set<std::string_view> unapplied;
+    unapplied.reserve(delta_.size());
+    for (const auto &[k, _] : delta_) {
+        unapplied.insert(k);
+    }
     if (baseEntries_) {
         combined.reserve(baseEntries_->size() + delta_.size());
         for (const auto &b : *baseEntries_) {
-            const auto vKey = variantKey(b.phrase, b.pinyin, b.contextBefore, b.contextAfter);
-            seenKeys.insert(vKey);
-            const auto it = delta_.find(vKey);
-            if (it != delta_.end()) {
-                combined.push_back(it->second);
-            } else {
-                combined.push_back(b);
+            if (!unapplied.empty()) {
+                const auto vKey = variantKey(b.phrase, b.pinyin, b.contextBefore, b.contextAfter);
+                const auto it = delta_.find(vKey);
+                if (it != delta_.end()) {
+                    combined.push_back(it->second);
+                    unapplied.erase(vKey);
+                    continue;
+                }
             }
+            combined.push_back(b);
         }
     }
-    for (const auto &[vKey, entry] : delta_) {
-        if (!seenKeys.contains(vKey)) {
-            combined.push_back(entry);
-        }
+    for (const auto &vKey : unapplied) {
+        combined.push_back(delta_.find(std::string(vKey))->second);
     }
 
     pruneContextVariants(combined);
@@ -848,64 +877,69 @@ void LearningSnapshotShard::consolidate() {
 
     baseEntries_ = std::make_shared<const std::vector<LearningEntry>>(std::move(combined));
     baseIndex_ = std::move(newIndex);
-    // This is a local shard consolidation. Build its index before publication.
     baseRecallIndex_ = std::make_shared<RecallIndexCache>();
-    ensureRecallIndex();
     delta_.clear();
     deltaIndex_.clear();
+    deltaNewCount_ = 0;
     selectionsSincePrune_ = 0;
-    materializedDirty_ = true;
-    weakestDirty_ = true;
+    materializedCache_ = std::make_shared<MaterializedCache>();
 }
 
 const std::vector<LearningEntry> &LearningSnapshotShard::entries() const {
     if (delta_.empty() && baseEntries_) {
         return *baseEntries_;
     }
-    if (materializedDirty_) {
-        materializedEntries_.clear();
-        std::unordered_set<std::string> seenKeys;
+    const auto cache = materializedCache_;
+    std::call_once(cache->initialized, [this, cache] {
+        cache->entries.clear();
+        std::unordered_set<std::string_view> unapplied;
+        unapplied.reserve(delta_.size());
+        for (const auto &[k, _] : delta_) {
+            unapplied.insert(k);
+        }
         if (baseEntries_) {
-            materializedEntries_.reserve(baseEntries_->size() + delta_.size());
+            cache->entries.reserve(baseEntries_->size() + delta_.size());
             for (const auto &b : *baseEntries_) {
-                const auto vKey = variantKey(b.phrase, b.pinyin, b.contextBefore, b.contextAfter);
-                seenKeys.insert(vKey);
-                const auto it = delta_.find(vKey);
-                if (it != delta_.end()) {
-                    materializedEntries_.push_back(it->second);
-                } else {
-                    materializedEntries_.push_back(b);
+                if (!unapplied.empty()) {
+                    const auto vKey = variantKey(b.phrase, b.pinyin, b.contextBefore, b.contextAfter);
+                    const auto it = delta_.find(vKey);
+                    if (it != delta_.end()) {
+                        cache->entries.push_back(it->second);
+                        unapplied.erase(vKey);
+                        continue;
+                    }
+                }
+                cache->entries.push_back(b);
+            }
+        }
+        for (const auto &vKey : unapplied) {
+            cache->entries.push_back(delta_.find(std::string(vKey))->second);
+        }
+        if (!cache->entries.empty()) {
+            cache->weakestIndex = 0;
+            for (std::size_t i = 1; i < cache->entries.size(); ++i) {
+                const auto &a = cache->entries[i];
+                const auto &b = cache->entries[cache->weakestIndex];
+                if (a.suppressed != b.suppressed ? a.suppressed :
+                    a.lastSelectedMs != b.lastSelectedMs ? a.lastSelectedMs < b.lastSelectedMs :
+                    a.frequency != b.frequency ? a.frequency < b.frequency : true) {
+                    cache->weakestIndex = i;
                 }
             }
+            cache->hasWeakest = true;
         }
-        for (const auto &[vKey, entry] : delta_) {
-            if (!seenKeys.contains(vKey)) {
-                materializedEntries_.push_back(entry);
-            }
-        }
-        materializedDirty_ = false;
-    }
-    return materializedEntries_;
+    });
+    return cache->entries;
 }
-
 
 const LearningEntry *LearningSnapshotShard::weakestEntry() const {
     const auto &all = entries();
     if (all.empty()) return nullptr;
-    if (weakestDirty_) {
-        weakestIndex_ = 0;
-        for (std::size_t i = 1; i < all.size(); ++i) {
-            const auto &a = all[i];
-            const auto &b = all[weakestIndex_];
-            if (a.suppressed != b.suppressed ? a.suppressed :
-                a.lastSelectedMs != b.lastSelectedMs ? a.lastSelectedMs < b.lastSelectedMs :
-                a.frequency != b.frequency ? a.frequency < b.frequency : true) {
-                weakestIndex_ = i;
-            }
-        }
-        weakestDirty_ = false;
+    const auto cache = materializedCache_;
+    if (cache && cache->hasWeakest) {
+        return &cache->entries[cache->weakestIndex];
     }
-    return &all[weakestIndex_];
+    return &all[0];
 }
 
 void LearningSnapshotShard::pruneContextVariants(std::vector<LearningEntry> &entries) {
@@ -917,6 +951,19 @@ void LearningSnapshotShard::pruneContextVariants(std::vector<LearningEntry> &ent
             continue;
         }
         variants[candidateKey(entry.phrase, entry.pinyin)].push_back(index);
+    }
+    if (variants.empty()) {
+        return;
+    }
+    bool hasOverflow = false;
+    for (const auto &[key, indexes] : variants) {
+        if (indexes.size() > maximumVariants) {
+            hasOverflow = true;
+            break;
+        }
+    }
+    if (!hasOverflow) {
+        return;
     }
 
     std::vector<bool> keep(entries.size(), true);
@@ -1171,33 +1218,36 @@ LearningSnapshotShard &LearningSnapshot::mutableShard(std::string_view phrase) {
     return *shard;
 }
 void LearningSnapshot::finishMutation(std::size_t previousCount, std::string_view phrase) {
-    entryCount_ = entryCount_ - previousCount + shards_[shardFor(phrase)]->entries().size();
+    const auto currentCount = shards_[shardFor(phrase)]->entryCount();
+    entryCount_ = entryCount_ - previousCount + currentCount;
     entriesCache_ = std::make_shared<EntriesCache>();
-    shards_[shardFor(phrase)]->weakestEntry();
-    while (entryCount_ > totalEntryLimit_) {
-        // Each immutable shard publishes its weakest entry in advance. Global
-        // eviction compares only 512 cached values, then rebuilds one shard.
-        // Ties evict the last item in the materialized order, as before.
-        std::size_t victimShard = kShardCount;
-        const LearningEntry *weakest = nullptr;
-        for (std::size_t i = 0; i < kShardCount; ++i) {
-            if (!shards_[i]) continue;
-            const auto *candidate = shards_[i]->weakestEntry();
-            if (!candidate) continue;
-            if (!weakest || (candidate->suppressed != weakest->suppressed ? candidate->suppressed :
-                candidate->lastSelectedMs != weakest->lastSelectedMs ? candidate->lastSelectedMs < weakest->lastSelectedMs :
-                candidate->frequency != weakest->frequency ? candidate->frequency < weakest->frequency : true)) {
-                victimShard = i;
-                weakest = candidate;
+    if (entryCount_ > totalEntryLimit_) {
+        shards_[shardFor(phrase)]->weakestEntry();
+        while (entryCount_ > totalEntryLimit_) {
+            // Each immutable shard publishes its weakest entry in advance. Global
+            // eviction compares only 512 cached values, then rebuilds one shard.
+            // Ties evict the last item in the materialized order, as before.
+            std::size_t victimShard = kShardCount;
+            const LearningEntry *weakest = nullptr;
+            for (std::size_t i = 0; i < kShardCount; ++i) {
+                if (!shards_[i]) continue;
+                const auto *candidate = shards_[i]->weakestEntry();
+                if (!candidate) continue;
+                if (!weakest || (candidate->suppressed != weakest->suppressed ? candidate->suppressed :
+                    candidate->lastSelectedMs != weakest->lastSelectedMs ? candidate->lastSelectedMs < weakest->lastSelectedMs :
+                    candidate->frequency != weakest->frequency ? candidate->frequency < weakest->frequency : true)) {
+                    victimShard = i;
+                    weakest = candidate;
+                }
             }
+            const auto &original = shards_[victimShard]->entries();
+            const auto victim = static_cast<std::size_t>(weakest - original.data());
+            auto retained = original;
+            retained.erase(retained.begin() + static_cast<std::ptrdiff_t>(victim));
+            shards_[victimShard] = std::make_shared<LearningSnapshotShard>(std::move(retained), totalEntryLimit_);
+            shards_[victimShard]->weakestEntry();
+            --entryCount_;
         }
-        const auto &original = shards_[victimShard]->entries();
-        const auto victim = static_cast<std::size_t>(weakest - original.data());
-        auto retained = original;
-        retained.erase(retained.begin() + static_cast<std::ptrdiff_t>(victim));
-        shards_[victimShard] = std::make_shared<LearningSnapshotShard>(std::move(retained), totalEntryLimit_);
-        shards_[victimShard]->weakestEntry();
-        --entryCount_;
     }
 }
 const LearningEntry *LearningSnapshot::entry(std::string_view phrase, std::string_view pinyin,
@@ -1229,19 +1279,19 @@ double LearningSnapshot::contextBoost(std::string_view phrase, std::string_view 
 void LearningSnapshot::recordSelection(std::string_view phrase, std::string_view pinyin,
     std::string_view before, std::string_view after, std::int64_t now) {
     auto &s = mutableShard(phrase);
-    const auto count = s.entries().size();
+    const auto count = s.entryCount();
     s.recordSelection(phrase, pinyin, before, after, now);
     finishMutation(count, phrase);
 }
 void LearningSnapshot::recordNegativeFeedback(std::string_view phrase, std::string_view pinyin) {
     auto &s = mutableShard(phrase);
-    const auto count = s.entries().size();
+    const auto count = s.entryCount();
     s.recordNegativeFeedback(phrase, pinyin);
     finishMutation(count, phrase);
 }
 void LearningSnapshot::recordSuppression(std::string_view phrase, std::string_view pinyin) {
     auto &s = mutableShard(phrase);
-    const auto count = s.entries().size();
+    const auto count = s.entryCount();
     s.recordSuppression(phrase, pinyin);
     finishMutation(count, phrase);
 }

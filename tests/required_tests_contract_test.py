@@ -13,6 +13,7 @@ import unittest
 from verify_required_tests import (
     CORE_ONLY_BASELINE_REQUIRED,
     CORE_ONLY_FINAL_ADDITIONAL,
+    FINAL_REQUIRED_GTEST_SUITES,
     FULL_BASELINE_REQUIRED,
     FULL_FINAL_ADDITIONAL,
     HEADLESS_SKIP_WHITELIST,
@@ -404,6 +405,246 @@ class VerifyRequiredTestsContractTest(unittest.TestCase):
         )
         self.assertFalse(ok)
         self.assertTrue(any("Error reading JUnit XML" in e or "not found" in e for e in errors))
+
+    def test_check_registration_mode_ignores_missing_junit_and_gtest(self):
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            check_mode="registration",
+        )
+        self.assertTrue(ok, f"Registration mode should succeed without junit/gtest: {errors}")
+
+    def test_check_registration_mode_fails_when_unregistered(self):
+        incomplete = [t for t in FULL_BASELINE_REQUIRED if t != "modernime_pinyin_engine"]
+        self.create_registered_json(incomplete)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            check_mode="registration",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("modernime_pinyin_engine" in e for e in errors))
+
+    def test_check_execution_mode_fails_without_junit(self):
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            check_mode="execution",
+            junit_paths=None,
+            gtest_dir=self.gtest_dir,
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Execution verification mode requires at least one --junit" in e for e in errors))
+
+    def test_check_execution_mode_full_profile_fails_without_gtest_xml(self):
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            check_mode="execution",
+            junit_paths=[self.junit_xml],
+            gtest_dir=None,
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("requires --gtest-xml directory" in e for e in errors))
+
+    def test_check_execution_mode_core_only_passes_without_gtest_xml(self):
+        self.create_registered_json(CORE_ONLY_BASELINE_REQUIRED)
+        self.create_junit_xml({t: "passed" for t in CORE_ONLY_BASELINE_REQUIRED})
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="core-only",
+            stage="baseline",
+            check_mode="execution",
+            junit_paths=[self.junit_xml],
+            gtest_dir=None,
+        )
+        self.assertTrue(ok, f"Expected core-only execution mode to pass without gtest-xml: {errors}")
+
+    def test_empty_junit_file_fails(self):
+        empty_junit = os.path.join(self.test_dir, "empty_junit.xml")
+        with open(empty_junit, "w") as f:
+            pass  # 0 bytes
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            junit_paths=[empty_junit],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("empty (0 bytes)" in e for e in errors))
+
+    def test_junit_with_zero_testcases_fails(self):
+        zero_cases_junit = os.path.join(self.test_dir, "zero_cases.xml")
+        with open(zero_cases_junit, "w") as f:
+            f.write('<?xml version="1.0"?><testsuites><testsuite name="empty"/></testsuites>')
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            junit_paths=[zero_cases_junit],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("contains 0 testcases" in e for e in errors))
+
+    def test_corrupted_junit_file_fails(self):
+        corrupt_junit = os.path.join(self.test_dir, "corrupt.xml")
+        with open(corrupt_junit, "w") as f:
+            f.write("<not closed")
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            junit_paths=[corrupt_junit],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Error reading JUnit XML" in e for e in errors))
+
+    def test_all_junit_tests_skipped_fails(self):
+        skipped_results = {t: "skipped" for t in FULL_BASELINE_REQUIRED}
+        self.create_junit_xml(skipped_results)
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            junit_paths=[self.junit_xml],
+            execution="headless",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("All executed tests in JUnit reports were skipped/disabled" in e for e in errors))
+
+    def test_empty_gtest_xml_file_fails(self):
+        empty_gtest_xml = os.path.join(self.gtest_dir, "empty.xml")
+        with open(empty_gtest_xml, "w") as f:
+            pass
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            junit_paths=[self.junit_xml],
+            gtest_dir=self.gtest_dir,
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("empty (0 bytes)" in e for e in errors))
+
+    def test_duplicate_test_with_one_failure_fails_closed(self):
+        dup_junit = os.path.join(self.test_dir, "dup_junit.xml")
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<testsuites><testsuite name="ModernIME">',
+        ]
+        for name in FULL_BASELINE_REQUIRED:
+            if name == "modernime_pinyin_engine":
+                # First run failed
+                lines.append(f'  <testcase classname="ModernIME" name="{name}" time="0.1"><failure message="failed"/></testcase>')
+                # Retry passed - must NOT mask the previous failure!
+                lines.append(f'  <testcase classname="ModernIME" name="{name}" time="0.1"/>')
+            else:
+                lines.append(f'  <testcase classname="ModernIME" name="{name}" time="0.1"/>')
+        lines.append('</testsuite></testsuites>')
+        with open(dup_junit, "w") as f:
+            f.write("\n".join(lines))
+
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="baseline",
+            junit_paths=[dup_junit],
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Test FAILED: modernime_pinyin_engine" in e for e in errors))
+
+    def test_final_stage_with_all_disabled_gtest_suites_fails(self):
+        # Create full final registration and JUnit XML
+        final_tests = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(final_tests)
+        self.create_junit_xml({t: "passed" for t in final_tests})
+
+        # Create GTest XML where all suites are present but all testcases are disabled
+        xml_path = os.path.join(self.gtest_dir, "test_detail.xml")
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            f'<testsuites tests="{len(FINAL_REQUIRED_GTEST_SUITES)}" failures="0" disabled="{len(FINAL_REQUIRED_GTEST_SUITES)}" errors="0">',
+        ]
+        for suite in FINAL_REQUIRED_GTEST_SUITES:
+            lines.append(f'  <testsuite name="{suite}" tests="1" failures="0" disabled="1" errors="0">')
+            lines.append(f'    <testcase name="DISABLED_Check" classname="{suite}" status="notrun" result="suppressed"/>')
+            lines.append("  </testsuite>")
+        lines.append("</testsuites>")
+        with open(xml_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+            gtest_dir=self.gtest_dir,
+            execution="headless",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(
+            any("0 executed testcases" in e for e in errors)
+            or any("contains 0 executed tests" in e for e in errors),
+            f"Expected 0 executed tests error, got: {errors}",
+        )
+
+    def test_final_stage_with_one_disabled_gtest_suite_fails(self):
+        final_tests = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(final_tests)
+        self.create_junit_xml({t: "passed" for t in final_tests})
+
+        # All suites have running testcases except ArchitectureLmdbRegression
+        xml_path = os.path.join(self.gtest_dir, "test_detail.xml")
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            f'<testsuites tests="{len(FINAL_REQUIRED_GTEST_SUITES)}" failures="0" errors="0">',
+        ]
+        for suite in FINAL_REQUIRED_GTEST_SUITES:
+            lines.append(f'  <testsuite name="{suite}" tests="1" failures="0" errors="0">')
+            if suite == "ArchitectureLmdbRegression":
+                lines.append(f'    <testcase name="DISABLED_Check" classname="{suite}" status="notrun" result="suppressed"/>')
+            else:
+                lines.append(f'    <testcase name="BasicCheck" classname="{suite}" status="run"/>')
+            lines.append("  </testsuite>")
+        lines.append("</testsuites>")
+        with open(xml_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+            gtest_dir=self.gtest_dir,
+            execution="headless",
+        )
+        self.assertFalse(ok)
+        self.assertTrue(
+            any("ArchitectureLmdbRegression" in e and "0 executed testcases" in e for e in errors),
+            f"Expected ArchitectureLmdbRegression 0 executed testcases error, got: {errors}",
+        )
+
+    def test_final_stage_with_all_valid_gtest_suites_passes(self):
+        final_tests = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
+        self.create_registered_json(final_tests)
+        self.create_junit_xml({t: "passed" for t in final_tests})
+
+        # All required suites have status="run"
+        self.create_gtest_xml(FINAL_REQUIRED_GTEST_SUITES)
+
+        ok, errors = verify(
+            registered_path=self.registered_json,
+            profile="full",
+            stage="final",
+            junit_paths=[self.junit_xml],
+            gtest_dir=self.gtest_dir,
+            execution="headless",
+        )
+        self.assertTrue(ok, f"Expected pass, got errors: {errors}")
 
 
 if __name__ == "__main__":

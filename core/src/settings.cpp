@@ -1,12 +1,17 @@
 #include "modernime/core/settings.h"
 
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <cerrno>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -373,50 +378,84 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
     return result;
 }
 
-bool SettingsStore::save(const std::filesystem::path &path,
-                         const ModernIMESettings &settings,
-                         std::string *error,
-                         std::string_view expectedContentHash,
-                         const std::vector<std::string> *rawLinesToPreserve) {
-    const auto setError = [error](std::string message) {
-        if (error != nullptr) {
-            *error = std::move(message);
-        }
-    };
+SettingsSaveResult SettingsStore::saveWithResult(
+    const std::filesystem::path &path,
+    const ModernIMESettings &settings,
+    SettingsExpectedBaseline expectedBaseline,
+    const std::vector<std::string> *rawLinesToPreserve) {
+    SettingsSaveResult result;
     if (path.empty()) {
-        setError("settings path is empty");
-        return false;
+        result.status = SettingsSaveStatus::IoError;
+        result.error = "settings path is empty";
+        return result;
     }
     const auto validation = validateSettings(settings);
     if (!validation.valid) {
-        setError(validation.issues.front().message);
-        return false;
+        result.status = SettingsSaveStatus::Invalid;
+        result.error = validation.issues.front().message;
+        return result;
     }
+
     std::error_code filesystemError;
-    if (!expectedContentHash.empty() && std::filesystem::exists(path, filesystemError)) {
-        const auto currentHash = computeFileContentHash(path);
-        if (currentHash != expectedContentHash) {
-            setError("配置文件已被外部修改，请重新加载后再保存");
-            return false;
-        }
-    }
-
     if (!path.parent_path().empty()) {
-        std::filesystem::create_directories(path.parent_path(),
-                                            filesystemError);
+        std::filesystem::create_directories(path.parent_path(), filesystemError);
         if (filesystemError) {
-            setError("unable to create settings directory: " +
-                     filesystemError.message());
-            return false;
+            result.status = SettingsSaveStatus::IoError;
+            result.error = "unable to create settings directory: " + filesystemError.message();
+            return result;
         }
     }
 
-    auto temporary = path;
-    temporary += ".tmp";
-    std::ofstream output(temporary, std::ios::trunc);
-    if (!output) {
-        setError("unable to open temporary settings file");
-        return false;
+    const auto lockPath = path.string() + ".lock";
+    int lockFd = ::open(lockPath.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    if (lockFd < 0) {
+        result.status = SettingsSaveStatus::IoError;
+        result.error = "无法获取配置文件锁: " + std::string(std::strerror(errno));
+        return result;
+    }
+    struct LockGuard {
+        int fd = -1;
+        ~LockGuard() {
+            if (fd >= 0) {
+                ::flock(fd, LOCK_UN);
+                ::close(fd);
+            }
+        }
+    } guard{lockFd};
+    if (::flock(lockFd, LOCK_EX) != 0) {
+        result.status = SettingsSaveStatus::IoError;
+        result.error = "无法锁定配置文件: " + std::string(std::strerror(errno));
+        return result;
+    }
+
+    if (expectedBaseline.kind != SettingsBaselineKind::Unchecked) {
+        const bool fileExists = std::filesystem::exists(path, filesystemError);
+        if (expectedBaseline.kind == SettingsBaselineKind::ExpectedMissing) {
+            if (fileExists) {
+                result.status = SettingsSaveStatus::Conflict;
+                result.error = "配置文件已被外部创建，请重新加载后再保存";
+                result.currentDiskHash = computeFileContentHash(path);
+                const auto currentLoaded = SettingsStore::load(path);
+                result.currentDiskSettings = currentLoaded.settings;
+                result.currentDiskRawLines = currentLoaded.rawLines;
+                return result;
+            }
+        } else if (expectedBaseline.kind == SettingsBaselineKind::ExpectedContentHash) {
+            const auto currentHash = fileExists ? computeFileContentHash(path) : std::string();
+            if (currentHash != expectedBaseline.contentHash) {
+                result.status = SettingsSaveStatus::Conflict;
+                result.error = fileExists
+                    ? "配置文件已被外部修改，请重新加载后再保存"
+                    : "配置文件已被外部删除，请重新加载后再保存";
+                result.currentDiskHash = currentHash;
+                if (fileExists) {
+                    const auto currentLoaded = SettingsStore::load(path);
+                    result.currentDiskSettings = currentLoaded.settings;
+                    result.currentDiskRawLines = currentLoaded.rawLines;
+                }
+                return result;
+            }
+        }
     }
 
     std::unordered_map<std::string, std::string> knownSettings;
@@ -455,25 +494,33 @@ bool SettingsStore::save(const std::filesystem::path &path,
         return std::string(k);
     };
 
+    std::vector<std::string> writtenLines;
+    std::ostringstream output;
+
     if (rawLinesToPreserve != nullptr && !rawLinesToPreserve->empty()) {
         for (const auto &rawLine : *rawLinesToPreserve) {
             const auto content = trim(rawLine);
             if (content.empty() || content.front() == '#') {
                 output << rawLine << '\n';
+                writtenLines.push_back(rawLine);
                 continue;
             }
             const auto separator = content.find('=');
             if (separator == std::string::npos) {
                 output << rawLine << '\n';
+                writtenLines.push_back(rawLine);
                 continue;
             }
             const auto key = canonicalKey(trim(std::string_view(content).substr(0, separator)));
             auto it = knownSettings.find(key);
             if (it != knownSettings.end()) {
-                output << key << "=" << it->second << '\n';
+                std::string line = key + "=" + it->second;
+                output << line << '\n';
+                writtenLines.push_back(std::move(line));
                 writtenKeys.insert(key);
             } else {
                 output << rawLine << '\n';
+                writtenLines.push_back(rawLine);
             }
         }
     }
@@ -489,28 +536,91 @@ bool SettingsStore::save(const std::filesystem::path &path,
 
     for (const char *k : keyOrder) {
         if (writtenKeys.find(k) == writtenKeys.end()) {
-            output << k << "=" << knownSettings[k] << '\n';
+            std::string line = std::string(k) + "=" + knownSettings[k];
+            output << line << '\n';
+            writtenLines.push_back(std::move(line));
         }
     }
 
-    output.close();
-    if (!output) {
-        std::filesystem::remove(temporary, filesystemError);
-        setError("unable to write temporary settings file");
-        return false;
+    const std::string writtenContent = output.str();
+    const std::string contentHash = fnv1a64Hex(writtenContent);
+
+    static std::atomic<std::uint64_t> s_tempCounter{0};
+    const auto tempPath = path.string() + ".tmp." + std::to_string(::getpid()) + "." +
+                          std::to_string(++s_tempCounter);
+
+    int fd = ::open(tempPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        result.status = SettingsSaveStatus::IoError;
+        result.error = "unable to open temporary settings file";
+        return result;
+    }
+    std::size_t written = 0;
+    while (written < writtenContent.size()) {
+        ssize_t n = ::write(fd, writtenContent.data() + written, writtenContent.size() - written);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            ::close(fd);
+            ::unlink(tempPath.c_str());
+            result.status = SettingsSaveStatus::IoError;
+            result.error = "unable to write temporary settings file";
+            return result;
+        }
+        written += static_cast<std::size_t>(n);
+    }
+    ::fsync(fd);
+
+    std::filesystem::rename(tempPath, path, filesystemError);
+    if (filesystemError) {
+        ::close(fd);
+        std::filesystem::remove(tempPath, filesystemError);
+        result.status = SettingsSaveStatus::IoError;
+        result.error = "unable to replace settings file: " + filesystemError.message();
+        return result;
     }
 
-    std::filesystem::rename(temporary, path, filesystemError);
-    if (filesystemError) {
-        std::filesystem::remove(temporary, filesystemError);
-        setError("unable to replace settings file: " +
-                 filesystemError.message());
-        return false;
+    struct stat committedStat {};
+    if (::fstat(fd, &committedStat) != 0) {
+        ::close(fd);
+        result.status = SettingsSaveStatus::IoError;
+        result.error = "unable to stat committed settings file: " + std::string(std::strerror(errno));
+        result.stamp = SettingsFileStamp{};
+        return result;
+    }
+    ::close(fd);
+
+    result.status = SettingsSaveStatus::Saved;
+    result.settings = settings;
+    result.contentHash = contentHash;
+    result.rawLines = std::move(writtenLines);
+    result.stamp.device = static_cast<std::uint64_t>(committedStat.st_dev);
+    result.stamp.inode = static_cast<std::uint64_t>(committedStat.st_ino);
+    result.stamp.size = static_cast<std::uint64_t>(committedStat.st_size);
+    result.stamp.mtimeSec = static_cast<std::int64_t>(committedStat.st_mtim.tv_sec);
+    result.stamp.mtimeNsec = static_cast<std::int64_t>(committedStat.st_mtim.tv_nsec);
+    result.stamp.ctimeSec = static_cast<std::int64_t>(committedStat.st_ctim.tv_sec);
+    result.stamp.ctimeNsec = static_cast<std::int64_t>(committedStat.st_ctim.tv_nsec);
+    result.stamp.exists = true;
+    result.error.clear();
+    return result;
+}
+
+bool SettingsStore::save(const std::filesystem::path &path,
+                         const ModernIMESettings &settings,
+                         std::string *error,
+                         SettingsExpectedBaseline expectedBaseline,
+                         const std::vector<std::string> *rawLinesToPreserve) {
+    const auto res = saveWithResult(path, settings, expectedBaseline, rawLinesToPreserve);
+    if (res.status == SettingsSaveStatus::Saved) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return true;
     }
     if (error != nullptr) {
-        error->clear();
+        *error = res.error;
     }
-    return true;
+    return false;
 }
 
 bool SettingsStore::reset(const std::filesystem::path &path,

@@ -6,6 +6,7 @@
 #include "modernime/core/pinyin_match.h"
 
 #include <chrono>
+#include <cstdio>
 #include <utility>
 #include <vector>
 
@@ -407,7 +408,15 @@ void LearningWriter::rebaseSnapshot(const LearningStoreState &state,
     ++snapshotVersion_;
 }
 
-bool LearningWriter::persistBatch(const std::vector<Event> &events) {
+bool LearningWriter::persistBatch(const std::vector<Event> &events,
+                                  bool *pruned,
+                                  bool *external_changed) {
+    if (pruned != nullptr) {
+        *pruned = false;
+    }
+    if (external_changed != nullptr) {
+        *external_changed = false;
+    }
     constexpr int kMaxAttemptsPerCycle = 3;
     std::vector<LearningEvent> storeEvents;
     storeEvents.reserve(events.size());
@@ -434,7 +443,7 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events) {
             store_->close();
             continue;
         }
-        if (store_->recordBatch(storeEvents)) {
+        if (store_->recordBatch(storeEvents, pruned, external_changed)) {
             return true;
         }
         store_->close();
@@ -592,11 +601,18 @@ void LearningWriter::run() {
         }
 
         bool success = false;
+        bool pruned = false;
+        bool externalChanged = false;
         std::optional<LearningStoreState> freshState;
         {
             std::lock_guard storeLock(storeMutex_);
-            success = persistBatch(events);
-            freshState = success ? store_->readState() : std::nullopt;
+            success = persistBatch(events, &pruned, &externalChanged);
+            if (success) {
+                const auto rev = store_->resetRevision();
+                if (rev.has_value() && (*rev > resetRevision_ || pruned || externalChanged)) {
+                    freshState = store_->readState();
+                }
+            }
         }
 
         // Replay pending input without holding the input mutex. If another

@@ -62,6 +62,85 @@ bool hasInvalidInternalPinyinSegment(std::string_view segmentedInput) {
     return false;
 }
 
+bool isInitialConsonantInput(std::string_view rawInput) {
+    return rawInput == "sh" || rawInput == "ch" || rawInput == "zh";
+}
+
+bool isConsonantAbbreviationInput(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items) {
+    if (rawInput.size() < 2 || items.empty()) {
+        return false;
+    }
+    const bool allConsonants = std::all_of(rawInput.begin(), rawInput.end(), [len = rawInput.size()](char c) {
+        return c >= 'a' && c <= 'z' &&
+               c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' &&
+               c != 'v' && (c != 'y' || len == 3);
+    });
+    if (!allConsonants) {
+        return false;
+    }
+    return rawInput.size() == 2 ||
+           core::PinyinMatchPolicy::abbreviationKey(items.front().fullPinyin) == rawInput ||
+           core::PinyinMatchPolicy::initialsMatch(rawInput, items.front().fullPinyin);
+}
+
+bool hasExactFullPinyinMatch(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items) {
+    return std::any_of(
+        items.begin(), items.end(),
+        [&rawInput](const auto &item) {
+            return item.source != core::CandidateSource::Raw &&
+                   !hasInvalidInternalPinyinSegment(item.fullPinyin) &&
+                   (core::PinyinMatchPolicy::exactInputMatch(rawInput, item.fullPinyin) ||
+                    core::PinyinMatchPolicy::isFullTypoMatch(rawInput, item.fullPinyin));
+        });
+}
+
+bool hasTrustedShortAbbreviation(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items) {
+    return std::any_of(
+        items.begin(), items.end(),
+        [&rawInput](const auto &item) {
+            return item.source != core::CandidateSource::Raw &&
+                   core::PinyinMatchPolicy::trustedShortAbbreviationMatch(
+                       rawInput, item.fullPinyin, item.text);
+        });
+}
+
+bool isTopChineseLexical(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items,
+    const std::function<bool(std::string_view text, std::string_view pinyin)> &isLexicalWord) {
+    if (items.empty()) {
+        return false;
+    }
+    const auto &topChinese = items.front();
+    if (topChinese.source == core::CandidateSource::UserDictionary ||
+        topChinese.isLexical ||
+        (utf8CodePointCount(topChinese.text) == 1 && rawInput.size() <= 3)) {
+        return true;
+    }
+    if (isLexicalWord) {
+        return isLexicalWord(topChinese.text, topChinese.fullPinyin);
+    }
+    return false;
+}
+
+bool hasHighConfidenceChinese(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items,
+    const std::function<bool(std::string_view text, std::string_view pinyin)> &isLexicalWord) {
+    if (items.empty()) {
+        return false;
+    }
+    return hasTrustedShortAbbreviation(rawInput, items) ||
+           isConsonantAbbreviationInput(rawInput, items) ||
+           (hasExactFullPinyinMatch(rawInput, items) && isTopChineseLexical(rawInput, items, isLexicalWord));
+}
+
 void interleaveHigherNativeRankFuzzyCandidate(
     std::string_view rawInput,
     std::vector<core::CandidateItem> &fullCandidates) {
@@ -172,54 +251,13 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
 
     // Stage 4: English & Raw & Command Placement
     const auto rawInput = input.rawInput;
-    const bool isInitialConsonant =
-        (rawInput == "sh" || rawInput == "ch" || rawInput == "zh");
-    const bool isConsonantAbbreviation =
-        rawInput.size() >= 2 && !mixed.empty() &&
-        std::all_of(rawInput.begin(), rawInput.end(), [len = rawInput.size()](char c) {
-            return c >= 'a' && c <= 'z' &&
-                   c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' &&
-                   c != 'v' && (c != 'y' || len == 3);
-        }) &&
-        (rawInput.size() == 2 ||
-         core::PinyinMatchPolicy::abbreviationKey(mixed.front().fullPinyin) == rawInput ||
-         core::PinyinMatchPolicy::initialsMatch(rawInput, mixed.front().fullPinyin));
-    const bool isEnglish =
-        !isInitialConsonant && !isConsonantAbbreviation && input.isEnglishWord;
-
-    const bool hasExactFullPinyinMatch = std::any_of(
-        mixed.begin(), mixed.end(),
-        [&rawInput](const auto &item) {
-            return item.source != core::CandidateSource::Raw &&
-                   !hasInvalidInternalPinyinSegment(item.fullPinyin) &&
-                   (core::PinyinMatchPolicy::exactInputMatch(rawInput, item.fullPinyin) ||
-                    core::PinyinMatchPolicy::isFullTypoMatch(rawInput, item.fullPinyin));
-        });
-
-    const bool hasTrustedShortAbbreviation = std::any_of(
-        mixed.begin(), mixed.end(),
-        [&rawInput](const auto &item) {
-            return item.source != core::CandidateSource::Raw &&
-                   core::PinyinMatchPolicy::trustedShortAbbreviationMatch(
-                       rawInput, item.fullPinyin, item.text);
-        });
-
-    bool isTopChineseLexical = false;
-    if (!mixed.empty()) {
-        const auto &topChinese = mixed.front();
-        if (topChinese.source == core::CandidateSource::UserDictionary ||
-            topChinese.isLexical ||
-            (utf8CodePointCount(topChinese.text) == 1 && rawInput.size() <= 3)) {
-            isTopChineseLexical = true;
-        } else if (input.isLexicalWord) {
-            isTopChineseLexical = input.isLexicalWord(topChinese.text, topChinese.fullPinyin);
-        }
-    }
-
-    const bool hasHighConfidenceChinese =
-        !mixed.empty() &&
-        (hasTrustedShortAbbreviation || isConsonantAbbreviation ||
-         (hasExactFullPinyinMatch && isTopChineseLexical));
+    const bool isInitialConsonant = isInitialConsonantInput(rawInput);
+    const bool isConsonantAbbreviation = isConsonantAbbreviationInput(rawInput, mixed);
+    const bool isEnglish = !isInitialConsonant && !isConsonantAbbreviation && input.isEnglishWord;
+    const bool hasExactFullPinyinMatch = pinyin::hasExactFullPinyinMatch(rawInput, mixed);
+    const bool hasTrustedShortAbbreviation = pinyin::hasTrustedShortAbbreviation(rawInput, mixed);
+    const bool isTopChineseLexical = pinyin::isTopChineseLexical(rawInput, mixed, input.isLexicalWord);
+    const bool hasHighConfidenceChinese = pinyin::hasHighConfidenceChinese(rawInput, mixed, input.isLexicalWord);
 
     const bool isEnglishSuppressed =
         input.isSuppressed ? input.isSuppressed(rawInput, rawInput) : false;

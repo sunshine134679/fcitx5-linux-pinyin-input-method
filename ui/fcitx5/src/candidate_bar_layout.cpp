@@ -272,42 +272,11 @@ CandidateBarLayout CandidateBarLayout::measure(
     layout.maxCandidates = metrics.maxCandidates;
     layout.layoutGeneration = metrics.layoutGeneration;
 
-    const bool showPageIndicator = (page.pageBoundaries.size() > 1);
-    double indicatorWidth = 0.0;
-    if (showPageIndicator) {
-        std::size_t currentPage = 0;
-        for (std::size_t i = 0; i < page.pageBoundaries.size(); ++i) {
-            if (page.cursor >= page.pageBoundaries[i].begin &&
-                page.cursor < page.pageBoundaries[i].end) {
-                currentPage = i;
-                break;
-            }
-        }
-        const std::size_t totalPages = page.pageBoundaries.size();
-        if (currentPage == 0) {
-            layout.pageIndicatorText = std::to_string(currentPage + 1) + "/" +
-                                       std::to_string(totalPages) + " ►";
-        } else if (currentPage + 1 < totalPages) {
-            layout.pageIndicatorText = "◄ " + std::to_string(currentPage + 1) + "/" +
-                                       std::to_string(totalPages) + " ►";
-        } else {
-            layout.pageIndicatorText = "◄ " + std::to_string(currentPage + 1) + "/" +
-                                       std::to_string(totalPages);
-        }
-        indicatorWidth = textWidth ? std::max(36.0, textWidth(layout.pageIndicatorText) + 8.0) : 36.0;
-        layout.pageIndicator = {
-            metrics.panelX + metrics.panelWidth - metrics.horizontalPadding - indicatorWidth,
-            metrics.panelY + (metrics.panelHeight - metrics.candidateHeight) / 2.0,
-            indicatorWidth,
-            metrics.candidateHeight
-        };
-    }
-
     const auto count = visibleItems(page, &metrics);
     layout.candidates.reserve(count);
     double nextX = metrics.panelX + metrics.horizontalPadding;
     const double rightEdge = metrics.panelX + metrics.panelWidth -
-                             metrics.horizontalPadding - indicatorWidth;
+                             metrics.horizontalPadding;
     for (std::size_t index = 0; index < count; ++index) {
         const auto selected = index == page.cursor;
         const auto number = index + 1;
@@ -445,10 +414,6 @@ int hitTestCandidate(const CandidateBarLayout &layout,
     }
 
     // Horizontal pinyin mode
-    if (layout.pageIndicator.width > 0.0 && x >= layout.pageIndicator.x) {
-        return -1;
-    }
-
     for (std::size_t i = 0; i < layout.candidates.size(); ++i) {
         const auto &bounds = layout.candidates[i].bounds;
         if (x >= bounds.x && x <= bounds.x + bounds.width &&

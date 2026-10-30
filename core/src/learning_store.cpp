@@ -75,6 +75,7 @@ bool LearningStore::open() {
             lmdbEngine_.reset();
             return false;
         }
+        lastDataVersion_ = dataVersion();
         return true;
     }
 
@@ -115,6 +116,7 @@ bool LearningStore::open() {
             return false;
         }
     }
+    lastDataVersion_ = dataVersion();
     return true;
 }
 
@@ -134,6 +136,7 @@ bool LearningStore::openReadOnly() {
             lmdbEngine_.reset();
             return false;
         }
+        lastDataVersion_ = dataVersion();
         return true;
     }
 
@@ -146,6 +149,7 @@ bool LearningStore::openReadOnly() {
         return false;
     }
     sqlite3_busy_timeout(db_, 0);
+    lastDataVersion_ = dataVersion();
     return true;
 }
 
@@ -443,7 +447,7 @@ bool LearningStore::recordSuppression(std::string_view phrase,
     return recordBatch({event});
 }
 
-bool LearningStore::pruneContextVariants() const {
+bool LearningStore::pruneContextVariants(bool *pruned) const {
     constexpr const char *sql =
         "DELETE FROM learning_entries WHERE rowid IN ("
         "SELECT rowid FROM ("
@@ -453,10 +457,14 @@ bool LearningStore::pruneContextVariants() const {
         ") AS variant_rank FROM learning_entries WHERE "
         "context_before <> '' OR context_after <> ''"
         ") WHERE variant_rank > 8);";
-    return execute(sql);
+    const bool ok = execute(sql);
+    if (ok && pruned != nullptr && sqlite3_changes(db_) > 0) {
+        *pruned = true;
+    }
+    return ok;
 }
 
-bool LearningStore::pruneTotalEntries() const {
+bool LearningStore::pruneTotalEntries(bool *pruned) const {
     if (db_ == nullptr) {
         return false;
     }
@@ -477,11 +485,22 @@ bool LearningStore::pruneTotalEntries() const {
                            static_cast<sqlite3_int64>(totalEntryLimit_)) ==
                        SQLITE_OK;
     const bool success = bound && sqlite3_step(statement) == SQLITE_DONE;
+    if (success && pruned != nullptr && sqlite3_changes(db_) > 0) {
+        *pruned = true;
+    }
     sqlite3_finalize(statement);
     return success;
 }
 
-bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
+bool LearningStore::recordBatch(const std::vector<LearningEvent> &events,
+                                bool *pruned,
+                                bool *external_changed) {
+    if (pruned != nullptr) {
+        *pruned = false;
+    }
+    if (external_changed != nullptr) {
+        *external_changed = false;
+    }
     if (useLmdb_) {
         if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
             return false;
@@ -489,7 +508,11 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
         if (events.empty()) {
             return true;
         }
-        return lmdbEngine_->RecordLearningBatch(events);
+        const bool ok = lmdbEngine_->RecordLearningBatch(events, 1.0f, pruned, external_changed);
+        if (ok) {
+            lastDataVersion_ = dataVersion();
+        }
+        return ok;
     }
 
     if (db_ == nullptr) {
@@ -500,6 +523,11 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
     }
     if (!execute("BEGIN IMMEDIATE;")) {
         return false;
+    }
+    const auto curVer = dataVersion();
+    const bool extChanged = (lastDataVersion_ != 0 && curVer != lastDataVersion_);
+    if (external_changed != nullptr) {
+        *external_changed = extChanged;
     }
     const auto currentRevision = resetRevision();
     if (!currentRevision.has_value()) {
@@ -534,17 +562,24 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events) {
         execute("ROLLBACK;");
         return false;
     }
+    bool batchPruned = false;
     // Keep housekeeping in the same transaction as the events. Otherwise a
     // pruning failure can be reported after COMMIT, and LearningWriter's safe
     // retry would apply already-committed selections a second time.
     if (faultInjection_ == FaultInjection::FailDuringPrune ||
-        !pruneContextVariants() || !pruneTotalEntries()) {
+        !pruneContextVariants(&batchPruned) || !pruneTotalEntries(&batchPruned)) {
         execute("ROLLBACK;");
         return false;
     }
     if (!execute("COMMIT;")) {
         execute("ROLLBACK;");
         return false;
+    }
+    if (!extChanged) {
+        lastDataVersion_ = curVer;
+    }
+    if (pruned != nullptr) {
+        *pruned = batchPruned;
     }
     return true;
 }
@@ -597,6 +632,26 @@ int LearningStore::schemaVersion() const {
     return version;
 }
 
+std::uint64_t LearningStore::dataVersion() const {
+    if (useLmdb_) {
+        return lmdbEngine_ ? lmdbEngine_->LastTxnId() : 0;
+    }
+    if (db_ == nullptr) {
+        return 0;
+    }
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(db_, "PRAGMA data_version;", -1, &statement,
+                           nullptr) != SQLITE_OK) {
+        return 0;
+    }
+    std::uint64_t version = 0;
+    if (sqlite3_step(statement) == SQLITE_ROW) {
+        version = static_cast<std::uint64_t>(sqlite3_column_int64(statement, 0));
+    }
+    sqlite3_finalize(statement);
+    return version;
+}
+
 std::optional<LearningStoreState> LearningStore::readState() const {
     if (useLmdb_) {
         if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
@@ -607,6 +662,7 @@ std::optional<LearningStoreState> LearningStore::readState() const {
         if (!lmdbEngine_->ReadLearningState(entries, revision)) {
             return std::nullopt;
         }
+        lastDataVersion_ = dataVersion();
         return LearningStoreState{
             std::make_shared<const LearningSnapshot>(std::move(entries), totalEntryLimit_),
             revision};
@@ -615,12 +671,14 @@ std::optional<LearningStoreState> LearningStore::readState() const {
     if (!execute("BEGIN;")) {
         return std::nullopt;
     }
+    const auto readVer = dataVersion();
     const auto revision = resetRevision();
     auto loaded = revision.has_value() ? snapshot() : nullptr;
     if (loaded == nullptr || !execute("COMMIT;")) {
         execute("ROLLBACK;");
         return std::nullopt;
     }
+    lastDataVersion_ = readVer;
     return LearningStoreState{std::move(loaded), *revision};
 }
 
@@ -648,6 +706,35 @@ std::optional<std::size_t> LearningStore::entryCount() const {
     return count;
 }
 
+bool LearningStore::verifySelf() const {
+    if (useLmdb_) {
+        if (lmdbEngine_ == nullptr || !lmdbEngine_->IsLmdbOpen()) {
+            return false;
+        }
+        return lmdbEngine_->VerifyDatabaseIntegrity();
+    }
+
+    if (db_ == nullptr) {
+        return false;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, "PRAGMA quick_check;", -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    bool ok = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const auto *text = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+        if (text != nullptr && std::string_view(text) == "ok") {
+            ok = true;
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!ok) {
+        return false;
+    }
+    return schemaVersion() > 0 && resetRevision().has_value() && entryCount().has_value();
+}
+
 std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
     std::int64_t) const {
     if (useLmdb_) {
@@ -655,7 +742,7 @@ std::shared_ptr<const LearningSnapshot> LearningStore::snapshot(
             return std::make_shared<const LearningSnapshot>();
         }
         const auto state = readState();
-        return state ? state->snapshot : nullptr;
+        return state ? state->snapshot : std::make_shared<const LearningSnapshot>();
     }
 
     std::vector<LearningEntry> entries;

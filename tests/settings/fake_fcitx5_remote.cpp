@@ -42,6 +42,20 @@ void markActivated() {
 
 int main(int argc, char **argv) {
     logInvocation(argc, argv);
+    if (const auto *sleepSec = std::getenv("FAKE_REMOTE_SLEEP_SECONDS")) {
+        sleep(static_cast<unsigned int>(std::atoi(sleepSec)));
+    }
+    if (const auto *flood = std::getenv("FAKE_REMOTE_FLOOD_BYTES")) {
+        std::size_t bytes = static_cast<std::size_t>(std::strtoul(flood, nullptr, 10));
+        std::string junk(4096, 'A');
+        while (bytes > 0) {
+            std::size_t chunk = std::min(bytes, junk.size());
+            std::cout.write(junk.data(), static_cast<std::streamsize>(chunk));
+            bytes -= chunk;
+        }
+        std::cout << '\n';
+        return EXIT_SUCCESS;
+    }
     if (const auto *delay = std::getenv("FAKE_REMOTE_INHERITED_PIPE_SECONDS")) {
         if (fork() == 0) {
             sleep(static_cast<unsigned int>(std::atoi(delay)));

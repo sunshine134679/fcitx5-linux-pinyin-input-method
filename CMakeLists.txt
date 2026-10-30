@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ModernIME VERSION 0.1.23 LANGUAGES CXX)
+project(ModernIME VERSION 0.1.24 LANGUAGES CXX)
 
 option(MODERNIME_BUILD_FCITX5 "Build the Fcitx5 addon targets" OFF)
 option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" OFF)
@@ -29,6 +29,7 @@ endif()
 if(MODERNIME_BUILD_SETTINGS)
     find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
     find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
+    find_program(MODERNIME_FLOCK_EXECUTABLE flock REQUIRED)
 endif()
 set(MODERNIME_PACKAGE_CHANNEL "" CACHE STRING "Native package channel identifier (e.g. deb, rpm)")
 
@@ -83,9 +84,37 @@ install(FILES
     DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/modernime"
 )
 
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions"
+set(MODERNIME_KIMPANEL_ROOT_FILES
+    extension.js
+    indicator.js
+    lib.js
+    menu.js
+    metadata.json
+    panel.js
+    prefs.js
+    stylesheet.css
 )
+foreach(file IN LISTS MODERNIME_KIMPANEL_ROOT_FILES)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org/${file}"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org")
+endforeach()
+
+set(MODERNIME_KIMPANEL_SCHEMAS_FILES
+    gschemas.compiled
+    org.gnome.shell.extensions.kimpanel.gschema.xml
+)
+foreach(file IN LISTS MODERNIME_KIMPANEL_SCHEMAS_FILES)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org/schemas/${file}"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org/schemas")
+endforeach()
+
+set(MODERNIME_KIMPANEL_LOCALES
+    de es fr he ja ko nl ru zh_CN zh_TW
+)
+foreach(loc IN LISTS MODERNIME_KIMPANEL_LOCALES)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org/locale/${loc}/LC_MESSAGES/gnome-shell-extensions-kimpanel.mo"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org/locale/${loc}/LC_MESSAGES")
+endforeach()
 
 if(MODERNIME_PACKAGE_CHANNEL)
     set(MODERNIME_GENERATED_CHANNEL_FILE "${CMAKE_CURRENT_BINARY_DIR}/install-channel.txt")

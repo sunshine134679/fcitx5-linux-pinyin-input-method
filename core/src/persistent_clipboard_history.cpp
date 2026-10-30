@@ -143,27 +143,60 @@ bool PersistentClipboardHistory::flush(std::string *error) {
         setError(error, "clipboard history is not loaded");
         return false;
     }
-    return !dirty_ || persist(error);
+    if (!dirty_ && pendingObservations_.entries().empty()) {
+        return true;
+    }
+    if (persist(error)) {
+        return true;
+    }
+    // If non-blocking persist failed due to lock contention, perform a blocking update
+    ClipboardHistory committed;
+    const bool ok = ClipboardHistory::updateFile(
+        path_,
+        [this](ClipboardHistory &diskHistory) {
+            for (auto entry = pendingObservations_.entries().rbegin();
+                 entry != pendingObservations_.entries().rend(); ++entry) {
+                diskHistory.observe(*entry);
+            }
+            return true;
+        },
+        &committed,
+        error,
+        /*nonBlocking=*/false);
+    if (!ok) {
+        return false;
+    }
+    history_ = std::move(committed);
+    dirty_ = false;
+    pendingObservations_.clear();
+    knownFileState_ = currentFileState();
+    return true;
 }
 
 bool PersistentClipboardHistory::persist(std::string *error) {
-    if (currentFileState() != knownFileState_) {
-        ClipboardHistory latest;
-        if (!latest.load(path_, error)) {
-            return false;
-        }
-        // Replay only copies that could not be saved, oldest first. Reusing
-        // the bounded history for this journal preserves deduplication and
-        // prevents stale base entries from undoing another client's deletion.
-        for (auto entry = pendingObservations_.entries().rbegin();
-             entry != pendingObservations_.entries().rend(); ++entry) {
-            latest.observe(*entry);
-        }
-        history_ = std::move(latest);
+    if (!dirty_ && pendingObservations_.entries().empty()) {
+        return true;
     }
-    if (!history_.save(path_, error)) {
+
+    ClipboardHistory committed;
+    const bool ok = ClipboardHistory::updateFile(
+        path_,
+        [this](ClipboardHistory &diskHistory) {
+            for (auto entry = pendingObservations_.entries().rbegin();
+                 entry != pendingObservations_.entries().rend(); ++entry) {
+                diskHistory.observe(*entry);
+            }
+            return true;
+        },
+        &committed,
+        error,
+        /*nonBlocking=*/true);
+
+    if (!ok) {
         return false;
     }
+
+    history_ = std::move(committed);
     dirty_ = false;
     pendingObservations_.clear();
     knownFileState_ = currentFileState();

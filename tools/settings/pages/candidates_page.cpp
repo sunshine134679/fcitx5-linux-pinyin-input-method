@@ -193,16 +193,6 @@ private:
         gtk_box_pack_start(GTK_BOX(card), englishDefinitionFallback, FALSE,
                            FALSE, 0);
 
-        auto *tip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        addStyleClass(tip, "modernime-tip-note");
-        auto *tipIcon = gtk_image_new_from_icon_name("dialog-information-symbolic", GTK_ICON_SIZE_MENU);
-        gtk_box_pack_start(GTK_BOX(tip), tipIcon, FALSE, FALSE, 0);
-        auto *tipLabel = gtk_label_new("中文状态下，常用中文与用户明确选择优先");
-        gtk_label_set_line_wrap(GTK_LABEL(tipLabel), TRUE);
-        gtk_label_set_xalign(GTK_LABEL(tipLabel), 0);
-        gtk_box_pack_start(GTK_BOX(tip), tipLabel, TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(card), tip, FALSE, FALSE, 0);
-
         auto *navigation = createSectionCard("候选导航", "控制方向键与翻页键的行为");
         gtk_box_pack_start(GTK_BOX(page), navigation, FALSE, FALSE, 0);
         arrowNavigation = gtk_switch_new();

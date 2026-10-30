@@ -12,13 +12,14 @@ cat >"$fake_bin/cmake" <<'EOF'
 set -euo pipefail
 if [[ " $* " == *" --install "* ]]; then
     FAKE_PREFIX="${DESTDIR:-}$FAKE_PREFIX"
-    mkdir -p "$FAKE_PREFIX/bin" "$FAKE_PREFIX/share/applications"
+    mkdir -p "$FAKE_PREFIX/bin" "$FAKE_PREFIX/share/applications" "$FAKE_PREFIX/share/modernime/pinyin"
     for icon_size in 16 32 48 64 128 256 512; do
         icon_dir="$FAKE_PREFIX/share/icons/hicolor/${icon_size}x${icon_size}/apps"
         mkdir -p "$icon_dir"
         cp "$PROJECT_ROOT/config/icons/${icon_size}x${icon_size}/modernime.png" "$icon_dir/modernime.png"
     done
     : >"$FAKE_PREFIX/bin/modernime-settings"
+    : >"$FAKE_PREFIX/share/modernime/pinyin/modernime-knowledge.dict"
     cp "$PROJECT_ROOT/config/desktop/modernime-settings.desktop" \
         "$FAKE_PREFIX/share/applications/modernime-settings.desktop"
 fi

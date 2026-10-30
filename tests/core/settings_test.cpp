@@ -473,6 +473,48 @@ void testUnknownKeysReturnSuccessWithDiagnostics() {
     assertTrue(res.rawLines.size() == 4, "all raw lines preserved");
 }
 
+void testSettingsStoreSaveWithResultTruthReceipt() {
+    using namespace modernime::core;
+
+    const auto directory = testDirectory();
+    const auto path = directory / "receipt_test.conf";
+
+    auto settings = defaultSettings();
+    settings.candidatePageSize = 7;
+    settings.toggleKey = "Ctrl+Shift+Space";
+
+    // 1. Initial save with result
+    const auto receipt1 = SettingsStore::saveWithResult(path, settings);
+    assertTrue(receipt1.status == SettingsSaveStatus::Saved, "initial save succeeds with Saved status");
+    assertTrue(!receipt1.contentHash.empty(), "receipt returns non-empty contentHash");
+    assertTrue(receipt1.contentHash == computeFileContentHash(path), "receipt hash matches file content hash");
+    assertTrue(receipt1.settings.candidatePageSize == 7, "receipt returns matching settings");
+    assertTrue(!receipt1.rawLines.empty(), "receipt returns raw lines");
+    assertTrue(receipt1.stamp.exists, "receipt stamp exists");
+
+    // 2. Modify disk externally
+    {
+        std::ofstream ext(path, std::ios::app);
+        ext << "# external modification\n";
+    }
+    const auto externalDiskHash = computeFileContentHash(path);
+    assertTrue(externalDiskHash != receipt1.contentHash, "external hash differs from original");
+
+    // 3. Save with old expected hash -> Conflict
+    auto draft = settings;
+    draft.candidatePageSize = 5;
+    const auto conflictReceipt = SettingsStore::saveWithResult(path, draft, receipt1.contentHash);
+    assertTrue(conflictReceipt.status == SettingsSaveStatus::Conflict, "conflict detected when expectedHash does not match");
+    assertTrue(!conflictReceipt.error.empty(), "conflict returns error message");
+    assertTrue(conflictReceipt.currentDiskHash == externalDiskHash, "conflict receipt returns current disk hash");
+    assertTrue(!conflictReceipt.currentDiskRawLines.empty(), "conflict receipt returns current disk raw lines");
+
+    // Verify disk content was NOT overwritten
+    const auto diskAfterConflict = SettingsStore::load(path);
+    assertTrue(diskAfterConflict.settings.candidatePageSize == 7, "disk still retains previous settings, not draft");
+    assertTrue(diskAfterConflict.contentHash == externalDiskHash, "disk retains external hash");
+}
+
 } // namespace
 
 int main() {
@@ -491,5 +533,6 @@ int main() {
     testConsistentSingleSnapshotRead();
     testIoErrorAndMissingFileDifferentiated();
     testUnknownKeysReturnSuccessWithDiagnostics();
+    testSettingsStoreSaveWithResultTruthReceipt();
     return EXIT_SUCCESS;
 }

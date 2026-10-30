@@ -302,6 +302,43 @@ void testPinyinSegmentationPreservesExistingChoice() {
     }
 }
 
+void testUserDictionaryLoadSnapshotDiagnostics() {
+    const auto nonExistent = testPath("non-existent-dict.txt");
+    const auto snapNonExistent = modernime::pinyin::UserDictionary::loadSnapshot(nonExistent);
+    assertTrue(!snapNonExistent.exists, "non-existent file reports exists=false");
+    assertTrue(!snapNonExistent.readable, "non-existent file reports readable=false");
+    assertTrue(snapNonExistent.contentHash.empty(), "non-existent content hash is empty");
+    assertTrue(snapNonExistent.entries.empty(), "non-existent entries empty");
+
+    const auto dirPath = testPath("test-dir-dict");
+    std::filesystem::create_directories(dirPath);
+    const auto snapDir = modernime::pinyin::UserDictionary::loadSnapshot(dirPath);
+    assertTrue(snapDir.exists, "dir reports exists=true");
+    assertTrue(!snapDir.readable, "dir reports readable=false");
+    assertTrue(!snapDir.error.empty(), "dir reports error");
+    std::filesystem::remove_all(dirPath);
+
+    const auto corrupted = testPath("corrupted-dict.txt");
+    writeFile(corrupted,
+              "# comment\n"
+              "ni'hao\t你好\t100\n"
+              "broken_columns\n"
+              "bad!pinyin\t词条\t50\n"
+              "zhong'wen\t中文\tnot_a_weight\n"
+              "wan'mei\t完美\t80\n");
+    const auto snapCorrupted = modernime::pinyin::UserDictionary::loadSnapshot(corrupted);
+    assertTrue(snapCorrupted.exists && snapCorrupted.readable, "file exists and is readable");
+    assertTrue(!snapCorrupted.contentHash.empty(), "content hash is computed");
+    assertTrue(snapCorrupted.entries.size() == 2, "2 valid entries are kept");
+    assertTrue(snapCorrupted.entries[0].phrase == "你好" && snapCorrupted.entries[1].phrase == "完美",
+               "correct entries kept");
+    assertTrue(snapCorrupted.diagnostics.size() == 3, "3 corrupted lines diagnosed");
+    assertTrue(snapCorrupted.diagnostics[0].lineNumber == 3, "diagnostic line 3");
+    assertTrue(snapCorrupted.diagnostics[1].lineNumber == 4, "diagnostic line 4");
+    assertTrue(snapCorrupted.diagnostics[2].lineNumber == 5, "diagnostic line 5");
+    std::filesystem::remove(corrupted);
+}
+
 } // namespace
 
 int main() {
@@ -317,5 +354,6 @@ int main() {
     testManualCandidatesAreCappedForShortInput();
     testManualCandidatesExpandForLongerInput();
     testUserDictionaryFastContainsWithLargeCorpus();
+    testUserDictionaryLoadSnapshotDiagnostics();
     return EXIT_SUCCESS;
 }

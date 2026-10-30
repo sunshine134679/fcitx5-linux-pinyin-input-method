@@ -104,13 +104,87 @@ struct SettingsLoadResult final {
     bool isIoError() const noexcept { return status == SettingsLoadStatus::IoError; }
 };
 
+enum class SettingsSaveStatus {
+    Saved,
+    Conflict,
+    Invalid,
+    IoError,
+};
+
+struct SettingsSaveResult final {
+    SettingsSaveStatus status = SettingsSaveStatus::Invalid;
+    ModernIMESettings settings = defaultSettings();
+    std::string contentHash;
+    std::vector<std::string> rawLines;
+    SettingsFileStamp stamp;
+    std::string error;
+
+    std::string currentDiskHash;
+    ModernIMESettings currentDiskSettings = defaultSettings();
+    std::vector<std::string> currentDiskRawLines;
+};
+
+enum class SettingsBaselineKind {
+    Unchecked,
+    ExpectedMissing,
+    ExpectedContentHash
+};
+
+struct SettingsExpectedBaseline final {
+    SettingsBaselineKind kind = SettingsBaselineKind::Unchecked;
+    std::string contentHash;
+
+    SettingsExpectedBaseline() = default;
+    SettingsExpectedBaseline(SettingsBaselineKind k, std::string hash = {})
+        : kind(k), contentHash(std::move(hash)) {}
+
+    static SettingsExpectedBaseline unchecked() {
+        return SettingsExpectedBaseline{SettingsBaselineKind::Unchecked, ""};
+    }
+    static SettingsExpectedBaseline expectedMissing() {
+        return SettingsExpectedBaseline{SettingsBaselineKind::ExpectedMissing, ""};
+    }
+    static SettingsExpectedBaseline expectedContent(std::string hash) {
+        if (hash.empty()) {
+            return expectedMissing();
+        }
+        return SettingsExpectedBaseline{SettingsBaselineKind::ExpectedContentHash, std::move(hash)};
+    }
+    static SettingsExpectedBaseline fromLoadResult(const SettingsLoadResult &loaded) {
+        if (loaded.isMissing()) {
+            return expectedMissing();
+        }
+        if (loaded.isSuccess()) {
+            return expectedContent(loaded.contentHash);
+        }
+        return unchecked();
+    }
+
+    SettingsExpectedBaseline(std::string_view hash) {
+        if (hash.empty()) {
+            kind = SettingsBaselineKind::ExpectedMissing;
+        } else {
+            kind = SettingsBaselineKind::ExpectedContentHash;
+            contentHash = std::string(hash);
+        }
+    }
+    SettingsExpectedBaseline(const char *hash)
+        : SettingsExpectedBaseline(hash ? std::string_view(hash) : std::string_view{}) {}
+    SettingsExpectedBaseline(const std::string &hash)
+        : SettingsExpectedBaseline(std::string_view(hash)) {}
+};
+
 class SettingsStore final {
 public:
     static SettingsLoadResult load(const std::filesystem::path &path);
+    static SettingsSaveResult saveWithResult(const std::filesystem::path &path,
+                                             const ModernIMESettings &settings,
+                                             SettingsExpectedBaseline expectedBaseline = SettingsExpectedBaseline::unchecked(),
+                                             const std::vector<std::string> *rawLinesToPreserve = nullptr);
     static bool save(const std::filesystem::path &path,
                      const ModernIMESettings &settings,
                      std::string *error = nullptr,
-                     std::string_view expectedContentHash = {},
+                     SettingsExpectedBaseline expectedBaseline = SettingsExpectedBaseline::unchecked(),
                      const std::vector<std::string> *rawLinesToPreserve = nullptr);
     static bool reset(const std::filesystem::path &path,
                       std::string *error = nullptr);

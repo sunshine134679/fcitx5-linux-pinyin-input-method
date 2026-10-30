@@ -1274,8 +1274,10 @@ void testExplicitCharacterExtractionAndLearning() {
 
 void testKeystrokeVariantRecallAndReadingAnnotation();
 void testLearnedPartialPrefixDoesNotUsurpAbbreviationSentence();
+void testSpecialCandidateSelectionActionAndLifetime();
 
 int main() {
+    testSpecialCandidateSelectionActionAndLifetime();
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();
     testMixerUsesRawFallbackWhenNoHomophoneExists();
@@ -1750,5 +1752,74 @@ void testKeystrokeVariantRecallAndReadingAnnotation() {
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);
+}
+
+void testSpecialCandidateSelectionActionAndLifetime() {
+    // AR01 / A01: 验证特殊候选（Command / EnglishDefinition）在 selectConfirmed()
+    // 刷新页面并销毁原候选 vector 元素后，SelectionAction 仍正确返回，无失效引用读取。
+    const auto learningPath = testPath("special-candidate-lifetime.sqlite3");
+    std::error_code error;
+    std::filesystem::remove(learningPath, error);
+
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.clipboardEnabled = true;
+    options.englishDefinitionEnabled = true;
+    options.learningEnabled = true;
+
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    // 1. CommandSelectionOpensClipboardAfterRefresh
+    assertTrue(provider.append("v"), "v input accepted");
+    const auto &cmdPage = provider.page();
+    std::size_t cmdIndex = cmdPage.items.size();
+    for (std::size_t i = 0; i < cmdPage.items.size(); ++i) {
+        if (cmdPage.items[i].source == modernime::core::CandidateSource::Command) {
+            cmdIndex = i;
+            break;
+        }
+    }
+    assertTrue(cmdIndex < cmdPage.items.size(), "command candidate found");
+    const auto expectedCmdId = modernime::core::candidateIdentity(cmdPage.items[cmdIndex], cmdPage);
+    modernime::core::CandidateSelectionRequest cmdReq{
+        .sessionId = cmdPage.sessionId,
+        .displayGeneration = cmdPage.displayGeneration,
+        .globalIndex = cmdIndex,
+        .expected = expectedCmdId,
+    };
+    const auto cmdOutcome = provider.selectConfirmed(cmdReq, cmdPage.generation);
+    assertTrue(cmdOutcome.has_value(), "command selectConfirmed succeeded");
+    assertTrue(cmdOutcome->action == modernime::core::SelectionAction::OpenClipboard,
+               "command selection outcome specifies OpenClipboard action");
+    assertTrue(cmdOutcome->remainingInput.empty(), "command selection consumes remaining input");
+    assertTrue(cmdOutcome->selected == expectedCmdId, "command outcome matches expected identity");
+    assertTrue(provider.page().items.empty(), "command selection clears candidates page");
+
+    // 2. DefinitionSelectionCommitsWithoutLearning / 普通候选 selectConfirmed 校验
+    provider.reset();
+    assertTrue(provider.append("nihao"), "nihao input accepted");
+    const auto &nhPage = provider.page();
+    assertTrue(!nhPage.items.empty(), "nihao has candidates");
+    const auto expectedNhId = modernime::core::candidateIdentity(nhPage.items[0], nhPage);
+    modernime::core::CandidateSelectionRequest nhReq{
+        .sessionId = nhPage.sessionId,
+        .displayGeneration = nhPage.displayGeneration,
+        .globalIndex = 0,
+        .expected = expectedNhId,
+    };
+    const auto nhOutcome = provider.selectConfirmed(nhReq, nhPage.generation);
+    assertTrue(nhOutcome.has_value(), "normal candidate selectConfirmed succeeded");
+    assertTrue(nhOutcome->action == modernime::core::SelectionAction::CommitText,
+               "normal candidate selection commits text");
+    assertTrue(provider.page().items.empty(), "page cleared after selectConfirmed");
+
+    // Stale request must be rejected
+    const auto staleOutcome = provider.selectConfirmed(nhReq, nhPage.generation);
+    assertTrue(!staleOutcome.has_value(), "stale selectConfirmed is rejected");
+
+    std::filesystem::remove(learningPath, error);
+    std::filesystem::remove(learningPath.string() + "-wal", error);
+    std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 

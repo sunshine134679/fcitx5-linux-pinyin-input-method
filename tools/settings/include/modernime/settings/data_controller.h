@@ -40,9 +40,66 @@ struct DictionaryImportPreview final {
     std::vector<pinyin::UserDictionaryEntry> parsedEntries;
 };
 
+struct DictionaryDiagnosticLine final {
+    std::size_t lineNumber = 0;
+    std::string lineContent;
+    std::string reason;
+};
+
+enum class DictionaryLoadStatus {
+    Success,
+    NonExistent,
+    IoError,
+    CorruptedLines,
+};
+
+struct DictionarySnapshot final {
+    DictionaryLoadStatus status = DictionaryLoadStatus::NonExistent;
+    bool exists = false;
+    std::string contentHash;
+    std::vector<pinyin::UserDictionaryEntry> entries;
+    std::vector<DictionaryDiagnosticLine> diagnostics;
+    std::string error;
+};
+
+enum class DictionarySaveResult {
+    Saved,
+    Conflict,
+    Invalid,
+    IoError,
+};
+
+struct DictionaryExpectedBaseline final {
+    enum class Kind {
+        Unchecked,
+        ExpectNonExistent,
+        ExpectHash,
+    };
+    Kind kind = Kind::Unchecked;
+    std::string contentHash;
+
+    static DictionaryExpectedBaseline unchecked() {
+        return {Kind::Unchecked, {}};
+    }
+    static DictionaryExpectedBaseline nonExistent() {
+        return {Kind::ExpectNonExistent, {}};
+    }
+    static DictionaryExpectedBaseline fromHash(std::string hash) {
+        return {Kind::ExpectHash, std::move(hash)};
+    }
+    static DictionaryExpectedBaseline fromSnapshot(const DictionarySnapshot &snapshot) {
+        if (!snapshot.exists) {
+            return nonExistent();
+        }
+        return fromHash(snapshot.contentHash);
+    }
+};
+
 class DataController final {
 public:
     static std::vector<pinyin::UserDictionaryEntry> loadDictionary(
+        const std::filesystem::path &path);
+    static DictionarySnapshot loadDictionaryForEditing(
         const std::filesystem::path &path);
     static std::vector<std::size_t> filterDictionary(
         std::span<const pinyin::UserDictionaryEntry> entries,
@@ -66,6 +123,11 @@ public:
     static bool saveDictionary(
         const std::filesystem::path &path,
         const std::vector<pinyin::UserDictionaryEntry> &entries,
+        std::string *error = nullptr);
+    static DictionarySaveResult saveDictionaryIfUnchanged(
+        const std::filesystem::path &path,
+        const std::vector<pinyin::UserDictionaryEntry> &entries,
+        const DictionaryExpectedBaseline &expectedBaseline,
         std::string *error = nullptr);
     static std::size_t learningEntryCount(const std::filesystem::path &path,
                                           std::string *error = nullptr);

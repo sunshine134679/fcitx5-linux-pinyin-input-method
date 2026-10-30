@@ -82,7 +82,9 @@ private:
                                 std::string_view contextBefore,
                                 std::string_view contextAfter,
                                 std::int64_t nowMs);
-    bool persistBatch(const std::vector<Event> &events);
+    bool persistBatch(const std::vector<Event> &events,
+                      bool *pruned = nullptr,
+                      bool *external_changed = nullptr);
     void run();
     void rebaseSnapshot(const LearningStoreState &state, bool includeProcessing);
     static void applyEvent(LearningSnapshot &snapshot, const Event &event);

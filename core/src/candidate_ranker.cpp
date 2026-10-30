@@ -193,7 +193,19 @@ CandidateRanker::rank(std::string_view userInput,
             static_cast<std::size_t>(
                 std::count(candidate.full_pinyin.begin(), candidate.full_pinyin.end(), '\'')) +
             1;
-        return candidateSyllables == inputSyllables ? 2 : candidate.match_priority;
+        if (candidateSyllables != inputSyllables) {
+            return candidate.match_priority;
+        }
+        // Single-syllable fuzzy candidates (match_priority == 0) must not be elevated to
+        // exact match priority (2) purely by generic unigram learning boost from their normal
+        // pronunciation (e.g. typing "le -> 了" must not hijack "ne -> 呢", "long -> 龙" must
+        // not hijack "nong -> 弄", "shi -> 是" must not hijack "si -> 四").
+        // Promotion across exact match group requires explicit correction evidence under the
+        // current raw input (recent_choice_bonus > 0.0).
+        if (inputSyllables <= 1 && candidate.recent_choice_bonus <= 0.0) {
+            return candidate.match_priority;
+        }
+        return 2;
     };
     std::stable_sort(order.begin(), order.end(),
                      [&candidates, &abbreviationPromoted, &preferenceCosts,

@@ -65,6 +65,27 @@ if [[ -n "$binary_dir" && -f "$binary_dir/CPackConfig.cmake" ]]; then
     grep -F 'set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE' "$binary_dir/CPackConfig.cmake" >/dev/null
     grep -F 'set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE' "$binary_dir/CPackConfig.cmake" >/dev/null
 fi
+if [[ -n "$binary_dir" && -f "$binary_dir/cmake_install.cmake" ]]; then
+    stage_check=$(mktemp -d "${TMPDIR:-/tmp}/modernime-contract-stage.XXXXXX")
+    cmake --install "$binary_dir" --prefix "$stage_check" >/dev/null
+    ext_dir="$stage_check/share/modernime/extensions/kimpanel@kde.org"
+    test -f "$ext_dir/metadata.json"
+    test -f "$ext_dir/extension.js"
+    test -f "$ext_dir/schemas/gschemas.compiled"
+    test -f "$ext_dir/locale/zh_CN/LC_MESSAGES/gnome-shell-extensions-kimpanel.mo"
+    ext_count=$(find "$ext_dir" -type f | wc -l)
+    if [[ "$ext_count" -ne 20 ]]; then
+        echo "Expected exactly 20 kimpanel extension files in install staging, got $ext_count" >&2
+        rm -rf -- "$stage_check"
+        exit 1
+    fi
+    if find "$stage_check" \( -name "*mimosa*" -o -name "*v2c*" \) | grep -q .; then
+        echo "Staging contains dirty or uncommitted files (.mimosa / .v2c)" >&2
+        rm -rf -- "$stage_check"
+        exit 1
+    fi
+    rm -rf -- "$stage_check"
+fi
 
 session_init="$project_root/scripts/modernime-session-init"
 test -f "$session_init" && test -x "$session_init"

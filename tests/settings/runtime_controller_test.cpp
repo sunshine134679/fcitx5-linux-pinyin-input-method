@@ -163,12 +163,11 @@ int main(int argc, char **argv) {
     const auto inheritedPipeStart = std::chrono::steady_clock::now();
     const auto inheritedPipeStatus = modernime::settings::RuntimeController::probe(
         argv[1], inheritedPipeEnvironment);
-    assertTrue(!inheritedPipeStatus.running &&
-                   inheritedPipeStatus.message.find("timed out") != std::string::npos,
-               "remote timeout covers inherited output pipes after parent exits");
+    assertTrue(inheritedPipeStatus.running && inheritedPipeStatus.available,
+               "direct child exit with inherited pipe is captured cleanly without hanging");
     assertTrue(std::chrono::steady_clock::now() - inheritedPipeStart <
-                   std::chrono::seconds(3),
-               "inherited remote output cannot bypass the command deadline");
+                   std::chrono::seconds(2),
+               "inherited remote output does not hang query runner");
 
     const auto failedReplaceLog = directory / "failed-replace-fcitx.log";
     auto failedReplaceEnvironment = baseEnvironment;
@@ -320,13 +319,33 @@ int main(int argc, char **argv) {
                    "已保存，下次启用时应用",
                "stopped engine reports next time apply");
 
+    // A08 regression: Fcitx5 is running, but ModernIME is not available.
+    // Even if appliedHashAvailable is true and matches saved hash, and input context exists,
+    // it must NEVER falsely claim "已保存并应用".
     testStatus.running = true;
+    testStatus.modernimeAvailable = false;
+    testStatus.appliedHashAvailable = true;
+    testStatus.appliedContentHash = "aabbccdd11223344";
+    testStatus.inputContextAvailable = true;
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
+                   "已保存，下次启用时应用",
+               "unavailable modernime addon reports next time apply despite matching hash (A08)");
+
+    testStatus.modernimeAvailable = true;
     testStatus.appliedHashAvailable = false;
     assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
                    "已保存，应用状态待确认",
                "missing state file / older plugin reports confirmation pending");
 
+    // V10: If appliedHashAvailable is true but instance is not bound, report confirmation pending
     testStatus.appliedHashAvailable = true;
+    testStatus.appliedContentHash = "aabbccdd11223344";
+    testStatus.instanceBound = false;
+    assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
+                   "已保存，应用状态待确认",
+               "unbound old state reports confirmation pending (V10)");
+
+    testStatus.instanceBound = true;
     testStatus.appliedContentHash = "old_hash_0000";
     assertTrue(modernime::settings::describeSettingsApplication(testStatus, "aabbccdd11223344") ==
                    "已保存，等待输入法读取",
@@ -346,6 +365,29 @@ int main(int argc, char **argv) {
     assertTrue(modernime::settings::describeSettingsApplication(testStatus, "") ==
                    "设置已保存",
                "empty saved hash reports saved");
+
+    // Query timeout bounded execution test (A09)
+    auto timeoutEnvironment = baseEnvironment;
+    timeoutEnvironment.emplace_back("FAKE_REMOTE_SLEEP_SECONDS", "4");
+    const auto startTimeout = std::chrono::steady_clock::now();
+    const auto statusTimeout = modernime::settings::RuntimeController::probe(
+        argv[1], timeoutEnvironment);
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - startTimeout).count();
+    assertTrue(statusTimeout.available && !statusTimeout.running,
+               "timed out query reports non-running status while remote executable is present");
+    assertTrue(statusTimeout.message.find("timed out") != std::string::npos,
+               "timed out query message identifies timeout");
+    assertTrue(elapsedMs >= 1000 && elapsedMs < 3500,
+               "query timeout bounded around 1500ms");
+
+    // Double-stream flood / truncation handling test (A09)
+    auto floodEnvironment = baseEnvironment;
+    floodEnvironment.emplace_back("FAKE_REMOTE_FLOOD_BYTES", "2000000");
+    const auto statusFlood = modernime::settings::RuntimeController::probe(
+        argv[1], floodEnvironment);
+    assertTrue(!statusFlood.running,
+               "truncated query output is rejected and not parsed as valid state");
 
     std::error_code cleanupError;
     std::filesystem::remove_all(directory, cleanupError);

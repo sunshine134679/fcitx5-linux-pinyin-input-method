@@ -1,6 +1,7 @@
 #include "modernime/core/candidate_ranker.h"
 #include "modernime/core/english_dictionary.h"
 #include "modernime/core/learning_store.h"
+#include "modernime/core/pinyin_match.h"
 #include "modernime/fcitx5/engine.h"
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/pinyin_candidate_provider.h"
@@ -48,6 +49,10 @@ protected:
     }
     static void type(fcitx5::ModernIMEController &c, std::string_view input) {
         c.setContext("", "");
+        for (char key : input) ASSERT_TRUE(c.handle({fcitx5::KeyKind::Character, key}));
+        ASSERT_EQ(c.page().rawInput, input);
+    }
+    static void feedKeys(fcitx5::ModernIMEController &c, std::string_view input) {
         for (char key : input) ASSERT_TRUE(c.handle({fcitx5::KeyKind::Character, key}));
         ASSERT_EQ(c.page().rawInput, input);
     }
@@ -376,6 +381,10 @@ TEST(CandidatePriorRegression, SaturatedLearningCanOvercomeUnlearnedStaticPrior)
 }
 
 TEST(CandidatePriorRegression, LearnedSingleCharCannotHijackAbbreviationInput) {
+    // 2026-10-25 发布门禁回归（Ubuntu 22.04 实机复现）：简拼 nh 的原生候选
+    // 中含单字「你」(ni)，学习增益 ≥1.8 且音节数（1）与输入段数（1）相同，
+    // 被 F1 模糊音组间晋升误抬到 trusted 简拼「你好」之上。模糊音晋升只应
+    // 作用于全拼输入（每个音节均为标准音节），简拼/混拼不得借用该通道。
     core::CandidateScore hijacker, trusted;
     hijacker.text = "你";
     hijacker.full_pinyin = "ni";
@@ -1274,8 +1283,360 @@ TEST_F(CandidateRankingRegression, SharedResources_HotwordPathFallbackOnMissingF
     EXPECT_TRUE(hasYyds) << "Fallback to default hotword candidates preserves hotwords like '永远滴神'";
 }
 
+// -----------------------------------------------------------------------------
+// AP01 / AP02 算法防污染回归测试集 (2026-10-27)
+// 验证规范读音通用词频成熟后，单音节模糊音不跨组劫持留出精确读音候选
+// -----------------------------------------------------------------------------
+
+TEST_F(CandidateRankingRegression, AP01_AP02_NormalLearningDoesNotPolluteFuzzyPair_NeLe) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 1. 基线检查：冷启动输入 "ne"，首选必为 "呢" (精确匹配 prio=2)
+    type(c, "ne");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "呢");
+    EXPECT_EQ(c.page().items.front().fullPinyin, "ne");
+    EXPECT_EQ(c.page().items.front().consumedInputBytes, 2u);
+    c.reset();
+
+    // 2. 正常上下文训练 "le -> 了" 20 次，建立成熟通用词频 (boost >= 1.8)
+    for (int n = 0; n < 20; ++n) {
+        c.setContext("完成", "", fcitx5::ContextAvailability::Valid);
+        feedKeys(c, "le");
+        const auto leRank = rank(c.page(), "了");
+        ASSERT_LT(leRank, c.page().items.size());
+        ASSERT_TRUE(c.select(leRank));
+        EXPECT_EQ(host.committed, "了");
+    }
+    ASSERT_TRUE(provider.flush());
+
+    // 验证学习库中已达到高词频，且拼音键严格记录为规范拼音 "le"
+    core::LearningStore store(paths.learningStore);
+    ASSERT_TRUE(store.openReadOnly());
+    const auto snapshot = store.snapshot();
+    EXPECT_GE(snapshot->boostAt("了", "le", nowMs()), 1.8);
+    EXPECT_EQ(snapshot->boostAt("了", "ne", nowMs()), 0.0);
+
+    // 3. 留出输入 "ne" 测试（无上下文及特定上下文 "好的"）
+    for (const auto &ctx : {"", "好的"}) {
+        c.reset();
+        c.setContext(ctx, "");
+        type(c, "ne");
+        ASSERT_FALSE(c.page().items.empty());
+
+        // 核心断言：首选候选必须仍是精确单字 "呢"，绝不能被 "了" 劫持
+        EXPECT_EQ(c.page().items.front().text, "呢")
+            << "Exact match '呢' must retain #1 under context '" << ctx << "'";
+        EXPECT_EQ(c.page().items.front().fullPinyin, "ne");
+        EXPECT_EQ(core::PinyinMatchPolicy::priority(c.page().rawInput, c.page().items.front().fullPinyin), 2);
+
+        // "了" 属于模糊音 (prio=0)，即使通用 boost >= 1.8 也不得晋升至首位
+        const auto leRankAfter = rank(c.page(), "了");
+        EXPECT_GT(leRankAfter, 0u) << "'了' must not occupy slot 0 for 'ne'";
+
 #if defined(MODERNIME_HAS_FCITX5)
-TEST_F(CandidateRankingRegression, CandidateBarLayout_PageIndicatorMultiPage) {
+        // 物理候选栏布局检验：首选候选位于第 0 页第 0 槽
+        const auto pos = physicalPosition(c.page(), 0);
+        EXPECT_EQ(pos.first, 0u);
+        EXPECT_EQ(pos.second, 0u);
+#endif
+
+        // 真实按键提交检验：空格键或选择 0 槽提交 "呢"
+        ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+        EXPECT_EQ(host.committed, "呢");
+        EXPECT_TRUE(c.page().rawInput.empty());
+    }
+
+    // 4. 对称反向验证：训练 "ne -> 呢" 20 次，验证不得劫持 "le -> 了"
+    for (int n = 0; n < 20; ++n) {
+        c.setContext("问句", "", fcitx5::ContextAvailability::Valid);
+        feedKeys(c, "ne");
+        const auto neRank = rank(c.page(), "呢");
+        ASSERT_LT(neRank, c.page().items.size());
+        ASSERT_TRUE(c.select(neRank));
+        EXPECT_EQ(host.committed, "呢");
+    }
+    ASSERT_TRUE(provider.flush());
+
+    c.reset();
+    type(c, "le");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "了") << "'了' must remain #1 for 'le'";
+    EXPECT_EQ(c.page().items.front().fullPinyin, "le");
+    const auto neRankAfter = rank(c.page(), "呢");
+    EXPECT_GT(neRankAfter, 0u) << "'呢' must not occupy slot 0 for 'le'";
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "了");
+}
+
+TEST_F(CandidateRankingRegression, AP01_AP02_NormalLearningDoesNotPolluteFuzzyPair_NongLong) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 1. 训练 "long -> 龙" 20 次
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "long");
+        const auto r = rank(c.page(), "龙");
+        ASSERT_LT(r, c.page().items.size());
+        ASSERT_TRUE(c.select(r));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    // 2. 验证 "nong" 输入的首选仍为正音 "弄"，不被高频 "龙" 劫持
+    c.reset();
+    type(c, "nong");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "弄");
+    EXPECT_EQ(c.page().items.front().fullPinyin, "nong");
+    EXPECT_GT(rank(c.page(), "龙"), 0u);
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "弄");
+
+    // 3. 对称反向：训练 "nong -> 弄" 20 次，验证 "long" 首选不受影响
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "nong");
+        const auto r = rank(c.page(), "弄");
+        ASSERT_LT(r, c.page().items.size());
+        ASSERT_TRUE(c.select(r));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    c.reset();
+    type(c, "long");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "龙");
+    EXPECT_GT(rank(c.page(), "弄"), 0u);
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "龙");
+}
+
+TEST_F(CandidateRankingRegression, AP01_AP02_NormalLearningDoesNotPolluteFuzzyPair_SiShi) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 1. 训练 "shi -> 是" 20 次（"是" 是极高频字）
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "shi");
+        const auto r = rank(c.page(), "是");
+        ASSERT_LT(r, c.page().items.size());
+        ASSERT_TRUE(c.select(r));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    // 2. 验证 "si" 输入的首选为 "si" 组正音（如 "四" 或 "司"），绝不能被 "是" 劫持
+    c.reset();
+    type(c, "si");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_NE(c.page().items.front().text, "是") << "'是' must not hijack top slot for 'si'";
+    EXPECT_EQ(c.page().items.front().fullPinyin, "si");
+    EXPECT_GT(rank(c.page(), "是"), 0u);
+    const auto topSiText = c.page().items.front().text;
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, topSiText);
+
+    // 3. 对称反向：训练 "si -> 四" 20 次，验证 "shi" 首选仍为 "是"
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "si");
+        const auto r = rank(c.page(), "四");
+        ASSERT_LT(r, c.page().items.size());
+        ASSERT_TRUE(c.select(r));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    c.reset();
+    type(c, "shi");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "是");
+    EXPECT_GT(rank(c.page(), "四"), 0u);
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "是");
+}
+
+TEST_F(CandidateRankingRegression, AP01_AP02_NormalLearningDoesNotPolluteExtendedSymmetricFuzzyPairs) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 1. ni / li 对
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "li");
+        const auto r = rank(c.page(), "里");
+        ASSERT_LT(r, c.page().items.size());
+        ASSERT_TRUE(c.select(r));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    c.reset();
+    type(c, "ni");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "你");
+    EXPECT_GT(rank(c.page(), "里"), 0u);
+
+    // 2. neng / leng 对
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "leng");
+        const auto r = rank(c.page(), "冷");
+        ASSERT_LT(r, c.page().items.size());
+        ASSERT_TRUE(c.select(r));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    c.reset();
+    type(c, "neng");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "能");
+    EXPECT_GT(rank(c.page(), "冷"), 0u);
+
+    // 3. zu / zhu 对
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "zhu");
+        const auto r = rank(c.page(), "主");
+        ASSERT_LT(r, c.page().items.size());
+        ASSERT_TRUE(c.select(r));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    c.reset();
+    type(c, "zu");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().fullPinyin, "zu");
+    EXPECT_GT(rank(c.page(), "主"), 0u);
+}
+
+TEST_F(CandidateRankingRegression, AP01_AP02_ExplicitCorrectionIntentUnderSameRawElevatesSingleSyllable) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 1. 规范训练 "le -> 了" 20 次（使用有效上下文记录通用词频）
+    for (int n = 0; n < 20; ++n) {
+        c.setContext("完成", "", fcitx5::ContextAvailability::Valid);
+        feedKeys(c, "le");
+        ASSERT_TRUE(c.select(rank(c.page(), "了")));
+    }
+    ASSERT_TRUE(provider.flush());
+
+    // 验证此时无纠正意图下，"ne" 保持首选 "呢"
+    c.reset();
+    type(c, "ne");
+    EXPECT_EQ(c.page().items.front().text, "呢");
+    c.handle({fcitx5::KeyKind::Escape});
+
+    // 2. 用户在当前会话中，在 raw="ne" 下反复主动纠正选择 "了"（连续 4 次，同一会话不 reset）
+    for (int n = 0; n < 4; ++n) {
+        feedKeys(c, "ne");
+        const auto leRank = rank(c.page(), "了");
+        ASSERT_LT(leRank, c.page().items.size());
+        ASSERT_TRUE(c.select(leRank));
+        EXPECT_EQ(host.committed, "了");
+    }
+
+    // 3. 此时 recent_choice_bonus > 0 激活，根据产品纠正契约允许晋升 "了"
+    feedKeys(c, "ne");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "了")
+        << "Explicit repeated correction under raw 'ne' allows '了' to be promoted";
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "了");
+
+    // 4. 会话重置/清空近期纠正意图后，重新回到保护正音的边界
+    c.reset();
+    type(c, "ne");
+    EXPECT_EQ(c.page().items.front().text, "呢");
+}
+
+TEST_F(CandidateRankingRegression, AP01_AP02_MultiSyllableFuzzyVariantLearningPreserved) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+
+    // 1. 未学习时，"zongwen" 不得凭空将 "中文" 置于首位
+    type(c, "zongwen");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_NE(c.page().items.front().text, "中文");
+    c.reset();
+
+    // 2. 多音节经 20 次训练 "zongwen -> 中文"
+    for (int n = 0; n < 20; ++n) {
+        c.reset();
+        type(c, "zongwen");
+        const auto zwRank = rank(c.page(), "中文");
+        ASSERT_LT(zwRank, c.page().items.size());
+        ASSERT_TRUE(c.select(zwRank));
+        EXPECT_EQ(host.committed, "中文");
+    }
+    ASSERT_TRUE(provider.flush());
+
+    // 3. 验证多音节模糊音学习晋升机制完整保留（有效音节数 >= 2 契约生效）
+    c.reset();
+    type(c, "zongwen");
+    ASSERT_FALSE(c.page().items.empty());
+    EXPECT_EQ(c.page().items.front().text, "中文")
+        << "Multi-syllable fuzzy preference 'zongwen -> 中文' must be preserved";
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "中文");
+}
+
+TEST_F(CandidateRankingRegression, AP01_AP02_LifeCycleAndStorageIntegrity_ProviderReload) {
+    // 1. 在一个 Provider 生命周期中训练 "le -> 了" 20 次
+    {
+        pinyin::PinyinCandidateProvider provider(paths);
+        Host host;
+        fcitx5::ModernIMEController c(host, &provider);
+        for (int n = 0; n < 20; ++n) {
+            c.setContext("完成", "", fcitx5::ContextAvailability::Valid);
+            feedKeys(c, "le");
+            ASSERT_TRUE(c.select(rank(c.page(), "了")));
+        }
+        ASSERT_TRUE(provider.flush());
+    }
+
+    // 2. 检查底层 SQLite 数据库：只有 ("了", "le") 正音键，绝无 ("了", "ne") 坏键
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.openReadOnly());
+        const auto snap = store.snapshot();
+        EXPECT_GE(snap->boostAt("了", "le", nowMs()), 1.8);
+        EXPECT_EQ(snap->boostAt("了", "ne", nowMs()), 0.0);
+    }
+
+    // 3. 跨进程/跨实例模拟：使用全新 Provider/Controller 重新打开同一数据库
+    {
+        pinyin::PinyinCandidateProvider freshProvider(paths);
+        Host freshHost;
+        fcitx5::ModernIMEController freshC(freshHost, &freshProvider);
+
+        // 验证正音 "le -> 了" 学习成果完好保留
+        type(freshC, "le");
+        ASSERT_FALSE(freshC.page().items.empty());
+        EXPECT_EQ(freshC.page().items.front().text, "了");
+        ASSERT_TRUE(freshC.handle({fcitx5::KeyKind::Space}));
+        EXPECT_EQ(freshHost.committed, "了");
+        freshC.reset();
+
+        // 验证 "ne -> 呢" 在重开后依然受保护，未发生跨会话算法污染
+        type(freshC, "ne");
+        ASSERT_FALSE(freshC.page().items.empty());
+        EXPECT_EQ(freshC.page().items.front().text, "呢");
+        EXPECT_GT(rank(freshC.page(), "了"), 0u);
+        ASSERT_TRUE(freshC.handle({fcitx5::KeyKind::Space}));
+        EXPECT_EQ(freshHost.committed, "呢");
+    }
+}
+
+#if defined(MODERNIME_HAS_FCITX5)
+TEST_F(CandidateRankingRegression, CandidateBarLayout_MultiPageWithoutIndicator) {
     core::CandidatePage page;
     page.preedit = "qingbangwodakaiwenjian";
     for (std::size_t i = 0; i < 16; ++i) {
@@ -1290,10 +1651,22 @@ TEST_F(CandidateRankingRegression, CandidateBarLayout_PageIndicatorMultiPage) {
 
     const auto metrics = ui::CandidateBarMetrics::reference();
     const auto layout = ui::CandidateBarLayout::measure(page, metrics);
-    EXPECT_EQ(layout.pageIndicatorText, "1/2 ►");
-    EXPECT_GE(layout.pageIndicator.width, 36.0);
-    EXPECT_LE(layout.pageIndicator.x + layout.pageIndicator.width,
-              metrics.panelX + metrics.panelWidth);
+    page.pageBoundaries.clear();
+    const auto plainLayout = ui::CandidateBarLayout::measure(page, metrics);
+    ASSERT_FALSE(layout.candidates.empty());
+    ASSERT_EQ(layout.candidates.size(), plainLayout.candidates.size());
+    for (std::size_t i = 0; i < layout.candidates.size(); ++i) {
+        const auto &candidate = layout.candidates[i];
+        const auto &plain = plainLayout.candidates[i];
+        EXPECT_EQ(candidate.displayText, plain.displayText);
+        EXPECT_DOUBLE_EQ(candidate.bounds.x, plain.bounds.x);
+        EXPECT_DOUBLE_EQ(candidate.bounds.width, plain.bounds.width);
+        EXPECT_EQ(ui::hitTestCandidate(
+                      layout, metrics,
+                      candidate.bounds.x + candidate.bounds.width / 2.0,
+                      candidate.bounds.y + candidate.bounds.height / 2.0),
+                  static_cast<int>(i));
+    }
 }
 #endif
 

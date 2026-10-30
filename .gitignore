@@ -48,6 +48,8 @@ Testing/
 .clangd/
 .agents/
 .codex/
+.mimosa/
+.v2c/
 *.swp
 *.swo
 *~

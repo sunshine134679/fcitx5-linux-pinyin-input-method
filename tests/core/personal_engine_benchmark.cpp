@@ -502,20 +502,54 @@ void verifyLmdbWriterLatency(std::size_t count) {
         event.candidateIndex = 1;
         event.isDeviation = true;
 
+        struct SampleBreakdown {
+            double total = 0.0;
+            double enqueue = 0.0;
+            double snapshot = 0.0;
+            double recall = 0.0;
+            double release = 0.0;
+            int index = 0;
+        };
+        std::vector<SampleBreakdown> breakdowns;
+        breakdowns.reserve(1024);
+
         for (int i = 0; i < 1024; ++i) {
             event.timestampMs = 1700000000000LL + i;
             const auto start = std::chrono::steady_clock::now();
             writer.enqueueCommit(event);
-            benchmark::DoNotOptimize(writer.snapshot()->recallCandidates("nihao", event.timestampMs));
-            samples.push_back(std::chrono::duration<double, std::micro>(
-                std::chrono::steady_clock::now() - start).count());
+            const auto t1 = std::chrono::steady_clock::now();
+            auto snap = writer.snapshot();
+            const auto t2 = std::chrono::steady_clock::now();
+            benchmark::DoNotOptimize(snap->recallCandidates("nihao", event.timestampMs));
+            const auto t3 = std::chrono::steady_clock::now();
+            snap.reset();
+            const auto t4 = std::chrono::steady_clock::now();
+            double total_us = std::chrono::duration<double, std::micro>(t4 - start).count();
+            double enqueue_us = std::chrono::duration<double, std::micro>(t1 - start).count();
+            double snap_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
+            double recall_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
+            double release_us = std::chrono::duration<double, std::micro>(t4 - t3).count();
+            samples.push_back(total_us);
+            breakdowns.push_back({total_us, enqueue_us, snap_us, recall_us, release_us, i});
         }
         if (!writer.flush()) std::exit(EXIT_FAILURE);
+
+        std::size_t max_idx = 0;
+        for (std::size_t i = 1; i < breakdowns.size(); ++i) {
+            if (breakdowns[i].total > breakdowns[max_idx].total) {
+                max_idx = i;
+            }
+        }
+        const auto peak_bd = breakdowns[max_idx];
+
         std::sort(samples.begin(), samples.end());
         double p99 = samples[1013];
         const double max_val = samples.back();
-        std::cout << "  LMDB writer " << count << " entries: enqueue+commit policy+publish+recall P99="
-                  << p99 << " us, maximum=" << max_val << " us\n";
+        std::cout << "  LMDB writer " << count << " entries: enqueue+commit policy+publish+recall+release P99="
+                  << p99 << " us, maximum=" << max_val << " us\n"
+                  << "  Peak sample (i=" << peak_bd.index << "): total=" << peak_bd.total
+                  << " us (enqueue=" << peak_bd.enqueue << " us, snapshot=" << peak_bd.snapshot
+                  << " us, recall=" << peak_bd.recall << " us, release=" << peak_bd.release << " us)\n";
 #if MODERNIME_ENFORCE_LATENCY_GATES
         if (g_injected_gate_failure == "lmdb_writer") {
             p99 = 99999.0;

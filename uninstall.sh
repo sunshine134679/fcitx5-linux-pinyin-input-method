@@ -2,31 +2,61 @@
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+unset MODERNIME_PREFIX_LOCK_FD MODERNIME_LOCKED_PREFIX MODERNIME_LOCK_FILE 2>/dev/null || true
 source "$project_root/scripts/install_state.sh"
+if [[ -f "$project_root/scripts/install_lifecycle.sh" ]]; then
+    source "$project_root/scripts/install_lifecycle.sh"
+fi
 
-if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && -z "${MODERNIME_PREFIX:-}" ]]; then
+prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
+explicit_prefix=false
+[[ -n "${MODERNIME_PREFIX:-}" ]] && explicit_prefix=true
+
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+    case "$1" in
+        --prefix=*)
+            prefix="${1#*=}"
+            explicit_prefix=true
+            ;;
+        --prefix|-p)
+            prefix="$2"
+            explicit_prefix=true
+            shift
+            ;;
+        -h|--help)
+            printf 'Usage: %s [OPTIONS] [PREFIX]\n\n' "$0"
+            printf 'Options:\n'
+            printf '  -p, --prefix=PATH         Installation prefix to remove (default: $HOME/.local)\n'
+            printf '  -h, --help                Show this help message\n'
+            exit 0
+            ;;
+        -*)
+            ;;
+        *)
+            prefix="$1"
+            explicit_prefix=true
+            ;;
+    esac
+fi
+
+if [[ "$project_root" =~ ^/(tmp|var/tmp)/ && "$explicit_prefix" != true ]]; then
     printf 'Error: Running uninstall.sh from temporary directory %s without MODERNIME_PREFIX is not allowed.\n' "$project_root" >&2
     printf 'This prevents accidental removal of your real user environment (%s).\n' "$HOME" >&2
     printf 'Specify MODERNIME_PREFIX explicitly (e.g. MODERNIME_PREFIX=/tmp/test-prefix) if intended.\n' >&2
     exit 1
 fi
 
-prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
-if [[ $# -ge 1 && -n "${1:-}" ]]; then
-    case "$1" in
-        --prefix=*)
-            prefix="${1#*=}"
-            ;;
-        --prefix|-p)
-            prefix="$2"
-            shift
-            ;;
-        -*)
-            ;;
-        *)
-            prefix="$1"
-            ;;
-    esac
+if ! declare -f modernime_acquire_prefix_lock >/dev/null 2>&1; then
+    if [[ -f "$prefix/share/modernime/install_lifecycle.sh" ]]; then
+        source "$prefix/share/modernime/install_lifecycle.sh"
+    fi
+fi
+
+if declare -f modernime_acquire_prefix_lock >/dev/null 2>&1; then
+    if ! modernime_acquire_prefix_lock "$prefix"; then
+        exit 1
+    fi
+    trap modernime_release_prefix_lock EXIT
 fi
 
 is_system_prefix=false
@@ -87,71 +117,79 @@ if [[ -f "$managed_state_dir/autostart.path" ]]; then
     recorded_autostart=$(cat "$managed_state_dir/autostart.path")
 fi
 
+prefix_clean="${prefix%/}"
+canon_prefix=$(readlink -f -- "$prefix_clean" 2>/dev/null || echo "$prefix_clean")
+
 while IFS= read -r path; do
     [[ -z "$path" ]] && continue
-    case "$path" in
-        "$prefix"/lib*/fcitx5/modernime_fcitx5.so|\
-        "$prefix"/lib*/fcitx5/modernime_ui.so|\
-        "$prefix"/lib/*-linux-gnu/fcitx5/modernime_fcitx5.so|\
-        "$prefix"/lib/*-linux-gnu/fcitx5/modernime_ui.so|\
-        "$prefix/share/modernime/pinyin/modernime-knowledge.dict"|\
-        "$prefix/share/modernime/pinyin/modernime-hotwords.dict"|\
-        "$prefix/share/modernime/pinyin/modernime-english-dict.bin"|\
-        "$prefix/share/modernime/install-channel.txt"|\
-        "$prefix/share/fcitx5/addon/modernime.conf"|\
-        "$prefix/share/fcitx5/addon/modernime-ui.conf"|\
-        "$prefix/share/fcitx5/inputmethod/modernime.conf"|\
-        "$prefix/bin/modernime-settings"|\
-        "$prefix/bin/modernime-session-init"|\
-        "$prefix/share/modernime/install_state.sh"|\
-        "$prefix/share/modernime/install_lifecycle.sh"|\
-        "$prefix/bin/modernime-data-guard"|\
-        "$prefix/bin/modernime-migrate-channel"|\
-        "$prefix/share/doc/modernime/LICENSE"|\
-        "$prefix/share/doc/modernime/copyright"|\
-        "$prefix/share/doc/modernime/THIRD_PARTY_NOTICES.md"|\
-        "$prefix/share/doc/modernime/SOURCES.json"|\
-        "$prefix/share/icons/hicolor/16x16/apps/modernime.png"|\
-        "$prefix/share/icons/hicolor/32x32/apps/modernime.png"|\
-        "$prefix/share/icons/hicolor/48x48/apps/modernime.png"|\
-        "$prefix/share/icons/hicolor/64x64/apps/modernime.png"|\
-        "$prefix/share/icons/hicolor/128x128/apps/modernime.png"|\
-        "$prefix/share/icons/hicolor/256x256/apps/modernime.png"|\
-        "$prefix/share/icons/hicolor/512x512/apps/modernime.png"|\
-        "$prefix/share/applications/modernime-settings.desktop"|\
-        "$prefix/share/modernime/extensions/"*)
-            if [[ "$is_system_prefix" == true ]]; then
-                owner=""
-                if command -v dpkg >/dev/null 2>&1; then
-                    owner=$(dpkg -S "$path" 2>/dev/null || true)
-                elif command -v rpm >/dev/null 2>&1; then
-                    owner=$(rpm -qf "$path" 2>/dev/null || true)
-                fi
-                if [[ -n "$owner" ]]; then
-                    printf 'Preserving file managed by native system package (%s): %s\n' "$owner" "$path" >&2
-                    managed_files_preserved=true
+
+    # 1. Reject path traversal
+    if [[ "$path" == *"/../"* || "$path" == *"/.." || "$path" == "../"* || "$path" == ".." ]]; then
+        printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
+        exit 1
+    fi
+
+    # 2. Path must be absolute
+    if [[ "$path" != /* ]]; then
+        printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
+        exit 1
+    fi
+
+    # 3. External managed file handling (when not inside prefix)
+    if [[ "$path" != "$prefix_clean/"* ]]; then
+        case "$path" in
+            "$recorded_desktop"|"$desktop_shortcut"|*/modernime-settings.desktop)
+                modernime_remove_managed_file "$path" desktop "$managed_state_dir"
+                continue
+                ;;
+            "$recorded_environment"|"$environment_file"|*/environment.d/90-modernime.conf)
+                modernime_remove_managed_file "$path" environment "$managed_state_dir"
+                continue
+                ;;
+            "$recorded_autostart"|"$autostart_file"|*/autostart/modernime-fcitx5-session.desktop)
+                modernime_remove_managed_file "$path" autostart "$managed_state_dir"
+                continue
+                ;;
+            "$recorded_xprofile")
+                if [[ -n "$recorded_xprofile" ]]; then
+                    modernime_remove_profile_block "$path" "$managed_state_dir"
                     continue
                 fi
+                ;;
+            *)
+                printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
+                exit 1
+                ;;
+        esac
+    fi
+
+    # 4. Canonical parent & target containment and namespace ownership check
+    if ! modernime_is_safe_removal_target "$path" "$prefix_clean" "$canon_prefix" "$is_system_prefix"; then
+        # Check if it was preserved due to system package ownership
+        if [[ "$is_system_prefix" == true ]]; then
+            owner=""
+            canon_target=$(readlink -f -- "$path" 2>/dev/null || true)
+            for check_target in "$path" "$canon_target"; do
+                [[ -z "$check_target" ]] && continue
+                if command -v dpkg >/dev/null 2>&1; then
+                    owner=$(dpkg -S "$check_target" 2>/dev/null || true)
+                elif command -v rpm >/dev/null 2>&1; then
+                    owner=$(rpm -qf "$check_target" 2>/dev/null || true)
+                fi
+                [[ -n "$owner" ]] && break
+            done
+            if [[ -n "$owner" ]]; then
+                printf 'Preserving file managed by native system package (%s): %s\n' "$owner" "$path" >&2
+                managed_files_preserved=true
+                continue
             fi
-            rm -f -- "$path"
-            ;;
-        "$recorded_desktop"|"$desktop_shortcut"|*/modernime-settings.desktop)
-            modernime_remove_managed_file "$path" desktop "$managed_state_dir"
-            ;;
-        "$recorded_environment"|"$environment_file"|*/environment.d/90-modernime.conf)
-            modernime_remove_managed_file "$path" environment "$managed_state_dir"
-            ;;
-        "$recorded_autostart"|"$autostart_file"|*/autostart/modernime-fcitx5-session.desktop)
-            modernime_remove_managed_file "$path" autostart "$managed_state_dir"
-            ;;
-        "$recorded_xprofile")
-            modernime_remove_profile_block "$path" "$managed_state_dir"
-            ;;
-        *)
-            printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
-            exit 1
-            ;;
-    esac
+        fi
+        printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
+        exit 1
+    fi
+
+    # 5. Safe removal
+    rm -f -- "$path"
 done < "$manifest"
 
 if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -d "$prefix/share/icons/hicolor" ]]; then
@@ -163,18 +201,9 @@ for legacy_plugin in "$prefix/lib/fcitx5/modernime_fcitx5.so" \
                      "$prefix/lib64/fcitx5/modernime_fcitx5.so" \
                      "$prefix/lib64/fcitx5/modernime_ui.so"; do
     if [[ -f "$legacy_plugin" || -L "$legacy_plugin" ]]; then
-        if [[ "$is_system_prefix" == true ]]; then
-            owner=""
-            if command -v dpkg >/dev/null 2>&1; then
-                owner=$(dpkg -S "$legacy_plugin" 2>/dev/null || true)
-            elif command -v rpm >/dev/null 2>&1; then
-                owner=$(rpm -qf "$legacy_plugin" 2>/dev/null || true)
-            fi
-            if [[ -n "$owner" ]]; then
-                continue
-            fi
+        if modernime_is_safe_removal_target "$legacy_plugin" "$prefix_clean" "$canon_prefix" "$is_system_prefix"; then
+            rm -f -- "$legacy_plugin"
         fi
-        rm -f -- "$legacy_plugin"
     fi
 done
 
@@ -193,8 +222,8 @@ fi
 
 if [[ "$managed_files_preserved" != true ]]; then
     rm -f -- "$manifest"
-    for key in desktop environment autostart xprofile; do
-        rm -f -- "$managed_state_dir/$key.content" "$managed_state_dir/$key.path"
+    for key in desktop environment autostart xprofile payload; do
+        rm -f -- "$managed_state_dir/$key.content" "$managed_state_dir/$key.path" "$managed_state_dir/$key.manifest"
     done
     rmdir "$managed_state_dir" 2>/dev/null || true
 fi
@@ -222,5 +251,8 @@ if [[ -n "$recorded_autostart" ]]; then
 fi
 if [[ -n "$recorded_desktop" ]]; then
     rmdir --ignore-fail-on-non-empty "$(dirname -- "$recorded_desktop")" 2>/dev/null || true
+fi
+if declare -f modernime_release_prefix_lock >/dev/null 2>&1; then
+    modernime_release_prefix_lock
 fi
 printf 'ModernIME files removed from %s\n' "$prefix"

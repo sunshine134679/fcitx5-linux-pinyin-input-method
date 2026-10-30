@@ -60,14 +60,21 @@ modernime_write_managed_file() {
             return 0
         fi
     fi
-    mkdir -p -- "$(dirname -- "$target")" "$managed_state_dir"
+    mkdir -p -- "$(dirname -- "$target")" "$managed_state_dir" || return 1
     local replacement
-    replacement=$(mktemp "$(dirname -- "$target")/.modernime-managed.XXXXXX")
-    cp -- "$expected" "$replacement"
-    mv -f -- "$replacement" "$target"
-    cp -- "$expected" "$baseline"
-    printf '%s\n' "$target" > "$recorded_path"
+    replacement=$(mktemp "$(dirname -- "$target")/.modernime-managed.XXXXXX" 2>/dev/null) || return 1
+    if ! cp -- "$expected" "$replacement" 2>/dev/null; then
+        rm -f -- "$replacement"
+        return 1
+    fi
+    if ! mv -f -- "$replacement" "$target" 2>/dev/null; then
+        rm -f -- "$replacement"
+        return 1
+    fi
+    cp -- "$expected" "$baseline" || return 1
+    printf '%s\n' "$target" > "$recorded_path" || return 1
     managed_file_written=true
+    return 0
 }
 
 modernime_remove_managed_file() {
@@ -139,7 +146,9 @@ modernime_write_profile_block() {
         return 0
     fi
     local extracted
-    extracted=$(mktemp)
+    if ! extracted=$(mktemp); then
+        return 1
+    fi
     if [[ -f "$target" ]] && grep -Fq '# BEGIN MODERNIME ENV' "$target"; then
         if ! modernime_profile_block "$target" > "$extracted" ||
            [[ ! -f "$baseline" || ! -f "$recorded_path" ]] ||
@@ -149,23 +158,45 @@ modernime_write_profile_block() {
             printf 'Preserving modified or unowned profile: %s\n' "$target" >&2
             return 0
         fi
-        modernime_strip_profile_block "$target" > "$extracted"
+        if ! modernime_strip_profile_block "$target" > "$extracted"; then
+            rm -f "$extracted"
+            return 1
+        fi
     elif [[ -f "$target" ]]; then
         if grep -Eq 'GTK_IM_MODULE=|XMODIFIERS=|# END MODERNIME ENV' "$target"; then
             rm -f "$extracted"
             printf 'Preserving existing input method profile: %s\n' "$target" >&2
             return 0
         fi
-        cat "$target" > "$extracted"
+        if ! cat "$target" > "$extracted"; then
+            rm -f "$extracted"
+            return 1
+        fi
         # Ensure an unterminated last user line cannot swallow the marker.
-        printf '\n' >> "$extracted"
+        if ! printf '\n' >> "$extracted"; then
+            rm -f "$extracted"
+            return 1
+        fi
     fi
-    cat "$expected" >> "$extracted"
-    mkdir -p -- "$(dirname -- "$target")" "$managed_state_dir"
-    cat "$extracted" > "$target"
+    if ! cat "$expected" >> "$extracted"; then
+        rm -f "$extracted"
+        return 1
+    fi
+    if ! mkdir -p -- "$(dirname -- "$target")" "$managed_state_dir"; then
+        rm -f "$extracted"
+        return 1
+    fi
+    if ! cat "$extracted" > "$target"; then
+        rm -f "$extracted"
+        return 1
+    fi
     rm -f "$extracted"
-    cp "$expected" "$baseline"
-    printf '%s\n' "$target" > "$recorded_path"
+    if ! cp "$expected" "$baseline"; then
+        return 1
+    fi
+    if ! printf '%s\n' "$target" > "$recorded_path"; then
+        return 1
+    fi
 }
 
 modernime_remove_profile_block() {

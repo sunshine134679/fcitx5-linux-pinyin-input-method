@@ -66,15 +66,15 @@ void renderClipboard(RenderSurface &surface, const CandidateBarLayout &layout,
 
 RenderStyle RenderStyle::reference() {
     RenderStyle style;
-    style.shadow = {0.10, 0.14, 0.20, 0.12};
-    style.panel = {1.0, 1.0, 1.0, 0.96};
-    style.border = {0.88, 0.90, 0.93, 0.90};
+    style.shadow = {0.10, 0.14, 0.20, 0.09};
+    style.panel = {1.0, 1.0, 1.0, 0.99};
+    style.border = {0.86, 0.89, 0.93, 0.75};
     style.selected = {0.07, 0.40, 0.93, 1.0};
     style.text = {0.05, 0.09, 0.15, 1.0};
     style.selectedText = {1.0, 1.0, 1.0, 1.0};
     style.preedit = {0.27, 0.32, 0.40, 1.0};
-    style.panelRadius = 9.0;
-    style.selectedRadius = 6.0;
+    style.panelRadius = 10.0;
+    style.selectedRadius = 7.0;
     style.shadowRadius = 6.0;
     style.shadowSpread = 2.0;
     style.shadowOffsetY = 4.0;
@@ -87,7 +87,7 @@ RenderStyle RenderStyle::reference() {
     style.selectedAnnotation = {0.90, 0.94, 1.0, 0.90};
     style.clipboardText = {"Noto Sans CJK SC", 20.0, 400};
     style.clipboardSubmitIconText = {"Noto Sans CJK SC", 18.0, 400};
-    style.clipboardSeparator = {0.86, 0.88, 0.91, 1.0};
+    style.clipboardSeparator = {0.90, 0.92, 0.95, 1.0};
     style.clipboardSubmitBackground = {0.04, 0.32, 0.82, 1.0};
     style.clipboardPanelRadius = 14.0;
     style.clipboardSelectedRadius = 8.0;
@@ -189,10 +189,12 @@ void CandidateBarRenderer::render(RenderSurface &surface,
                  : std::max({indexMetrics.baseline, valueBaseline,
                              annotationMetrics.baseline}));
         const auto color = candidate.selected ? style.selectedText : style.text;
+        const auto numberColor = candidate.selected ? style.selectedText
+                                                     : style.preedit;
         const auto annotationColor =
             candidate.selected ? style.selectedAnnotation : style.annotation;
         surface.text(indexText, textX, baseline, style.candidateNumberText,
-                     color);
+                     numberColor);
         double valueX = textX + indexMetrics.width;
         surface.text(valuePrefix, valueX, baseline, style.candidateText, color);
         valueX += prefixMetrics.width;
@@ -210,18 +212,6 @@ void CandidateBarRenderer::render(RenderSurface &surface,
             surface.text(candidate.annotation, valueX, baseline,
                          style.annotationText, annotationColor);
         }
-    }
-
-    if (!layout.pageIndicatorText.empty() && layout.pageIndicator.width > 0.0) {
-        const auto indicatorMetrics =
-            surface.textMetrics(layout.pageIndicatorText, style.annotationText);
-        const auto textX = layout.pageIndicator.x +
-                           std::max(0.0, (layout.pageIndicator.width - indicatorMetrics.width) / 2.0);
-        const auto baseline = layout.pageIndicator.y +
-                              (layout.pageIndicator.height - indicatorMetrics.height) / 2.0 +
-                              indicatorMetrics.baseline;
-        surface.text(layout.pageIndicatorText, textX, baseline, style.annotationText,
-                     style.annotation);
     }
 }
 

@@ -18,9 +18,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.23_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.23-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.23-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.1.24_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.1.24-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.1.24-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -192,7 +192,7 @@ sudo ./install.sh /usr
 ```bash
 sudo apt update
 sudo apt install \
-    build-essential cmake pkg-config python3 coreutils \
+    build-essential cmake pkg-config python3 coreutils util-linux \
     libsqlite3-dev liblmdb-dev libboost-dev \
     libgtest-dev libbenchmark-dev \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
@@ -207,7 +207,7 @@ sudo dnf config-manager --set-enabled EPOL || true
 
 # 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
 sudo dnf install -y \
-    gcc gcc-c++ cmake make pkgconf-pkg-config python3 coreutils \
+    gcc gcc-c++ cmake make pkgconf-pkg-config python3 coreutils util-linux \
     sqlite-devel lmdb-devel boost-devel \
     gtest-devel google-benchmark-devel \
     fcitx5-devel libime-devel \
@@ -327,14 +327,16 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 
 设置客户端使用蓝色强调色、浅灰侧栏和白色内容区。八个页面统一使用圆角分组、紧凑设置行和清晰的分隔线；底部固定显示修改状态、「放弃修改」和「保存设置」。默认窗口为 980×720，最小为 720×520；较小窗口下内容可滚动，保存按钮始终可见。
 
+标题、设置项与说明文字采用分层字号和字重，导航与底栏保持一致的留白。候选栏使用轻边框、柔和阴影和蓝底白字选中态，未选中序号弱化显示，便于快速辨认候选正文；外观预览与实际候选栏共用绘制实现。
+
 - **概览**：查看输入法运行状态、输入模式、快捷键和本地数据统计，快速进入对应设置。
-- **输入与按键**：配置启用状态、默认输入状态、中英文切换快捷键、以词定字和中文标点；快捷键支持直接按键录制，按 `Esc` 取消。
+- **输入与按键**：配置启用状态、默认输入状态、中英文切换快捷键、以词定字和中文标点；单独的 Shift 与组合键统一在同一个控件中直接按键录制，按 `Esc` 取消。
 - **候选与外观**：按可容纳 3–9 个单字候选设置栏宽，词组按实际长度自动分页；设置 14–28 pt 字号，管理数字选词、英文释义、方向键和候选翻页。顶部预览复用输入法实际的布局与绘制，可切换单字、双字和混合词组示例，在同一栏宽下比较当前页容量。预览不记录学习，也不修改候选排序规则。
 - **个人词典**：输入词条后从本地离线词库自动建议拼音；已有词优先使用整词读音，新词按汉字组合建议。人名、多音字可直接修改读音或从列表选择；没有可用读音时可手动填写完整拼音。排序加成默认使用 0，收在「高级设置」中，普通添加无需调整。编辑保留已有拼音和排序加成，词条列表以词条和拼音为主；继续支持搜索、删除、导入和导出，导入前可检查冲突与合并结果。保存后运行中的输入法会自动读取词典，通常约 2 秒生效。
 - **剪贴板**：配置 V+2 功能，以紧凑列表查看本地历史；默认最多预览两行，超出内容按需展开，全文阅读区可独立滚动并选择文字。复制保留完整内容，删除和清空需要确认。
 - **智能学习**：控制候选选择记忆与上下文排序，查看本地存储状态；清空前自动备份。
-- **更新与安装**：查看安装渠道、检查版本，并按实际安装渠道提供升级操作。
-- **系统与诊断**：检查 Fcitx5 和 ModernIME 运行状态，手动刷新和重载。
+- **更新与安装**：版本状态和检查按钮直接显示；版本与软件源、更新说明、安全升级引导点击展开。搜索详情中的控件时会自动展开对应条目。
+- **系统与诊断**：使用蓝灰色文字与简洁图标显示 Fcitx5 和 ModernIME 运行状态，异常状态保留警示色，支持手动刷新和重载。
 
 左侧搜索框按名称与说明查找设置并定位控件；`Ctrl+F` 聚焦搜索，`Ctrl+Enter` 保存。修改先保留在草稿中，点击「保存设置」后写入配置；候选外观配置由输入法自动监听应用，无需重启 Fcitx5。
 
@@ -650,6 +652,14 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ## 版本更新记录
 
+### v0.1.24 (2026-10-27)
+
+- **核心架构升级与 200,000 规模容量突破**：引入 LMDB 内存映射零拷贝检索引擎，实现 200,000 条词条满额容量底线不降规；有序索引与 Range Cursor 检索耗时压降至 2~4 μs；200k 规模写入链路 P99 达 332.92 μs（门限 < 5,000 μs），Max 达 624.69 μs（门限 < 30,000 μs），快照释放开销显式度量仅 0.09 μs。
+- **客户端运行时可靠性加固**：彻底消除 GTK UI 主循环在状态检测时的卡顿，引入无锁轻量级异步心跳机制；统一 `PackagePolicy` 管理多渠道（script/deb/rpm）软件策略，杜绝跨渠道状态撕裂。
+- **全生命周期安装安全防护**：全面重构安装、卸载与渠道迁移流程（`install.sh` / `modernime-migrate-channel` / `modernime-data-guard`）；实现前置备份真实故障立时阻断（如 exit 74）、多层嵌套用户目录保护消除 `rm -rf` 风险、目录权限（0751）与纳秒级时间戳（mtime）物理精确还原。
+- **自动化测试与独立审计**：历经九轮独立复验闭环全部缺陷（V01~V10 与 R3~R9）；CTest 全量 79/79 Passed (100%)、GTest 168/168 Passed (100%)、强契约 38/38 Passed、7 重包仓库门禁与沙箱生命周期测试 100% 通过。
+- 完整发布说明见 [v0.1.24](docs/releases/v0.1.24.md)。
+
 ### v0.1.23 (2026-10-25)
 
 - **停止 Ubuntu 22.04 / Debian 12 支持**：发布门禁只保留 Ubuntu 24.04、openEuler RPM 与便携归档；APT 软件源只保留 `noble` 套件，官网下载区与 README 兼容矩阵同步移除旧选项。源码构建与便携包（glibc ≥ 2.34）继续支持其它发行版。
@@ -690,7 +700,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 - **消除英文静态前缀补全 128 条截断缺陷**：重构 `core/src/english_dictionary.cpp`，移除字母序 128 条硬截断，对当前前缀的全部词条按长词/高频/词性权重多维度评分排序后截取 Top-3，彻底解决 `con-`、`trans-`、`pro-` 等多词前缀下高频词被字母序早早截断的问题（例如 `configuration`、`translation`、`protocol` 顺畅入选）。
 - **放宽 3 字母前缀英文单词补全门槛与输入预测**：在 `algorithm/pinyin/src/pinyin_candidate_provider.cpp` 中放宽英文候选提取门槛，允许如 `app`、`con`、`pro` 等 3 字母有效前缀正常触发长词英文补全。
 - **拼音词典路径自愈机制**：增强 `algorithm/pinyin/src/pinyin_shared_resources.cpp`，在标准路径未找到系统或用户词典时自动回退扫描 `/usr/share/modernime/pinyin/`、`~/.local/share/modernime/pinyin/` 等多重路径，杜绝词典缺失导致的召回降级。
-- **候选条多页状态直观提示**：在水平候选条右侧增设优雅的分页指示符（例如 `1/2 ►`），让用户直观掌握候选总页数与当前翻页状态，大幅优化多页候选浏览质感。
+- **候选条分页提示（历史功能，2026-10-24 撤销）**：按用户要求移除右侧页码与箭头及其占位；原有分页和选词方式保持。
 - **纯声母简拼技术词中英跨维度智能仲裁**：在 `algorithm/pinyin/src/candidate_composition.cpp` 引入纯声母/缩写跨领域仲裁，当输入 `pyt` 时第一位保持高质量中文候选（如「普通话/拼音/平台」），第二位精准保留首位高频技术英文词（如 `python`），兼顾中文习惯与程序员技术词打字流畅度。
 - **外部词频对数平滑与导入保护**：在 `tools/settings/data_controller.cpp` 引入 `normalizeImportedWeight` 对数平滑算法，对导入的外部用户词库原始频次进行科学归一化，防止外部畸高频次冲击并破坏本地学习衰减体系。
 - 完整发布说明见 [v0.1.18](docs/releases/v0.1.18.md)。

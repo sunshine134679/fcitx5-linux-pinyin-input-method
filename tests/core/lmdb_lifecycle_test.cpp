@@ -528,4 +528,65 @@ TEST_F(ArchitectureLmdbRegression, ConcurrentRevisionReadsAndCloseInterleaving) 
     engine.CloseLmdb();
 }
 
+// 11. Test_A16_SameInstanceReadOnlyToReadWriteUpgrade:
+// Verifies that calling OpenLmdb(path, false) on an already RO-opened engine
+// properly upgrades the instance to RW mode so subsequent writes succeed.
+TEST_F(ArchitectureLmdbRegression, SameInstanceReadOnlyToReadWriteUpgrade) {
+    const auto dbPath = root_ / "db_ro_rw_upgrade.lmdb";
+
+    {
+        PersonalEngine seed;
+        ASSERT_TRUE(seed.OpenLmdb(dbPath, /*read_only=*/false));
+        ASSERT_TRUE(seed.RecordUsage("init", "初始"));
+    }
+
+    PersonalEngine engine;
+    ASSERT_TRUE(engine.OpenLmdb(dbPath, /*read_only=*/true));
+    EXPECT_FALSE(engine.RecordUsage("forbidden", "禁写"));
+
+    ASSERT_TRUE(engine.OpenLmdb(dbPath, /*read_only=*/false));
+    EXPECT_TRUE(engine.RecordUsage("allowed", "写入成功"));
+
+    PersonalEngine verifier;
+    ASSERT_TRUE(verifier.OpenLmdb(dbPath, /*read_only=*/true));
+    EXPECT_EQ(verifier.EntryCount().value_or(0), 2);
+}
+
+// 12. Test_A15_StaleFlushRejectedAfterExternalClear:
+// Verifies that an engine with a stale baseline loaded before Clear() cannot
+// FlushToLmdb(), preventing revision rollback and resurrection of cleared entries.
+TEST_F(ArchitectureLmdbRegression, StaleFlushRejectedAfterExternalClear) {
+    const auto dbPath = root_ / "db_stale_flush.lmdb";
+
+    {
+        PersonalEngine seed;
+        ASSERT_TRUE(seed.OpenLmdb(dbPath, /*read_only=*/false));
+        ASSERT_TRUE(seed.RecordUsage("old", "旧词"));
+    }
+
+    PersonalEngine oldWriter;
+    ASSERT_TRUE(oldWriter.OpenLmdb(dbPath, /*read_only=*/false));
+    EXPECT_EQ(oldWriter.ResetRevision(), 0);
+
+    PersonalEngine clearer;
+    ASSERT_TRUE(clearer.OpenLmdb(dbPath, /*read_only=*/false));
+    EXPECT_EQ(clearer.ResetRevision(), 0);
+
+    ASSERT_TRUE(clearer.Clear());
+    EXPECT_EQ(clearer.ResetRevision(), 1);
+    EXPECT_EQ(clearer.EntryCount().value_or(999), 0);
+
+    // Stale flush from old writer MUST be rejected
+    EXPECT_FALSE(oldWriter.FlushToLmdb());
+
+    // Verified facts on disk: revision remains 1 and count remains 0
+    EXPECT_EQ(clearer.ResetRevision(), 1);
+    EXPECT_EQ(clearer.EntryCount().value_or(999), 0);
+
+    PersonalEngine freshVerifier;
+    ASSERT_TRUE(freshVerifier.OpenLmdb(dbPath, /*read_only=*/true));
+    EXPECT_EQ(freshVerifier.ResetRevision(), 1);
+    EXPECT_EQ(freshVerifier.EntryCount().value_or(999), 0);
+}
+
 } // namespace

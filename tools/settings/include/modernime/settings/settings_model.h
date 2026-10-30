@@ -51,6 +51,7 @@ public:
     const std::string &loadedHash() const { return loadedHash_; }
     const std::string &savedHash() const { return savedHash_; }
     const std::string &savedContentHash() const { return savedHash_; }
+    const core::SettingsSaveResult &lastSaveResult() const { return lastSaveResult_; }
     bool hasExternalModification() const;
     bool reloadFromDisk(std::string *error = nullptr);
 
@@ -63,6 +64,7 @@ private:
     std::string loadedHash_;
     std::string savedHash_;
     std::vector<std::string> rawLines_;
+    core::SettingsSaveResult lastSaveResult_{};
     bool defaultsEdited_ = false;
     Revision savedRevision_ = 0;
     Revision reloadedRevision_ = 0;

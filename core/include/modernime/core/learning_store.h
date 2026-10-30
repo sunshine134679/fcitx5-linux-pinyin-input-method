@@ -60,14 +60,19 @@ public:
                                 std::string_view pinyin);
     bool recordSuppression(std::string_view phrase,
                            std::string_view pinyin);
-    bool recordBatch(const std::vector<LearningEvent> &events);
+    bool recordBatch(const std::vector<LearningEvent> &events,
+                     bool *pruned = nullptr,
+                     bool *external_changed = nullptr);
     bool backupTo(const std::filesystem::path &path) const;
     bool clear();
     std::optional<std::int64_t> resetRevision() const;
     int schemaVersion() const;
+    std::uint64_t dataVersion() const;
     // Reads the reset marker and entries from the same read transaction.
     std::optional<LearningStoreState> readState() const;
     std::optional<std::size_t> entryCount() const;
+    // Self-verifies database structure, schema, metadata, and data readability.
+    bool verifySelf() const;
     std::shared_ptr<const LearningSnapshot> snapshot(std::int64_t nowMs = 0) const;
 
     enum class FaultInjection {
@@ -80,8 +85,8 @@ public:
 private:
     bool execute(const char *sql) const;
     bool ensureSuppressionColumn() const;
-    bool pruneContextVariants() const;
-    bool pruneTotalEntries() const;
+    bool pruneContextVariants(bool *pruned = nullptr) const;
+    bool pruneTotalEntries(bool *pruned = nullptr) const;
     bool applySelection(std::string_view phrase, std::string_view pinyin,
                         std::string_view contextBefore,
                         std::string_view contextAfter, std::int64_t nowMs) const;
@@ -95,6 +100,7 @@ private:
     std::unique_ptr<PersonalEngine> lmdbEngine_;
     bool useLmdb_ = false;
     std::size_t totalEntryLimit_ = kMaxLearningEntries;
+    mutable std::uint64_t lastDataVersion_ = 0;
     FaultInjection faultInjection_ = FaultInjection::None;
 };
 

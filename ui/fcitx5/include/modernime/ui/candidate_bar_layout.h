@@ -103,8 +103,6 @@ struct CandidateBarLayout final {
     std::uint64_t layoutGeneration = 0;
     std::vector<Rect> separators;
     std::vector<CandidateGeometry> candidates;
-    Rect pageIndicator{};
-    std::string pageIndicatorText{};
 
     static CandidateBarLayout measure(const core::CandidatePage &page,
                                       const CandidateBarMetrics &metrics);

@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct MDB_env;
@@ -42,6 +43,22 @@ struct WordMeta {
     int64_t last_selected_ms = 0;      // 毫秒级时间戳（与 LearningEntry 无损对齐）
 };
 #pragma pack(pop)
+
+inline bool operator==(const WordMeta &a, const WordMeta &b) noexcept {
+    return a.last_used_timestamp == b.last_used_timestamp &&
+           a.hit_count == b.hit_count &&
+           a.base_weight == b.base_weight &&
+           a.text_bytes_len == b.text_bytes_len &&
+           a.context_before_len == b.context_before_len &&
+           a.context_after_len == b.context_after_len &&
+           a.negative_feedback == b.negative_feedback &&
+           a.suppressed == b.suppressed &&
+           a.last_selected_ms == b.last_selected_ms;
+}
+
+inline bool operator!=(const WordMeta &a, const WordMeta &b) noexcept {
+    return !(a == b);
+}
 
 // 个性化候选词条
 struct PersonalCandidate {
@@ -120,7 +137,9 @@ public:
     // Applies all events and reset checks in one LMDB transaction.
     // Empty input repairs excess context variants left by older versions.
     bool RecordLearningBatch(const std::vector<LearningEvent> &events,
-                             float initial_weight = 1.0f);
+                             float initial_weight = 1.0f,
+                             bool *pruned = nullptr,
+                             bool *external_changed = nullptr);
 
     bool RecordNegativeFeedback(std::string_view pinyin_key,
                                 std::string_view text);
@@ -170,11 +189,12 @@ public:
     void CloseLmdb() noexcept;
     bool IsLmdbOpen() const noexcept { return env_ != nullptr; }
     size_t LmdbMapSize() const noexcept;
-    bool FlushToLmdb();
+    bool FlushToLmdb(bool replace_all = false);
     bool ReloadFromLmdb();
     // Exports entries and their clear revision from the same read transaction.
     bool ReadLearningState(std::vector<LearningEntry> &entries,
                            int64_t &reset_revision) const;
+    bool VerifyDatabaseIntegrity() const;
     bool BackupLmdbTo(const std::filesystem::path &backup_path) const;
     bool Clear();
 
@@ -188,6 +208,7 @@ public:
     int64_t ResetRevision() const;
     int SchemaVersion() const;
     std::optional<std::size_t> EntryCount() const;
+    size_t LastTxnId() const;
 
     // 与 ModernIME LearningStore / LearningSnapshot 无损互转
     std::vector<LearningEntry> ExportLearningEntries() const;
@@ -243,6 +264,8 @@ private:
     int64_t reset_revision_ = 0;
     bool migrated_from_sqlite_ = false;
     int64_t migrated_bin_size_ = 0;
+    using BaselineFact = WordMeta;
+    std::unordered_map<std::string, BaselineFact> baseline_entries_;
 
     // LMDB 句柄
     std::shared_ptr<detail::LmdbEnvironment> lmdb_env_;

@@ -169,7 +169,7 @@ std::string_view settingsStyles() {
         @define-color theme_base_color #ffffff;
         @define-color theme_fg_color #182031;
         @define-color insensitive_fg_color #657184;
-        @define-color borders #dfe4ec;
+        @define-color borders #e1e6ee;
         @define-color theme_selected_bg_color #1262ff;
         @define-color theme_selected_fg_color #ffffff;
         @define-color warning_color #966400;
@@ -185,7 +185,7 @@ std::string_view settingsStyles() {
         .modernime-sidebar {
             border-right: 1px solid @borders;
             background-color: #f6f7f9;
-            padding: 8px 8px;
+            padding: 10px 8px;
         }
 
         .modernime-sidebar viewport {
@@ -209,8 +209,8 @@ std::string_view settingsStyles() {
             background-color: #ffffff;
             border: 1px solid #d7dee8;
             color: @theme_fg_color;
-            padding: 7px 8px;
-            margin-bottom: 4px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
         }
 
         .modernime-nav-button {
@@ -218,8 +218,8 @@ std::string_view settingsStyles() {
             background-image: none;
             background-color: transparent;
             box-shadow: none;
-            padding: 6px 6px;
-            margin: 1px 0;
+            padding: 7px 8px;
+            margin: 2px 0;
             border: 1px solid transparent;
             color: @theme_fg_color;
             transition: background-color 150ms ease, border-color 150ms ease;
@@ -230,7 +230,8 @@ std::string_view settingsStyles() {
         }
 
         .modernime-settings .modernime-nav-button.modernime-nav-selected {
-            background-color: #e5edff;
+            background-color: #eaf0ff;
+            border-color: #dce6fb;
             background-image: none;
             color: @theme_selected_bg_color;
             outline-color: @theme_selected_bg_color;
@@ -277,7 +278,7 @@ std::string_view settingsStyles() {
         }
 
         .modernime-page-title {
-            font-size: 26px;
+            font-size: 24px;
             font-weight: 700;
             color: @theme_fg_color;
             letter-spacing: -0.2px;
@@ -286,7 +287,7 @@ std::string_view settingsStyles() {
         .modernime-page-subtitle {
             font-size: 13px;
             color: @insensitive_fg_color;
-            margin-top: 1px;
+            margin-top: 2px;
             margin-bottom: 0;
         }
 
@@ -296,9 +297,59 @@ std::string_view settingsStyles() {
             font-size: 12.5px;
         }
 
+        .modernime-details-button,
+        .modernime-settings .modernime-details-button:hover,
+        .modernime-settings .modernime-details-button:checked {
+            padding: 16px 0;
+            font-size: 15px;
+            font-weight: 500;
+            background-color: transparent;
+            border: none;
+            box-shadow: none;
+        }
+        .modernime-details {
+            border-bottom: 1px solid #edf0f4;
+        }
+        .modernime-details:last-child { border-bottom: none; }
+        .modernime-details-content { padding: 0 0 16px; }
+        .modernime-update-summary { padding: 20px 22px; }
+        .modernime-current-version { font-size: 26px; font-weight: 600; }
+        .modernime-update-status { font-size: 13px; color: @insensitive_fg_color; }
+        .modernime-diagnostics-card { padding: 18px 22px; }
+        .modernime-diagnostics-card .modernime-setting-row { padding: 16px 0; }
+        .modernime-diagnostics-card .modernime-setting-title { font-size: 15px; }
+        .modernime-runtime-summary {
+            background-color: transparent;
+            border: none;
+            box-shadow: none;
+            padding: 12px 0 20px;
+        }
+        .modernime-runtime-summary label {
+            font-size: 18px;
+            font-weight: 600;
+            color: @theme_fg_color;
+        }
+        .modernime-runtime-summary image { color: @theme_selected_bg_color; }
+        .modernime-runtime-summary.warning label,
+        .modernime-runtime-summary.warning image { color: @warning_color; }
+        .modernime-runtime-summary.error label,
+        .modernime-runtime-summary.error image { color: @error_color; }
+        .modernime-diagnostics-card .modernime-diagnostics-value {
+            font-size: 15px;
+            font-weight: 500;
+            color: #385a7d;
+            background-color: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+        }
+        .modernime-diagnostics-card .modernime-badge-amber { color: @warning_color; }
+        .modernime-diagnostics-card .modernime-badge-red { color: @error_color; }
+        .modernime-diagnostics-card button { padding: 10px 16px; }
+
         .modernime-section {
             border: 1px solid @borders;
-            border-radius: 12px;
+            border-radius: 10px;
             background-color: @theme_base_color;
             padding: 14px 18px;
             margin-bottom: 4px;
@@ -317,7 +368,7 @@ std::string_view settingsStyles() {
 
         .modernime-setting-row {
             padding: 10px 0;
-            border-bottom: 1px solid #e6eaf0;
+            border-bottom: 1px solid #edf0f4;
         }
 
         .modernime-setting-row:last-child {
@@ -325,8 +376,8 @@ std::string_view settingsStyles() {
         }
 
         .modernime-setting-title {
-            font-size: 15px;
-            font-weight: 600;
+            font-size: 14px;
+            font-weight: 500;
             color: @theme_fg_color;
         }
 
@@ -338,7 +389,7 @@ std::string_view settingsStyles() {
         /* Overview Bento Cards */
         .modernime-hero-card {
             border: 1px solid @borders;
-            border-radius: 14px;
+            border-radius: 12px;
             background-color: @theme_base_color;
             padding: 12px 18px;
             margin-bottom: 10px;
@@ -352,7 +403,7 @@ std::string_view settingsStyles() {
 
         .modernime-bento-card {
             border: 1px solid @borders;
-            border-radius: 12px;
+            border-radius: 10px;
             background-color: @theme_base_color;
             padding: 12px 16px;
         }
@@ -365,7 +416,7 @@ std::string_view settingsStyles() {
 
         .modernime-bento-value {
             font-size: 18px;
-            font-weight: 700;
+            font-weight: 600;
             color: @theme_fg_color;
             margin: 3px 0 2px 0;
         }
@@ -489,13 +540,13 @@ std::string_view settingsStyles() {
             border-top: 1px solid @borders;
             background-color: @theme_bg_color;
             border-radius: 0 0 12px 12px;
-            padding: 14px 28px;
+            padding: 12px 24px;
         }
 
         /* Preview Box */
         .modernime-preview-bar {
-            background-color: rgba(128, 128, 128, 0.08);
-            border: 1px dashed @borders;
+            background-color: #f6f7f9;
+            border: 1px solid @borders;
             border-radius: 10px;
             padding: 12px 16px;
             margin-top: 8px;
@@ -606,7 +657,7 @@ std::string_view settingsStyles() {
         /* Candidates Hero Preview & Controls matching layout-1.png */
         .modernime-preview-card {
             border: 1px solid @borders;
-            border-radius: 12px;
+            border-radius: 10px;
             background-color: #f6f7f9;
             padding: 14px 18px;
             margin-bottom: 4px;
@@ -644,6 +695,7 @@ std::string_view settingsStyles() {
             border-radius: 8px;
             background-image: none;
             background-color: #ffffff;
+            box-shadow: none;
             border: 1px solid @borders;
             color: @theme_fg_color;
             padding: 6px 12px;
@@ -672,8 +724,8 @@ std::string_view settingsStyles() {
             color: @theme_selected_fg_color;
         }
 
-        .modernime-nav-label { font-size: 15px; }
-        .modernime-brand { font-size: 24px; font-weight: 700; }
+        .modernime-nav-label { font-size: 14px; }
+        .modernime-brand { font-size: 22px; font-weight: 700; }
         .modernime-settings entry,
         .modernime-settings spinbutton,
         .modernime-settings treeview,
@@ -824,16 +876,6 @@ GtkWidget *createSectionCard(std::string_view title,
         setAccessibleWidgetText(heading, title, "设置分组标题");
         gtk_box_pack_start(GTK_BOX(card), heading, FALSE, FALSE, 0);
     }
-    if (!description.empty()) {
-        auto *help = gtk_label_new(std::string(description).c_str());
-        addStyleClass(help, "modernime-description");
-        gtk_widget_set_halign(help, GTK_ALIGN_FILL);
-        gtk_label_set_xalign(GTK_LABEL(help), 0);
-        gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
-        gtk_widget_set_margin_bottom(help, 10);
-        setAccessibleWidgetText(help, description, "设置分组说明");
-        gtk_box_pack_start(GTK_BOX(card), help, FALSE, FALSE, 0);
-    }
     return cardGuard.release();
 }
 
@@ -881,7 +923,7 @@ GtkWidget *createSettingRow(std::string_view title,
     addStyleClass(row, "modernime-setting-row");
     setAccessibleWidgetText(row, title, description);
 
-    auto *textVBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+    auto *textVBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_valign(textVBox, GTK_ALIGN_CENTER);
     gtk_widget_set_hexpand(textVBox, TRUE);
 
@@ -891,21 +933,17 @@ GtkWidget *createSettingRow(std::string_view title,
     setAccessibleWidgetText(label, title, "设置名称");
     gtk_box_pack_start(GTK_BOX(textVBox), label, FALSE, FALSE, 0);
 
-    if (!description.empty()) {
-        auto *help = gtk_label_new(std::string(description).c_str());
-        addStyleClass(help, "modernime-setting-desc");
-        gtk_widget_set_halign(help, GTK_ALIGN_FILL);
-        gtk_label_set_xalign(GTK_LABEL(help), 0);
-        gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
-        setAccessibleWidgetText(help, description, "设置说明");
-        gtk_box_pack_start(GTK_BOX(textVBox), help, FALSE, FALSE, 0);
-    }
     gtk_box_pack_start(GTK_BOX(row), textVBox, TRUE, TRUE, 0);
 
     if (control != nullptr) {
         gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
         gtk_widget_set_halign(control, GTK_ALIGN_END);
-        setAccessibleWidgetText(control, title, description);
+        if (GTK_IS_LABEL(control)) {
+            // Read-only values must retain their dynamic text as the ATK name.
+            setAccessibleWidgetText(control, {}, title);
+        } else {
+            setAccessibleWidgetText(control, title, description);
+        }
         gtk_box_pack_end(GTK_BOX(row), control, FALSE, FALSE, 0);
         controlGuard.release();
     }

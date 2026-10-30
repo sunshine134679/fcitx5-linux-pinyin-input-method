@@ -19,8 +19,26 @@ struct UserDictionaryEntry final {
     float weight = 0.0F;
 };
 
+struct DictionaryParseDiagnostic final {
+    std::size_t lineNumber = 0;
+    std::string lineContent;
+    std::string reason;
+};
+
+class UserDictionary;
+
+struct UserDictionarySnapshot final {
+    bool exists = false;
+    bool readable = false;
+    std::string contentHash;
+    std::vector<UserDictionaryEntry> entries;
+    std::vector<DictionaryParseDiagnostic> diagnostics;
+    std::string error;
+};
+
 class UserDictionary final {
 public:
+    static UserDictionarySnapshot loadSnapshot(const std::filesystem::path &path);
     static UserDictionary loadText(const std::filesystem::path &path);
 
     const std::vector<UserDictionaryEntry> &entries() const {

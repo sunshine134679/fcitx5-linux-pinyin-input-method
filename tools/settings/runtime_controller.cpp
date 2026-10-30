@@ -1,11 +1,14 @@
 #include "modernime/settings/runtime_controller.h"
+#include "modernime/settings/detail/process_runner.h"
 
 #include <gio/gio.h>
 #include <glib.h>
 
 #include <algorithm>
+#include <csignal>
 #include <fstream>
 #include <string_view>
+#include <unistd.h>
 
 namespace modernime::settings {
 namespace {
@@ -56,17 +59,6 @@ struct StartWaitState final {
     std::string error;
 };
 
-struct CommunicationState final {
-    GMainLoop *loop = nullptr;
-    GCancellable *cancellable = nullptr;
-    GSubprocess *process = nullptr;
-    bool timedOut = false;
-    bool successful = false;
-    std::string standardOutput;
-    std::string standardError;
-    std::string error;
-};
-
 std::string trim(std::string value) {
     const auto first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) {
@@ -97,92 +89,56 @@ gboolean cancelStartAfterTimeout(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
-void communicationFinished(GObject *object, GAsyncResult *result,
-                           gpointer data) {
-    auto *state = static_cast<CommunicationState *>(data);
-    gchar *standardOutput = nullptr;
-    gchar *standardError = nullptr;
-    GError *error = nullptr;
-    state->successful = g_subprocess_communicate_utf8_finish(
-        G_SUBPROCESS(object), result, &standardOutput, &standardError, &error);
-    if (standardOutput != nullptr) {
-        state->standardOutput = standardOutput;
-    }
-    if (standardError != nullptr) {
-        state->standardError = standardError;
-    }
-    if (error != nullptr) {
-        state->error = error->message;
-    }
-    g_free(standardOutput);
-    g_free(standardError);
-    g_clear_error(&error);
-    g_main_loop_quit(state->loop);
-}
-
-gboolean cancelCommunicationAfterTimeout(gpointer data) {
-    auto *state = static_cast<CommunicationState *>(data);
-    state->timedOut = true;
-    g_subprocess_force_exit(state->process);
-    g_cancellable_cancel(state->cancellable);
-    return G_SOURCE_REMOVE;
-}
-
 ProcessResult runCommand(const std::filesystem::path &executable,
                          const std::vector<std::string> &arguments,
-                         const Environment &environment) {
+                         const Environment &environment,
+                         guint timeoutMs = waitTimeoutMs) {
     ProcessResult result;
     if (executable.empty()) {
         result.error = "fcitx5-remote path is empty";
         return result;
     }
 
-    GSubprocessLauncher *launcher = g_subprocess_launcher_new(
-        static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-                                      G_SUBPROCESS_FLAGS_STDERR_PIPE));
-    for (const auto &[name, value] : environment) {
-        g_subprocess_launcher_setenv(launcher, name.c_str(), value.c_str(),
-                                     TRUE);
-    }
-
-    std::vector<const gchar *> argv;
-    argv.reserve(arguments.size() + 1);
-    argv.push_back(executable.c_str());
+    detail::CommandSpec spec;
+    spec.argv.reserve(arguments.size() + 1);
+    spec.argv.push_back(executable.string());
     for (const auto &argument : arguments) {
-        argv.push_back(argument.c_str());
+        spec.argv.push_back(argument);
     }
-    argv.push_back(nullptr);
+    spec.environment = environment;
+    spec.timeoutMs = timeoutMs;
+    spec.mode = detail::CommandMode::Query;
 
-    GError *spawnError = nullptr;
-    GSubprocess *process = g_subprocess_launcher_spawnv(
-        launcher, argv.data(), &spawnError);
-    g_object_unref(launcher);
-    if (process == nullptr) {
-        result.error = spawnError == nullptr ? "unable to start fcitx5-remote"
-                                             : spawnError->message;
-        g_clear_error(&spawnError);
+    const auto cmdResult = detail::runCommand(spec);
+    if (cmdResult.state == detail::CommandState::NotStarted ||
+        (cmdResult.state == detail::CommandState::Exited && cmdResult.exitStatus == 127)) {
+        result.started = false;
+        result.error = cmdResult.stderrText.empty() ? "unable to start fcitx5-remote"
+                                                    : trim(cmdResult.stderrText);
         return result;
     }
-    result.started = true;
 
-    CommandLoop loop;
-    auto *cancellable = g_cancellable_new();
-    CommunicationState state{loop.loop, cancellable, process, false, false,
-                             {}, {}, {}};
-    // Drain output while waiting. The deadline also covers descendants that
-    // inherit a pipe after the direct child has exited.
-    g_subprocess_communicate_utf8_async(process, nullptr, cancellable,
-                                      communicationFinished, &state);
-    loop.setTimeout(waitTimeoutMs, cancelCommunicationAfterTimeout, &state);
-    g_main_loop_run(loop.loop);
-    g_object_unref(cancellable);
-    result.standardOutput = std::move(state.standardOutput);
-    result.standardError = std::move(state.standardError);
-    result.error = std::move(state.error);
-    result.timedOut = state.timedOut;
-    result.successful = !result.timedOut && state.successful &&
-                        g_subprocess_get_successful(process);
-    g_object_unref(process);
+    result.started = true;
+    result.timedOut = cmdResult.timedOut;
+    result.standardOutput = cmdResult.stdoutText;
+    result.standardError = cmdResult.stderrText;
+
+    if (cmdResult.timedOut) {
+        result.successful = false;
+        result.error = "fcitx5-remote timed out";
+    } else if (cmdResult.stdoutTruncated || cmdResult.stderrTruncated) {
+        result.successful = false;
+        result.error = "command output truncated";
+    } else if (cmdResult.state == detail::CommandState::Exited && cmdResult.exitStatus == 0) {
+        result.successful = true;
+    } else {
+        result.successful = false;
+        if (!cmdResult.stderrText.empty()) {
+            result.error = trim(cmdResult.stderrText);
+        } else {
+            result.error = "fcitx5-remote exited with status " + std::to_string(cmdResult.exitStatus);
+        }
+    }
     return result;
 }
 
@@ -352,7 +308,33 @@ RuntimeStatus RuntimeController::probe(
                         try {
                             status.settingsGeneration = std::stoull(val);
                         } catch (...) {}
+                    } else if (key == "pid") {
+                        try {
+                            status.runtimePid = static_cast<pid_t>(std::stol(val));
+                        } catch (...) {}
                     }
+                }
+            }
+        }
+        if (status.runtimePid > 0 && ::kill(status.runtimePid, 0) == 0) {
+            std::error_code procEc;
+            const auto exePath = std::filesystem::read_symlink(
+                "/proc/" + std::to_string(status.runtimePid) + "/exe", procEc);
+            std::string exeName;
+            if (!procEc && !exePath.empty()) {
+                std::string exeStr = exePath.string();
+                const std::string deletedSuffix = " (deleted)";
+                if (exeStr.ends_with(deletedSuffix)) {
+                    exeStr.resize(exeStr.size() - deletedSuffix.size());
+                }
+                exeName = std::filesystem::path(exeStr).filename().string();
+            }
+            if (exeName == "fcitx5") {
+                status.instanceBound = true;
+            } else if (const char *envTest = std::getenv("MODERNIME_TEST_ALLOW_MOCK_INSTANCE");
+                       envTest != nullptr && *envTest != '\0') {
+                if (exeName.find("modernime") != std::string::npos) {
+                    status.instanceBound = true;
                 }
             }
         }
@@ -422,7 +404,7 @@ std::string describeSettingsApplication(
     if (savedContentHash.empty()) {
         return "设置已保存";
     }
-    if (!status.running) {
+    if (!status.running || !status.modernimeAvailable) {
         return "已保存，下次启用时应用";
     }
     if (!status.appliedHashAvailable) {
@@ -430,6 +412,9 @@ std::string describeSettingsApplication(
     }
     if (status.appliedContentHash != savedContentHash) {
         return "已保存，等待输入法读取";
+    }
+    if (!status.instanceBound) {
+        return "已保存，应用状态待确认";
     }
     if (status.inputContextAvailable) {
         return "已保存并应用";

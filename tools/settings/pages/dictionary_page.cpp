@@ -21,6 +21,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -340,30 +341,41 @@ public:
 
     static void onLoadFinished(GObject *, GAsyncResult *result, gpointer) {
         GError *error = nullptr;
-        auto *entriesPtr = static_cast<std::vector<pinyin::UserDictionaryEntry> *>(
+        auto *snapshotPtr = static_cast<DictionarySnapshot *>(
             g_task_propagate_pointer(G_TASK(result), &error));
         g_clear_error(&error);
         const auto *taskData = static_cast<const LoadTaskData *>(
             g_task_get_task_data(G_TASK(result)));
-        if (taskData != nullptr && entriesPtr != nullptr) {
+        if (taskData != nullptr && snapshotPtr != nullptr) {
             const auto gen = taskData->generation;
-            taskData->lifetime->withOwner([entriesPtr, gen](Impl &owner) {
+            taskData->lifetime->withOwner([snapshotPtr, gen](Impl &owner) {
                 if (gen == owner.loadGeneration) {
-                    owner.dictionaryEntries = std::move(*entriesPtr);
+                    owner.currentSnapshot = *snapshotPtr;
+                    owner.currentBaseline =
+                        DictionaryExpectedBaseline::fromSnapshot(owner.currentSnapshot);
+                    owner.dictionaryEntries = std::move(snapshotPtr->entries);
                     owner.setButtonsSensitive(true);
                     owner.applyFilter();
                 }
             });
         }
-        delete entriesPtr;
+        delete snapshotPtr;
     }
 
     void setButtonsSensitive(bool sensitive) {
         const bool allow = sensitive && !operationInProgress;
-        if (addButton != nullptr) gtk_widget_set_sensitive(addButton, allow);
-        if (importButton != nullptr) gtk_widget_set_sensitive(importButton, allow);
-        if (exportButton != nullptr) gtk_widget_set_sensitive(exportButton, allow);
-        if (!allow) {
+        const bool hasCorruptedLines =
+            (currentSnapshot.status == DictionaryLoadStatus::CorruptedLines);
+        const bool hasIoError =
+            (currentSnapshot.status == DictionaryLoadStatus::IoError);
+
+        const bool canMutate = allow && !hasCorruptedLines && !hasIoError;
+        const bool canExport = allow && !hasIoError;
+
+        if (addButton != nullptr) gtk_widget_set_sensitive(addButton, canMutate);
+        if (importButton != nullptr) gtk_widget_set_sensitive(importButton, canMutate);
+        if (exportButton != nullptr) gtk_widget_set_sensitive(exportButton, canExport);
+        if (!canMutate) {
             if (editButton != nullptr) gtk_widget_set_sensitive(editButton, FALSE);
             if (deleteButton != nullptr) gtk_widget_set_sensitive(deleteButton, FALSE);
         } else {
@@ -388,12 +400,12 @@ public:
         });
         g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer data, GCancellable *) {
             const auto *td = static_cast<const LoadTaskData *>(data);
-            auto entries = DataController::loadDictionary(td->path);
+            auto snapshot = DataController::loadDictionaryForEditing(td->path);
             g_task_return_pointer(
                 t,
-                new std::vector<pinyin::UserDictionaryEntry>(std::move(entries)),
+                new DictionarySnapshot(std::move(snapshot)),
                 [](gpointer v) {
-                    delete static_cast<std::vector<pinyin::UserDictionaryEntry> *>(v);
+                    delete static_cast<DictionarySnapshot *>(v);
                 });
         });
         g_object_unref(task);
@@ -443,11 +455,22 @@ public:
                 const auto query = owner.dictionarySearch == nullptr
                                        ? std::string()
                                        : gtk_entry_get_text(GTK_ENTRY(owner.dictionarySearch));
-                const auto countText =
-                    query.empty()
+                std::string countText;
+                if (owner.currentSnapshot.status == DictionaryLoadStatus::CorruptedLines) {
+                    countText = (query.empty()
                         ? "共 " + std::to_string(owner.filteredIndices.size()) + " 条"
                         : "显示 " + std::to_string(owner.filteredIndices.size()) + " 条，共 " +
-                              std::to_string(owner.dictionaryEntries.size()) + " 条";
+                              std::to_string(owner.dictionaryEntries.size()) + " 条") +
+                        "（存在受损行，已禁用写入）";
+                } else if (owner.currentSnapshot.status == DictionaryLoadStatus::IoError) {
+                    countText = "读取失败";
+                } else {
+                    countText =
+                        query.empty()
+                            ? "共 " + std::to_string(owner.filteredIndices.size()) + " 条"
+                            : "显示 " + std::to_string(owner.filteredIndices.size()) + " 条，共 " +
+                                  std::to_string(owner.dictionaryEntries.size()) + " 条";
+                }
                 gtk_label_set_text(GTK_LABEL(owner.dictionaryCount), countText.c_str());
                 owner.updateActionState();
             }
@@ -468,20 +491,36 @@ public:
 
         if (filteredIndices.empty()) {
             if (dictionaryCount != nullptr) {
-                const auto countText =
-                    query.empty()
+                std::string countText;
+                if (currentSnapshot.status == DictionaryLoadStatus::CorruptedLines) {
+                    countText = (query.empty()
                         ? "共 0 条"
-                        : "显示 0 条，共 " + std::to_string(dictionaryEntries.size()) + " 条";
+                        : "显示 0 条，共 " + std::to_string(dictionaryEntries.size()) + " 条") +
+                        "（存在受损行，已禁用写入）";
+                } else if (currentSnapshot.status == DictionaryLoadStatus::IoError) {
+                    countText = "读取失败";
+                } else {
+                    countText =
+                        query.empty()
+                            ? "共 0 条"
+                            : "显示 0 条，共 " + std::to_string(dictionaryEntries.size()) + " 条";
+                }
                 gtk_label_set_text(GTK_LABEL(dictionaryCount), countText.c_str());
             }
             if (dictionaryState != nullptr) {
-                const char *state = nullptr;
-                if (dictionaryEntries.empty()) {
+                std::string state;
+                if (currentSnapshot.status == DictionaryLoadStatus::CorruptedLines) {
+                    state = "词典包含损坏行（第 " +
+                            std::to_string(currentSnapshot.diagnostics.front().lineNumber) + " 行：" +
+                            currentSnapshot.diagnostics.front().reason + "），已禁用保存以防静默覆盖损坏数据；可导出备份修复。";
+                } else if (currentSnapshot.status == DictionaryLoadStatus::IoError) {
+                    state = "无法读取用户词典：" + currentSnapshot.error;
+                } else if (dictionaryEntries.empty()) {
                     state = "暂无用户词条；可以添加个人词条或导入专业词典";
                 } else {
                     state = "没有匹配的词条；请更换拼音或词条关键词";
                 }
-                gtk_label_set_text(GTK_LABEL(dictionaryState), state);
+                gtk_label_set_text(GTK_LABEL(dictionaryState), state.c_str());
                 gtk_widget_set_visible(dictionaryState, TRUE);
             }
             updateActionState();
@@ -489,7 +528,19 @@ public:
         }
 
         if (dictionaryState != nullptr) {
-            gtk_widget_set_visible(dictionaryState, FALSE);
+            if (currentSnapshot.status == DictionaryLoadStatus::CorruptedLines) {
+                std::string state = "词典包含损坏行（第 " +
+                                    std::to_string(currentSnapshot.diagnostics.front().lineNumber) + " 行：" +
+                                    currentSnapshot.diagnostics.front().reason + "），已禁用保存以防静默覆盖损坏数据；可导出备份修复。";
+                gtk_label_set_text(GTK_LABEL(dictionaryState), state.c_str());
+                gtk_widget_set_visible(dictionaryState, TRUE);
+            } else if (currentSnapshot.status == DictionaryLoadStatus::IoError) {
+                std::string state = "无法读取用户词典：" + currentSnapshot.error;
+                gtk_label_set_text(GTK_LABEL(dictionaryState), state.c_str());
+                gtk_widget_set_visible(dictionaryState, TRUE);
+            } else {
+                gtk_widget_set_visible(dictionaryState, FALSE);
+            }
         }
 
         ++batchGeneration;
@@ -612,13 +663,14 @@ private:
         std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
         uint64_t generation = 0;
         std::filesystem::path path;
+        DictionaryExpectedBaseline expectedBaseline;
         bool isReplace = false;
         DictionaryConflictPolicy policy = DictionaryConflictPolicy::KeepExisting;
         std::vector<pinyin::UserDictionaryEntry> parsedEntries;
         std::vector<pinyin::UserDictionaryEntry> currentEntries;
         std::size_t newEntries = 0;
         std::size_t conflictEntries = 0;
-        bool success = false;
+        DictionarySaveResult result = DictionarySaveResult::Invalid;
         std::filesystem::path backupPath;
         std::string error;
         std::string successMessage;
@@ -636,9 +688,13 @@ private:
                     return;
                 }
                 owner.operationInProgress = false;
-                if (taskData->success) {
+                if (taskData->result == DictionarySaveResult::Saved) {
                     owner.notifyMessage(taskData->successMessage);
                     owner.refresh();
+                } else if (taskData->result == DictionarySaveResult::Conflict) {
+                    owner.notifyMessage("导入保存失败：词典已被外部程序修改（版本冲突）。未覆盖磁盘内容，请刷新后重试。");
+                    owner.setButtonsSensitive(true);
+                    owner.updateActionState();
                 } else {
                     owner.notifyMessage(taskData->error.empty() ? "导入词典保存失败" : taskData->error);
                     owner.setButtonsSensitive(true);
@@ -754,10 +810,10 @@ private:
         setButtonsSensitive(false);
 
         auto *saveTaskData = new ImportSaveTaskData{
-            lifetime, operationGeneration, path, isReplace, policy,
+            lifetime, operationGeneration, path, currentBaseline, isReplace, policy,
             std::move(preview.parsedEntries), dictionaryEntries,
             preview.newEntries, preview.conflictEntries,
-            false, {}, {}, {}
+            DictionarySaveResult::Invalid, {}, {}, {}
         };
 
         auto *saveTask = g_task_new(nullptr, nullptr, onImportSaveFinished, nullptr);
@@ -769,11 +825,12 @@ private:
                 std::string backupError;
                 if (!DataController::createDictionaryBackup(td->path, &backupPath, &backupError)) {
                     td->error = "整体替换已中止：无法创建词典备份（" + backupError + "）";
-                    td->success = false;
+                    td->result = DictionarySaveResult::IoError;
                 } else {
                     td->backupPath = backupPath;
-                    td->success = DataController::saveDictionary(td->path, td->parsedEntries, &td->error);
-                    if (td->success) {
+                    td->result = DataController::saveDictionaryIfUnchanged(
+                        td->path, td->parsedEntries, td->expectedBaseline, &td->error);
+                    if (td->result == DictionarySaveResult::Saved) {
                         td->successMessage = "已整体替换个人词典（原词典已自动备份至 " +
                                             backupPath.filename().string() + "）";
                     }
@@ -781,8 +838,9 @@ private:
             } else {
                 const auto merged = DataController::mergeDictionary(
                     td->currentEntries, td->parsedEntries, td->policy);
-                td->success = DataController::saveDictionary(td->path, merged, &td->error);
-                if (td->success) {
+                td->result = DataController::saveDictionaryIfUnchanged(
+                    td->path, merged, td->expectedBaseline, &td->error);
+                if (td->result == DictionarySaveResult::Saved) {
                     std::ostringstream msg;
                     msg << "已成功合并导入 " << td->newEntries << " 条新词条";
                     if (td->conflictEntries > 0) {
@@ -943,14 +1001,35 @@ private:
         }
     }
 
+    struct DraftEntry {
+        std::string pinyin;
+        std::string phrase;
+        double weight = 0.0;
+        std::optional<std::string> originalPhrase;
+        std::optional<std::string> originalPinyin;
+        std::optional<double> originalWeight;
+        DictionaryExpectedBaseline baseBaseline;
+    };
+
+    static std::string makeDraftKey(std::string_view phrase, std::string_view pinyin) {
+        std::string key;
+        key.reserve(phrase.size() + pinyin.size() + 1);
+        key.append(phrase);
+        key.push_back('\t');
+        key.append(pinyin);
+        return key;
+    }
+
     struct SaveTaskData {
         std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
         uint64_t generation = 0;
         std::filesystem::path path;
+        DictionaryExpectedBaseline expectedBaseline;
         std::vector<pinyin::UserDictionaryEntry> entries;
         std::string successMessage;
-        bool success = false;
+        DictionarySaveResult result = DictionarySaveResult::Invalid;
         std::string error;
+        std::optional<DraftEntry> draft;
     };
 
     static void onSaveFinished(GObject *, GAsyncResult *result, gpointer) {
@@ -965,9 +1044,34 @@ private:
                     return;
                 }
                 owner.operationInProgress = false;
-                if (taskData->success) {
+                if (taskData->result == DictionarySaveResult::Saved) {
+                    if (taskData->draft.has_value()) {
+                        if (taskData->draft->originalPhrase.has_value() &&
+                            taskData->draft->originalPinyin.has_value()) {
+                            owner.conflictDrafts.erase(makeDraftKey(
+                                *taskData->draft->originalPhrase, *taskData->draft->originalPinyin));
+                        } else {
+                            owner.newEntryConflictDraft.reset();
+                        }
+                    }
                     owner.notifyMessage(taskData->successMessage);
                     owner.refresh();
+                } else if (taskData->result == DictionarySaveResult::Conflict) {
+                    if (taskData->draft.has_value()) {
+                        if (taskData->draft->originalPhrase.has_value() &&
+                            taskData->draft->originalPinyin.has_value()) {
+                            owner.conflictDrafts[makeDraftKey(
+                                *taskData->draft->originalPhrase, *taskData->draft->originalPinyin)] =
+                                *taskData->draft;
+                        } else {
+                            owner.newEntryConflictDraft = taskData->draft;
+                        }
+                        owner.notifyMessage("保存失败：词典已被外部程序修改（版本冲突）。已保留您的编辑草稿，请刷新后重试。");
+                    } else {
+                        owner.notifyMessage("保存失败：词典已被外部程序修改（版本冲突）。未覆盖磁盘内容，请刷新后重试。");
+                    }
+                    owner.setButtonsSensitive(true);
+                    owner.updateActionState();
                 } else {
                     owner.notifyMessage(taskData->error.empty() ? "保存个人词典失败" : taskData->error);
                     owner.setButtonsSensitive(true);
@@ -979,7 +1083,8 @@ private:
     }
 
     void saveEntriesAsync(std::vector<pinyin::UserDictionaryEntry> entries,
-                          std::string successMessage) {
+                          std::string successMessage,
+                          std::optional<DraftEntry> draft = std::nullopt) {
         if (operationInProgress) {
             return;
         }
@@ -988,14 +1093,15 @@ private:
         setButtonsSensitive(false);
 
         auto *taskData = new SaveTaskData{
-            lifetime, operationGeneration, path, std::move(entries),
-            std::move(successMessage), false, {}
+            lifetime, operationGeneration, path, currentBaseline, std::move(entries),
+            std::move(successMessage), DictionarySaveResult::Invalid, {}, std::move(draft)
         };
         auto *task = g_task_new(nullptr, nullptr, onSaveFinished, nullptr);
         g_task_set_task_data(task, taskData, nullptr);
         g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
             auto *td = static_cast<SaveTaskData *>(task_data);
-            td->success = DataController::saveDictionary(td->path, td->entries, &td->error);
+            td->result = DataController::saveDictionaryIfUnchanged(
+                td->path, td->entries, td->expectedBaseline, &td->error);
             g_task_return_pointer(t, td, nullptr);
         });
         g_object_unref(task);
@@ -1097,11 +1203,22 @@ private:
         addStyleClass(state->accept, kSettingsPrimaryButtonClass);
         setAccessibleWidgetText(state->accept, "保存", "校验通过后保存当前词条");
         auto *cancel = gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
-        if (selected.has_value()) {
+        if (selected.has_value() && *selected < dictionaryEntries.size()) {
             const auto &entry = dictionaryEntries[*selected];
-            gtk_entry_set_text(GTK_ENTRY(pinyin), entry.pinyin.c_str());
-            gtk_entry_set_text(GTK_ENTRY(phrase), entry.phrase.c_str());
-            gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), entry.weight);
+            auto it = conflictDrafts.find(makeDraftKey(entry.phrase, entry.pinyin));
+            if (it != conflictDrafts.end()) {
+                gtk_entry_set_text(GTK_ENTRY(pinyin), it->second.pinyin.c_str());
+                gtk_entry_set_text(GTK_ENTRY(phrase), it->second.phrase.c_str());
+                gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), it->second.weight);
+            } else {
+                gtk_entry_set_text(GTK_ENTRY(pinyin), entry.pinyin.c_str());
+                gtk_entry_set_text(GTK_ENTRY(phrase), entry.phrase.c_str());
+                gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), entry.weight);
+            }
+        } else if (!selected.has_value() && newEntryConflictDraft.has_value()) {
+            gtk_entry_set_text(GTK_ENTRY(pinyin), newEntryConflictDraft->pinyin.c_str());
+            gtk_entry_set_text(GTK_ENTRY(phrase), newEntryConflictDraft->phrase.c_str());
+            gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), newEntryConflictDraft->weight);
         }
         setSettingsFocusChain(dialog, {phrase, pinyin, automatic, advanced, weight, cancel, state->accept});
         gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
@@ -1122,17 +1239,18 @@ private:
             return false;
         }
 
-        const auto pinyinText = gtk_entry_get_text(GTK_ENTRY(pinyin));
-        const auto phraseText = gtk_entry_get_text(GTK_ENTRY(phrase));
+        const std::string pinyinText = gtk_entry_get_text(GTK_ENTRY(pinyin));
+        const std::string phraseText = gtk_entry_get_text(GTK_ENTRY(phrase));
         const auto weightValue = static_cast<float>(
             gtk_spin_button_get_value(GTK_SPIN_BUTTON(weight)));
+        gtk_widget_destroy(dialog);
+
         pinyin::UserDictionary dictionary;
         for (std::size_t index = 0; index < dictionaryEntries.size(); ++index) {
             if (!selected.has_value() || index != *selected) {
                 const auto &entry = dictionaryEntries[index];
                 if (!dictionary.upsert(entry.pinyin, entry.phrase,
                                        entry.weight)) {
-                    gtk_widget_destroy(dialog);
                     notifyMessage("现有用户词典包含非法词条");
                     return false;
                 }
@@ -1140,12 +1258,21 @@ private:
         }
         const bool valid =
             dictionary.upsert(pinyinText, phraseText, weightValue);
-        gtk_widget_destroy(dialog);
         if (!valid) {
             notifyMessage("词条未保存：拼音、词条或权重格式不合法");
             return false;
         }
-        saveEntriesAsync(dictionary.entries(), "词条已保存；输入法会自动读取（约 2 秒）");
+        DraftEntry draft;
+        draft.pinyin = pinyinText;
+        draft.phrase = phraseText;
+        draft.weight = weightValue;
+        draft.baseBaseline = currentBaseline;
+        if (selected.has_value() && *selected < dictionaryEntries.size()) {
+            draft.originalPhrase = dictionaryEntries[*selected].phrase;
+            draft.originalPinyin = dictionaryEntries[*selected].pinyin;
+            draft.originalWeight = dictionaryEntries[*selected].weight;
+        }
+        saveEntriesAsync(dictionary.entries(), "词条已保存；输入法会自动读取（约 2 秒）", std::move(draft));
         return true;
     }
 
@@ -1175,6 +1302,8 @@ private:
     GtkWidget *exportButton = nullptr;
     std::vector<pinyin::UserDictionaryEntry> dictionaryEntries;
     std::vector<std::size_t> filteredIndices;
+    DictionarySnapshot currentSnapshot;
+    DictionaryExpectedBaseline currentBaseline = DictionaryExpectedBaseline::unchecked();
     std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime =
         std::make_shared<detail::DiagnosticsLifetime<Impl>>(this);
     uint64_t loadGeneration = 0;
@@ -1182,6 +1311,8 @@ private:
     uint64_t operationGeneration = 0;
     bool operationInProgress = false;
     guint idleBatchSourceId = 0;
+    std::unordered_map<std::string, DraftEntry> conflictDrafts;
+    std::optional<DraftEntry> newEntryConflictDraft;
 };
 
 DictionaryPage::DictionaryPage(std::filesystem::path dictionaryPath,

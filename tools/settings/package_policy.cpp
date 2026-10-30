@@ -400,9 +400,9 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
                 "离线、未配置软件源或尚未刷新本地缓存，本地功能与词库完好无损";
         }
         status.statusMessage =
-            "当前处于离线状态、尚未配置 ModernIME 系统软件源或未刷新缓存（可先执行 " +
+            "当前处于离线状态、尚未配置 ModernIME 系统软件源或未刷新缓存（可先在终端执行 " +
             status.refreshCacheCommand +
-            " 或点击“刷新软件源缓存”）；本地输入法与数据运行正常（未发现软件损坏）。";
+            " 同步远端最新元数据）；本地输入法与数据运行正常（未发现软件损坏）。";
         return;
     }
 
@@ -428,7 +428,7 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
         }
         status.statusMessage =
             "本地软件源缓存中当前已是最新版本（" + status.currentVersion +
-            "）。提示：包管理器默认读取本地缓存索引，请先点击“刷新软件源缓存”或在终端执行 " +
+            "）。提示：包管理器默认读取本地缓存索引，请在终端执行 " +
             status.refreshCacheCommand + " 同步远端最新元数据后再检查。";
     }
 

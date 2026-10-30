@@ -2,6 +2,7 @@
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+unset MODERNIME_PREFIX_LOCK_FD MODERNIME_LOCKED_PREFIX MODERNIME_LOCK_FILE 2>/dev/null || true
 source "$project_root/scripts/install_state.sh"
 if [[ -f "$project_root/scripts/install_lifecycle.sh" ]]; then
     source "$project_root/scripts/install_lifecycle.sh"
@@ -16,6 +17,17 @@ case "${MODERNIME_ALLOW_MISSING_DEPS:-}" in
         allow_missing_deps=true
         ;;
 esac
+
+for arg in "$@"; do
+    if [[ "$arg" == "-u" || "$arg" == "--uninstall" ]]; then
+        forward_args=()
+        for a in "$@"; do
+            [[ "$a" == "-u" || "$a" == "--uninstall" ]] && continue
+            forward_args+=("$a")
+        done
+        exec "$project_root/uninstall.sh" "${forward_args[@]}"
+    fi
+done
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -36,6 +48,16 @@ while [[ $# -gt 0 ]]; do
         --overwrite-package|--force)
             overwrite_package=true
             shift
+            ;;
+        -h|--help)
+            printf 'Usage: %s [OPTIONS] [PREFIX]\n\n' "$0"
+            printf 'Options:\n'
+            printf '  -p, --prefix=PATH             Installation prefix (default: $HOME/.local)\n'
+            printf '  -u, --uninstall               Uninstall ModernIME\n'
+            printf '  --allow-missing-deps          Allow installation even if optional dependencies are missing\n'
+            printf '  --overwrite-package, --force  Allow overwriting package-managed installations\n'
+            printf '  -h, --help                    Show this help message\n'
+            exit 0
             ;;
         -*)
             shift
@@ -77,7 +99,7 @@ if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
     fi
 fi
 
-required_commands=(cmake ctest pkg-config)
+required_commands=(cmake ctest pkg-config flock)
 for required_command in "${required_commands[@]}"; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
         printf 'Required build command not found: %s\n' "$required_command" >&2
@@ -85,6 +107,10 @@ for required_command in "${required_commands[@]}"; do
         exit 1
     fi
 done
+
+if ! modernime_acquire_prefix_lock "$prefix"; then
+    exit 1
+fi
 
 check_cmake_version() {
     if command -v cmake >/dev/null 2>&1; then
@@ -249,6 +275,20 @@ backup_user_database() {
 backup_user_database
 
 build_dir=${MODERNIME_BUILD_DIR:-"$project_root/build/install-debug"}
+canonical_build_dir=$(realpath -m "$build_dir" 2>/dev/null || echo "$build_dir")
+mkdir -p "$canonical_build_dir"
+build_lock_file="$canonical_build_dir/.modernime-build.lock"
+if ! exec {MODERNIME_BUILD_LOCK_FD}>"$build_lock_file"; then
+    printf 'Error: Cannot open build directory lock file: %s\n' "$build_lock_file" >&2
+    modernime_release_prefix_lock
+    exit 1
+fi
+if ! flock -n "$MODERNIME_BUILD_LOCK_FD"; then
+    printf 'Error: Another ModernIME build is currently running in build directory: %s\n' "$canonical_build_dir" >&2
+    exec {MODERNIME_BUILD_LOCK_FD}>&-
+    modernime_release_prefix_lock
+    exit 1
+fi
 generator=${CMAKE_GENERATOR:-"Unix Makefiles"}
 config_home=${MODERNIME_CONFIG_HOME:-"${XDG_CONFIG_HOME:-"$HOME/.config"}"}
 data_home=${MODERNIME_DATA_HOME:-"${XDG_DATA_HOME:-"$HOME/.local/share"}"}
@@ -353,7 +393,8 @@ else
         # remaining suite still runs normally. The original desktop environment is
         # restored automatically when this subshell exits.
         unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
-        ctest --test-dir "$build_dir" --output-on-failure --parallel "$build_jobs"
+        test_jobs="${CTEST_PARALLEL_LEVEL:-1}"
+        ctest --test-dir "$build_dir" --output-on-failure --parallel "$test_jobs"
     )
 fi
 
@@ -368,10 +409,27 @@ mkdir -p -- "$src_stage_dir" "$deploy_tx_dir"
 cleanup_src_transaction() {
     local exit_code=$?
     trap - EXIT
-    if [[ -n "${src_transaction_dir:-}" && -d "${src_transaction_dir:-}" ]]; then
+    if [[ -d "${deploy_tx_dir:-}" && -f "$deploy_tx_dir/status" ]]; then
+        local tx_status
+        tx_status=$(cat "$deploy_tx_dir/status" 2>/dev/null || echo "UNKNOWN")
+        case "$tx_status" in
+            COMMITTED|ROLLED_BACK|FAILED_COLLISION|FAILED_BACKUP)
+                rm -rf -- "$src_transaction_dir"
+                ;;
+            FAILED_ROLLBACK|INTEGRATION_FAILED|*)
+                rm -rf -- "$src_stage_dir" 2>/dev/null || true
+                printf 'Transaction materials preserved in: %s\n' "$deploy_tx_dir" >&2
+                ;;
+        esac
+    elif [[ -n "${src_transaction_dir:-}" && -d "${src_transaction_dir:-}" ]]; then
         rm -rf -- "$src_transaction_dir"
     fi
     cleanup_desktop_tmp
+    if [[ -n "${MODERNIME_BUILD_LOCK_FD:-}" ]]; then
+        eval "exec ${MODERNIME_BUILD_LOCK_FD}>&-"
+        unset MODERNIME_BUILD_LOCK_FD
+    fi
+    modernime_release_prefix_lock
     exit "$exit_code"
 }
 trap cleanup_src_transaction EXIT
@@ -381,11 +439,18 @@ src_payload_dir="$src_stage_dir/${prefix#/}"
 mkdir -p -- "$src_payload_dir"
 
 if ! modernime_deploy_payload "$src_payload_dir" "$prefix" "$deploy_tx_dir"; then
-    printf 'Error: Source payload deployment failed; rollback completed.\n' >&2
+    tx_status=$(cat "$deploy_tx_dir/status" 2>/dev/null || echo "UNKNOWN")
+    if [[ "$tx_status" == "ROLLED_BACK" ]]; then
+        printf 'Error: Source payload deployment failed; rollback completed.\n' >&2
+    elif [[ "$tx_status" == "FAILED_ROLLBACK" ]]; then
+        printf 'Error: Source payload deployment failed; rollback failed. Recovery files preserved in %s\n' "$deploy_tx_dir" >&2
+    else
+        printf 'Error: Source payload deployment failed (status=%s). Transaction materials preserved in %s\n' "$tx_status" "$deploy_tx_dir" >&2
+    fi
     exit 1
 fi
-rm -rf -- "$src_transaction_dir"
-trap cleanup_desktop_tmp EXIT
+rm -rf -- "$src_stage_dir" 2>/dev/null || true
+printf 'INTEGRATING\n' > "$deploy_tx_dir/status"
 
 cmake_libdir=$(grep -m1 '^CMAKE_INSTALL_LIBDIR:PATH=' "$build_dir/CMakeCache.txt" 2>/dev/null || true)
 cmake_libdir=${cmake_libdir#*=}
@@ -511,13 +576,27 @@ if [[ -z "$installed_version" ]]; then
     installed_version=$(grep -m1 'project(ModernIME VERSION' "$project_root/CMakeLists.txt" 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo "unknown")
 fi
 
-MODERNIME_INSTALLED_VERSION="$installed_version" \
-    modernime_integrate "$prefix" "$config_home" "$desktop_dir" "$managed_state_dir" "$data_home"
+if ! MODERNIME_INSTALLED_VERSION="$installed_version" \
+    modernime_integrate "$prefix" "$config_home" "$desktop_dir" "$managed_state_dir" "$data_home" "$deploy_tx_dir/deployed_files.list"; then
+    printf 'INTEGRATION_FAILED\n' > "$deploy_tx_dir/status"
+    printf 'Error: Integration failed after payload deployment. Transaction materials preserved in: %s\n' "$deploy_tx_dir" >&2
+    exit 1
+fi
+
+printf 'COMMITTED\n' > "$deploy_tx_dir/status"
+modernime_cleanup_transaction_dir "$deploy_tx_dir"
+rm -rf -- "$src_transaction_dir" 2>/dev/null || true
 
 if [[ "$is_system_prefix" != true && -x "$prefix/bin/modernime-session-init" ]]; then
     MODERNIME_PREFIX="$prefix" MODERNIME_CONFIG_HOME="$config_home" \
         MODERNIME_SKIP_FCITX_RESTART=1 "$prefix/bin/modernime-session-init"
 fi
+
+if [[ -n "${MODERNIME_BUILD_LOCK_FD:-}" ]]; then
+    eval "exec ${MODERNIME_BUILD_LOCK_FD}>&-"
+    unset MODERNIME_BUILD_LOCK_FD
+fi
+modernime_release_prefix_lock
 
 run_fcitx5_remote() {
     "${fcitx_environment[@]}" bash -c '

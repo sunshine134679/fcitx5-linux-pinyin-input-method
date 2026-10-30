@@ -237,6 +237,7 @@ private:
     class ControllerEndpoint;
     std::shared_ptr<ControllerEndpoint> endpoint_;
     bool sensitive_ = false;
+    bool inSetContext_ = false;
 };
 
 } // namespace modernime::fcitx5

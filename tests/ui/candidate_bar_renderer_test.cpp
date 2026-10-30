@@ -23,6 +23,7 @@ struct RecordingSurface final : modernime::ui::RenderSurface {
     std::vector<double> textX;
     std::vector<double> textBaseline;
     std::vector<double> textSizes;
+    std::vector<modernime::ui::Color> textColors;
     std::vector<modernime::ui::Rect> rects;
 
     void roundedRect(const modernime::ui::Rect &bounds, double,
@@ -38,11 +39,12 @@ struct RecordingSurface final : modernime::ui::RenderSurface {
 
     void text(std::string_view value, double x, double baseline,
               const modernime::ui::TextStyle &style,
-              const modernime::ui::Color &) override {
+              const modernime::ui::Color &color) override {
         operations.push_back("text:" + std::string(value));
         textX.push_back(x);
         textBaseline.push_back(baseline);
         textSizes.push_back(style.size);
+        textColors.push_back(color);
     }
 };
 
@@ -58,7 +60,7 @@ int main() {
 
     RecordingSurface surface;
     const auto style = modernime::ui::RenderStyle::reference();
-    assertTrue(style.panelRadius == 9.0 && style.selectedRadius == 6.0,
+    assertTrue(style.panelRadius == 10.0 && style.selectedRadius == 7.0,
                "reference radii follow the design proportions");
     assertTrue(style.shadowRadius == 6.0 && style.shadowOffsetY == 4.0,
                "reference shadow preserves the native window height");
@@ -92,6 +94,14 @@ int main() {
                "normal candidate text is centered in its slot");
     assertTrue(surface.textSizes[0] == 16.0 && surface.textSizes[1] == 19.0,
                "candidate index is smaller than candidate text");
+    assertTrue(surface.textColors[0].red == style.selectedText.red &&
+                   surface.textColors[0].green == style.selectedText.green &&
+                   surface.textColors[0].blue == style.selectedText.blue,
+               "selected index retains the same contrast as its candidate");
+    assertTrue(surface.textColors[2].red > surface.textColors[3].red &&
+                   surface.textColors[2].green > surface.textColors[3].green &&
+                   surface.textColors[2].blue > surface.textColors[3].blue,
+               "unselected index is secondary to the candidate text");
     assertTrue(surface.textBaseline.size() == 6,
                "candidate baselines are recorded");
     assertTrue(surface.textBaseline[0] == 33.75 &&
@@ -156,10 +166,15 @@ int main() {
         indicatorPage, modernime::ui::CandidateBarMetrics::reference());
     RecordingSurface indicatorSurface;
     modernime::ui::CandidateBarRenderer::render(indicatorSurface, indicatorLayout, style);
-    assertTrue(std::find(indicatorSurface.operations.begin(),
-                         indicatorSurface.operations.end(), "text:1/2 ►") !=
-                   indicatorSurface.operations.end(),
-               "renderer renders page indicator text when multi-page layout has page indicator");
+    indicatorPage.pageBoundaries.clear();
+    const auto plainLayout = modernime::ui::CandidateBarLayout::measure(
+        indicatorPage, modernime::ui::CandidateBarMetrics::reference());
+    RecordingSurface plainSurface;
+    modernime::ui::CandidateBarRenderer::render(plainSurface, plainLayout, style);
+    assertTrue(indicatorSurface.operations == plainSurface.operations &&
+                   indicatorSurface.textX == plainSurface.textX &&
+                   indicatorSurface.textBaseline == plainSurface.textBaseline,
+               "page metadata draws no extra text and preserves candidate positions");
 
     return EXIT_SUCCESS;
 }

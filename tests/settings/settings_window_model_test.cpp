@@ -157,6 +157,10 @@ int main() {
     std::string extErr;
     assertTrue(extModel.save(&extErr), "initial save succeeds: " + extErr);
     assertTrue(!extModel.hasExternalModification(), "saved model has no external modification");
+    assertTrue(extModel.lastSaveResult().status == modernime::core::SettingsSaveStatus::Saved,
+               "save result status is Saved");
+    assertTrue(extModel.savedHash() == extModel.lastSaveResult().contentHash,
+               "savedHash directly bound to receipt contentHash");
 
     // Modify file externally behind model's back
     {
@@ -172,6 +176,10 @@ int main() {
     std::string conflictErr;
     assertTrue(!extModel.save(&conflictErr), "saving with external modification fails");
     assertTrue(!conflictErr.empty(), "conflict error is reported");
+    assertTrue(extModel.lastSaveResult().status == modernime::core::SettingsSaveStatus::Conflict,
+               "save result status is Conflict");
+    assertTrue(extModel.lastSaveResult().currentDiskHash == modernime::core::computeFileContentHash(extPath),
+               "conflict receipt reports current disk hash");
 
     // Reload from disk clears conflict
     assertTrue(extModel.reloadFromDisk(), "reloadFromDisk succeeds");

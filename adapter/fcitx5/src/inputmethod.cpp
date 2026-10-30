@@ -28,6 +28,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <utility>
 
 namespace modernime::fcitx5 {
@@ -46,6 +47,7 @@ void writeRuntimeState(const std::filesystem::path &statePath,
     if (!out) {
         return;
     }
+    out << "pid=" << ::getpid() << "\n";
     out << "applied_content_hash=" << contentHash << "\n";
     out << "settings_generation=" << generation << "\n";
     out << "source=fcitx5-adapter\n";

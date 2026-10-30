@@ -205,6 +205,101 @@ void testFailedBackupDoesNotClearLearning() {
     untouched.close();
 }
 
+void testConcurrentLearningWriteDuringBackupSucceeds() {
+    const auto directory = testDirectory("concurrent-learning-backup");
+    const auto databasePath = directory / "learning.sqlite3";
+    const auto backupPath = directory / "learning-backup.sqlite3";
+
+    modernime::core::LearningStore seed(databasePath);
+    assertTrue(seed.open(), "seed database opens");
+    assertTrue(seed.recordSelection("基础词", "jichuci", {}, {}, 1000), "seed recorded");
+    seed.close();
+
+    // Hook: after backup completes, insert a new selection into the live store
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view phase) {
+        if (phase == "backupAndClearLearning:afterBackup") {
+            modernime::core::LearningStore liveWriter(databasePath);
+            if (liveWriter.open()) {
+                liveWriter.recordSelection("并发新增词", "bingfaxinzeng", {}, {}, 2000);
+                liveWriter.close();
+            }
+        }
+    });
+
+    std::string error;
+    assertTrue(modernime::settings::DataController::backupAndClearLearning(
+                   databasePath, backupPath, &error),
+               "backup and clear succeeds despite concurrent live write: " + error);
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+
+    // Backup must preserve the snapshot taken (1 entry) and be verified
+    modernime::core::LearningStore backup(backupPath);
+    assertTrue(backup.openReadOnly(), "backup opens read-only");
+    assertTrue(backup.verifySelf(), "backup self-verification passes");
+    const auto backupEntries = backup.entryCount();
+    assertTrue(backupEntries.has_value() && *backupEntries == 1, "backup preserved initial 1 entry");
+    backup.close();
+
+    // Live store was cleared
+    assertTrue(modernime::settings::DataController::learningEntryCount(databasePath, &error) == 0,
+               "live store is cleared");
+}
+
+void testCorruptedBackupBlocksClear() {
+    const auto directory = testDirectory("corrupt-backup-test");
+    const auto databasePath = directory / "learning.sqlite3";
+    const auto backupPath = directory / "learning-backup.sqlite3";
+
+    modernime::core::LearningStore seed(databasePath);
+    assertTrue(seed.open(), "seed database opens");
+    assertTrue(seed.recordSelection("重要数据", "zhongyaoshuju", {}, {}, 1000), "seed recorded");
+    seed.close();
+
+    // Hook: corrupt the backup file after backup creation
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view phase) {
+        if (phase == "backupAndClearLearning:afterBackup") {
+            std::ofstream corrupt(backupPath, std::ios::binary | std::ios::trunc);
+            corrupt << "GARBAGE_NOT_A_VALID_DATABASE_CORRUPTED_BYTES";
+        }
+    });
+
+    std::string error;
+    assertTrue(!modernime::settings::DataController::backupAndClearLearning(
+                   databasePath, backupPath, &error),
+               "corrupted backup must be rejected");
+    assertTrue(error.find("could not be verified") != std::string::npos,
+               "error explains verification failure: " + error);
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+
+    // Live store MUST remain intact and not cleared!
+    assertTrue(modernime::settings::DataController::learningEntryCount(databasePath, &error) == 1,
+               "original learning database is preserved when backup verification fails");
+}
+
+void testLmdbBackupAndClearSelfVerification() {
+    const auto directory = testDirectory("lmdb-backup-test");
+    const auto databasePath = directory / "learning.lmdb";
+    const auto backupPath = directory / "learning-backup.lmdb";
+
+    modernime::core::LearningStore seed(databasePath);
+    assertTrue(seed.open(), "lmdb seed opens");
+    assertTrue(seed.recordSelection("LMDB词条", "lmdbcitiao", {}, {}, 1000), "lmdb seed recorded");
+    seed.close();
+
+    std::string error;
+    assertTrue(modernime::settings::DataController::backupAndClearLearning(
+                   databasePath, backupPath, &error),
+               "lmdb backup and clear succeeds: " + error);
+
+    modernime::core::LearningStore backup(backupPath);
+    assertTrue(backup.openReadOnly() && backup.verifySelf(), "lmdb backup self-verifies");
+    assertTrue(backup.entryCount().value_or(0) == 1, "lmdb backup has 1 entry");
+    backup.close();
+
+    assertTrue(modernime::settings::DataController::learningEntryCount(databasePath, &error) == 0,
+               "lmdb live store cleared");
+}
+
 void testDictionaryImportPreviewAndMerge() {
     using namespace modernime::settings;
     using namespace modernime::pinyin;
@@ -380,6 +475,75 @@ void testFilterDictionaryPerformance() {
     assertTrue(elapsed200kMs < 300, "200k filtering is fast (<300ms)");
 }
 
+void testDataControllerSnapshotAndSaveBaseline() {
+    using namespace modernime::settings;
+    using namespace modernime::pinyin;
+
+    const auto dir = testDirectory("snapshot-baseline");
+    const auto dictPath = dir / "user-dict.txt";
+
+    // 1. Non-existent file
+    const auto snapNonExistent = DataController::loadDictionaryForEditing(dictPath);
+    assertTrue(snapNonExistent.status == DictionaryLoadStatus::NonExistent, "status is NonExistent");
+    assertTrue(!snapNonExistent.exists, "exists is false");
+    assertTrue(snapNonExistent.entries.empty(), "entries empty");
+
+    // 2. Save with ExpectNonExistent baseline succeeds
+    std::string error;
+    std::vector<UserDictionaryEntry> entries1 = {
+        {"nihao", "你好", 10.0F}
+    };
+    const auto res1 = DataController::saveDictionaryIfUnchanged(
+        dictPath, entries1, DictionaryExpectedBaseline::fromSnapshot(snapNonExistent), &error);
+    assertTrue(res1 == DictionarySaveResult::Saved, "save with ExpectNonExistent succeeds: " + error);
+    assertTrue(std::filesystem::exists(dictPath), "file was created");
+
+    // 3. Load snapshot of existing file
+    const auto snap1 = DataController::loadDictionaryForEditing(dictPath);
+    assertTrue(snap1.status == DictionaryLoadStatus::Success, "status is Success");
+    assertTrue(snap1.exists, "exists is true");
+    assertTrue(snap1.entries.size() == 1, "1 entry loaded");
+    assertTrue(!snap1.contentHash.empty(), "contentHash is computed");
+
+    // 4. External modification behind the back
+    {
+        std::ofstream external(dictPath, std::ios::app);
+        external << "zaijian\t再见\t20\n";
+    }
+
+    // 5. Attempt saving with old baseline snap1 -> Expect Conflict
+    std::vector<UserDictionaryEntry> userDraft = {
+        {"nihao", "你好", 10.0F},
+        {"xiexie", "谢谢", 30.0F}
+    };
+    error.clear();
+    const auto resConflict = DataController::saveDictionaryIfUnchanged(
+        dictPath, userDraft, DictionaryExpectedBaseline::fromSnapshot(snap1), &error);
+    assertTrue(resConflict == DictionarySaveResult::Conflict, "concurrent edit detects conflict");
+
+    // Verify disk content was NOT overwritten
+    const auto snapAfterConflict = DataController::loadDictionaryForEditing(dictPath);
+    assertTrue(snapAfterConflict.entries.size() == 2, "disk was not overwritten by draft");
+    assertTrue(snapAfterConflict.entries[1].phrase == "再见", "disk retains external changes");
+    assertTrue(userDraft.size() == 2 && userDraft[1].phrase == "谢谢", "user draft in caller preserved");
+
+    // 6. Directory returns IoError
+    const auto snapDir = DataController::loadDictionaryForEditing(dir);
+    assertTrue(snapDir.status == DictionaryLoadStatus::IoError, "directory status is IoError");
+
+    // 7. Corrupted lines returns CorruptedLines
+    const auto corruptPath = dir / "corrupt.txt";
+    {
+        std::ofstream corruptOut(corruptPath);
+        corruptOut << "nihao\t你好\t10\n"
+                   << "bad_row\n";
+    }
+    const auto snapCorrupt = DataController::loadDictionaryForEditing(corruptPath);
+    assertTrue(snapCorrupt.status == DictionaryLoadStatus::CorruptedLines, "status is CorruptedLines");
+    assertTrue(snapCorrupt.diagnostics.size() == 1, "1 diagnostic reported");
+    assertTrue(snapCorrupt.diagnostics[0].lineNumber == 2, "diagnostic line number is 2");
+}
+
 } // namespace
 
 int main() {
@@ -391,9 +555,13 @@ int main() {
     testDictionaryBackupCreationAndVerification();
     testLearningBackupThenClear();
     testFailedBackupDoesNotClearLearning();
+    testConcurrentLearningWriteDuringBackupSucceeds();
+    testCorruptedBackupBlocksClear();
+    testLmdbBackupAndClearSelfVerification();
     testLearningBackendDetection();
     testFilterDictionaryPureFunction();
     testFilterDictionaryPerformance();
+    testDataControllerSnapshotAndSaveBaseline();
     return EXIT_SUCCESS;
 }
 

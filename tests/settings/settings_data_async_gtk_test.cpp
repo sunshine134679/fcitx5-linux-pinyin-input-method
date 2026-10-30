@@ -28,17 +28,20 @@ struct HeartbeatMonitor {
     std::chrono::steady_clock::time_point lastTick = std::chrono::steady_clock::now();
     std::chrono::milliseconds maxLatency{0};
     std::atomic<bool> active{true};
+    std::atomic<int> sampleCount{0};
     guint sourceId = 0;
 
     void start() {
         lastTick = std::chrono::steady_clock::now();
         maxLatency = std::chrono::milliseconds{0};
+        sampleCount.store(0);
         active = true;
         sourceId = g_timeout_add(10, [](gpointer data) -> gboolean {
             auto *self = static_cast<HeartbeatMonitor *>(data);
             if (!self->active.load()) {
                 return G_SOURCE_REMOVE;
             }
+            self->sampleCount.fetch_add(1, std::memory_order_relaxed);
             const auto now = std::chrono::steady_clock::now();
             const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - self->lastTick);
             // Expected tick is 10ms. Latency beyond 10ms:
@@ -54,11 +57,26 @@ struct HeartbeatMonitor {
     }
 
     void stop() {
+        if (!active.load()) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTick);
+        const auto latency = elapsed > std::chrono::milliseconds(10)
+                                 ? elapsed - std::chrono::milliseconds(10)
+                                 : std::chrono::milliseconds(0);
+        if (latency > maxLatency) {
+            maxLatency = latency;
+        }
         active = false;
         if (sourceId != 0) {
             g_source_remove(sourceId);
             sourceId = 0;
         }
+    }
+
+    ~HeartbeatMonitor() {
+        stop();
     }
 };
 
@@ -87,11 +105,11 @@ void pumpEventsUntil(const std::function<bool()> &condition,
                      std::chrono::milliseconds timeout = std::chrono::seconds(15)) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     do {
-        if (condition()) {
-            return;
-        }
         if (!g_main_context_iteration(nullptr, FALSE)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        if (condition()) {
+            return;
         }
     } while (std::chrono::steady_clock::now() < deadline);
 }
@@ -388,6 +406,12 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     }
 
     // Part 1: Verify 2-second real production I/O (loadDictionary) keeps GTK heartbeat < 100ms
+    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    auto page = std::make_unique<modernime::settings::DictionaryPage>(dictPath, [](std::string) {});
+    gtk_container_add(GTK_CONTAINER(window), page->widget());
+    gtk_widget_show_all(window);
+    drainEvents();
+
     std::atomic<bool> slowLoadEntered{false};
     std::atomic<bool> slowLoadFinished{false};
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
@@ -401,23 +425,22 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     HeartbeatMonitor heartbeat;
     heartbeat.start();
 
-    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    auto page = std::make_unique<modernime::settings::DictionaryPage>(dictPath, [](std::string) {});
-    gtk_container_add(GTK_CONTAINER(window), page->widget());
-    gtk_widget_show_all(window);
-
-    // DictionaryPage::refresh was called during construction
-    pumpEventsUntil([&] { return slowLoadEntered.load(); }, std::chrono::seconds(5));
-    assert(slowLoadEntered.load());
+    page->refresh();
 
     // Pump events during the 2-second real production loadDictionary worker
     pumpEventsUntil([&] { return slowLoadFinished.load(); }, std::chrono::seconds(5));
+    assert(slowLoadEntered.load());
     assert(slowLoadFinished.load());
 
     heartbeat.stop();
     std::cout << "  Max heartbeat latency during 2s production loadDictionary: "
-              << heartbeat.maxLatency.count() << " ms (target < 100ms)" << std::endl;
+              << heartbeat.maxLatency.count() << " ms (target < 100ms)"
+              << " samples: " << heartbeat.sampleCount.load() << std::endl;
+    assert(heartbeat.sampleCount.load() >= 10);
     assert(heartbeat.maxLatency < kMaxAllowedLatency);
+
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+    drainEvents();
 
     // Part 2: Verify window destruction while slow production saveDictionary is in-flight (0 UAF)
     std::atomic<bool> slowSaveEntered{false};
@@ -473,6 +496,7 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     auto *rowPath = gtk_tree_path_new_from_indices(0, -1);
     gtk_tree_view_set_cursor(view, rowPath, nullptr, FALSE);
     gtk_tree_path_free(rowPath);
+    pumpEventsUntil([&] { return deleteBtn != nullptr && gtk_widget_get_sensitive(deleteBtn); }, std::chrono::seconds(5));
     drainEvents();
 
     assert(deleteBtn != nullptr && gtk_widget_get_sensitive(deleteBtn));
@@ -989,6 +1013,14 @@ void testLearningPageAsyncAndSlowIo(const std::filesystem::path &tempDir) {
     }
 
     // 1. Hook real production learningEntryCount with 2s delay
+    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    modernime::settings::SettingsWindowModel model(tempDir / "settings.json");
+    auto page = std::make_unique<modernime::settings::LearningPage>(
+        model, storePath, []{}, [](std::string){});
+    gtk_container_add(GTK_CONTAINER(window), page->widget());
+    gtk_widget_show_all(window);
+    drainEvents();
+
     std::atomic<bool> slowCountEntered{false};
     std::atomic<bool> slowCountFinished{false};
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
@@ -1002,23 +1034,21 @@ void testLearningPageAsyncAndSlowIo(const std::filesystem::path &tempDir) {
     HeartbeatMonitor heartbeat;
     heartbeat.start();
 
-    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    modernime::settings::SettingsWindowModel model(tempDir / "settings.json");
-    auto page = std::make_unique<modernime::settings::LearningPage>(
-        model, storePath, []{}, [](std::string){});
-    gtk_container_add(GTK_CONTAINER(window), page->widget());
-    gtk_widget_show_all(window);
-
-    pumpEventsUntil([&] { return slowCountEntered.load(); }, std::chrono::seconds(5));
-    assert(slowCountEntered.load());
+    page->refresh(false);
 
     pumpEventsUntil([&] { return slowCountFinished.load(); }, std::chrono::seconds(5));
+    assert(slowCountEntered.load());
     assert(slowCountFinished.load());
 
     heartbeat.stop();
     std::cout << "  Max heartbeat latency during 2s production learningEntryCount: "
-              << heartbeat.maxLatency.count() << " ms (target < 100ms)" << std::endl;
+              << heartbeat.maxLatency.count() << " ms (target < 100ms)"
+              << " samples: " << heartbeat.sampleCount.load() << std::endl;
+    assert(heartbeat.sampleCount.load() >= 10);
     assert(heartbeat.maxLatency < kMaxAllowedLatency);
+
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+    drainEvents();
 
     // 2. Hook and test safe window closing during in-flight learningEntryCount
     std::atomic<bool> countHookPaused{false};

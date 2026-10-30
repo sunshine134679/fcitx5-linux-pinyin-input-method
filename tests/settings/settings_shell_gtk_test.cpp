@@ -613,6 +613,10 @@ int main(int argc, char **argv) {
         auto *pageSize = findTarget(window, "candidate-page-size");
         auto *preview = findTarget(window, "candidate-preview");
         auto *numbers = findTarget(window, "number-selection");
+        auto *definitionHelp = findAccessibleWidget(
+            window, GTK_TYPE_EVENT_BOX, "显示英文释义说明");
+        assert(definitionHelp == nullptr);
+        assert(findLabelText(window, "中文状态下，常用中文与用户明确选择优先") == nullptr);
         assert(pageSize != nullptr && GTK_IS_COMBO_BOX(pageSize));
         assert(preview != nullptr && GTK_IS_DRAWING_AREA(preview));
         auto *example = findTarget(window, "candidate-preview-example");
@@ -645,6 +649,36 @@ int main(int argc, char **argv) {
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), originalFont);
         gtk_switch_set_active(GTK_SWITCH(numbers), originalNumbers);
 
+        // Details stay collapsed until opened; search must reveal hidden targets.
+        shell.show(modernime::settings::SettingsPageId::Updates);
+        drainEvents();
+        auto *versionDetails = findTarget(window, "updates-version-details");
+        auto *releaseDetails = findTarget(window, "updates-release-details");
+        auto *upgradeDetails = findTarget(window, "updates-upgrade-details");
+        assert(GTK_IS_TOGGLE_BUTTON(versionDetails) && GTK_IS_TOGGLE_BUTTON(releaseDetails) &&
+               GTK_IS_TOGGLE_BUTTON(upgradeDetails));
+        assert(!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(versionDetails)));
+        assert(!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(releaseDetails)));
+        assert(!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(upgradeDetails)));
+        auto *updateStatus = findTarget(window, "updates-status");
+        auto *sourceJump = findTarget(window, "updates-source-jump");
+        assert(updateStatus != nullptr && gtk_widget_get_mapped(updateStatus));
+        assert(sourceJump != nullptr);
+        // Verify visible content growth rather than internal mapping flags.
+        auto *versionRow = gtk_widget_get_parent(versionDetails);
+        const int collapsedHeight = gtk_widget_get_allocated_height(versionRow);
+        gtk_button_clicked(GTK_BUTTON(versionDetails));
+        assert(waitUntil([versionDetails, versionRow, collapsedHeight] {
+            return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(versionDetails)) &&
+                   gtk_widget_get_allocated_height(versionRow) > collapsedHeight;
+        }));
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(versionDetails), FALSE);
+        shell.show(modernime::settings::SettingsPageId::Updates, "updates-source");
+        assert(waitUntil([window, sourceJump] { return hasFocusWithin(window, sourceJump); }));
+        shell.show(modernime::settings::SettingsPageId::Updates, "updates-copy-command");
+        auto *copyUpgrade = findTarget(window, "updates-copy-command");
+        assert(waitUntil([window, copyUpgrade] { return hasFocusWithin(window, copyUpgrade); }));
+
         // Return to the original focus route before input-page traversal checks.
         shell.show(modernime::settings::SettingsPageId::Input, "input-enabled");
         drainEvents();
@@ -658,8 +692,10 @@ int main(int argc, char **argv) {
 
         auto *shiftPreset = findTarget(window, "toggle-key-shift");
         auto *toggleKey = findTarget(window, "toggle-key");
-        assert(shiftPreset != nullptr && toggleKey != nullptr);
-        gtk_button_clicked(GTK_BUTTON(shiftPreset));
+        assert(shiftPreset == nullptr && toggleKey != nullptr);
+        gtk_button_clicked(GTK_BUTTON(toggleKey));
+        gtk_widget_grab_focus(toggleKey);
+        dispatchKey(window, GDK_KEY_Shift_L, GdkModifierType{});
         assert(std::string_view(gtk_button_get_label(GTK_BUTTON(toggleKey))) == "Shift");
         assert(!gtk_style_context_has_class(gtk_widget_get_style_context(toggleKey), "error"));
         assert(gtk_widget_get_sensitive(save));
@@ -832,7 +868,7 @@ int main(int argc, char **argv) {
         gtk_tree_view_set_cursor(GTK_TREE_VIEW(dictionaryView), firstWord, nullptr, FALSE);
         gtk_tree_path_free(firstWord);
         auto *edit = findAccessibleWidget(window, GTK_TYPE_BUTTON, "编辑");
-        assert(edit != nullptr && gtk_widget_get_sensitive(edit));
+        assert(waitUntil([edit] { return edit != nullptr && gtk_widget_get_sensitive(edit); }));
         DictionaryDialogProbe editProbe;
         editProbe.editing = true;
         g_timeout_add(10, inspectDictionaryDialog, &editProbe);
@@ -858,6 +894,12 @@ int main(int argc, char **argv) {
         auto *reload = findTarget(window, "diagnostics-reload");
         assert(refresh != nullptr && reload != nullptr);
         assert(waitUntil([reload] { return gtk_widget_get_sensitive(reload); }));
+        auto *diagnosticsPage = findAccessibleWidget(
+            window, GTK_TYPE_BOX, "系统与诊断");
+        auto *serviceStatus = findLabelText(diagnosticsPage, "正在运行");
+        assert(serviceStatus != nullptr);
+        assert(std::string_view(atk_object_get_name(
+                   gtk_widget_get_accessible(serviceStatus))) == "正在运行");
         for (std::size_t attempt = 2; attempt <= 3; ++attempt) {
             gtk_button_clicked(GTK_BUTTON(reload));
             assert(!gtk_widget_get_sensitive(refresh));
@@ -869,9 +911,11 @@ int main(int argc, char **argv) {
 
         // Full clipboard text is loaded on demand into a bounded reading area.
         shell.show(modernime::settings::SettingsPageId::Clipboard);
-        drainEvents();
         auto *historyList = findTarget(window, "clipboard-history");
         assert(historyList != nullptr);
+        assert(waitUntil([historyList] {
+            return gtk_list_box_get_row_at_index(GTK_LIST_BOX(historyList), 0) != nullptr;
+        }));
         auto *firstHistoryRow = GTK_WIDGET(gtk_list_box_get_row_at_index(
             GTK_LIST_BOX(historyList), 0));
         assert(firstHistoryRow != nullptr);
@@ -898,6 +942,57 @@ int main(int argc, char **argv) {
         assert(gtk_list_box_row_get_index(gtk_list_box_get_selected_row(
                    GTK_LIST_BOX(historyList))) == 0);
 
+        // AR16 regression: full 30 entries (kMaxEntries) with ~900KB entry, batch rendering & async refresh
+        {
+            modernime::core::ClipboardHistory fullHistory;
+            const std::string hugeEntry = std::string(900 * 1024, 'a') + "\n巨大历史";
+            fullHistory.observe(hugeEntry);
+            for (int i = 1; i < 30; ++i) {
+                fullHistory.observe("条目 " + std::to_string(i));
+            }
+            assert(fullHistory.entries().size() == 30);
+            assert(fullHistory.save(paths.clipboardHistory));
+
+            auto *refreshBtn = findAccessibleWidget(window, GTK_TYPE_BUTTON, "刷新历史");
+            assert(refreshBtn != nullptr);
+            gtk_button_clicked(GTK_BUTTON(refreshBtn));
+
+            // Wait until the 30th item is rendered in the list box via idle batching
+            assert(waitUntil([historyList] {
+                return gtk_list_box_get_row_at_index(GTK_LIST_BOX(historyList), 29) != nullptr;
+            }));
+
+            // Verify row 0 is auto-selected
+            assert(gtk_list_box_row_get_index(gtk_list_box_get_selected_row(
+                       GTK_LIST_BOX(historyList))) == 0);
+
+            // Verify action buttons are enabled
+            auto *copyBtn = findAccessibleWidget(window, GTK_TYPE_BUTTON, "复制选中");
+            auto *deleteBtn = findAccessibleWidget(window, GTK_TYPE_BUTTON, "删除选中");
+            auto *clearBtn = findAccessibleWidget(window, GTK_TYPE_BUTTON, "清空历史");
+            assert(copyBtn != nullptr && gtk_widget_get_sensitive(copyBtn));
+            assert(deleteBtn != nullptr && gtk_widget_get_sensitive(deleteBtn));
+            assert(clearBtn != nullptr && gtk_widget_get_sensitive(clearBtn));
+
+            // Expand the huge entry (row 29) on demand
+            auto *hugeRow = GTK_WIDGET(gtk_list_box_get_row_at_index(GTK_LIST_BOX(historyList), 29));
+            assert(hugeRow != nullptr);
+            auto *expandHuge = findAccessibleWidget(hugeRow, GTK_TYPE_BUTTON, "展开");
+            assert(expandHuge != nullptr);
+            gtk_button_clicked(GTK_BUTTON(expandHuge));
+            drainEvents();
+            auto *hugeReader = findWidgetByType(hugeRow, GTK_TYPE_TEXT_VIEW);
+            assert(hugeReader != nullptr && gtk_widget_get_mapped(hugeReader));
+            auto *hugeBuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(hugeReader));
+            GtkTextIter hStart, hEnd;
+            gtk_text_buffer_get_bounds(hugeBuf, &hStart, &hEnd);
+            auto *hugeReadText = gtk_text_buffer_get_text(hugeBuf, &hStart, &hEnd, FALSE);
+            assert(hugeEntry == hugeReadText);
+            g_free(hugeReadText);
+            gtk_button_clicked(GTK_BUTTON(expandHuge));
+            drainEvents();
+            assert(!gtk_widget_get_mapped(hugeReader));
+        }
     }
 
     // Real GTK UpdatesPage / SettingsShell Lifecycle During Active Package Operation (R2)

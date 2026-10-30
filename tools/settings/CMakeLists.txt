@@ -10,53 +10,72 @@ if(FCITX5_UTILS_FOUND AND FCITX5_UTILS_LIBDIR)
         "${FCITX5_UTILS_LIBDIR}/fcitx5")
 endif()
 
-add_library(modernime_settings_components INTERFACE)
-target_sources(modernime_settings_components INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/data_controller.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/dictionary_pronunciation.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/settings_model.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/runtime_controller.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/package_operation_state.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/process_runner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/package_policy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/update_controller.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/clipboard_history_model.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/overview_model.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/page_registry.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/settings_widgets.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/settings_shell.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/settings_shell_state.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/candidates_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/clipboard_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/diagnostics_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/dictionary_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/input_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/learning_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/overview_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/pages/updates_page.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/settings_window.cpp
+add_library(modernime_settings_logic STATIC
+    data_controller.cpp
+    dictionary_pronunciation.cpp
+    settings_model.cpp
+    runtime_controller.cpp
+    package_operation_state.cpp
+    process_runner.cpp
+    package_policy.cpp
+    update_controller.cpp
+    clipboard_history_model.cpp
+    overview_model.cpp
+    page_registry.cpp
+    settings_shell_state.cpp
 )
-target_include_directories(modernime_settings_components INTERFACE
+target_include_directories(modernime_settings_logic PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
-target_link_libraries(modernime_settings_components INTERFACE
+target_link_libraries(modernime_settings_logic PUBLIC
     modernime_core
     modernime_pinyin
     modernime_ui_layout
     PkgConfig::GTK3
 )
-target_compile_features(modernime_settings_components INTERFACE cxx_std_20)
+target_compile_definitions(modernime_settings_logic PUBLIC
+    MODERNIME_VERSION="${PROJECT_VERSION}"
+    MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+)
+target_compile_features(modernime_settings_logic PUBLIC cxx_std_20)
+modernime_enable_warnings(modernime_settings_logic)
+
+add_library(modernime_settings_gtk STATIC
+    settings_widgets.cpp
+    settings_shell.cpp
+    settings_window.cpp
+    pages/candidates_page.cpp
+    pages/clipboard_page.cpp
+    pages/diagnostics_page.cpp
+    pages/dictionary_page.cpp
+    pages/input_page.cpp
+    pages/learning_page.cpp
+    pages/overview_page.cpp
+    pages/updates_page.cpp
+)
+target_include_directories(modernime_settings_gtk PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(modernime_settings_gtk PUBLIC
+    modernime_settings_logic
+    PkgConfig::GTK3
+)
+target_compile_definitions(modernime_settings_gtk PRIVATE
+    MODERNIME_SYSTEM_FCITX5_ADDON_DIR="${modernime_system_fcitx5_addon_dir}"
+)
+target_compile_features(modernime_settings_gtk PUBLIC cxx_std_20)
+modernime_enable_warnings(modernime_settings_gtk)
+
+add_library(modernime_settings_components INTERFACE)
+target_link_libraries(modernime_settings_components INTERFACE
+    modernime_settings_gtk
+)
 
 add_executable(modernime-settings
     settings_app.cpp
 )
 target_link_libraries(modernime-settings PRIVATE
-    modernime_settings_components
-)
-target_compile_definitions(modernime-settings PRIVATE
-    MODERNIME_VERSION="${PROJECT_VERSION}"
-    MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
-    MODERNIME_SYSTEM_FCITX5_ADDON_DIR="${modernime_system_fcitx5_addon_dir}"
+    modernime_settings_gtk
 )
 modernime_enable_warnings(modernime-settings)
 

@@ -44,6 +44,8 @@ public:
 
     static UpdateStatus checkForUpdates(const Environment &environment = {});
 
+    // 保留用于底层独立包管理器事务能力及自动化测试。
+    // 当前客户端设置 UI 采用无特权“复制命令到终端执行”的产品流程，不直接调用此接口进行自动提权升级。
     static RuntimeResult refreshPackageCache(const UpdateStatus &status,
                                              const Environment &environment = {});
 

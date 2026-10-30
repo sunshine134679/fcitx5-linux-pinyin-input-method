@@ -115,7 +115,6 @@ TEST_F(ArchitectureCompositionRegression, FuzzyCandidatesPromotedToSecondSlot) {
 TEST_F(ArchitectureCompositionRegression, StageOrderingAndMoveTracing) {
     CandidateCompositionInput input;
     input.rawInput = "t";
-    input.canonicalInput = "t";
     input.segmentedInput = "t";
     input.macroCandidates = {"2026年10月16日"};
     input.recordMoves = true;
@@ -153,7 +152,6 @@ TEST_F(ArchitectureCompositionRegression, MacroPlacementFixedPositions) {
     // Normal input: macro placed at position 1 (behind top candidate)
     CandidateCompositionInput inputNormal;
     inputNormal.rawInput = "sj";
-    inputNormal.canonicalInput = "sj";
     inputNormal.segmentedInput = "s'j";
     inputNormal.prefixEnds = {1, 2};
 
@@ -176,7 +174,6 @@ TEST_F(ArchitectureCompositionRegression, MacroPlacementFixedPositions) {
     // 'v' input: macro placed at position 0
     CandidateCompositionInput inputV;
     inputV.rawInput = "v123";
-    inputV.canonicalInput = "v123";
     inputV.segmentedInput = "v123";
     inputV.macroCandidates = {"壹佰贰拾叁元整"};
 
@@ -189,7 +186,6 @@ TEST_F(ArchitectureCompositionRegression, MacroPlacementFixedPositions) {
 TEST_F(ArchitectureCompositionRegression, ClipboardCommandAndSingleTriggerV) {
     CandidateCompositionInput input;
     input.rawInput = "v";
-    input.canonicalInput = "v";
     input.segmentedInput = "v";
     input.clipboardEnabled = true;
     input.clipboardTrigger = "V+2";
@@ -222,7 +218,6 @@ TEST_F(ArchitectureCompositionRegression, EnglishPriorityAndDualAttributeCan) {
     // "can" has dual attribute exemption: even though single syllable, raw is placed at index 1
     CandidateCompositionInput inputCan;
     inputCan.rawInput = "can";
-    inputCan.canonicalInput = "can";
     inputCan.segmentedInput = "can";
     inputCan.isEnglishWord = true;
 
@@ -245,7 +240,6 @@ TEST_F(ArchitectureCompositionRegression, EnglishPriorityAndDualAttributeCan) {
     // Prefer English when predicted words present and no exact full pinyin match
     CandidateCompositionInput inputEnglish;
     inputEnglish.rawInput = "gara";
-    inputEnglish.canonicalInput = "gara";
     inputEnglish.segmentedInput = "gara";
     inputEnglish.englishPredictions = {"garage"};
 
@@ -268,7 +262,6 @@ TEST_F(ArchitectureCompositionRegression, EnglishPriorityAndDualAttributeCan) {
 TEST_F(ArchitectureCompositionRegression, FinalSuppressionUnifiedBoundary) {
     CandidateCompositionInput input;
     input.rawInput = "test";
-    input.canonicalInput = "test";
     input.segmentedInput = "test";
 
     core::CandidateItem goodItem;
@@ -315,7 +308,6 @@ TEST_F(ArchitectureCompositionRegression, FinalSuppressionUnifiedBoundary) {
 TEST_F(ArchitectureCompositionRegression, MovesTraceCappedAt256AndDisabledByDefault) {
     CandidateCompositionInput input;
     input.rawInput = "test";
-    input.canonicalInput = "test";
     input.segmentedInput = "test";
     input.recordMoves = true;
 

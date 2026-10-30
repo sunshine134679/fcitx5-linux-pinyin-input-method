@@ -316,7 +316,7 @@ int main() {
     assertTrue(remeasuredLayout.candidates[2].displayText == hitTestHLayout.candidates[2].displayText,
                "candidate 2 semantic displayText unchanged after re-measure");
 
-    // Multi-page layout with visual page indicator test
+    // Page metadata must not reserve space or intercept candidate selection.
     modernime::core::CandidatePage multiPage;
     multiPage.preedit = "qingbangwodakaiwenjian";
     for (std::size_t i = 0; i < 14; ++i) {
@@ -327,32 +327,108 @@ int main() {
 
     const auto multiPageLayoutP1 = modernime::ui::CandidateBarLayout::measure(
         multiPage, metrics, [](std::string_view) { return 40.0; });
-    assertTrue(!multiPageLayoutP1.pageIndicatorText.empty(),
-               "multi-page layout generates non-empty page indicator text");
-    assertTrue(multiPageLayoutP1.pageIndicatorText == "1/2 ►",
-               "page 1 indicator displays 1/2 ►");
-    assertTrue(multiPageLayoutP1.pageIndicator.width >= 36.0,
-               "page indicator reserves >= 36px width");
-    assertTrue(multiPageLayoutP1.pageIndicator.x + multiPageLayoutP1.pageIndicator.width <=
-                   metrics.panelX + metrics.panelWidth,
-               "page indicator stays within panel right edge");
-    if (!multiPageLayoutP1.candidates.empty()) {
-        const auto &lastCand = multiPageLayoutP1.candidates.back().bounds;
-        assertTrue(lastCand.x + lastCand.width <= multiPageLayoutP1.pageIndicator.x,
-                   "candidates do not overlap page indicator");
-    }
-    // Hit test on indicator area must return -1
-    const double indX = multiPageLayoutP1.pageIndicator.x + multiPageLayoutP1.pageIndicator.width / 2.0;
-    const double indY = multiPageLayoutP1.pageIndicator.y + multiPageLayoutP1.pageIndicator.height / 2.0;
-    assertTrue(modernime::ui::hitTestCandidate(multiPageLayoutP1, metrics, indX, indY) == -1,
-               "hit test on page indicator returns -1 to avoid false candidate selection");
-
-    // Test page 2 indicator text
-    multiPage.cursor = 7;
-    const auto multiPageLayoutP2 = modernime::ui::CandidateBarLayout::measure(
+    multiPage.pageBoundaries.clear();
+    const auto withoutPageMetadata = modernime::ui::CandidateBarLayout::measure(
         multiPage, metrics, [](std::string_view) { return 40.0; });
-    assertTrue(multiPageLayoutP2.pageIndicatorText == "◄ 2/2",
-               "page 2 indicator displays ◄ 2/2");
+    assertTrue(multiPageLayoutP1.candidates.size() ==
+                   withoutPageMetadata.candidates.size(),
+               "page metadata does not reduce visible candidate count");
+    for (std::size_t i = 0; i < multiPageLayoutP1.candidates.size(); ++i) {
+        const auto &candidate = multiPageLayoutP1.candidates[i];
+        const auto &expected = withoutPageMetadata.candidates[i];
+        assertTrue(candidate.displayText == expected.displayText &&
+                       candidate.bounds.x == expected.bounds.x &&
+                       candidate.bounds.width == expected.bounds.width,
+                   "page metadata leaves candidate content and geometry unchanged");
+        assertTrue(modernime::ui::hitTestCandidate(
+                       multiPageLayoutP1, metrics,
+                       candidate.bounds.x + candidate.bounds.width / 2.0,
+                       candidate.bounds.y + candidate.bounds.height / 2.0) ==
+                       static_cast<int>(i),
+                   "every candidate remains selectable including the rightmost one");
+    }
+
+    // AR03 / A04 regression test:
+    // Candidate 0 with reading hint ("卡住", readingHint="qiǎ") + Candidate 1 ("你").
+    // Under critical panel width (150px), reading hint must be taken into account during pagination.
+    // Partition plans exactly 1 candidate on page 1, and CandidateBarLayout draws exactly 1 candidate on page 1.
+    // Planned count equals drawn count on both pages (no planned 2 drawn 1 mismatch).
+    // Hit testing correctly selects Candidate 0 on page 1, and Candidate 1 on page 2.
+    {
+        modernime::core::CandidateItem a;
+        a.text = "卡住";
+        a.fullPinyin = "ka'zhu";
+        a.readingHint = "qiǎ";
+        a.readingHintAfterCharIndex = 0;
+        a.sourceIndex = 0;
+        a.source = modernime::core::CandidateSource::Engine;
+        a.commitRole = modernime::core::CommitCandidateRole::Chinese;
+
+        modernime::core::CandidateItem b;
+        b.text = "你";
+        b.fullPinyin = "ni";
+        b.sourceIndex = 1;
+        b.source = modernime::core::CandidateSource::Engine;
+        b.commitRole = modernime::core::CommitCandidateRole::Chinese;
+
+        modernime::core::CandidatePage page;
+        page.items = {a, b};
+
+        auto testMetrics = modernime::ui::CandidateBarMetrics::reference();
+        testMetrics.panelWidth = 150.0;
+        testMetrics.horizontalPadding = 0.0;
+        testMetrics.candidateGap = 0.0;
+        testMetrics.candidateTextPadding = 0.0;
+        testMetrics.selectedTextPadding = 0.0;
+        testMetrics.candidateWidth = 0.0;
+        testMetrics.selectedWidth = 0.0;
+
+        auto textMeasure = [](std::string_view s) {
+            return static_cast<double>(s.size() * 10);
+        };
+
+        const auto boundaries = modernime::ui::CandidatePagination::partition(
+            page.items, testMetrics, textMeasure);
+        assertTrue(boundaries.size() == 2,
+                   "pagination partitions two candidates into two separate pages");
+        assertTrue(boundaries[0].begin == 0 && boundaries[0].end == 1,
+                   "page 1 plans exactly 1 candidate");
+        assertTrue(boundaries[1].begin == 1 && boundaries[1].end == 2,
+                   "page 2 plans exactly 1 candidate");
+
+        // Page 1 layout
+        page.pageBoundaries = boundaries;
+        page.cursor = 0;
+        modernime::core::CandidatePage p1Page = page;
+        p1Page.items = {a};
+        const auto p1Layout = modernime::ui::CandidateBarLayout::measure(
+            p1Page, testMetrics, textMeasure);
+        assertTrue(p1Layout.candidates.size() == 1,
+                   "drawn candidate count on page 1 matches planned count (1)");
+        assertTrue(p1Layout.candidates[0].displayText == "1.卡住",
+                   "candidate 0 on page 1 is 1.卡住");
+        assertTrue(modernime::ui::hitTestCandidate(
+                       p1Layout, testMetrics,
+                       p1Layout.candidates[0].bounds.x + 10.0,
+                       p1Layout.candidates[0].bounds.y + 10.0) == 0,
+                   "hit testing page 1 hits candidate 0");
+
+        // Page 2 layout
+        modernime::core::CandidatePage p2Page = page;
+        p2Page.cursor = 1;
+        p2Page.items = {b};
+        const auto p2Layout = modernime::ui::CandidateBarLayout::measure(
+            p2Page, testMetrics, textMeasure);
+        assertTrue(p2Layout.candidates.size() == 1,
+                   "drawn candidate count on page 2 matches planned count (1)");
+        assertTrue(p2Layout.candidates[0].displayText == "1.你",
+                   "candidate 1 on page 2 is 1.你");
+        assertTrue(modernime::ui::hitTestCandidate(
+                       p2Layout, testMetrics,
+                       p2Layout.candidates[0].bounds.x + 10.0,
+                       p2Layout.candidates[0].bounds.y + 10.0) == 0,
+                   "hit testing page 2 hits candidate");
+    }
 
     return EXIT_SUCCESS;
 }

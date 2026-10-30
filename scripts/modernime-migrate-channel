@@ -110,6 +110,25 @@ if [[ -z "$from_prefix" ]]; then
     fi
 fi
 
+# Locate and source lifecycle helpers early for boundary and safe removal verification
+lifecycle_sh=""
+if [[ -n "$project_root" && -f "$project_root/scripts/install_lifecycle.sh" ]]; then
+    lifecycle_sh="$project_root/scripts/install_lifecycle.sh"
+elif [[ -f "$from_prefix/share/modernime/install_lifecycle.sh" ]]; then
+    lifecycle_sh="$from_prefix/share/modernime/install_lifecycle.sh"
+elif [[ -f "$script_dir/install_lifecycle.sh" ]]; then
+    lifecycle_sh="$script_dir/install_lifecycle.sh"
+elif [[ -f "$script_dir/../share/modernime/install_lifecycle.sh" ]]; then
+    lifecycle_sh="$script_dir/../share/modernime/install_lifecycle.sh"
+fi
+
+if [[ -z "$lifecycle_sh" ]]; then
+    printf 'Error: Required lifecycle safety helpers (install_lifecycle.sh) not available; aborting migration to protect prefix boundaries.\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$lifecycle_sh"
+
 find_data_guard() {
     if [[ -n "$project_root" && -x "$project_root/scripts/modernime-data-guard" ]]; then
         printf '%s\n' "$project_root/scripts/modernime-data-guard"
@@ -245,9 +264,14 @@ printf '[1/5] Inspecting source installation (channel=%s, version=%s, prefix=%s)
     "$detected_channel" "${detected_version:-unknown}" "$from_prefix"
 
 printf '[2/5] Creating verified transactional backup of user configuration and learning data...\n'
+user_backup_created=false
+user_backup_dir="$data_dir/backups/migrate-$ts"
 if ! "$data_guard_bin" --pre-upgrade --data-dir "$data_dir" --config-dir "$config_dir" --tag "migrate-$ts"; then
     printf 'Error: Pre-migration user data backup or integrity check failed; aborting migration. Original installation at %s is untouched.\n' "$from_prefix" >&2
     exit 1
+fi
+if [[ -f "$user_backup_dir/backup-manifest.json" ]]; then
+    user_backup_created=true
 fi
 
 # Copy data_guard_bin to a temporary path before removing old prefix files
@@ -286,9 +310,266 @@ fi
 
 package_attempted=false
 
+modernime_is_user_data_path() {
+    local p="$1"
+    local canon_p
+    canon_p=$(readlink -m -- "$p" 2>/dev/null || true)
+    [[ -z "$canon_p" ]] && canon_p="$p"
+
+    local canon_data canon_cfg
+    canon_data=$(readlink -m -- "$data_dir" 2>/dev/null || true)
+    [[ -z "$canon_data" ]] && canon_data="$data_dir"
+    canon_cfg=$(readlink -m -- "$config_dir" 2>/dev/null || true)
+    [[ -z "$canon_cfg" ]] && canon_cfg="$config_dir"
+
+    if [[ -n "$canon_cfg" && ("$canon_p" == "$canon_cfg" || "$canon_p" == "$canon_cfg"/*) ]]; then
+        return 0
+    fi
+
+    if [[ -n "$canon_data" && ("$canon_p" == "$canon_data" || "$canon_p" == "$canon_data"/*) ]]; then
+        local rel_data=""
+        if [[ "$canon_p" == "$canon_data"/* ]]; then
+            rel_data="${canon_p#"$canon_data/"}"
+        fi
+
+        case "$rel_data" in
+            "install-channel.txt" | "install-manifest.txt" | "install_lifecycle.sh" | \
+            "pinyin" | "pinyin/"* | "managed-files" | "managed-files/"* | "extensions" | "extensions/"*)
+                return 1
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    fi
+
+    local base_name
+    base_name=$(basename -- "$canon_p")
+    case "$base_name" in
+        user-dictionary.txt | learning.sqlite3* | learning.lmdb* | *.backup-*)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+modernime_dir_contains_user_data() {
+    local p="$1"
+    local canon_p
+    canon_p=$(readlink -m -- "$p" 2>/dev/null || true)
+    [[ -z "$canon_p" ]] && canon_p="$p"
+
+    local canon_data canon_cfg
+    canon_data=$(readlink -m -- "$data_dir" 2>/dev/null || true)
+    [[ -z "$canon_data" ]] && canon_data="$data_dir"
+    canon_cfg=$(readlink -m -- "$config_dir" 2>/dev/null || true)
+    [[ -z "$canon_cfg" ]] && canon_cfg="$config_dir"
+
+    if [[ -n "$canon_cfg" && ("$canon_cfg" == "$canon_p" || "$canon_cfg" == "$canon_p"/*) ]]; then
+        return 0
+    fi
+
+    if [[ -n "$canon_data" && ("$canon_data" == "$canon_p" || "$canon_data" == "$canon_p"/*) ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+target_backup_dir="$temp_work/target_backup"
+mkdir -p "$target_backup_dir"
+target_preexisting_list="$temp_work/target-preexisting.txt"
+: > "$target_preexisting_list"
+target_dir_mtime_list="$temp_work/target-dir-mtime.txt"
+: > "$target_dir_mtime_list"
+target_mtime_refs="$temp_work/target_mtime_refs"
+mkdir -p "$target_mtime_refs"
+
+dir_ref_idx=0
+record_target_dir_metadata() {
+    local dir_path="$1"
+    local rel_path="$2"
+    if grep -q -E "^${rel_path}\t" "$target_dir_mtime_list" 2>/dev/null; then
+        return 0
+    fi
+    dir_ref_idx=$((dir_ref_idx + 1))
+    local ref_file="$target_mtime_refs/ref_$dir_ref_idx"
+    local rc=0
+    touch -r "$dir_path" "$ref_file" 2>/dev/null || {
+        rc=$?
+        rm -f -- "$ref_file" 2>/dev/null || true
+        return "$rc"
+    }
+    chmod --reference="$dir_path" "$ref_file" 2>/dev/null || {
+        rc=$?
+        rm -f -- "$ref_file" 2>/dev/null || true
+        return "$rc"
+    }
+    printf '%s\t%s\n' "$rel_path" "$ref_file" >> "$target_dir_mtime_list"
+    return 0
+}
+
+for pre_file in \
+    "$target_prefix/bin/modernime-settings" \
+    "$target_prefix/bin/modernime-session-init" \
+    "$target_prefix/bin/modernime-data-guard" \
+    "$target_prefix/bin/modernime-migrate-channel" \
+    "$target_prefix/share/applications/modernime-settings.desktop" \
+    "$target_prefix/share/fcitx5/addon/modernime.conf" \
+    "$target_prefix/share/fcitx5/addon/modernime-ui.conf" \
+    "$target_prefix/share/fcitx5/inputmethod/modernime.conf" \
+    "$target_prefix/lib/fcitx5/modernime_fcitx5.so" \
+    "$target_prefix/lib/fcitx5/modernime_ui.so" \
+    "$target_prefix/lib64/fcitx5/modernime_fcitx5.so" \
+    "$target_prefix/lib64/fcitx5/modernime_ui.so" \
+    "$target_prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+    "$target_prefix/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so" \
+    "$target_prefix/lib/aarch64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+    "$target_prefix/lib/aarch64-linux-gnu/fcitx5/modernime_ui.so" \
+    "$target_prefix/share/modernime" \
+    "$target_prefix/share/doc/modernime"; do
+    if [[ -d "$pre_file" && ! -L "$pre_file" ]]; then
+        if [[ "$pre_file" == "$target_prefix"/* ]]; then
+            rel="${pre_file#"$target_prefix/"}"
+            if mkdir -p "$target_backup_dir/$rel"; then
+                :
+            else
+                cp_ec=$?
+                printf 'Error: Failed to create target backup directory %s (exit %d)\n' "$target_backup_dir/$rel" "$cp_ec" >&2
+                printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                exit "$cp_ec"
+            fi
+            chmod --reference="$pre_file" "$target_backup_dir/$rel" 2>/dev/null || true
+            record_target_dir_metadata "$pre_file" "$rel" || {
+                cp_ec=$?
+                printf 'Error: Failed to record directory metadata for %s (exit %d)\n' "$pre_file" "$cp_ec" >&2
+                printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                exit "$cp_ec"
+            }
+            if ! modernime_is_user_data_path "$pre_file" && ! modernime_dir_contains_user_data "$pre_file"; then
+                printf '%s\n' "$pre_file" >> "$target_preexisting_list"
+            fi
+            while IFS= read -r -d '' sub_item; do
+                if modernime_is_user_data_path "$sub_item"; then
+                    continue
+                fi
+                sub_rel="${sub_item#"$target_prefix/"}"
+                if [[ -d "$sub_item" && ! -L "$sub_item" ]]; then
+                    if mkdir -p "$target_backup_dir/$sub_rel"; then
+                        :
+                    else
+                        cp_ec=$?
+                        printf 'Error: Failed to create target backup directory %s (exit %d)\n' "$target_backup_dir/$sub_rel" "$cp_ec" >&2
+                        printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                        printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                        exit "$cp_ec"
+                    fi
+                    chmod --reference="$sub_item" "$target_backup_dir/$sub_rel" 2>/dev/null || true
+                    record_target_dir_metadata "$sub_item" "$sub_rel" || {
+                        cp_ec=$?
+                        printf 'Error: Failed to record directory metadata for %s (exit %d)\n' "$sub_item" "$cp_ec" >&2
+                        printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                        printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                        exit "$cp_ec"
+                    }
+                    if ! modernime_dir_contains_user_data "$sub_item"; then
+                        printf '%s\n' "$sub_item" >> "$target_preexisting_list"
+                    fi
+                elif [[ -e "$sub_item" || -L "$sub_item" ]]; then
+                    if mkdir -p "$target_backup_dir/$(dirname "$sub_rel")"; then
+                        :
+                    else
+                        cp_ec=$?
+                        printf 'Error: Failed to create parent directory for %s (exit %d)\n' "$target_backup_dir/$sub_rel" "$cp_ec" >&2
+                        printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                        printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                        exit "$cp_ec"
+                    fi
+                    if cp -a -- "$sub_item" "$target_backup_dir/$sub_rel"; then
+                        :
+                    else
+                        cp_ec=$?
+                        printf 'Error: Failed to back up existing target file %s to %s (exit %d)\n' "$sub_item" "$target_backup_dir/$sub_rel" "$cp_ec" >&2
+                        printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                        printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                        exit "$cp_ec"
+                    fi
+                    printf '%s\n' "$sub_item" >> "$target_preexisting_list"
+                fi
+            done < <(find "$pre_file" -mindepth 1 -print0 2>/dev/null)
+        fi
+    elif [[ -e "$pre_file" || -L "$pre_file" ]]; then
+        if ! modernime_is_user_data_path "$pre_file"; then
+            canon_pre=$(readlink -f -- "$pre_file" 2>/dev/null || true)
+            if [[ -n "$canon_pre" && "$canon_pre" != "$pre_file" ]]; then
+                if [[ "$canon_pre" == "$target_prefix"/* && ( -e "$canon_pre" || -L "$canon_pre" ) ]]; then
+                    if ! modernime_is_user_data_path "$canon_pre"; then
+                        canon_rel="${canon_pre#"$target_prefix/"}"
+                        rm -rf -- "$target_backup_dir/$canon_rel"
+                        if mkdir -p "$target_backup_dir/$(dirname "$canon_rel")"; then
+                            :
+                        else
+                            cp_ec=$?
+                            printf 'Error: Failed to create parent directory for %s (exit %d)\n' "$target_backup_dir/$canon_rel" "$cp_ec" >&2
+                            printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                            printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                            exit "$cp_ec"
+                        fi
+                        if cp -a -- "$canon_pre" "$target_backup_dir/$canon_rel"; then
+                            :
+                        else
+                            cp_ec=$?
+                            printf 'Error: Failed to back up target file %s to %s (exit %d)\n' "$canon_pre" "$target_backup_dir/$canon_rel" "$cp_ec" >&2
+                            printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                            printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                            exit "$cp_ec"
+                        fi
+                        printf '%s\n' "$canon_pre" >> "$target_preexisting_list"
+                    fi
+                fi
+            fi
+            if [[ "$pre_file" == "$target_prefix"/* ]]; then
+                rel="${pre_file#"$target_prefix/"}"
+                rm -rf -- "$target_backup_dir/$rel"
+                if mkdir -p "$target_backup_dir/$(dirname "$rel")"; then
+                    :
+                else
+                    cp_ec=$?
+                    printf 'Error: Failed to create parent directory for %s (exit %d)\n' "$target_backup_dir/$rel" >&2
+                    printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                    printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                    exit "$cp_ec"
+                fi
+                if cp -a -- "$pre_file" "$target_backup_dir/$rel"; then
+                    :
+                else
+                    cp_ec=$?
+                    printf 'Error: Failed to back up target file %s to %s (exit %d)\n' "$pre_file" "$target_backup_dir/$rel" "$cp_ec" >&2
+                    printf 'Pre-migration backup incomplete; aborting migration to protect existing installation.\n' >&2
+                    printf 'Transaction materials and diagnostics preserved at: %s\n' "$temp_work" >&2
+                    exit "$cp_ec"
+                fi
+                printf '%s\n' "$pre_file" >> "$target_preexisting_list"
+            fi
+        fi
+    fi
+done
+
 cleanup_target_prefix_files() {
     local pfx=$1
-    rm -f -- \
+    local canon_pfx
+    canon_pfx=$(modernime_canonical_prefix "$pfx" 2>/dev/null || true)
+    [[ -z "$canon_pfx" ]] && return 0
+    local is_sys=false
+    if [[ "${MODERNIME_FORCE_SYSTEM_PREFIX:-}" == "1" || "$canon_pfx" == "/usr" || "$canon_pfx" == "/usr/local" || "$canon_pfx" == "/opt"* ]]; then
+        is_sys=true
+    fi
+
+    local file canon_file
+    for file in \
         "$pfx/bin/modernime-settings" \
         "$pfx/bin/modernime-session-init" \
         "$pfx/bin/modernime-data-guard" \
@@ -296,19 +577,74 @@ cleanup_target_prefix_files() {
         "$pfx/share/applications/modernime-settings.desktop" \
         "$pfx/share/fcitx5/addon/modernime.conf" \
         "$pfx/share/fcitx5/addon/modernime-ui.conf" \
-        "$pfx/share/fcitx5/inputmethod/modernime.conf" 2>/dev/null || true
-    for d in \
-        "$pfx/lib/fcitx5" \
-        "$pfx/lib64/fcitx5" \
-        "$pfx/lib/x86_64-linux-gnu/fcitx5" \
-        "$pfx/lib/aarch64-linux-gnu/fcitx5"; do
-        rm -f -- "$d/modernime_fcitx5.so" "$d/modernime_ui.so" 2>/dev/null || true
+        "$pfx/share/fcitx5/inputmethod/modernime.conf" \
+        "$pfx/lib/fcitx5/modernime_fcitx5.so" \
+        "$pfx/lib/fcitx5/modernime_ui.so" \
+        "$pfx/lib64/fcitx5/modernime_fcitx5.so" \
+        "$pfx/lib64/fcitx5/modernime_ui.so" \
+        "$pfx/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+        "$pfx/lib/x86_64-linux-gnu/fcitx5/modernime_ui.so" \
+        "$pfx/lib/aarch64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+        "$pfx/lib/aarch64-linux-gnu/fcitx5/modernime_ui.so"; do
+        if [[ -e "$file" || -L "$file" ]]; then
+            if [[ -f "$target_preexisting_list" ]] && grep -Fxq "$file" "$target_preexisting_list" 2>/dev/null; then
+                continue
+            fi
+            canon_file=$(readlink -f -- "$file" 2>/dev/null || true)
+            if [[ -n "$canon_file" && -f "$target_preexisting_list" ]] && grep -Fxq "$canon_file" "$target_preexisting_list" 2>/dev/null; then
+                continue
+            fi
+            if ! modernime_is_safe_removal_target "$file" "$pfx" "$canon_pfx" "$is_sys"; then
+                continue
+            fi
+            rm -f -- "$file" 2>/dev/null || true
+        fi
     done
-    rm -rf -- "$pfx/share/modernime" "$pfx/share/doc/modernime" 2>/dev/null || true
+    if [[ -d "$pfx/share/modernime" ]]; then
+        while IFS= read -r -d '' item_path; do
+            if modernime_is_user_data_path "$item_path" || modernime_dir_contains_user_data "$item_path"; then
+                continue
+            fi
+            if [[ -f "$target_preexisting_list" ]] && grep -Fxq "$item_path" "$target_preexisting_list" 2>/dev/null; then
+                continue
+            fi
+            if [[ -d "$item_path" && ! -L "$item_path" ]]; then
+                rmdir -- "$item_path" 2>/dev/null || true
+            else
+                rm -f -- "$item_path" 2>/dev/null || true
+            fi
+        done < <(find "$pfx/share/modernime" -mindepth 1 -depth -print0 2>/dev/null)
+
+        if [[ ! -f "$target_preexisting_list" ]] || ! grep -Fxq "$pfx/share/modernime" "$target_preexisting_list" 2>/dev/null; then
+            if ! modernime_is_user_data_path "$pfx/share/modernime" && ! modernime_dir_contains_user_data "$pfx/share/modernime"; then
+                rmdir -- "$pfx/share/modernime" 2>/dev/null || true
+            fi
+        fi
+    fi
+    if [[ -d "$pfx/share/doc/modernime" ]]; then
+        while IFS= read -r -d '' item_path; do
+            if [[ -f "$target_preexisting_list" ]] && grep -Fxq "$item_path" "$target_preexisting_list" 2>/dev/null; then
+                continue
+            fi
+            if [[ -d "$item_path" && ! -L "$item_path" ]]; then
+                rmdir -- "$item_path" 2>/dev/null || true
+            else
+                rm -f -- "$item_path" 2>/dev/null || true
+            fi
+        done < <(find "$pfx/share/doc/modernime" -mindepth 1 -depth -print0 2>/dev/null)
+
+        if [[ ! -f "$target_preexisting_list" ]] || ! grep -Fxq "$pfx/share/doc/modernime" "$target_preexisting_list" 2>/dev/null; then
+            rmdir -- "$pfx/share/doc/modernime" 2>/dev/null || true
+        fi
+    fi
 }
 
 restore_original_channel() {
     printf '\n[ROLLBACK] Migration failed! Rolling back target package and restoring original script installation at %s...\n' "$from_prefix" >&2
+    local rollback_failed=false
+    local target_restore_failed=false
+    local source_restore_failed=false
+
     if [[ "$package_attempted" == true ]]; then
         if [[ -n "$package_rollback_cmd" ]]; then
             printf '[ROLLBACK] Uninstalling target %s package via: %s\n' "$to_channel" "$package_rollback_cmd" >&2
@@ -329,22 +665,87 @@ restore_original_channel() {
             fi
         fi
         cleanup_target_prefix_files "$target_prefix"
+        if [[ -d "$target_backup_dir" && -n "$(ls -A "$target_backup_dir" 2>/dev/null)" ]]; then
+            local cp_err_file="$temp_work/target_restore_cp.err"
+            if ! cp -a --remove-destination -- "$target_backup_dir/." "$target_prefix/" 2>"$cp_err_file"; then
+                target_restore_failed=true
+                rollback_failed=true
+                printf '[ROLLBACK] Error: Failed to restore target backup files from %s to %s\n' \
+                    "$target_backup_dir" "$target_prefix" >&2
+                if [[ -s "$cp_err_file" ]]; then
+                    sed 's/^/[ROLLBACK] /' "$cp_err_file" >&2
+                fi
+            fi
+        fi
+        if [[ "$target_restore_failed" == false && -f "$target_dir_mtime_list" ]]; then
+            while IFS=$'\t' read -r rel_dir ref_file; do
+                [[ -z "$rel_dir" || -z "$ref_file" || ! -f "$ref_file" ]] && continue
+                local target_dir="$target_prefix/$rel_dir"
+                if [[ -d "$target_dir" && ! -L "$target_dir" ]]; then
+                    if modernime_is_user_data_path "$target_dir" || modernime_dir_contains_user_data "$target_dir"; then
+                        continue
+                    fi
+                    if ! chmod --reference="$ref_file" "$target_dir" 2>"$temp_work/target_chmod.err"; then
+                        target_restore_failed=true
+                        rollback_failed=true
+                        printf '[ROLLBACK] Error: Failed to restore directory permissions for %s\n' "$target_dir" >&2
+                        if [[ -s "$temp_work/target_chmod.err" ]]; then
+                            sed 's/^/[ROLLBACK] /' "$temp_work/target_chmod.err" >&2
+                        fi
+                    fi
+                    if ! touch -r "$ref_file" "$target_dir" 2>"$temp_work/target_touch.err"; then
+                        target_restore_failed=true
+                        rollback_failed=true
+                        printf '[ROLLBACK] Error: Failed to restore directory timestamps for %s\n' "$target_dir" >&2
+                        if [[ -s "$temp_work/target_touch.err" ]]; then
+                            sed 's/^/[ROLLBACK] /' "$temp_work/target_touch.err" >&2
+                        fi
+                    fi
+                fi
+            done < "$target_dir_mtime_list"
+        fi
     fi
     if [[ -d "$rollback_prefix_dir" ]]; then
         mkdir -p "$from_prefix"
-        cp -a --remove-destination -- "$rollback_prefix_dir/." "$from_prefix/" 2>/dev/null || true
+        local src_err_file="$temp_work/source_restore_cp.err"
+        if ! cp -a --remove-destination -- "$rollback_prefix_dir/." "$from_prefix/" 2>"$src_err_file"; then
+            source_restore_failed=true
+            rollback_failed=true
+            printf '[ROLLBACK] Error: Failed to restore source files from %s to %s\n' \
+                "$rollback_prefix_dir" "$from_prefix" >&2
+        fi
     fi
     if [[ -d "$rollback_home_dir" ]]; then
         while IFS= read -r -d '' bak_file; do
             rel="${bak_file#"$rollback_home_dir/"}"
             dst="/$rel"
             mkdir -p "$(dirname "$dst")"
-            cp -a --remove-destination -- "$bak_file" "$dst" 2>/dev/null || true
+            if ! cp -a --remove-destination -- "$bak_file" "$dst" 2>/dev/null; then
+                source_restore_failed=true
+                rollback_failed=true
+            fi
         done < <(find "$rollback_home_dir" \( -type f -o -type l \) -print0)
     fi
-    "$temp_work/modernime-data-guard" --restore \
-        --data-dir "$data_dir" \
-        --config-dir "$config_dir" 2>/dev/null || true
+    if [[ "$user_backup_created" == true ]]; then
+        if ! "$temp_work/modernime-data-guard" --restore \
+            --data-dir "$data_dir" \
+            --config-dir "$config_dir" 2>/dev/null; then
+            rollback_failed=true
+            printf '[ROLLBACK] Warning: User data-guard restore reported errors.\n' >&2
+        fi
+    fi
+
+    if [[ "$rollback_failed" == true ]]; then
+        printf '[ROLLBACK] Warning: Rollback encountered errors; original installation may not be fully restored.\n' >&2
+        printf '[ROLLBACK] Transaction materials and backups preserved at: %s\n' "$temp_work" >&2
+        printf 'Recovery Instructions:\n' >&2
+        if [[ "$target_restore_failed" == true ]]; then
+            printf '  1. Inspect and manually restore target backup files from: %s/target_backup/\n' "$temp_work" >&2
+        fi
+        printf '  2. Verify your existing installation: %s/bin/modernime-settings --help\n' "$from_prefix" >&2
+        printf '  3. Check user data integrity: %s/bin/modernime-data-guard --verify\n' "$from_prefix" >&2
+        return 1 2>/dev/null || exit 1
+    fi
 
     printf '[ROLLBACK] Original installation restored (channel=script, version=%s, prefix=%s).\n' \
         "${detected_version:-unknown}" "$from_prefix" >&2
@@ -357,12 +758,21 @@ restore_original_channel() {
 
 printf '[4/5] Cleaning up old script-managed files from %s...\n' "$from_prefix"
 if [[ -n "$project_root" && -f "$project_root/uninstall.sh" ]]; then
-    MODERNIME_PREFIX="$from_prefix" MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/uninstall.sh" --prefix="$from_prefix" >/dev/null 2>&1 || true
+    if ! MODERNIME_PREFIX="$from_prefix" MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/uninstall.sh" --prefix="$from_prefix" >/dev/null 2>&1; then
+        printf 'Error: Safe uninstall of old installation failed.\n' >&2
+        restore_original_channel
+        exit 1
+    fi
 fi
+
 # Ensure all recorded script files in from_prefix are removed before package installation
 while IFS= read -r item; do
     [[ -z "$item" ]] && continue
     if [[ "$item" == "$from_prefix/"* && ( -e "$item" || -L "$item" ) ]]; then
+        if ! modernime_is_safe_removal_target "$item" "$from_prefix"; then
+            printf 'Warning: Skipping unsafe removal target: %s\n' "$item" >&2
+            continue
+        fi
         rm -f -- "$item" 2>/dev/null || true
     fi
 done < "$managed_list"

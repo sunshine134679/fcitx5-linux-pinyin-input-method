@@ -50,7 +50,6 @@ struct CandidateMoveRecord {
 
 struct CandidateCompositionInput {
     std::string_view rawInput;
-    std::string_view canonicalInput;
     std::string_view segmentedInput;
 
     std::vector<core::CandidateItem> fullCandidates;
@@ -62,8 +61,6 @@ struct CandidateCompositionInput {
     std::vector<std::string> englishPredictions;
     std::size_t learnedEnglishCount = 0;
     bool isEnglishWord = false;
-    bool hasPinyinCoverage = true;
-    bool hasInvalidInternalPinyinSegment = false;
 
     bool clipboardEnabled = false;
     std::string clipboardTrigger = "v";
@@ -107,5 +104,30 @@ std::size_t pinyinSyllableCount(std::string_view fullPinyin);
 
 // Helper for utf8 code point count
 std::size_t utf8CodePointCount(std::string_view text);
+
+// Pure language fact evaluations shared between provider and composer
+bool isInitialConsonantInput(std::string_view rawInput);
+
+bool isConsonantAbbreviationInput(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items);
+
+bool hasExactFullPinyinMatch(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items);
+
+bool hasTrustedShortAbbreviation(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items);
+
+bool isTopChineseLexical(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items,
+    const std::function<bool(std::string_view text, std::string_view pinyin)> &isLexicalWord = nullptr);
+
+bool hasHighConfidenceChinese(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items,
+    const std::function<bool(std::string_view text, std::string_view pinyin)> &isLexicalWord = nullptr);
 
 } // namespace modernime::pinyin

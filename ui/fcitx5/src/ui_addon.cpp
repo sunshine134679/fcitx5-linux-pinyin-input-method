@@ -493,6 +493,22 @@ void configureWindow(GtkWidget *window) {
     }
 }
 
+core::CandidateItem projectCandidateItem(const fcitx::CandidateWord &candidate,
+                                         std::size_t sourceIndex) {
+    core::CandidateItem item;
+    item.text = candidate.text().toString();
+    if (const auto *word =
+            dynamic_cast<const fcitx5::FcitxCandidateWord *>(&candidate)) {
+        item.annotation = word->annotation();
+        // 易错音内联读音提示（卡qiǎ住）必须随候选词重建回页面
+        // （2026-10-25 实机事故：该字段曾在此丢失导致提示不显示）。
+        item.readingHint = word->readingHint();
+        item.readingHintAfterCharIndex = word->readingHintAfterCharIndex();
+    }
+    item.sourceIndex = sourceIndex;
+    return item;
+}
+
 core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
     core::CandidatePage page;
     page.preedit = panel.preedit().toString();
@@ -515,18 +531,8 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
                                : variableCandidates->pageBegin();
     for (int index = 0; index < candidates->size(); ++index) {
         const auto &candidate = candidates->candidate(index);
-        core::CandidateItem item;
-        item.text = candidate.text().toString();
-        if (const auto *word =
-                dynamic_cast<const fcitx5::FcitxCandidateWord *>(&candidate)) {
-            item.annotation = word->annotation();
-            // 易错音内联读音提示（卡qiǎ住）必须随候选词重建回页面
-            // （2026-10-25 实机事故：该字段曾在此丢失导致提示不显示）。
-            item.readingHint = word->readingHint();
-            item.readingHintAfterCharIndex = word->readingHintAfterCharIndex();
-        }
-        item.sourceIndex = pageBegin + static_cast<std::size_t>(index);
-        page.items.push_back(std::move(item));
+        page.items.push_back(
+            projectCandidateItem(candidate, pageBegin + static_cast<std::size_t>(index)));
     }
     return page;
 }
@@ -685,14 +691,8 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
                 allItems.reserve(static_cast<std::size_t>(std::max(0, total)));
                 for (int index = 0; index < total; ++index) {
                     const auto &cand = bulk->candidateFromAll(index);
-                    core::CandidateItem item;
-                    item.text = cand.text().toString();
-                    if (const auto *word =
-                            dynamic_cast<const fcitx5::FcitxCandidateWord *>(&cand)) {
-                        item.annotation = word->annotation();
-                    }
-                    item.sourceIndex = static_cast<std::size_t>(index);
-                    allItems.push_back(std::move(item));
+                    allItems.push_back(
+                        projectCandidateItem(cand, static_cast<std::size_t>(index)));
                 }
                 variableCandidates->setPageBoundaries(
                     CandidatePagination::partition(allItems, impl_->metrics,

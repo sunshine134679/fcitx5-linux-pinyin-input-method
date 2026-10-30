@@ -66,6 +66,7 @@ void saveWithoutBlocking(GtkWidget *save) {
 } // namespace
 
 int main(int argc, char **argv) {
+    ::setenv("MODERNIME_TEST_ALLOW_MOCK_INSTANCE", "1", 1);
     if (!gtk_init_check(&argc, &argv)) {
         return 77;
     }
@@ -121,7 +122,7 @@ int main(int argc, char **argv) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), !initial);
         saveWithoutBlocking(save);
         const auto firstHash = modernime::core::computeFileContentHash(paths.settingsFile);
-        std::ofstream(paths.runtimeState) << "applied_content_hash=" << firstHash << '\n';
+        std::ofstream(paths.runtimeState) << "applied_content_hash=" << firstHash << "\npid=" << getpid() << '\n';
 
         // A second save while the first probe runs must report the second hash.
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), initial);

@@ -3,9 +3,13 @@
 #include "modernime/core/learning_store.h"
 
 #include <cmath>
+#include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <sys/file.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 
@@ -81,10 +85,35 @@ std::vector<std::size_t> DataController::filterDictionary(
     return indices;
 }
 
+DictionarySnapshot DataController::loadDictionaryForEditing(
+    const std::filesystem::path &path) {
+    notifyIoHook("loadDictionaryForEditing");
+    notifyIoHook("loadDictionary");
+    const auto raw = pinyin::UserDictionary::loadSnapshot(path);
+    DictionarySnapshot snapshot;
+    snapshot.exists = raw.exists;
+    snapshot.contentHash = raw.contentHash;
+    snapshot.entries = raw.entries;
+    snapshot.error = raw.error;
+    for (const auto &diag : raw.diagnostics) {
+        snapshot.diagnostics.push_back({diag.lineNumber, diag.lineContent, diag.reason});
+    }
+
+    if (!raw.exists) {
+        snapshot.status = DictionaryLoadStatus::NonExistent;
+    } else if (!raw.readable) {
+        snapshot.status = DictionaryLoadStatus::IoError;
+    } else if (!snapshot.diagnostics.empty()) {
+        snapshot.status = DictionaryLoadStatus::CorruptedLines;
+    } else {
+        snapshot.status = DictionaryLoadStatus::Success;
+    }
+    return snapshot;
+}
+
 std::vector<pinyin::UserDictionaryEntry> DataController::loadDictionary(
     const std::filesystem::path &path) {
-    notifyIoHook("loadDictionary");
-    return pinyin::UserDictionary::loadText(path).entries();
+    return loadDictionaryForEditing(path).entries;
 }
 
 float DataController::normalizeImportedWeight(float rawWeight) noexcept {
@@ -275,6 +304,11 @@ bool DataController::createDictionaryBackup(
     if (!std::filesystem::exists(path, ec)) {
         return true;
     }
+    const auto originalSnapshot = pinyin::UserDictionary::loadSnapshot(path);
+    if (!originalSnapshot.readable) {
+        setError(error, "无法读取原词典文件进行备份");
+        return false;
+    }
     const auto backupPath = path.string() + ".bak";
     if (backupPathOut != nullptr) {
         *backupPathOut = backupPath;
@@ -286,14 +320,9 @@ bool DataController::createDictionaryBackup(
         setError(error, "无法创建词典备份文件：" + ec.message());
         return false;
     }
-    if (!std::filesystem::exists(backupPath, ec)) {
-        setError(error, "词典备份文件写入验证失败");
-        return false;
-    }
-    const auto originalEntries = loadDictionary(path);
-    const auto backupEntries = loadDictionary(backupPath);
-    if (originalEntries.size() != backupEntries.size()) {
-        setError(error, "词典备份内容校验未通过（条目数不一致）");
+    const auto backupSnapshot = pinyin::UserDictionary::loadSnapshot(backupPath);
+    if (!backupSnapshot.readable || backupSnapshot.contentHash != originalSnapshot.contentHash) {
+        setError(error, "词典备份内容校验未通过（内容哈希不一致）");
         return false;
     }
     if (error != nullptr) {
@@ -302,31 +331,94 @@ bool DataController::createDictionaryBackup(
     return true;
 }
 
-bool DataController::saveDictionary(
+DictionarySaveResult DataController::saveDictionaryIfUnchanged(
     const std::filesystem::path &path,
     const std::vector<pinyin::UserDictionaryEntry> &entries,
+    const DictionaryExpectedBaseline &expectedBaseline,
     std::string *error) {
+    notifyIoHook("saveDictionaryIfUnchanged");
     notifyIoHook("saveDictionary");
-    const auto setError = [error](std::string message) {
+    const auto setErr = [error](std::string message) {
         if (error != nullptr) {
             *error = std::move(message);
         }
     };
-    pinyin::UserDictionary dictionary;
-    for (const auto &entry : entries) {
-        if (!dictionary.upsert(entry.pinyin, entry.phrase, entry.weight)) {
-            setError("用户词典包含无效词条");
-            return false;
-        }
-    }
-    if (!dictionary.saveText(path)) {
-        setError("无法保存用户词典");
-        return false;
-    }
     if (error != nullptr) {
         error->clear();
     }
-    return true;
+    if (path.empty()) {
+        setErr("用户词典路径为空");
+        return DictionarySaveResult::Invalid;
+    }
+
+    // Advisory lock using flock on .lock file
+    const auto lockPath = path.string() + ".lock";
+    int lockFd = open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (lockFd < 0) {
+        setErr("无法获取词典锁文件: " + std::string(strerror(errno)));
+        return DictionarySaveResult::IoError;
+    }
+    struct LockGuard {
+        int fd = -1;
+        ~LockGuard() {
+            if (fd >= 0) {
+                flock(fd, LOCK_UN);
+                close(fd);
+            }
+        }
+    } guard;
+    if (flock(lockFd, LOCK_EX) != 0) {
+        close(lockFd);
+        setErr("无法锁定词典文件: " + std::string(strerror(errno)));
+        return DictionarySaveResult::IoError;
+    }
+    guard.fd = lockFd;
+
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+
+    if (expectedBaseline.kind == DictionaryExpectedBaseline::Kind::ExpectNonExistent) {
+        if (exists) {
+            setErr("词典保存冲突：文件已被外部创建");
+            return DictionarySaveResult::Conflict;
+        }
+    } else if (expectedBaseline.kind == DictionaryExpectedBaseline::Kind::ExpectHash) {
+        if (!exists) {
+            setErr("词典保存冲突：原词典文件已被外部删除");
+            return DictionarySaveResult::Conflict;
+        }
+        const auto currentSnapshot = pinyin::UserDictionary::loadSnapshot(path);
+        if (!currentSnapshot.readable) {
+            setErr("无法读取现有词典进行冲突校验");
+            return DictionarySaveResult::IoError;
+        }
+        if (currentSnapshot.contentHash != expectedBaseline.contentHash) {
+            setErr("词典保存冲突：文件内容已被外部修改");
+            return DictionarySaveResult::Conflict;
+        }
+    }
+
+    pinyin::UserDictionary dictionary;
+    for (const auto &entry : entries) {
+        if (!dictionary.upsert(entry.pinyin, entry.phrase, entry.weight)) {
+            setErr("用户词典包含无效词条");
+            return DictionarySaveResult::Invalid;
+        }
+    }
+    if (!dictionary.saveText(path)) {
+        setErr("无法保存用户词典");
+        return DictionarySaveResult::IoError;
+    }
+    return DictionarySaveResult::Saved;
+}
+
+bool DataController::saveDictionary(
+    const std::filesystem::path &path,
+    const std::vector<pinyin::UserDictionaryEntry> &entries,
+    std::string *error) {
+    return saveDictionaryIfUnchanged(path, entries,
+                                    DictionaryExpectedBaseline::unchecked(),
+                                    error) == DictionarySaveResult::Saved;
 }
 
 std::size_t DataController::learningEntryCount(
@@ -402,20 +494,16 @@ bool DataController::backupAndClearLearning(
         setError("unable to create learning backup");
         return false;
     }
+    notifyIoHook("backupAndClearLearning:afterBackup");
 
-    const auto expectedCount = store.entryCount();
+    // Self-verify the backup itself rather than comparing with the continuing live store.
     core::LearningStore verification(backupPath);
-    if (!verification.openReadOnly()) {
+    if (!verification.openReadOnly() || !verification.verifySelf()) {
         setError("learning backup could not be verified");
         return false;
     }
-    const auto verifiedCount = verification.entryCount();
     verification.close();
-    if (!verifiedCount.has_value() ||
-        (expectedCount.has_value() && *verifiedCount != *expectedCount)) {
-        setError("learning backup could not be verified");
-        return false;
-    }
+
     if (!store.clear()) {
         setError("unable to clear learning database");
         return false;

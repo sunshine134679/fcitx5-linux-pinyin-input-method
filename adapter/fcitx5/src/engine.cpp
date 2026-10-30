@@ -393,7 +393,25 @@ void ModernIMEController::finalizeRecentCommitDeletion() {
 
 void ModernIMEController::setContext(std::string before, std::string after,
                                      ContextAvailability availability) {
+    if (inSetContext_) {
+        return;
+    }
+    inSetContext_ = true;
+    struct ReentrancyGuard {
+        bool &flag;
+        ~ReentrancyGuard() { flag = false; }
+    } guard{inSetContext_};
+
     if (sensitive_) { availability = ContextAvailability::Invalidated; }
+
+    const bool availabilityChanged = (availability != contextAvailability_);
+    const bool contentChanged = (availability == ContextAvailability::Valid)
+                                    ? (before != contextBefore_ || after != contextAfter_)
+                                    : false;
+    if (!availabilityChanged && !contentChanged) {
+        return;
+    }
+
     if (availability == ContextAvailability::Valid) {
         checkRecentCommitDeletionFeedback(before, after);
         contextBefore_ = std::move(before);
@@ -422,8 +440,15 @@ void ModernIMEController::setContext(std::string before, std::string after,
         provider_->setContext(contextBefore_, contextAfter_);
     }
     if (!page_.items.empty()) {
-        displayGeneration_++;
-        page_.displayGeneration = displayGeneration_;
+        if (clipboardMode_) {
+            displayGeneration_++;
+            page_.displayGeneration = displayGeneration_;
+            host_.publishPage(page_);
+        } else if (provider_ != nullptr) {
+            publishProviderPage();
+        } else {
+            refreshPage();
+        }
     }
 }
 
@@ -1045,7 +1070,6 @@ void ModernIMEController::setSensitive(bool sensitive) {
         return;
     }
     sensitive_ = sensitive;
-    displayGeneration_++;
     if (sensitive_) {
         recentCommit_.valid = false;
         contextAvailability_ = ContextAvailability::Invalidated;
@@ -1061,14 +1085,23 @@ void ModernIMEController::setSensitive(bool sensitive) {
         provider_->setLearningEnabled(options_.learningEnabled);
         provider_->setContextLearningEnabled(options_.contextLearningEnabled);
     }
-    if (provider_ != nullptr && !page_.items.empty()) {
-        publishProviderPage();
+    if (!page_.items.empty()) {
+        if (clipboardMode_) {
+            displayGeneration_++;
+            page_.displayGeneration = displayGeneration_;
+            host_.publishPage(page_);
+        } else if (provider_ != nullptr) {
+            publishProviderPage();
+        } else {
+            refreshPage();
+        }
+    } else {
+        displayGeneration_++;
     }
 }
 
 void ModernIMEController::setOptions(ControllerOptions options) {
     options_ = options;
-    displayGeneration_++;
     if (!options_.learningEnabled) { recentCommit_.valid = false; }
     if (provider_ != nullptr && !sensitive_) {
         provider_->setLearningEnabled(options_.learningEnabled);
@@ -1076,8 +1109,18 @@ void ModernIMEController::setOptions(ControllerOptions options) {
     }
     if (!options_.inputEnabled) {
         reset();
-    } else if (provider_ != nullptr && !page_.items.empty()) {
-        publishProviderPage();
+    } else if (!page_.items.empty()) {
+        if (clipboardMode_) {
+            displayGeneration_++;
+            page_.displayGeneration = displayGeneration_;
+            host_.publishPage(page_);
+        } else if (provider_ != nullptr) {
+            publishProviderPage();
+        } else {
+            refreshPage();
+        }
+    } else {
+        displayGeneration_++;
     }
 }
 

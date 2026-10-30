@@ -192,10 +192,11 @@ private:
     void buildPage() {
         auto *section = createSectionCard(
             "运行状态", "如果状态异常，可以在这里重新加载 ModernIME。");
+        addStyleClass(section, "modernime-diagnostics-card");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
         statusBanner = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-        addStyleClass(statusBanner, "modernime-status-banner");
+        addStyleClass(statusBanner, "modernime-runtime-summary");
         statusIcon = gtk_image_new_from_icon_name("dialog-information-symbolic",
                                                   GTK_ICON_SIZE_BUTTON);
         gtk_widget_set_valign(statusIcon, GTK_ALIGN_CENTER);
@@ -208,30 +209,22 @@ private:
         gtk_box_pack_start(GTK_BOX(statusBanner), statusMessage, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(section), statusBanner, FALSE, FALSE, 0);
 
-        auto *statusGrid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(statusGrid), 10);
-        gtk_grid_set_column_spacing(GTK_GRID(statusGrid), 24);
+        auto *statusRows = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         const auto labels = settingsRuntimeStatusLabels();
-        const auto addStatusRow = [statusGrid](int row,
-                                               std::string_view title,
+        const auto addStatusRow = [statusRows](std::string_view title,
                                                GtkWidget **value) {
-            auto *label = gtk_label_new(std::string(title).c_str());
-            addStyleClass(label, "modernime-description");
-            gtk_widget_set_halign(label, GTK_ALIGN_START);
-            gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
-            gtk_grid_attach(GTK_GRID(statusGrid), label, 0, row, 1, 1);
-
             *value = gtk_label_new("检测中…");
             applyStatusBadge(*value, "检测中…");
-            gtk_widget_set_halign(*value, GTK_ALIGN_START);
+            addStyleClass(*value, "modernime-diagnostics-value");
             gtk_widget_set_valign(*value, GTK_ALIGN_CENTER);
-            gtk_grid_attach(GTK_GRID(statusGrid), *value, 1, row, 1, 1);
+            gtk_box_pack_start(GTK_BOX(statusRows),
+                               createSettingRow(title, "", *value), FALSE, FALSE, 0);
         };
-        addStatusRow(0, labels[0], &availability);
-        addStatusRow(1, labels[1], &service);
-        addStatusRow(2, labels[2], &inputMethod);
-        addStatusRow(3, labels[3], &modernime);
-        gtk_box_pack_start(GTK_BOX(section), statusGrid, FALSE, FALSE, 0);
+        addStatusRow(labels[0], &availability);
+        addStatusRow(labels[1], &service);
+        addStatusRow(labels[2], &inputMethod);
+        addStatusRow(labels[3], &modernime);
+        gtk_box_pack_start(GTK_BOX(section), statusRows, FALSE, FALSE, 0);
 
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
         gtk_widget_set_margin_top(actions, 18);

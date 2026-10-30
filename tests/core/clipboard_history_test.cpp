@@ -79,6 +79,13 @@ int main() {
     std::string error;
     assertTrue(persisted.save(path, &error),
                "clipboard history saves: " + error);
+    const auto perms = std::filesystem::status(path).permissions();
+    assertTrue((perms & (std::filesystem::perms::group_all | std::filesystem::perms::others_all)) ==
+                   std::filesystem::perms::none,
+               "clipboard history file has no group or other permissions (0600)");
+    assertTrue((perms & (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write)) ==
+                   (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write),
+               "clipboard history file has owner read and write permissions");
     modernime::core::ClipboardHistory reloaded;
     assertTrue(reloaded.load(path, &error),
                "clipboard history loads: " + error);

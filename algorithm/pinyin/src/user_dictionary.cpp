@@ -5,17 +5,32 @@
 #include <libime/pinyin/pinyindictionary.h>
 #include <libime/pinyin/pinyinencoder.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <fstream>
-#include <algorithm>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 
 namespace modernime::pinyin {
 namespace {
+
+std::atomic<std::uint64_t> gTempCounter{1};
+
+std::string fnv1a64Hex(std::string_view text) {
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const char character : text) {
+        hash ^= static_cast<std::uint8_t>(character);
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream ss;
+    ss << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return ss.str();
+}
 
 std::string keyFor(std::string_view pinyin, std::string_view phrase) {
     std::string key = modernime::core::normalizePinyin(pinyin);
@@ -149,17 +164,50 @@ std::string segmentedPinyin(std::string_view pinyin) {
 
 } // namespace
 
-UserDictionary UserDictionary::loadText(
+UserDictionarySnapshot UserDictionary::loadSnapshot(
     const std::filesystem::path &path) {
-    UserDictionary dictionary;
-    std::ifstream input(path);
-    if (!input) {
-        return dictionary;
+    UserDictionarySnapshot snapshot;
+    if (path.empty()) {
+        snapshot.error = "词典路径为空";
+        return snapshot;
     }
 
+    std::error_code ec;
+    snapshot.exists = std::filesystem::exists(path, ec);
+    if (!snapshot.exists) {
+        return snapshot;
+    }
+
+    if (std::filesystem::is_directory(path, ec)) {
+        snapshot.readable = false;
+        snapshot.error = "路径是一个目录，无法作为用户词典";
+        return snapshot;
+    }
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        snapshot.readable = false;
+        snapshot.error = "无法打开词典文件读取";
+        return snapshot;
+    }
+
+    std::string content((std::istreambuf_iterator<char>(input)),
+                        std::istreambuf_iterator<char>());
+    if (input.bad()) {
+        snapshot.readable = false;
+        snapshot.error = "读取词典文件中断";
+        return snapshot;
+    }
+    snapshot.readable = true;
+    snapshot.contentHash = fnv1a64Hex(content);
+
     std::unordered_map<std::string, std::size_t> positions;
+    std::istringstream stream(content);
     std::string line;
-    while (std::getline(input, line)) {
+    std::size_t lineNumber = 0;
+
+    while (std::getline(stream, line)) {
+        ++lineNumber;
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
@@ -174,37 +222,69 @@ UserDictionary UserDictionary::loadText(
         if (!std::getline(fields, pinyin, '\t') ||
             !std::getline(fields, phrase, '\t') ||
             !std::getline(fields, weightText, '\t') ||
-            std::getline(fields, extra, '\t') ||
-            pinyin.empty() || phrase.empty() || !validUtf8(phrase)) {
+            std::getline(fields, extra, '\t')) {
+            snapshot.diagnostics.push_back(
+                {lineNumber, line, "列数错误（需要拼音、词组、权重三列，以Tab分隔）"});
+            continue;
+        }
+        if (pinyin.empty()) {
+            snapshot.diagnostics.push_back({lineNumber, line, "拼音为空"});
             continue;
         }
         if (!validUserPinyin(pinyin)) {
+            snapshot.diagnostics.push_back({lineNumber, line, "无效的拼音格式"});
+            continue;
+        }
+        if (phrase.empty()) {
+            snapshot.diagnostics.push_back({lineNumber, line, "词组为空"});
+            continue;
+        }
+        if (!validUtf8(phrase)) {
+            snapshot.diagnostics.push_back({lineNumber, line, "词组包含非法的UTF-8字符"});
             continue;
         }
         try {
             std::size_t consumed = 0;
             const auto weight = std::stof(weightText, &consumed);
-            if (!std::isfinite(weight) || weight < 0.0F) {
-                continue;
-            }
-            if (consumed != weightText.size()) {
+            if (!std::isfinite(weight) || weight < 0.0F || consumed != weightText.size()) {
+                snapshot.diagnostics.push_back({lineNumber, line, "无效的权重数值"});
                 continue;
             }
             const auto normalized = modernime::core::normalizePinyin(pinyin);
             if (normalized.empty()) {
+                snapshot.diagnostics.push_back({lineNumber, line, "拼音规范化失败"});
                 continue;
             }
             UserDictionaryEntry entry{normalized, std::move(phrase), weight};
             const auto key = keyFor(entry.pinyin, entry.phrase);
             const auto [position, inserted] = positions.emplace(
-                key, dictionary.entries_.size());
+                key, snapshot.entries.size());
             if (inserted) {
-                dictionary.entries_.push_back(std::move(entry));
+                snapshot.entries.push_back(std::move(entry));
             } else {
-                dictionary.entries_[position->second] = std::move(entry);
+                snapshot.entries[position->second] = std::move(entry);
             }
         } catch (...) {
+            snapshot.diagnostics.push_back({lineNumber, line, "权重数值解析异常"});
             continue;
+        }
+    }
+    return snapshot;
+}
+
+UserDictionary UserDictionary::loadText(
+    const std::filesystem::path &path) {
+    auto snapshot = loadSnapshot(path);
+    UserDictionary dictionary;
+    std::unordered_map<std::string, std::size_t> positions;
+    for (auto &entry : snapshot.entries) {
+        const auto key = keyFor(entry.pinyin, entry.phrase);
+        const auto [position, inserted] = positions.emplace(
+            key, dictionary.entries_.size());
+        if (inserted) {
+            dictionary.entries_.push_back(std::move(entry));
+        } else {
+            dictionary.entries_[position->second] = std::move(entry);
         }
     }
     dictionary.entryIndex_ = std::move(positions);
@@ -266,8 +346,9 @@ bool UserDictionary::saveText(const std::filesystem::path &path) const {
         }
     }
 
-    auto temporary = path;
-    temporary += ".tmp";
+    const auto temporary = path.string() + ".tmp." +
+                           std::to_string(getpid()) + "." +
+                           std::to_string(gTempCounter.fetch_add(1));
     std::ofstream output(temporary, std::ios::trunc);
     if (!output) {
         return false;

@@ -51,24 +51,18 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_dictionary_pronunciation_tests
         settings/dictionary_pronunciation_test.cpp
-        ../tools/settings/dictionary_pronunciation.cpp
     )
-    target_include_directories(modernime_dictionary_pronunciation_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include)
     target_link_libraries(modernime_dictionary_pronunciation_tests PRIVATE
-        modernime_pinyin PkgConfig::GTK3)
+        modernime_settings_logic
+    )
     add_test(NAME modernime_dictionary_pronunciation
         COMMAND modernime_dictionary_pronunciation_tests)
 
     add_executable(modernime_settings_model_tests
         settings/settings_window_model_test.cpp
     )
-    target_link_libraries(modernime_settings_model_tests PRIVATE modernime_core)
-    target_include_directories(modernime_settings_model_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
-    )
-    target_sources(modernime_settings_model_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/settings_model.cpp
+    target_link_libraries(modernime_settings_model_tests PRIVATE
+        modernime_settings_logic
     )
     add_test(NAME modernime_settings_model
         COMMAND modernime_settings_model_tests
@@ -76,13 +70,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_input_page_state_tests
         settings/input_page_state_test.cpp
-        ../tools/settings/settings_model.cpp
     )
     target_link_libraries(modernime_input_page_state_tests PRIVATE
-        modernime_core
-    )
-    target_include_directories(modernime_input_page_state_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+        modernime_settings_logic
     )
     add_test(NAME modernime_input_page_state
         COMMAND modernime_input_page_state_tests
@@ -90,17 +80,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_shortcut_recorder_tests
         settings/shortcut_recorder_test.cpp
-        ../tools/settings/pages/input_page.cpp
-        ../tools/settings/settings_model.cpp
-        ../tools/settings/settings_widgets.cpp
-        ../tools/settings/settings_shell_state.cpp
     )
     target_link_libraries(modernime_shortcut_recorder_tests PRIVATE
-        modernime_core
-        PkgConfig::GTK3
-    )
-    target_include_directories(modernime_shortcut_recorder_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+        modernime_settings_gtk
     )
     add_test(NAME modernime_shortcut_recorder
         COMMAND modernime_shortcut_recorder_tests
@@ -121,15 +103,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_learning_page_contract_tests
         settings/learning_page_contract_test.cpp
-        ../tools/settings/page_registry.cpp
-        ../tools/settings/data_controller.cpp
-    )
-    target_include_directories(modernime_learning_page_contract_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_learning_page_contract_tests PRIVATE
-        modernime_core
-        modernime_pinyin
+        modernime_settings_logic
     )
     add_test(NAME modernime_learning_page_contract
         COMMAND modernime_learning_page_contract_tests
@@ -137,14 +113,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_dictionary_page_contract_tests
         settings/dictionary_page_contract_test.cpp
-        ../tools/settings/page_registry.cpp
-    )
-    target_include_directories(modernime_dictionary_page_contract_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_dictionary_page_contract_tests PRIVATE
-        modernime_core
-        modernime_pinyin
+        modernime_settings_logic
     )
     add_test(NAME modernime_dictionary_page_contract
         COMMAND modernime_dictionary_page_contract_tests
@@ -165,14 +136,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_candidates_page_contract_tests
         settings/candidates_page_contract_test.cpp
-        ../tools/settings/page_registry.cpp
-        ../tools/settings/settings_shell_state.cpp
-    )
-    target_include_directories(modernime_candidates_page_contract_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_candidates_page_contract_tests PRIVATE
-        modernime_core
+        modernime_settings_logic
     )
     add_test(NAME modernime_candidates_page_contract
         COMMAND modernime_candidates_page_contract_tests
@@ -180,13 +146,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_updates_page_contract_tests
         settings/updates_page_contract_test.cpp
-        ../tools/settings/page_registry.cpp
-    )
-    target_include_directories(modernime_updates_page_contract_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_updates_page_contract_tests PRIVATE
-        modernime_core
+        modernime_settings_logic
     )
     add_test(NAME modernime_updates_page_contract
         COMMAND modernime_updates_page_contract_tests
@@ -204,10 +166,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_settings_ui_contract_tests
         settings/settings_ui_contract_test.cpp
-        ../tools/settings/page_registry.cpp
     )
-    target_include_directories(modernime_settings_ui_contract_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    target_link_libraries(modernime_settings_ui_contract_tests PRIVATE
+        modernime_settings_logic
     )
     add_test(NAME modernime_settings_ui_contract
         COMMAND modernime_settings_ui_contract_tests
@@ -215,10 +176,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_settings_shell_state_tests
         settings/settings_shell_state_test.cpp
-        ../tools/settings/settings_shell_state.cpp
     )
-    target_include_directories(modernime_settings_shell_state_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    target_link_libraries(modernime_settings_shell_state_tests PRIVATE
+        modernime_settings_logic
     )
     add_test(NAME modernime_settings_shell_state
         COMMAND modernime_settings_shell_state_tests
@@ -239,14 +199,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_settings_focus_gtk_tests
         settings/settings_focus_gtk_test.cpp
-        ../tools/settings/settings_widgets.cpp
-        ../tools/settings/settings_shell_state.cpp
-    )
-    target_include_directories(modernime_settings_focus_gtk_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_settings_focus_gtk_tests PRIVATE
-        PkgConfig::GTK3
+        modernime_settings_gtk
     )
     add_test(NAME modernime_settings_focus_gtk
         COMMAND modernime_settings_focus_gtk_tests
@@ -264,8 +219,6 @@ if(MODERNIME_BUILD_SETTINGS)
         modernime_settings_components
     )
     target_compile_definitions(modernime_settings_shell_gtk_tests PRIVATE
-        MODERNIME_VERSION="${PROJECT_VERSION}"
-        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
         MODERNIME_SYSTEM_FCITX5_ADDON_DIR=""
     )
     add_test(NAME modernime_settings_shell_gtk
@@ -285,8 +238,6 @@ if(MODERNIME_BUILD_SETTINGS)
         modernime_settings_components
     )
     target_compile_definitions(modernime_settings_save_gtk_tests PRIVATE
-        MODERNIME_VERSION="${PROJECT_VERSION}"
-        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
         MODERNIME_SYSTEM_FCITX5_ADDON_DIR=""
     )
     add_test(NAME modernime_settings_save_gtk
@@ -306,8 +257,6 @@ if(MODERNIME_BUILD_SETTINGS)
         modernime_settings_components
     )
     target_compile_definitions(modernime_settings_data_async_gtk_tests PRIVATE
-        MODERNIME_VERSION="${PROJECT_VERSION}"
-        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
         MODERNIME_SYSTEM_FCITX5_ADDON_DIR=""
     )
     add_test(NAME modernime_settings_data_async_gtk
@@ -322,39 +271,17 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_update_controller_tests
         settings/update_controller_test.cpp
-        ../tools/settings/package_operation_state.cpp
-        ../tools/settings/process_runner.cpp
-        ../tools/settings/package_policy.cpp
-        ../tools/settings/update_controller.cpp
-    )
-    target_include_directories(modernime_update_controller_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_update_controller_tests PRIVATE
-        PkgConfig::GTK3
-    )
-    target_compile_definitions(modernime_update_controller_tests PRIVATE
-        MODERNIME_VERSION="${PROJECT_VERSION}"
-        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+        modernime_settings_logic
     )
     add_test(NAME modernime_update_controller COMMAND modernime_update_controller_tests)
 
     add_executable(modernime_process_runner_tests
         settings/process_runner_test.cpp
-        ../tools/settings/package_operation_state.cpp
-        ../tools/settings/process_runner.cpp
-        ../tools/settings/package_policy.cpp
-        ../tools/settings/update_controller.cpp
-    )
-    target_include_directories(modernime_process_runner_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_process_runner_tests PRIVATE
-        PkgConfig::GTK3
-    )
-    target_compile_definitions(modernime_process_runner_tests PRIVATE
-        MODERNIME_VERSION="${PROJECT_VERSION}"
-        MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+        modernime_settings_logic
     )
     add_test(NAME modernime_process_runner COMMAND modernime_process_runner_tests)
 
@@ -365,14 +292,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_settings_widgets_contract_tests
         settings/settings_widgets_contract_test.cpp
-        ../tools/settings/settings_widgets.cpp
-        ../tools/settings/settings_shell_state.cpp
-    )
-    target_include_directories(modernime_settings_widgets_contract_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_settings_widgets_contract_tests PRIVATE
-        PkgConfig::GTK3
+        modernime_settings_gtk
     )
     add_test(NAME modernime_settings_widgets_contract
         COMMAND modernime_settings_widgets_contract_tests
@@ -380,10 +302,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_page_registry_tests
         settings/page_registry_test.cpp
-        ../tools/settings/page_registry.cpp
     )
-    target_include_directories(modernime_page_registry_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
+    target_link_libraries(modernime_page_registry_tests PRIVATE
+        modernime_settings_logic
     )
     add_test(NAME modernime_page_registry COMMAND modernime_page_registry_tests)
 
@@ -399,13 +320,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_clipboard_history_model_tests
         settings/clipboard_history_model_test.cpp
-        ../tools/settings/clipboard_history_model.cpp
-    )
-    target_include_directories(modernime_clipboard_history_model_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_clipboard_history_model_tests PRIVATE
-        modernime_core
+        modernime_settings_logic
     )
     add_test(NAME modernime_clipboard_history_model
         COMMAND modernime_clipboard_history_model_tests
@@ -420,14 +337,8 @@ if(MODERNIME_BUILD_SETTINGS)
     add_executable(modernime_runtime_controller_tests
         settings/runtime_controller_test.cpp
     )
-    target_include_directories(modernime_runtime_controller_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
-    )
-    target_sources(modernime_runtime_controller_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/runtime_controller.cpp
-    )
     target_link_libraries(modernime_runtime_controller_tests PRIVATE
-        PkgConfig::GTK3
+        modernime_settings_logic
     )
     add_test(NAME modernime_runtime_controller
         COMMAND modernime_runtime_controller_tests
@@ -442,15 +353,8 @@ if(MODERNIME_BUILD_SETTINGS)
     add_executable(modernime_data_controller_tests
         settings/data_controller_test.cpp
     )
-    target_include_directories(modernime_data_controller_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
-    )
-    target_sources(modernime_data_controller_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/data_controller.cpp
-    )
     target_link_libraries(modernime_data_controller_tests PRIVATE
-        modernime_core
-        modernime_pinyin
+        modernime_settings_logic
     )
     add_test(NAME modernime_data_controller
         COMMAND modernime_data_controller_tests
@@ -458,16 +362,9 @@ if(MODERNIME_BUILD_SETTINGS)
 
     add_executable(modernime_overview_model_tests
         settings/overview_model_test.cpp
-        ../tools/settings/overview_model.cpp
-        ../tools/settings/data_controller.cpp
-        ../tools/settings/clipboard_history_model.cpp
-    )
-    target_include_directories(modernime_overview_model_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tools/settings/include
     )
     target_link_libraries(modernime_overview_model_tests PRIVATE
-        modernime_core
-        modernime_pinyin
+        modernime_settings_logic
     )
     add_test(NAME modernime_overview_model
         COMMAND modernime_overview_model_tests
@@ -809,6 +706,15 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/src/candidate_pagination.cpp
     )
     add_test(NAME modernime_candidate_bar_layout COMMAND modernime_ui_tests)
+    if(NOT TARGET modernime_candidate_bar_layout_tests)
+        add_custom_target(modernime_candidate_bar_layout_tests
+            DEPENDS modernime_ui_tests
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                $<TARGET_FILE:modernime_ui_tests>
+                $<TARGET_FILE_DIR:modernime_ui_tests>/modernime_candidate_bar_layout_tests
+            COMMENT "Create alias symlink modernime_candidate_bar_layout_tests -> modernime_ui_tests"
+        )
+    endif()
 
     add_executable(modernime_window_anchor_tests ui/window_anchor_test.cpp)
     target_include_directories(modernime_window_anchor_tests PRIVATE

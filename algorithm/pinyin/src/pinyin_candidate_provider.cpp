@@ -1069,13 +1069,14 @@ public:
 
         if (candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Command) {
+            const auto source = candidate.source;
+            outcome.action = (source == core::CandidateSource::Command)
+                ? core::SelectionAction::OpenClipboard
+                : core::SelectionAction::CommitText;
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
             context->clear();
             refresh();
-            outcome.action = (candidate.source == core::CandidateSource::Command)
-                ? core::SelectionAction::OpenClipboard
-                : core::SelectionAction::CommitText;
             outcome.remainingInput = context->userInput();
             return outcome;
         }
@@ -1753,77 +1754,46 @@ private:
             }
         }
 
-        const bool isInitialConsonant = (rawInput == "sh" || rawInput == "ch" || rawInput == "zh");
+        const auto lexicalWordCheck = [this](std::string_view text, std::string_view pinyin) {
+            try {
+                std::string cleanPinyin(pinyin);
+                while (!cleanPinyin.empty() && cleanPinyin.back() == '\'') {
+                    cleanPinyin.pop_back();
+                }
+                if (cleanPinyin.empty()) return false;
+                const auto encoded = libime::PinyinEncoder::encodeFullPinyin(cleanPinyin);
+                bool matched = false;
+                ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
+                    if (hanzi == text) {
+                        matched = true;
+                        return false;
+                    }
+                    return true;
+                });
+                return matched;
+            } catch (const std::exception &) {
+                return false;
+            }
+        };
+
+        const bool isInitialConsonant = isInitialConsonantInput(rawInput);
         const bool isConsonantAbbreviation =
-            rawInput.size() >= 2 && !fullItems.empty() &&
-            std::all_of(rawInput.begin(), rawInput.end(), [len = rawInput.size()](char c) {
-                return c >= 'a' && c <= 'z' &&
-                       c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u' && c != 'v' &&
-                       (c != 'y' || len == 3);
-            }) &&
-            (rawInput.size() == 2 ||
-             core::PinyinMatchPolicy::abbreviationKey(
-                 fullItems.front().fullPinyin) == rawInput ||
-             core::PinyinMatchPolicy::initialsMatch(
-                 rawInput, fullItems.front().fullPinyin));
+            isConsonantAbbreviationInput(rawInput, fullItems);
         const bool isEnglish =
             !isInitialConsonant && !isConsonantAbbreviation &&
             core::EnglishDictionary::isEnglishWord(rawInput);
 
-        const bool hasExactFullPinyinMatch = std::any_of(
-            fullItems.begin(), fullItems.end(),
-            [&rawInput](const auto &item) {
-                return item.source != core::CandidateSource::Raw &&
-                       !hasInvalidInternalPinyinSegment(item.fullPinyin) &&
-                       (core::PinyinMatchPolicy::exactInputMatch(
-                            rawInput, item.fullPinyin) ||
-                        core::PinyinMatchPolicy::isFullTypoMatch(
-                            rawInput, item.fullPinyin));
-            });
+        const bool hasExactFullPinyin =
+            hasExactFullPinyinMatch(rawInput, fullItems);
 
-        const bool hasTrustedShortAbbreviation =
-            std::any_of(fullItems.begin(), fullItems.end(),
-                        [&rawInput](const auto &item) {
-                            return item.source != core::CandidateSource::Raw &&
-                                   core::PinyinMatchPolicy::
-                                       trustedShortAbbreviationMatch(
-                                           rawInput, item.fullPinyin,
-                                           item.text);
-                        });
+        const bool hasTrustedShortAbbr =
+            hasTrustedShortAbbreviation(rawInput, fullItems);
 
-        bool isTopChineseLexical = false;
-        if (!fullItems.empty()) {
-            const auto &topChinese = fullItems.front();
-            if (topChinese.source == core::CandidateSource::UserDictionary ||
-                topChinese.isLexical ||
-                (utf8CodePointCount(topChinese.text) == 1 && rawInput.size() <= 3)) {
-                isTopChineseLexical = true;
-            } else {
-                try {
-                    std::string cleanPinyin = topChinese.fullPinyin;
-                    while (!cleanPinyin.empty() && cleanPinyin.back() == '\'') {
-                        cleanPinyin.pop_back();
-                    }
-                    if (!cleanPinyin.empty()) {
-                        const auto encoded = libime::PinyinEncoder::encodeFullPinyin(cleanPinyin);
-                        ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
-                            if (hanzi == topChinese.text) {
-                                isTopChineseLexical = true;
-                                return false;
-                            }
-                            return true;
-                        });
-                    }
-                } catch (const std::exception &) {
-                    isTopChineseLexical = false;
-                }
-            }
-        }
+        const bool topChineseLexical =
+            isTopChineseLexical(rawInput, fullItems, lexicalWordCheck);
 
-        const bool hasHighConfidenceChinese =
-            !fullItems.empty() &&
-            (hasTrustedShortAbbreviation || isConsonantAbbreviation ||
-             (hasExactFullPinyinMatch && isTopChineseLexical));
+        const bool highConfidenceChinese =
+            hasHighConfidenceChinese(rawInput, fullItems, lexicalWordCheck);
 
         // 单音节完整拼音输入（you/can/she 等）在存在精确匹配的高置信中文时，
         // 不注入静态英文补全：单音节前排必须保持全部地道中文（既有单音节
@@ -1833,23 +1803,23 @@ private:
             core::PinyinMatchPolicy::isValidPinyinSequence(rawInput) &&
             core::PinyinMatchPolicy::segmentPinyin(rawInput).find('\'') ==
                 std::string::npos &&
-            hasExactFullPinyinMatch && isTopChineseLexical;
+            hasExactFullPinyin && topChineseLexical;
 
         const bool shouldPredictEnglish =
             (rawInput.empty() || rawInput.front() != 'v') &&
-            !hasTrustedShortAbbreviation &&
+            !hasTrustedShortAbbr &&
             rawInput.size() >= 3 &&
             !singleSyllableChineseProtected &&
             (isEnglish ||
              (isConsonantAbbreviation && rawInput.size() <= 3) ||
-             (!hasHighConfidenceChinese && !hasExactFullPinyinMatch &&
+             (!highConfidenceChinese && !hasExactFullPinyin &&
               (!hasPinyinCoverage || hasInvalidInternalPinyinSegment(segmentedInput))));
 
         std::vector<std::string> predictedWords;
         std::size_t learnedEnglishCount = 0;
         const bool canPredictEnglish =
             (rawInput.empty() || rawInput.front() != 'v') &&
-            !hasTrustedShortAbbreviation &&
+            !hasTrustedShortAbbr &&
             rawInput.size() >= 2;
 
         if (canPredictEnglish && learning != nullptr) {
@@ -1898,7 +1868,6 @@ private:
 
         CandidateCompositionInput compInput;
         compInput.rawInput = rawInput;
-        compInput.canonicalInput = canonicalInput;
         compInput.segmentedInput = segmentedInput;
         compInput.fullCandidates = std::move(fullItems);
         compInput.partialCandidates = std::move(partialPool);
@@ -1909,8 +1878,6 @@ private:
         compInput.englishPredictions = std::move(predictedWords);
         compInput.learnedEnglishCount = learnedEnglishCount;
         compInput.isEnglishWord = isEnglish;
-        compInput.hasPinyinCoverage = hasPinyinCoverage;
-        compInput.hasInvalidInternalPinyinSegment = hasInvalidInternalPinyinSegment(segmentedInput);
         compInput.clipboardEnabled = clipboardEnabled_;
         compInput.clipboardTrigger = clipboardTrigger_;
         if (englishDefinitionEnabled_ && shared_) {
@@ -1938,27 +1905,7 @@ private:
                                            nowMilliseconds())
                        : 0.0);
         compInput.isSuppressed = isSuppressed;
-        compInput.isLexicalWord = [this](std::string_view text, std::string_view pinyin) {
-            try {
-                std::string cleanPinyin(pinyin);
-                while (!cleanPinyin.empty() && cleanPinyin.back() == '\'') {
-                    cleanPinyin.pop_back();
-                }
-                if (cleanPinyin.empty()) return false;
-                const auto encoded = libime::PinyinEncoder::encodeFullPinyin(cleanPinyin);
-                bool matched = false;
-                ime().dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view hanzi, float) {
-                    if (hanzi == text) {
-                        matched = true;
-                        return false;
-                    }
-                    return true;
-                });
-                return matched;
-            } catch (const std::exception &) {
-                return false;
-            }
-        };
+        compInput.isLexicalWord = lexicalWordCheck;
 
         auto compResult = composeCandidates(compInput);
         page_.items = std::move(compResult.items);

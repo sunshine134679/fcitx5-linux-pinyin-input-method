@@ -1,18 +1,22 @@
 #include "modernime/settings/pages/clipboard_page.h"
 
 #include "modernime/settings/clipboard_history_model.h"
+#include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include "modernime/core/clipboard_history.h"
 
+#include <gio/gio.h>
 #include <gtk/gtk.h>
 
 #include <array>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace modernime::settings {
 namespace {
@@ -41,66 +45,106 @@ void setWidgetError(GtkWidget *widget, bool invalid, std::string_view message) {
 
 class ClipboardPage::Impl final {
 public:
-    Impl(SettingsWindowModel &settingsModel, std::filesystem::path historyPath,
+    struct DisplayItem {
+        std::string text;
+        ClipboardItemMeta meta;
+    };
+
+    struct ReloadTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        std::filesystem::path path;
+        uint64_t generation = 0;
+        bool shouldNotify = false;
+        std::vector<DisplayItem> items;
+        std::vector<std::string> rawEntries;
+        bool success = false;
+        std::string error;
+    };
+
+    struct BatchRenderContext {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        uint64_t generation = 0;
+        std::size_t nextIndex = 0;
+        bool shouldNotify = false;
+    };
+
+    struct ClearTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        std::filesystem::path path;
+        uint64_t generation = 0;
+        bool success = false;
+        std::string error;
+    };
+
+    struct DeleteTaskData {
+        std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime;
+        std::filesystem::path path;
+        uint64_t generation = 0;
+        std::size_t index = 0;
+        std::string itemNumber;
+        std::string expectedText;
+        std::vector<std::string> remainingEntries;
+        bool success = false;
+        std::string error;
+    };
+
+    Impl(SettingsWindowModel &settingsModel, std::filesystem::path historyPathArg,
          std::function<void()> settingsChangedCallback,
          std::function<void(std::string)> notifyCallback)
-        : model(settingsModel), history(std::move(historyPath)),
+        : model(settingsModel), historyPath(std::move(historyPathArg)),
+          history(historyPath),
           settingsChanged(std::move(settingsChangedCallback)),
           notify(std::move(notifyCallback)) {
-        detail::GtkWidgetGuard pageGuard(createPageShell(
-            "剪贴板", "配置 V+2 功能并查看保存在本地的剪贴板历史"));
+        detail::GtkWidgetGuard pageGuard(createPageShell("剪贴板", ""));
         page = pageGuard.get();
         buildPage();
         refreshSettings();
         pageGuard.release();
     }
 
+    ~Impl() {
+        if (idleBatchSourceId != 0) {
+            g_source_remove(idleBatchSourceId);
+            idleBatchSourceId = 0;
+        }
+        if (lifetime) {
+            lifetime->deactivate();
+        }
+    }
+
     void buildPage() {
         auto *settingsSection = createSectionCard(
-            "触发方式",
+            "",
             "中文输入状态下输入触发字母后紧跟触发数字即可打开剪贴板。");
         gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
 
         clipboardEnabled = gtk_switch_new();
-        setAccessibleWidgetText(clipboardEnabled, "启用 V+2 剪贴板",
+        setAccessibleWidgetText(clipboardEnabled, "启用剪贴板",
                                 "启用或关闭本地剪贴板历史入口");
         setTarget(clipboardEnabled, "clipboard-enabled");
         gtk_box_pack_start(GTK_BOX(settingsSection),
-                           createSettingRow("启用 V+2 剪贴板",
+                           createSettingRow("启用剪贴板",
                                             "中文输入状态下输入触发字母后紧跟数字即可打开剪贴板。",
                                             clipboardEnabled),
                            FALSE, FALSE, 0);
 
-        auto *grid = gtk_grid_new();
-        clipboardTriggerFallback = grid;
+        clipboardTrigger = gtk_entry_new();
+        gtk_entry_set_max_length(GTK_ENTRY(clipboardTrigger), 3);
+        gtk_entry_set_width_chars(GTK_ENTRY(clipboardTrigger), 10);
+        gtk_entry_set_max_width_chars(GTK_ENTRY(clipboardTrigger), 10);
+        gtk_entry_set_placeholder_text(GTK_ENTRY(clipboardTrigger), "例如 V+2");
+        setTarget(clipboardTrigger, "clipboard-trigger");
+        clipboardTriggerFallback = createSettingRow(
+            "触发键",
+            "设置在中文输入状态打开本地剪贴板历史的按键",
+            clipboardTrigger);
+        setAccessibleWidgetText(clipboardTrigger, "剪贴板触发键",
+            "设置在中文输入状态打开本地剪贴板历史的按键");
         setAccessibleWidgetText(
             clipboardTriggerFallback, "剪贴板触发键",
             "剪贴板功能关闭时仍可定位并阅读触发键设置");
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-        auto *triggerLabel = gtk_label_new("剪贴板触发键");
-        gtk_widget_set_halign(triggerLabel, GTK_ALIGN_START);
-        clipboardTrigger = gtk_entry_new();
-        gtk_entry_set_max_length(GTK_ENTRY(clipboardTrigger), 3);
-        gtk_entry_set_width_chars(GTK_ENTRY(clipboardTrigger), 6);
-        gtk_entry_set_placeholder_text(GTK_ENTRY(clipboardTrigger), "例如 V+2");
-        gtk_widget_set_hexpand(clipboardTrigger, TRUE);
-        setTarget(clipboardTrigger, "clipboard-trigger");
-        setAccessibleWidgetText(
-            clipboardTrigger, "剪贴板触发键",
-            "设置在中文输入状态打开本地剪贴板历史的按键");
-        gtk_grid_attach(GTK_GRID(grid), triggerLabel, 0, 0, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), clipboardTrigger, 1, 0, 1, 1);
-        gtk_box_pack_start(GTK_BOX(settingsSection), grid, FALSE, FALSE, 0);
-
-        auto *description = gtk_label_new(
-            "输入触发字母（默认 v）后立即按下触发数字（默认 2）即可打开剪贴板。"
-            "触发字母本身按正常拼音输入处理，不会被吞掉或改写。");
-        addStyleClass(description, "modernime-description");
-        gtk_widget_set_halign(description, GTK_ALIGN_START);
-        gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
-        gtk_box_pack_start(GTK_BOX(settingsSection), description, FALSE, FALSE,
-                           0);
+        gtk_box_pack_start(GTK_BOX(settingsSection), clipboardTriggerFallback,
+                           FALSE, FALSE, 0);
         auto *historySection = createSectionCard(
             "剪贴板历史", "按最近使用排序 · 仅保存在本机 · 双击记录即可复制");
         gtk_box_pack_start(GTK_BOX(page), historySection, TRUE, TRUE, 0);
@@ -184,60 +228,164 @@ public:
                    copyButton, deleteButton, clearButton, refreshButton});
     }
 
-    void refresh(bool shouldNotify) {
+    void clearHistoryListBox() {
+        if (historyListBox == nullptr) {
+            return;
+        }
         auto *children =
             gtk_container_get_children(GTK_CONTAINER(historyListBox));
         for (auto *c = children; c != nullptr; c = c->next) {
             gtk_widget_destroy(GTK_WIDGET(c->data));
         }
         g_list_free(children);
+    }
 
-        std::string error;
-        if (!history.reload(&error)) {
-            gtk_label_set_text(GTK_LABEL(historyCount), "历史读取失败");
+    void refresh(bool shouldNotify) {
+        if (idleBatchSourceId != 0) {
+            g_source_remove(idleBatchSourceId);
+            idleBatchSourceId = 0;
+        }
+        ++historyGeneration;
+        const auto gen = historyGeneration;
+        isLoading = true;
+        updateHistoryActionState();
+        gtk_label_set_text(GTK_LABEL(historyCount), "正在读取…");
+
+        auto *data = new ReloadTaskData{
+            lifetime, historyPath, gen, shouldNotify, {}, {}, false, {}
+        };
+
+        auto *task = g_task_new(nullptr, nullptr, onReloadFinished, nullptr);
+        g_task_set_task_data(task, data, nullptr);
+        g_task_run_in_thread(task, onReloadWorker);
+        g_object_unref(task);
+    }
+
+    static void onReloadWorker(GTask *task, gpointer, gpointer taskData, GCancellable *) {
+        auto *td = static_cast<ReloadTaskData *>(taskData);
+        core::ClipboardHistory rawHistory;
+        if (!rawHistory.load(td->path, &td->error)) {
+            td->success = false;
+        } else {
+            td->success = true;
+            td->rawEntries = rawHistory.entries();
+            td->items.reserve(td->rawEntries.size());
+            for (const auto &entry : td->rawEntries) {
+                td->items.push_back({entry, analyzeClipboardContent(entry)});
+            }
+        }
+        g_task_return_pointer(task, td, nullptr);
+    }
+
+    static void onReloadFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *td = static_cast<ReloadTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (td != nullptr) {
+            td->lifetime->withOwner([td](Impl &owner) {
+                if (td->generation != owner.historyGeneration) {
+                    return;
+                }
+                owner.isLoading = false;
+                if (!td->success) {
+                    owner.displayItems.clear();
+                    gtk_label_set_text(GTK_LABEL(owner.historyCount), "历史读取失败");
+                    gtk_label_set_text(
+                        GTK_LABEL(owner.historyState),
+                        td->error.empty() ? "无法读取剪贴板历史"
+                                          : ("无法读取剪贴板历史：" + td->error).c_str());
+                    gtk_widget_set_visible(owner.historyState, TRUE);
+                    owner.clearHistoryListBox();
+                    owner.updateHistoryActionState();
+                    if (td->shouldNotify) {
+                        owner.notifyMessage(td->error);
+                    }
+                    return;
+                }
+                owner.history = ClipboardHistoryModel(owner.historyPath, std::move(td->rawEntries));
+                owner.displayItems = std::move(td->items);
+                owner.startBatchRender(td->generation, td->shouldNotify);
+            });
+            delete td;
+        }
+    }
+
+    void startBatchRender(uint64_t gen, bool shouldNotify) {
+        if (idleBatchSourceId != 0) {
+            g_source_remove(idleBatchSourceId);
+            idleBatchSourceId = 0;
+        }
+        clearHistoryListBox();
+
+        if (displayItems.empty()) {
             gtk_label_set_text(GTK_LABEL(historyState),
-                               error.empty() ? "无法读取剪贴板历史"
-                                             : ("无法读取剪贴板历史：" + error)
-                                                   .c_str());
+                               "暂无剪贴板历史；复制内容后会自动记录");
             gtk_widget_set_visible(historyState, TRUE);
+            gtk_label_set_text(
+                GTK_LABEL(historyCount),
+                ("0 / " + std::to_string(core::ClipboardHistory::kMaxEntries) + " 条记录")
+                    .c_str());
             updateHistoryActionState();
             if (shouldNotify) {
-                notifyMessage(error);
+                notifyMessage("剪贴板历史已刷新");
             }
             return;
         }
 
-        const auto &entries = history.entries();
-        gtk_label_set_text(GTK_LABEL(historyState),
-                           entries.empty()
-                               ? "暂无剪贴板历史；复制内容后会自动记录"
-                               : "");
-        gtk_widget_set_visible(historyState, entries.empty());
+        gtk_label_set_text(GTK_LABEL(historyState), "");
+        gtk_widget_set_visible(historyState, FALSE);
 
-        for (std::size_t index = 0; index < entries.size(); ++index) {
-            auto *row = buildCardRow(index, entries[index]);
-            gtk_container_add(GTK_CONTAINER(historyListBox), row);
-        }
-        gtk_widget_show_all(historyListBox);
+        auto *ctx = new BatchRenderContext{lifetime, gen, 0, shouldNotify};
+        idleBatchSourceId = g_idle_add_full(
+            G_PRIORITY_DEFAULT_IDLE,
+            onBatchIdle,
+            ctx,
+            [](gpointer d) { delete static_cast<BatchRenderContext *>(d); });
+    }
 
-        gtk_label_set_text(
-            GTK_LABEL(historyCount),
-            (std::to_string(entries.size()) + " / " +
-             std::to_string(core::ClipboardHistory::kMaxEntries) + " 条记录")
-                .c_str());
-
-        if (!entries.empty()) {
-            auto *firstRow =
-                gtk_list_box_get_row_at_index(GTK_LIST_BOX(historyListBox), 0);
-            if (firstRow != nullptr) {
-                gtk_list_box_select_row(GTK_LIST_BOX(historyListBox), firstRow);
+    static gboolean onBatchIdle(gpointer data) {
+        auto *ctx = static_cast<BatchRenderContext *>(data);
+        bool keepGoing = false;
+        const bool alive = ctx->lifetime->withOwner([ctx, &keepGoing](Impl &owner) {
+            if (ctx->generation != owner.historyGeneration) {
+                return;
             }
-        }
+            const auto start = std::chrono::steady_clock::now();
+            while (ctx->nextIndex < owner.displayItems.size()) {
+                const auto idx = ctx->nextIndex;
+                auto *row = owner.buildCardRow(idx, owner.displayItems[idx]);
+                gtk_container_add(GTK_CONTAINER(owner.historyListBox), row);
+                ++ctx->nextIndex;
 
-        updateHistoryActionState();
-        if (shouldNotify) {
-            notifyMessage("剪贴板历史已刷新");
-        }
+                if (ctx->nextIndex % 10 == 0 ||
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start) >= std::chrono::milliseconds(4)) {
+                    break;
+                }
+            }
+            if (ctx->nextIndex < owner.displayItems.size()) {
+                keepGoing = true;
+            } else {
+                owner.idleBatchSourceId = 0;
+                gtk_widget_show_all(owner.historyListBox);
+                gtk_label_set_text(
+                    GTK_LABEL(owner.historyCount),
+                    (std::to_string(owner.displayItems.size()) + " / " +
+                     std::to_string(core::ClipboardHistory::kMaxEntries) + " 条记录")
+                        .c_str());
+                auto *firstRow = gtk_list_box_get_row_at_index(
+                    GTK_LIST_BOX(owner.historyListBox), 0);
+                if (firstRow != nullptr) {
+                    gtk_list_box_select_row(GTK_LIST_BOX(owner.historyListBox), firstRow);
+                }
+                owner.updateHistoryActionState();
+                if (ctx->shouldNotify) {
+                    owner.notifyMessage("剪贴板历史已刷新");
+                }
+            }
+        });
+        return (alive && keepGoing) ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
     }
 
     void refreshSettings() {
@@ -302,6 +450,9 @@ private:
 
     static void onDelete(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
+        if (impl->isLoading || impl->isOperating) {
+            return;
+        }
         const auto selected = impl->selectedHistoryIndex();
         if (!selected.has_value()) {
             impl->notifyMessage("请先选择要删除的剪贴板历史");
@@ -312,11 +463,14 @@ private:
 
     static void onClear(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        if (impl->history.entries().empty()) {
+        if (impl->isLoading || impl->isOperating) {
+            return;
+        }
+        if (impl->displayItems.empty()) {
             impl->notifyMessage("当前没有可清空的剪贴板历史");
             return;
         }
-        const auto count = std::to_string(impl->history.entries().size());
+        const auto count = std::to_string(impl->displayItems.size());
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
@@ -332,12 +486,44 @@ private:
             return;
         }
 
-        std::string error;
-        if (impl->history.clear(&error)) {
-            impl->refresh(false);
-            impl->notifyMessage("剪贴板历史已清空");
-        } else {
-            impl->notifyMessage(error.empty() ? "剪贴板历史清空失败" : error);
+        impl->isOperating = true;
+        impl->updateHistoryActionState();
+        auto *taskData = new ClearTaskData{
+            impl->lifetime, impl->historyPath, impl->historyGeneration, false, {}
+        };
+        auto *task = g_task_new(nullptr, nullptr, onClearFinished, nullptr);
+        g_task_set_task_data(task, taskData, nullptr);
+        g_task_run_in_thread(task, onClearWorker);
+        g_object_unref(task);
+    }
+
+    static void onClearWorker(GTask *task, gpointer, gpointer taskData, GCancellable *) {
+        auto *td = static_cast<ClearTaskData *>(taskData);
+        ClipboardHistoryModel rawModel(td->path);
+        td->success = rawModel.clear(&td->error);
+        g_task_return_pointer(task, td, nullptr);
+    }
+
+    static void onClearFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *td = static_cast<ClearTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (td != nullptr) {
+            td->lifetime->withOwner([td](Impl &owner) {
+                owner.isOperating = false;
+                if (td->generation != owner.historyGeneration) {
+                    return;
+                }
+                if (td->success) {
+                    owner.refresh(false);
+                    owner.notifyMessage("剪贴板历史已清空");
+                } else {
+                    owner.updateHistoryActionState();
+                    owner.notifyMessage(td->error.empty() ? "剪贴板历史清空失败" : td->error);
+                }
+            });
+            delete td;
         }
     }
 
@@ -357,11 +543,11 @@ private:
     }
 
     void copyIndex(std::size_t index) {
-        if (index >= history.entries().size()) {
+        if (index >= displayItems.size()) {
             notifyMessage("请先选择要复制的剪贴板历史");
             return;
         }
-        const auto &entry = history.entries()[index];
+        const auto &entry = displayItems[index].text;
         auto *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
         if (clipboard == nullptr) {
             notifyMessage("系统剪贴板不可用");
@@ -372,10 +558,15 @@ private:
     }
 
     void deleteIndex(std::size_t index) {
-        if (index >= history.entries().size()) {
+        if (isLoading || isOperating) {
+            return;
+        }
+        if (index >= displayItems.size()) {
             notifyMessage("请先选择要删除的剪贴板历史");
             return;
         }
+        const auto expectedText = displayItems[index].text;
+        const auto initialGeneration = historyGeneration;
         const auto number = std::to_string(index + 1);
         auto *dialog = gtk_message_dialog_new(
             parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
@@ -391,12 +582,59 @@ private:
             return;
         }
 
-        std::string error;
-        if (history.remove(index, &error)) {
-            refresh(false);
-            notifyMessage("已删除第 " + number + " 条剪贴板历史");
-        } else {
-            notifyMessage(error.empty() ? "剪贴板历史删除失败" : error);
+        std::size_t targetIndex = index;
+        if (historyGeneration != initialGeneration) {
+            auto it = std::find_if(displayItems.begin(), displayItems.end(),
+                                   [&](const DisplayItem &item) { return item.text == expectedText; });
+            if (it == displayItems.end()) {
+                notifyMessage("选中的剪贴板历史已不存在");
+                return;
+            }
+            targetIndex = static_cast<std::size_t>(std::distance(displayItems.begin(), it));
+        }
+
+        isOperating = true;
+        updateHistoryActionState();
+        auto *taskData = new DeleteTaskData{
+            lifetime, historyPath, historyGeneration, targetIndex, number, expectedText, {}, false, {}
+        };
+        auto *task = g_task_new(nullptr, nullptr, onDeleteFinished, nullptr);
+        g_task_set_task_data(task, taskData, nullptr);
+        g_task_run_in_thread(task, onDeleteWorker);
+        g_object_unref(task);
+    }
+
+    static void onDeleteWorker(GTask *task, gpointer, gpointer taskData, GCancellable *) {
+        auto *td = static_cast<DeleteTaskData *>(taskData);
+        ClipboardHistoryModel rawModel(td->path);
+        td->success = rawModel.remove(td->index, td->expectedText, &td->error);
+        if (td->success) {
+            td->remainingEntries = rawModel.entries();
+        }
+        g_task_return_pointer(task, td, nullptr);
+    }
+
+    static void onDeleteFinished(GObject *, GAsyncResult *result, gpointer) {
+        GError *err = nullptr;
+        auto *td = static_cast<DeleteTaskData *>(
+            g_task_propagate_pointer(G_TASK(result), &err));
+        g_clear_error(&err);
+        if (td != nullptr) {
+            td->lifetime->withOwner([td](Impl &owner) {
+                owner.isOperating = false;
+                if (td->generation != owner.historyGeneration) {
+                    return;
+                }
+                if (td->success) {
+                    owner.history = ClipboardHistoryModel(owner.historyPath, std::move(td->remainingEntries));
+                    owner.refresh(false);
+                    owner.notifyMessage("已删除第 " + td->itemNumber + " 条剪贴板历史");
+                } else {
+                    owner.updateHistoryActionState();
+                    owner.notifyMessage(td->error.empty() ? "剪贴板历史删除失败" : td->error);
+                }
+            });
+            delete td;
         }
     }
 
@@ -410,7 +648,7 @@ private:
             return std::nullopt;
         }
         const auto index = gtk_list_box_row_get_index(selectedRow);
-        if (index < 0 || static_cast<std::size_t>(index) >= history.entries().size()) {
+        if (index < 0 || static_cast<std::size_t>(index) >= displayItems.size()) {
             return std::nullopt;
         }
         return static_cast<std::size_t>(index);
@@ -419,13 +657,14 @@ private:
     void updateHistoryActionState() {
         const auto selected = selectedHistoryIndex();
         const bool hasSelected = selected.has_value();
-        const bool hasEntries = !history.entries().empty();
-        gtk_widget_set_sensitive(copyButton, hasSelected);
-        gtk_widget_set_sensitive(deleteButton, hasSelected);
-        gtk_widget_set_sensitive(clearButton, hasEntries);
+        const bool hasEntries = !displayItems.empty();
+        const bool busy = isLoading || isOperating;
+        gtk_widget_set_sensitive(copyButton, !busy && hasSelected);
+        gtk_widget_set_sensitive(deleteButton, !busy && hasSelected);
+        gtk_widget_set_sensitive(clearButton, !busy && hasEntries);
     }
 
-    GtkWidget *buildCardRow(std::size_t index, const std::string &entry) {
+    GtkWidget *buildCardRow(std::size_t index, const DisplayItem &item) {
         auto *row = gtk_list_box_row_new();
         gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), TRUE);
         gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
@@ -433,7 +672,7 @@ private:
         auto *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
         addStyleClass(card, "modernime-clipboard-card");
 
-        const auto meta = analyzeClipboardContent(entry);
+        const auto &meta = item.meta;
 
         // Secondary metadata stays on one line; the content has its own reading area.
         auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -536,9 +775,11 @@ private:
                             if (td->isCode) {
                                 addStyleClass(reader, "modernime-card-code");
                             }
-                            const auto &text = td->impl->history.entries()[td->index];
-                            gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(reader)),
-                                                     text.c_str(), static_cast<gint>(text.size()));
+                            if (td->index < td->impl->displayItems.size()) {
+                                const auto &text = td->impl->displayItems[td->index].text;
+                                gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(reader)),
+                                                         text.c_str(), static_cast<gint>(text.size()));
+                            }
                             setAccessibleWidgetText(reader, "剪贴板完整内容", "可选择文字，内容不会被编辑");
                             gtk_container_add(GTK_CONTAINER(td->expanded), reader);
                             gtk_widget_show(reader);
@@ -619,6 +860,7 @@ private:
     }
 
     SettingsWindowModel &model;
+    std::filesystem::path historyPath;
     ClipboardHistoryModel history;
     std::function<void()> settingsChanged;
     std::function<void(std::string)> notify;
@@ -634,6 +876,14 @@ private:
     GtkWidget *deleteButton = nullptr;
     GtkWidget *clearButton = nullptr;
     bool refreshing = false;
+
+    std::shared_ptr<detail::DiagnosticsLifetime<Impl>> lifetime =
+        std::make_shared<detail::DiagnosticsLifetime<Impl>>(this);
+    uint64_t historyGeneration = 0;
+    guint idleBatchSourceId = 0;
+    bool isLoading = false;
+    bool isOperating = false;
+    std::vector<DisplayItem> displayItems;
 };
 
 ClipboardPage::ClipboardPage(SettingsWindowModel &settings,

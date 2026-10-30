@@ -38,12 +38,27 @@ if ! declare -f modernime_deploy_payload >/dev/null 2>&1; then
     fi
 fi
 
-bin_tx_dir=$(mktemp -d "${TMPDIR:-/tmp}/modernime-bin-payload-tx.XXXXXX")
-if ! modernime_deploy_payload "$payload_root" "$prefix" "$bin_tx_dir"; then
-    rm -rf -- "$bin_tx_dir"
-    printf 'Error encountered during payload installation; restoring previous version...\n' >&2
+if ! modernime_acquire_prefix_lock "$prefix"; then
     exit 1
 fi
-rm -rf -- "$bin_tx_dir"
+
+bin_tx_dir=$(mktemp -d "${TMPDIR:-/tmp}/modernime-bin-payload-tx.XXXXXX")
+if ! modernime_deploy_payload "$payload_root" "$prefix" "$bin_tx_dir"; then
+    tx_status=$(cat "$bin_tx_dir/status" 2>/dev/null || echo "UNKNOWN")
+    if [[ "$tx_status" == "ROLLED_BACK" ]]; then
+        modernime_cleanup_transaction_dir "$bin_tx_dir"
+        modernime_release_prefix_lock
+        printf 'Error encountered during payload installation; rollback completed.\n' >&2
+    elif [[ "$tx_status" == "FAILED_ROLLBACK" ]]; then
+        modernime_release_prefix_lock
+        printf 'Error: Payload rollback failed; recovery files retained in %s\n' "$bin_tx_dir" >&2
+    else
+        modernime_release_prefix_lock
+        printf 'Error: Payload installation failed (status=%s); transaction materials retained in %s\n' "$tx_status" "$bin_tx_dir" >&2
+    fi
+    exit 1
+fi
+modernime_cleanup_transaction_dir "$bin_tx_dir"
+modernime_release_prefix_lock
 
 printf 'ModernIME binary payload installed to %s\n' "$prefix"

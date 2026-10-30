@@ -25,6 +25,7 @@ cat << 'INSTALLER_EOF' > "$package_root/install.sh"
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+unset MODERNIME_PREFIX_LOCK_FD MODERNIME_LOCKED_PREFIX MODERNIME_LOCK_FILE 2>/dev/null || true
 source "$project_root/scripts/install_state.sh"
 source "$project_root/scripts/install_lifecycle.sh"
 
@@ -35,6 +36,17 @@ allow_missing_deps=false
 case "${MODERNIME_ALLOW_MISSING_DEPS:-}" in
     1|true|TRUE|yes|YES) allow_missing_deps=true ;;
 esac
+
+for arg in "$@"; do
+    if [[ "$arg" == "-u" || "$arg" == "--uninstall" ]]; then
+        forward_args=()
+        for a in "$@"; do
+            [[ "$a" == "-u" || "$a" == "--uninstall" ]] && continue
+            forward_args+=("$a")
+        done
+        exec "$project_root/uninstall.sh" "${forward_args[@]}"
+    fi
+done
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -189,28 +201,57 @@ if [[ ! -d "$payload_root" ]]; then
     exit 1
 fi
 
+if ! modernime_acquire_prefix_lock "$prefix"; then
+    exit 1
+fi
+
 bin_tx_dir=$(mktemp -d "${TMPDIR:-/tmp}/modernime-bin-tx.XXXXXX")
 cleanup_bin_transaction() {
     local exit_code=$?
     trap - EXIT
     if [[ -n "${bin_tx_dir:-}" && -d "${bin_tx_dir:-}" ]]; then
-        rm -rf -- "$bin_tx_dir"
+        local tx_status
+        tx_status=$(cat "$bin_tx_dir/status" 2>/dev/null || echo "UNKNOWN")
+        case "$tx_status" in
+            COMMITTED|ROLLED_BACK)
+                rm -rf -- "$bin_tx_dir"
+                ;;
+            FAILED_ROLLBACK|INTEGRATION_FAILED|*)
+                printf 'Transaction materials preserved in: %s\n' "$bin_tx_dir" >&2
+                ;;
+        esac
     fi
+    modernime_release_prefix_lock
     exit "$exit_code"
 }
 trap cleanup_bin_transaction EXIT
 
 if ! modernime_deploy_payload "$payload_root" "$prefix" "$bin_tx_dir"; then
-    printf 'Error: Binary payload deployment failed; rollback completed.\n' >&2
+    tx_status=$(cat "$bin_tx_dir/status" 2>/dev/null || echo "UNKNOWN")
+    if [[ "$tx_status" == "ROLLED_BACK" ]]; then
+        printf 'Error: Binary payload deployment failed; rollback completed.\n' >&2
+    elif [[ "$tx_status" == "FAILED_ROLLBACK" ]]; then
+        printf 'Error: Binary payload deployment failed; rollback failed. Recovery files preserved in %s\n' "$bin_tx_dir" >&2
+    else
+        printf 'Error: Binary payload deployment failed (status=%s). Transaction materials preserved in %s\n' "$tx_status" "$bin_tx_dir" >&2
+    fi
     exit 1
 fi
-rm -rf -- "$bin_tx_dir"
-trap - EXIT
+
+printf 'INTEGRATING\n' > "$bin_tx_dir/status"
 
 manifest_dir="$prefix/share/modernime"
 managed_state_dir="$manifest_dir/managed-files"
-MODERNIME_INSTALLED_VERSION="__PACKAGE_VERSION__" \
-    modernime_integrate "$prefix" "$config_home" "$desktop_dir" "$managed_state_dir" "$data_home"
+if ! MODERNIME_INSTALLED_VERSION="__PACKAGE_VERSION__" \
+    modernime_integrate "$prefix" "$config_home" "$desktop_dir" "$managed_state_dir" "$data_home" "$bin_tx_dir/deployed_files.list"; then
+    printf 'INTEGRATION_FAILED\n' > "$bin_tx_dir/status"
+    printf 'Error: Integration failed after payload deployment. Transaction materials preserved in: %s\n' "$bin_tx_dir" >&2
+    exit 1
+fi
+
+printf 'COMMITTED\n' > "$bin_tx_dir/status"
+modernime_cleanup_transaction_dir "$bin_tx_dir"
+modernime_release_prefix_lock
 
 skip_fcitx_restart=false
 case "${MODERNIME_SKIP_FCITX_RESTART:-}" in

@@ -1,6 +1,7 @@
 #include "lmdb_environment.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -42,7 +43,7 @@ UnpackedRecordView unpackLmdbValue(const MDB_val &val) noexcept {
         static_cast<std::size_t>(result.meta.text_bytes_len) +
         static_cast<std::size_t>(result.meta.context_before_len) +
         static_cast<std::size_t>(result.meta.context_after_len);
-    if (val.mv_size < total_needed) {
+    if (val.mv_size != total_needed || !std::isfinite(result.meta.base_weight)) {
         return result;
     }
     const auto *base = static_cast<const char *>(val.mv_data) + sizeof(WordMeta);

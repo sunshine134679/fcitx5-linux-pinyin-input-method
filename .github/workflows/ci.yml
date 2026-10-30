@@ -38,6 +38,8 @@ jobs:
       - name: Run headless CTest
         run: |
           unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
+          mkdir -p "$PWD/build/ci/gtest_output"
+          GTEST_OUTPUT="xml:$PWD/build/ci/gtest_output/personal_engine.xml" \
           ctest --test-dir build/ci --output-on-failure \
             -E '^modernime_personal_engine_benchmark$' \
             --output-junit "$PWD/build/ci/debug-junit.xml" \
@@ -63,11 +65,13 @@ jobs:
         run: |
           ctest --test-dir build/ci --show-only=json-v1 > build/ci/registered.json
           python3 tests/verify_required_tests.py \
+            --check execution \
             --registered build/ci/registered.json \
             --profile full \
-            --stage baseline \
+            --stage final \
             --junit build/ci/debug-junit.xml \
             --junit build/ci-performance/release-junit.xml \
+            --gtest-xml build/ci/gtest_output \
             --execution headless
 
       - name: Verify core-only build profile
@@ -85,6 +89,7 @@ jobs:
             --output-junit "$PWD/build/ci-core-only/junit.xml" \
             --parallel $(nproc)
           python3 tests/verify_required_tests.py \
+            --check execution \
             --registered build/ci-core-only/registered.json \
             --profile core-only \
             --stage baseline \

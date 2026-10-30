@@ -20,8 +20,12 @@ bool SettingsWindowModel::dirty() const {
 }
 
 bool SettingsWindowModel::hasExternalModification() const {
-    if (savedHash_.empty() || !std::filesystem::exists(path_)) {
-        return false;
+    const bool fileExists = std::filesystem::exists(path_);
+    if (savedHash_.empty()) {
+        return fileExists;
+    }
+    if (!fileExists) {
+        return true;
     }
     return core::computeFileContentHash(path_) != savedHash_;
 }
@@ -101,21 +105,21 @@ void SettingsWindowModel::editDefaults() {
 
 bool SettingsWindowModel::save(std::string *error) {
     const bool changed = edited_ != loaded_;
-    std::string saveError;
-    if (!core::SettingsStore::save(path_, edited_, &saveError, savedHash_,
-                                  &rawLines_)) {
-        lastError_ = saveError;
+    auto saveResult = core::SettingsStore::saveWithResult(
+        path_, edited_, savedHash_, &rawLines_);
+    lastSaveResult_ = saveResult;
+    if (saveResult.status != core::SettingsSaveStatus::Saved) {
+        lastError_ = saveResult.error;
         if (error != nullptr) {
-            *error = saveError;
+            *error = saveResult.error;
         }
         return false;
     }
-    loaded_ = edited_;
+    loaded_ = std::move(saveResult.settings);
     defaultsEdited_ = false;
-    savedHash_ = core::computeFileContentHash(path_);
+    savedHash_ = std::move(saveResult.contentHash);
     loadedHash_ = savedHash_;
-    const auto reloaded = core::SettingsStore::load(path_);
-    rawLines_ = reloaded.rawLines;
+    rawLines_ = std::move(saveResult.rawLines);
     if (changed) {
         ++savedRevision_;
     }

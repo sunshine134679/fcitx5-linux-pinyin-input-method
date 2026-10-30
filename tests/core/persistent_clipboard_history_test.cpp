@@ -8,6 +8,8 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace {
 
@@ -291,6 +293,114 @@ int main() {
     assertTrue(editor.load(dirtyPath, &error) &&
                    editor.entries() == std::vector<std::string>{"collision pending"},
                "same-timestamp retry saves only the pending copy");
+
+    // Dual-process concurrency and fence test:
+    // 1) Verify that concurrent writes between child and parent do not corrupt the file.
+    // 2) Verify that copy vs clear concurrency does not resurrect cleared history.
+    const auto concurrentPath = directory / "concurrent-fence.bin";
+    modernime::core::PersistentClipboardHistory parentHist(concurrentPath);
+    assertTrue(parentHist.load(&error) && parentHist.observe("base item", &error),
+               "concurrent fixture initializes");
+
+    pid_t pid = fork();
+    assertTrue(pid >= 0, "fork succeeds");
+    if (pid == 0) {
+        // Child process: performs writes and clear operations
+        for (int i = 0; i < 20; ++i) {
+            std::string childError;
+            modernime::core::ClipboardHistory childWorker;
+            modernime::core::ClipboardHistory::updateFile(
+                concurrentPath,
+                [i](modernime::core::ClipboardHistory &hist) {
+                    hist.observe("child-entry-" + std::to_string(i));
+                    return true;
+                },
+                &childWorker,
+                &childError,
+                false);
+            usleep(500);
+        }
+        std::exit(EXIT_SUCCESS);
+    } else {
+        // Parent process: also performs writes concurrently
+        for (int i = 0; i < 20; ++i) {
+            std::string parentError;
+            modernime::core::ClipboardHistory parentWorker;
+            modernime::core::ClipboardHistory::updateFile(
+                concurrentPath,
+                [i](modernime::core::ClipboardHistory &hist) {
+                    hist.observe("parent-entry-" + std::to_string(i));
+                    return true;
+                },
+                &parentWorker,
+                &parentError,
+                false);
+            usleep(500);
+        }
+
+        int status = 0;
+        waitpid(pid, &status, 0);
+        assertTrue(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                   "child worker exited cleanly");
+
+        // Verify file is clean and uncorrupted
+        modernime::core::ClipboardHistory checkHist;
+        assertTrue(checkHist.load(concurrentPath, &error),
+                   "file remains valid after concurrent process writes: " + error);
+        assertTrue(!checkHist.entries().empty(),
+                   "concurrent entries are recorded");
+    }
+
+    // Now test copy vs clear fence across processes:
+    // Process A (child) clears the file; Process B (parent) observes a new item.
+    // Old entries in parent's memory must not be resurrected.
+    const auto fencePath = directory / "fence-test.bin";
+    modernime::core::PersistentClipboardHistory runtimeFence(fencePath);
+    assertTrue(runtimeFence.load(&error), "fence fixture loads");
+    assertTrue(runtimeFence.observe("stale A", &error) &&
+                   runtimeFence.observe("stale B", &error),
+               "fence fixture populates stale base");
+    assertTrue(runtimeFence.flush(&error), "fence fixture flushes stale base");
+
+    pid = fork();
+    assertTrue(pid >= 0, "second fork succeeds");
+    if (pid == 0) {
+        // Child clears the history via updateFile (simulating settings UI action)
+        std::string childError;
+        modernime::core::ClipboardHistory childWorker;
+        bool cleared = modernime::core::ClipboardHistory::updateFile(
+            fencePath,
+            [](modernime::core::ClipboardHistory &hist) {
+                hist.clear();
+                return true;
+            },
+            &childWorker,
+            &childError,
+            false);
+        if (!cleared) {
+            std::exit(EXIT_FAILURE);
+        }
+        std::exit(EXIT_SUCCESS);
+    } else {
+        int status = 0;
+        waitpid(pid, &status, 0);
+        assertTrue(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                   "child clear exited cleanly");
+
+        // Runtime observes a new item AFTER child cleared on disk
+        assertTrue(runtimeFence.observe("fresh item", &error),
+                   "runtime observes fresh item: " + error);
+        assertTrue(runtimeFence.flush(&error),
+                   "runtime flushes fresh item: " + error);
+
+        modernime::core::ClipboardHistory finalCheck;
+        assertTrue(finalCheck.load(fencePath, &error),
+                   "fence file is readable: " + error);
+        // The file must contain ONLY "fresh item", stale A and stale B must NOT be resurrected!
+        assertTrue(finalCheck.entries().size() == 1 &&
+                       finalCheck.entries().front() == "fresh item",
+                   "copy vs clear concurrency does not resurrect cleared history");
+    }
 
     return EXIT_SUCCESS;
 }

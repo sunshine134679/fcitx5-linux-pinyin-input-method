@@ -831,4 +831,108 @@ TEST(ArchitectureSelectionRegression, T11_A08_ReadyNotificationSafeAgainstDestro
 }
 #endif
 
+TEST(ArchitectureSelectionRegression, AR03_IdenticalContextDoesNotInvalidateVisibleCandidates) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    controller.setContext("", "", modernime::fcitx5::ContextAvailability::Valid);
+    provider.currentPage.rawInput = "nihao";
+    provider.currentPage.preedit = "nihao";
+    provider.currentPage.generation = 1;
+    provider.currentPage.items = {
+        makeItem("你好", "ni'hao", 5),
+        makeItem("您好", "nin'hao", 5)
+    };
+    controller.handle({modernime::fcitx5::KeyKind::Character, 'n', 0});
+    ASSERT_FALSE(controller.page().items.empty());
+
+    const auto initialGen = controller.displayGeneration();
+    const auto initialPublishes = host.publishedPages.size();
+    modernime::core::CandidateSelectionRequest req;
+    req.sessionId = controller.sessionId();
+    req.displayGeneration = initialGen;
+    req.globalIndex = 0;
+    req.expected = modernime::core::candidateIdentity(controller.page().items.front(), controller.page());
+
+    // Repeating identical context notification must not bump displayGeneration nor republish
+    controller.setContext("", "", modernime::fcitx5::ContextAvailability::Valid);
+    EXPECT_EQ(controller.displayGeneration(), initialGen);
+    EXPECT_EQ(host.publishedPages.size(), initialPublishes);
+
+    // Old visible candidate request (e.g. mouse click) must still be accepted
+    EXPECT_TRUE(controller.select(req));
+    EXPECT_FALSE(host.committedTexts.empty());
+    EXPECT_EQ(host.committedTexts.back(), "你好");
+}
+
+TEST(ArchitectureSelectionRegression, AR03_ActualContextChangeRepublishesAndRejectsOldRequest) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    controller.setContext("", "", modernime::fcitx5::ContextAvailability::Valid);
+    provider.currentPage.rawInput = "nihao";
+    provider.currentPage.preedit = "nihao";
+    provider.currentPage.generation = 1;
+    provider.currentPage.items = {
+        makeItem("你好", "ni'hao", 5),
+        makeItem("您好", "nin'hao", 5)
+    };
+    controller.handle({modernime::fcitx5::KeyKind::Character, 'n', 0});
+    ASSERT_FALSE(controller.page().items.empty());
+
+    const auto oldGen = controller.displayGeneration();
+    const auto oldPublishes = host.publishedPages.size();
+    modernime::core::CandidateSelectionRequest oldReq;
+    oldReq.sessionId = controller.sessionId();
+    oldReq.displayGeneration = oldGen;
+    oldReq.globalIndex = 0;
+    oldReq.expected = modernime::core::candidateIdentity(controller.page().items.front(), controller.page());
+
+    // Actual context change occurs
+    controller.setContext("new_context", "", modernime::fcitx5::ContextAvailability::Valid);
+    EXPECT_GT(controller.displayGeneration(), oldGen);
+    EXPECT_GT(host.publishedPages.size(), oldPublishes);
+
+    // Old request holding stale displayGeneration must be rejected
+    EXPECT_FALSE(controller.select(oldReq));
+
+    // New request holding fresh displayGeneration must be accepted
+    modernime::core::CandidateSelectionRequest freshReq;
+    freshReq.sessionId = controller.sessionId();
+    freshReq.displayGeneration = controller.displayGeneration();
+    freshReq.globalIndex = 0;
+    freshReq.expected = modernime::core::candidateIdentity(controller.page().items.front(), controller.page());
+    EXPECT_TRUE(controller.select(freshReq));
+}
+
+TEST(ArchitectureSelectionRegression, AR03_SensitivityChangeRepublishesAndRejectsOldRequest) {
+    TestEngineHost host;
+    TestCandidateProvider provider;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+
+    provider.currentPage.rawInput = "nihao";
+    provider.currentPage.preedit = "nihao";
+    provider.currentPage.generation = 1;
+    provider.currentPage.items = {
+        makeItem("你好", "ni'hao", 5),
+        makeItem("您好", "nin'hao", 5)
+    };
+    controller.handle({modernime::fcitx5::KeyKind::Character, 'n', 0});
+    ASSERT_FALSE(controller.page().items.empty());
+
+    const auto oldGen = controller.displayGeneration();
+    modernime::core::CandidateSelectionRequest oldReq;
+    oldReq.sessionId = controller.sessionId();
+    oldReq.displayGeneration = oldGen;
+    oldReq.globalIndex = 0;
+    oldReq.expected = modernime::core::candidateIdentity(controller.page().items.front(), controller.page());
+
+    // Sensitive mode entered
+    controller.setSensitive(true);
+    EXPECT_GT(controller.displayGeneration(), oldGen);
+    EXPECT_FALSE(controller.select(oldReq));
+}
+
 } // namespace
