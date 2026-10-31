@@ -551,13 +551,16 @@ modernime_integrate() {
         else
             settings_desktop_exec="$(modernime_desktop_argument "$prefix/bin/modernime-settings")"
         fi
+        local target_icon
+        target_icon="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
+
         {
             printf '%s\n' '[Desktop Entry]'
             printf '%s\n' 'Type=Application'
             printf '%s\n' 'Name=ModernIME 设置'
             printf '%s\n' 'Comment=Configure ModernIME input method'
             printf 'Exec=%s\n' "$settings_desktop_exec"
-            printf 'Icon=%s\n' "$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
+            printf 'Icon=%s\n' "$target_icon"
             printf '%s\n' 'Terminal=false'
             printf '%s\n' 'Categories=Settings;Utility;'
         } > "$desktop_tmp" || return 1
@@ -568,8 +571,7 @@ modernime_integrate() {
                 gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
             fi
         elif [[ -f "$desktop_shortcut" && ! -L "$desktop_shortcut" && -w "$desktop_shortcut" ]]; then
-            local current_icon target_icon
-            target_icon="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
+            local current_icon
             current_icon=$(grep -m1 '^Icon=' "$desktop_shortcut" 2>/dev/null | cut -d= -f2- || true)
             if [[ "$current_icon" != "$target_icon" ]]; then
                 awk -v new_icon="$target_icon" '
@@ -590,7 +592,7 @@ modernime_integrate() {
         local application_desktop="$prefix/share/applications/modernime-settings.desktop"
         if [[ -f "$application_desktop" ]]; then
             MODERNIME_DESKTOP_EXEC="$settings_desktop_exec" \
-            MODERNIME_DESKTOP_ICON="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")" \
+            MODERNIME_DESKTOP_ICON="$target_icon" \
                 awk '/^Exec=/ { print "Exec=" ENVIRON["MODERNIME_DESKTOP_EXEC"]; next } /^Icon=/ { print "Icon=" ENVIRON["MODERNIME_DESKTOP_ICON"]; next } { print }' \
                     "$application_desktop" > "$desktop_tmp" || return 1
             cp -- "$desktop_tmp" "$application_desktop" || return 1

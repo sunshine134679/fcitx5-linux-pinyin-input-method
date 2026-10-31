@@ -773,19 +773,59 @@ bool UpdateController::ensureDesktopShortcut(const Environment &environment) {
 
     std::string prefix = lookupEnv(environment, "MODERNIME_PREFIX");
     if (prefix.empty()) {
+        char exeBuf[PATH_MAX];
+        const ssize_t len = ::readlink("/proc/self/exe", exeBuf, sizeof(exeBuf) - 1);
+        if (len > 0) {
+            exeBuf[len] = '\0';
+            std::filesystem::path selfPath(exeBuf);
+            if (selfPath.parent_path().filename() == "bin") {
+                const auto candidate = selfPath.parent_path().parent_path();
+                if (std::filesystem::is_regular_file(candidate / "share/icons/hicolor/512x512/apps/modernime.png", ec) ||
+                    std::filesystem::is_regular_file(candidate / "bin/modernime-settings", ec)) {
+                    prefix = candidate.string();
+                }
+            }
+        }
+    }
+    if (prefix.empty()) {
+        const std::string home = lookupEnv(environment, "HOME");
+        if (!home.empty()) {
+            const auto userCandidate = std::filesystem::path(home) / ".local";
+            if (std::filesystem::is_regular_file(userCandidate / "share/icons/hicolor/512x512/apps/modernime.png", ec) ||
+                std::filesystem::is_regular_file(userCandidate / "bin/modernime-settings", ec)) {
+                prefix = userCandidate.string();
+            }
+        }
+    }
+    if (prefix.empty()) {
         prefix = MODERNIME_INSTALL_PREFIX;
     }
 
     std::string expectedIcon = lookupEnv(environment, "MODERNIME_DESKTOP_ICON");
     if (expectedIcon.empty()) {
-        const auto p512 = std::filesystem::path(prefix) / "share/icons/hicolor/512x512/apps/modernime.png";
-        const auto sys512 = std::filesystem::path("/usr/share/icons/hicolor/512x512/apps/modernime.png");
-        if (std::filesystem::is_regular_file(p512, ec)) {
-            expectedIcon = p512.string();
-        } else if (std::filesystem::is_regular_file(sys512, ec)) {
-            expectedIcon = sys512.string();
-        } else {
-            expectedIcon = (std::filesystem::path(prefix) / "share/icons/hicolor/512x512/apps/modernime.png").string();
+        const std::string home = lookupEnv(environment, "HOME");
+        const std::string dataHome = lookupEnv(environment, "XDG_DATA_HOME");
+        std::vector<std::filesystem::path> candidateIcons = {
+            std::filesystem::path(prefix) / "share/icons/hicolor/512x512/apps/modernime.png",
+        };
+        if (!dataHome.empty()) {
+            candidateIcons.push_back(std::filesystem::path(dataHome) / "icons/hicolor/512x512/apps/modernime.png");
+        }
+        if (!home.empty()) {
+            candidateIcons.push_back(std::filesystem::path(home) / ".local/share/icons/hicolor/512x512/apps/modernime.png");
+            candidateIcons.push_back(std::filesystem::path(home) / "Applications/ModernIME/modernime.png");
+        }
+        candidateIcons.push_back(std::filesystem::path("/usr/local/share/icons/hicolor/512x512/apps/modernime.png"));
+        candidateIcons.push_back(std::filesystem::path("/usr/share/icons/hicolor/512x512/apps/modernime.png"));
+
+        for (const auto &cand : candidateIcons) {
+            if (std::filesystem::is_regular_file(cand, ec)) {
+                expectedIcon = cand.string();
+                break;
+            }
+        }
+        if (expectedIcon.empty()) {
+            expectedIcon = "modernime";
         }
     }
 
@@ -793,7 +833,18 @@ bool UpdateController::ensureDesktopShortcut(const Environment &environment) {
     if (expectedExec.empty()) {
         const std::string configHome = lookupEnv(environment, "MODERNIME_CONFIG_HOME");
         const std::string dataHome = lookupEnv(environment, "MODERNIME_DATA_HOME");
-        const auto binPath = std::filesystem::path(prefix) / "bin/modernime-settings";
+        std::filesystem::path binPath = std::filesystem::path(prefix) / "bin/modernime-settings";
+        if (!std::filesystem::is_regular_file(binPath, ec)) {
+            char exeBuf[PATH_MAX];
+            const ssize_t len = ::readlink("/proc/self/exe", exeBuf, sizeof(exeBuf) - 1);
+            if (len > 0) {
+                exeBuf[len] = '\0';
+                std::filesystem::path selfPath(exeBuf);
+                if (std::filesystem::is_regular_file(selfPath, ec)) {
+                    binPath = selfPath;
+                }
+            }
+        }
         if (!configHome.empty() || !dataHome.empty()) {
             expectedExec = "env";
             if (!configHome.empty()) {
@@ -872,8 +923,14 @@ bool UpdateController::ensureDesktopShortcut(const Environment &environment) {
             iconFound = true;
             const auto currentIcon = line.substr(5);
             if (currentIcon != expectedIcon) {
-                lines.push_back("Icon=" + expectedIcon);
-                iconChanged = true;
+                if (std::filesystem::is_regular_file(currentIcon, ec) &&
+                    !expectedIcon.empty() && expectedIcon != "modernime" &&
+                    !std::filesystem::is_regular_file(expectedIcon, ec)) {
+                    lines.push_back(line);
+                } else {
+                    lines.push_back("Icon=" + expectedIcon);
+                    iconChanged = true;
+                }
             } else {
                 lines.push_back(line);
             }

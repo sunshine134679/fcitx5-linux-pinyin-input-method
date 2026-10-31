@@ -226,6 +226,14 @@ if [[ "$skip_desktop_shortcut" != true ]]; then
     if [[ -z "$desktop_icon" ]]; then
         if [[ -f "$prefix/share/icons/hicolor/512x512/apps/modernime.png" ]]; then
             desktop_icon="$(modernime_desktop_string "$prefix/share/icons/hicolor/512x512/apps/modernime.png")"
+        elif [[ -f "${data_home:-"$HOME/.local/share"}/icons/hicolor/512x512/apps/modernime.png" ]]; then
+            desktop_icon="$(modernime_desktop_string "${data_home:-"$HOME/.local/share"}/icons/hicolor/512x512/apps/modernime.png")"
+        elif [[ -f "$HOME/.local/share/icons/hicolor/512x512/apps/modernime.png" ]]; then
+            desktop_icon="$(modernime_desktop_string "$HOME/.local/share/icons/hicolor/512x512/apps/modernime.png")"
+        elif [[ -f "$HOME/Applications/ModernIME/modernime.png" ]]; then
+            desktop_icon="$(modernime_desktop_string "$HOME/Applications/ModernIME/modernime.png")"
+        elif [[ -f "/usr/local/share/icons/hicolor/512x512/apps/modernime.png" ]]; then
+            desktop_icon="$(modernime_desktop_string "/usr/local/share/icons/hicolor/512x512/apps/modernime.png")"
         elif [[ -f "/usr/share/icons/hicolor/512x512/apps/modernime.png" ]]; then
             desktop_icon="$(modernime_desktop_string "/usr/share/icons/hicolor/512x512/apps/modernime.png")"
         else
