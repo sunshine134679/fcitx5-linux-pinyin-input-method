@@ -6,6 +6,7 @@
 #include <array>
 #include <cctype>
 #include <vector>
+#include <unordered_set>
 
 namespace modernime::core {
 namespace {
@@ -486,6 +487,97 @@ bool PinyinMatchPolicy::initialsMatch(std::string_view userInput,
         return false;
     };
     return matchNext(matchNext, 0, 0);
+}
+
+bool PinyinMatchPolicy::syllableInputMatch(std::string_view userInput,
+                                           std::string_view fullPinyin) {
+    constexpr std::size_t kMaxInputBytes = 48;
+    if (userInput.size() < 2 || userInput.size() > kMaxInputBytes ||
+        !validComposition(userInput) || userInput.back() == '\'') {
+        return false;
+    }
+    const auto segmented = segmentPinyin(fullPinyin);
+    if (segmented.empty() || segmented.size() > 2 * kMaxInputBytes) {
+        return false;
+    }
+    // One row per candidate syllable keeps ambiguous alignments polynomial.
+    std::array<bool, kMaxInputBytes + 1> reachable{};
+    reachable[0] = true;
+    std::size_t start = 0;
+    while (start < segmented.size()) {
+        const auto separator = segmented.find('\'', start);
+        const auto end = separator == std::string::npos ? segmented.size() : separator;
+        const auto syllable = std::string_view(segmented).substr(start, end - start);
+        if (!isStandardSyllable(syllable)) return false;
+        std::array<bool, kMaxInputBytes + 1> next{};
+        for (std::size_t offset = 0; offset < userInput.size(); ++offset) {
+            if (!reachable[offset]) continue;
+            const auto remaining = userInput.substr(offset);
+            const auto advance = [&](std::size_t length) {
+                auto position = offset + length;
+                if (position < userInput.size() && userInput[position] == '\'') ++position;
+                next[position] = true;
+            };
+            if (remaining.starts_with(syllable)) advance(syllable.size());
+            if (remaining.front() == syllable.front()) advance(1);
+            if ((syllable.starts_with("zh") || syllable.starts_with("ch") ||
+                 syllable.starts_with("sh")) && remaining.starts_with(syllable.substr(0, 2))) {
+                advance(2);
+            }
+        }
+        reachable = next;
+        start = end + 1;
+    }
+    return reachable[userInput.size()];
+}
+
+std::vector<std::string> PinyinMatchPolicy::mixedAbbreviationKeys(
+    std::string_view input,
+    const std::function<bool(std::string_view)> &hasIndexedPrefix) {
+    constexpr std::size_t kMaxStates = 512;
+    constexpr std::size_t kMaxKeys = 64;
+    const bool separated = input.find('\'') != std::string_view::npos;
+    if (input.size() < 3 || input.size() > 48 || !validComposition(input) ||
+        input.back() == '\'' ||
+        (!separated && input.find_first_of("aeiouv") == std::string_view::npos)) {
+        return {};
+    }
+    std::vector<std::string> keys;
+    std::unordered_set<std::string> seenKeys;
+    std::unordered_set<std::string> visited;
+    std::string key;
+    const auto visit = [&](auto self, std::size_t offset, bool full, bool shortened) -> void {
+        if (keys.size() >= kMaxKeys || visited.size() >= kMaxStates) return;
+        if (hasIndexedPrefix && !hasIndexedPrefix(key)) return;
+        std::string state = key;
+        state.push_back(static_cast<char>(offset));
+        state.push_back(static_cast<char>((full ? 1 : 0) | (shortened ? 2 : 0)));
+        if (!visited.insert(std::move(state)).second) return;
+        if (offset == input.size()) {
+            if (((full && shortened) || separated) && key.size() >= 2 && seenKeys.insert(key).second) keys.push_back(key);
+            return;
+        }
+        const auto initial = input[offset];
+        // i/u/v cannot start a standard Mandarin syllable. Prune such paths
+        // before exploring later ambiguous full-syllable boundaries.
+        if (initial == '\'' || initial == 'i' || initial == 'u' || initial == 'v') return;
+        key.push_back(initial);
+        const auto advance = [&](std::size_t length, bool isFull, bool isShort) {
+            auto position = offset + length;
+            if (position < input.size() && input[position] == '\'') ++position;
+            self(self, position, full || isFull, shortened || isShort);
+        };
+        for (auto length = std::min<std::size_t>(6, input.size() - offset); length >= 1; --length) {
+            if (isStandardSyllable(input.substr(offset, length))) advance(length, true, false);
+        }
+        if (offset + 1 < input.size() && input[offset + 1] == 'h' &&
+            (initial == 'z' || initial == 'c' || initial == 's')) advance(2, false, true);
+        advance(1, false, true);
+        key.pop_back();
+    };
+    visit(visit, 0, false, false);
+    std::sort(keys.begin(), keys.end());
+    return keys;
 }
 
 bool PinyinMatchPolicy::exactInputMatch(std::string_view userInput,
@@ -1490,6 +1582,10 @@ int PinyinMatchPolicy::priority(std::string_view userInput,
     if (isAbbreviationInput(userInput) &&
         (abbreviationKey(fullPinyin) == userInput ||
          initialsMatch(userInput, fullPinyin))) {
+        return 1;
+    }
+    if (userInput.find_first_of("aeiouv'") != std::string_view::npos &&
+        syllableInputMatch(userInput, fullPinyin)) {
         return 1;
     }
     if (!candidate.empty() && candidate.size() < input.size() &&

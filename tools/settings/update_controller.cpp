@@ -57,6 +57,135 @@ std::string lookupEnv(const Environment &environment, std::string_view key) {
     return {};
 }
 
+bool repairLegacyUserApplicationIcon(const Environment &environment,
+                                     const std::string &prefix,
+                                     const std::string &expectedIcon) {
+    std::filesystem::path dataHome = lookupEnv(environment, "XDG_DATA_HOME");
+    if (dataHome.empty()) {
+        const auto home = lookupEnv(environment, "HOME");
+        if (home.empty()) {
+            return true;
+        }
+        dataHome = std::filesystem::path(home) / ".local/share";
+    }
+    const auto application = dataHome / "applications/modernime-settings.desktop";
+    struct stat original{};
+    if (::lstat(application.c_str(), &original) != 0) {
+        return errno == ENOENT;
+    }
+    if (!S_ISREG(original.st_mode)) {
+        return true;
+    }
+
+    std::ifstream in(application, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    if (in.bad()) {
+        return false;
+    }
+    std::string content = buffer.str();
+    std::string type, exec, icon;
+    std::size_t groupEnd = std::string::npos;
+    std::size_t iconStart = std::string::npos, iconLength = 0;
+    unsigned int groups = 0, types = 0, execs = 0, icons = 0;
+    bool inEntry = false;
+    std::string newline = "\n";
+    // Keep the original bytes: GKeyFile serialization would also rewrite user fields.
+    for (std::size_t start = 0; start < content.size();) {
+        const auto lf = content.find('\n', start);
+        const auto end = lf == std::string::npos ? content.size() : lf;
+        auto textEnd = end;
+        if (textEnd > start && content[textEnd - 1] == '\r') {
+            --textEnd;
+        }
+        const auto line = std::string_view(content).substr(start, textEnd - start);
+        const auto stripped = trim(line);
+        if (stripped.starts_with("[") && stripped.ends_with("]")) {
+            inEntry = stripped == "[Desktop Entry]";
+            if (inEntry) {
+                ++groups;
+                groupEnd = lf == std::string::npos ? end : lf + 1;
+                newline = textEnd != end ? "\r\n" : "\n";
+            }
+        } else if (inEntry && !stripped.starts_with("#")) {
+            const auto equals = line.find('=');
+            if (equals != std::string_view::npos) {
+                const auto key = trim(line.substr(0, equals));
+                const auto value = trim(line.substr(equals + 1));
+                if (key == "Type") {
+                    type = value;
+                    ++types;
+                } else if (key == "Exec") {
+                    exec = value;
+                    ++execs;
+                } else if (key == "Icon") {
+                    icon = value;
+                    ++icons;
+                    iconStart = start + equals + 1;
+                    iconLength = textEnd - iconStart;
+                }
+            }
+        }
+        start = lf == std::string::npos ? content.size() : lf + 1;
+    }
+    const auto installedExec = (std::filesystem::path(prefix) / "bin/modernime-settings").string();
+    // Recognize the historical launcher and this installation only, not shell wrappers
+    // or another installation that happens to share the same desktop filename.
+    if (groups != 1 || types != 1 || type != "Application" || execs != 1 || icons > 1 ||
+        (exec != "modernime-settings" && exec != installedExec && exec != "\"" + installedExec + "\"")) {
+        return true;
+    }
+    std::error_code ec;
+    const std::filesystem::path iconPath(icon);
+    const bool obsoletePath = iconPath.is_absolute() && iconPath.filename() == "modernime.png" &&
+                              !std::filesystem::exists(iconPath, ec) && !ec;
+    if (icon == expectedIcon || (!icon.empty() && icon != "input-keyboard" && !obsoletePath)) {
+        return true;
+    }
+    if (iconStart != std::string::npos) {
+        content.replace(iconStart, iconLength, expectedIcon);
+    } else {
+        content.insert(groupEnd, (groupEnd == content.size() && !content.ends_with("\n") ? newline : "") +
+                                    "Icon=" + expectedIcon + newline);
+    }
+
+    std::string temporary = (application.parent_path() / ".modernime-application-XXXXXX").string();
+    const int fd = ::mkstemp(temporary.data());
+    if (fd < 0) {
+        return false;
+    }
+    bool success = true;
+    for (std::size_t written = 0; written < content.size();) {
+        const auto count = ::write(fd, content.data() + written, content.size() - written);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            success = false;
+            break;
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    success = (::fchmod(fd, original.st_mode & 07777) == 0) && success;
+    success = (::close(fd) == 0) && success;
+    struct stat current{};
+    success = success && ::lstat(application.c_str(), &current) == 0 &&
+              S_ISREG(current.st_mode) && current.st_dev == original.st_dev &&
+              current.st_ino == original.st_ino && current.st_size == original.st_size &&
+              current.st_mtim.tv_sec == original.st_mtim.tv_sec &&
+              current.st_mtim.tv_nsec == original.st_mtim.tv_nsec;
+    if (success) {
+        success = ::rename(temporary.c_str(), application.c_str()) == 0;
+    }
+    if (!success) {
+        ::unlink(temporary.c_str());
+    }
+    return success;
+}
+
 guint resolvePackageOperationTimeoutMs(const Environment &environment) {
     const auto raw = trim(lookupEnv(environment, "MODERNIME_PACKAGE_OP_TIMEOUT_MS"));
     if (!raw.empty()) {
@@ -442,7 +571,11 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
         detail::CommandSpec infoSpec;
         infoSpec.mode = detail::CommandMode::Query;
         infoSpec.timeoutMs = kQueryTimeoutMs;
-        infoSpec.argv = {dnfBin.string(), "--cacheonly", "-q", "info", "modernime"};
+        // Inspect only the root-managed system cache. DNF otherwise tries to
+        // re-open root's private repository keyring even in cache-only mode.
+        // Real refresh/upgrade commands still use the repository GPG policy.
+        infoSpec.argv = {dnfBin.string(), "--cacheonly", "--setopt=*.repo_gpgcheck=0",
+                         "-q", "info", "modernime"};
         infoSpec.environment = environment;
         infoSpec.limits.perStreamBufferBytes = 1048576;
         infoSpec.limits.perStreamResultBytes = 1048576;
@@ -827,6 +960,10 @@ bool UpdateController::ensureDesktopShortcut(const Environment &environment) {
         if (expectedIcon.empty()) {
             expectedIcon = "modernime";
         }
+    }
+
+    if (!repairLegacyUserApplicationIcon(environment, prefix, expectedIcon)) {
+        return false;
     }
 
     std::string expectedExec = lookupEnv(environment, "MODERNIME_DESKTOP_EXEC");

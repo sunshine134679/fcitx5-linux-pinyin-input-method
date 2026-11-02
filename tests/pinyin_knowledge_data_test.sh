@@ -123,7 +123,14 @@ if ! cmp -s "$data_file" "$tmp_sorted"; then
 fi
 
 raw_count=$(awk -F '\t' '
-    NF != 3 || $1 == "" || $2 !~ /^[a-z]+('\''[a-z]+)*$/ || $3 != "0" { bad = 1 }
+    # 仅两项已复核术语允许 cost=3；其余条目仍严格为0。
+    # 同时保留真实长句与 zdl 常用词首选的端到端断言。
+    {
+        calibrated = ($1 == "子代理" && $2 == "zi'\''dai'\''li") ||
+                     ($1 == "多代理" && $2 == "duo'\''dai'\''li")
+        expected = calibrated ? "3" : "0"
+    }
+    NF != 3 || $1 == "" || $2 !~ /^[a-z]+('\''[a-z]+)*$/ || $3 != expected { bad = 1 }
     { count++ }
     END { if (bad) exit 1; print count + 0 }
 ' "$raw_file")

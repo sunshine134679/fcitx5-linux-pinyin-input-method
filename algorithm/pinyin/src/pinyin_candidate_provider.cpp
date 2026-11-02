@@ -1660,7 +1660,6 @@ private:
             const auto &candidate = result.scored[sourceIndex];
             const bool isManual = userDictionary().contains(
                 candidate.full_pinyin, candidate.text);
-            auto key = candidateKey(candidate.full_pinyin, candidate.text);
             if (isSuppressed(candidate.text, candidate.full_pinyin)) {
                 continue;
             }
@@ -1668,9 +1667,6 @@ private:
                                    learning->hasPositiveFrequency(
                                        candidate.text, candidate.full_pinyin);
             if (isManual && manualCount >= manualLimit) {
-                continue;
-            }
-            if (!seen.insert(std::move(key)).second) {
                 continue;
             }
             core::CandidateItem item;
@@ -1691,13 +1687,10 @@ private:
             if (isLearned && item.source != core::CandidateSource::Engine) {
                 item.origins.push_back(core::CandidateSource::Engine);
             }
-            if (isManual) {
-                ++manualCount;
-            }
-            item.consumedInputBytes = rawInput.size();
+            item.consumedInputBytes = candidate.consumed_input_bytes.value_or(rawInput.size());
             const auto candidatePriority = core::PinyinMatchPolicy::priority(
                 rawInput, candidate.full_pinyin);
-            if (candidatePriority == -1) {
+            if (!candidate.consumed_input_bytes && candidatePriority == -1) {
                 const auto candidatePinyin =
                     core::PinyinMatchPolicy::canonical(candidate.full_pinyin);
                 for (const auto &[prefixEnd, canonicalPrefix] : canonicalPrefixes) {
@@ -1706,7 +1699,7 @@ private:
                         break;
                     }
                 }
-            } else if (candidatePriority == 0 && !inputSegments.empty() &&
+            } else if (!candidate.consumed_input_bytes && candidatePriority == 0 && !inputSegments.empty() &&
                        !prefixEnds.empty()) {
                 // 简拼/混拼下的部分消费候选（如 zmhuishi 下的 怎么=zm）此前
                 // 被默认标成全消费：高频学习词条借加成越过整句篡位，且选词
@@ -1747,6 +1740,11 @@ private:
                     }
                 }
             }
+            auto identityKey = candidateKey(item.fullPinyin, item.text);
+            identityKey.push_back('\x1e');
+            identityKey += std::to_string(item.consumedInputBytes);
+            if (!seen.insert(std::move(identityKey)).second) continue;
+            if (isManual) ++manualCount;
             if (item.consumedInputBytes < rawInput.size()) {
                 partialPool.push_back(std::move(item));
             } else {
@@ -1856,10 +1854,16 @@ private:
         if (variantContext != nullptr && !variantInput.empty()) {
             const auto variantCanonical =
                 core::PinyinMatchPolicy::canonical(variantInput);
+            const bool singleVariant = core::PinyinMatchPolicy::isStandardSyllable(variantCanonical);
             for (const auto &item : fullItems) {
-                if (item.isLexical && item.consumedInputBytes == rawInput.size() &&
-                    core::PinyinMatchPolicy::canonical(item.fullPinyin) ==
-                        variantCanonical) {
+                if (item.consumedInputBytes != rawInput.size() ||
+                    core::PinyinMatchPolicy::canonical(item.fullPinyin) != variantCanonical) continue;
+                // 单音节来/六的词典身份不享受多字成词加分，不能因此失去
+                // 既有变体可见席位。仅接纳标准单音节且实际词典命中的变体，
+                // 不放宽普通模糊音候选、英文或部分消费候选的资格。
+                const bool lexicalVariant = item.isLexical ||
+                    (singleVariant && lexicalWordCheck(item.text, item.fullPinyin));
+                if (lexicalVariant) {
                     compInputVariantTop = item;
                     break;
                 }

@@ -472,6 +472,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             core/personalization_provider_regression_test.cpp
             core/personalization_controller_regression_test.cpp
             core/candidate_ranking_regression_test.cpp
+            core/cold_terminology_regression_test.cpp
             core/learning_writer_concurrency_test.cpp
             core/lmdb_lifecycle_test.cpp
             core/learning_semantics_test.cpp

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace modernime::core {
 
@@ -11,6 +13,14 @@ public:
     static std::string segmentPinyin(std::string_view fullPinyin);
     static std::string abbreviationKey(std::string_view fullPinyin);
     static bool initialsMatch(std::string_view userInput, std::string_view fullPinyin);
+    // 按候选音节对齐全音节、单字母声母或 zh/ch/sh，要求完整覆盖。
+    // 不把用户输入的单一贪心切分当作候选音节边界。
+    static bool syllableInputMatch(std::string_view userInput, std::string_view fullPinyin);
+    // 查询端有界探索：最多 512 个状态、64 个声母键，单键不写回学习库。
+    // hasIndexedPrefix 在学习召回中按现有索引剪枝，假想键不消耗结果预算。
+    static std::vector<std::string> mixedAbbreviationKeys(
+        std::string_view userInput,
+        const std::function<bool(std::string_view)> &hasIndexedPrefix = {});
     static bool validComposition(std::string_view userInput);
     static bool isAbbreviationInput(std::string_view userInput);
     static bool exactInputMatch(std::string_view userInput,

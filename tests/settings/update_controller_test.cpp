@@ -1,4 +1,5 @@
 #include "modernime/settings/update_controller.h"
+#include "modernime/settings/detail/package_policy.h"
 
 #include <cassert>
 #include <cstdlib>
@@ -15,6 +16,7 @@
 #include <iostream>
 #include <sys/prctl.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -87,6 +89,9 @@ int main(int argc, char **argv) {
     assert(UpdateController::compareVersions("1:0.1.0", "0.9.9") > 0);
 
     const auto tempRoot = makeTempDir();
+    // Package-success paths also maintain launchers; keep all HOME/XDG writes isolated.
+    assert(::setenv("HOME", (tempRoot / "home").c_str(), 1) == 0);
+    assert(::setenv("XDG_DATA_HOME", (tempRoot / "data").c_str(), 1) == 0);
     const auto mockLockPath = tempRoot / "mock.lock";
     writeTextFile(mockLockPath, "unlocked");
     const auto aptBinDir = tempRoot / "apt-bin";
@@ -152,9 +157,11 @@ int main(int argc, char **argv) {
            "sudo apt update && sudo apt install --only-upgrade modernime");
 
     // 3. Fake DNF check with available update
+    const auto dnfQueryArgs = tempRoot / "dnf-query-args";
     writeExecutable(
         dnfBinDir / "dnf",
         "#!/bin/sh\n"
+        "if [ -n \"$MODERNIME_DNF_QUERY_ARGS\" ]; then printf '%s\\n' \"$@\" > \"$MODERNIME_DNF_QUERY_ARGS\"; fi\n"
         "cat <<'EOF'\n"
         "Available Packages\n"
         "Name         : modernime\n"
@@ -167,12 +174,15 @@ int main(int argc, char **argv) {
         "exit 0\n");
 
     const Environment dnfEnv{
+        {"MODERNIME_DNF_QUERY_ARGS", dnfQueryArgs.string()},
         {"PATH", dnfBinDir.string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.8"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", rpmChannelFile.string()},
         {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
     };
     const auto dnfStatus = UpdateController::checkForUpdates(dnfEnv);
+    assert(readFile(dnfQueryArgs) ==
+           "--cacheonly\n--setopt=*.repo_gpgcheck=0\n-q\ninfo\nmodernime\n");
     assert(dnfStatus.checked);
     assert(!dnfStatus.offlineOrUnreachable);
     assert(!dnfStatus.cacheMayBeStale);
@@ -181,8 +191,15 @@ int main(int argc, char **argv) {
     assert(dnfStatus.candidateVersion == "0.1.9-1.oe2409");
     assert(dnfStatus.packageSource.find("modernime-openeuler") != std::string::npos);
     assert(dnfStatus.packageSource.find("channel=rpm") != std::string::npos);
-    assert(dnfStatus.refreshCacheCommand == "sudo dnf makecache");
-    assert(dnfStatus.upgradeCommand == "sudo dnf makecache && sudo dnf upgrade modernime");
+    assert(dnfStatus.refreshCacheCommand == "sudo dnf makecache --refresh");
+    assert(dnfStatus.upgradeCommand == "sudo dnf makecache --refresh && sudo dnf upgrade modernime");
+    assert(dnfStatus.privilegedCommand == "pkexec dnf upgrade --refresh -y modernime");
+    assert((modernime::settings::detail::buildRefreshCacheArgv(
+        PackageManagerKind::Dnf, "pkexec", "dnf") ==
+        std::vector<std::string>{"pkexec", "dnf", "makecache", "--refresh"}));
+    assert((modernime::settings::detail::buildUpgradeArgv(
+        PackageManagerKind::Dnf, "pkexec", "dnf") ==
+        std::vector<std::string>{"pkexec", "dnf", "upgrade", "--refresh", "-y", "modernime"}));
 
     // RPM channel takes precedence even if APT tools are also installed.
     const Environment mixedRpmEnv{
@@ -1428,12 +1445,138 @@ int main(int argc, char **argv) {
         };
 
         UpdateController::resetPackageOperationStateForTesting();
+        const auto upgradeApplication = tempRoot / "data/applications/modernime-settings.desktop";
+        std::filesystem::create_directories(upgradeApplication.parent_path());
+        writeTextFile(upgradeApplication,
+                      "[Desktop Entry]\nType=Application\nExec=modernime-settings\nIcon=input-keyboard\n");
         assert(!std::filesystem::exists(upgradeShortcut));
         const auto directUpgradeRes = UpdateController::runSystemUpgrade(upgradeStatus, upgradeEnv);
         assert(directUpgradeRes.success);
         assert(std::filesystem::exists(upgradeShortcut));
         const auto upgradeContent = readFile(upgradeShortcut);
         assert(upgradeContent.find("Icon=" + newIconPath.string()) != std::string::npos);
+        assert(readFile(upgradeApplication) ==
+               "[Desktop Entry]\nType=Application\nExec=modernime-settings\nIcon=" + newIconPath.string() + "\n");
+
+        // 18.8 An old user application entry shadows the packaged launcher after an upgrade.
+        const auto userData = deskTestDir / "user data";
+        const auto userApplication = userData / "applications/modernime-settings.desktop";
+        std::filesystem::create_directories(userApplication.parent_path());
+        Environment applicationEnv{
+            {"MODERNIME_DESKTOP_DIR", mockDesktop.string()},
+            {"MODERNIME_PREFIX", mockPrefix.string()},
+            {"XDG_DATA_HOME", userData.string()},
+        };
+        const std::string oldApplication =
+            "# 用户保留的注释\r\n"
+            "[Desktop Entry]\r\n"
+            "Type=Application\r\n"
+            "Name=我的 ModernIME 设置\r\n"
+            "Exec=modernime-settings\r\n"
+            "Icon=input-keyboard\r\n"
+            "X-User-Custom-Key=keep-this-value\r\n"
+            "Actions=Open;\r\n"
+            "\r\n"
+            "[Desktop Action Open]\r\n"
+            "Name=用户动作\r\n"
+            "Exec=modernime-settings --page updates\r\n"
+            "Icon=input-keyboard\r\n";
+        writeTextFile(userApplication, oldApplication);
+        assert(::chmod(userApplication.c_str(), 0640) == 0);
+        assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+        std::string repairedApplication = oldApplication;
+        repairedApplication.replace(repairedApplication.find("Icon=input-keyboard"),
+                                    std::string("Icon=input-keyboard").size(),
+                                    "Icon=" + (mockIcons / "modernime.png").string());
+        assert(readFile(userApplication) == repairedApplication);
+        struct stat applicationStat{};
+        assert(::stat(userApplication.c_str(), &applicationStat) == 0);
+        assert((applicationStat.st_mode & 0777) == 0640);
+
+        // 18.9 A correct application entry is not rewritten or touched at the next startup.
+        const auto oldTime = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
+        std::filesystem::last_write_time(userApplication, oldTime);
+        struct stat beforeRepeat{};
+        assert(::stat(userApplication.c_str(), &beforeRepeat) == 0);
+        assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+        struct stat afterRepeat{};
+        assert(::stat(userApplication.c_str(), &afterRepeat) == 0);
+        assert(afterRepeat.st_ino == beforeRepeat.st_ino);
+        assert(std::filesystem::last_write_time(userApplication) == oldTime);
+        assert(readFile(userApplication) == repairedApplication);
+
+        // 18.10 Missing icons are inserted in Desktop Entry, never a Desktop Action group.
+        const std::string withoutIcon =
+            "[Desktop Entry]\nType=Application\nName=保留名称\nExec=\"" +
+            (mockBin / "modernime-settings").string() +
+            "\"\n[Desktop Action Open]\nIcon=user-action-icon\n";
+        writeTextFile(userApplication, withoutIcon);
+        assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+        assert(readFile(userApplication) ==
+               "[Desktop Entry]\nIcon=" + (mockIcons / "modernime.png").string() +
+               "\n" + withoutIcon.substr(std::string("[Desktop Entry]\n").size()));
+
+        // 18.11 Only a known obsolete ModernIME path is repaired; user custom icons survive.
+        const auto customIcon = deskTestDir / "custom.png";
+        writeTextFile(customIcon, "user-icon");
+        const std::string applicationHeader =
+            "[Desktop Entry]\nType=Application\nName=Custom\nExec=modernime-settings\nIcon=";
+        for (const auto &icon : {customIcon.string(), std::string("user-theme-icon"),
+                                 (deskTestDir / "missing-custom.png").string()}) {
+            const auto content = applicationHeader + icon + "\n";
+            writeTextFile(userApplication, content);
+            assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+            assert(readFile(userApplication) == content);
+        }
+        writeTextFile(userApplication, applicationHeader +
+                      (deskTestDir / "old-prefix/share/icons/hicolor/512x512/apps/modernime.png").string() + "\n");
+        assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+        assert(readFile(userApplication) == applicationHeader + (mockIcons / "modernime.png").string() + "\n");
+
+        // 18.12 Other applications, ambiguous executables and symlinks are not ours to edit.
+        for (const auto &exec : {std::string("another-settings"), std::string("/other/bin/modernime-settings"),
+                                 std::string("env modernime-settings")}) {
+            const auto content = "[Desktop Entry]\nType=Application\nExec=" + exec + "\nIcon=input-keyboard\n";
+            writeTextFile(userApplication, content);
+            assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+            assert(readFile(userApplication) == content);
+        }
+        const auto applicationTarget = deskTestDir / "user-application-target.desktop";
+        writeTextFile(applicationTarget, oldApplication);
+        std::filesystem::remove(userApplication);
+        std::filesystem::create_symlink(applicationTarget, userApplication);
+        assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+        assert(std::filesystem::is_symlink(userApplication));
+        assert(readFile(applicationTarget) == oldApplication);
+
+        // 18.13 Respect skip, never create a user override, and use HOME when XDG is empty.
+        std::filesystem::remove(userApplication);
+        assert(UpdateController::ensureDesktopShortcut(applicationEnv));
+        assert(!std::filesystem::exists(userApplication));
+        auto absentApplicationEnv = applicationEnv;
+        for (auto &[key, value] : absentApplicationEnv) {
+            if (key == "XDG_DATA_HOME") {
+                value = (deskTestDir / "absent-data-home").string();
+            }
+        }
+        assert(UpdateController::ensureDesktopShortcut(absentApplicationEnv));
+        assert(!std::filesystem::exists(deskTestDir / "absent-data-home"));
+        writeTextFile(userApplication, oldApplication);
+        auto skippedApplicationEnv = applicationEnv;
+        skippedApplicationEnv.emplace_back("MODERNIME_SKIP_DESKTOP_SHORTCUT", "1");
+        assert(UpdateController::ensureDesktopShortcut(skippedApplicationEnv));
+        assert(readFile(userApplication) == oldApplication);
+        const auto fallbackHome = deskTestDir / "fallback-home";
+        const auto fallbackApplication = fallbackHome / ".local/share/applications/modernime-settings.desktop";
+        std::filesystem::create_directories(fallbackApplication.parent_path());
+        writeTextFile(fallbackApplication, oldApplication);
+        Environment fallbackEnv{
+            {"HOME", fallbackHome.string()}, {"XDG_DATA_HOME", ""},
+            {"MODERNIME_PREFIX", mockPrefix.string()},
+            {"MODERNIME_DESKTOP_DIR", mockDesktop.string()},
+        };
+        assert(UpdateController::ensureDesktopShortcut(fallbackEnv));
+        assert(readFile(fallbackApplication) == repairedApplication);
     }
 
     std::filesystem::remove_all(tempRoot);

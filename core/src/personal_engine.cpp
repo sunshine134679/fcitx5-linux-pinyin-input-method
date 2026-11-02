@@ -2347,11 +2347,12 @@ size_t PersonalEngine::LastTxnId() const {
         std::shared_lock env_lock(active_env_handle->lifecycle_gate);
         MDB_env *active_env = active_env_handle->env;
         if (active_env != nullptr) {
-            MDB_txn *txn = nullptr;
-            if (mdb_txn_begin(active_env, nullptr, MDB_RDONLY, &txn) == MDB_SUCCESS) {
-                const size_t txn_id = mdb_txn_id(txn);
-                mdb_txn_abort(txn);
-                return txn_id;
+            // Change polling needs the latest committed ID, not a pinned read
+            // snapshot. Avoid allocating a transaction and consuming a reader
+            // slot merely to query the environment's commit marker.
+            MDB_envinfo info{};
+            if (mdb_env_info(active_env, &info) == MDB_SUCCESS) {
+                return info.me_last_txnid;
             }
         }
     }

@@ -12,9 +12,63 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string_view>
 
 namespace modernime::pinyin {
+namespace {
+// 将解码输入上的边界映射到原始击键。纠错可能增删字母/隔音符；只接受
+// 未改前缀或未改后缀确定的边界。两种证据冲突（如重复字母）时拒绝该
+// 补充部分候选，不能把不明边界默认为消费整串。
+std::optional<std::size_t> inputBoundary(
+    const libime::PinyinContext &decoded, const libime::SentenceResult &candidate,
+    std::string_view rawInput) {
+    const auto &sentence = candidate.sentence();
+    if (sentence.empty() || sentence.back() == nullptr ||
+        sentence.back()->to() == nullptr) return std::nullopt;
+    const auto decodedInput = decoded.userInput();
+    auto end = sentence.back()->to()->index();
+    if (end == 0 || end > decodedInput.size()) return std::nullopt;
+    while (end < decodedInput.size() && decodedInput[end] == '\'') ++end;
+    if (decodedInput == rawInput) return end;
+    const auto from = core::PinyinMatchPolicy::canonical(decodedInput);
+    const auto to = core::PinyinMatchPolicy::canonical(rawInput);
+    const auto prefix = core::PinyinMatchPolicy::canonical(decodedInput.substr(0, end));
+    const auto split = prefix.size();
+    std::optional<std::size_t> letterEnd;
+    if (split == from.size()) {
+        letterEnd = to.size();
+    } else {
+        if (to.starts_with(prefix)) letterEnd = split;
+        const auto suffix = std::string_view(from).substr(split);
+        if (to.ends_with(suffix)) {
+            const auto suffixEnd = to.size() - suffix.size();
+            if (letterEnd && *letterEnd != suffixEnd) return std::nullopt;
+            letterEnd = suffixEnd;
+        }
+    }
+    if (!letterEnd || *letterEnd == 0) return std::nullopt;
+    std::size_t letters = 0;
+    for (std::size_t i = 0; i < rawInput.size(); ++i) {
+        if (rawInput[i] != '\'' && rawInput[i] != ',') ++letters;
+        if (letters != *letterEnd) continue;
+        auto rawEnd = i + 1;
+        while (rawEnd < rawInput.size() &&
+               (rawInput[rawEnd] == '\'' || rawInput[rawEnd] == ',')) ++rawEnd;
+        return rawEnd;
+    }
+    return std::nullopt;
+}
+
+std::string spanKey(std::string_view text, std::string_view pinyin,
+                    std::size_t consumed) {
+    auto key = core::candidateOrderKey(text, pinyin);
+    key.push_back('\x1e');
+    key += std::to_string(consumed);
+    return key;
+}
+} // namespace
+
 CandidatePipelineResult buildCandidatePipeline(
     const libime::PinyinContext &context,
     const libime::PinyinDictionary &dictionary,
@@ -40,17 +94,23 @@ CandidatePipelineResult buildCandidatePipeline(
         std::string full_pinyin;
         float decoder_score = 0.0F;
         int match_priority = 0;
+        std::size_t consumed = 0;
+        std::size_t source_index = 0;
     };
     std::vector<NativeCandidateEntry> nativeEntries;
     nativeEntries.reserve(scoreLimit);
     for (std::size_t index = 0; index < scoreLimit; ++index) {
         NativeCandidateEntry entry;
+        entry.source_index = index;
         entry.text = nativeCandidates[index].toString();
         try {
             entry.full_pinyin = context.candidateFullPinyin(index);
         } catch (const std::exception &) {
             entry.full_pinyin.clear();
         }
+        const auto consumed = inputBoundary(context, nativeCandidates[index], context.userInput());
+        if (!consumed) continue;
+        entry.consumed = *consumed;
         entry.decoder_score = nativeCandidates[index].score();
         entry.match_priority =
             core::PinyinMatchPolicy::priority(context.userInput(), entry.full_pinyin);
@@ -66,6 +126,8 @@ CandidatePipelineResult buildCandidatePipeline(
             ++j;
         }
         if (j > i + 1) {
+            std::vector<std::size_t> priorSlots;
+            for (auto n = i; n < j; ++n) priorSlots.push_back(nativeEntries[n].source_index);
             std::stable_sort(nativeEntries.begin() + i, nativeEntries.begin() + j,
                              [](const NativeCandidateEntry &a, const NativeCandidateEntry &b) {
                                  if (a.match_priority != b.match_priority) {
@@ -73,6 +135,9 @@ CandidatePipelineResult buildCandidatePipeline(
                                  }
                                  return a.text < b.text;
                              });
+            // 保持既有同分仲裁的确定性位置先验；跳过无效格点不压缩原槽位，
+            // 且消费事实已经独立保存，绝不用这个先验位置反查原生格点。
+            for (auto n = i; n < j; ++n) nativeEntries[n].source_index = priorSlots[n - i];
         }
         i = j;
     }
@@ -80,15 +145,18 @@ CandidatePipelineResult buildCandidatePipeline(
     result.scored.reserve(scoreLimit + 16);
     std::unordered_set<std::string> seenKeys;
     seenKeys.reserve(scoreLimit + 16);
+    std::unordered_set<std::string> seenWords;
     for (std::size_t index = 0; index < nativeEntries.size(); ++index) {
         auto &entry = nativeEntries[index];
         core::CandidateScore candidate;
-        candidate.source_index = index;
+        candidate.source_index = entry.source_index;
         candidate.text = std::move(entry.text);
         candidate.full_pinyin = std::move(entry.full_pinyin);
         candidate.decoder_score = entry.decoder_score;
-        if (index == 0) candidate.unigram_anchor = 7.0;
-        seenKeys.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
+        if (entry.source_index == 0) candidate.unigram_anchor = 7.0;
+        candidate.consumed_input_bytes = entry.consumed;
+        seenKeys.insert(spanKey(candidate.text, candidate.full_pinyin, entry.consumed));
+        seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
     }
 
@@ -107,10 +175,13 @@ CandidatePipelineResult buildCandidatePipeline(
             if (fullPinyin.empty()) {
                 continue;
             }
-            const auto key = core::candidateOrderKey(text, fullPinyin);
+            const auto consumed = inputBoundary(*typoContext, typoCandidates[index], context.userInput());
+            if (!consumed) continue;
+            const auto key = spanKey(text, fullPinyin, *consumed);
             if (seenKeys.contains(key)) {
                 for (auto &existing : result.scored) {
-                    if (existing.text == text && existing.full_pinyin == fullPinyin) {
+                    if (existing.text == text && existing.full_pinyin == fullPinyin &&
+                        existing.consumed_input_bytes == consumed) {
                         if (index < existing.source_index) {
                             existing.source_index = index;
                             existing.decoder_score = typoCandidates[index].score();
@@ -125,6 +196,8 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.source_index = index;
             candidate.text = text;
             candidate.full_pinyin = fullPinyin;
+            candidate.consumed_input_bytes = *consumed;
+            seenWords.insert(core::candidateOrderKey(text, fullPinyin));
             // 容错补充候选稍加惩罚（+0.8F 解码代价），避免在原词完全合法时过度喧宾夺主
             candidate.decoder_score = typoCandidates[index].score() + 0.8F;
             result.scored.push_back(std::move(candidate));
@@ -146,7 +219,9 @@ CandidatePipelineResult buildCandidatePipeline(
             if (fullPinyin.empty()) {
                 continue;
             }
-            const auto key = core::candidateOrderKey(text, fullPinyin);
+            const auto consumed = inputBoundary(*variantContext, variantCandidates[index], context.userInput());
+            if (!consumed) continue;
+            const auto key = spanKey(text, fullPinyin, *consumed);
             if (seenKeys.contains(key)) {
                 continue;
             }
@@ -155,6 +230,8 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.source_index = index;
             candidate.text = text;
             candidate.full_pinyin = fullPinyin;
+            candidate.consumed_input_bytes = *consumed;
+            seenWords.insert(core::candidateOrderKey(text, fullPinyin));
             // 近音变体是最低位的补充召回来源：惩罚显著高于纠错候选（+0.8），
             // 且只依赖 F1 的成熟学习提升或既有混排插位获得可见性。
             candidate.decoder_score = variantCandidates[index].score() + 2.0F;
@@ -175,8 +252,7 @@ CandidatePipelineResult buildCandidatePipeline(
             const std::string segmentedPinyin =
                 core::PinyinMatchPolicy::segmentPinyin(item.pinyin);
             const auto key = core::candidateOrderKey(item.phrase, segmentedPinyin);
-            if (seenKeys.contains(key)) continue;
-            seenKeys.insert(key);
+            if (!seenWords.insert(key).second) continue;
             core::CandidateScore candidate;
             // No native position exists for a recall-only candidate. Use a
             // neutral prior, never the snapshot's shard/enumeration position.

@@ -2,30 +2,32 @@
   "format_version": 2,
   "generated_by": "tools/import_lexicon_bundle.py",
   "generated_on": "2026-10-12",
+  "updated_on": "2026-11-02",
   "runtime_network": false,
   "package_spdx_license": "LGPL-2.1-or-later AND MIT",
   "code_license": "LGPL-2.1-or-later",
   "data_license": "LGPL-2.1-or-later AND MIT",
   "generated_counts": {
-    "entries": 283781,
-    "distinct_phrases": 283558,
+    "entries": 283789,
+    "distinct_phrases": 283566,
     "polyphonic_extra_readings": 223,
     "baseline_entries": 120340,
     "baseline_polyphonic_repairs": 539,
     "batch1_added": 134245,
     "batch2_added": 21307,
     "batch3_added": 7889,
+    "curated_ai_added_20261102": 9,
     "batch3_quarantined_total": 15144,
     "batch3_quarantined_manifest_rows": 400,
-    "combined_system_distinct_phrases": 460766,
-    "combined_system_distinct_keys": 468979,
+    "combined_system_distinct_phrases": 460776,
+    "combined_system_distinct_keys": 468989,
     "by_category": {
-      "daily": 152680,
+      "daily": 152679,
       "place": 35674,
       "idiom": 29844,
       "person": 17419,
       "medical": 12588,
-      "it": 9173,
+      "it": 9182,
       "law": 7077,
       "food": 5897,
       "poem": 3161,
@@ -34,12 +36,14 @@
       "animal": 2046,
       "chemistry": 1312,
       "car": 1220
-    }
+    },
+    "conversational_hotwords_added_20261102": 3
   },
   "sha256": {
-    "modernime-knowledge.tsv": "a113beaba1e5257c8bc4dfad3e302dc0e3fe09387498aa4e4a1e62045f120be2",
-    "modernime-knowledge.raw": "227e7cfd8da55491bc83828cf49d74b387cf7297bf8d932d65a1c6c25561f017",
-    "POLYPHONIC_REVIEW.tsv": "a11a8eb4d4b43e978958da6b06d8a7e05ff0ca0e3032a5ff4cb9caf781e13122"
+    "modernime-knowledge.tsv": "059c9a8b1250d2d4e113ab1348e508f79e46c50bc2a69ab082cfeb5ea484b0d4",
+    "modernime-knowledge.raw": "46aa601782a1b374982ed820aa6b5ac570e37036e201a6083c3129de68df7dd0",
+    "POLYPHONIC_REVIEW.tsv": "a11a8eb4d4b43e978958da6b06d8a7e05ff0ca0e3032a5ff4cb9caf781e13122",
+    "modernime-hotwords.raw": "7113e66d85146c5478c3247c630c990d1b1033a2e27e94e828340029bd2d8cb4"
   },
   "filters": {
     "phrase": "连续中文字符（含〇），长度 2 到 24",
@@ -53,8 +57,70 @@
       "wanxiang/fangyan (dialect vocabulary)",
       "wanxiang/abbrev, t9_abbrev, mixed, cuoyin"
     ],
-    "libime_cost": 0
+    "libime_cost": 0,
+    "reviewed_lexical_costs": [
+      {
+        "phrase": "子代理",
+        "pinyin": "zi'dai'li",
+        "cost": 3
+      },
+      {
+        "phrase": "多代理",
+        "pinyin": "duo'dai'li",
+        "cost": 3
+      }
+    ]
   },
+  "curated_updates": [
+    {
+      "date": "2026-11-02",
+      "source": "curated-it",
+      "entries": 9,
+      "frequency": 600,
+      "libime_cost": 0,
+      "terms": [
+        "代理编排",
+        "多代理",
+        "多模态模型",
+        "多智能体",
+        "工具调用",
+        "模型上下文协议",
+        "主代理",
+        "子代理",
+        "子智能体"
+      ],
+      "generator": "tools/import_lexicon_bundle.py::CURATED_SUPPLEMENTS",
+      "libime_cost_overrides": {
+        "子代理": 3,
+        "多代理": 3
+      }
+    },
+    {
+      "date": "2026-11-02",
+      "source": "modernime-conversation",
+      "entries": 3,
+      "libime_cost": 5,
+      "terms": [
+        "那你",
+        "你继续",
+        "说吧"
+      ],
+      "moved_from_knowledge": [
+        "那你"
+      ],
+      "reason": "校准常用口语片段，支持未单独收录的长句组合；保持既有热词层 cost=5 和知识库零重叠。"
+    },
+    {
+      "date": "2026-11-02",
+      "source": "modernime-conversation-calibration",
+      "terms": [
+        "子代理",
+        "多代理"
+      ],
+      "libime_cost": 3,
+      "reason": "修正让子代理/让多代理长句的词边界；cost=3保留zdl首选战斗力，cost>=4消融不满足此边界，拒绝采用。"
+    }
+  ],
   "sources": [
     {
       "id": "wanxiang",
@@ -106,7 +172,10 @@
       "sha256": "cf0bf5c8ff94316799bc82755dbe0627658d7167244060d8e4ce8d5928a6b9f5",
       "license": "CC-BY-SA-4.0",
       "license_file": "data/pinyin/licenses/CC-BY-SA-4.0.txt",
-      "used_fields": ["simplified_headword", "pinyin"],
+      "used_fields": [
+        "simplified_headword",
+        "pinyin"
+      ],
       "role": "Batch 1 phrase-level pronunciation cross-validation (definitions excluded)"
     },
     {
@@ -115,7 +184,9 @@
       "commit": "78606b0294a22e798633c4469a4009b78ad60f26",
       "path": "china_idiom/idiom.csv",
       "license": "MIT",
-      "used_fields": ["word"],
+      "used_fields": [
+        "word"
+      ],
       "pinyin_annotation": "python-pinyin phrase dictionary cross-checked with wanxiang/rime-ice/cc-cedict"
     },
     {
@@ -135,14 +206,24 @@
         "car",
         "animal"
       ],
-      "used_fields": ["word", "DF"],
+      "used_fields": [
+        "word",
+        "DF"
+      ],
       "pinyin_annotation": "polyphonic readings calibrated against wanxiang/duoyin, wanxiang/jichu, rime-ice, and cc-cedict"
     },
     {
       "id": "modernime-curated-expansion",
       "license": "LGPL-2.1-or-later AND MIT",
       "role": "carefully curated names, daily expressions, and domain terminology with polyphonic verification",
-      "categories": ["person", "daily", "it", "medical", "law", "finance"],
+      "categories": [
+        "person",
+        "daily",
+        "it",
+        "medical",
+        "law",
+        "finance"
+      ],
       "date": "2026-10-12"
     },
     {
@@ -163,7 +244,10 @@
       "repository": "https://github.com/skywind3000/ECDICT",
       "license": "MIT",
       "author": "Lin Wei (Skywind)",
-      "used_fields": ["word", "translation"],
+      "used_fields": [
+        "word",
+        "translation"
+      ],
       "role": "english word concise definition dictionary"
     },
     {

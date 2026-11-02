@@ -37004,6 +37004,7 @@
 戴笠	dai'li	125	person	dl	thuocl-person
 袋狸	dai'li	170	biology	dl	wanxiang-wuzhong
 袋里	dai'li	550	daily	dl	wanxiang-jichu
+代理编排	dai'li'bian'pai	600	it	dlbp	curated-it
 待理不理	dai'li'bu'li	111	idiom	dlbl	china-idiom
 戴笠乘车	dai'li'cheng'che	104	idiom	dlcc	china-idiom
 代理出口合同	dai'li'chu'kou'he'tong	140	law	dlckht	thuocl-law
@@ -49223,6 +49224,7 @@
 多打听	duo'da'ting	449	daily	ddt	wanxiang-jichu
 多大小	duo'da'xiao	413	daily	ddx	wanxiang-jichu
 多带金钱鱼	duo'dai'jin'qian'yu	65	biology	ddjqy	wanxiang-wuzhong
+多代理	duo'dai'li	600	it	ddl	curated-it
 多单	duo'dan	606	daily	dd	wanxiang-jichu
 多担待	duo'dan'dai	504	daily	ddd	wanxiang-jichu
 多弹头	duo'dan'tou	543	daily	ddt	wanxiang-jichu
@@ -49628,6 +49630,7 @@
 多模光纤	duo'mo'guang'xian	541	daily	dmgx	wanxiang-jichu
 多模块	duo'mo'kuai	474	daily	dmk	wanxiang-jichu
 多模态理解	duo'mo'tai'li'jie	650	it	dmtlj	curated-it
+多模态模型	duo'mo'tai'mo'xing	600	it	dmtmx	curated-it
 多谋善断	duo'mou'shan'duan	128	idiom	dmsd	china-idiom
 多谋善虑	duo'mou'shan'lv	104	idiom	dmsl	china-idiom
 多亩	duo'mu	659	daily	dm	wanxiang-jichu
@@ -50067,6 +50070,7 @@
 多支持	duo'zhi'chi	228	daily	dzc	rime-ice-tencent
 多址访问	duo'zhi'fang'wen	105	it	dzfw	thuocl-it
 多指令	duo'zhi'ling	560	daily	dzl	wanxiang-jichu
+多智能体	duo'zhi'neng'ti	600	it	dznt	curated-it
 多制式	duo'zhi'shi	448	daily	dzs	wanxiang-jichu
 多值依赖	duo'zhi'yi'lai	128	it	dzyl	thuocl-it
 多重	duo'zhong	851	daily	dz	wanxiang-duoyin
@@ -67024,6 +67028,7 @@
 工具插件	gong'ju'cha'jian	173	it	gjcj	thuocl-it
 工具厂	gong'ju'chang	502	daily	gjc	wanxiang-jichu
 工具车	gong'ju'che	576	daily	gjc	wanxiang-jichu
+工具调用	gong'ju'diao'yong	600	it	gjdy	curated-it
 工具方法	gong'ju'fang'fa	246	it	gjff	thuocl-it
 共聚合	gong'ju'he	436	daily	gjh	wanxiang-jichu
 工具盒	gong'ju'he	361	daily	gjh	wanxiang-jichu
@@ -138214,6 +138219,7 @@
 模型论	mo'xing'lun	114	it	mxl	thuocl-it
 模型驱动	mo'xing'qu'dong	218	it	mxqd	thuocl-it
 模型驱动方法	mo'xing'qu'dong'fang'fa	117	it	mxqdff	thuocl-it
+模型上下文协议	mo'xing'shang'xia'wen'xie'yi	600	it	mxsxwxy	curated-it
 膜性肾病	mo'xing'shen'bing	109	medical	mxsb	thuocl-medical
 模型生成器	mo'xing'sheng'cheng'qi	125	it	mxscq	thuocl-it
 模形式	mo'xing'shi	436	daily	mxs	wanxiang-jichu
@@ -139654,7 +139660,6 @@
 那男人	na'nan'ren	228	daily	nnr	rime-ice-tencent
 那能	na'neng	587	daily	nn	wanxiang-jichu
 拿你	na'ni	606	daily	nn	wanxiang-jichu
-那你	na'ni	810	daily	nn	wanxiang-jichu
 那你吃	na'ni'chi	377	daily	nnc	wanxiang-jichu
 那你还	na'ni'hai	577	daily	nnh	wanxiang-jichu
 那你就	na'ni'jiu	713	daily	nnj	wanxiang-jichu
@@ -275350,6 +275355,7 @@
 诸大夫皆曰可杀	zhu'da'fu'jie'yue'ke'sha	156	poem	zdfjyks	thuocl-poem
 朱大可	zhu'da'ke	126	person	zdk	thuocl-person
 助贷	zhu'dai	506	daily	zd	wanxiang-jichu
+主代理	zhu'dai'li	600	it	zdl	curated-it
 珠蛋白	zhu'dan'bai	522	daily	zdb	wanxiang-jichu
 朱丹臣	zhu'dan'chen	223	person	zdc	wanxiang-renming
 猪丹毒	zhu'dan'du	460	daily	zdd	wanxiang-jichu
@@ -278791,6 +278797,7 @@
 子代	zi'dai	242	medical	zd	thuocl-medical
 子带编码	zi'dai'bian'ma	138	it	zdbm	thuocl-it
 自带酒水	zi'dai'jiu'shui	226	daily	zdjs	rime-ice-tencent
+子代理	zi'dai'li	600	it	zdl	curated-it
 子丹	zi'dan	94	person	zd	thuocl-person
 子弹袋	zi'dan'dai	388	daily	zdd	wanxiang-jichu
 子弹魔	zi'dan'mo	131	animal	zdm	thuocl-animal
@@ -280333,6 +280340,7 @@
 字纸篓	zi'zhi'lou	589	daily	zzl	wanxiang-jichu
 紫芝眉宇	zi'zhi'mei'yu	104	idiom	zzmy	china-idiom
 自治能力	zi'zhi'neng'li	488	daily	zznl	wanxiang-jichu
+子智能体	zi'zhi'neng'ti	600	it	zznt	curated-it
 自制汽水	zi'zhi'qi'shui	115	food	zzqs	thuocl-food
 自治区	zi'zhi'qu	242	place	zzq	thuocl-place
 自治区党校	zi'zhi'qu'dang'xiao	122	place	zzqdx	thuocl-place

@@ -1,6 +1,7 @@
 #include "modernime/core/learning_snapshot.h"
 #include "modernime/core/learning_store.h"
 #include "modernime/core/learning_writer.h"
+#include "modernime/core/pinyin_match.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <chrono>
@@ -100,6 +101,85 @@ TEST(PersonalizationSnapshotRegression, DigraphInitialsRemainIndexedAfterPublica
     const auto exactInitials = snapshot.recallCandidates("zh", 1000);
     EXPECT_TRUE(std::any_of(exactInitials.begin(), exactInitials.end(), [](const auto &item) { return item.phrase == "组合"; }));
 }
+TEST(PersonalizationSnapshotRegression, MixedPinyinRecallsCanonicalLearnedIdentity) {
+    LearningSnapshot original({
+        {"子代理", "zidaili", {}, {}, 5, 1000, 0, false},
+        {"王绍龙", "wangshaolong", {}, {}, 5, 1000, 0, false},
+        {"上海里", "shang'hai'li", {}, {}, 5, 1000, 0, false}});
+    for (const auto *input : {"zdaili", "zidli", "zidail", "z'dai'li", "zi'd'li", "zdl", "zi'dai'li"}) {
+        const auto recalled = original.recallCandidates(input, 1000);
+        const auto found = std::find_if(recalled.begin(), recalled.end(), [](const auto &item) {
+            return item.phrase == "子代理";
+        });
+        ASSERT_NE(found, recalled.end()) << input;
+        EXPECT_EQ(found->pinyin, "zi'dai'li");
+    }
+    for (const auto *input : {"wshaolong", "wshlong", "wslong"}) {
+        const auto recalled = original.recallCandidates(input, 1000);
+        EXPECT_TRUE(std::any_of(recalled.begin(), recalled.end(), [](const auto &item) {
+            return item.phrase == "王绍龙";
+        })) << input;
+    }
+    const auto ambiguous = original.recallCandidates("shanghl", 1000);
+    EXPECT_TRUE(std::any_of(ambiguous.begin(), ambiguous.end(), [](const auto &item) {
+        return item.phrase == "上海里";
+    }));
+    EXPECT_EQ(original.entries().size(), 3u) << "query aliases must not become persistent records";
+    auto suppressed = original;
+    suppressed.recordSuppression("子代理", "zidaili");
+    for (const auto *input : {"zdaili", "zidli", "z'dai'li"}) {
+        const auto recalled = suppressed.recallCandidates(input, 1000);
+        EXPECT_TRUE(std::none_of(recalled.begin(), recalled.end(), [](const auto &item) {
+            return item.phrase == "子代理";
+        }));
+        const auto unchanged = original.recallCandidates(input, 1000);
+        EXPECT_TRUE(std::any_of(unchanged.begin(), unchanged.end(), [](const auto &item) {
+            return item.phrase == "子代理";
+        })) << "published snapshot changed: " << input;
+    }
+    LearningSnapshot published;
+    published.recordSelection("子代理", "zidaili", {}, {}, 1000);
+    for (const auto *input : {"zdaili", "zidli"}) {
+        const auto recalled = published.recallCandidates(input, 1000);
+        ASSERT_EQ(recalled.size(), 1u) << input;
+        EXPECT_EQ(recalled.front().phrase, "子代理");
+    }
+    LearningSnapshot cleared;
+    EXPECT_TRUE(cleared.recallCandidates("zdaili", 1000).empty());
+}
+
+TEST(PersonalizationSnapshotRegression, MixedPinyinAllSyllableCombinationsRemainRecallable) {
+    const std::vector<std::string> syllables{"qing", "bang", "wo", "da", "kai", "wen", "jian"};
+    const LearningSnapshot snapshot({{"请帮我打开文件", "qingbangwodakaiwenjian", {}, {}, 5, 1000, 0, false}});
+    for (unsigned mask = 0; mask < (1u << syllables.size()); ++mask) {
+        std::string input;
+        for (std::size_t i = 0; i < syllables.size(); ++i) {
+            input += mask & (1u << i) ? syllables[i] : syllables[i].substr(0, 1);
+        }
+        const auto recalled = snapshot.recallCandidates(input, 1000);
+        EXPECT_TRUE(std::any_of(recalled.begin(), recalled.end(), [](const auto &item) {
+            return item.phrase == "请帮我打开文件";
+        })) << input;
+        EXPECT_GE(PinyinMatchPolicy::priority(input, "qing'bang'wo'da'kai'wen'jian"), 1) << input;
+    }
+}
+
+TEST(PersonalizationSnapshotRegression, MixedPinyinScanHasOneGlobalBudgetAndLexicalOrder) {
+    std::vector<LearningEntry> entries;
+    for (int i = 0; i < 300; ++i) {
+        // 扫描预算以外的44条故意赋予更强证据；若误按分片各扫256或全表扫，
+        // 它们会抢占Top16，证明测试实际约束了扫描范围而非只约束返回大小。
+        entries.push_back({"混拼候选" + std::to_string(1000 + i), "zidaili", {}, {}, i < 256 ? 1 : 100, 1000, 0, false});
+    }
+    LearningSnapshot snapshot(std::move(entries));
+    const auto recalled = snapshot.recallCandidates("zdaili", 1000);
+    ASSERT_EQ(recalled.size(), 16u);
+    for (std::size_t i = 0; i < recalled.size(); ++i) {
+        EXPECT_EQ(recalled[i].phrase, "混拼候选" + std::to_string(1000 + i));
+    }
+    EXPECT_EQ(snapshot.entries().size(), 300u);
+}
+
 TEST(PersonalizationSnapshotRegression, ConcurrentFirstMaterializationIsImmutable) {
     const LearningSnapshot snapshot(largeVocabulary(5000));
     const LearningSnapshot copy(snapshot);
@@ -160,4 +240,53 @@ TEST(PersonalizationSnapshotRegression, LegacyEnglishPrefixKeysRemainLearned) {
     snapshot.recordSuppression("garage", "garage");
     EXPECT_TRUE(snapshot.recallEnglishWords("gar", 5, 1000).empty());
 }
+}
+
+
+TEST(PersonalizationSnapshotRegression, MixedPinyinSeparatorsAndSingleLetterVowelsShareEligibility) {
+    const LearningSnapshot snapshot({
+        {"紫袋狸", "zi'dai'li", {}, {}, 5, 1000, 0, false},
+        {"阿里巴巴", "a'li'ba'ba", {}, {}, 5, 1000, 0, false}});
+    for (const auto &[input, phrase] : std::vector<std::pair<std::string, std::string>>{
+             {"z'd'l", "紫袋狸"}, {"zi'd'l", "紫袋狸"},
+             {"a'lbb", "阿里巴巴"}, {"a'li'ba'ba", "阿里巴巴"}}) {
+        const auto recalled = snapshot.recallCandidates(input, 1000);
+        EXPECT_TRUE(std::any_of(recalled.begin(), recalled.end(), [&](const auto &item) {
+            return item.phrase == phrase;
+        })) << input;
+    }
+}
+
+TEST(PersonalizationSnapshotRegression, MixedPinyinPrunesUnindexedKeysBeforeSpendingQueryBudget) {
+    const std::vector<std::string> syllables{"zhong", "hua", "ren", "min", "gong", "he", "guo"};
+    const LearningSnapshot snapshot({{"合成七音节词", "zhong'hua'ren'min'gong'he'guo", {}, {}, 5, 1000, 0, false}});
+    for (unsigned mask = 0; mask < (1u << syllables.size()); ++mask) {
+        for (const bool separated : {false, true}) {
+            std::string input;
+            for (std::size_t i = 0; i < syllables.size(); ++i) {
+                if (separated && i) input += "'";
+                input += mask & (1u << i) ? syllables[i] : syllables[i].substr(0, 1);
+            }
+            const auto recalled = snapshot.recallCandidates(input, 1000);
+            EXPECT_TRUE(std::any_of(recalled.begin(), recalled.end(), [](const auto &item) {
+                return item.phrase == "合成七音节词";
+            })) << input;
+        }
+    }
+}
+
+
+TEST(PersonalizationSnapshotRegression, MixedAndLiteralPrefixShareResultSlotsByIdentity) {
+    std::vector<LearningEntry> entries;
+    for (int i = 0; i < 20; ++i) {
+        entries.push_back({"测试词" + std::to_string(100 + i), "a'ba'ba'a", {}, {}, 1, 1000, 0, false});
+    }
+    const LearningSnapshot snapshot(std::move(entries));
+    // ababa 既是 ababaa 的字面前缀，也按 a+ba+b+a 完整混拼匹配。
+    // 同一结果不能在截断前占两次席位，把Top16错误缩成8个词。
+    const auto recalled = snapshot.recallCandidates("ababa", 1000);
+    ASSERT_EQ(recalled.size(), 16u);
+    for (std::size_t i = 0; i < recalled.size(); ++i) {
+        EXPECT_EQ(recalled[i].phrase, "测试词" + std::to_string(100 + i));
+    }
 }

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -63,6 +64,10 @@ struct CandidateScore final {
     bool is_lexical = false;
     double recent_choice_bonus = 0.0;
     std::size_t phrase_length = 0;
+    // 原生格点跨度，已映射到本次原始输入。缺省仅用于无格点的个人召回。
+    // 必须随排序携带值；source_index 不是重排后反查格点的下标。
+    std::optional<std::size_t> consumed_input_bytes = std::nullopt;
+
 
     double base_prior() const {
         const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? 0.08 : 1.0;

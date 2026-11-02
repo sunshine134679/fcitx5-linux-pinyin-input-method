@@ -67,6 +67,31 @@ int main() {
 
     testTrustedAbbreviationOrderIsIndependentOfInputOrder();
 
+    for (const auto input : {"zdaili", "zidli", "zidail", "z'dai'li", "zi'd'li"}) {
+        assertTrue(PinyinMatchPolicy::priority(input, "zi'dai'li") == 1,
+                   "full syllables and initials may be mixed without losing abbreviation priority");
+    }
+    assertTrue(PinyinMatchPolicy::priority("shanghl", "shang'hai'li") == 1,
+               "mixed matching follows candidate syllables rather than greedy input segmentation");
+    assertTrue(PinyinMatchPolicy::priority("wshaolong", "wang'shao'long") == 1,
+               "a digraph syllable may be written fully in mixed input");
+    assertTrue(PinyinMatchPolicy::priority("wshlong", "wang'shao'long") == 1,
+               "a digraph initial may be mixed with a full syllable");
+    assertTrue(PinyinMatchPolicy::priority("zd'aili", "zi'dai'li") == 0,
+               "an explicit separator cannot split a candidate syllable");
+    assertTrue(PinyinMatchPolicy::priority("zdailix", "zi'dai'li") == 0,
+               "mixed matching requires all input and all candidate syllables");
+    assertTrue(PinyinMatchPolicy::priority("zdaoli", "zi'dai'li") == 0,
+               "mixed matching does not introduce rhyme substitution");
+
+    assertTrue(PinyinMatchPolicy::mixedAbbreviationKeys("wsl").empty(),
+               "pure initials bypass mixed query expansion");
+    assertTrue(PinyinMatchPolicy::mixedAbbreviationKeys(std::string(49, 'a')).empty(),
+               "mixed query input is bounded before expansion");
+    const auto boundedKeys = PinyinMatchPolicy::mixedAbbreviationKeys("shangshangshangshangshangshangshangshang");
+    assertTrue(boundedKeys.size() <= 64,
+               "ambiguous mixed queries never generate exponential aliases");
+
     assertTrue(PinyinMatchPolicy::canonical("Ni'Hao") == "nihao",
                "canonical pinyin removes separators and lowercases");
     assertTrue(PinyinMatchPolicy::abbreviationKey("ni'hao") == "nh",

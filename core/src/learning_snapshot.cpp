@@ -318,7 +318,10 @@ LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entrie
             }
         }
     }
-    for (const auto &[key, candidates] : index->abbrIndex) index->abbreviationKeys.push_back(key);
+    for (auto &[key, candidates] : index->abbrIndex) {
+        std::sort(candidates.begin(), candidates.end());
+        index->abbreviationKeys.push_back(key);
+    }
     std::sort(index->abbreviationKeys.begin(), index->abbreviationKeys.end());
     std::sort(index->prefixIndex.begin(), index->prefixIndex.end(),
               [](const auto &a, const auto &b) {
@@ -1315,11 +1318,13 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
     std::unordered_set<std::string> seen;
     const auto canonical = PinyinMatchPolicy::canonical(input);
     const bool abbreviated = PinyinMatchPolicy::isAbbreviationInput(input);
+
     auto append = [&](std::string_view phrase, std::string_view pinyin,
                       std::vector<RecalledCandidate> &destination) {
         const auto key = candidateOrderKey(phrase, pinyin);
-        if (seen.contains(key) || isSuppressed(phrase, pinyin) ||
-            !hasPositiveFrequency(phrase, pinyin)) return;
+        // hasPositiveFrequency 同时拒绝任何受屏蔽变体，避免为同一不可变
+        // 事实重复做一次收集/规范化查询。
+        if (seen.contains(key) || !hasPositiveFrequency(phrase, pinyin)) return;
         if (&destination == &result) seen.insert(key);
         destination.push_back({std::string(phrase), std::string(pinyin),
             boostAt(phrase, pinyin, now), contextBoost(phrase, pinyin, before, after, now)});
@@ -1330,8 +1335,16 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
         return (*a.entries)[a.offset] > (*b.entries)[b.offset];
     };
     std::priority_queue<Cursor, std::vector<Cursor>, decltype(later)> ranges(later);
+    using Abbreviations = std::vector<std::pair<std::string, std::string>>;
+    struct MixedCursor { const Abbreviations *entries; std::size_t offset; };
+    const auto mixedLater = [](const MixedCursor &a, const MixedCursor &b) {
+        return (*a.entries)[a.offset] > (*b.entries)[b.offset];
+    };
+    std::priority_queue<MixedCursor, std::vector<MixedCursor>, decltype(mixedLater)> mixedRanges(mixedLater);
+    std::vector<const LearningSnapshotShard::RecallIndex *> indexes;
     for (const auto &shard : shards_) if (shard) {
         const auto &index = shard->ensureRecallIndex();
+        if (!index.abbreviationKeys.empty()) indexes.push_back(&index);
         const auto exact = index.canonicalIndex.find(canonical);
         if (!canonical.empty() && exact != index.canonicalIndex.end()) {
             for (const auto &[phrase, pinyin] : exact->second) append(phrase, pinyin, result);
@@ -1369,9 +1382,35 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
             }
         }
     }
+    // 查询只探索实际存在的声母键前缀，避免64个假想键先耗尽预算。
+    // 此缓存限于本次有界查询，不增加快照或持久词条/别名。
+    std::unordered_map<std::string, bool> indexedPrefixes;
+    const auto hasIndexedPrefix = [&](std::string_view prefix) {
+        const auto [cached, inserted] = indexedPrefixes.try_emplace(std::string(prefix), false);
+        if (!inserted) return cached->second;
+        for (const auto *index : indexes) {
+            const auto found = std::lower_bound(index->abbreviationKeys.begin(),
+                                                index->abbreviationKeys.end(), prefix);
+            if (found != index->abbreviationKeys.end() && found->starts_with(prefix)) {
+                cached->second = true;
+                break;
+            }
+        }
+        return cached->second;
+    };
+    const auto mixedKeys = PinyinMatchPolicy::mixedAbbreviationKeys(input, hasIndexedPrefix);
+    for (const auto *index : indexes) {
+        for (const auto &key : mixedKeys) {
+            const auto found = index->abbrIndex.find(key);
+            if (found != index->abbrIndex.end() && !found->second.empty()) {
+                mixedRanges.push({&found->second, 0});
+            }
+        }
+    }
     // Merge sorted ranges before consuming the original global 256-entry
     // budget, so hash partitioning cannot starve lexically earlier candidates.
-    for (std::size_t scanned = 0; scanned < 256 && !ranges.empty(); ++scanned) {
+    std::size_t scanned = 0;
+    for (; scanned < 256 && !ranges.empty(); ++scanned) {
         auto cursor = ranges.top();
         ranges.pop();
         const auto &[key, phrase, pinyin] = (*cursor.entries)[cursor.offset];
@@ -1379,6 +1418,21 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
         ++cursor.offset;
         if (cursor.offset < cursor.entries->size() &&
             std::get<0>((*cursor.entries)[cursor.offset]).starts_with(canonical)) ranges.push(cursor);
+    }
+    // Mixed lookup shares the existing global 256-record prefix budget.
+    // Merge postings across shards before spending it; no shard gets its own
+    // budget and no query scans the vocabulary or materializes persistent aliases.
+    std::unordered_map<std::string_view, bool> mixedMatches;
+    for (; scanned < 256 && !mixedRanges.empty(); ++scanned) {
+        auto cursor = mixedRanges.top();
+        mixedRanges.pop();
+        const auto &[phrase, pinyin] = (*cursor.entries)[cursor.offset];
+        // posting 内常有同音词；相同规范读音的对齐只需验证一次。
+        // string_view 仅借用本次const快照持有的索引，不跨请求保存。
+        const auto [match, inserted] = mixedMatches.try_emplace(pinyin, false);
+        if (inserted) match->second = PinyinMatchPolicy::syllableInputMatch(input, pinyin);
+        if (match->second) append(phrase, pinyin, prefixes);
+        if (++cursor.offset < cursor.entries->size()) mixedRanges.push(cursor);
     }
     std::sort(prefixes.begin(), prefixes.end(), [](const auto &a, const auto &b) {
         const double aScore = a.learningBoost + a.contextBoost;
@@ -1390,6 +1444,10 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
         if (a.phrase != b.phrase) return a.phrase < b.phrase;
         return a.pinyin < b.pinyin;
     });
+    // 字面前缀和混拼可能命中同一身份；先合并再花Top16名额。
+    prefixes.erase(std::unique(prefixes.begin(), prefixes.end(), [](const auto &a, const auto &b) {
+        return a.phrase == b.phrase && a.pinyin == b.pinyin;
+    }), prefixes.end());
     if (prefixes.size() > 16) prefixes.resize(16);
     for (auto &candidate : prefixes) {
         if (seen.insert(candidateOrderKey(candidate.phrase, candidate.pinyin)).second)

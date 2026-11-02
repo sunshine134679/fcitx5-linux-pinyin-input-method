@@ -4,6 +4,9 @@
 #include "modernime/core/pinyin_match.h"
 #include "modernime/fcitx5/engine.h"
 #include "modernime/pinyin/candidate_mixer.h"
+#include "modernime/pinyin/candidate_pipeline.h"
+#include "modernime/pinyin/pinyin_shared_resources.h"
+#include <libime/pinyin/pinyincontext.h>
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/recent_choice.h"
 #if defined(MODERNIME_HAS_FCITX5)
@@ -40,6 +43,9 @@ protected:
         root = created;
         paths.learningStore = (root / "learning.sqlite3").string();
         paths.userDictionary = (root / "empty-user.dict").string();
+        // 测试当前源码产物，不让默认路径优先读到已安装的旧扩展词典。
+        paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+        paths.hotwordDictionary = MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY;
     }
     void TearDown() override { std::error_code ec; std::filesystem::remove_all(root, ec); }
     static std::size_t rank(const core::CandidatePage &page, std::string_view text) {
@@ -1673,3 +1679,193 @@ TEST_F(CandidateRankingRegression, CandidateBarLayout_MultiPageWithoutIndicator)
 } // namespace
 
 
+
+
+TEST_F(CandidateRankingRegression, FuzzyPartialSelectionPreservesUnconsumedRawSuffix) {
+    struct Case { const char *input; const char *text; const char *pinyin;
+                  std::size_t consumed; const char *remaining; };
+    for (const auto &tc : std::vector<Case>{
+             {"zidaili", "子", "zi", 2, "daili"},
+             {"zidaili", "之", "zhi", 2, "daili"},
+             {"zidaili", "指代", "zhi'dai", 5, "li"},
+             {"zi'dai'li", "子", "zi", 3, "dai'li"},
+             {"zi'dai'li", "之", "zhi", 3, "dai'li"},
+             {"zi'dai'li", "指代", "zhi'dai", 7, "li"}}) {
+        SCOPED_TRACE(std::string(tc.input) + " / " + tc.text);
+        pinyin::PinyinProviderOptions options;
+        options.learningEnabled = false;
+        pinyin::PinyinCandidateProvider provider(paths, options);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        type(controller, tc.input);
+        const auto index = rank(controller.page(), tc.text);
+        ASSERT_LT(index, controller.page().items.size());
+        const auto &page = controller.page();
+        const auto identity = core::candidateIdentity(page.items[index], page);
+        EXPECT_EQ(identity.fullPinyin, tc.pinyin);
+        EXPECT_EQ(identity.consumedInputBytes, tc.consumed);
+        const core::CandidateSelectionRequest request{
+            controller.sessionId(), controller.displayGeneration(), index, identity};
+        ASSERT_TRUE(controller.select(request));
+        EXPECT_EQ(host.committed, tc.text);
+        EXPECT_EQ(controller.page().rawInput, tc.remaining);
+    }
+}
+
+
+TEST_F(CandidateRankingRegression, SupplementalDecoderSpansMapBackToOriginalKeystrokes) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinCandidateProvider::createSharedResources(paths, options);
+    // 将部分候选置入补充来源既有16项预算，专测跨度映射而非召回宽度。
+    shared->ime->setNBest(1);
+    for (const bool typoSource : {false, true}) {
+        SCOPED_TRACE(typoSource ? "typo" : "variant");
+        libime::PinyinContext original(shared->ime.get());
+        libime::PinyinContext corrected(shared->ime.get());
+        original.type("baoyan");
+        // source biao'yan 包含插入字母与隔音符，其表/biao 格点末端不能
+        // 直接当作 raw baoyan 的字节偏移；原始已消费的是 bao 三字节。
+        corrected.type("biao'yan");
+        const auto result = pinyin::buildCandidatePipeline(
+            original, *shared->ime->dict(), nullptr, 0, {}, {}, {},
+            typoSource ? &corrected : nullptr, nullptr,
+            typoSource ? nullptr : &corrected);
+        bool found = false;
+        for (const auto &candidate : result.scored) {
+            if (candidate.text != "表" || candidate.full_pinyin != "biao") continue;
+            found = true;
+            ASSERT_TRUE(candidate.consumed_input_bytes.has_value());
+            EXPECT_EQ(*candidate.consumed_input_bytes, 3u);
+        }
+        EXPECT_TRUE(found);
+    }
+}
+
+TEST_F(CandidateRankingRegression, FuzzyPartialSelectionLearnsOnlyCommittedSyllables) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    type(controller, "zidaili");
+    const auto first = rank(controller.page(), "之");
+    ASSERT_LT(first, controller.page().items.size());
+    ASSERT_TRUE(controller.select(first));
+    EXPECT_EQ(host.committed, "之");
+    ASSERT_EQ(controller.page().rawInput, "daili");
+    const auto second = rank(controller.page(), "代理");
+    ASSERT_LT(second, controller.page().items.size());
+    ASSERT_TRUE(controller.select(second));
+    EXPECT_EQ(host.committed, "代理");
+    EXPECT_TRUE(controller.page().rawInput.empty());
+    ASSERT_TRUE(provider.flush());
+    core::LearningStore store(paths.learningStore);
+    ASSERT_TRUE(store.openReadOnly());
+    const auto state = store.snapshot();
+    ASSERT_NE(state, nullptr);
+    EXPECT_TRUE(state->hasPositiveFrequency("之", "zhi"));
+    EXPECT_TRUE(state->hasPositiveFrequency("之代理", "zhidaili"));
+    EXPECT_EQ(state->entry("之", "zidaili", "", ""), nullptr);
+}
+
+
+TEST_F(CandidateRankingRegression, SegmentedPersonalWordRecallsMixedSpellingsAfterReopen) {
+    // 不使用这次新收录的子代理，防止静态词典掩盖个人混拼索引缺失。
+    {
+        pinyin::PinyinCandidateProvider provider(paths);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        for (int round = 0; round < 3; ++round) {
+            controller.reset();
+            controller.setContext("", "");
+            for (const auto &[raw, text] : std::vector<std::pair<std::string, std::string>>{
+                     {"zi", "紫"}, {"dai", "袋"}, {"li", "狸"}}) {
+                feedKeys(controller, raw);
+                const auto index = rank(controller.page(), text);
+                ASSERT_LT(index, controller.page().items.size());
+                ASSERT_TRUE(controller.select(index));
+                EXPECT_EQ(host.committed, text);
+                ASSERT_TRUE(controller.page().rawInput.empty());
+            }
+        }
+        ASSERT_TRUE(provider.flush());
+    }
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.openReadOnly());
+        EXPECT_TRUE(store.snapshot()->hasPositiveFrequency("紫袋狸", "zidaili"));
+    }
+    for (const auto raw : {"zidaili", "zi'dai'li", "zdl", "zdaili", "zidli"}) {
+        SCOPED_TRACE(raw);
+        pinyin::PinyinCandidateProvider provider(paths);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        type(controller, raw);
+        const auto index = rank(controller.page(), "紫袋狸");
+        ASSERT_LT(index, controller.page().items.size());
+        EXPECT_EQ(controller.page().items[index].source, core::CandidateSource::Learned);
+        const auto identity = core::candidateIdentity(controller.page().items[index], controller.page());
+        EXPECT_EQ(identity.fullPinyin, "zi'dai'li");
+        EXPECT_EQ(identity.consumedInputBytes, std::string_view(raw).size());
+#if defined(MODERNIME_HAS_FCITX5)
+        const auto physical = physicalPosition(controller.page(), index);
+        EXPECT_EQ(physical.first, 0u);
+#endif
+        const core::CandidateSelectionRequest request{
+            controller.sessionId(), controller.displayGeneration(), index, identity};
+        ASSERT_TRUE(controller.select(request));
+        EXPECT_EQ(host.committed, "紫袋狸");
+        EXPECT_TRUE(controller.page().rawInput.empty());
+        ASSERT_TRUE(provider.flush());
+    }
+}
+
+
+TEST_F(CandidateRankingRegression, ColdStartAgentWordAndPrefixAreOnPhysicalFirstPage) {
+    for (const auto &[raw, word, first, consumed, rest] :
+         std::vector<std::tuple<std::string, std::string, std::string, std::size_t, std::string>>{
+             {"zidaili", "子代理", "子", 2, "daili"},
+             {"zhudaili", "主代理", "主", 3, "daili"}}) {
+        SCOPED_TRACE(raw);
+        pinyin::PinyinProviderOptions options;
+        options.learningEnabled = false;
+        pinyin::PinyinCandidateProvider provider(paths, options);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        type(controller, raw);
+        const auto wordIndex = rank(controller.page(), word);
+        const auto prefixIndex = rank(controller.page(), first);
+        ASSERT_LT(wordIndex, controller.page().items.size());
+        ASSERT_LT(prefixIndex, controller.page().items.size());
+        EXPECT_EQ(wordIndex, 0u);
+        EXPECT_LT(prefixIndex, 5u);
+        EXPECT_EQ(controller.page().items[prefixIndex].consumedInputBytes, consumed);
+#if defined(MODERNIME_HAS_FCITX5)
+        EXPECT_EQ(physicalPosition(controller.page(), wordIndex).first, 0u);
+        EXPECT_EQ(physicalPosition(controller.page(), prefixIndex).first, 0u);
+#endif
+        ASSERT_TRUE(controller.select(prefixIndex));
+        EXPECT_EQ(host.committed, first);
+        EXPECT_EQ(controller.page().rawInput, rest);
+    }
+}
+
+
+TEST_F(CandidateRankingRegression, SingleSyllableTypoVariantSurvivesMixedPinyinInterpretations) {
+    for (const auto &[raw, text] : std::vector<std::pair<std::string, std::string>>{
+             {"rai", "来"}, {"lui", "六"}}) {
+        SCOPED_TRACE(raw);
+        pinyin::PinyinProviderOptions options;
+        options.learningEnabled = false;
+        pinyin::PinyinCandidateProvider provider(paths, options);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        type(controller, raw);
+        const auto index = rank(controller.page(), text);
+        ASSERT_LT(index, controller.page().items.size());
+        EXPECT_LT(index, 10u);
+        EXPECT_EQ(controller.page().items[index].consumedInputBytes, raw.size());
+        ASSERT_TRUE(controller.select(index));
+        EXPECT_EQ(host.committed, text);
+        EXPECT_TRUE(controller.page().rawInput.empty());
+    }
+}

@@ -37002,6 +37002,7 @@
 戴笠	dai'li	0
 袋狸	dai'li	0
 袋里	dai'li	0
+代理编排	dai'li'bian'pai	0
 待理不理	dai'li'bu'li	0
 戴笠乘车	dai'li'cheng'che	0
 代理出口合同	dai'li'chu'kou'he'tong	0
@@ -49221,6 +49222,7 @@
 多打听	duo'da'ting	0
 多大小	duo'da'xiao	0
 多带金钱鱼	duo'dai'jin'qian'yu	0
+多代理	duo'dai'li	3
 多单	duo'dan	0
 多担待	duo'dan'dai	0
 多弹头	duo'dan'tou	0
@@ -49626,6 +49628,7 @@
 多模光纤	duo'mo'guang'xian	0
 多模块	duo'mo'kuai	0
 多模态理解	duo'mo'tai'li'jie	0
+多模态模型	duo'mo'tai'mo'xing	0
 多谋善断	duo'mou'shan'duan	0
 多谋善虑	duo'mou'shan'lv	0
 多亩	duo'mu	0
@@ -50065,6 +50068,7 @@
 多支持	duo'zhi'chi	0
 多址访问	duo'zhi'fang'wen	0
 多指令	duo'zhi'ling	0
+多智能体	duo'zhi'neng'ti	0
 多制式	duo'zhi'shi	0
 多值依赖	duo'zhi'yi'lai	0
 多重	duo'zhong	0
@@ -67022,6 +67026,7 @@
 工具插件	gong'ju'cha'jian	0
 工具厂	gong'ju'chang	0
 工具车	gong'ju'che	0
+工具调用	gong'ju'diao'yong	0
 工具方法	gong'ju'fang'fa	0
 共聚合	gong'ju'he	0
 工具盒	gong'ju'he	0
@@ -138212,6 +138217,7 @@
 模型论	mo'xing'lun	0
 模型驱动	mo'xing'qu'dong	0
 模型驱动方法	mo'xing'qu'dong'fang'fa	0
+模型上下文协议	mo'xing'shang'xia'wen'xie'yi	0
 膜性肾病	mo'xing'shen'bing	0
 模型生成器	mo'xing'sheng'cheng'qi	0
 模形式	mo'xing'shi	0
@@ -139652,7 +139658,6 @@
 那男人	na'nan'ren	0
 那能	na'neng	0
 拿你	na'ni	0
-那你	na'ni	0
 那你吃	na'ni'chi	0
 那你还	na'ni'hai	0
 那你就	na'ni'jiu	0
@@ -275348,6 +275353,7 @@
 诸大夫皆曰可杀	zhu'da'fu'jie'yue'ke'sha	0
 朱大可	zhu'da'ke	0
 助贷	zhu'dai	0
+主代理	zhu'dai'li	0
 珠蛋白	zhu'dan'bai	0
 朱丹臣	zhu'dan'chen	0
 猪丹毒	zhu'dan'du	0
@@ -278789,6 +278795,7 @@
 子代	zi'dai	0
 子带编码	zi'dai'bian'ma	0
 自带酒水	zi'dai'jiu'shui	0
+子代理	zi'dai'li	3
 子丹	zi'dan	0
 子弹袋	zi'dan'dai	0
 子弹魔	zi'dan'mo	0
@@ -280331,6 +280338,7 @@
 字纸篓	zi'zhi'lou	0
 紫芝眉宇	zi'zhi'mei'yu	0
 自治能力	zi'zhi'neng'li	0
+子智能体	zi'zhi'neng'ti	0
 自制汽水	zi'zhi'qi'shui	0
 自治区	zi'zhi'qu	0
 自治区党校	zi'zhi'qu'dang'xiao	0

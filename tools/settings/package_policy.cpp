@@ -348,9 +348,9 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
     status.checked = true;
 
     if (status.manager == PackageManagerKind::Dnf) {
-        status.refreshCacheCommand = "sudo dnf makecache";
-        status.upgradeCommand = "sudo dnf makecache && sudo dnf upgrade modernime";
-        status.privilegedCommand = "pkexec dnf upgrade -y modernime";
+        status.refreshCacheCommand = "sudo dnf makecache --refresh";
+        status.upgradeCommand = "sudo dnf makecache --refresh && sudo dnf upgrade modernime";
+        status.privilegedCommand = "pkexec dnf upgrade --refresh -y modernime";
     } else {
         if (status.manager == PackageManagerKind::Unknown) {
             status.manager = PackageManagerKind::Apt;
@@ -363,7 +363,7 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
     if (status.installChannel == "script") {
         const char *targetCh = (status.manager == PackageManagerKind::Dnf) ? "rpm" : "deb";
         const char *pkgCmd = (status.manager == PackageManagerKind::Dnf)
-                                 ? "sudo dnf makecache && sudo dnf install -y modernime"
+                                 ? "sudo dnf makecache --refresh && sudo dnf install -y modernime"
                                  : "sudo apt update && sudo apt install -y modernime";
         status.upgradeCommand =
             std::string("modernime-migrate-channel --to-channel ") + targetCh +
@@ -441,8 +441,8 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
 std::string buildFallbackCommand(PackageManagerKind manager, PackageOperationKind opKind) {
     if (manager == PackageManagerKind::Dnf) {
         return (opKind == PackageOperationKind::SystemUpgrade)
-                   ? "sudo dnf makecache && sudo dnf upgrade modernime"
-                   : "sudo dnf makecache";
+                   ? "sudo dnf makecache --refresh && sudo dnf upgrade modernime"
+                   : "sudo dnf makecache --refresh";
     }
     return (opKind == PackageOperationKind::SystemUpgrade)
                ? "sudo apt update && sudo apt install --only-upgrade modernime"
@@ -453,7 +453,7 @@ std::vector<std::string> buildRefreshCacheArgv(PackageManagerKind manager,
                                                const std::string &pkexecPath,
                                                const std::string &managerPath) {
     if (manager == PackageManagerKind::Dnf) {
-        return {pkexecPath, managerPath, "makecache"};
+        return {pkexecPath, managerPath, "makecache", "--refresh"};
     }
     return {pkexecPath, managerPath, "update"};
 }
@@ -462,7 +462,7 @@ std::vector<std::string> buildUpgradeArgv(PackageManagerKind manager,
                                          const std::string &pkexecPath,
                                          const std::string &managerPath) {
     if (manager == PackageManagerKind::Dnf) {
-        return {pkexecPath, managerPath, "upgrade", "-y", "modernime"};
+        return {pkexecPath, managerPath, "upgrade", "--refresh", "-y", "modernime"};
     }
     return {pkexecPath, managerPath, "install", "--only-upgrade", "-y", "modernime"};
 }

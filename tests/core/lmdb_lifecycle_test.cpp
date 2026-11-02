@@ -1,12 +1,17 @@
 #include "modernime/core/learning_store.h"
 #include "modernime/core/personal_engine.h"
+#include "../../core/src/lmdb_environment.h"
 
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
+#include <memory>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -48,6 +53,100 @@ LearningEvent makeSelection(std::string phrase, std::string pinyin, uint32_t now
     event.pinyin = std::move(pinyin);
     event.nowMs = nowMs;
     return event;
+}
+
+TEST_F(ArchitectureLmdbRegression, DataVersionObservesCommittedChangesWithoutReaderSlots) {
+    PersonalEngine writer;
+    ASSERT_TRUE(writer.OpenLmdb(path()));
+    LearningStore observer(path());
+    ASSERT_TRUE(observer.openReadOnly());
+    const auto initial = observer.dataVersion();
+    ASSERT_GT(initial, 0u);
+
+    auto handle = modernime::core::detail::LmdbRegistry::instance().getOrCreate(
+        path(), true, 64 * 1024 * 1024);
+    ASSERT_NE(handle, nullptr);
+    std::shared_lock gate(handle->lifecycle_gate);
+    using Txn = std::unique_ptr<MDB_txn, decltype(&mdb_txn_abort)>;
+    std::vector<Txn> readers;
+    int result = MDB_SUCCESS;
+    for (int i = 0; i < 256; ++i) {
+        MDB_txn *raw = nullptr;
+        result = mdb_txn_begin(handle->env, nullptr, MDB_RDONLY, &raw);
+        if (result != MDB_SUCCESS) break;
+        readers.emplace_back(raw, &mdb_txn_abort);
+    }
+    ASSERT_EQ(result, MDB_READERS_FULL);
+
+    MDB_txn *raw = nullptr;
+    ASSERT_EQ(mdb_txn_begin(handle->env, nullptr, 0, &raw), MDB_SUCCESS);
+    Txn write(raw, &mdb_txn_abort);
+    std::string key = "version_probe";
+    int64_t value = 1;
+    MDB_val k{key.size(), key.data()};
+    MDB_val v{sizeof(value), &value};
+    ASSERT_EQ(mdb_put(write.get(), handle->meta_dbi, &k, &v, 0), MDB_SUCCESS);
+    ASSERT_EQ(mdb_txn_commit(write.release()), MDB_SUCCESS);
+
+    // The gate and live read transactions belong to this thread. Query from a
+    // second thread so the production method takes its own shared gate.
+    auto query = [&]() {
+        return std::async(std::launch::async, [&] { return observer.dataVersion(); }).get();
+    };
+    EXPECT_EQ(query(), initial + 1);
+    EXPECT_EQ(query(), initial + 1); // No write must not invent a new version.
+    ASSERT_EQ(mdb_txn_begin(handle->env, nullptr, 0, &raw), MDB_SUCCESS);
+    write.reset(raw);
+    value = 2;
+    ASSERT_EQ(mdb_put(write.get(), handle->meta_dbi, &k, &v, 0), MDB_SUCCESS);
+    write.reset(); // Aborted writes remain invisible to change polling.
+    EXPECT_EQ(query(), initial + 1);
+}
+
+TEST_F(ArchitectureLmdbRegression, DataVersionTracksCommitsAcrossReadOnlyUpgrade) {
+    {
+        PersonalEngine seed;
+        ASSERT_TRUE(seed.OpenLmdb(path()));
+    }
+    LearningStore observer(path());
+    ASSERT_TRUE(observer.openReadOnly());
+    const auto initial = observer.dataVersion();
+    PersonalEngine writer;
+    ASSERT_TRUE(writer.OpenLmdb(path())); // Rebuild the shared RO environment as RW.
+    EXPECT_EQ(observer.dataVersion(), initial);
+    ASSERT_TRUE(writer.RecordUsage("nihao", "你好"));
+    const auto after = observer.dataVersion();
+    EXPECT_EQ(after, initial + 1);
+    EXPECT_EQ(observer.resetRevision(), 0); // A same-generation external write.
+    ASSERT_NE(observer.readState(), std::nullopt);
+
+    std::atomic<bool> started{false};
+    std::atomic<bool> done{false};
+    std::atomic<bool> writesOk{true};
+    std::thread producer([&] {
+        started.store(true, std::memory_order_release);
+        for (int i = 0; i < 40; ++i) {
+            if (!writer.RecordUsage("nihao", "你好")) writesOk.store(false);
+        }
+        done.store(true, std::memory_order_release);
+    });
+    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
+    auto previous = after;
+    do {
+        const auto current = observer.dataVersion();
+        EXPECT_GE(current, previous);
+        EXPECT_LE(current, after + 40);
+        previous = current;
+    } while (!done.load(std::memory_order_acquire));
+    producer.join();
+    EXPECT_TRUE(writesOk.load());
+    EXPECT_EQ(observer.dataVersion(), after + 40);
+    const auto state = observer.readState();
+    ASSERT_TRUE(state.has_value());
+    ASSERT_NE(state->snapshot, nullptr);
+    const auto *entry = state->snapshot->entry("你好", "nihao", {}, {});
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 41);
 }
 
 // 1. OpenWhileBatchExits:

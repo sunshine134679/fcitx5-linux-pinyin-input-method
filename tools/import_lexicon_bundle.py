@@ -1236,6 +1236,16 @@ CURATED_SUPPLEMENTS: list[tuple[str, str, int, str, str]] = [
     ('坐公交', "zuo'gong'jiao", 3700, 'daily', 'curated-daily'),
     ('左拉', "zuo'la", 2300, 'person', 'curated-person'),
     ('左太冲', "zuo'tai'chong", 720, 'person', 'curated-person'),
+    # 2026-11-02：人工复核的 AI 协作术语；默认中性 cost=0。
+    ('代理编排', "dai'li'bian'pai", 3600, 'it', 'curated-it'),
+    ('多代理', "duo'dai'li", 3600, 'it', 'curated-it'),
+    ('多模态模型', "duo'mo'tai'mo'xing", 3600, 'it', 'curated-it'),
+    ('多智能体', "duo'zhi'neng'ti", 3600, 'it', 'curated-it'),
+    ('工具调用', "gong'ju'diao'yong", 3600, 'it', 'curated-it'),
+    ('模型上下文协议', "mo'xing'shang'xia'wen'xie'yi", 3600, 'it', 'curated-it'),
+    ('主代理', "zhu'dai'li", 3600, 'it', 'curated-it'),
+    ('子代理', "zi'dai'li", 3600, 'it', 'curated-it'),
+    ('子智能体', "zi'zhi'neng'ti", 3600, 'it', 'curated-it'),
 ]
 
 REQUIRED_ACCEPTANCE_ENTRIES: list[tuple[str, str, int, str, str]] = [
@@ -1325,6 +1335,13 @@ def load_annotated_table(path: Path) -> tuple[dict[tuple[str, str], tuple[int, s
     for w in by_word:
         by_word[w].sort(key=lambda x: -x[1])
     return data, by_word
+
+
+# 两项有整句反例与常用简拼对照的校准；不提升整个 IT 类别。
+REVIEWED_LEXICAL_COSTS = {
+    ("子代理", "zi'dai'li"): 3,
+    ("多代理", "duo'dai'li"): 3,
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -1708,7 +1725,8 @@ def main() -> int:
         f_tsv.write("# phrase<TAB>full_pinyin<TAB>frequency<TAB>category<TAB>abbreviation<TAB>source\n")
         for w, p, freq, cat, abbr, src in sorted_rows:
             f_tsv.write(f"{w}\t{p}\t{freq}\t{cat}\t{abbr}\t{src}\n")
-            f_raw.write(f"{w}\t{p}\t0\n")
+            cost = REVIEWED_LEXICAL_COSTS.get((w, p), 0)
+            f_raw.write(f"{w}\t{p}\t{cost}\n")
 
     with args.polyphonic_review_output.open("w", encoding="utf-8", newline="\n") as f_rev:
         f_rev.write("# ModernIME polyphonic quarantine manifest v1\n")
@@ -1744,6 +1762,7 @@ def main() -> int:
         "sha256": {
             "modernime-knowledge.tsv": sha256_file(args.output),
             "modernime-knowledge.raw": sha256_file(args.raw_output),
+            "modernime-hotwords.raw": sha256_file(args.hotwords_raw),
             "POLYPHONIC_REVIEW.tsv": sha256_file(args.polyphonic_review_output),
         },
     }
