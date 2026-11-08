@@ -18,7 +18,7 @@
 | 改动范围 | 应覆盖的现有入口和实际行为 |
 |---|---|
 | 匹配、排序、中英、前缀、混排或学习策略 | CTest 的 `modernime_pinyin_match`、`modernime_dictionary_prior`、`modernime_pinyin_quality`、`modernime_pinyin_provider`、`modernime_english_arbitration`、`modernime_pinyin_daily_simulation`、`modernime_pinyin_engine`；GTest 的候选身份/学习顺序回归；按现有算法规范执行完整 CTest/GTest/Benchmark |
-| 选择、分页、上下文、取字或反馈 | `modernime_engine_state`、`modernime_fcitx5_input_panel`、`modernime_fcitx5_candidate_list`、`modernime_candidate_bar_layout`、`modernime_candidate_bar_renderer`，以及 GTest `ArchitectureSelectionRegression`；覆盖真实键鼠/消费范围/旧页失效 |
+| 选择、分页、上下文、取字或反馈 | `modernime_engine_state`、`modernime_fcitx5_input_panel`、`modernime_fcitx5_candidate_list`、`modernime_candidate_bar_layout`、`modernime_candidate_bar_renderer`、`modernime_ui_addon`，以及 GTest `ArchitectureSelectionRegression`；覆盖真实键鼠/消费范围/旧页失效、GTK before-paint 排队点击及选择回调销毁上下文 |
 | Writer、快照、清空及异步启学 | `modernime_personal_engine_gtest` 的 `ArchitectureWriterRegression`、`ArchitectureResourceCoordinationTest`、`PersonalizationSnapshotRegression`；真实二次 clear、失败恢复、首提交、首键、快照释放与相应 Release 基准 |
 | LMDB 事务、锁、扩容及环境所有权 | GTest `ArchitectureLmdbRegression`、`modernime_learning_store`，包含换库、RO/RW、close/reopen、真实 MAP_FULL、最后持有者；相关 TSAN/ASAN，不能只测单线程成功路径 |
 | 外部导入、本地恢复及容量 | `ArchitecturePersonalFileRegression`、`modernime_learning_store` 及现有导入/学习用例；两后端实际查询、频次/屏蔽/世代、容量边界与重开 |

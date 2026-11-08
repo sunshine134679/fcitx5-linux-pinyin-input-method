@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -65,6 +66,10 @@ private:
     int *selectedStore_;
 };
 
+void drainGtkEvents() {
+    for (int i = 0; i < 128 && g_main_context_iteration(nullptr, FALSE); ++i) {}
+}
+
 void paint(modernime::ui::ModernIMEUserInterface &ui) {
     auto *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1200, 400);
     auto *cr = cairo_create(surface);
@@ -72,9 +77,10 @@ void paint(modernime::ui::ModernIMEUserInterface &ui) {
     assertTrue(cairo_status(cr) == CAIRO_STATUS_SUCCESS, "production draw succeeds");
     cairo_destroy(cr);
     cairo_surface_destroy(surface);
+    drainGtkEvents();
 }
 
-void click() {
+GtkWidget *candidateArea() {
     GList *windows = gtk_window_list_toplevels();
     GtkWidget *area = nullptr;
     for (auto *it = windows; it; it = it->next) {
@@ -86,11 +92,23 @@ void click() {
     }
     g_list_free(windows);
     assertTrue(area != nullptr, "production candidate drawing area exists");
+    return area;
+}
+
+GdkEvent *buttonEvent(GtkWidget *area) {
     auto *event = gdk_event_new(GDK_BUTTON_PRESS);
     event->button.window = GDK_WINDOW(g_object_ref(gtk_widget_get_window(area)));
     event->button.button = 1;
     event->button.x = 30;
     event->button.y = 20;
+    gdk_event_set_device(event, gdk_seat_get_pointer(
+        gdk_display_get_default_seat(gtk_widget_get_display(area))));
+    return event;
+}
+
+void click() {
+    auto *area = candidateArea();
+    auto *event = buttonEvent(area);
     gtk_widget_event(area, event);
     gdk_event_free(event);
 }
@@ -160,6 +178,48 @@ void testSelection(fcitx::Instance &instance, std::string_view scenario) {
             g_list_free(windows);
             ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
         }
+    } else if (scenario == "queued") {
+        struct QueuedClick {
+            GtkWidget *area;
+            bool queued = false;
+            bool painted = false;
+        } queued{candidateArea()};
+        auto *clock = gtk_widget_get_frame_clock(queued.area);
+        assertTrue(clock != nullptr, "real GTK frame clock available");
+        const auto before = g_signal_connect(clock, "before-paint",
+            G_CALLBACK(+[](GdkFrameClock *, gpointer data) {
+                auto &state = *static_cast<QueuedClick *>(data);
+                if (!state.queued) {
+                    auto *event = buttonEvent(state.area);
+                    gdk_event_put(event);
+                    gdk_event_free(event);
+                    state.queued = true;
+                }
+            }), &queued);
+        const auto after = g_signal_connect(clock, "after-paint",
+            G_CALLBACK(+[](GdkFrameClock *, gpointer data) {
+                static_cast<QueuedClick *>(data)->painted = true;
+            }), &queued);
+        auto replacement = words(&selected);
+        const_cast<TestCandidateWord &>(static_cast<const TestCandidateWord &>(
+            replacement->candidate(0))).changeText("新页候选");
+        context->inputPanel().setCandidateList(std::move(replacement));
+        ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!queued.painted && std::chrono::steady_clock::now() < deadline) {
+            if (!g_main_context_iteration(nullptr, FALSE)) g_usleep(1000);
+        }
+        drainGtkEvents();
+        g_signal_handler_disconnect(clock, before);
+        g_signal_handler_disconnect(clock, after);
+        assertTrue(queued.queued && queued.painted, "old click crosses real GTK before-paint/draw/after-paint");
+        assertTrue(context->commits.empty() && selected == -1,
+                   "queued old click must not select newly painted page");
+        click();
+        assertTrue(context->commits == std::vector<std::string>{"新页候选"},
+                   "new click after event drain selects new page exactly once");
+        std::cout << "[PASS] selection " << scenario << '\n';
+        return;
     } else if (scenario == "page") {
         mutableList->setPage(1);
     } else if (scenario == "focus") {
@@ -341,7 +401,7 @@ int main(int argc, char *argv[]) {
     context.focusOut();
     }
     for (const auto *scenario : {"replacement", "page", "unpainted", "focus", "destroy",
-                                  "hidden", "mutated-text", "partial", "same-text", "reentrant", "suspend"}) {
+                                  "hidden", "mutated-text", "partial", "same-text", "reentrant", "suspend", "queued"}) {
         testSelection(instance, scenario);
     }
 

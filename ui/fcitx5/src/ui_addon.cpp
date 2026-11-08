@@ -160,12 +160,44 @@ struct ModernIMEUserInterface::Impl final {
     // geometry, together with the exact list/page and owner that produced it.
     std::shared_ptr<const CandidateFrame> pendingFrame;
     std::shared_ptr<const CandidateFrame> paintedFrame;
+    std::shared_ptr<const CandidateFrame> drawnFrame;
+    guint frameReadySource = 0;
     std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>>
         contextWatchers;
 
     void invalidateFrame() {
+        if (frameReadySource != 0) {
+            g_source_remove(frameReadySource);
+            frameReadySource = 0;
+        }
         pendingFrame.reset();
         paintedFrame.reset();
+        drawnFrame.reset();
+    }
+
+    void finishDraw(std::shared_ptr<const CandidateFrame> frame) {
+        if (frame == paintedFrame || frame == drawnFrame) {
+            return;
+        }
+        // GTK pauses event delivery during paint, then resumes it afterwards.
+        // A button queued before this draw must not be interpreted on the new
+        // page. Revoke clicks now and arm only after higher-priority GDK events
+        // (GDK_PRIORITY_EVENTS) and redraw/resume phases have drained.
+        paintedFrame.reset();
+        drawnFrame = std::move(frame);
+        if (frameReadySource == 0) {
+            frameReadySource = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                [](gpointer data) -> gboolean {
+                    auto *impl = static_cast<Impl *>(data);
+                    impl->frameReadySource = 0;
+                    if (impl->drawnFrame && impl->drawnFrame->currentList()) {
+                        impl->paintedFrame = std::move(impl->drawnFrame);
+                    } else {
+                        impl->drawnFrame.reset();
+                    }
+                    return G_SOURCE_REMOVE;
+                }, this, nullptr);
+        }
     }
     WindowAnchor windowAnchor;
     RenderStyle style = RenderStyle::reference();
@@ -653,7 +685,8 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
                 [this](fcitx::Event &event) {
                     auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
                     if ((impl_->pendingFrame && impl_->pendingFrame->context.get() == ic) ||
-                        (impl_->paintedFrame && impl_->paintedFrame->context.get() == ic)) {
+                        (impl_->paintedFrame && impl_->paintedFrame->context.get() == ic) ||
+                        (impl_->drawnFrame && impl_->drawnFrame->context.get() == ic)) {
                         impl_->invalidateFrame();
                         gtk_widget_hide(impl_->window);
                         impl_->windowAnchor.reset();
@@ -678,6 +711,7 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
 }
 
 ModernIMEUserInterface::~ModernIMEUserInterface() {
+    impl_->invalidateFrame();
     impl_->contextWatchers.clear();
     impl_->gtkEventSource.reset();
     if (impl_->sharedTextLayout != nullptr) {
@@ -713,7 +747,7 @@ void ModernIMEUserInterface::draw(cairo_t *context) {
     CandidateBarRenderer::render(surface, frame->layout, impl_->style);
     cairo_restore(context);
     if (cairo_status(context) == CAIRO_STATUS_SUCCESS) {
-        impl_->paintedFrame = frame;
+        impl_->finishDraw(frame);
     }
 }
 
