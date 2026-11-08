@@ -18,6 +18,8 @@
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx/event.h>
+#include <fcitx-utils/trackableobject.h>
 #include <fcitx-utils/event.h>
 
 #include <dlfcn.h>
@@ -30,6 +32,8 @@
 #include <cmath>
 #include <cctype>
 #include <memory>
+#include <optional>
+#include <vector>
 #include <string>
 #include <unordered_map>
 
@@ -114,13 +118,55 @@ static AppIndicatorAPI g_appIndicator;
 
 struct ModernIMEUserInterface::Impl final {
     fcitx::Instance *instance = nullptr;
-    fcitx::InputContext *currentInputContext = nullptr;
     GtkWidget *window = nullptr;
     GtkWidget *drawingArea = nullptr;
     AppIndicator *indicator = nullptr;
     GtkWidget *indicatorMenu = nullptr;
 
-    CandidateBarLayout layout;
+    struct CandidateFrame {
+        struct Binding {
+            const fcitx::CandidateWord *word;
+            // ModernIME words are immutable. Generic Fcitx words may edit their
+            // text in place, so keep their displayed text as well.
+            std::optional<std::string> mutableText;
+        };
+        CandidateBarLayout layout;
+        fcitx::TrackableObjectReference<fcitx::InputContext> context;
+        std::weak_ptr<fcitx::CandidateList> list;
+        std::vector<Binding> bindings;
+
+        std::shared_ptr<fcitx::CandidateList> currentList() const {
+            auto *ic = context.get();
+            if (!ic || !ic->hasFocus()) {
+                return {};
+            }
+            auto saved = list.lock();
+            if (!saved || saved != ic->inputPanel().candidateList() ||
+                saved->size() != static_cast<int>(bindings.size())) {
+                return {};
+            }
+            for (std::size_t i = 0; i < bindings.size(); ++i) {
+                const auto &word = saved->candidate(static_cast<int>(i));
+                if (&word != bindings[i].word ||
+                    (bindings[i].mutableText &&
+                     word.text().toString() != *bindings[i].mutableText)) {
+                    return {};
+                }
+            }
+            return saved;
+        }
+    };
+    // An update is not a paint. Only the last completed draw supplies hit-test
+    // geometry, together with the exact list/page and owner that produced it.
+    std::shared_ptr<const CandidateFrame> pendingFrame;
+    std::shared_ptr<const CandidateFrame> paintedFrame;
+    std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>>
+        contextWatchers;
+
+    void invalidateFrame() {
+        pendingFrame.reset();
+        paintedFrame.reset();
+    }
     WindowAnchor windowAnchor;
     RenderStyle style = RenderStyle::reference();
     CandidateBarMetrics metrics = CandidateBarMetrics::reference();
@@ -213,7 +259,7 @@ struct ModernIMEUserInterface::Impl final {
                             sharedWidthCache.clear();
                             lastWindowWidth = -1;
                             lastWindowHeight = -1;
-                            layout = {};
+                            invalidateFrame();
                         }
                     }
                 } else if (loadResult.isIoError()) {
@@ -263,12 +309,14 @@ struct ModernIMEUserInterface::Impl final {
     // 缩放放大（绘制上下文已应用 scale），这里不能再乘 scaleFactor，
     // 否则会双重缩放导致面板尺寸和位置全面错位。
     int windowWidth() const {
+        const auto &layout = pendingFrame->layout;
         return static_cast<int>(std::ceil(
             layout.panel.x + layout.panel.width + style.shadowSpread -
             originX));
     }
 
     int windowHeight() const {
+        const auto &layout = pendingFrame->layout;
         return static_cast<int>(std::ceil(
             layout.panel.y + layout.panel.height + style.shadowSpread -
             originY + style.shadowOffsetY));
@@ -280,7 +328,7 @@ struct ModernIMEUserInterface::Impl final {
     // 位置由合成器决定；尚未接入 fcitx5 窗口系统（windowing）接口前，
     // Wayland 会话中的候选栏定位属于平台限制。
     void positionWindow(fcitx::InputContext *inputContext) {
-        if (inputContext == nullptr) {
+        if (inputContext == nullptr || !pendingFrame) {
             return;
         }
         if (wayland) {
@@ -598,6 +646,20 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     impl_->textWidth("你好世界");
     impl_->textWidth("1234567890");
     if (instance != nullptr) {
+        for (const auto type : {fcitx::EventType::InputContextFocusOut,
+                                fcitx::EventType::InputContextDestroyed}) {
+            impl_->contextWatchers.push_back(instance->watchEvent(
+                type, fcitx::EventWatcherPhase::PreInputMethod,
+                [this](fcitx::Event &event) {
+                    auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
+                    if ((impl_->pendingFrame && impl_->pendingFrame->context.get() == ic) ||
+                        (impl_->paintedFrame && impl_->paintedFrame->context.get() == ic)) {
+                        impl_->invalidateFrame();
+                        gtk_widget_hide(impl_->window);
+                        impl_->windowAnchor.reset();
+                    }
+                }));
+        }
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 30000, 30000,
             [this](fcitx::EventSourceTime *source, uint64_t) {
@@ -616,6 +678,7 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
 }
 
 ModernIMEUserInterface::~ModernIMEUserInterface() {
+    impl_->contextWatchers.clear();
     impl_->gtkEventSource.reset();
     if (impl_->sharedTextLayout != nullptr) {
         g_object_unref(impl_->sharedTextLayout);
@@ -640,14 +703,18 @@ ModernIMEUserInterface::~ModernIMEUserInterface() {
 }
 
 void ModernIMEUserInterface::draw(cairo_t *context) {
-    if (impl_->suspended) {
+    const auto frame = impl_->pendingFrame;
+    if (impl_->suspended || !frame || !frame->currentList()) {
         return;
     }
     cairo_save(context);
     cairo_translate(context, -Impl::originX, -Impl::originY);
     CairoRenderSurface surface(context);
-    CandidateBarRenderer::render(surface, impl_->layout, impl_->style);
+    CandidateBarRenderer::render(surface, frame->layout, impl_->style);
     cairo_restore(context);
+    if (cairo_status(context) == CAIRO_STATUS_SUCCESS) {
+        impl_->paintedFrame = frame;
+    }
 }
 
 void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
@@ -661,13 +728,12 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         auto &panel = inputContext->inputPanel();
         const auto list = panel.candidateList();
         if (list == nullptr || list->empty()) {
-            impl_->currentInputContext = nullptr;
+            impl_->invalidateFrame();
             gtk_widget_hide(impl_->window);
             impl_->windowAnchor.reset();
             impl_->pumpPendingGtkEvents();
             return;
         }
-        impl_->currentInputContext = inputContext;
 
         const auto mode =
             list->layoutHint() == fcitx::CandidateLayoutHint::Vertical
@@ -700,8 +766,20 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
             }
         }
         const auto page = pageFromInputPanel(panel);
-        impl_->layout = CandidateBarLayout::measure(
-            page, impl_->metrics, textWidth);
+        auto frame = std::make_shared<Impl::CandidateFrame>();
+        frame->layout = CandidateBarLayout::measure(page, impl_->metrics, textWidth);
+        frame->context = inputContext->watch();
+        frame->list = list;
+        frame->bindings.reserve(static_cast<std::size_t>(list->size()));
+        for (int index = 0; index < list->size(); ++index) {
+            const auto &word = list->candidate(index);
+            Impl::CandidateFrame::Binding binding{&word, std::nullopt};
+            if (!dynamic_cast<const fcitx5::FcitxCandidateWord *>(&word)) {
+                binding.mutableText = word.text().toString();
+            }
+            frame->bindings.push_back(std::move(binding));
+        }
+        impl_->pendingFrame = std::move(frame);
         impl_->setWindowSize();
         impl_->positionWindow(inputContext);
         gtk_widget_queue_draw(impl_->drawingArea);
@@ -725,7 +803,7 @@ bool ModernIMEUserInterface::available() { return impl_->gtkAvailable; }
 
 void ModernIMEUserInterface::suspend() {
     impl_->suspended = true;
-    impl_->currentInputContext = nullptr;
+    impl_->invalidateFrame();
     if (impl_->window != nullptr) {
         gtk_widget_hide(impl_->window);
     }
@@ -738,25 +816,19 @@ bool ModernIMEUserInterface::handleButtonPress(double x, double y) {
         return false;
     }
     impl_->refreshSettingsIfNeeded();
-    auto *inputContext = impl_->currentInputContext;
-    if (inputContext == nullptr && impl_->instance != nullptr) {
-        inputContext =
-            impl_->instance->inputContextManager().mostRecentInputContext();
-    }
-    if (inputContext == nullptr) {
+    const auto frame = impl_->paintedFrame;
+    const auto list = frame ? frame->currentList() : nullptr;
+    if (!list) {
         return false;
     }
-    auto &panel = inputContext->inputPanel();
-    const auto list = panel.candidateList();
-    if (list == nullptr || list->empty()) {
-        return false;
-    }
-
-    const int index = hitTestCandidate(impl_->layout, impl_->metrics, x, y);
+    const int index = hitTestCandidate(frame->layout, impl_->metrics, x, y);
     if (index >= 0 && index < list->size()) {
-        list->candidate(index).select(inputContext);
-        inputContext->updateUserInterface(
-            fcitx::UserInterfaceComponent::InputPanel, true);
+        // Keep the list alive through select, but never keep its InputContext
+        // alive or fall back to another context after a focus/lifetime change.
+        list->candidate(index).select(frame->context.get());
+        if (auto *ic = frame->context.get(); ic && ic->hasFocus()) {
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel, true);
+        }
         return true;
     }
     return true;

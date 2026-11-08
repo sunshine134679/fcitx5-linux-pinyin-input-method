@@ -830,6 +830,8 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
             add_executable(modernime_ui_addon_tests
                 ui/ui_addon_test.cpp
                 ../ui/fcitx5/src/ui_addon.cpp
+                ../adapter/fcitx5/src/engine.cpp
+                ../adapter/fcitx5/src/inputmethod.cpp
             )
             target_include_directories(modernime_ui_addon_tests PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include

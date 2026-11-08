@@ -1,6 +1,7 @@
 #include "modernime/ui/ui_addon.h"
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/core/settings.h"
+#include "modernime/fcitx5/fcitx_engine.h"
 
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputcontext.h>
@@ -12,6 +13,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -35,7 +37,8 @@ public:
     ~TestInputContext() override { destroy(); }
     const char *frontend() const override { return "modernime-ui-test"; }
     void updatePreeditImpl() override {}
-    void commitStringImpl(const std::string &) override {}
+    std::vector<std::string> commits;
+    void commitStringImpl(const std::string &text) override { commits.push_back(text); }
     void forwardKeyImpl(const fcitx::ForwardKeyEvent &) override {}
     void deleteSurroundingTextImpl(int, unsigned int) override {}
 };
@@ -46,17 +49,187 @@ public:
         : text_(std::move(text)), index_(index), selectedStore_(selectedStore) {
         setText(fcitx::Text(text_));
     }
-    void select(fcitx::InputContext *) const override {
+    void select(fcitx::InputContext *context) const override {
+        context->commitString(text().toString());
         if (selectedStore_ != nullptr) {
             *selectedStore_ = index_;
         }
+        if (afterSelect) afterSelect();
     }
+    std::function<void()> afterSelect;
     const std::string &candidateText() const { return text_; }
+    void changeText(std::string value) { setText(fcitx::Text(std::move(value))); }
 private:
     std::string text_;
     int index_;
     int *selectedStore_;
 };
+
+void paint(modernime::ui::ModernIMEUserInterface &ui) {
+    auto *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1200, 400);
+    auto *cr = cairo_create(surface);
+    ui.draw(cr);
+    assertTrue(cairo_status(cr) == CAIRO_STATUS_SUCCESS, "production draw succeeds");
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+}
+
+void click() {
+    GList *windows = gtk_window_list_toplevels();
+    GtkWidget *area = nullptr;
+    for (auto *it = windows; it; it = it->next) {
+        auto *child = gtk_bin_get_child(GTK_BIN(it->data));
+        if (child && GTK_IS_DRAWING_AREA(child)) {
+            assertTrue(area == nullptr, "one isolated candidate drawing area");
+            area = child;
+        }
+    }
+    g_list_free(windows);
+    assertTrue(area != nullptr, "production candidate drawing area exists");
+    auto *event = gdk_event_new(GDK_BUTTON_PRESS);
+    event->button.window = GDK_WINDOW(g_object_ref(gtk_widget_get_window(area)));
+    event->button.button = 1;
+    event->button.x = 30;
+    event->button.y = 20;
+    gtk_widget_event(area, event);
+    gdk_event_free(event);
+}
+
+std::unique_ptr<fcitx::CommonCandidateList> words(int *selected) {
+    auto list = std::make_unique<fcitx::CommonCandidateList>();
+    list->setPageSize(5);
+    for (int i = 0; i < 10; ++i) {
+        list->append(std::make_unique<TestCandidateWord>(
+            i < 5 ? "旧词" : "新词", i, selected));
+    }
+    return list;
+}
+
+class PrefixProvider final : public modernime::core::CandidateProvider {
+public:
+    std::size_t consumed = 5;
+    bool append(std::string_view input) override {
+        page_.rawInput.append(input);
+        page_.preedit = page_.rawInput;
+        modernime::core::CandidateItem item;
+        item.text = "你好";
+        item.fullPinyin = "ni'hao";
+        page_.items = {std::move(item)};
+        page_.items[0].consumedInputBytes = consumed;
+        ++page_.generation;
+        return true;
+    }
+    bool select(std::size_t index) override {
+        if (index != 0) return false;
+        page_.rawInput.erase(0, consumed);
+        page_.preedit = page_.rawInput;
+        page_.items.clear();
+        ++page_.generation;
+        return true;
+    }
+    bool eraseLast() override { return false; }
+    void reset() override { page_.clear(); }
+    const modernime::core::CandidatePage &page() const override { return page_; }
+private:
+    modernime::core::CandidatePage page_;
+};
+
+void testSelection(fcitx::Instance &instance, std::string_view scenario) {
+    int selected = -1;
+    auto context = std::make_unique<TestInputContext>(instance.inputContextManager());
+    context->focusIn();
+    modernime::ui::ModernIMEUserInterface ui(&instance);
+    auto list = words(&selected);
+    auto *mutableList = list.get();
+    context->inputPanel().setCandidateList(std::move(list));
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
+    paint(ui);
+
+    if (scenario == "replacement" || scenario == "unpainted") {
+        context->inputPanel().setCandidateList(words(&selected));
+        if (scenario == "unpainted") {
+            // Block only GTK draw handlers, leaving production update and hit-testing intact.
+            GList *windows = gtk_window_list_toplevels();
+            for (auto *it = windows; it; it = it->next) {
+                auto *child = gtk_bin_get_child(GTK_BIN(it->data));
+                if (child && GTK_IS_DRAWING_AREA(child)) {
+                    g_signal_handlers_block_matched(child, G_SIGNAL_MATCH_ID,
+                        g_signal_lookup("draw", GTK_TYPE_WIDGET), 0, nullptr, nullptr, nullptr);
+                }
+            }
+            g_list_free(windows);
+            ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
+        }
+    } else if (scenario == "page") {
+        mutableList->setPage(1);
+    } else if (scenario == "focus") {
+        context->focusOut();
+        context->focusIn();
+    } else if (scenario == "destroy") {
+        context.reset();
+    } else if (scenario == "reentrant") {
+        auto &word = const_cast<TestCandidateWord &>(
+            static_cast<const TestCandidateWord &>(mutableList->candidate(0)));
+        word.afterSelect = [&] { context.reset(); };
+        click();
+        assertTrue(!context && selected == 0, "selection can destroy its owner safely");
+        click();
+        assertTrue(selected == 0, "destroyed owner cannot select again");
+        std::cout << "[PASS] selection " << scenario << '\n';
+        return;
+    } else if (scenario == "suspend") {
+        ui.suspend();
+        click();
+        assertTrue(selected == -1, "suspended UI rejects click");
+        ui.resume();
+    } else if (scenario == "hidden") {
+        context->inputPanel().reset();
+        ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
+        context->inputPanel().setCandidateList(words(&selected));
+    } else if (scenario == "mutated-text") {
+        const_cast<TestCandidateWord &>(static_cast<const TestCandidateWord &>(mutableList->candidate(0))).changeText("未绘制");
+    } else if (scenario == "partial" || scenario == "same-text") {
+        PrefixProvider provider;
+        modernime::fcitx5::FcitxEngineHost host(*context);
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+        host.setController(controller);
+        for (const char c : std::string("nihaoma")) {
+            controller.handle({modernime::fcitx5::KeyKind::Character, c});
+        }
+        ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
+        paint(ui);
+        if (scenario == "same-text") {
+            provider.consumed = 2;
+            controller.handle({modernime::fcitx5::KeyKind::Character, 'a'});
+            click();
+            assertTrue(context->commits.empty(), "same text with new consumption cannot use old geometry");
+            assertTrue(controller.page().rawInput == "nihaomaa", "stale click preserves full input");
+            ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
+            paint(ui);
+        }
+        click();
+        assertTrue(context->commits == std::vector<std::string>{"你好"}, "real controller commits exact displayed text once");
+        assertTrue(controller.page().rawInput == (scenario == "partial" ? "ma" : "haomaa"),
+                   "mouse selection preserves exact remaining input");
+        std::cout << "[PASS] selection " << scenario << '\n';
+        return;
+    } else {
+        assertTrue(false, "unknown selection scenario");
+    }
+    click();
+    assertTrue(selected == -1, "stale selection rejected: " + std::string(scenario));
+    if (context) {
+        assertTrue(context->commits.empty(), "stale page never commits text");
+        ui.update(fcitx::UserInterfaceComponent::InputPanel, context.get());
+        paint(ui);
+        click();
+        assertTrue(selected == (scenario == "page" ? 5 : 0), "freshly drawn page selects intended object");
+        assertTrue(context->commits == std::vector<std::string>{
+            scenario == "page" ? "新词" : scenario == "mutated-text" ? "未绘制" : "旧词"},
+            "freshly drawn page commits exact text once");
+    }
+    std::cout << "[PASS] selection " << scenario << '\n';
+}
 
 } // namespace
 
@@ -93,7 +266,15 @@ int main(int argc, char *argv[]) {
     fcitx::Instance instance(2, fcitxArgv);
     instance.initialize();
 
+    if (argc == 3 && std::string_view(argv[1]) == "--selection-case") {
+        testSelection(instance, argv[2]);
+        std::filesystem::remove_all(testDir);
+        return 0;
+    }
+
+    {
     TestInputContext context(instance.inputContextManager());
+    context.focusIn();
     int selectedIndex = -1;
 
     auto candidateList = std::make_unique<fcitx::CommonCandidateList>();
@@ -109,6 +290,8 @@ int main(int argc, char *argv[]) {
 
     // Initial update to measure and create layout
     uiAddon.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+
+    paint(uiAddon);
 
     // 2. Perform click on first candidate area
     // In horizontal layout at font size 14, (x=30, y=14) hits candidate 0
@@ -138,6 +321,8 @@ int main(int argc, char *argv[]) {
     // 5. Now update UI: this remeasures layout with new metrics (font size 28)
     uiAddon.update(fcitx::UserInterfaceComponent::InputPanel, &context);
 
+    paint(uiAddon);
+
     // 6. Click on candidate with new layout:
     // With font size 28, candidate 0 and candidate 1 are wider.
     // Click candidate 0
@@ -152,6 +337,13 @@ int main(int argc, char *argv[]) {
                "Candidate list preserved after layout refresh");
     assertTrue(activeList->candidate(selectedIndex).text().toString() == "你好",
                "Selected candidate text semantics preserved");
+
+    context.focusOut();
+    }
+    for (const auto *scenario : {"replacement", "page", "unpainted", "focus", "destroy",
+                                  "hidden", "mutated-text", "partial", "same-text", "reentrant", "suspend"}) {
+        testSelection(instance, scenario);
+    }
 
     // Cleanup
     std::filesystem::remove_all(testDir);
