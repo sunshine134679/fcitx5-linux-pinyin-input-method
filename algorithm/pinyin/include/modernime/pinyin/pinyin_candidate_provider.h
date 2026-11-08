@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/candidate_provider.h"
+#include "modernime/core/pinyin_options.h"
 
 #include <cstdint>
 #include <functional>
@@ -33,6 +34,7 @@ struct PinyinProviderOptions final {
     bool englishDefinitionEnabled = false;
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
+    core::FuzzyPinyinOptions fuzzyPinyin;
 };
 
 struct ResourceChange final {

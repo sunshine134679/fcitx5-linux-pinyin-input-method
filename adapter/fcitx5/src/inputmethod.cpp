@@ -185,7 +185,7 @@ pinyin::PinyinProviderOptions pinyinOptions(
     const core::ModernIMESettings &settings) {
     return {settings.learningEnabled, settings.contextLearningEnabled,
             settings.englishDefinitionEnabled,
-            settings.clipboardEnabled, settings.clipboardTrigger};
+            settings.clipboardEnabled, settings.clipboardTrigger, settings.fuzzyPinyin};
 }
 #endif
 
@@ -378,7 +378,6 @@ FcitxInputContextState::FcitxInputContextState(
 
 void FcitxInputContextState::applySettings(
     const core::ModernIMESettings &settings, std::uint64_t generation) {
-    controller().setOptions(controllerOptions(settings));
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     if (provider_ != nullptr) {
         auto opts = pinyinOptions(settings);
@@ -391,6 +390,7 @@ void FcitxInputContextState::applySettings(
 #else
     (void)settings;
 #endif
+    controller().setOptions(controllerOptions(settings));
     settingsGeneration_ = generation;
 }
 

@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <cerrno>
@@ -179,6 +180,9 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
            << (settings.englishDefinitionEnabled ? "true" : "false") << '\n'
            << "candidate.character_extraction="
            << (settings.characterExtractionEnabled ? "true" : "false") << '\n';
+    for (const auto &option : kFuzzyPinyinOptions) {
+        output << option.key << '=' << (settings.fuzzyPinyin.*option.member ? "true" : "false") << '\n';
+    }
     return fnv1a64Hex(output.str());
 }
 
@@ -313,7 +317,11 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
             const auto key = trim(std::string_view(content).substr(0, separator));
             const auto value = trim(std::string_view(content).substr(separator + 1));
             bool parsed = false;
-            if (key == "input.enabled") {
+            const auto fuzzy = std::find_if(kFuzzyPinyinOptions.begin(), kFuzzyPinyinOptions.end(),
+                [&](const auto &option) { return key == option.key; });
+            if (fuzzy != kFuzzyPinyinOptions.end()) {
+                parsed = parseBoolean(value, result.settings.fuzzyPinyin.*fuzzy->member);
+            } else if (key == "input.enabled") {
                 parsed = parseBoolean(value, result.settings.inputEnabled);
             } else if (key == "input.default_mode") {
                 if (value == "chinese") {
@@ -459,6 +467,9 @@ SettingsSaveResult SettingsStore::saveWithResult(
     }
 
     std::unordered_map<std::string, std::string> knownSettings;
+    for (const auto &option : kFuzzyPinyinOptions) {
+        knownSettings[option.key] = settings.fuzzyPinyin.*option.member ? "true" : "false";
+    }
     knownSettings["input.enabled"] = settings.inputEnabled ? "true" : "false";
     knownSettings["input.default_mode"] =
         settings.defaultMode == InputMode::Chinese ? "chinese" : "english";
@@ -525,8 +536,10 @@ SettingsSaveResult SettingsStore::saveWithResult(
         }
     }
 
-    const std::array<const char *, 15> keyOrder{
+    const std::array<const char *, 21> keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
+        "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",
+        "pinyin.fuzzy_l_n", "pinyin.fuzzy_en_eng", "pinyin.fuzzy_in_ing",
         "candidate.page_size", "candidate.font_size",
         "candidate.number_selection", "candidate.arrow_navigation",
         "candidate.page_navigation", "punctuation.enabled",

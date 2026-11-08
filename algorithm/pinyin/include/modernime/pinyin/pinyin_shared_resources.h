@@ -40,6 +40,12 @@ public:
     ResourceChange reloadLearningStore();
     ResourceChange refreshLearningStore();
 
+    // Engine-wide parsing configuration; read/written only on the input thread.
+    bool setFuzzyOptions(const core::FuzzyPinyinOptions &options);
+    std::uint64_t inputConfigurationGeneration() const noexcept {
+        return inputConfigurationGeneration_;
+    }
+
     std::shared_ptr<const core::LearningSnapshot> visibleLearning() const;
     core::LearningWriter *ensureLearningWriter(bool synchronousInitialLoad = true);
     core::EnglishDefinitionDictionary *ensureEnglishDefinitionDictionary();
@@ -71,6 +77,7 @@ public:
     std::int64_t visibilityRevision = 0;
 
 private:
+    std::uint64_t inputConfigurationGeneration_ = 0;
     std::atomic<std::uint64_t> dictionaryGeneration_{1};
     std::atomic<std::int64_t> learningRevision_{0};
     std::function<void()> onReadyCallback_;

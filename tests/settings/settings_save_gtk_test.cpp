@@ -134,6 +134,22 @@ int main(int argc, char **argv) {
         saveWithoutBlocking(save);
         assert(modernime::core::computeFileContentHash(paths.settingsFile) == firstHash);
         assert(waitUntil([window] { return hasLabel(window, "已保存并应用"); }));
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), true);
+        for (const auto &option : modernime::core::kFuzzyPinyinOptions) {
+            auto *control = findWidget(window, [&](GtkWidget *widget) {
+                const auto *target = static_cast<const char *>(g_object_get_data(
+                    G_OBJECT(widget), "modernime-settings-target"));
+                return target && std::string_view(target) == option.key;
+            });
+            assert(control && GTK_IS_SWITCH(control) && gtk_widget_get_sensitive(control));
+            assert(gtk_switch_get_active(GTK_SWITCH(control)));
+            gtk_switch_set_active(GTK_SWITCH(control), false);
+        }
+        saveWithoutBlocking(save);
+        const auto saved = modernime::core::SettingsStore::load(paths.settingsFile);
+        assert(saved.isSuccess());
+        for (const auto &option : modernime::core::kFuzzyPinyinOptions)
+            assert(!(saved.settings.fuzzyPinyin.*option.member));
     }
     g_object_unref(application);
     std::filesystem::remove_all(root);

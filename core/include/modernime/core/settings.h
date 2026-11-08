@@ -1,5 +1,7 @@
 #pragma once
 
+#include "modernime/core/pinyin_options.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -25,6 +27,7 @@ struct ModernIMESettings final {
     std::string clipboardTrigger = "V+2";
     bool englishDefinitionEnabled = false;
     bool characterExtractionEnabled = true;
+    FuzzyPinyinOptions fuzzyPinyin;
 
     bool operator==(const ModernIMESettings &) const = default;
 };

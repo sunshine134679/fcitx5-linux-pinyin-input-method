@@ -173,11 +173,13 @@ public:
             "输入与按键", "调整默认输入状态、中英文切换键与以词定字。"));
         page = pageGuard.get();
         buildInputStatusSection();
+        buildFuzzySection();
         buildShortcutSection();
         buildPunctuationSection();
-        setSettingsFocusChain(
-            page, {inputEnabled, defaultMode, toggleKey, characterExtraction,
-                   punctuation});
+        setSettingsFocusChain(page, {inputEnabled, defaultMode,
+            fuzzyControls[0], fuzzyControls[1], fuzzyControls[2],
+            fuzzyControls[3], fuzzyControls[4], fuzzyControls[5],
+            toggleKey, characterExtraction, punctuation});
         refresh();
         pageGuard.release();
     }
@@ -207,6 +209,22 @@ public:
 
         g_signal_connect(inputEnabled, "notify::active", G_CALLBACK(onSwitchChanged), this);
         g_signal_connect(defaultMode, "changed", G_CALLBACK(onChanged), this);
+    }
+
+    void buildFuzzySection() {
+        auto *section = createSectionCard(
+            "模糊音", "按发音习惯选择需要混用的音。保存后生效，保留正在输入的拼音。");
+        gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            const auto &option = core::kFuzzyPinyinOptions[i];
+            auto *control = gtk_switch_new();
+            fuzzyControls[i] = control;
+            setTarget(control, option.key);
+            gtk_box_pack_start(GTK_BOX(section),
+                createSettingRow(option.label, "开启后，这两种发音可以互相匹配。", control),
+                FALSE, FALSE, 0);
+            g_signal_connect(control, "notify::active", G_CALLBACK(onSwitchChanged), this);
+        }
     }
 
     void buildShortcutSection() {
@@ -382,6 +400,10 @@ public:
             GTK_SWITCH(impl->punctuation));
         settings.characterExtractionEnabled = gtk_switch_get_active(
             GTK_SWITCH(impl->characterExtraction));
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            settings.fuzzyPinyin.*core::kFuzzyPinyinOptions[i].member =
+                gtk_switch_get_active(GTK_SWITCH(impl->fuzzyControls[i]));
+        }
         impl->model.setSettings(std::move(settings));
         impl->updateState();
         impl->changed();
@@ -408,6 +430,10 @@ public:
                               settings.characterExtractionEnabled);
         gtk_switch_set_active(GTK_SWITCH(punctuation),
                               settings.punctuationEnabled);
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            gtk_switch_set_active(GTK_SWITCH(fuzzyControls[i]),
+                settings.fuzzyPinyin.*core::kFuzzyPinyinOptions[i].member);
+        }
         refreshing = false;
         updateState();
     }
@@ -420,6 +446,9 @@ public:
         for (auto *control : {defaultMode, toggleKey, characterExtraction, punctuation}) {
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         }
+        for (auto *control : fuzzyControls) {
+            gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
+        }
         setWidgetError(toggleKey, !state.toggleKeyValid,
                        state.toggleKeyMessage);
         if (state.toggleKeyValid && !isRecording) {
@@ -429,6 +458,11 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            if (target == core::kFuzzyPinyinOptions[i].key) {
+                return focusWidgetOrFallback(fuzzyControls[i], nullptr);
+            }
+        }
         if (target == "toggle-key-shift") {
             return focusWidgetOrFallback(toggleKey, toggleKeyFallback);
         }
@@ -455,6 +489,7 @@ public:
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
     GtkWidget *defaultModeFallback = nullptr;
+    std::array<GtkWidget *, core::kFuzzyPinyinOptions.size()> fuzzyControls{};
     GtkWidget *toggleKey = nullptr;
     GtkWidget *toggleKeyFallback = nullptr;
     std::string toggleKeyValue;

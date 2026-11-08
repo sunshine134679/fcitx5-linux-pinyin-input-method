@@ -6,6 +6,7 @@
 #include "native_pinyin_test_baseline.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1276,7 +1277,49 @@ void testKeystrokeVariantRecallAndReadingAnnotation();
 void testLearnedPartialPrefixDoesNotUsurpAbbreviationSentence();
 void testSpecialCandidateSelectionActionAndLifetime();
 
-int main() {
+void testFuzzyPinyinOptions() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("fuzzy-options.sqlite3").string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = modernime::pinyin::PinyinCandidateProvider::createSharedResources(paths, options);
+    modernime::pinyin::PinyinCandidateProvider provider(shared, options);
+    modernime::pinyin::PinyinCandidateProvider other(shared, options);
+    const std::array<std::pair<const char *, const char *>, 6> examples{{
+        {"zongwen", "中文"}, {"cifan", "吃饭"}, {"suofa", "说法"},
+        {"lali", "哪里"}, {"zhen", "正"}, {"jin", "京"}}};
+    for (std::size_t i = 0; i < examples.size(); ++i) {
+        const auto &[input, expected] = examples[i];
+        const auto &option = modernime::core::kFuzzyPinyinOptions[i];
+        provider.reset();
+        other.reset();
+        assertTrue(provider.append(input) && other.append(input), "fuzzy input accepted");
+        const auto oldPage = other.page();
+        const auto oldIndex = indexOf(oldPage, expected);
+        assertTrue(oldIndex < oldPage.items.size(), "enabled fuzzy group recalls expected word");
+        const modernime::core::CandidateSelectionRequest request{
+            .globalIndex = oldIndex,
+            .expected = modernime::core::candidateIdentity(oldPage.items[oldIndex], oldPage)};
+        options.fuzzyPinyin.*option.member = false;
+        provider.applyOptions(options);
+        assertTrue(provider.page().rawInput == input, "hot update preserves raw composition");
+        assertTrue(!hasText(provider.page(), expected), "disabled fuzzy group stops matching");
+        assertTrue(!other.selectConfirmed(request, oldPage.generation),
+                   "shared configuration change rejects stale candidate request");
+        assertTrue(other.page().rawInput == input && !hasText(other.page(), expected),
+                   "inactive shared context uses the same parsing configuration");
+        options.fuzzyPinyin.*option.member = true;
+        provider.applyOptions(options);
+        assertTrue(hasText(provider.page(), expected), "reenabling restores fuzzy matching");
+        assertTrue(other.append("a") && other.page().rawInput == std::string(input) + "a",
+                   "first edit in another context preserves pre-update composition");
+        std::cout << "[PASS] " << option.key << '\n';
+    }
+}
+
+int main(int argc, char **argv) {
+    testFuzzyPinyinOptions();
+    if (argc == 2 && std::string_view(argv[1]) == "--fuzzy-options") return 0;
     testSpecialCandidateSelectionActionAndLifetime();
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();

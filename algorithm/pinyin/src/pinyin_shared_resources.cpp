@@ -19,15 +19,14 @@
 
 namespace {
 
-inline libime::PinyinFuzzyFlags getDefaultFuzzyFlags() {
-    libime::PinyinFuzzyFlags flags{
-        libime::PinyinFuzzyFlag::Z_ZH,
-        libime::PinyinFuzzyFlag::C_CH,
-        libime::PinyinFuzzyFlag::S_SH,
-        libime::PinyinFuzzyFlag::L_N,
-        libime::PinyinFuzzyFlag::EN_ENG,
-        libime::PinyinFuzzyFlag::IN_ING,
-    };
+libime::PinyinFuzzyFlags fuzzyFlags(const modernime::core::FuzzyPinyinOptions &options) {
+    libime::PinyinFuzzyFlags flags;
+    if (options.zZh) flags |= libime::PinyinFuzzyFlag::Z_ZH;
+    if (options.cCh) flags |= libime::PinyinFuzzyFlag::C_CH;
+    if (options.sSh) flags |= libime::PinyinFuzzyFlag::S_SH;
+    if (options.lN) flags |= libime::PinyinFuzzyFlag::L_N;
+    if (options.enEng) flags |= libime::PinyinFuzzyFlag::EN_ENG;
+    if (options.inIng) flags |= libime::PinyinFuzzyFlag::IN_ING;
 #ifdef MODERNIME_HAS_PINYIN_COMMON_TYPO
     flags |= libime::PinyinFuzzyFlag::CommonTypo;
 #endif
@@ -377,7 +376,7 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
 
     resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
                                                          std::move(model));
-    resources->ime->setFuzzyFlags(getDefaultFuzzyFlags());
+    resources->setFuzzyOptions(options.fuzzyPinyin);
     resources->ime->setNBest(32);
     // 在后台预热线程中一体化加载学习写入器，首键打字时直接读取内存快照，
     // 避免首键触发数十毫秒的 SQLite 磁盘打开与全表反序列化。
@@ -393,6 +392,14 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
         std::memory_order_release);
 
     return resources;
+}
+
+bool PinyinSharedResources::setFuzzyOptions(const core::FuzzyPinyinOptions &options) {
+    const auto flags = fuzzyFlags(options);
+    if (ime->fuzzyFlags() == flags) return false;
+    ++inputConfigurationGeneration_;
+    ime->setFuzzyFlags(flags);
+    return true;
 }
 
 ResourceChange PinyinSharedResources::reloadUserDictionary() {

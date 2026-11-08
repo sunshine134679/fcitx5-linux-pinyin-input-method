@@ -28,20 +28,6 @@
 
 namespace {
 
-inline libime::PinyinFuzzyFlags getDefaultFuzzyFlags() {
-    libime::PinyinFuzzyFlags flags{
-        libime::PinyinFuzzyFlag::Z_ZH,
-        libime::PinyinFuzzyFlag::C_CH,
-        libime::PinyinFuzzyFlag::S_SH,
-        libime::PinyinFuzzyFlag::L_N,
-        libime::PinyinFuzzyFlag::EN_ENG,
-        libime::PinyinFuzzyFlag::IN_ING,
-    };
-#ifdef MODERNIME_HAS_PINYIN_COMMON_TYPO
-    flags |= libime::PinyinFuzzyFlag::CommonTypo;
-#endif
-    return flags;
-}
 
 std::string toChineseFinancial(std::string_view numStr) {
     if (numStr.empty()) {
@@ -907,11 +893,13 @@ public:
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
           observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
+        shared_->setFuzzyOptions(options.fuzzyPinyin);
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         refresh();
     }
 
     bool append(std::string_view input) {
+        checkResourceChanges();
         std::string nextInput = context->userInput();
         nextInput.append(input);
         if (!core::PinyinMatchPolicy::validComposition(nextInput)) {
@@ -925,6 +913,7 @@ public:
     }
 
     bool eraseLast() {
+        checkResourceChanges();
         if (!context->backspace()) {
             return false;
         }
@@ -936,6 +925,7 @@ public:
     }
 
     bool replaceInput(std::string_view input) {
+        checkResourceChanges();
         if (!input.empty() &&
             !core::PinyinMatchPolicy::validComposition(input)) {
             return false;
@@ -993,6 +983,18 @@ public:
             return false;
         }
         bool changed = false;
+        const auto inputGeneration = shared_->inputConfigurationGeneration();
+        if (inputGeneration != observedInputConfigurationGeneration_) {
+            observedInputConfigurationGeneration_ = inputGeneration;
+            // LibIME clears every PinyinContext on optionChanged. Restore this
+            // session's last published raw composition before edits or reads;
+            // no new raw-input owner or per-session engine copy is needed.
+            context->clear();
+            if (!page_.rawInput.empty()) context->type(page_.rawInput);
+            recentChoices_.clear();
+            phraseTracker_.cancelComposition();
+            changed = true;
+        }
         const auto curDictGen = shared_->dictionaryGeneration();
         if (curDictGen != observedDictionaryGeneration_) {
             observedDictionaryGeneration_ = curDictGen;
@@ -1401,6 +1403,7 @@ public:
     }
 
     void reset() {
+        checkResourceChanges();
         phraseTracker_.cancelComposition();
         contextBefore_ = fallbackContextBefore_;
         contextAfter_.clear();
@@ -1484,7 +1487,8 @@ public:
     }
 
     void applyOptions(const PinyinProviderOptions &opts) {
-        bool needRefresh = false;
+        bool needRefresh = shared_->setFuzzyOptions(opts.fuzzyPinyin) ||
+            observedInputConfigurationGeneration_ != shared_->inputConfigurationGeneration();
         if (englishDefinitionEnabled_ != opts.englishDefinitionEnabled) {
             englishDefinitionEnabled_ = opts.englishDefinitionEnabled;
             needRefresh = true;
@@ -2032,6 +2036,7 @@ private:
     std::uint64_t generation = 0;
     bool pageAuthorized_ = false;
     std::uint64_t observedDictionaryGeneration_ = 0;
+    std::uint64_t observedInputConfigurationGeneration_ = 0;
     std::int64_t observedLearningRevision_ = 0;
     core::EpochViewState observedEpochViewState_ = core::EpochViewState::Ready;
 };

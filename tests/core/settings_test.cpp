@@ -517,7 +517,32 @@ void testSettingsStoreSaveWithResultTruthReceipt() {
 
 } // namespace
 
+void testFuzzyPinyinRoundTrip() {
+    const auto directory = testDirectory();
+    const auto file = directory / "settings.conf";
+    auto defaults = modernime::core::defaultSettings();
+    std::ofstream(file) << "input.enabled=true\n";
+    assertTrue(modernime::core::SettingsStore::load(file).settings.fuzzyPinyin == defaults.fuzzyPinyin,
+               "old settings retain all six fuzzy groups");
+    for (const auto &option : modernime::core::kFuzzyPinyinOptions) {
+        auto edited = defaults;
+        edited.fuzzyPinyin.*option.member = false;
+        assertTrue(modernime::core::computeSettingsHash(edited) != modernime::core::computeSettingsHash(defaults),
+                   "each fuzzy option participates in settings identity");
+        assertTrue(modernime::core::SettingsStore::save(file, edited), "save fuzzy option");
+        assertTrue(modernime::core::SettingsStore::load(file).settings == edited,
+                   "each fuzzy option survives save and reopen independently");
+    }
+    std::ofstream(file) << "pinyin.fuzzy_z_zh=invalid\npinyin.fuzzy_l_n=false\n";
+    const auto invalid = modernime::core::SettingsStore::load(file);
+    assertTrue(!invalid.diagnostics.empty() && invalid.settings.fuzzyPinyin.zZh &&
+                   !invalid.settings.fuzzyPinyin.lN,
+               "invalid fuzzy value falls back per key without losing valid settings");
+    std::filesystem::remove_all(directory);
+}
+
 int main() {
+    testFuzzyPinyinRoundTrip();
     testOversizedIntegersAreRejectedWithoutWrapping();
     testPaths();
     testDefaultsAndRoundTrip();
