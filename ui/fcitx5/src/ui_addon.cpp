@@ -205,6 +205,7 @@ struct ModernIMEUserInterface::Impl final {
     WindowAnchor windowAnchor;
     RenderStyle style = RenderStyle::reference();
     CandidateBarMetrics metrics = CandidateBarMetrics::reference();
+    double configuredPanelWidth = metrics.panelWidth;
     bool gtkAvailable = false;
     bool suspended = false;
     bool wayland = false;
@@ -282,6 +283,7 @@ struct ModernIMEUserInterface::Impl final {
                             metrics = CandidateBarMetrics::reference(
                                 static_cast<double>(currentFontSize),
                                 static_cast<std::size_t>(currentPageSize));
+                            configuredPanelWidth = metrics.panelWidth;
                             metrics.layoutGeneration = layoutGeneration;
                             metrics.maxCandidates = static_cast<std::size_t>(currentPageSize);
                             metrics.candidateFontSize = static_cast<double>(currentFontSize);
@@ -356,6 +358,40 @@ struct ModernIMEUserInterface::Impl final {
             originY + style.shadowOffsetY));
     }
 
+    std::optional<GdkRectangle> workareaFor(fcitx::InputContext *inputContext) const {
+        auto *display = gtk_widget_get_display(window);
+        if (!inputContext || !display) {
+            return std::nullopt;
+        }
+        const auto &cursor = inputContext->cursorRect();
+        auto *monitor = gdk_display_get_monitor_at_point(
+            display, cursor.left(), cursorAnchorBottom(cursor.top(), cursor.height()));
+        if (!monitor) {
+            return std::nullopt;
+        }
+        GdkRectangle workarea{};
+        gdk_monitor_get_workarea(monitor, &workarea);
+        return workarea;
+    }
+
+    bool constrainWidth(fcitx::InputContext *inputContext) {
+        double width = configuredPanelWidth;
+        if (const auto workarea = workareaFor(inputContext)) {
+            // Workarea and GTK geometry are logical pixels. Reserve the outer
+            // panel/shadow extents before the existing page planner measures.
+            width = std::min(width, std::max(1.0,
+                workarea->width - metrics.panelX - style.shadowSpread + originX));
+        }
+        if (width == metrics.panelWidth) {
+            return false;
+        }
+        metrics.canvasWidth += width - metrics.panelWidth;
+        metrics.panelWidth = width;
+        metrics.layoutGeneration = ++layoutGeneration;
+        invalidateFrame();
+        return true;
+    }
+
     // 把候选栏锚定到输入光标下方；光标所在显示器放不下时翻到光标上方，
     // 并把窗口完全钳制在工作区内。
     // Wayland 会话由 Fcitx5 的原生桌面面板负责，本窗口仅用于 X11。
@@ -368,12 +404,8 @@ struct ModernIMEUserInterface::Impl final {
         int desiredY = cursorAnchorBottom(cursor.top(), cursor.height());
         const auto panelWidth = windowWidth();
         const auto panelHeight = windowHeight();
-        if (GdkDisplay *display = gtk_widget_get_display(window);
-            display != nullptr) {
-            GdkRectangle workarea{};
-            GdkMonitor *monitor = gdk_display_get_monitor_at_point(
-                display, desiredX, desiredY);
-            gdk_monitor_get_workarea(monitor, &workarea);
+        if (const auto area = workareaFor(inputContext)) {
+            const auto &workarea = *area;
             const auto maxX = std::max(
                 workarea.x, workarea.x + workarea.width - panelWidth);
             desiredX = std::clamp(desiredX, workarea.x, maxX);
@@ -688,6 +720,21 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
                     }
                 }));
         }
+        impl_->contextWatchers.push_back(instance->watchEvent(
+            fcitx::EventType::InputContextCursorRectChanged,
+            fcitx::EventWatcherPhase::PostInputMethod,
+            [this](fcitx::Event &event) {
+                auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
+                if (!impl_->pendingFrame || impl_->pendingFrame->context.get() != ic) {
+                    return;
+                }
+                if (impl_->constrainWidth(ic)) {
+                    update(fcitx::UserInterfaceComponent::InputPanel, ic);
+                } else {
+                    impl_->positionWindow(ic);
+                    impl_->pumpPendingGtkEvents();
+                }
+            }));
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 30000, 30000,
             [this](fcitx::EventSourceTime *source, uint64_t) {
@@ -763,6 +810,7 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
             impl_->pumpPendingGtkEvents();
             return;
         }
+        impl_->constrainWidth(inputContext);
 
         const auto mode =
             list->layoutHint() == fcitx::CandidateLayoutHint::Vertical

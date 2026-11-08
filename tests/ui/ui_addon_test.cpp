@@ -126,19 +126,23 @@ std::unique_ptr<fcitx::CommonCandidateList> words(int *selected) {
 class PrefixProvider final : public modernime::core::CandidateProvider {
 public:
     std::size_t consumed = 5;
+    std::vector<std::string> texts = {"你好"};
     bool append(std::string_view input) override {
         page_.rawInput.append(input);
         page_.preedit = page_.rawInput;
-        modernime::core::CandidateItem item;
-        item.text = "你好";
-        item.fullPinyin = "ni'hao";
-        page_.items = {std::move(item)};
-        page_.items[0].consumedInputBytes = consumed;
+        page_.items.clear();
+        for (const auto &text : texts) {
+            modernime::core::CandidateItem item;
+            item.text = text;
+            item.fullPinyin = "ni'hao";
+            item.consumedInputBytes = consumed;
+            page_.items.push_back(std::move(item));
+        }
         ++page_.generation;
         return true;
     }
     bool select(std::size_t index) override {
-        if (index != 0) return false;
+        if (index >= page_.items.size()) return false;
         page_.rawInput.erase(0, consumed);
         page_.preedit = page_.rawInput;
         page_.items.clear();
@@ -151,6 +155,84 @@ public:
 private:
     modernime::core::CandidatePage page_;
 };
+
+void testWorkarea(fcitx::Instance &instance) {
+    TestInputContext context(instance.inputContextManager());
+    context.focusIn();
+    context.setCursorRect(fcitx::Rect(10, 20, 1, 20));
+    modernime::ui::ModernIMEUserInterface ui(&instance);
+    PrefixProvider provider;
+    provider.texts.clear();
+    for (int i = 0; i < 18; ++i) provider.texts.push_back("你好" + std::to_string(i));
+    modernime::fcitx5::FcitxEngineHost host(context);
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    host.setController(controller);
+    const auto type = [&] {
+        for (const char c : std::string("nihaoma"))
+            controller.handle({modernime::fcitx5::KeyKind::Character, c});
+        ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+        paint(ui);
+    };
+    type();
+    auto *area = candidateArea();
+    auto *window = GTK_WINDOW(gtk_widget_get_toplevel(area));
+    auto *display = gtk_widget_get_display(area);
+    GdkRectangle workarea{};
+    gdk_monitor_get_workarea(gdk_display_get_monitor_at_point(display, 10, 40), &workarea);
+    int width = 0, height = 0;
+    gtk_widget_get_size_request(area, &width, &height);
+    std::cout << "WORKAREA " << workarea.width << " REQUEST " << width << '\n';
+    assertTrue(width <= workarea.width, "candidate window fits monitor workarea");
+
+    const auto candidates = [&] {
+        return std::dynamic_pointer_cast<modernime::fcitx5::FcitxCandidateList>(
+            context.inputPanel().candidateList());
+    };
+    auto list = candidates();
+    assertTrue(list != nullptr, "uses real controller candidate list");
+    std::size_t next = 0;
+    for (const auto &page : list->pageBoundaries()) {
+        assertTrue(page.begin == next && page.end > page.begin,
+                   "narrow pages cover candidates in order without gaps");
+        next = page.end;
+    }
+    assertTrue(next == provider.texts.size() && list->totalPages() > 1,
+               "all candidates remain reachable through pagination");
+
+    // A cursor-only event must move the visible panel without another input key.
+    context.setCursorRect(fcitx::Rect(workarea.x + workarea.width - 2,
+                                      workarea.y + workarea.height - 20, 1, 20));
+    gdk_display_sync(display);
+    drainGtkEvents();
+    int x = 0, y = 0;
+    gtk_window_get_size(window, &width, &height);
+    gtk_window_get_position(window, &x, &y);
+    std::cout << "WINDOW " << width << ' ' << height << " POSITION " << x << ' ' << y << '\n';
+    assertTrue(x >= workarea.x && x + width <= workarea.x + workarea.width &&
+                   y >= workarea.y && y + height <= workarea.y + workarea.height && y > 40,
+               "cursor-only movement follows caret and stays in workarea");
+
+    while (candidates()->hasNext()) {
+        controller.handle({modernime::fcitx5::KeyKind::NextPage});
+        ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    }
+    paint(ui);
+    const auto mouseText = candidates()->candidate(0).text().toString();
+    click();
+    assertTrue(context.commits == std::vector<std::string>{mouseText} &&
+                   controller.page().rawInput == "ma",
+               "last narrow page mouse selection commits exact identity and consumption");
+    controller.handle({modernime::fcitx5::KeyKind::Escape});
+    type();
+    controller.handle({modernime::fcitx5::KeyKind::NextPage});
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    const auto keyboardText = candidates()->candidate(0).text().toString();
+    controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '1'});
+    assertTrue(context.commits == std::vector<std::string>{mouseText, keyboardText} &&
+                   controller.page().rawInput == "ma",
+               "narrow page number selection matches displayed identity and consumption");
+    std::cout << "[PASS] workarea pagination, cursor movement and selection\n";
+}
 
 void testSelection(fcitx::Instance &instance, std::string_view scenario) {
     int selected = -1;
@@ -316,6 +398,11 @@ int main(int argc, char *argv[]) {
     modernime::core::ModernIMESettings initialSettings = modernime::core::defaultSettings();
     initialSettings.candidateFontSize = 14;
     initialSettings.candidatePageSize = 5;
+    const bool workareaTest = argc == 2 && std::string_view(argv[1]) == "--workarea";
+    if (workareaTest) {
+        initialSettings.candidateFontSize = 28;
+        initialSettings.candidatePageSize = 9;
+    }
     assertTrue(modernime::core::SettingsStore::save(settingsFile, initialSettings),
                "Failed to write initial settings");
 
@@ -325,6 +412,12 @@ int main(int argc, char *argv[]) {
     optind = 0;
     fcitx::Instance instance(2, fcitxArgv);
     instance.initialize();
+
+    if (workareaTest) {
+        testWorkarea(instance);
+        std::filesystem::remove_all(testDir);
+        return 0;
+    }
 
     if (argc == 3 && std::string_view(argv[1]) == "--selection-case") {
         testSelection(instance, argv[2]);
@@ -404,6 +497,11 @@ int main(int argc, char *argv[]) {
                                   "hidden", "mutated-text", "partial", "same-text", "reentrant", "suspend", "queued"}) {
         testSelection(instance, scenario);
     }
+    initialSettings.candidateFontSize = 28;
+    initialSettings.candidatePageSize = 9;
+    assertTrue(modernime::core::SettingsStore::save(settingsFile, initialSettings),
+               "Failed to write workarea test settings");
+    testWorkarea(instance);
 
     // Cleanup
     std::filesystem::remove_all(testDir);
