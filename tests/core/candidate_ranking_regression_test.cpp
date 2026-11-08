@@ -87,6 +87,93 @@ protected:
     pinyin::PinyinDataPaths paths;
 };
 
+TEST_F(CandidateRankingRegression, NumericMacrosPreserveValueAtRepresentationLimits) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    struct Case { std::string input; std::vector<std::string> macros; };
+    const std::vector<Case> cases = {
+        {"v10000000000000000", {"10000000000000000"}},
+        {"v1.001", {"一点零零一", "1.001"}},
+        {"v0.001", {"零点零零一", "0.001"}},
+        {"v.", {}},
+        {"v9999999999999999", {"玖仟玖佰玖拾玖兆玖仟玖佰玖拾玖亿玖仟玖佰玖拾玖万玖仟玖佰玖拾玖元整", "九千九百九十九兆九千九百九十九亿九千九百九十九万九千九百九十九", "9999999999999999"}},
+        {"v00000000000000000000000000001.01", {"壹元零壹分", "一点零一", "00000000000000000000000000001.01"}},
+        {"v0.00", {"零元整", "零点零零", "0.00"}},
+        {"v0.01", {"零元零壹分", "零点零一", "0.01"}},
+        {"v.5", {"零元伍角整", "零点五", ".5"}},
+        {"v1.", {"壹元整", "一", "1."}},
+        {"v1.000", {"一点零零零", "1.000"}},
+    };
+    for (const auto &test : cases) {
+        SCOPED_TRACE(test.input);
+        provider.reset();
+        ASSERT_TRUE(provider.append(test.input));
+        std::vector<std::string> actual;
+        for (const auto &item : provider.page().items) {
+            if (item.source == core::CandidateSource::Engine &&
+                item.sourceIndex == std::numeric_limits<std::size_t>::max()) {
+                actual.push_back(item.text);
+                EXPECT_EQ(item.fullPinyin, test.input);
+                EXPECT_EQ(item.consumedInputBytes, test.input.size());
+                EXPECT_EQ(item.commitRole, core::CommitCandidateRole::Chinese);
+            }
+        }
+        EXPECT_EQ(actual, test.macros);
+    }
+    provider.reset();
+    EXPECT_FALSE(provider.append("v1..2"));
+    EXPECT_FALSE(provider.append("v-1"));
+}
+
+TEST_F(CandidateRankingRegression, NumericMacroKeyboardCommitPreservesExactValue) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"v10000000000000000", "10000000000000000"},
+        {"v1.001", "一点零零一"},
+        {"v12345", "壹万贰仟叁佰肆拾伍元整"},
+        {"v88.5", "捌拾捌元伍角整"},
+    };
+    for (const auto &[input, expected] : cases) {
+        SCOPED_TRACE(input);
+        c.reset();
+        for (const char ch : input) {
+            ASSERT_TRUE(c.handle(ch >= '0' && ch <= '9'
+                ? fcitx5::KeyEvent{fcitx5::KeyKind::Digit, 0, ch}
+                : fcitx5::KeyEvent{fcitx5::KeyKind::Character, ch}));
+        }
+        EXPECT_EQ(c.page().rawInput, input);
+        ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+        EXPECT_EQ(host.committed, expected);
+        EXPECT_TRUE(c.page().rawInput.empty());
+        type(c, input);
+        ASSERT_TRUE(c.handle({fcitx5::KeyKind::Enter}));
+        EXPECT_EQ(host.committed, input);
+        EXPECT_TRUE(c.page().rawInput.empty());
+    }
+    type(c, "v1.001");
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::NextCandidate}));
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "1.001");
+    EXPECT_TRUE(c.page().rawInput.empty());
+    type(c, "v1.001");
+    ASSERT_TRUE(c.select(1));
+    EXPECT_EQ(host.committed, "1.001");
+    EXPECT_TRUE(c.page().rawInput.empty());
+    type(c, "v1.001");
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Escape}));
+    EXPECT_TRUE(c.page().rawInput.empty());
+    ASSERT_TRUE(provider.flush());
+    // 本夹具禁学；取消及查询不能创建学习库。
+    EXPECT_FALSE(std::filesystem::exists(paths.learningStore));
+}
+
 TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Shi) {
     pinyin::PinyinCandidateProvider provider(paths);
     ASSERT_TRUE(provider.append("shi"));

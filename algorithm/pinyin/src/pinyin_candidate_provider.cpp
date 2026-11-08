@@ -58,6 +58,12 @@ std::string toChineseFinancial(std::string_view numStr) {
         intPart = "";
     }
 
+    // 最大单位“兆”只覆盖四个四位分组；金融大写精确到分。
+    // 不可表示时留给标准数字/原文候选，禁止截断或隐式舍入。
+    if (intPart.size() > 16 || decPart.size() > 2) {
+        return {};
+    }
+
     static const char *const kDigits[] = {
         "零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"
     };
@@ -156,6 +162,10 @@ std::string toChineseStandardNumber(std::string_view numStr) {
         intPart = "";
     }
 
+    if (intPart.size() > 16) {
+        return {};
+    }
+
     static const char *const kDigits[] = {
         "零", "一", "二", "三", "四", "五", "六", "七", "八", "九"
     };
@@ -245,14 +255,15 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput,
     if (rawInput.size() > 1 && rawInput.front() == 'v') {
         std::string_view numPart = rawInput.substr(1);
         bool validNum = true;
+        bool hasDigit = false;
         bool hasDot = false;
         for (char c : numPart) {
-            if (c >= '0' && c <= '9') continue;
+            if (c >= '0' && c <= '9') { hasDigit = true; continue; }
             if (c == '.' && !hasDot) { hasDot = true; continue; }
             validNum = false;
             break;
         }
-        if (validNum) {
+        if (validNum && hasDigit) {
             const auto fin = toChineseFinancial(numPart);
             if (!fin.empty()) results.push_back(fin);
             const auto stdNum = toChineseStandardNumber(numPart);
