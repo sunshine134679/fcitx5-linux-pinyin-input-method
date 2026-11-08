@@ -217,6 +217,20 @@ if(MODERNIME_BUILD_SETTINGS)
         SKIP_RETURN_CODE 77
     )
 
+    add_executable(modernime_updates_page_gtk_tests
+        settings/updates_page_gtk_test.cpp
+    )
+    target_link_libraries(modernime_updates_page_gtk_tests PRIVATE
+        modernime_settings_components
+    )
+    add_test(NAME modernime_updates_page_gtk COMMAND modernime_updates_page_gtk_tests)
+    set_tests_properties(modernime_updates_page_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 20
+    )
+
     add_executable(modernime_settings_shell_gtk_tests
         settings/settings_shell_gtk_test.cpp
     )

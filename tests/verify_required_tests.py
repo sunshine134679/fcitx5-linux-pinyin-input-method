@@ -47,6 +47,7 @@ FULL_BASELINE_REQUIRED = [
 ]
 
 FULL_FINAL_ADDITIONAL = [
+    "modernime_updates_page_gtk",
     "modernime_gnome_extension_lifecycle",
     "modernime_fresh_clone_isolation",
     "modernime_required_tests_contract",
@@ -86,6 +87,7 @@ CORE_ONLY_FINAL_ADDITIONAL = [
 ]
 
 HEADLESS_SKIP_WHITELIST = {
+    "modernime_updates_page_gtk",
     "modernime_settings_focus_gtk",
     "modernime_settings_shell_gtk",
     "modernime_settings_save_gtk",

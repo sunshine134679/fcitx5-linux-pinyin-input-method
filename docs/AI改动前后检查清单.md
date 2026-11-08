@@ -22,7 +22,7 @@
 | Writer、快照、清空及异步启学 | `modernime_personal_engine_gtest` 的 `ArchitectureWriterRegression`、`ArchitectureResourceCoordinationTest`、`PersonalizationSnapshotRegression`；真实二次 clear、失败恢复、首提交、首键、快照释放与相应 Release 基准 |
 | LMDB 事务、锁、扩容及环境所有权 | GTest `ArchitectureLmdbRegression`、`modernime_learning_store`，包含换库、RO/RW、close/reopen、真实 MAP_FULL、最后持有者；相关 TSAN/ASAN，不能只测单线程成功路径 |
 | 外部导入、本地恢复及容量 | `ArchitecturePersonalFileRegression`、`modernime_learning_store` 及现有导入/学习用例；两后端实际查询、频次/屏蔽/世代、容量边界与重开 |
-| 子进程、包更新及采集器 | `modernime_process_runner`、`modernime_update_controller`、`modernime_updates_page_contract`；fork 反例、输出预算、启动不明、等待超时、队列、旧 ID、页面关闭及安装后内部模式 |
+| 子进程、包更新及采集器 | `modernime_process_runner`、`modernime_update_controller`、`modernime_updates_page_contract`、`modernime_updates_page_gtk`；fork 反例、输出预算、启动不明、等待超时、队列、旧 ID、页面关闭及安装后内部模式；更新页真实缓存/失败/在途/搜索焦点与命令复制 |
 | 设置文件、路径、运行时诊断 | `modernime_settings`、`modernime_settings_model`、`modernime_runtime_controller`、`modernime_runtime_controller_concurrency`、`modernime_configuration_contract`、`modernime_ui_addon`、`modernime_adapter_recovery`；同 stamp 故障解除、原子替换与真实消费者 |
 | GTK 数据页与导航 | `modernime_data_controller`、`modernime_settings_data_async_gtk`、`modernime_settings_focus_gtk`、`modernime_settings_shell_gtk`、`modernime_settings_save_gtk`、`modernime_page_registry`、`modernime_settings_navigation_dbus`；真实在途打断/读后挂起、主循环心跳及实际控件状态 |
 | 依赖或 CMake/CI | full 与 core-only 配置，`modernime_required_tests_contract`、`tests/required_tests_contract_test.py`；注册和执行双检查，失败/缺报告/非法 skip 负向保护 |

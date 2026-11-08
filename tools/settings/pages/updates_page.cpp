@@ -75,9 +75,6 @@ public:
         : environment(std::move(currentEnvironment)),
           notify(std::move(notifyCallback)) {
         lastStatus.currentVersion = MODERNIME_VERSION;
-        lastStatus.refreshCacheCommand = "sudo apt update";
-        lastStatus.upgradeCommand =
-            "sudo apt update && sudo apt install --only-upgrade modernime";
 
         lifetime = detail::GObjectHandle<GObject>::adopt(
             G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr)));
@@ -103,17 +100,21 @@ public:
     GtkWidget *widget() const { return page; }
 
     void refresh() {
+        focusCopyWhenReady = false;
         startCheck();
     }
 
     bool focusTarget(std::string_view target) {
+        focusCopyWhenReady = false;
         if (target == "updates-check" || target == "diagnostics-check-update" ||
             target == "updates-refresh-cache") {
             return focusWidgetOrFallback(checkButton, checkButton);
         }
         if (target == "updates-copy-command") {
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(upgradeDetails), TRUE);
-            return focusWidgetOrFallback(copyCommandButton, copyCommandButton);
+            const bool focused = focusWidgetOrFallback(copyCommandButton, upgradeDetails);
+            focusCopyWhenReady = focused && busy;
+            return focused;
         }
         if (target == "updates-source" || target == "updates-source-jump") {
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(versionDetails), TRUE);
@@ -146,6 +147,12 @@ private:
         (*shared)->withOwner([](Impl &owner) {
             owner.copyCommand();
         });
+    }
+
+    static gboolean onUpgradeFocusOut(GtkWidget *, GdkEventFocus *, gpointer data) {
+        auto *shared = static_cast<SharedLifetime *>(data);
+        (*shared)->withOwner([](Impl &owner) { owner.focusCopyWhenReady = false; });
+        return FALSE;
     }
 
     static void updateTaskFinished(GObject *source, GAsyncResult *result, gpointer) {
@@ -296,7 +303,7 @@ private:
         addStyleClass(checkButton, kSettingsPrimaryButtonClass);
         gtk_widget_set_valign(checkButton, GTK_ALIGN_CENTER);
         setTarget(checkButton, "updates-check");
-        setAccessibleWidgetText(checkButton, "检查更新", "查询软件源中是否有 ModernIME 新版本");
+        setAccessibleWidgetText(checkButton, "检查更新", "查询本地软件源缓存中的 ModernIME 版本；不会自动刷新缓存或安装");
 
         gtk_box_pack_end(GTK_BOX(summary), checkButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section), summary, FALSE, FALSE, 0);
@@ -317,6 +324,9 @@ private:
     void buildUpgradeGuideSection(GtkWidget *parent) {
         auto *section = detailsSection(parent, "安全升级引导",
                                        "updates-upgrade-details", &upgradeDetails);
+        g_signal_connect_data(upgradeDetails, "focus-out-event",
+                              G_CALLBACK(onUpgradeFocusOut), new SharedLifetime(state),
+                              destroySignalState, static_cast<GConnectFlags>(0));
 
         guideDescLabel = gtk_label_new(
             "检测到可更新版本时，请复制并在终端中运行以下升级命令：");
@@ -325,7 +335,7 @@ private:
         gtk_label_set_line_wrap(GTK_LABEL(guideDescLabel), TRUE);
         gtk_box_pack_start(GTK_BOX(section), guideDescLabel, FALSE, FALSE, 0);
 
-        commandLabel = wrappedLabel("sudo apt update && sudo apt install --only-upgrade modernime", true);
+        commandLabel = wrappedLabel("检查后显示升级命令", true);
         addStyleClass(commandLabel, "modernime-code-block");
         gtk_widget_set_margin_top(commandLabel, 8);
         gtk_widget_set_margin_bottom(commandLabel, 10);
@@ -373,7 +383,12 @@ private:
         }
         busy = true;
         gtk_widget_set_sensitive(checkButton, FALSE);
+        gtk_widget_set_sensitive(copyCommandButton, FALSE);
         gtk_label_set_text(GTK_LABEL(statusMessageLabel), "正在检查更新…");
+        gtk_label_set_text(GTK_LABEL(candidateVersionLabel), "检查中…");
+        gtk_label_set_text(GTK_LABEL(channelLabel), "检测中…");
+        gtk_label_set_text(GTK_LABEL(changelogLabel), "正在查询更新信息…");
+        gtk_label_set_text(GTK_LABEL(commandLabel), "检查后显示升级命令");
 
         auto *task = g_task_new(lifetime.get(), nullptr, updateTaskFinished, nullptr);
         auto request = std::make_unique<UpdateCheckTask>();
@@ -396,11 +411,22 @@ private:
                                      : "未知错误";
             g_warning("[ModernIME Updates] Check error: %s", errMsg);
             gtk_label_set_text(GTK_LABEL(statusMessageLabel),
-                               "未能获取最新版本信息，请检查网络连接。");
+                               "检查更新失败，请重试或查看诊断日志。");
+            gtk_label_set_text(GTK_LABEL(candidateVersionLabel), "暂不可用");
+            gtk_label_set_text(GTK_LABEL(channelLabel), "未检测");
+            gtk_label_set_text(GTK_LABEL(changelogLabel), "未能获取更新说明");
+            focusCopyWhenReady = false;
             return;
         }
         lastStatus = *status;
         applyStatus(lastStatus);
+        // A search may arrive while copying is disabled. Complete that intent
+        // only while the user still rests on its visible fallback control.
+        const bool completeFocus = std::exchange(focusCopyWhenReady, false);
+        if (completeFocus && gtk_widget_get_mapped(page) &&
+            gtk_widget_has_focus(upgradeDetails)) {
+            focusWidgetOrFallback(copyCommandButton, upgradeDetails);
+        }
     }
 
     void applyStatus(const UpdateStatus &status) {
@@ -417,7 +443,7 @@ private:
 
         std::string channelText = status.installChannel;
         if (channelText.empty() || channelText == "unknown") {
-            channelText = (status.manager == PackageManagerKind::Dnf) ? "rpm (系统包)" : "deb (系统包)";
+            channelText = status.checked ? "未识别" : "未检测";
         } else if (channelText == "deb") {
             channelText = "deb (Debian/Ubuntu 软件源)";
         } else if (channelText == "rpm") {
@@ -427,16 +453,8 @@ private:
         }
         gtk_label_set_text(GTK_LABEL(channelLabel), channelText.c_str());
 
-        std::string candDisplay;
-        if (status.updateAvailable) {
-            candDisplay = status.candidateVersion;
-        } else if (status.checked && !status.offlineOrUnreachable) {
-            candDisplay = status.currentVersion.empty() ? MODERNIME_VERSION : status.currentVersion;
-        } else if (status.offlineOrUnreachable) {
-            candDisplay = "暂不可用";
-        } else {
-            candDisplay = "未检查";
-        }
+        const std::string candDisplay = !status.checked ? "未检查"
+            : status.candidateVersion.empty() ? "暂不可用" : status.candidateVersion;
         gtk_label_set_text(GTK_LABEL(candidateVersionLabel), candDisplay.c_str());
 
         gtk_label_set_text(
@@ -446,27 +464,25 @@ private:
         std::string userMsg;
         if (status.packageManagerLocked) {
             userMsg = "系统包管理器正在运行中，请稍后重试。";
-        } else if (status.updateAvailable) {
-            userMsg = "可更新至 " + status.candidateVersion;
-        } else if (status.offlineOrUnreachable) {
-            userMsg = "未能获取最新版本信息，请检查网络连接。";
+        } else if (!status.statusMessage.empty()) {
+            userMsg = status.statusMessage;
         } else if (status.checked) {
-            userMsg = "已是最新版本";
+            userMsg = "检查已结束，暂无可用版本信息。";
         } else {
             userMsg = "尚未检查";
         }
         gtk_label_set_text(GTK_LABEL(statusMessageLabel), userMsg.c_str());
 
-        std::string cmd = status.upgradeCommand;
-        if (cmd.empty()) {
-            cmd = (status.manager == PackageManagerKind::Dnf)
-                      ? "sudo dnf upgrade modernime"
-                      : "sudo apt update && sudo apt install --only-upgrade modernime";
-        }
-        gtk_label_set_text(GTK_LABEL(commandLabel), cmd.c_str());
+        gtk_label_set_text(GTK_LABEL(commandLabel), status.upgradeCommand.empty()
+            ? "检查后显示升级命令" : status.upgradeCommand.c_str());
+        gtk_widget_set_sensitive(copyCommandButton,
+            status.checked && !status.upgradeCommand.empty());
     }
 
     void copyCommand() {
+        if (!gtk_widget_get_sensitive(copyCommandButton)) {
+            return;
+        }
         const auto *cmd = gtk_label_get_text(GTK_LABEL(commandLabel));
         if (cmd != nullptr && *cmd != '\0') {
             auto *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
@@ -481,6 +497,7 @@ private:
     std::function<void(std::string)> notify;
     UpdateStatus lastStatus;
     bool busy = false;
+    bool focusCopyWhenReady = false;
 
     GtkWidget *page = nullptr;
     GtkWidget *versionDetails = nullptr;

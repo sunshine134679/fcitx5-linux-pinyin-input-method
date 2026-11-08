@@ -396,13 +396,12 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
             status.packageSource = "未检测到已配置的 APT / DNF 软件源索引";
         }
         if (status.changelogSummary.empty()) {
-            status.changelogSummary =
-                "离线、未配置软件源或尚未刷新本地缓存，本地功能与词库完好无损";
+            status.changelogSummary = "未能获取更新说明";
         }
         status.statusMessage =
-            "当前处于离线状态、尚未配置 ModernIME 系统软件源或未刷新缓存（可先在终端执行 " +
+            "未能确认可用版本，可能是查询失败、离线、未配置 ModernIME 软件源或未刷新本地缓存。可先在终端执行 " +
             status.refreshCacheCommand +
-            " 同步远端最新元数据）；本地输入法与数据运行正常（未发现软件损坏）。";
+            " 后重试。本次查询未修改本地输入法或用户数据。";
         return;
     }
 
@@ -412,8 +411,7 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
         status.updateAvailable = true;
         status.cacheMayBeStale = false;
         if (status.changelogSummary.empty()) {
-            status.changelogSummary =
-                "包含候选排序优化、词库更新与 SQLite/LMDB 事务安全升级保护";
+            status.changelogSummary = "暂无更新说明";
         }
         status.statusMessage =
             "发现新版本 " + status.candidateVersion + "（当前版本 " +

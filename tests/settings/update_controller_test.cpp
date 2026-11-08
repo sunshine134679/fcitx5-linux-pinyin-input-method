@@ -387,7 +387,11 @@ int main(int argc, char **argv) {
     assert(offlineStatus.offlineOrUnreachable);
     assert(!offlineStatus.cacheMayBeStale);
     assert(!offlineStatus.updateAvailable);
-    assert(offlineStatus.statusMessage.find("未发现软件损坏") != std::string::npos);
+    // A failed package query neither diagnoses corruption nor certifies health.
+    assert(offlineStatus.statusMessage.find("运行正常") == std::string::npos);
+    assert(offlineStatus.statusMessage.find("未发现软件损坏") == std::string::npos);
+    assert(offlineStatus.statusMessage.find("软件源") != std::string::npos);
+    assert(offlineStatus.statusMessage.find("sudo apt update") != std::string::npos);
 
     // 5b. Locally installed via dpkg -i ONLY (100 /var/lib/dpkg/status, no remote APT repo index)
     // Must report offlineOrUnreachable=true instead of falsely claiming "已是最新版本"
