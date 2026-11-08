@@ -630,7 +630,31 @@ int main(int argc, char **argv) {
         gtk_combo_box_set_active(GTK_COMBO_BOX(example), 0);
         drainEvents();
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 9 个") != std::string_view::npos);
+        assert(waitUntil([preview] {
+            return gtk_widget_get_mapped(preview) && gtk_widget_get_allocated_width(preview) > 1;
+        }));
         const int singleWidth = gtk_widget_get_allocated_width(preview);
+        auto *scaleHint = findTarget(window, "candidate-preview-scale");
+        assert(scaleHint != nullptr);
+        // The established 20pt / 9-item bar is 614 logical pixels wide.
+        // The hint must describe the actual allocated display, not a fixed ratio.
+        assert(singleWidth < 614);
+        const auto smallPercent = std::to_string((singleWidth * 100 + 307) / 614) + "%";
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(scaleHint))).find(smallPercent) != std::string_view::npos);
+        const bool editedBeforeResize = gtk_widget_get_sensitive(save);
+        gtk_window_resize(GTK_WINDOW(window), 980, 720);
+        assert(waitUntil([preview, scaleHint] {
+            return gtk_widget_get_allocated_width(preview) >= 614 &&
+                std::string_view(gtk_label_get_text(GTK_LABEL(scaleHint))).find("100%") != std::string_view::npos;
+        }));
+        assert(gtk_widget_get_sensitive(save) == editedBeforeResize);
+        assert(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFont)) == 20);
+        assert(gtk_combo_box_get_active(GTK_COMBO_BOX(pageSize)) == 6);
+        gtk_window_resize(GTK_WINDOW(window), 720, 520);
+        assert(waitUntil([preview, scaleHint, singleWidth, smallPercent] {
+            return gtk_widget_get_allocated_width(preview) == singleWidth &&
+                std::string_view(gtk_label_get_text(GTK_LABEL(scaleHint))).find(smallPercent) != std::string_view::npos;
+        }));
         gtk_combo_box_set_active(GTK_COMBO_BOX(example), 1);
         drainEvents();
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 7 个") != std::string_view::npos);
@@ -642,6 +666,9 @@ int main(int argc, char **argv) {
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 3 个") != std::string_view::npos);
         gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), 6);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), 28);
+        // At 28pt / 9 items the established unscaled width is 858 pixels.
+        const auto largeFontPercent = std::to_string((singleWidth * 100 + 429) / 858) + "%";
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(scaleHint))).find(largeFontPercent) != std::string_view::npos);
         gtk_switch_set_active(GTK_SWITCH(numbers), FALSE);
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 7 个") != std::string_view::npos);
         // Number selection changes keyboard behavior, not the real bar's labels.
@@ -747,6 +774,39 @@ int main(int argc, char **argv) {
         assert(popover != nullptr);
         assert(waitUntil(
             [popover] { return gtk_widget_get_visible(popover); }));
+        assert(gtk_widget_has_focus(search));
+        gtk_entry_set_text(GTK_ENTRY(search), "不存在设置xyz");
+        assert(waitUntil([popover] {
+            auto *empty = findLabelText(popover, "未找到匹配的设置");
+            return empty != nullptr && gtk_widget_get_mapped(empty);
+        }));
+        assert(gtk_widget_has_focus(search));
+        gtk_editable_set_position(GTK_EDITABLE(search), -1);
+        dispatchKey(window, GDK_KEY_x, GdkModifierType{});
+        assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(search))) == "不存在设置xyzx");
+        assert(gtk_widget_has_focus(search));
+        dispatchKey(window, GDK_KEY_Escape, GdkModifierType{});
+        assert(waitUntil([popover] { return !gtk_widget_get_visible(popover); }));
+        gtk_entry_set_text(GTK_ENTRY(search), " \t ");
+        assert(waitUntil([popover] {
+            return !gtk_widget_get_visible(popover) &&
+                findLabelText(popover, "未找到匹配的设置") == nullptr;
+        }));
+        gtk_entry_set_text(GTK_ENTRY(search), "a");
+        assert(waitUntil([popover] {
+            return gtk_widget_get_visible(popover) &&
+                findLabelText(popover, "未找到匹配的设置") == nullptr;
+        }));
+        dispatchKey(window, GDK_KEY_Tab, GdkModifierType{});
+        assert(gtk_widget_is_ancestor(gtk_window_get_focus(GTK_WINDOW(window)), popover));
+        dispatchKey(window, GDK_KEY_f, GDK_CONTROL_MASK);
+        dispatchKey(window, GDK_KEY_Down, GdkModifierType{});
+        assert(gtk_widget_is_ancestor(gtk_window_get_focus(GTK_WINDOW(window)), popover));
+        gtk_widget_grab_focus(inputEnabled);
+        assert(waitUntil([popover] { return !gtk_widget_get_visible(popover); }));
+        dispatchKey(window, GDK_KEY_f, GDK_CONTROL_MASK);
+        gtk_entry_set_text(GTK_ENTRY(search), "候选");
+        assert(waitUntil([popover] { return gtk_widget_get_visible(popover); }));
         KeyPressObservation escapeObservation;
         auto *escapeController = gtk_event_controller_key_new(window);
         gtk_event_controller_set_propagation_phase(escapeController,
@@ -785,6 +845,40 @@ int main(int argc, char **argv) {
                 return !gtk_widget_get_visible(popover) &&
                        !gtk_widget_get_mapped(popover);
             }));
+
+        // A queued GtkSearchEntry search-changed must not reopen a dismissed
+        // popup. Observe the real delayed signal, not an assumed sleep interval.
+        // Reduced-motion desktops close immediately, exposing this ordering
+        // instead of masking it behind the longer popdown animation.
+        auto *gtkSettings = gtk_widget_get_settings(window);
+        gboolean animationsEnabled = TRUE;
+        g_object_get(gtkSettings, "gtk-enable-animations", &animationsEnabled, nullptr);
+        g_object_set(gtkSettings, "gtk-enable-animations", FALSE, nullptr);
+        int delayedSearchChanges = 0;
+        const auto changedObserver = g_signal_connect(
+            search, "search-changed", G_CALLBACK(+[](GtkSearchEntry *, gpointer data) {
+                ++*static_cast<int *>(data);
+            }), &delayedSearchChanges);
+        gtk_entry_set_text(GTK_ENTRY(search), "候选");
+        assert(waitUntil([&] { return delayedSearchChanges == 1; }));
+        gtk_entry_set_text(GTK_ENTRY(search), "学习");
+        dispatchKey(window, GDK_KEY_Escape, GdkModifierType{});
+        assert(waitUntil([&] { return delayedSearchChanges == 2; }));
+        const bool stayedClosedAfterEscape = waitUntil(
+            [popover] { return !gtk_widget_get_visible(popover); });
+        gtk_entry_set_text(GTK_ENTRY(search), "候选");
+        assert(waitUntil([&] { return delayedSearchChanges == 3; }));
+        gtk_entry_set_text(GTK_ENTRY(search), "拼音");
+        gtk_widget_grab_focus(inputEnabled);
+        assert(waitUntil([&] { return delayedSearchChanges == 4; }));
+        const bool stayedClosedAfterFocus = waitUntil(
+            [popover] { return !gtk_widget_get_visible(popover); });
+        g_signal_handler_disconnect(search, changedObserver);
+        g_object_set(gtkSettings, "gtk-enable-animations", animationsEnabled, nullptr);
+        std::cerr << "Search dismissal: Escape=" << stayedClosedAfterEscape
+                  << ", focus=" << stayedClosedAfterFocus << '\n';
+        assert(stayedClosedAfterEscape && stayedClosedAfterFocus);
+        dispatchKey(window, GDK_KEY_f, GDK_CONTROL_MASK);
 
         gtk_entry_set_text(GTK_ENTRY(search), "刷新状态");
         assert(waitUntil(

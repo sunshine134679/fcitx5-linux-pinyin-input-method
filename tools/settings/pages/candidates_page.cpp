@@ -128,6 +128,10 @@ private:
         gtk_widget_set_hexpand(candidatePreview, TRUE);
         gtk_box_pack_start(GTK_BOX(previewCard), candidatePreview, FALSE, FALSE, 0);
         g_signal_connect(candidatePreview, "draw", G_CALLBACK(onPreviewDraw), this);
+        g_signal_connect(candidatePreview, "size-allocate",
+                         G_CALLBACK(+[](GtkWidget *, GtkAllocation *, gpointer data) {
+                             static_cast<Impl *>(data)->updateScaleHint();
+                         }), this);
         g_signal_connect(previewExample, "changed", G_CALLBACK(onExampleChanged), this);
         previewSummary = gtk_label_new(nullptr);
         addStyleClass(previewSummary, "modernime-description");
@@ -135,6 +139,12 @@ private:
         gtk_label_set_line_wrap(GTK_LABEL(previewSummary), TRUE);
         setTarget(previewSummary, "candidate-preview-summary");
         gtk_box_pack_start(GTK_BOX(previewCard), previewSummary, FALSE, FALSE, 0);
+        previewScaleHint = gtk_label_new("预览随窗口宽度适配");
+        addStyleClass(previewScaleHint, "modernime-description");
+        gtk_label_set_xalign(GTK_LABEL(previewScaleHint), 0.0F);
+        gtk_label_set_line_wrap(GTK_LABEL(previewScaleHint), TRUE);
+        setTarget(previewScaleHint, "candidate-preview-scale");
+        gtk_box_pack_start(GTK_BOX(previewCard), previewScaleHint, FALSE, FALSE, 0);
         definitionPreview = gtk_label_new("hello · int. 你好；喂");
         addStyleClass(definitionPreview, "modernime-description");
         gtk_widget_set_halign(definitionPreview, GTK_ALIGN_START);
@@ -269,13 +279,29 @@ private:
         const auto summary = "长度可容纳 " + std::to_string(capacity) +
             " 个单字候选 · 当前页 " + std::to_string(previewLayout.candidates.size()) + " 个 · 按词长自动分页";
         gtk_label_set_text(GTK_LABEL(previewSummary), summary.c_str());
+        updateScaleHint();
         gtk_widget_queue_draw(candidatePreview);
         gtk_widget_set_visible(definitionPreview, gtk_switch_get_active(GTK_SWITCH(englishDefinition)));
     }
 
-    static gboolean onPreviewDraw(GtkWidget *widget, cairo_t *context, gpointer data) {
+    double previewScale() const {
+        return std::min(1.0, gtk_widget_get_allocated_width(candidatePreview) / metrics.canvasWidth);
+    }
+
+    void updateScaleHint() {
+        if (gtk_widget_get_allocated_width(candidatePreview) <= 1) {
+            return;
+        }
+        const double scale = previewScale();
+        const auto text = scale >= 1.0 ? std::string("按实际大小预览（100%）")
+            : "预览约为 " + std::to_string(static_cast<int>(std::lround(scale * 100.0))) +
+                "% · 设置字号不变";
+        gtk_label_set_text(GTK_LABEL(previewScaleHint), text.c_str());
+    }
+
+    static gboolean onPreviewDraw(GtkWidget *, cairo_t *context, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        const double scale = std::min(1.0, gtk_widget_get_allocated_width(widget) / impl->metrics.canvasWidth);
+        const double scale = impl->previewScale();
         cairo_save(context);
         cairo_scale(context, scale, scale);
         ui::CairoRenderSurface surface(context);
@@ -336,6 +362,7 @@ private:
     GtkWidget *previewExample = nullptr;
     GtkWidget *compositionLabel = nullptr;
     GtkWidget *previewSummary = nullptr;
+    GtkWidget *previewScaleHint = nullptr;
     ui::CandidateBarMetrics metrics;
     ui::CandidateBarLayout previewLayout;
     ui::RenderStyle renderStyle;

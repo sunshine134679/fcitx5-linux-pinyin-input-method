@@ -27,6 +27,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -309,6 +310,13 @@ private:
             }
             return TRUE;
         }
+        if (modifiers == 0 &&
+            (event->keyval == GDK_KEY_Down || event->keyval == GDK_KEY_Tab) &&
+            gtk_widget_has_focus(owner->searchEntry) &&
+            gtk_widget_get_visible(owner->searchPopover) &&
+            gtk_widget_child_focus(owner->searchResults, GTK_DIR_TAB_FORWARD)) {
+            return TRUE;
+        }
         if (modifiers == 0 && event->keyval == GDK_KEY_Escape &&
             gtk_widget_get_visible(owner->searchPopover)) {
             gtk_popover_popdown(GTK_POPOVER(owner->searchPopover));
@@ -408,13 +416,26 @@ private:
         gtk_box_pack_start(GTK_BOX(sidebar), searchEntry, FALSE, FALSE, 0);
 
         searchPopover = gtk_popover_new(searchEntry);
+        // Search suggestions must leave the entry usable for continuous typing.
+        gtk_popover_set_modal(GTK_POPOVER(searchPopover), FALSE);
         gtk_popover_set_position(GTK_POPOVER(searchPopover), GTK_POS_RIGHT);
         searchResults = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
         gtk_widget_set_size_request(searchResults, 360, -1);
         gtk_container_set_border_width(GTK_CONTAINER(searchResults), 8);
         gtk_container_add(GTK_CONTAINER(searchPopover), searchResults);
-        g_signal_connect(searchEntry, "search-changed",
+        // This small local index needs no delayed query: a queued search-changed
+        // signal could reopen suggestions after Escape or a focus change.
+        g_signal_connect(searchEntry, "changed",
                          G_CALLBACK(onSearchChanged), this);
+        g_signal_connect(windowOwner.get(), "set-focus",
+                         G_CALLBACK(+[](GtkWindow *, GtkWidget *focus, gpointer data) {
+                             auto *owner = static_cast<Impl *>(data);
+                             if (focus != owner->searchEntry &&
+                                 (focus == nullptr ||
+                                  !gtk_widget_is_ancestor(focus, owner->searchPopover))) {
+                                 gtk_popover_popdown(GTK_POPOVER(owner->searchPopover));
+                             }
+                         }), this);
 
         auto *navBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
         for (const auto &definition : settingsPageDefinitions()) {
@@ -632,10 +653,21 @@ private:
     void updateSearchResults() {
         clearContainer(searchResults);
         const auto query = gtk_entry_get_text(GTK_ENTRY(searchEntry));
-        const auto results = searchSettings(query == nullptr ? "" : query);
-        if (results.empty()) {
+        const std::string_view queryText = query == nullptr ? "" : query;
+        if (queryText.find_first_not_of(" \t\n\r\f\v") == std::string_view::npos) {
             gtk_popover_popdown(GTK_POPOVER(searchPopover));
             return;
+        }
+        const auto results = searchSettings(queryText);
+        if (results.empty()) {
+            auto *title = gtk_label_new("未找到匹配的设置");
+            gtk_widget_set_halign(title, GTK_ALIGN_START);
+            auto *hint = gtk_label_new("试试其他关键词，如「候选」或「学习」");
+            addStyleClass(hint, "modernime-description");
+            gtk_widget_set_halign(hint, GTK_ALIGN_START);
+            gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+            gtk_box_pack_start(GTK_BOX(searchResults), title, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(searchResults), hint, FALSE, FALSE, 0);
         }
 
         constexpr std::size_t kMaximumVisibleResults = 10;
