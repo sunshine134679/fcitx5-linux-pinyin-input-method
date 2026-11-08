@@ -32,7 +32,7 @@ CandidatePipelineResult buildCandidatePipeline(
     const libime::PinyinContext *typoContext = nullptr,
     const RecentChoices *recentChoices = nullptr,
     // 容错变体上下文（2026-10-24 容错专项）：由 rhymeVariantInput 派生的近音
-    // 变体解码（如 kazhu -> kazhe）。变体候选带 +2.0 解码惩罚，作为低位补充
+    // 变体解码（如 kazhu -> kazhe）。变体候选扣除 2.0 解码分，作为低位补充
     // 召回来源，不改写主解码排序。
     const libime::PinyinContext *variantContext = nullptr);
 

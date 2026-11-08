@@ -79,7 +79,8 @@ CandidatePipelineResult buildCandidatePipeline(
     const libime::PinyinContext *variantContext) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
-    // libime 的候选已按解码代价升序排列。简拼输入（如 yyds）会展开出
+    // libime 保留 N-best 整句在前，后续候选按解码分数降序排列；高分更优。
+    // 简拼输入（如 yyds）会展开出
     // 数千个候选，全部进入学习 boost + 词典加分评分循环会让单键耗时
     // 超过 100ms；用户翻页永远看不到 128 名以外的候选，这里按 libime
     // 原生顺序截断头部再评分，保证评分管线只在有限集合上工作。
@@ -177,14 +178,19 @@ CandidatePipelineResult buildCandidatePipeline(
             }
             const auto consumed = inputBoundary(*typoContext, typoCandidates[index], context.userInput());
             if (!consumed) continue;
+            const float adjustedScore = typoCandidates[index].score() - 0.8F;
             const auto key = spanKey(text, fullPinyin, *consumed);
             if (seenKeys.contains(key)) {
                 for (auto &existing : result.scored) {
                     if (existing.text == text && existing.full_pinyin == fullPinyin &&
                         existing.consumed_input_bytes == consumed) {
-                        if (index < existing.source_index) {
-                            existing.source_index = index;
-                            existing.decoder_score = typoCandidates[index].score();
+                        existing.source_index = std::min(index, existing.source_index);
+                        // Source position and decoder confidence are separate
+                        // evidence. A duplicate must not erase a stronger score.
+                        if (std::isfinite(adjustedScore) &&
+                            (!existing.decoder_score || !std::isfinite(*existing.decoder_score) ||
+                             adjustedScore > *existing.decoder_score)) {
+                            existing.decoder_score = adjustedScore;
                         }
                         break;
                     }
@@ -198,8 +204,8 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = fullPinyin;
             candidate.consumed_input_bytes = *consumed;
             seenWords.insert(core::candidateOrderKey(text, fullPinyin));
-            // 容错补充候选稍加惩罚（+0.8F 解码代价），避免在原词完全合法时过度喧宾夺主
-            candidate.decoder_score = typoCandidates[index].score() + 0.8F;
+            // 分数越高越优，容错补充扣除 0.8，避免把纠错惩罚变成奖励。
+            candidate.decoder_score = adjustedScore;
             result.scored.push_back(std::move(candidate));
         }
     }
@@ -232,9 +238,9 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = fullPinyin;
             candidate.consumed_input_bytes = *consumed;
             seenWords.insert(core::candidateOrderKey(text, fullPinyin));
-            // 近音变体是最低位的补充召回来源：惩罚显著高于纠错候选（+0.8），
+            // 近音变体是最低位的补充召回来源：扣分幅度高于纠错候选（0.8），
             // 且只依赖 F1 的成熟学习提升或既有混排插位获得可见性。
-            candidate.decoder_score = variantCandidates[index].score() + 2.0F;
+            candidate.decoder_score = variantCandidates[index].score() - 2.0F;
             result.scored.push_back(std::move(candidate));
         }
     }

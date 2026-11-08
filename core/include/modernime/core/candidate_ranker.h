@@ -48,7 +48,9 @@ struct CandidateScore final {
     std::size_t source_index = 0;
     std::string text;
     std::string full_pinyin;
-    float decoder_score = 0.0F;
+    // LibIME score: higher is better. Recall-only candidates have no decoder
+    // evidence; a known zero must remain distinct from a missing score.
+    std::optional<float> decoder_score = std::nullopt;
     double decoder_bonus = 0.0;
     int match_priority = 0;
     double learning_boost = 0.0;

@@ -18,7 +18,11 @@
 
 #include <gtest/gtest.h>
 #include <chrono>
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <limits>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -88,6 +92,193 @@ protected:
     std::filesystem::path root;
     pinyin::PinyinDataPaths paths;
 };
+
+TEST_F(CandidateRankingRegression, DecoderHigherScoreWinsAtEqualPriorForEveryPermutation) {
+    // LibIME scores are higher-is-better. Hold all other priors equal so the
+    // native source position cannot hide an inverted decoder signal.
+    const std::vector<core::CandidateScore> source{
+        {0, "你好", "ni'hao", -10.0F},
+        {0, "拟好", "ni'hao", -15.0F},
+        {0, "你号", "ni'hao", -20.0F}};
+    std::vector<std::size_t> permutation{0, 1, 2};
+    do {
+        std::vector<core::CandidateScore> candidates;
+        for (const auto i : permutation) candidates.push_back(source[i]);
+        const auto order = core::CandidateRanker::rank("nihao", candidates);
+        ASSERT_EQ(order.size(), 3u);
+        EXPECT_EQ(candidates[order[0]].text, "你好");
+        EXPECT_EQ(candidates[order[1]].text, "拟好");
+        EXPECT_EQ(candidates[order[2]].text, "你号");
+        EXPECT_DOUBLE_EQ(candidates[order[0]].decoder_bonus, 1.0);
+        EXPECT_DOUBLE_EQ(candidates[order[1]].decoder_bonus, 0.5);
+        EXPECT_DOUBLE_EQ(candidates[order[2]].decoder_bonus, 0.0);
+    } while (std::next_permutation(permutation.begin(), permutation.end()));
+}
+
+TEST_F(CandidateRankingRegression, DecoderMissingEvidenceDoesNotChangeKnownBonuses) {
+    std::vector<core::CandidateScore> candidates{
+        {0, "你好", "ni'hao", -10.0F}, {0, "拟好", "ni'hao", -20.0F}};
+    core::CandidateRanker::rank("nihao", candidates);
+    const auto before = candidates;
+    core::CandidateScore recalled;
+    recalled.text = "你号";
+    recalled.full_pinyin = "ni'hao";
+    candidates.push_back(recalled);
+    core::CandidateRanker::rank("nihao", candidates);
+    EXPECT_DOUBLE_EQ(candidates[0].decoder_bonus, before[0].decoder_bonus);
+    EXPECT_DOUBLE_EQ(candidates[1].decoder_bonus, before[1].decoder_bonus);
+    EXPECT_DOUBLE_EQ(candidates[2].decoder_bonus, 0.0);
+    EXPECT_FALSE(std::optional<float>(candidates[2].decoder_score).has_value());
+}
+
+TEST_F(CandidateRankingRegression, DecoderKnownZeroRemainsEvidence) {
+    std::vector<core::CandidateScore> candidates{
+        {0, "你好", "ni'hao", 0.0F}, {0, "拟好", "ni'hao", -10.0F}};
+    const auto order = core::CandidateRanker::rank("nihao", candidates);
+    EXPECT_EQ(order.front(), 0u);
+    EXPECT_DOUBLE_EQ(candidates[0].decoder_bonus, 1.0);
+    EXPECT_DOUBLE_EQ(candidates[1].decoder_bonus, 0.0);
+}
+
+TEST_F(CandidateRankingRegression, DecoderNonFiniteAndDegeneratePoolsStayFinite) {
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto inf = std::numeric_limits<float>::infinity();
+    for (const auto &scores : {std::vector<float>{}, {nan}, {inf, -inf},
+                              {-10.0F}, {-10.0F, -10.0F, nan}}) {
+        std::vector<core::CandidateScore> candidates;
+        for (const auto score : scores) candidates.push_back({0, "词", "ci", score});
+        const auto order = core::CandidateRanker::rank("ci", candidates);
+        EXPECT_EQ(order.size(), scores.size());
+        for (const auto &candidate : candidates) {
+            EXPECT_DOUBLE_EQ(candidate.decoder_bonus, 0.0);
+            EXPECT_TRUE(std::isfinite(candidate.final_score()));
+        }
+    }
+    const auto maximum = std::numeric_limits<float>::max();
+    std::vector<core::CandidateScore> extremes{
+        {0, "强", "qiang", maximum}, {0, "弱", "qiang", -maximum},
+        {0, "缺失", "qiang", nan}, {0, "无穷", "qiang", inf}};
+    const auto order = core::CandidateRanker::rank("qiang", extremes);
+    EXPECT_EQ(order.front(), 0u);
+    EXPECT_DOUBLE_EQ(extremes[0].decoder_bonus, 1.0);
+    for (std::size_t i=1; i<extremes.size(); ++i) EXPECT_DOUBLE_EQ(extremes[i].decoder_bonus, 0.0);
+}
+
+TEST_F(CandidateRankingRegression, DecoderNativePreferenceReachesPipeline) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    libime::PinyinContext context(shared->ime.get());
+    ASSERT_TRUE(context.type("nihao"));
+    const auto result = pinyin::buildCandidatePipeline(context, *shared->ime->dict());
+    std::size_t comparisons = 0;
+    for (const auto &a : result.scored) {
+        for (const auto &b : result.scored) {
+            if (a.match_priority != b.match_priority ||
+                a.consumed_input_bytes != b.consumed_input_bytes) continue;
+            const auto first = std::optional<float>(a.decoder_score);
+            const auto second = std::optional<float>(b.decoder_score);
+            ASSERT_TRUE(first.has_value());
+            ASSERT_TRUE(second.has_value());
+            if (*first <= *second) continue;
+            ++comparisons;
+            EXPECT_GT(a.decoder_bonus, b.decoder_bonus) << a.text << " / " << b.text;
+        }
+    }
+    EXPECT_GT(comparisons, 0u);
+}
+
+TEST_F(CandidateRankingRegression, DecoderRecallOnlyCandidateHasNoInventedScore) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    libime::PinyinContext context(shared->ime.get());
+    ASSERT_TRUE(context.type("zidaili"));
+    const core::LearningSnapshot snapshot({{"紫袋狸", "zi'dai'li", "", "", 3, 1000}});
+    const auto result = pinyin::buildCandidatePipeline(context, *shared->ime->dict(), &snapshot, 1000);
+    const auto found = std::find_if(result.scored.begin(), result.scored.end(),
+        [](const auto &candidate) { return candidate.text == "紫袋狸"; });
+    ASSERT_NE(found, result.scored.end());
+    EXPECT_FALSE(std::optional<float>(found->decoder_score).has_value());
+    EXPECT_DOUBLE_EQ(found->decoder_bonus, 0.0);
+    EXPECT_GT(found->learning_boost, 0.0);
+}
+
+TEST_F(CandidateRankingRegression, DecoderSupplementalPenaltyReducesEvidence) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    libime::PinyinContext original(shared->ime.get()), corrected(shared->ime.get());
+    ASSERT_TRUE(original.type("baoyan"));
+    ASSERT_TRUE(corrected.type("biaoyan"));
+    const auto native = pinyin::buildCandidatePipeline(original, *shared->ime->dict());
+    for (const bool typo : {true, false}) {
+        SCOPED_TRACE(typo ? "typo" : "variant");
+        const auto result = pinyin::buildCandidatePipeline(original, *shared->ime->dict(),
+            nullptr, 0, {}, {}, {}, typo ? &corrected : nullptr, nullptr,
+            typo ? nullptr : &corrected);
+        std::size_t checked = 0;
+        for (const auto &candidate : result.scored) {
+            if (candidate.consumed_input_bytes != original.size()) continue;
+            const auto preexisting = std::find_if(native.scored.begin(), native.scored.end(),
+                [&](const auto &item) { return item.text == candidate.text &&
+                    item.full_pinyin == candidate.full_pinyin &&
+                    item.consumed_input_bytes == candidate.consumed_input_bytes; });
+            if (preexisting != native.scored.end()) continue;
+            ASSERT_LT(candidate.source_index, corrected.candidates().size());
+            const auto nativeScore = corrected.candidates()[candidate.source_index].score();
+            const auto score = std::optional<float>(candidate.decoder_score);
+            ASSERT_TRUE(score.has_value());
+            EXPECT_LT(*score, nativeScore) << candidate.text;
+            EXPECT_FLOAT_EQ(*score, nativeScore - (typo ? 0.8F : 2.0F));
+            EXPECT_DOUBLE_EQ(candidate.unigram_anchor, 0.0);
+            ++checked;
+        }
+        EXPECT_GT(checked, 0u);
+    }
+}
+
+TEST_F(CandidateRankingRegression, DecoderDuplicateTypoKeepsStrongerPenalizedEvidence) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    std::size_t smallerIndex = 0, otherIndex = 0;
+    for (const auto &[raw, fixed] : std::vector<std::pair<std::string, std::string>>{
+             {"jaili", "jiali"}, {"jiali", "jaili"}, {"qign", "qing"},
+             {"qing", "qign"}, {"zongwen", "zhongwen"}, {"zhongwen", "zongwen"},
+             {"baoyan", "biaoyan"}, {"nihao", "nihao"}}) {
+        SCOPED_TRACE(raw + " / " + fixed);
+        libime::PinyinContext original(shared->ime.get()), corrected(shared->ime.get());
+        ASSERT_TRUE(original.type(raw));
+        ASSERT_TRUE(corrected.type(fixed));
+        const auto before = pinyin::buildCandidatePipeline(original, *shared->ime->dict());
+        const auto after = pinyin::buildCandidatePipeline(original, *shared->ime->dict(),
+            nullptr, 0, {}, {}, {}, &corrected);
+        for (std::size_t i=0; i<std::min<std::size_t>(16,corrected.candidates().size()); ++i) {
+            const auto &sentence = corrected.candidates()[i].sentence();
+            if (sentence.empty() || sentence.back()->to()->index() != fixed.size()) continue;
+            const auto text = corrected.candidates()[i].toString();
+            const auto full = corrected.candidateFullPinyin(i);
+            const auto same = [&](const auto &item) { return item.text == text &&
+                item.full_pinyin == full && item.consumed_input_bytes == raw.size(); };
+            const auto old = std::find_if(before.scored.begin(), before.scored.end(), same);
+            if (old == before.scored.end()) continue;
+            const auto merged = std::find_if(after.scored.begin(), after.scored.end(), same);
+            ASSERT_NE(merged, after.scored.end());
+            const auto oldScore = std::optional<float>(old->decoder_score);
+            const auto newScore = std::optional<float>(merged->decoder_score);
+            ASSERT_TRUE(oldScore.has_value());
+            ASSERT_TRUE(newScore.has_value());
+            EXPECT_FLOAT_EQ(*newScore, std::max(*oldScore, corrected.candidates()[i].score()-0.8F)) << text;
+            EXPECT_EQ(merged->source_index, std::min(i,old->source_index));
+            EXPECT_EQ(merged->consumed_input_bytes, raw.size());
+            EXPECT_EQ(merged->unigram_anchor, old->unigram_anchor);
+            if (i < old->source_index) ++smallerIndex; else ++otherIndex;
+        }
+    }
+    EXPECT_GT(smallerIndex, 0u);
+    EXPECT_GT(otherIndex, 0u);
+}
 
 TEST_F(CandidateRankingRegression, ContextFeaturesUseRequestTimeWithoutChangingDecayPolicy) {
     constexpr std::int64_t day = 24LL * 60 * 60 * 1000;
