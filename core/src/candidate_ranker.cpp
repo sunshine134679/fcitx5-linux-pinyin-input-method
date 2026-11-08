@@ -18,7 +18,8 @@ CandidateRanker::rank(std::string_view userInput,
     std::iota(order.begin(), order.end(), 0);
     for (auto &candidate : candidates) {
         candidate.match_priority =
-            PinyinMatchPolicy::priority(userInput, candidate.full_pinyin);
+            candidate.decoded_match_priority.value_or(
+                PinyinMatchPolicy::priority(userInput, candidate.full_pinyin));
         candidate.stability_bonus = 0.0;
         candidate.decoder_bonus = 0.0;
     }

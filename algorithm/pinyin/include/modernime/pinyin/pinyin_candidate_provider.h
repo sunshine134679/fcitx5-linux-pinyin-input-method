@@ -35,6 +35,7 @@ struct PinyinProviderOptions final {
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
     core::FuzzyPinyinOptions fuzzyPinyin;
+    core::PinyinScheme pinyinScheme = core::PinyinScheme::Full;
 };
 
 struct ResourceChange final {

@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/shuangpin_input.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
 
 #include "modernime/pinyin/candidate_composition.h"
@@ -894,7 +895,9 @@ public:
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
           observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
         shared_->setFuzzyOptions(options.fuzzyPinyin);
+        shared_->setPinyinScheme(options.pinyinScheme);
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
+        context->setUseShuangpin(shared_->usesShuangpin());
         refresh();
     }
 
@@ -948,6 +951,11 @@ public:
     }
 
     void onCommitEvent(const core::CommitEvent &event) {
+        if (shared_->usesShuangpin() && event.role == core::CommitCandidateRole::Raw) {
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
+            return;
+        }
         if (!learningEnabled_) {
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
@@ -990,6 +998,7 @@ public:
             // session's last published raw composition before edits or reads;
             // no new raw-input owner or per-session engine copy is needed.
             context->clear();
+            context->setUseShuangpin(shared_->usesShuangpin());
             if (!page_.rawInput.empty()) context->type(page_.rawInput);
             recentChoices_.clear();
             phraseTracker_.cancelComposition();
@@ -1487,7 +1496,9 @@ public:
     }
 
     void applyOptions(const PinyinProviderOptions &opts) {
-        bool needRefresh = shared_->setFuzzyOptions(opts.fuzzyPinyin) ||
+        const bool fuzzyChanged = shared_->setFuzzyOptions(opts.fuzzyPinyin);
+        const bool schemeChanged = shared_->setPinyinScheme(opts.pinyinScheme);
+        bool needRefresh = fuzzyChanged || schemeChanged ||
             observedInputConfigurationGeneration_ != shared_->inputConfigurationGeneration();
         if (englishDefinitionEnabled_ != opts.englishDefinitionEnabled) {
             englishDefinitionEnabled_ = opts.englishDefinitionEnabled;
@@ -1595,8 +1606,11 @@ private:
                        : suppressedLearned_.contains(candidateKey(pinyin, text));
         };
         std::unique_ptr<libime::PinyinContext> typoContext;
+        const bool useShuangpin = context->useShuangpin();
+        std::optional<ShuangpinInput> shuangpin;
+        if (useShuangpin) shuangpin.emplace(rawInput, *ime().shuangpinProfile(), ime().fuzzyFlags());
         const auto correctedInput = correctTypoInput(rawInput);
-        if (correctedInput != rawInput) {
+        if (!useShuangpin && correctedInput != rawInput) {
             try {
                 typoContext =
                     std::make_unique<libime::PinyinContext>(shared_->ime.get());
@@ -1610,7 +1624,7 @@ private:
         // （de/qu/zhang 等单音节不做变体，避免高频输入的噪声与额外解码）。
         std::unique_ptr<libime::PinyinContext> variantContext;
         std::string variantInput;
-        if (rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
+        if (!useShuangpin && rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
             !core::PinyinMatchPolicy::isStandardSyllable(rawInput)) {
             variantInput = core::PinyinMatchPolicy::rhymeVariantInput(rawInput);
             if (variantInput != rawInput) {
@@ -1628,10 +1642,11 @@ private:
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
-            variantContext.get());
+            variantContext.get(), shuangpin ? &*shuangpin : nullptr);
         const auto segmentedInput =
-            automaticallySegmentedPreedit(rawInput, result);
-        const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);
+            shuangpin ? shuangpin->preedit() : automaticallySegmentedPreedit(rawInput, result);
+        const auto prefixEnds = shuangpin ? shuangpin->prefixEnds()
+            : syllablePrefixEnds(rawInput, segmentedInput);
         std::vector<std::pair<std::size_t, std::string>> canonicalPrefixes;
         canonicalPrefixes.reserve(prefixEnds.size());
         for (const auto prefixEnd : prefixEnds) {
@@ -1793,7 +1808,7 @@ private:
         const bool isConsonantAbbreviation =
             isConsonantAbbreviationInput(rawInput, fullItems);
         const bool isEnglish =
-            !isInitialConsonant && !isConsonantAbbreviation &&
+            !(useShuangpin && !fullItems.empty()) && !isInitialConsonant && !isConsonantAbbreviation &&
             core::EnglishDictionary::isEnglishWord(rawInput);
 
         const bool hasExactFullPinyin =
@@ -1817,6 +1832,7 @@ private:
             hasExactFullPinyin && topChineseLexical;
 
         const bool shouldPredictEnglish =
+            !(useShuangpin && !fullItems.empty()) &&
             (rawInput.empty() || rawInput.front() != 'v') &&
             !hasTrustedShortAbbr &&
             rawInput.size() >= 3 &&
@@ -1829,6 +1845,7 @@ private:
         std::vector<std::string> predictedWords;
         std::size_t learnedEnglishCount = 0;
         const bool canPredictEnglish =
+            !(useShuangpin && !fullItems.empty()) &&
             (rawInput.empty() || rawInput.front() != 'v') &&
             !hasTrustedShortAbbr &&
             rawInput.size() >= 2;
@@ -1884,6 +1901,7 @@ private:
         }
 
         CandidateCompositionInput compInput;
+        compInput.shuangpin = useShuangpin;
         compInput.rawInput = rawInput;
         compInput.segmentedInput = segmentedInput;
         compInput.fullCandidates = std::move(fullItems);
@@ -1949,7 +1967,7 @@ private:
                     start = sep + 1;
                 }
             }
-            bool rawIsFullPinyin = !rawSyllables.empty();
+            bool rawIsFullPinyin = !useShuangpin && !rawSyllables.empty();
             for (const auto &syllable : rawSyllables) {
                 if (!core::PinyinMatchPolicy::isStandardSyllable(syllable)) {
                     rawIsFullPinyin = false;

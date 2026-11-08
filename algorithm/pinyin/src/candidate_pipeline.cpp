@@ -1,5 +1,6 @@
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/candidate_features.h"
+#include "modernime/pinyin/shuangpin_input.h"
 
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/common_characters.h"
@@ -76,7 +77,7 @@ CandidatePipelineResult buildCandidatePipeline(
     std::string_view contextBefore, std::string_view contextAfter,
     const std::vector<std::string> &previousOrder,
     const libime::PinyinContext *typoContext, const RecentChoices *recentChoices,
-    const libime::PinyinContext *variantContext) {
+    const libime::PinyinContext *variantContext, const ShuangpinInput *shuangpin) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
     // libime 保留 N-best 整句在前，后续候选按解码分数降序排列；高分更优。
@@ -113,8 +114,13 @@ CandidatePipelineResult buildCandidatePipeline(
         if (!consumed) continue;
         entry.consumed = *consumed;
         entry.decoder_score = nativeCandidates[index].score();
-        entry.match_priority =
-            core::PinyinMatchPolicy::priority(context.userInput(), entry.full_pinyin);
+        if (shuangpin != nullptr) {
+            const auto match = shuangpin->match(entry.full_pinyin);
+            if (!match || match->consumed != entry.consumed) continue;
+            entry.match_priority = match->priority;
+        } else {
+            entry.match_priority = core::PinyinMatchPolicy::priority(context.userInput(), entry.full_pinyin);
+        }
         nativeEntries.push_back(std::move(entry));
     }
 
@@ -156,6 +162,7 @@ CandidatePipelineResult buildCandidatePipeline(
         candidate.decoder_score = entry.decoder_score;
         if (entry.source_index == 0) candidate.unigram_anchor = 7.0;
         candidate.consumed_input_bytes = entry.consumed;
+        if (shuangpin != nullptr) candidate.decoded_match_priority = entry.match_priority;
         seenKeys.insert(spanKey(candidate.text, candidate.full_pinyin, entry.consumed));
         seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
@@ -245,9 +252,12 @@ CandidatePipelineResult buildCandidatePipeline(
         }
     }
 
+    const auto recallInputs = shuangpin != nullptr ? shuangpin->recallInputs()
+        : std::vector<std::string>{context.userInput()};
     if (learning != nullptr) {
+      for (const auto &recallInput : recallInputs) {
         const auto recalled = learning->recallCandidates(
-            context.userInput(), nowMs, contextBefore, contextAfter);
+            recallInput, nowMs, contextBefore, contextAfter);
         for (const auto &item : recalled) {
             const auto cp = core::CommonCharacters::firstCodepoint(item.phrase);
             if (!((cp >= 0x4E00 && cp <= 0x9FFF) ||
@@ -257,6 +267,9 @@ CandidatePipelineResult buildCandidatePipeline(
             }
             const std::string segmentedPinyin =
                 core::PinyinMatchPolicy::segmentPinyin(item.pinyin);
+            const auto decodedMatch = shuangpin != nullptr
+                ? shuangpin->match(segmentedPinyin) : std::optional<ShuangpinInput::Match>{};
+            if (shuangpin != nullptr && !decodedMatch) continue;
             const auto key = core::candidateOrderKey(item.phrase, segmentedPinyin);
             if (!seenWords.insert(key).second) continue;
             core::CandidateScore candidate;
@@ -265,8 +278,13 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.source_index = 0;
             candidate.text = item.phrase;
             candidate.full_pinyin = segmentedPinyin;
+            if (decodedMatch) {
+                candidate.consumed_input_bytes = decodedMatch->consumed;
+                candidate.decoded_match_priority = decodedMatch->priority;
+            }
             result.scored.push_back(std::move(candidate));
         }
+      }
     }
 
     const CandidateFeatureContext request{context.userInput(), learning, recentChoices,
@@ -275,7 +293,8 @@ CandidatePipelineResult buildCandidatePipeline(
         populateCandidateFeatures(candidate, dictionary, request);
     }
     result.order = core::CandidateRanker::rank(
-        context.userInput(), result.scored, previousOrder);
+        shuangpin != nullptr && !recallInputs.empty() ? recallInputs.front() : context.userInput(),
+        result.scored, previousOrder);
     return result;
 }
 

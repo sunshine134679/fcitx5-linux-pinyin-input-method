@@ -1317,7 +1317,58 @@ void testFuzzyPinyinOptions() {
     }
 }
 
+void testShuangpinSchemes() {
+    using modernime::core::PinyinScheme;
+    for (const auto &[scheme, code] : std::array{
+             std::pair{PinyinScheme::Xiaohe, "nihc"},
+             std::pair{PinyinScheme::Ziranma, "nihk"}}) {
+        const auto path = testPath(scheme == PinyinScheme::Xiaohe ? "xiaohe.sqlite3" : "ziranma.sqlite3");
+        {
+            modernime::core::LearningStore store(path);
+            assertTrue(store.open() && store.recordSelection("妮好", "nihao", "", "", 0),
+                       "prepare a learned word using its full pinyin identity");
+        }
+        modernime::pinyin::PinyinDataPaths paths;
+        paths.learningStore = path.string();
+        modernime::pinyin::PinyinProviderOptions options;
+        options.pinyinScheme = scheme;
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        assertTrue(provider.append(code), "double pinyin accepted");
+        assertTrue(provider.page().items.front().text == "你好", "double pinyin decodes greeting first");
+        const auto learnedIndex = indexOf(provider.page(), "妮好");
+        assertTrue(learnedIndex < provider.page().items.size(), "double pinyin recalls existing learned full-pinyin word");
+        assertTrue(provider.select(learnedIndex) && provider.flush(), "learned word selection persists");
+        {
+            modernime::core::LearningStore store(path);
+            assertTrue(store.open(), "reopen learning");
+            assertTrue(store.snapshot()->hasPositiveFrequency("妮好", "nihao") &&
+                       !store.snapshot()->hasPositiveFrequency("妮好", code),
+                       "double pinyin does not become the learning identity");
+        }
+        provider.reset();
+        assertTrue(provider.append(std::string(code) + "ma"), "double pinyin sentence accepted");
+        const auto index = indexOf(provider.page(), "你好");
+        assertTrue(index < provider.page().items.size() && provider.page().items[index].consumedInputBytes == 4,
+                   "phrase consumes four original double-pinyin bytes");
+        assertTrue(provider.select(index) && provider.page().rawInput == "ma", "partial double pinyin preserves suffix");
+        provider.reset();
+        provider.append(code);
+        const auto oldPage = provider.page();
+        const modernime::core::CandidateSelectionRequest oldRequest{.globalIndex = 0,
+            .expected = modernime::core::candidateIdentity(oldPage.items.front(), oldPage)};
+        options.pinyinScheme = PinyinScheme::Full;
+        provider.applyOptions(options);
+        assertTrue(provider.page().rawInput == code && !provider.selectConfirmed(oldRequest, oldPage.generation),
+                   "scheme change preserves keys and rejects previous selection");
+        provider.reset();
+        assertTrue(provider.append("nihao") && hasText(provider.page(), "妮好"), "full pinyin shares learned identity");
+        std::cout << "[PASS] shuangpin " << code << '\n';
+    }
+}
+
 int main(int argc, char **argv) {
+    testShuangpinSchemes();
+    if (argc == 2 && std::string_view(argv[1]) == "--shuangpin") return 0;
     testFuzzyPinyinOptions();
     if (argc == 2 && std::string_view(argv[1]) == "--fuzzy-options") return 0;
     testSpecialCandidateSelectionActionAndLifetime();

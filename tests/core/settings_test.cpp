@@ -521,6 +521,12 @@ void testFuzzyPinyinRoundTrip() {
     const auto directory = testDirectory();
     const auto file = directory / "settings.conf";
     auto defaults = modernime::core::defaultSettings();
+    for (const auto &scheme : modernime::core::kPinyinSchemes) {
+        auto edited = defaults;
+        edited.pinyinScheme = scheme.scheme;
+        assertTrue(modernime::core::SettingsStore::save(file, edited), "save pinyin scheme");
+        assertTrue(modernime::core::SettingsStore::load(file).settings == edited, "pinyin scheme roundtrip");
+    }
     std::ofstream(file) << "input.enabled=true\n";
     assertTrue(modernime::core::SettingsStore::load(file).settings.fuzzyPinyin == defaults.fuzzyPinyin,
                "old settings retain all six fuzzy groups");

@@ -65,9 +65,48 @@ std::size_t indexOf(const modernime::core::CandidatePage &page,
 
 } // namespace
 
-int main() {
+void testShuangpinController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "shuangpin.sqlite3";
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.pinyinScheme = modernime::core::PinyinScheme::Xiaohe;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    RecordingHost host;
+    modernime::fcitx5::ControllerOptions controllerOptions;
+    controllerOptions.learningEnabled = false;
+    modernime::fcitx5::ModernIMEController controller(host, &provider, controllerOptions);
+    const auto type = [&](std::string_view input) {
+        for (char c : input)
+            assertTrue(controller.handle({modernime::fcitx5::KeyKind::Character, c, 0}), "double pinyin key handled");
+    };
+    type("nihcma");
+    const auto index = indexOf(controller.page(), "你好");
+    assertTrue(index < controller.page().items.size() && controller.select(index), "select double pinyin prefix");
+    assertTrue(host.commits.back() == "你好" && controller.page().rawInput == "ma", "controller preserves double pinyin suffix");
+    controller.reset();
+    type("vi");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '1'}), "v initial supports number selection");
+    assertTrue(host.commits.back() == "之" && controller.page().rawInput.empty(), "v initial is not a numeric macro");
+    type("v123");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) &&
+               host.commits.back() == "壹佰贰拾叁元整", "explicit numeric macro remains usable");
+    type("nihc");
+    options.pinyinScheme = modernime::core::PinyinScheme::Ziranma;
+    provider.applyOptions(options);
+    controller.setOptions(controllerOptions);
+    assertTrue(controller.page().rawInput == "nihc", "controller preserves scheme-switch composition");
+    controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+    type("k");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) &&
+               host.commits.back() == "你好", "editing after switch uses new scheme");
+}
+
+int main(int argc, char **argv) {
     // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
     TempDirectory tempDirectory;
+    testShuangpinController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--shuangpin") return 0;
     std::cout << "Test directory: " << tempDirectory.path() << std::endl;
     const auto mainLearningDbPath = tempDirectory.path() / "integration_main_learn.sqlite3";
     modernime::pinyin::PinyinDataPaths mainPaths;

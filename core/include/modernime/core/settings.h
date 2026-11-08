@@ -28,6 +28,7 @@ struct ModernIMESettings final {
     bool englishDefinitionEnabled = false;
     bool characterExtractionEnabled = true;
     FuzzyPinyinOptions fuzzyPinyin;
+    PinyinScheme pinyinScheme = PinyinScheme::Full;
 
     bool operator==(const ModernIMESettings &) const = default;
 };

@@ -4,6 +4,20 @@
 
 namespace modernime::core {
 
+enum class PinyinScheme { Full, Xiaohe, Ziranma };
+
+struct PinyinSchemeOption final {
+    PinyinScheme scheme;
+    const char *key;
+    const char *label;
+};
+
+inline constexpr std::array kPinyinSchemes{
+    PinyinSchemeOption{PinyinScheme::Full, "full", "全拼 / 简拼"},
+    PinyinSchemeOption{PinyinScheme::Xiaohe, "xiaohe", "小鹤双拼"},
+    PinyinSchemeOption{PinyinScheme::Ziranma, "ziranma", "自然码双拼"},
+};
+
 struct FuzzyPinyinOptions final {
     bool zZh = true;
     bool cCh = true;

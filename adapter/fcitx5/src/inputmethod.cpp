@@ -185,7 +185,8 @@ pinyin::PinyinProviderOptions pinyinOptions(
     const core::ModernIMESettings &settings) {
     return {settings.learningEnabled, settings.contextLearningEnabled,
             settings.englishDefinitionEnabled,
-            settings.clipboardEnabled, settings.clipboardTrigger, settings.fuzzyPinyin};
+            settings.clipboardEnabled, settings.clipboardTrigger, settings.fuzzyPinyin,
+            settings.pinyinScheme};
 }
 #endif
 

@@ -183,6 +183,9 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
     for (const auto &option : kFuzzyPinyinOptions) {
         output << option.key << '=' << (settings.fuzzyPinyin.*option.member ? "true" : "false") << '\n';
     }
+    for (const auto &option : kPinyinSchemes) {
+        if (option.scheme == settings.pinyinScheme) output << "pinyin.scheme=" << option.key << '\n';
+    }
     return fnv1a64Hex(output.str());
 }
 
@@ -319,7 +322,15 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
             bool parsed = false;
             const auto fuzzy = std::find_if(kFuzzyPinyinOptions.begin(), kFuzzyPinyinOptions.end(),
                 [&](const auto &option) { return key == option.key; });
-            if (fuzzy != kFuzzyPinyinOptions.end()) {
+            if (key == "pinyin.scheme") {
+                for (const auto &option : kPinyinSchemes) {
+                    if (value == option.key) {
+                        result.settings.pinyinScheme = option.scheme;
+                        parsed = true;
+                        break;
+                    }
+                }
+            } else if (fuzzy != kFuzzyPinyinOptions.end()) {
                 parsed = parseBoolean(value, result.settings.fuzzyPinyin.*fuzzy->member);
             } else if (key == "input.enabled") {
                 parsed = parseBoolean(value, result.settings.inputEnabled);
@@ -467,6 +478,9 @@ SettingsSaveResult SettingsStore::saveWithResult(
     }
 
     std::unordered_map<std::string, std::string> knownSettings;
+    for (const auto &option : kPinyinSchemes) {
+        if (option.scheme == settings.pinyinScheme) knownSettings["pinyin.scheme"] = option.key;
+    }
     for (const auto &option : kFuzzyPinyinOptions) {
         knownSettings[option.key] = settings.fuzzyPinyin.*option.member ? "true" : "false";
     }
@@ -536,8 +550,9 @@ SettingsSaveResult SettingsStore::saveWithResult(
         }
     }
 
-    const std::array<const char *, 21> keyOrder{
+    const std::array<const char *, 22> keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
+        "pinyin.scheme",
         "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",
         "pinyin.fuzzy_l_n", "pinyin.fuzzy_en_eng", "pinyin.fuzzy_in_ing",
         "candidate.page_size", "candidate.font_size",

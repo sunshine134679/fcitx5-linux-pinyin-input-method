@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_shared_resources.h"
+#include <libime/pinyin/shuangpinprofile.h>
 #include "modernime/pinyin/user_dictionary.h"
 
 #include "modernime/core/pinyin_match.h"
@@ -377,6 +378,7 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
     resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
                                                          std::move(model));
     resources->setFuzzyOptions(options.fuzzyPinyin);
+    resources->setPinyinScheme(options.pinyinScheme);
     resources->ime->setNBest(32);
     // 在后台预热线程中一体化加载学习写入器，首键打字时直接读取内存快照，
     // 避免首键触发数十毫秒的 SQLite 磁盘打开与全表反序列化。
@@ -392,6 +394,18 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
         std::memory_order_release);
 
     return resources;
+}
+
+bool PinyinSharedResources::setPinyinScheme(core::PinyinScheme scheme) {
+    if (pinyinScheme_ == scheme) return false;
+    pinyinScheme_ = scheme;
+    ++inputConfigurationGeneration_;
+    if (usesShuangpin()) {
+        const auto profile = scheme == core::PinyinScheme::Xiaohe
+            ? libime::ShuangpinBuiltinProfile::Xiaohe : libime::ShuangpinBuiltinProfile::Ziranma;
+        ime->setShuangpinProfile(std::make_shared<libime::ShuangpinProfile>(profile));
+    }
+    return true;
 }
 
 bool PinyinSharedResources::setFuzzyOptions(const core::FuzzyPinyinOptions &options) {

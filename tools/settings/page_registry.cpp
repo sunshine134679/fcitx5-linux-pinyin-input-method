@@ -47,6 +47,8 @@ constexpr std::array kSearchEntries{
                         "控制 ModernIME 是否接收键盘输入", "enable input"},
     SettingsSearchEntry{SettingsPageId::Input, "default-mode", "默认输入状态",
                         "选择启动时默认使用中文或英文", "default mode chinese english"},
+    SettingsSearchEntry{SettingsPageId::Input, "pinyin.scheme", "拼音方案",
+                        "全拼、简拼、小鹤双拼或自然码双拼", "shuangpin pinyin xiaohe ziranma 双拼"},
     SettingsSearchEntry{SettingsPageId::Input, "pinyin.fuzzy_z_zh", "模糊音 z / zh",
                         "混用平舌和翘舌发音", "fuzzy pinyin z zh 模糊音"},
     SettingsSearchEntry{SettingsPageId::Input, "pinyin.fuzzy_c_ch", "模糊音 c / ch",

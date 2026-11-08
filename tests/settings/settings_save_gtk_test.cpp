@@ -135,6 +135,12 @@ int main(int argc, char **argv) {
         assert(modernime::core::computeFileContentHash(paths.settingsFile) == firstHash);
         assert(waitUntil([window] { return hasLabel(window, "已保存并应用"); }));
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), true);
+        auto *scheme = findWidget(window, [](GtkWidget *widget) {
+            const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
+            return target && std::string_view(target) == "pinyin.scheme";
+        });
+        assert(scheme && GTK_IS_COMBO_BOX(scheme));
+        assert(gtk_combo_box_set_active_id(GTK_COMBO_BOX(scheme), "xiaohe"));
         for (const auto &option : modernime::core::kFuzzyPinyinOptions) {
             auto *control = findWidget(window, [&](GtkWidget *widget) {
                 const auto *target = static_cast<const char *>(g_object_get_data(
@@ -148,6 +154,7 @@ int main(int argc, char **argv) {
         saveWithoutBlocking(save);
         const auto saved = modernime::core::SettingsStore::load(paths.settingsFile);
         assert(saved.isSuccess());
+        assert(saved.settings.pinyinScheme == modernime::core::PinyinScheme::Xiaohe);
         for (const auto &option : modernime::core::kFuzzyPinyinOptions)
             assert(!(saved.settings.fuzzyPinyin.*option.member));
     }

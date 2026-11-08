@@ -69,6 +69,9 @@ struct CandidateScore final {
     // 原生格点跨度，已映射到本次原始输入。缺省仅用于无格点的个人召回。
     // 必须随排序携带值；source_index 不是重排后反查格点的下标。
     std::optional<std::size_t> consumed_input_bytes = std::nullopt;
+    // Native code-based parsers supply match evidence in their own alphabet.
+    // Full-pinyin callers continue to derive priority from userInput.
+    std::optional<int> decoded_match_priority = std::nullopt;
 
 
     double base_prior() const {

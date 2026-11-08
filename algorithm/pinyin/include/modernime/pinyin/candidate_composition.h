@@ -79,6 +79,7 @@ struct CandidateCompositionInput {
     std::function<bool(std::string_view text, std::string_view pinyin)> isLexicalWord;
 
     bool recordMoves = false;
+    bool shuangpin = false;
 };
 
 struct CandidateCompositionResult {
