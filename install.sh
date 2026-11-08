@@ -394,7 +394,17 @@ else
         # restored automatically when this subshell exits.
         unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
         test_jobs="${CTEST_PARALLEL_LEVEL:-1}"
-        ctest --test-dir "$build_dir" --output-on-failure --parallel "$test_jobs"
+        report_dir="$canonical_build_dir/Testing"
+        mkdir -p -- "$report_dir"
+        # These filenames describe this run only. A failed/filtered invocation
+        # must not leave an earlier native report looking like current evidence.
+        rm -f -- "$report_dir/install-registered.json" "$report_dir/install-junit.xml" \
+            "$report_dir/install-gtest.xml"
+        unset GTEST_OUTPUT
+        ctest --test-dir "$build_dir" --show-only=json-v1 > "$report_dir/install-registered.json"
+        export GTEST_OUTPUT="xml:$report_dir/install-gtest.xml"
+        ctest --test-dir "$build_dir" --output-on-failure --parallel "$test_jobs" \
+            --output-junit "$report_dir/install-junit.xml"
     )
 fi
 

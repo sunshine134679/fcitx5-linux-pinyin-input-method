@@ -43,16 +43,16 @@ printf '%s\n' /fake/lib
 EOF
 cat >"$fake_bin/fcitx5" <<'EOF'
 #!/usr/bin/env bash
-printf 'fcitx5|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s|DATA=%s\n' \
+printf 'fcitx5|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s|DATA=%s|GTEST=%s\n' \
     "${DISPLAY-}" "${DBUS_SESSION_BUS_ADDRESS-}" \
-    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" "${XDG_DATA_DIRS-}" >>"$FAKE_LOG"
+    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" "${XDG_DATA_DIRS-}" "${GTEST_OUTPUT-}" >>"$FAKE_LOG"
 exit 0
 EOF
 cat >"$fake_bin/fcitx5-remote" <<'EOF'
 #!/usr/bin/env bash
-printf 'remote:%s|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s|DATA=%s\n' \
+printf 'remote:%s|DISPLAY=%s|DBUS=%s|RUNTIME=%s|ADDONS=%s|DATA=%s|GTEST=%s\n' \
     "${1-}" "${DISPLAY-}" "${DBUS_SESSION_BUS_ADDRESS-}" \
-    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" "${XDG_DATA_DIRS-}" >>"$FAKE_LOG"
+    "${XDG_RUNTIME_DIR-}" "${FCITX_ADDON_DIRS-}" "${XDG_DATA_DIRS-}" "${GTEST_OUTPUT-}" >>"$FAKE_LOG"
 case "${1-}" in
     -n) printf '%s\n' modernime ;;
     '') printf '%s\n' 2 ;;
@@ -91,12 +91,15 @@ env \
     MODERNIME_PREFIX="$test_root/prefix" \
     MODERNIME_BUILD_DIR="$test_root/build" \
     DISPLAY=:0 \
+    GTEST_OUTPUT="xml:$test_root/caller-report.xml" \
     DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
     FAKE_LOG="$log_file" \
     FAKE_PGREP_STATE="$state_file" \
     PATH="$fake_bin:/usr/bin:/bin" \
     bash ./install.sh >/dev/null
+
+grep -F "|GTEST=xml:$test_root/caller-report.xml" "$log_file" >/dev/null
 
 expected_addons="$test_root/prefix/lib/fcitx5:/fake/lib/fcitx5"
 grep -F 'ctest|DISPLAY=|WAYLAND=|GDK=|BROADWAY=' "$log_file" >/dev/null

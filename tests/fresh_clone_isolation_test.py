@@ -36,6 +36,8 @@ class FreshCloneIsolationTest(unittest.TestCase):
         self.git("init", "--quiet", str(self.source))
         (self.source / "tests").mkdir()
         shutil.copyfile(VERIFIER, self.source / "tests/verify_fresh_clone.sh")
+        shutil.copyfile(VERIFIER.with_name("verify_required_tests.py"),
+                        self.source / "tests/verify_required_tests.py")
         installer = self.source / "install.sh"
         installer.write_text('''#!/usr/bin/env python3
 import json, os
@@ -160,6 +162,41 @@ raise SystemExit(42)
 
     def test_unset_caller_controls_still_produce_isolated_environment(self):
         self.assert_isolated_failure(self.run_verifier(polluted=False), keep=False)
+
+    def test_successful_install_without_each_native_report_is_rejected(self):
+        installer = self.source / "install.sh"
+        original = installer.read_text()
+        reports = ("install-registered.json", "install-junit.xml", "install-gtest.xml")
+        for missing in reports:
+            with self.subTest(missing=missing):
+                emit = (
+                    'reports = Path(os.environ["MODERNIME_BUILD_DIR"]) / "Testing"\n'
+                    'reports.mkdir(parents=True)\n'
+                    f'for name in {tuple(name for name in reports if name != missing)!r}:\n'
+                    '    (reports / name).write_text("fixture")\n'
+                    'raise SystemExit(0)'
+                )
+                installer.write_text(original.replace("raise SystemExit(42)", emit))
+                result = self.run_verifier()
+                self.assertNotEqual(0, result.returncode)
+                self.assertNotIn("=== 3.", result.stdout, "artifact checks ran without test evidence")
+                self.assertIn(missing, result.stderr)
+                self.assertEqual([], list(self.tmp.iterdir()))
+
+    def test_present_but_invalid_reports_are_rejected_by_required_checker(self):
+        installer = self.source / "install.sh"
+        installer.write_text(installer.read_text().replace("raise SystemExit(42)", (
+            'reports = Path(os.environ["MODERNIME_BUILD_DIR"]) / "Testing"\n'
+            'reports.mkdir(parents=True)\n'
+            'for name in ("install-registered.json", "install-junit.xml", "install-gtest.xml"):\n'
+            '    (reports / name).write_text("invalid")\n'
+            'raise SystemExit(0)'
+        )))
+        result = self.run_verifier()
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("=== 3.", result.stdout, "artifact checks ran with invalid test evidence")
+        self.assertIn("Required tests check failed", result.stderr)
+        self.assertEqual([], list(self.tmp.iterdir()))
 
     def test_unknown_argument_fails_before_install(self):
         result = self.run_verifier(["--unknown-option"])

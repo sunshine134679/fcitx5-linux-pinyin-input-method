@@ -82,9 +82,24 @@ if ! git -C "$test_root/snapshot" diff --cached --quiet; then
         -c core.hooksPath=/dev/null commit -m 'Isolated verification snapshot' >/dev/null
 fi
 git clone --no-hardlinks "$test_root/snapshot" "$test_root/repo"
+git -C "$test_root/repo" rev-parse HEAD > "$test_root/source-commit.txt"
+printf '验证快照：%s\n' "$(cat "$test_root/source-commit.txt")"
 
 printf '=== 2. 在沙箱环境中执行 install.sh ===\n'
 (cd "$test_root/repo" && ./install.sh)
+
+# Installer success alone does not prove the required tests actually ran.
+report_dir="$MODERNIME_BUILD_DIR/Testing"
+for report in install-registered.json install-junit.xml install-gtest.xml; do
+    if [[ ! -s "$report_dir/$report" ]]; then
+        printf '缺少本次安装测试报告：%s\n' "$report_dir/$report" >&2
+        exit 1
+    fi
+done
+python3 "$test_root/repo/tests/verify_required_tests.py" \
+    --registered "$report_dir/install-registered.json" \
+    --junit "$report_dir/install-junit.xml" --gtest-xml "$report_dir" \
+    --profile full --stage final --check execution --execution headless
 
 printf '=== 3. 验证沙箱安装产物完整性 ===\n'
 test -f "$MODERNIME_PREFIX/bin/modernime-settings"
@@ -375,6 +390,8 @@ set +a
 "$MODERNIME_BUILD_DIR/tests/modernime_install_discovery_tests" "$MODERNIME_PREFIX"
 test ! -e "$HOME/.xprofile"
 
+cp -- "$MODERNIME_PREFIX/share/modernime/install-manifest.txt" "$test_root/install-manifest.txt"
+
 printf '=== 4. 在沙箱环境中执行 uninstall.sh ===\n'
 (cd "$test_root/repo" && ./uninstall.sh)
 
@@ -399,4 +416,5 @@ done
 test ! -e "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test ! -e "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 
-printf '=== 6. 沙箱全新克隆与全生命周期安装卸载验证 100%% 通过！ ===\n'
+printf '=== 6. 源码构建、必需测试及既有安装卸载检查通过（headless） ===\n'
+printf '桌面会话与用户扩展生命周期需另行专项验收。\n'

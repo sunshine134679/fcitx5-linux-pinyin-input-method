@@ -35,6 +35,22 @@ exit 0
 EOF
     cat >"$fake_bin/ctest" <<'EOF'
 #!/usr/bin/env bash
+mode=execute
+junit=
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --show-only=json-v1) mode=registration ;;
+        --output-junit) shift; junit=$1 ;;
+    esac
+    shift
+done
+if [[ -n "${FAKE_CTEST_REPORT_LOG:-}" ]]; then
+    printf '%s|junit=%s|gtest=%s\n' "$mode" "$junit" "${GTEST_OUTPUT:-}" >> "$FAKE_CTEST_REPORT_LOG"
+fi
+if [[ "$mode" == registration ]]; then
+    printf '{"tests": []}\n'
+    exit "${FAKE_CTEST_REGISTRATION_STATUS:-0}"
+fi
 if [[ -n "${FAKE_CTEST_SKIP_LOG:-}" ]]; then
     if [[ -n "${MODERNIME_SKIP_FCITX_RESTART:-}" ]]; then
         printf '%s\n' inherited >"$FAKE_CTEST_SKIP_LOG"
@@ -42,7 +58,7 @@ if [[ -n "${FAKE_CTEST_SKIP_LOG:-}" ]]; then
         : >"$FAKE_CTEST_SKIP_LOG"
     fi
 fi
-exit 0
+exit "${FAKE_CTEST_EXECUTION_STATUS:-0}"
 EOF
     cat >"$fake_bin/pkg-config" <<'EOF'
 #!/usr/bin/env bash
@@ -116,6 +132,46 @@ grep -F 'Fcitx5 restart skipped by MODERNIME_SKIP_FCITX_RESTART=1' \
     "$skip_output" >/dev/null
 test ! -s "$log_file"
 test ! -s "$ctest_skip_log"
+
+# The installer must export registration once and execute CTest once, with
+# both native report destinations inside this build, even after a prior run.
+report_log="$test_root/report-calls.log"
+mkdir -p "$test_root/reports-build/Testing"
+printf 'stale\n' > "$test_root/reports-build/Testing/install-junit.xml"
+printf 'stale\n' > "$test_root/reports-build/Testing/install-gtest.xml"
+run_install reports MODERNIME_SKIP_FCITX_RESTART=1 FAKE_CTEST_REPORT_LOG="$report_log" \
+    GTEST_OUTPUT="xml:$test_root/caller-report.xml" > "$test_root/reports-output" 2>&1
+[[ $(wc -l < "$report_log") -eq 2 ]]
+grep -Fx 'registration|junit=|gtest=' "$report_log" >/dev/null
+grep -Fx "execute|junit=$test_root/reports-build/Testing/install-junit.xml|gtest=xml:$test_root/reports-build/Testing/install-gtest.xml" \
+    "$report_log" >/dev/null
+test -s "$test_root/reports-build/Testing/install-registered.json"
+# This fake CTest emits no XML; old evidence must not survive as a new result.
+test ! -e "$test_root/reports-build/Testing/install-junit.xml"
+test ! -e "$test_root/reports-build/Testing/install-gtest.xml"
+test ! -e "$test_root/caller-report.xml"
+
+# A failed registration or execution must stop before deployment/session calls
+# and retain the original status, not the status of a later report/cleanup step.
+for failing_phase in registration execution; do
+    failure_log="$test_root/$failing_phase-calls.log"
+    : > "$log_file"
+    set +e
+    run_install "failed-$failing_phase" FAKE_CTEST_REPORT_LOG="$failure_log" \
+        FAKE_CTEST_REGISTRATION_STATUS="$([[ "$failing_phase" == registration ]] && echo 57 || echo 0)" \
+        FAKE_CTEST_EXECUTION_STATUS=58 > "$test_root/failed-$failing_phase-output" 2>&1
+    failure_status=$?
+    set -e
+    if [[ "$failing_phase" == registration ]]; then
+        [[ "$failure_status" -eq 57 ]]
+        [[ $(wc -l < "$failure_log") -eq 1 ]]
+    else
+        [[ "$failure_status" -eq 58 ]]
+        [[ $(wc -l < "$failure_log") -eq 2 ]]
+    fi
+    test ! -s "$log_file"
+    test ! -e "$test_root/failed-$failing_phase-prefix/share/modernime/install-manifest.txt"
+done
 
 no_fcitx_bin="$test_root/no-fcitx-bin"
 make_fake_build_tools "$no_fcitx_bin"
