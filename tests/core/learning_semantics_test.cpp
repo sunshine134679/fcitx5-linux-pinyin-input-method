@@ -10,8 +10,10 @@
 #include "modernime/core/pinyin_match.h"
 
 #include <sqlite3.h>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -21,14 +23,12 @@ namespace {
 class TempDirectoryFixture {
 public:
     TempDirectoryFixture() {
-        char tempPath[] = "/tmp/modernime_learning_semantics_test_XXXXXX";
-        const char *created = mkdtemp(tempPath);
-        if (created != nullptr) {
-            path_ = created;
-        } else {
-            path_ = "/tmp/modernime_learning_semantics_fallback";
-            std::filesystem::create_directories(path_);
+        auto pattern = (std::filesystem::temp_directory_path() /
+                        "modernime_learning_semantics_test_XXXXXX").string();
+        if (mkdtemp(pattern.data()) == nullptr) {
+            throw std::runtime_error("cannot create isolated test directory");
         }
+        path_ = pattern;
     }
 
     ~TempDirectoryFixture() {

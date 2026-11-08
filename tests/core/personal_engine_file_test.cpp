@@ -4,8 +4,10 @@
 #include "modernime/core/personal_engine.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -15,14 +17,12 @@ namespace {
 class TempDirGuard {
 public:
     TempDirGuard() {
-        char tempPath[] = "/tmp/modernime_personal_file_test_XXXXXX";
-        const char *created = mkdtemp(tempPath);
-        if (created != nullptr) {
-            path_ = created;
-        } else {
-            path_ = "/tmp/modernime_personal_file_fallback";
-            std::filesystem::create_directories(path_);
+        auto pattern = (std::filesystem::temp_directory_path() /
+                        "modernime_personal_file_test_XXXXXX").string();
+        if (mkdtemp(pattern.data()) == nullptr) {
+            throw std::runtime_error("cannot create isolated test directory");
         }
+        path_ = pattern;
     }
 
     ~TempDirGuard() {

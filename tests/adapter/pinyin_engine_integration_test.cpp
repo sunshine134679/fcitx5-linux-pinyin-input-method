@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -18,6 +19,28 @@ void assertTrue(bool condition, std::string_view message) {
         std::exit(EXIT_FAILURE);
     }
 }
+
+class TempDirectory {
+public:
+    TempDirectory() {
+        auto pattern = (std::filesystem::temp_directory_path() /
+                        "modernime-pinyin-engine-XXXXXX").string();
+        if (mkdtemp(pattern.data()) == nullptr) {
+            throw std::runtime_error("cannot create pinyin engine test directory");
+        }
+        path_ = pattern;
+    }
+
+    ~TempDirectory() {
+        std::error_code ec;
+        std::filesystem::remove_all(path_, ec);
+    }
+
+    const std::filesystem::path &path() const noexcept { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
 
 struct RecordingHost final : modernime::fcitx5::EngineHost {
     std::vector<modernime::core::CandidatePage> pages;
@@ -43,10 +66,10 @@ std::size_t indexOf(const modernime::core::CandidatePage &page,
 } // namespace
 
 int main() {
-    const auto mainLearningDbPath = "/tmp/integration_main_learn.sqlite3";
-    std::filesystem::remove(mainLearningDbPath);
-    std::filesystem::remove(std::string(mainLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(mainLearningDbPath) + "-shm");
+    // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
+    TempDirectory tempDirectory;
+    std::cout << "Test directory: " << tempDirectory.path() << std::endl;
+    const auto mainLearningDbPath = tempDirectory.path() / "integration_main_learn.sqlite3";
     modernime::pinyin::PinyinDataPaths mainPaths;
     mainPaths.learningStore = mainLearningDbPath;
     modernime::pinyin::PinyinCandidateProvider provider(mainPaths);
@@ -226,13 +249,10 @@ int main() {
 
 
     // Test repeated selection habit: selecting deep candidate elevates it to rank 0
-    const auto repeatLearningDbPath = "/tmp/integration_repeat_learn.sqlite3";
+    const auto repeatLearningDbPath = tempDirectory.path() / "integration_repeat_learn.sqlite3";
 
     // Test dual-attribute word like adaptive elevation in controller
-    const auto dualLearningDbPath = "/tmp/integration_dual_learn.sqlite3";
-    std::filesystem::remove(dualLearningDbPath);
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-shm");
+    const auto dualLearningDbPath = tempDirectory.path() / "integration_dual_learn.sqlite3";
     {
         modernime::pinyin::PinyinDataPaths dualPaths;
         dualPaths.learningStore = dualLearningDbPath;
@@ -290,13 +310,7 @@ int main() {
                    "space commits 那么");
         assertTrue(dualHost.commits.back() == "那么", "那么 is committed directly by space");
     }
-    std::filesystem::remove(dualLearningDbPath);
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-shm");
 
-    std::filesystem::remove(repeatLearningDbPath);
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");
     {
         modernime::pinyin::PinyinDataPaths repeatPaths;
         repeatPaths.learningStore = repeatLearningDbPath;
@@ -329,9 +343,6 @@ int main() {
         assertTrue(repeatHost.commits.back() == "中断",
                    "中断 is committed directly by space");
     }
-    std::filesystem::remove(repeatLearningDbPath);
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");
 
     // Test typo transposition yuedign -> 约定 space commit
     {
@@ -355,9 +366,8 @@ int main() {
     
     // Settings clears in WAL must reset ranking in shared, already-active providers.
     {
-        const auto path = std::filesystem::temp_directory_path() /
+        const auto path = tempDirectory.path() /
                           "modernime-ranking-wal-clear.sqlite3";
-        std::filesystem::remove(path);
         modernime::pinyin::PinyinDataPaths paths;
         paths.learningStore = path;
         auto shared = modernime::pinyin::PinyinCandidateProvider::createSharedResources(paths, {});
@@ -399,7 +409,6 @@ int main() {
                    "first post-clear provider selection persists without old learned frequency");
         settings.close();
         active.reset();
-        std::filesystem::remove(path);
     }
 
     // Stress test: rapid typing and short/incomplete syllables
@@ -426,9 +435,7 @@ int main() {
     // Test context association in controller without SurroundingText:
     {
         modernime::pinyin::PinyinDataPaths ctxPaths;
-        const auto ctxLearningPath = std::filesystem::temp_directory_path() / "modernime-engine-ctx.sqlite3";
-        std::error_code ec;
-        std::filesystem::remove(ctxLearningPath, ec);
+        const auto ctxLearningPath = tempDirectory.path() / "modernime-engine-ctx.sqlite3";
         ctxPaths.learningStore = ctxLearningPath.string();
         modernime::pinyin::PinyinProviderOptions ctxOptions;
         ctxOptions.learningEnabled = true;
@@ -507,18 +514,12 @@ int main() {
                    ctxController.page().items.front().text != "绍",
                    "punctuation resets fallback context so 绍 is not rank 0");
         ctxController.reset();
-
-        std::filesystem::remove(ctxLearningPath, ec);
-        std::filesystem::remove(ctxLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(ctxLearningPath.string() + "-shm", ec);
     }
 
     // Test custom English term learning via Enter and prefix completion:
     {
         modernime::pinyin::PinyinDataPaths engPaths;
-        const auto engLearningPath = std::filesystem::temp_directory_path() / "modernime-engine-eng.sqlite3";
-        std::error_code ec;
-        std::filesystem::remove(engLearningPath, ec);
+        const auto engLearningPath = tempDirectory.path() / "modernime-engine-eng.sqlite3";
         engPaths.learningStore = engLearningPath.string();
         modernime::pinyin::PinyinProviderOptions engOptions;
         engOptions.learningEnabled = true;
@@ -579,20 +580,12 @@ int main() {
         assertTrue(indexOf(engController.page(), "notlearned") == engController.page().items.size(),
                    "cancelled term is not learned");
         engController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
-
-        std::filesystem::remove(engLearningPath, ec);
-        std::filesystem::remove(engLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(engLearningPath.string() + "-shm", ec);
     }
 
     // 显式取首/末字及标点回退集成测试
     {
-        std::error_code ec;
         const auto extractLearningPath =
-            std::filesystem::temp_directory_path() / "modernime-engine-extract.sqlite3";
-        std::filesystem::remove(extractLearningPath, ec);
-        std::filesystem::remove(extractLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(extractLearningPath.string() + "-shm", ec);
+            tempDirectory.path() / "modernime-engine-extract.sqlite3";
 
         modernime::pinyin::PinyinDataPaths extractPaths;
         extractPaths.learningStore = extractLearningPath.string();
@@ -679,22 +672,14 @@ int main() {
                        {modernime::fcitx5::KeyKind::CommitLastCharacter, ']', 0}),
                    "] commits Chinese punctuation when idle");
         assertTrue(extractHost.commits.back() == "】", "committed Chinese punctuation 】");
-
-        std::filesystem::remove(extractLearningPath, ec);
-        std::filesystem::remove(extractLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(extractLearningPath.string() + "-shm", ec);
     }
 
     // -------------------------------------------------------------------------
     // Task 9 (P2): 经真实周边文本确认的后续删除反馈（键盘删除盘后学键）
     // -------------------------------------------------------------------------
     {
-        std::error_code ec;
         const auto delLearningPath =
-            std::filesystem::temp_directory_path() / "modernime-engine-del-feedback.sqlite3";
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+            tempDirectory.path() / "modernime-engine-del-feedback.sqlite3";
 
         modernime::pinyin::PinyinDataPaths delPaths;
         delPaths.learningStore = delLearningPath.string();
@@ -819,22 +804,14 @@ int main() {
                        "ce does not learn 测 after explicit reset");
         }
         delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
-
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
     }
 
     // -------------------------------------------------------------------------
     // Task 10: 成语/词语输入后删词留字（后缀与内部单字提取）即时提权至首位
     // -------------------------------------------------------------------------
     {
-        std::error_code ec;
         const auto delLearningPath =
-            std::filesystem::temp_directory_path() / "modernime-engine-del-feedback-idiom.sqlite3";
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+            tempDirectory.path() / "modernime-engine-del-feedback-idiom.sqlite3";
 
         modernime::pinyin::PinyinDataPaths delPaths;
         delPaths.learningStore = delLearningPath.string();
@@ -895,10 +872,6 @@ int main() {
         assertTrue(delController.page().items.front().text == "龙",
                    "龙 is immediately promoted to top candidate after idiom internal character extraction");
         delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
-
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
     }
 
     return EXIT_SUCCESS;

@@ -4,7 +4,22 @@ set -euo pipefail
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-install-runtime-test.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT
-unset XDG_DATA_HOME MODERNIME_DATA_HOME MODERNIME_SKIP_FCITX_RESTART
+
+# 独立调用这些回归也不使用日常目录或桌面会话；每个case仍可显式覆盖。
+for variable in "${!MODERNIME_@}"; do unset "$variable"; done
+# root容器也仅允许安装到本测试自建的隔离目录。
+if [[ "$EUID" -eq 0 ]]; then export MODERNIME_ALLOW_ROOT=1; fi
+unset DISPLAY WAYLAND_DISPLAY XAUTHORITY SESSION_MANAGER DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE
+unset XDG_DATA_HOME XDG_DESKTOP_DIR XDG_CURRENT_DESKTOP GNOME_DESKTOP_SESSION_ID DESKTOP_SESSION
+export HOME="$test_root/home" XDG_CONFIG_HOME="$test_root/config"
+export XDG_CACHE_HOME="$test_root/cache" XDG_STATE_HOME="$test_root/state"
+export XDG_RUNTIME_DIR="$test_root/runtime" GSETTINGS_BACKEND=memory
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/nonexistent-bus"
+export XDG_DATA_DIRS=/usr/local/share:/usr/share
+export FAKE_DESKTOP_LOG="$test_root/desktop-calls.log"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+: > "$FAKE_DESKTOP_LOG"
 
 make_fake_build_tools() {
     local fake_bin=$1
@@ -37,6 +52,17 @@ EOF
 #!/usr/bin/env bash
 exit 1
 EOF
+
+    local desktop_tool
+    for desktop_tool in gio gnome-extensions gsettings glib-compile-schemas; do
+        cat >"$fake_bin/$desktop_tool" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|DBUS=%s|RUNTIME=%s\n' "${0##*/}" "${DBUS_SESSION_BUS_ADDRESS-}" \
+    "${XDG_RUNTIME_DIR-}" >> "$FAKE_DESKTOP_LOG"
+if [[ "${0##*/}" == gsettings && "${1-}" == get ]]; then printf '@as []\n'; fi
+exit 0
+EOF
+    done
     chmod +x "$fake_bin"/*
 }
 
@@ -188,7 +214,7 @@ env \
     MODERNIME_PREFIX="$test_root/crash-prefix" \
     MODERNIME_BUILD_DIR="$test_root/crash-build" \
     DISPLAY=:0 \
-    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     FAKE_CRASH_LOG="$crash_log" \
     FAKE_CRASH_PGREP_STATE="$test_root/crash-pgrep.state" \
     PATH="$crashing_bin:/usr/bin:/bin" \
@@ -330,3 +356,9 @@ for mode in no-prefix flags-only; do
 done
 done
 printf 'Source/binary install runtime and early temporary-directory protection passed\n'
+
+# 元数据/扩展调用由假桌面工具承接，但环境恢复仍按真实调用值验证。
+test -s "$FAKE_DESKTOP_LOG"
+while IFS= read -r desktop_call; do
+    [[ "$desktop_call" == *"|DBUS=$DBUS_SESSION_BUS_ADDRESS|RUNTIME=$XDG_RUNTIME_DIR" ]]
+done < "$FAKE_DESKTOP_LOG"
