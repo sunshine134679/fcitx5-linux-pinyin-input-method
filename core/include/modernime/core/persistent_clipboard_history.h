@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/clipboard_history.h"
+#include "modernime/core/clipboard_observation.h"
 
 #include <chrono>
 #include <cstdint>
@@ -23,6 +24,11 @@ public:
     // clipboard value. Does not touch history, pending copies or the file.
     void setObservationBaseline(std::string_view text);
     bool observe(std::string_view text, std::string *error = nullptr);
+    // Already filtered by the caller's observation tracker. Applies the whole
+    // transformation before persisting; never filters identity a second time.
+    bool observeBatch(const ClipboardObservationBatch &batch,
+                      std::string *error = nullptr);
+    bool loaded() const { return loaded_; }
     bool flush(std::string *error = nullptr);
     // Reloads from disk when another process (e.g. the settings client)
     // modified the file since our last load or save; returns true when a
@@ -58,8 +64,7 @@ private:
     bool loaded_ = false;
     bool dirty_ = false;
     // Clipboard observation is independent of history edits by other clients.
-    std::string lastObservedText_;
-    bool hasObservedText_ = false;
+    ClipboardObservationTracker observationTracker_;
     FileState knownFileState_;
 };
 

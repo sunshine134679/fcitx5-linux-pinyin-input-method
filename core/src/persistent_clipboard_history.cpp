@@ -76,8 +76,7 @@ bool PersistentClipboardHistory::load(std::string *error) {
 }
 
 void PersistentClipboardHistory::setObservationBaseline(std::string_view text) {
-    lastObservedText_ = text;
-    hasObservedText_ = true;
+    observationTracker_.setBaseline(text);
 }
 
 bool PersistentClipboardHistory::observe(std::string_view text,
@@ -90,16 +89,20 @@ bool PersistentClipboardHistory::observe(std::string_view text,
         return false;
     }
 
-    const bool newObservation = !hasObservedText_ || text != lastObservedText_;
-    if (newObservation) {
-        lastObservedText_ = text;
-        hasObservedText_ = true;
+    ClipboardObservationBatch batch;
+    if (observationTracker_.accept(text)) batch.observe(text);
+    return observeBatch(batch, error);
+}
+
+bool PersistentClipboardHistory::observeBatch(const ClipboardObservationBatch &batch,
+                                               std::string *error) {
+    if (error != nullptr) error->clear();
+    if (!loaded_) {
+        setError(error, "clipboard history is not loaded");
+        return false;
     }
-    const bool changed = newObservation && history_.observe(text);
-    if (changed) {
-        dirty_ = true;
-        pendingObservations_.observe(text);
-    }
+    const bool changed = batch.apply(history_, pendingObservations_);
+    dirty_ = dirty_ || changed;
     if (!dirty_) {
         return changed;
     }
@@ -119,9 +122,6 @@ bool PersistentClipboardHistory::reloadIfExternallyChanged(
         return false;
     }
     const auto state = currentFileState();
-    if (!state.valid) {
-        return false;
-    }
     if (state == knownFileState_) {
         return false;
     }

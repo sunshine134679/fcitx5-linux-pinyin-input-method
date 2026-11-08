@@ -11,6 +11,7 @@ add_library(modernime_core STATIC
     src/personal_engine.cpp
     src/lmdb_environment.cpp
     src/personal_engine_state.cpp
+    src/clipboard_observation.cpp
     src/clipboard_history.cpp
     src/persistent_clipboard_history.cpp
     src/settings.cpp

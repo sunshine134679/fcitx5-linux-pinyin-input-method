@@ -38,6 +38,46 @@ int main() {
     const std::filesystem::path directory(created);
     std::error_code filesystemError;
 
+    const auto batchPath = directory / "batched.bin";
+    modernime::core::ClipboardHistory batchSeed;
+    batchSeed.observe("B"); batchSeed.observe("A");
+    assertTrue(batchSeed.save(batchPath), "batch fixture saves");
+    modernime::core::PersistentClipboardHistory batched(batchPath);
+    assertTrue(batched.load(), "batch fixture loads");
+    batched.setObservationBaseline("A");
+    auto batchBlock = batchPath;
+    batchBlock += ".tmp";
+    std::filesystem::create_directory(batchBlock);
+    modernime::core::ClipboardObservationBatch batch;
+    batch.observe("B"); batch.observe("A"); batch.observe("B");
+    std::string batchError;
+    assertTrue(batched.observeBatch(batch, &batchError) && !batchError.empty(),
+               "whole batch applies before one failed persistence attempt");
+    std::filesystem::remove(batchBlock);
+    batchSeed.clear();
+    assertTrue(batchSeed.save(batchPath) && batched.flush(), "batch retries after external clear");
+    assertTrue(batchSeed.load(batchPath) && batchSeed.entries() == std::vector<std::string>{"B", "A"},
+               "compacted batch keeps both legitimate pending copies");
+    batchSeed.clear();
+    assertTrue(batchSeed.save(batchPath) && batched.reloadIfExternallyChanged(), "second external clear reloads");
+    modernime::core::ClipboardObservationBatch recopy;
+    recopy.observe("A");
+    assertTrue(batched.observeBatch(recopy) && batchSeed.load(batchPath) &&
+                   batchSeed.entries() == std::vector<std::string>{"A"},
+               "prequalified recopy is not filtered by old synchronous baseline");
+
+    const auto deletedPath = directory / "externally-deleted.bin";
+    modernime::core::ClipboardHistory deletedSeed;
+    deletedSeed.observe("removed externally");
+    assertTrue(deletedSeed.save(deletedPath), "deletion fixture saves");
+    modernime::core::PersistentClipboardHistory deleted(deletedPath);
+    assertTrue(deleted.load(), "deletion fixture loads");
+    assertTrue(std::filesystem::remove(deletedPath), "external unlink succeeds");
+    assertTrue(deleted.reloadIfExternallyChanged() && deleted.entries().empty(),
+               "external file deletion clears a clean in-memory history");
+    assertTrue(deleted.flush() && !std::filesystem::exists(deletedPath),
+               "clean flush does not resurrect an externally deleted file");
+
     // A resume baseline is an observation, not a new copy. It must never
     // enter visible history or become a pending write, even after flush.
     const auto baselinePath = directory / "baseline.bin";

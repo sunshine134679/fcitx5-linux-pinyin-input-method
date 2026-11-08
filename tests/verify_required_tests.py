@@ -69,6 +69,7 @@ STORAGE_TSAN_REQUIRED = [
 
 CORE_ONLY_BASELINE_REQUIRED = [
     "modernime_settings",
+    "modernime_clipboard_observation",
     "modernime_clipboard_history",
     "modernime_persistent_clipboard_history",
     "modernime_dictionary_prior",

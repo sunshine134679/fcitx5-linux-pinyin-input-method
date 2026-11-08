@@ -36,6 +36,10 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     )
 endif()
 
+add_executable(modernime_clipboard_observation_tests core/clipboard_observation_test.cpp)
+target_link_libraries(modernime_clipboard_observation_tests PRIVATE modernime_core)
+add_test(NAME modernime_clipboard_observation COMMAND modernime_clipboard_observation_tests)
+
 add_executable(modernime_clipboard_history_tests core/clipboard_history_test.cpp)
 target_link_libraries(modernime_clipboard_history_tests PRIVATE modernime_core)
 add_test(NAME modernime_clipboard_history COMMAND modernime_clipboard_history_tests)
