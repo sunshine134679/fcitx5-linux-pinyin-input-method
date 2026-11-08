@@ -192,7 +192,7 @@ sudo ./install.sh /usr
 ```bash
 sudo apt update
 sudo apt install \
-    build-essential cmake pkg-config python3 coreutils util-linux \
+    build-essential cmake git pkg-config python3 coreutils util-linux \
     libsqlite3-dev liblmdb-dev libboost-dev \
     libgtest-dev libbenchmark-dev \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
@@ -207,7 +207,7 @@ sudo dnf config-manager --set-enabled EPOL || true
 
 # 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
 sudo dnf install -y \
-    gcc gcc-c++ cmake make pkgconf-pkg-config python3 coreutils util-linux \
+    gcc gcc-c++ cmake make git pkgconf-pkg-config python3 coreutils util-linux \
     sqlite-devel lmdb-devel boost-devel \
     gtest-devel google-benchmark-devel \
     fcitx5-devel libime-devel \

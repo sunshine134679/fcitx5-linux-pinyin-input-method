@@ -10,6 +10,11 @@ enable_language(C)
 find_package(SQLite3 REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(BASH_EXECUTABLE bash REQUIRED)
+find_package(Git REQUIRED)
+add_test(NAME modernime_fresh_clone_isolation
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/fresh_clone_isolation_test.py"
+)
+set_tests_properties(modernime_fresh_clone_isolation PROPERTIES TIMEOUT 180)
 add_test(NAME modernime_required_tests_contract
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/required_tests_contract_test.py"
 )

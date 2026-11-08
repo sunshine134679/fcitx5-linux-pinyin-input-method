@@ -47,6 +47,7 @@ FULL_BASELINE_REQUIRED = [
 ]
 
 FULL_FINAL_ADDITIONAL = [
+    "modernime_fresh_clone_isolation",
     "modernime_required_tests_contract",
     "modernime_cleanse_guard",
     "modernime_configuration_contract",
@@ -79,6 +80,7 @@ CORE_ONLY_BASELINE_REQUIRED = [
 ]
 
 CORE_ONLY_FINAL_ADDITIONAL = [
+    "modernime_fresh_clone_isolation",
     "modernime_required_tests_contract",
 ]
 

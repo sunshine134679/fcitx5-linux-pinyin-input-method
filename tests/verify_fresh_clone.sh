@@ -1,9 +1,66 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+keep=false
+for argument in "$@"; do
+    case "$argument" in
+        --keep) keep=true ;;
+        *) printf '用法：%s [--keep]\n' "$0" >&2; exit 2 ;;
+    esac
+done
+
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-fresh-clone-test.XXXXXX")
-trap 'rm -rf -- "$test_root"' EXIT
+test_root=$(CDPATH= cd -- "$test_root" && pwd)
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if [[ "$keep" == true ]]; then
+        printf '保留验证目录：%s\n' "$test_root"
+    elif ! rm -rf -- "$test_root"; then
+        printf '无法清理验证目录：%s\n' "$test_root" >&2
+        [[ "$status" -ne 0 ]] || status=1
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+
+# Isolate before the first Git command: inherited Git paths can redirect even
+# read-looking snapshot operations to the caller's index or another repository.
+for variable in ${!MODERNIME_@} ${!GTEST_@} ${!GIT_@}; do
+    unset "$variable"
+done
+export HOME="$test_root/home"
+export XDG_CONFIG_HOME="$test_root/config"
+export XDG_DATA_HOME="$test_root/data"
+export XDG_CACHE_HOME="$test_root/cache"
+export XDG_STATE_HOME="$test_root/state"
+export XDG_RUNTIME_DIR="$test_root/runtime"
+export TMPDIR="$test_root/tmp"
+export MODERNIME_PREFIX="$test_root/prefix"
+export MODERNIME_BUILD_DIR="$test_root/build"
+export MODERNIME_CONFIG_HOME="$XDG_CONFIG_HOME"
+export MODERNIME_DATA_HOME="$XDG_DATA_HOME"
+export MODERNIME_DESKTOP_DIR="$test_root/Desktop"
+export MODERNIME_SKIP_FCITX_RESTART=1
+# A root container may install only into this verifier-owned prefix.
+if [[ "$EUID" -eq 0 ]]; then
+    export MODERNIME_ALLOW_ROOT=1
+fi
+mkdir -p -- "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" \
+    "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" "$TMPDIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+export XDG_DATA_DIRS=/usr/local/share:/usr/share
+unset XDG_DESKTOP_DIR FCITX_ADDON_DIRS DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
+unset XAUTHORITY SESSION_MANAGER DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE
+unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION
+unset XDG_SESSION_ID XDG_SESSION_CLASS GNOME_DESKTOP_SESSION_ID GNOME_SHELL_SESSION_MODE
+# An explicit nonexistent socket prevents D-Bus auto-discovery of a live session.
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+export GSETTINGS_BACKEND=memory
+# Native timing gates must not contend with other CTest processes. Build jobs
+# and explicit read-only CMake dependency search paths remain caller-controlled.
+export CTEST_PARALLEL_LEVEL=1
 
 printf '=== 1. 克隆代码仓库到沙箱隔离目录 ===\n'
 # Build a local snapshot first: cloning HEAD alone silently validates the old
@@ -25,16 +82,6 @@ if ! git -C "$test_root/snapshot" diff --cached --quiet; then
         -c core.hooksPath=/dev/null commit -m 'Isolated verification snapshot' >/dev/null
 fi
 git clone --no-hardlinks "$test_root/snapshot" "$test_root/repo"
-
-mkdir -p "$test_root/home"
-export HOME="$test_root/home"
-export XDG_DATA_HOME="$test_root/data"
-export XDG_CONFIG_HOME="$test_root/config"
-export XDG_CACHE_HOME="$test_root/cache"
-export MODERNIME_PREFIX="$test_root/prefix"
-export MODERNIME_CONFIG_HOME="$test_root/config"
-export MODERNIME_DESKTOP_DIR="$test_root/Desktop"
-export MODERNIME_SKIP_FCITX_RESTART=1
 
 printf '=== 2. 在沙箱环境中执行 install.sh ===\n'
 (cd "$test_root/repo" && ./install.sh)
@@ -325,7 +372,7 @@ grep -Fx "Icon=$MODERNIME_PREFIX/share/icons/hicolor/512x512/apps/modernime.png"
 set -a
 source "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 set +a
-"$test_root/repo/build/install-debug/tests/modernime_install_discovery_tests" "$MODERNIME_PREFIX"
+"$MODERNIME_BUILD_DIR/tests/modernime_install_discovery_tests" "$MODERNIME_PREFIX"
 test ! -e "$HOME/.xprofile"
 
 printf '=== 4. 在沙箱环境中执行 uninstall.sh ===\n'
