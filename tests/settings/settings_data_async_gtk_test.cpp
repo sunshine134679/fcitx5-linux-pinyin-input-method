@@ -412,13 +412,36 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     gtk_widget_show_all(window);
     drainEvents();
 
+    // 隔开构造器初次加载与下面显式触发的慢读取。
+    GtkTreeView *view = nullptr;
+    std::function<void(GtkWidget*)> scanView = [&](GtkWidget *w) {
+        if (GTK_IS_TREE_VIEW(w)) { view = GTK_TREE_VIEW(w); return; }
+        if (GTK_IS_CONTAINER(w)) {
+            gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
+                (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);
+            }, &scanView);
+        }
+    };
+    scanView(page->widget());
+    assert(view != nullptr);
+
+    GtkTreeModel *model = gtk_tree_view_get_model(view);
+    auto *addBtn = findTarget(page->widget(), "dictionary-add");
+    assert(addBtn != nullptr);
+    const auto currentLoadReady = [&] {
+        return gtk_widget_get_sensitive(addBtn) &&
+               gtk_tree_model_iter_n_children(model, nullptr) == 500;
+    };
+    pumpEventsUntil(currentLoadReady, std::chrono::seconds(5));
+    assert(currentLoadReady());
+
     std::atomic<bool> slowLoadEntered{false};
-    std::atomic<bool> slowLoadFinished{false};
+    std::atomic<bool> slowLoadHookFinished{false};
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
         if (op == "loadDictionary") {
             slowLoadEntered = true;
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-            slowLoadFinished = true;
+            slowLoadHookFinished = true;
         }
     });
 
@@ -426,11 +449,15 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     heartbeat.start();
 
     page->refresh();
+    assert(!gtk_widget_get_sensitive(addBtn));
+    std::cout << "  Pending refresh retains "
+              << gtk_tree_model_iter_n_children(model, nullptr)
+              << " old rows; current load is not ready" << std::endl;
 
     // Pump events during the 2-second real production loadDictionary worker
-    pumpEventsUntil([&] { return slowLoadFinished.load(); }, std::chrono::seconds(5));
+    pumpEventsUntil([&] { return slowLoadHookFinished.load(); }, std::chrono::seconds(5));
     assert(slowLoadEntered.load());
-    assert(slowLoadFinished.load());
+    assert(slowLoadHookFinished.load());
 
     heartbeat.stop();
     std::cout << "  Max heartbeat latency during 2s production loadDictionary: "
@@ -476,21 +503,10 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
         scanBtn(page->widget());
     }
 
-    // Wait until entries are populated in treeview
-    GtkTreeView *view = nullptr;
-    std::function<void(GtkWidget*)> scanView = [&](GtkWidget *w) {
-        if (GTK_IS_TREE_VIEW(w)) { view = GTK_TREE_VIEW(w); return; }
-        if (GTK_IS_CONTAINER(w)) {
-            gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
-                (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);
-            }, &scanView);
-        }
-    };
-    scanView(page->widget());
-    assert(view != nullptr);
-
-    GtkTreeModel *model = gtk_tree_view_get_model(view);
-    pumpEventsUntil([&] { return gtk_tree_model_iter_n_children(model, nullptr) >= 500; }, std::chrono::seconds(5));
+    // IoHook结束不等于读取/界面回调完成；旧500行仍可能可见。
+    // 添加按钮由当前加载代次的完成回调启用，再等该代次渲染齐全。
+    pumpEventsUntil(currentLoadReady, std::chrono::seconds(5));
+    assert(currentLoadReady());
 
     // Select row 0
     auto *rowPath = gtk_tree_path_new_from_indices(0, -1);
