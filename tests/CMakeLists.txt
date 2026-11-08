@@ -36,6 +36,20 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
     )
 endif()
 
+add_library(modernime_clipboard_io_gate SHARED support/clipboard_io_gate.cpp)
+target_link_libraries(modernime_clipboard_io_gate PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+add_executable(modernime_clipboard_file_identity_tests core/clipboard_file_identity_test.cpp)
+target_link_libraries(modernime_clipboard_file_identity_tests PRIVATE modernime_core modernime_clipboard_io_gate)
+foreach(scenario load save retry)
+    add_test(NAME modernime_clipboard_file_identity_${scenario}
+        COMMAND modernime_clipboard_file_identity_tests ${scenario})
+    set_tests_properties(modernime_clipboard_file_identity_${scenario} PROPERTIES TIMEOUT 20)
+endforeach()
+add_executable(modernime_async_clipboard_history_tests core/async_clipboard_history_test.cpp)
+target_link_libraries(modernime_async_clipboard_history_tests PRIVATE modernime_core modernime_clipboard_io_gate)
+add_test(NAME modernime_async_clipboard_history COMMAND modernime_async_clipboard_history_tests)
+set_tests_properties(modernime_async_clipboard_history PROPERTIES TIMEOUT 45)
+
 add_executable(modernime_clipboard_observation_tests core/clipboard_observation_test.cpp)
 target_link_libraries(modernime_clipboard_observation_tests PRIVATE modernime_core)
 add_test(NAME modernime_clipboard_observation COMMAND modernime_clipboard_observation_tests)
@@ -490,6 +504,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     if(GTEST_INCLUDE_DIR AND GTEST_LIBRARY AND GTEST_MAIN_LIBRARY)
         add_executable(modernime_personal_engine_gtest
             core/personal_engine_gtest.cpp
+            core/clipboard_observation_gtest.cpp
             core/personalization_snapshot_regression_test.cpp
             core/personalization_storage_regression_test.cpp
             core/personalization_provider_regression_test.cpp

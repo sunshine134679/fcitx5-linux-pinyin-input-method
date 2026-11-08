@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -65,7 +66,8 @@ private:
     bool dirty_ = false;
     // Clipboard observation is independent of history edits by other clients.
     ClipboardObservationTracker observationTracker_;
-    FileState knownFileState_;
+    // nullopt means not checked; a known missing file has valid == false.
+    std::optional<FileState> knownFileState_;
 };
 
 } // namespace modernime::core

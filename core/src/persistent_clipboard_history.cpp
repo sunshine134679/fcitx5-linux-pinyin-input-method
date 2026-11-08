@@ -58,6 +58,7 @@ bool PersistentClipboardHistory::load(std::string *error) {
     if (error != nullptr) {
         error->clear();
     }
+    const auto state = currentFileState();
     const bool result = history_.load(path_, error);
     if (!result && quarantineCorruptFile()) {
         // 损坏或不可读的文件已改名备份；剪贴板以空历史继续运行，
@@ -71,7 +72,7 @@ bool PersistentClipboardHistory::load(std::string *error) {
     }
     dirty_ = false;
     pendingObservations_.clear();
-    knownFileState_ = currentFileState();
+    knownFileState_ = loaded_ ? std::optional(state) : std::nullopt;
     return loaded_;
 }
 
@@ -122,10 +123,9 @@ bool PersistentClipboardHistory::reloadIfExternallyChanged(
         return false;
     }
     const auto state = currentFileState();
-    if (state == knownFileState_) {
+    if (loaded_ && knownFileState_ && state == *knownFileState_) {
         return false;
     }
-    knownFileState_ = state;
     const bool result = history_.load(path_, error);
     if (!result && quarantineCorruptFile()) {
         // 外部修改把文件写坏时同样隔离备份并继续运行。
@@ -137,6 +137,7 @@ bool PersistentClipboardHistory::reloadIfExternallyChanged(
         loaded_ = result;
     }
     dirty_ = false;
+    knownFileState_ = loaded_ ? std::optional(state) : std::nullopt;
     return loaded_;
 }
 
@@ -174,7 +175,7 @@ bool PersistentClipboardHistory::flush(std::string *error) {
     history_ = std::move(committed);
     dirty_ = false;
     pendingObservations_.clear();
-    knownFileState_ = currentFileState();
+    knownFileState_.reset();
     return true;
 }
 
@@ -204,7 +205,9 @@ bool PersistentClipboardHistory::persist(std::string *error) {
     history_ = std::move(committed);
     dirty_ = false;
     pendingObservations_.clear();
-    knownFileState_ = currentFileState();
+    // An external writer may already have replaced the just-committed file.
+    // Recheck on the next refresh; never stamp an old result with a later file.
+    knownFileState_.reset();
     return true;
 }
 
