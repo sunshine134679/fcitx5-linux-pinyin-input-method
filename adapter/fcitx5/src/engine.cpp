@@ -1033,7 +1033,7 @@ void ModernIMEController::clearComposition() {
     contextBefore_ = fallbackContextBefore_;
     contextAfter_.clear();
     clipboardMode_ = false;
-    clipboardEntries_.clear();
+    clipboardEntries_.reset();
     compositionInput_.clear();
     compositionCursor_ = 0;
     if (provider_ != nullptr) {
@@ -1132,9 +1132,21 @@ void ModernIMEController::setActive(bool active) {
     }
 }
 
-void ModernIMEController::setClipboardEntries(
-    std::vector<std::string> entries) {
+void ModernIMEController::setClipboardEntries(std::vector<std::string> entries) {
+    setClipboardSnapshot(std::make_shared<const std::vector<std::string>>(std::move(entries)),
+                         core::ClipboardAvailability::Ready);
+}
+
+void ModernIMEController::setClipboardSnapshot(
+    std::shared_ptr<const std::vector<std::string>> entries,
+    core::ClipboardAvailability availability) {
+    const bool refreshPlaceholder = clipboardMode_ && !sensitive_ &&
+        clipboardPageAvailability_ != core::ClipboardAvailability::Ready &&
+        clipboardPageAvailability_ != availability;
+    if (entries == clipboardEntries_ && availability == clipboardAvailability_ && !refreshPlaceholder) return;
     clipboardEntries_ = std::move(entries);
+    clipboardAvailability_ = availability;
+    if (refreshPlaceholder) openClipboard();
 }
 
 std::size_t ModernIMEController::pageSize() const {
@@ -1288,17 +1300,22 @@ bool ModernIMEController::openClipboard() {
     compositionInput_.clear();
     compositionCursor_ = 0;
     clipboardMode_ = true;
-    page_.items.reserve(clipboardEntries_.size());
-    if (clipboardEntries_.empty()) {
+    clipboardPageAvailability_ = clipboardAvailability_;
+    const auto count = clipboardEntries_ ? clipboardEntries_->size() : 0;
+    page_.items.reserve(count);
+    if (clipboardAvailability_ != core::ClipboardAvailability::Ready || count == 0) {
         core::CandidateItem emptyItem;
-        emptyItem.text = "(剪贴板为空)";
+        emptyItem.text = clipboardAvailability_ == core::ClipboardAvailability::Loading
+            ? "(正在读取剪贴板…)"
+            : clipboardAvailability_ == core::ClipboardAvailability::Unavailable
+                ? "(剪贴板暂不可用)" : "(剪贴板为空)";
         emptyItem.source = core::CandidateSource::Command;
         emptyItem.commitRole = core::CommitCandidateRole::Command;
         page_.items.push_back(std::move(emptyItem));
     } else {
-        for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {
+        for (std::size_t index = 0; index < count; ++index) {
             core::CandidateItem item;
-            item.text = clipboardEntries_[index];
+            item.text = (*clipboardEntries_)[index];
             item.consumedInputBytes = index;
             item.commitRole = core::CommitCandidateRole::Chinese;
             page_.items.push_back(std::move(item));

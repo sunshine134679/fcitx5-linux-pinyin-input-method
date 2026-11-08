@@ -401,7 +401,6 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
                                            const core::SettingsLoadResult &initResult)
     : manager_(manager),
       instance_(manager == nullptr ? nullptr : manager->instance()),
-      clipboardHistory_(settingsPaths().clipboardHistory),
       settingsStamp_(initResult.stamp),
       userDictionaryStamp_(core::SettingsFileStamp::fromPath(settingsPaths().userDictionary)),
       appliedVersion_({initResult.isSuccess() ? initResult.contentHash : std::string{}, 0}),
@@ -456,11 +455,6 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
                          << settingsPaths().settingsFile.string();
         }
     }
-    std::string historyError;
-    if (!clipboardHistory_.load(&historyError)) {
-        FCITX_ERROR() << "Failed to load ModernIME clipboard history: "
-                      << historyError;
-    }
     subModeAction_.setShortText("中");
     subModeAction_.setLongText("中文输入法");
     subModeAction_.setIcon("input-keyboard-symbolic");
@@ -480,22 +474,23 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
     readyEndpoint_->instance = instance_;
     readyEndpoint_->active = true;
     readyEndpoint_->onDispatch = [this]() {
-        if (instance_ != nullptr) {
-            auto *ic = instance_->inputContextManager().mostRecentInputContext();
-            if (ic == nullptr || !ic->hasFocus() || instance_->inputMethod(ic) != "modernime") {
-                return;
+        if (auto *contextState = focusedActiveState()) {
+            if (!contextState->controller().page().preedit.empty()) {
+                contextState->controller().refreshPage();
             }
-            const bool isSensitive =
-                ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
-                ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
-            if (isSensitive) {
-                return;
-            }
-            auto *contextState = state(ic);
-            if (contextState != nullptr && contextState->controller().active()) {
-                if (!contextState->controller().page().preedit.empty()) {
-                    contextState->controller().refreshPage();
-                }
+        }
+    };
+    // Clipboard completion has its own notification owner. It must not rebuild
+    // a pinyin page or invalidate the user's current cursor/selection identity.
+    clipboardEndpoint_ = std::make_shared<ReadyNotificationEndpoint>();
+    clipboardEndpoint_->dispatcher = &dispatcher_;
+    clipboardEndpoint_->owner = this;
+    clipboardEndpoint_->instance = instance_;
+    clipboardEndpoint_->onDispatch = [this]() {
+        consumeClipboardSnapshot();
+        if (keyBindings_.clipboardEnabled && settings_.inputEnabled) {
+            if (auto *contextState = focusedActiveState()) {
+                contextState->setClipboardSnapshot(clipboardSnapshot_);
             }
         }
     };
@@ -563,6 +558,13 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
                 return true;
             });
     }
+    const std::weak_ptr<ReadyNotificationEndpoint> clipboardEndpoint = clipboardEndpoint_;
+    clipboardHistory_ = std::make_unique<core::AsyncClipboardHistory>(
+        settingsPaths().clipboardHistory, [clipboardEndpoint, hasInstance = instance_ != nullptr] {
+            if (hasInstance) {
+                if (auto endpoint = clipboardEndpoint.lock()) endpoint->notify();
+            }
+        });
 }
 
 ModernIMEInputMethod::~ModernIMEInputMethod() {
@@ -573,6 +575,15 @@ ModernIMEInputMethod::~ModernIMEInputMethod() {
 #endif
     if (readyEndpoint_) {
         readyEndpoint_->deactivateAndDrain();
+    }
+    if (clipboardEndpoint_) {
+        clipboardEndpoint_->deactivateAndDrain();
+    }
+    if (clipboardHistory_) {
+        const auto error = clipboardHistory_->shutdown();
+        if (!error.empty()) {
+            FCITX_ERROR() << "Failed to close ModernIME clipboard history: " << error;
+        }
     }
     dispatcher_.detach();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -596,10 +607,26 @@ std::vector<fcitx::InputMethodEntry> ModernIMEInputMethod::listInputMethods() {
 }
 
 void ModernIMEInputMethod::save() {
-    std::string historyError;
-    if (!clipboardHistory_.flush(&historyError)) {
-        FCITX_ERROR() << "Failed to save ModernIME clipboard history: "
-                      << historyError;
+    clipboardHistory_->requestSave();
+}
+
+FcitxInputContextState *ModernIMEInputMethod::focusedActiveState() const {
+    if (instance_ == nullptr) return nullptr;
+    auto *ic = instance_->inputContextManager().mostRecentInputContext();
+    if (ic == nullptr || !ic->hasFocus() || instance_->inputMethod(ic) != "modernime" ||
+        ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+        ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive)) return nullptr;
+    auto *contextState = state(ic);
+    return contextState && contextState->controller().active() ? contextState : nullptr;
+}
+
+void ModernIMEInputMethod::consumeClipboardSnapshot() {
+    if (auto snapshot = clipboardHistory_->takeSnapshot()) {
+        clipboardSnapshot_ = std::move(*snapshot);
+        if (!clipboardSnapshot_.error.empty() && clipboardSnapshot_.error != lastHistoryError_) {
+            FCITX_ERROR() << "ModernIME clipboard history: " << clipboardSnapshot_.error;
+        }
+        lastHistoryError_ = clipboardSnapshot_.error;
     }
 }
 
@@ -753,6 +780,7 @@ bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
 }
 
 void ModernIMEInputMethod::pollClipboard() {
+    consumeClipboardSnapshot();
     if (!keyBindings_.clipboardEnabled || !settings_.inputEnabled || manager_ == nullptr ||
         instance_ == nullptr) {
         clipboardNeedsBaseline_ = true;
@@ -778,16 +806,6 @@ void ModernIMEInputMethod::pollClipboard() {
     if (clipboardAddon_ == nullptr) {
         return;
     }
-    // The settings client may have deleted or cleared the history file since
-    // our last write; adopt the on-disk state before recording new content.
-    {
-        std::string reloadError;
-        if (!clipboardHistory_.reloadIfExternallyChanged(&reloadError) &&
-            !reloadError.empty()) {
-            FCITX_ERROR() << "Failed to reload ModernIME clipboard history: "
-                          << reloadError;
-        }
-    }
     try {
         const auto text = clipboardAddon_->callWithSignature<
             std::string(const fcitx::InputContext *)>(
@@ -795,23 +813,12 @@ void ModernIMEInputMethod::pollClipboard() {
         if (clipboardNeedsBaseline_) {
             // A value left during an excluded interval is not a new allowed
             // copy. Only later changes may enter history; dedup stays in core.
-            clipboardHistory_.setObservationBaseline(text);
+            clipboardHistory_->setObservationBaseline(text);
             clipboardNeedsBaseline_ = false;
-            return;
+        } else {
+            clipboardHistory_->observe(text);
         }
-        std::string historyError;
-        clipboardHistory_.observe(text, &historyError);
-        if (!historyError.empty()) {
-            // 剪贴板每 500ms 轮询一次；同一错误只在首次出现时记录，
-            // 避免日志刷屏。
-            if (historyError != lastHistoryError_) {
-                FCITX_ERROR() << "Failed to save ModernIME clipboard history: "
-                              << historyError;
-                lastHistoryError_ = historyError;
-            }
-        } else if (!lastHistoryError_.empty()) {
-            lastHistoryError_.clear();
-        }
+        clipboardHistory_->requestRefresh();
     } catch (const std::exception &) {
         clipboardNeedsBaseline_ = true;
         // A third-party or older clipboard addon may not expose this optional
@@ -933,6 +940,7 @@ void ModernIMEInputMethod::ensurePinyinResources() {
 
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                                     fcitx::KeyEvent &event) {
+    consumeClipboardSnapshot();
     if (event.isRelease()) {
         if (event.key().check(FcitxKey_Shift_L) ||
             event.key().check(FcitxKey_Shift_R)) {
@@ -1000,7 +1008,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
                                       contextState->controller().active();
         if (clipboardActive) {
-            contextState->setClipboardEntries(clipboardHistory_.entries());
+            contextState->setClipboardSnapshot(clipboardSnapshot_);
         }
         // 两段式剪贴板触发：拼音组合恰好是触发字母（默认 v）时，下一键为
         // 触发数字（默认 2）则丢弃组合并打开剪贴板。触发字母本身始终按

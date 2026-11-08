@@ -124,9 +124,69 @@ bool fires(std::string_view preedit, const fcitx::Key &key,
     return modernime::fcitx5::clipboardTriggerFire(preedit, key, trigger);
 }
 
+void testAsyncClipboardPageLifecycle() {
+    using modernime::core::ClipboardAvailability;
+    using modernime::fcitx5::KeyKind;
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host);
+    const auto empty = std::make_shared<const std::vector<std::string>>();
+    const auto ready = std::make_shared<const std::vector<std::string>>(std::vector<std::string>{"loaded text"});
+    controller.setClipboardSnapshot(empty, ClipboardAvailability::Loading);
+    assertTrue(controller.handle({KeyKind::OpenClipboard, 0, 0}), "open loading history");
+    assertTrue(controller.page().items.size() == 1 && controller.page().items[0].text == "(正在读取剪贴板…)",
+               "initial history has explicit Loading placeholder");
+    const auto oldPage = controller.page();
+    modernime::core::CandidateSelectionRequest oldRequest;
+    oldRequest.sessionId = oldPage.sessionId;
+    oldRequest.displayGeneration = oldPage.displayGeneration;
+    oldRequest.globalIndex = 0;
+    oldRequest.expected = modernime::core::candidateIdentity(oldPage.items[0], oldPage);
+    controller.setClipboardSnapshot(ready, ClipboardAvailability::Ready);
+    assertTrue(controller.page().items[0].text == "loaded text" && controller.page().displayGeneration > oldPage.displayGeneration,
+               "completion refreshes still-open placeholder with new identity generation");
+    assertTrue(!controller.select(oldRequest) && host.commits.empty() && controller.clipboardMode(),
+               "old Loading selection cannot commit or close newly loaded page");
+    const auto newer = std::make_shared<const std::vector<std::string>>(std::vector<std::string>{"newer text"});
+    controller.setClipboardSnapshot(newer, ClipboardAvailability::Ready);
+    assertTrue(controller.page().items[0].text == "loaded text", "normal clipboard page remains frozen");
+    assertTrue(controller.select(0) && host.commits == std::vector<std::string>{"loaded text"}, "frozen page commits the displayed entry");
+
+    controller.setClipboardSnapshot(empty, ClipboardAvailability::Unavailable);
+    controller.handle({KeyKind::OpenClipboard, 0, 0});
+    assertTrue(controller.page().items[0].text == "(剪贴板暂不可用)", "read failure is visible");
+    assertTrue(controller.select(0) && host.commits.size() == 1, "error placeholder never commits");
+    controller.setClipboardSnapshot(empty, ClipboardAvailability::Loading);
+    controller.handle({KeyKind::OpenClipboard, 0, 0});
+    assertTrue(controller.select(0) && host.commits.size() == 1, "loading placeholder never commits");
+
+    controller.setClipboardSnapshot(empty, ClipboardAvailability::Loading);
+    controller.handle({KeyKind::OpenClipboard, 0, 0});
+    controller.handle({KeyKind::Escape, 0, 0});
+    controller.setClipboardSnapshot(ready, ClipboardAvailability::Ready);
+    assertTrue(!controller.clipboardMode() && controller.page().items.empty(), "completion after Escape never reopens history");
+    controller.handle({KeyKind::Character, 'n', 0});
+    controller.setClipboardSnapshot(newer, ClipboardAvailability::Ready);
+    assertTrue(!controller.clipboardMode() && controller.page().preedit == "n", "completion preserves new composition");
+    controller.handle({KeyKind::Escape, 0, 0});
+    controller.setClipboardSnapshot(ready, ClipboardAvailability::Ready);
+    controller.handle({KeyKind::OpenClipboard, 0, 0});
+    assertTrue(controller.page().items[0].text == "loaded text", "same snapshot can be attached after composition cleared");
+
+    controller.handle({KeyKind::Escape, 0, 0});
+    controller.setClipboardSnapshot(empty, ClipboardAvailability::Loading);
+    controller.handle({KeyKind::OpenClipboard, 0, 0});
+    controller.setSensitive(true);
+    controller.setClipboardSnapshot(ready, ClipboardAvailability::Ready);
+    assertTrue(controller.page().items[0].text == "(正在读取剪贴板…)", "sensitive context does not refresh Loading page");
+    controller.setSensitive(false);
+    controller.setClipboardSnapshot(ready, ClipboardAvailability::Ready);
+    assertTrue(controller.page().items[0].text == "loaded text", "same completion snapshot can refresh after sensitive interval");
+}
+
 } // namespace
 
 int main() {
+    testAsyncClipboardPageLifecycle();
     testControllerCommandSelectionOpensClipboard();
     testEmptyClipboardStateAndEscape();
 

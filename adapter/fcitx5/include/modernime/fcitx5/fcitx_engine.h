@@ -1,6 +1,6 @@
 #pragma once
 
-#include "modernime/core/persistent_clipboard_history.h"
+#include "modernime/core/async_clipboard_history.h"
 #include "modernime/fcitx5/engine.h"
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -342,6 +342,9 @@ public:
     void setClipboardEntries(std::vector<std::string> entries) {
         controller_.setClipboardEntries(std::move(entries));
     }
+    void setClipboardSnapshot(const core::ClipboardSnapshot &snapshot) {
+        controller_.setClipboardSnapshot(snapshot.entries, snapshot.availability);
+    }
 
 private:
     FcitxEngineHost host_;
@@ -452,6 +455,8 @@ private:
     ModernIMEInputMethod(fcitx::AddonManager *manager,
                          const core::SettingsLoadResult &initResult);
     void pollClipboard();
+    void consumeClipboardSnapshot();
+    FcitxInputContextState *focusedActiveState() const;
     void pollFileChanges();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // 阻塞等待后台词典预热完成并落地 resources_.pinyin；fcitx5 事件循环
@@ -467,7 +472,8 @@ private:
     // Owned by the host event loop; excluded intervals and failed reads
     // invalidate the baseline even when they occur between timer ticks.
     bool clipboardNeedsBaseline_ = true;
-    core::PersistentClipboardHistory clipboardHistory_;
+    std::unique_ptr<core::AsyncClipboardHistory> clipboardHistory_;
+    core::ClipboardSnapshot clipboardSnapshot_;
     std::string lastHistoryError_;
     std::unique_ptr<fcitx::HandlerTableEntryBase> surroundingWatcher_;
     std::unique_ptr<fcitx::HandlerTableEntryBase> clipboardCapabilityWatcher_;
@@ -485,6 +491,7 @@ private:
     KeyBindings keyBindings_;
     fcitx::EventDispatcher dispatcher_;
     std::shared_ptr<ReadyNotificationEndpoint> readyEndpoint_;
+    std::shared_ptr<ReadyNotificationEndpoint> clipboardEndpoint_;
     FcitxEngineResources resources_;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::future<

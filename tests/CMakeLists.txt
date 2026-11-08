@@ -627,12 +627,15 @@ if(MODERNIME_BUILD_FCITX5)
     find_package(Fcitx5Core REQUIRED)
 
     add_executable(modernime_clipboard_capture_tests adapter/clipboard_capture_test.cpp)
-    target_link_libraries(modernime_clipboard_capture_tests PRIVATE
+    target_link_libraries(modernime_clipboard_capture_tests PRIVATE modernime_clipboard_io_gate
         modernime_core Fcitx5::Core Fcitx5::Utils)
     add_dependencies(modernime_clipboard_capture_tests modernime_fcitx5)
     add_test(NAME modernime_clipboard_capture
         COMMAND modernime_clipboard_capture_tests $<TARGET_FILE_DIR:modernime_fcitx5>)
     set_tests_properties(modernime_clipboard_capture PROPERTIES TIMEOUT 360)
+    add_test(NAME modernime_clipboard_async
+        COMMAND modernime_clipboard_capture_tests $<TARGET_FILE_DIR:modernime_fcitx5> --async)
+    set_tests_properties(modernime_clipboard_async PROPERTIES TIMEOUT 60)
 
     add_executable(modernime_clipboard_trigger_tests
         adapter/clipboard_trigger_test.cpp

@@ -30,6 +30,12 @@
 #include <vector>
 #include <stdexcept>
 #include <iterator>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include "../support/clipboard_io_gate.h"
 
 FCITX_ADDON_DECLARE_FUNCTION(Clipboard, clipboard, std::string(const fcitx::InputContext *));
 class Clipboard final : public fcitx::AddonInstance {
@@ -98,6 +104,169 @@ void verifyCandidates(Context &ic, const std::vector<std::string> &expected) {
     }
     key(ic, FcitxKey_Escape);
 }
+
+class HeldClipboardIo {
+public:
+    ~HeldClipboardIo() { release(); if (watchdog.joinable()) watchdog.join(); }
+    void start(const std::filesystem::path &path, int operation) {
+        modernime_clipboard_gate_arm(path.c_str(), operation);
+        watchdog = std::thread([this] {
+            reached = modernime_clipboard_gate_wait(4000);
+            std::unique_lock lock(mutex);
+            if (!changed.wait_for(lock, std::chrono::seconds(2), [&] { return progressed; })) expired = true;
+            lock.unlock();
+            modernime_clipboard_gate_release(); released = true;
+        });
+    }
+    void release() { std::lock_guard lock(mutex); progressed = true; changed.notify_all(); }
+    std::atomic<bool> reached{false}, expired{false}, released{false};
+private:
+    std::thread watchdog;
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool progressed = false;
+};
+int asyncScenario(fcitx::Instance &instance, Context &ic, Clipboard &clipboard,
+                  const modernime::core::SettingsPaths &paths, const std::string &mode,
+                  HeldClipboardIo &io) {
+    const bool writing = mode == "async-write";
+    const bool cancel = mode == "async-cancel";
+    const auto start = fcitx::now(CLOCK_MONOTONIC);
+    int phase = writing ? 0 : 1, heldBeats = 0, readsAtRelease = 0;
+    bool typed = false;
+    std::string failure;
+    auto top = [&]() -> std::string {
+        const auto list = ic.inputPanel().candidateList();
+        return list && list->size() ? list->candidate(0).text().toString() : "";
+    };
+    auto open = [&] { key(ic, FcitxKey_Escape); key(ic, FcitxKey_v); key(ic, FcitxKey_2); };
+    auto timer = instance.eventLoop().addTimeEvent(CLOCK_MONOTONIC, start + 10000, 1,
+        [&](fcitx::EventSourceTime *source, uint64_t) {
+            try {
+                require(fcitx::now(CLOCK_MONOTONIC) - start < 12000000, "async scenario completes");
+                require(!io.expired, "main loop and keys progress while clipboard I/O is held");
+                if (phase == 0 && clipboard.reads >= 1) {
+                    io.start(paths.clipboardHistory, clipboardBeforeFsync);
+                    clipboard.text = "async-copy";
+                    phase = 1;
+                }
+                if (phase == 1 && io.reached) {
+                    ++heldBeats;
+                    if (!typed) {
+                        for (char c : std::string("nihao")) key(ic, static_cast<fcitx::KeySym>(c));
+                        typed = true;
+                    }
+                    if (top() == "你好" && heldBeats >= 3) {
+                        key(ic, FcitxKey_space);
+                        require(ic.commits == std::vector<std::string>{"你好"}, "real pinyin commit completes during held I/O");
+                        if (!writing) {
+                            open();
+                            require(top() == "(正在读取剪贴板…)", "slow load exposes noncommitting Loading state");
+                            if (cancel) key(ic, FcitxKey_Escape);
+                        }
+                        readsAtRelease = clipboard.reads;
+                        io.release();
+                        phase = 2;
+                    }
+                } else if (phase == 2 && io.released) {
+                    if (cancel) {
+                        require(top() != "load-fixture" && top() != "(正在读取剪贴板…)", "completion never reopens cancelled menu");
+                        if (clipboard.reads < readsAtRelease + 2) {
+                            source->setNextInterval(10000); source->setEnabled(true); return true;
+                        }
+                        open();
+                    } else if (writing) open();
+                    if (top() == (writing ? "async-copy" : "load-fixture")) {
+                        key(ic, FcitxKey_1);
+                        require(ic.commits == std::vector<std::string>({"你好", writing ? "async-copy" : "load-fixture"}),
+                                "loaded history commits exact original text");
+                        source->setEnabled(false); instance.eventLoop().exit(); return true;
+                    }
+                    if (cancel || writing) key(ic, FcitxKey_Escape);
+                }
+            } catch (const std::exception &error) {
+                failure = error.what(); io.release();
+                source->setEnabled(false); instance.eventLoop().exit(); return true;
+            }
+            source->setNextInterval(10000); source->setEnabled(true); return true;
+        });
+    instance.eventLoop().exec();
+    io.release();
+    if (!failure.empty()) { std::cerr << "FAIL " << mode << ": " << failure << '\n'; return 1; }
+    std::cout << "PASS " << mode << " held-heartbeats=" << heldBeats << '\n';
+    return 0;
+}
+
+int navigationScenario(fcitx::Instance &instance, Context &ic, Clipboard &clipboard,
+                       const modernime::core::SettingsPaths &paths, const std::string &mode,
+                       HeldClipboardIo &io) {
+    const bool copying = mode == "navigation-copy";
+    const auto start = fcitx::now(CLOCK_MONOTONIC);
+    int phase = 0, readsAtRelease = 0;
+    std::shared_ptr<fcitx::CandidateList> selected;
+    std::string expected, failure;
+    auto timer = instance.eventLoop().addTimeEvent(CLOCK_MONOTONIC, start + 10000, 1,
+        [&](fcitx::EventSourceTime *source, uint64_t) {
+            try {
+                require(fcitx::now(CLOCK_MONOTONIC) - start < 12000000, "navigation scenario completes");
+                require(!io.expired, "navigation runs while actual clipboard I/O is held");
+                if (phase == 0 && clipboard.reads >= 2) {
+                    if (copying) {
+                        io.start(paths.clipboardHistory, clipboardBeforeFsync);
+                        clipboard.text = "navigation-copy";
+                    } else {
+                        // Force a real reload with identical empty contents. The
+                        // clipboard observation and published entries stay unchanged.
+                        modernime::core::ClipboardHistory unchanged;
+                        require(unchanged.save(paths.clipboardHistory), "unchanged history replaced");
+                        io.start(paths.clipboardHistory, clipboardAfterRead);
+                    }
+                    phase = 1;
+                }
+                if (phase == 1 && io.reached) {
+                    for (char c : std::string("shi")) key(ic, static_cast<fcitx::KeySym>(c));
+                    auto list = ic.inputPanel().candidateList();
+                    require(list && list->toPageable() && list->toPageable()->hasNext(), "real pinyin has a second page");
+                    list->toPageable()->next();
+                    list = ic.inputPanel().candidateList();
+                    require(list->size() > 1 && list->toCursorMovable(), "second page supports navigation");
+                    list->toCursorMovable()->nextCandidate();
+                    selected = ic.inputPanel().candidateList();
+                    require(selected->toPageable()->currentPage() == 1 && selected->cursorIndex() == 1,
+                            "nonfirst candidate on second physical page selected");
+                    expected = selected->candidate(1).text().toString();
+                    readsAtRelease = clipboard.reads;
+                    io.release();
+                    phase = 2;
+                } else if (phase == 2 && io.released) {
+                    const auto list = ic.inputPanel().candidateList();
+                    // A rebuilt page has a new list and selection generation.
+                    require(list == selected && list->cursorIndex() == 1 && list->toPageable()->currentPage() == 1,
+                            "clipboard completion preserves pinyin page, cursor and selection identity");
+                    if (clipboard.reads >= readsAtRelease + 2) {
+                        modernime::core::ClipboardHistory disk;
+                        require(disk.load(paths.clipboardHistory), "completed clipboard history readable");
+                        require(disk.entries() == (copying ? std::vector<std::string>{"navigation-copy"} : std::vector<std::string>{}),
+                                "clipboard task completed with exact expected contents");
+                        if (copying) key(ic, FcitxKey_space);
+                        else selected->candidate(1).select(&ic); // original mouse selection remains valid
+                        require(ic.commits == std::vector<std::string>{expected}, "original navigated candidate commits exactly");
+                        source->setEnabled(false); instance.eventLoop().exit(); return true;
+                    }
+                }
+            } catch (const std::exception &error) {
+                failure = error.what(); io.release();
+                source->setEnabled(false); instance.eventLoop().exit(); return true;
+            }
+            source->setNextInterval(10000); source->setEnabled(true); return true;
+        });
+    instance.eventLoop().exec();
+    io.release();
+    if (!failure.empty()) { std::cerr << "FAIL " << mode << ": " << failure << '\n'; return 1; }
+    std::cout << "PASS " << mode << " exact-navigation-commit\n";
+    return 0;
+}
+
 int worker(const std::string &addonDirectory, const std::string &mode) {
     char path[]="/tmp/modernime-clipboard-probe-XXXXXX";
     const auto *tmp=mkdtemp(path);
@@ -128,6 +297,12 @@ int worker(const std::string &addonDirectory, const std::string &mode) {
     settings.learningEnabled=false;
     const auto paths=modernime::core::SettingsPaths::fromEnvironment(tmp,tmp,tmp);
     require(modernime::core::SettingsStore::save(paths.settingsFile,settings), "settings saved");
+    HeldClipboardIo heldIo;
+    if (mode == "async-load" || mode == "async-cancel") {
+        modernime::core::ClipboardHistory seed; seed.observe("load-fixture");
+        require(seed.save(paths.clipboardHistory), "slow-load fixture saved");
+        heldIo.start(paths.clipboardHistory, clipboardAfterRead);
+    }
     Factory<Clipboard> cf;
     Factory<Keyboard> kf;
     fcitx::StaticAddonRegistry registry{{"clipboard",&cf},{"keyboard",&kf}};
@@ -150,6 +325,9 @@ int worker(const std::string &addonDirectory, const std::string &mode) {
     ic.focusIn();
     instance.setCurrentInputMethod(&ic,"modernime",false);
     require(instance.inputMethod(&ic) == "modernime" && ic.hasFocus(), "real focused ModernIME selected");
+
+    if (mode.starts_with("async-")) return asyncScenario(instance, ic, *clipboard, paths, mode, heldIo);
+    if (mode.starts_with("navigation-")) return navigationScenario(instance, ic, *clipboard, paths, mode, heldIo);
 
     clipboard->text = mode == "startup" ? "synthetic-before-start" : "";
     auto entries = [&]() {
@@ -270,12 +448,14 @@ int worker(const std::string &addonDirectory, const std::string &mode) {
 } // namespace
 int main(int argc, char **argv) {
     try {
-        if (argc == 3) return worker(argv[1],argv[2]);
-        require(argc == 2, "addon directory argument required");
+        const bool asyncOnly = argc == 3 && std::string(argv[2]) == "--async";
+        if (argc == 3 && !asyncOnly) return worker(argv[1],argv[2]);
+        require(argc == 2 || asyncOnly, "addon directory argument required");
         int failures=0;
-        for (const auto *mode : {"startup", "sensitive", "password", "focus", "other-ime",
+        const std::vector<const char *> modes = asyncOnly ? std::vector<const char *>{"async-load", "async-write", "async-cancel", "navigation-unchanged", "navigation-copy"} : std::vector<const char *>{"startup", "sensitive", "password", "focus", "other-ime",
                                 "fast-sensitive", "fast-focus", "fast-ime", "read-failure",
-                                "clipboard-disabled", "input-disabled", "ordinary-capability"}) {
+                                "clipboard-disabled", "input-disabled", "ordinary-capability"};
+        for (const auto *mode : modes) {
             const auto pid=fork();
             require(pid >= 0, "worker fork");
             if (!pid) { execl(argv[0],argv[0],argv[1],mode,nullptr); _exit(127); }
@@ -283,7 +463,7 @@ int main(int argc, char **argv) {
             require(waitpid(pid,&status,0)==pid, "worker wait");
             if (!WIFEXITED(status) || WEXITSTATUS(status)) ++failures;
         }
-        std::cout << "clipboard capture scenarios: " << 12-failures << "/12 passed\n";
+        std::cout << "clipboard capture scenarios: " << modes.size()-failures << "/" << modes.size() << " passed\n";
         return failures ? 1 : 0;
     } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

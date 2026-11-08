@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/async_clipboard_history.h"
 #include "modernime/core/candidate_provider.h"
 #include "modernime/core/input_state.h"
 #include "modernime/core/settings.h"
@@ -10,6 +11,7 @@
 #include <cstddef>
 #include <cctype>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -170,6 +172,8 @@ public:
     }
 
     void setClipboardEntries(std::vector<std::string> entries);
+    void setClipboardSnapshot(std::shared_ptr<const std::vector<std::string>> entries,
+                              core::ClipboardAvailability availability);
     void setOptions(ControllerOptions options);
     bool clipboardMode() const { return clipboardMode_; }
 
@@ -228,7 +232,11 @@ private:
     bool singleQuoteOpen_ = false;
     std::string compositionInput_;
     std::size_t compositionCursor_ = 0;
-    std::vector<std::string> clipboardEntries_;
+    std::shared_ptr<const std::vector<std::string>> clipboardEntries_;
+    core::ClipboardAvailability clipboardAvailability_ = core::ClipboardAvailability::Ready;
+    // The displayed page may intentionally lag the latest snapshot while a
+    // sensitive context prevents asynchronous UI updates.
+    core::ClipboardAvailability clipboardPageAvailability_ = core::ClipboardAvailability::Ready;
     RecentCommit recentCommit_;
     std::uint64_t sessionId_ = 0;
     std::uint64_t displayGeneration_ = 1;

@@ -48,6 +48,7 @@ FULL_BASELINE_REQUIRED = [
 
 FULL_FINAL_ADDITIONAL = [
     "modernime_clipboard_capture",
+    "modernime_clipboard_async",
     "modernime_updates_page_gtk",
     "modernime_gnome_extension_lifecycle",
     "modernime_fresh_clone_isolation",
