@@ -427,6 +427,56 @@ TEST_F(ArchitectureWriterRegression, EnableLearningDoesNotConstructWriterOnInput
     EXPECT_NE(shared->learning, nullptr);
 }
 
+TEST_F(ArchitectureWriterRegression, LongRawPinyinDoesNotLearnAcrossBackendsAndReload) {
+    const std::string pinyin = "qingbangwojianchayixiazhegedaimayoumeiyouwentiranhougaosuwo";
+    for (const auto suffix : {".sqlite3", ".lmdb"}) {
+        for (const bool reloading : {false, true}) {
+            const auto path = root_ / (std::string(reloading ? "reload" : "ready") + suffix);
+            {
+                LearningWriter writer(path);
+                ASSERT_EQ(writer.epochViewState(), EpochViewState::Ready);
+                if (reloading) {
+                    writer.pauseWorkerForTest(true);
+                    LearningStore external(path);
+                    EXPECT_TRUE(external.open());
+                    EXPECT_TRUE(external.clear());
+                    EXPECT_TRUE(writer.reloadIfChanged());
+                    EXPECT_EQ(writer.epochViewState(), EpochViewState::Reloading);
+                }
+                const auto old = writer.snapshot();
+                for (const auto &text : {pinyin, std::string("gnueabihf"), std::string("can")}) {
+                    CommitEvent event;
+                    event.text = text;
+                    event.fullPinyin = text;
+                    event.role = CommitCandidateRole::Raw;
+                    event.timestampMs = 1000;
+                    EXPECT_TRUE(writer.enqueueCommit(event));
+                }
+                writer.pauseWorkerForTest(false);
+                ASSERT_TRUE(writer.flush());
+                EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+                EXPECT_TRUE(old->entries().empty());
+                const auto snap = writer.snapshot();
+                EXPECT_FALSE(snap->hasPositiveFrequency(pinyin, pinyin));
+                EXPECT_TRUE(snap->hasPositiveFrequency("gnueabihf", "gnueabihf"));
+                EXPECT_TRUE(snap->hasPositiveFrequency("can", "can"));
+            }
+            LearningStore reopened(path);
+            ASSERT_TRUE(reopened.openReadOnly());
+            const auto snap = reopened.snapshot();
+            ASSERT_NE(snap, nullptr);
+            EXPECT_EQ(snap->entries().size(), 2U);
+            EXPECT_TRUE(snap->recallEnglishWords("qin", 1000).empty());
+            EXPECT_EQ(snap->entry(pinyin, pinyin, "", ""), nullptr);
+            for (const auto text : {"gnueabihf", "can"}) {
+                const auto *entry = snap->entry(text, text, "", "");
+                ASSERT_NE(entry, nullptr);
+                EXPECT_EQ(entry->frequency, 1);
+            }
+        }
+    }
+}
+
 TEST_F(ArchitectureWriterRegression, CommitRoleMatrixParityBetweenNormalAndReloading) {
     auto runRoleMatrixTest = [&](bool underReloading) {
         auto testDbPath = root_ / (underReloading ? "matrix_reloading.sqlite3" : "matrix_normal.sqlite3");

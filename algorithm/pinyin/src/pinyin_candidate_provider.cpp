@@ -1798,9 +1798,7 @@ private:
         // 英文沉底契约）。已学英文召回与纯声母缩写（pyt→python）不受此限制。
         const bool singleSyllableChineseProtected =
             rawInput.find('\'') == std::string::npos &&
-            core::PinyinMatchPolicy::isValidPinyinSequence(rawInput) &&
-            core::PinyinMatchPolicy::segmentPinyin(rawInput).find('\'') ==
-                std::string::npos &&
+            core::PinyinMatchPolicy::isStandardSyllable(rawInput) &&
             hasExactFullPinyin && topChineseLexical;
 
         const bool shouldPredictEnglish =
