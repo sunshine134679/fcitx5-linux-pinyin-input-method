@@ -63,6 +63,7 @@ for required_path in \
     "./usr/bin/modernime-settings" \
     "./usr/bin/modernime-session-init" \
     "./usr/share/modernime/install_state.sh" \
+    "./usr/share/modernime/gnome_extension.py" \
     "./usr/bin/modernime-data-guard" \
     "./usr/bin/modernime-migrate-channel" \
     "./usr/share/modernime/pinyin/modernime-knowledge.dict" \
@@ -284,7 +285,8 @@ assert (rootfs / "usr/share/modernime/extensions/kimpanel@kde.org/metadata.json"
 assert len(ext_paths) == 20, f"Expected exactly 20 kimpanel extension files in RPM, got {len(ext_paths)}: {[p.name for p in ext_paths]}"
 for p in ext_paths:
     assert ".mimosa" not in p.parts and ".v2c" not in p.parts, f"RPM payload contains dirty files: {p}"
-expected_regular_files = 20 + len(icon_paths) + len(ext_paths)
+assert (rootfs / "usr/share/modernime/gnome_extension.py").is_file(), "RPM missing GNOME lifecycle module"
+expected_regular_files = 21 + len(icon_paths) + len(ext_paths)
 assert len(payload_reg_files) == expected_regular_files, (
     f"Expected {expected_regular_files} regular files in RPM payload, got {len(payload_reg_files)}"
 )
@@ -320,6 +322,7 @@ if command -v rpm >/dev/null 2>&1; then
         "/usr/bin/modernime-settings" \
         "/usr/bin/modernime-session-init" \
         "/usr/share/modernime/install_state.sh" \
+        "/usr/share/modernime/gnome_extension.py" \
         "/usr/bin/modernime-data-guard" \
         "/usr/bin/modernime-migrate-channel" \
         "/usr/share/modernime/install-channel.txt" \
@@ -339,6 +342,7 @@ for rpm_req_file in \
     "usr/bin/modernime-settings" \
     "usr/bin/modernime-session-init" \
     "usr/share/modernime/install_state.sh" \
+    "usr/share/modernime/gnome_extension.py" \
     "usr/bin/modernime-data-guard" \
     "usr/bin/modernime-migrate-channel" \
     "usr/share/modernime/pinyin/modernime-knowledge.dict" \

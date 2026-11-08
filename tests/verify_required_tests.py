@@ -47,6 +47,7 @@ FULL_BASELINE_REQUIRED = [
 ]
 
 FULL_FINAL_ADDITIONAL = [
+    "modernime_gnome_extension_lifecycle",
     "modernime_fresh_clone_isolation",
     "modernime_required_tests_contract",
     "modernime_cleanse_guard",

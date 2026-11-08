@@ -88,6 +88,7 @@ fi
 %{_bindir}/modernime-settings
 %{_bindir}/modernime-session-init
 %{_datadir}/modernime/install_state.sh
+%{_datadir}/modernime/gnome_extension.py
 %{_bindir}/modernime-data-guard
 %{_bindir}/modernime-migrate-channel
 %{_libdir}/fcitx5/modernime_fcitx5.so

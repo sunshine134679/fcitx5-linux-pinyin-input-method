@@ -282,6 +282,22 @@ mkdir -p "$rollback_prefix_dir" "$rollback_home_dir"
 cp "$data_guard_bin" "$temp_work/modernime-data-guard"
 chmod +x "$temp_work/modernime-data-guard"
 
+# The installed entry point will delete its own prefix payload. Keep the same
+# ownership implementation available until the verified package can take over.
+gnome_record="$config_home/modernime/session-managed-files/gnome-extension.json"
+if [[ -e "$gnome_record" || -L "$gnome_record" ]]; then
+    for helper in "$script_dir/gnome_extension.py" "$from_prefix/share/modernime/gnome_extension.py"; do
+        if [[ -f "$helper" ]]; then
+            cp "$helper" "$temp_work/gnome_extension.py"
+            break
+        fi
+    done
+    if [[ ! -f "$temp_work/gnome_extension.py" ]]; then
+        printf 'Error: GNOME ownership helper missing; migration stopped before removing source files.\n' >&2
+        exit 1
+    fi
+fi
+
 printf '[3/5] Staging rollback snapshot of script-managed files from %s...\n' "$from_prefix"
 managed_list="$temp_work/managed-files.txt"
 : > "$managed_list"
@@ -758,7 +774,7 @@ restore_original_channel() {
 
 printf '[4/5] Cleaning up old script-managed files from %s...\n' "$from_prefix"
 if [[ -n "$project_root" && -f "$project_root/uninstall.sh" ]]; then
-    if ! MODERNIME_PREFIX="$from_prefix" MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/uninstall.sh" --prefix="$from_prefix" >/dev/null 2>&1; then
+    if ! MODERNIME_PREFIX="$from_prefix" MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/uninstall.sh" --prefix="$from_prefix" --keep-gnome-extension >/dev/null 2>&1; then
         printf 'Error: Safe uninstall of old installation failed.\n' >&2
         restore_original_channel
         exit 1
@@ -820,14 +836,30 @@ if ! "$temp_work/modernime-data-guard" --verify --data-dir "$data_dir" --config-
     exit 1
 fi
 
+session_status=0
+if [[ -f "$temp_work/gnome_extension.py" ]]; then
+    python3 "$temp_work/gnome_extension.py" transfer --prefix "$from_prefix" --new-prefix "$target_prefix" \
+        --config-home "$config_home" --data-home "$data_home" || session_status=$?
+    if [[ "$session_status" -ne 0 ]]; then
+        printf 'Package migration completed; GNOME ownership handoff incomplete. Recovery helper retained: %s\n' "$temp_work/gnome_extension.py" >&2
+        printf 'Retry: python3 %q transfer --prefix %q --new-prefix %q --config-home %q --data-home %q\n' \
+            "$temp_work/gnome_extension.py" "$from_prefix" "$target_prefix" "$config_home" "$data_home" >&2
+        exit "$session_status"
+    fi
+fi
 if [[ "$reinit_session" == true && -x "$target_prefix/bin/modernime-session-init" && "${EUID:-$(id -u)}" -ne 0 ]]; then
     MODERNIME_PREFIX="$target_prefix" MODERNIME_SKIP_FCITX_RESTART=1 \
-        "$target_prefix/bin/modernime-session-init" >/dev/null 2>&1 || true
+        "$target_prefix/bin/modernime-session-init" || session_status=$?
 fi
 
 rm -rf -- "$temp_work"
-printf 'Migration completed successfully!\n'
+if [[ "$session_status" -eq 0 ]]; then
+    printf 'Migration completed successfully!\n'
+else
+    printf 'Package migration completed; session initialization incomplete (exit %s). Retry modernime-session-init; do not repeat migration.\n' "$session_status" >&2
+fi
 printf '  New Channel: %s\n' "${new_channel:-$to_channel}"
 printf '  New Version: %s\n' "${new_version:-unknown}"
 printf '  Target Path: %s\n' "$target_prefix"
 printf '  Plugin Path: %s/modernime_fcitx5.so\n' "$target_addon_dir"
+exit "$session_status"

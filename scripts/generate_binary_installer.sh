@@ -14,6 +14,7 @@ mkdir -p "$package_root/scripts"
 # Copy lifecycle and utility scripts
 cp "$project_root/uninstall.sh" "$package_root/uninstall.sh"
 cp "$project_root/scripts/install_state.sh" "$package_root/scripts/install_state.sh"
+cp "$project_root/scripts/gnome_extension.py" "$package_root/scripts/gnome_extension.py"
 cp "$project_root/scripts/install_lifecycle.sh" "$package_root/scripts/install_lifecycle.sh"
 cp "$project_root/scripts/install_binary_payload.sh" "$package_root/scripts/install_binary_payload.sh"
 cp "$project_root/scripts/modernime-data-guard" "$package_root/scripts/modernime-data-guard"
@@ -252,6 +253,16 @@ fi
 printf 'COMMITTED\n' > "$bin_tx_dir/status"
 modernime_cleanup_transaction_dir "$bin_tx_dir"
 modernime_release_prefix_lock
+
+if [[ "$is_system_prefix" != true && -x "$prefix/bin/modernime-session-init" ]]; then
+    session_status=0
+    MODERNIME_PREFIX="$prefix" MODERNIME_CONFIG_HOME="$config_home" MODERNIME_DATA_HOME="$data_home" \
+        MODERNIME_SKIP_FCITX_RESTART=1 "$prefix/bin/modernime-session-init" || session_status=$?
+    if [[ "$session_status" -ne 0 ]]; then
+        printf 'ModernIME files installed; session initialization incomplete (exit %s). Retry modernime-session-init; do not repeat installation.\n' "$session_status" >&2
+        exit "$session_status"
+    fi
+fi
 
 skip_fcitx_restart=false
 case "${MODERNIME_SKIP_FCITX_RESTART:-}" in

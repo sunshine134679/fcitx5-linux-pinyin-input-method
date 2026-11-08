@@ -598,8 +598,13 @@ modernime_cleanup_transaction_dir "$deploy_tx_dir"
 rm -rf -- "$src_transaction_dir" 2>/dev/null || true
 
 if [[ "$is_system_prefix" != true && -x "$prefix/bin/modernime-session-init" ]]; then
-    MODERNIME_PREFIX="$prefix" MODERNIME_CONFIG_HOME="$config_home" \
-        MODERNIME_SKIP_FCITX_RESTART=1 "$prefix/bin/modernime-session-init"
+    session_status=0
+    MODERNIME_PREFIX="$prefix" MODERNIME_CONFIG_HOME="$config_home" MODERNIME_DATA_HOME="$data_home" \
+        MODERNIME_SKIP_FCITX_RESTART=1 "$prefix/bin/modernime-session-init" || session_status=$?
+    if [[ "$session_status" -ne 0 ]]; then
+        printf 'ModernIME files installed; session initialization incomplete (exit %s). Retry modernime-session-init; do not repeat installation.\n' "$session_status" >&2
+        exit "$session_status"
+    fi
 fi
 
 if [[ -n "${MODERNIME_BUILD_LOCK_FD:-}" ]]; then

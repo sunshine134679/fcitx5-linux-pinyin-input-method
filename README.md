@@ -400,6 +400,10 @@ fcitx5-remote
 
 `modernime-session-init` 会检查当前会话：Fcitx5 未运行时启动，有进程时重载配置；没有编辑器输入焦点时以输入法注册状态判断就绪。状态查询有超时，避免断连时一直等待。自定义 `MODERNIME_CONFIG_HOME` 同时用于写入配置和启动进程，含空格的前缀也可用于桌面自启。现有自启入口只在登录时启动一次，**不提供持续监护或崩溃后自动重启**；手动退出 Fcitx5、桌面/DBus 会话结束后不会强行拉起进程。
 
+GNOME 扩展仅在当前 GNOME 图形与 DBus 会话中自动部署。ModernIME 对自己创建的完整副本记录基线；已有副本、用户修改及旧版无所有权记录的副本均保留，不覆盖、不自动启用。仅在 GNOME Shell 返回的扩展路径与受管目录一致时申请启用，用户后续禁用不会被重复初始化撤销。首次复制后 Shell 可能尚未发现扩展，此时会提示待加载：重新登录后运行 `modernime-session-init`。若已手动确认需要启用，可运行 `gnome-extensions enable kimpanel@kde.org`。更新扩展文件后也需重新登录才能确认加载新代码。
+
+文件部署、启用申请与 Shell 当前活动状态分别报告。schema 严格编译或启用失败时，会话初始化返回非零；若安装/渠道迁移的程序事务已经提交，会明确提示“文件已安装/包迁移已完成，初始化未完成”。修复提示中的问题后重跑 `modernime-session-init`，无需重复安装或迁移。自定义 prefix、config-home、data-home 时，重试需沿用对应的 `MODERNIME_PREFIX`、`MODERNIME_CONFIG_HOME`、`MODERNIME_DATA_HOME`。
+
 ### 稳定性与长期使用
 
 - 用户词典重载会跳过 LibIME 不接受的拼音条目，避免单个错误词条终止输入进程；歧义拼音拆分按图节点计算，避免穷举大量路径导致卡顿。
@@ -658,6 +662,18 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 卸载脚本根据安装清单移除 ModernIME 自己安装的文件，并保留桌面目录中的其他文件。环境文件、自启入口和桌面快捷方式会保留安装时的内容快照；如果文件被用户修改过，重装和卸载会保留它并提示手动处理。卸载会继续清理其它未修改的产物，并保留清单供处理后再次运行。没有所有权快照的旧安装文件会按未托管文件保护。
 
+源码和便携卸载还会先清理当前用户未修改的受管 GNOME 扩展，并仅撤销 ModernIME 曾申请、且用户未改变的启用状态。设置恢复失败会停止卸载，保留程序和记录供正确用户会话中重试；被用户修改的扩展及其记录会保留。启用状态查询需要匹配的 GNOME 会话，离线卸载不能假报已恢复。所有权记录位于配置目录 `modernime/session-managed-files/gnome-extension.json`。
+
+如果用户已手动删除副本，清理命令会释放旧记录，并明确保留无法确认归属的 GNOME 启用设置。渠道迁移在目标包验证成功后交接受管副本的所有权，不在包事务中先删除扩展；包安装失败保留原副本与启用状态。交接失败会保留恢复助手并给出命令，应先完成交接再初始化目标会话。
+
+DEB/RPM 包管理器不遍历用户主目录。若需要同时移除此用户的受管扩展，请在卸载系统包**之前**以普通桌面用户运行：
+
+```bash
+modernime-session-init --remove-gnome-extension
+```
+
+此命令只处理扩展，不重启 Fcitx5、不改其他会话配置。包已移除时可从源码运行 `MODERNIME_PREFIX=/usr ./scripts/modernime-session-init --remove-gnome-extension`，并沿用安装时的配置/数据路径。旧版遗留的无记录副本仍由用户自行备份或移除；回退到尚无此保护的旧版时，须先备份扩展并避免运行旧版初始化脚本，旧程序不会遵守新记录。
+
 ## 版本更新记录
 
 ### v0.1.25 (2026-11-02)
@@ -709,8 +725,8 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 ### v0.1.19 (2026-10-22)
 
 - **GNOME Shell Overview (Super 键概览搜索栏) 中文输入与候选框深度支持**：彻底解决在 GNOME Shell 46+ 环境下按下 Super 键后 Overview 概览搜索栏中中文输入法无法调出候选框的问题。系统内置集成 `kimpanel@kde.org` 原生 Clutter 扩展资产，通过 `/org/kde/impanel` 协议直接在 GNOME Shell 舞台内部实时渲染跟随光标的候选框。
-- **开箱即用会话自动化集成与激活**：在 `modernime-session-init` 与 `install.sh` 部署链中实现智能桌面探测，检测到 GNOME 会话时自动部署扩展至用户目录、编译 GSchema 并无缝启用，无需用户手动寻找或编译安装扩展。
-- **安装生命周期与对称卸载规范化**：将扩展资产深度纳入 `install_lifecycle.sh` 的清单管理 (`install-manifest.txt`)，并在 `uninstall.sh` 中实现完全对称的受控白名单校验与目录递归收敛，杜绝任何卸载残留。
+- **会话扩展集成（历史实现）**：增加用户目录复制、schema 编译和启用尝试。2026-11-08 审计确认旧实现会覆盖已有副本且忽略启用失败，不能将该版本描述为保证无缝激活；当前保护和状态语义见上文会话初始化说明。
+- **安装目录扩展清单（历史范围）**：将 prefix 内的扩展资产纳入安装清单。2026-11-08 隔离验收确认旧版卸载会遗留用户副本；当前受管副本清理与 native 包边界见上文卸载说明。
 - **打包流水线与测试门禁适配**：适配 DEB/RPM 打包逻辑与包仓库门禁测试 (`verify_package_repo_gate.sh`)、升级安装回退验证 (`verify_release_install_upgrade.sh`)，保障一键升级与系统包管理器升级链路绝对稳固。
 - 完整发布说明见 [v0.1.19](docs/releases/v0.1.19.md)。
 

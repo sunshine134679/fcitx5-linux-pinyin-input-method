@@ -715,6 +715,7 @@ EOF
             printf '%s\n' "$prefix/bin/modernime-settings"
             printf '%s\n' "$prefix/bin/modernime-session-init"
             printf '%s\n' "$prefix/share/modernime/install_state.sh"
+            printf '%s\n' "$prefix/share/modernime/gnome_extension.py"
             printf '%s\n' "$prefix/share/modernime/install_lifecycle.sh"
             printf '%s\n' "$prefix/bin/modernime-data-guard"
             printf '%s\n' "$prefix/bin/modernime-migrate-channel"

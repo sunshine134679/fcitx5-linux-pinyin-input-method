@@ -366,6 +366,7 @@ finally:
 PYEOF
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
+test -f "$MODERNIME_PREFIX/share/modernime/gnome_extension.py"
 test -x "$MODERNIME_PREFIX/bin/modernime-session-init"
 { test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so" || \
   test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so" || \
@@ -399,6 +400,7 @@ printf '=== 5. 验证沙箱卸载清理完全性 ===\n'
 test ! -e "$MODERNIME_PREFIX/bin/modernime-settings"
 test ! -e "$MODERNIME_PREFIX/bin/modernime-session-init"
 test ! -e "$MODERNIME_PREFIX/share/modernime/install_state.sh"
+test ! -e "$MODERNIME_PREFIX/share/modernime/gnome_extension.py"
 test ! -e "$MODERNIME_PREFIX/share/doc/modernime/LICENSE"
 test ! -e "$MODERNIME_PREFIX/share/doc/modernime/copyright"
 test ! -e "$MODERNIME_PREFIX/share/doc/modernime/THIRD_PARTY_NOTICES.md"

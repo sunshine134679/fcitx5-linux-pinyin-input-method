@@ -838,6 +838,10 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/install_environment_test.sh
     )
+    add_test(NAME modernime_gnome_extension_lifecycle
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gnome_extension_lifecycle_test.py"
+    )
+    set_tests_properties(modernime_gnome_extension_lifecycle PROPERTIES TIMEOUT 180)
     add_test(NAME modernime_session_init
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/session_init_test.sh
