@@ -109,7 +109,7 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
         candidate.learning_boost = request.learning->boostAt(
             candidate.text, candidate.full_pinyin, request.nowMs);
         candidate.context_bonus = request.learning->contextBoost(
-            candidate.text, candidate.full_pinyin, request.before, request.after);
+            candidate.text, candidate.full_pinyin, request.before, request.after, request.nowMs);
         candidate.last_selected_ms = request.learning->lastSelectedMs(
             candidate.text, candidate.full_pinyin);
     }

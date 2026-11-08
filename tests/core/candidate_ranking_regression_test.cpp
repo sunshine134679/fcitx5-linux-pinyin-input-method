@@ -4,6 +4,8 @@
 #include "modernime/core/pinyin_match.h"
 #include "modernime/fcitx5/engine.h"
 #include "modernime/pinyin/candidate_mixer.h"
+#include "modernime/pinyin/candidate_features.h"
+#include <libime/pinyin/pinyindictionary.h>
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
 #include <libime/pinyin/pinyincontext.h>
@@ -86,6 +88,86 @@ protected:
     std::filesystem::path root;
     pinyin::PinyinDataPaths paths;
 };
+
+TEST_F(CandidateRankingRegression, ContextFeaturesUseRequestTimeWithoutChangingDecayPolicy) {
+    constexpr std::int64_t day = 24LL * 60 * 60 * 1000;
+    constexpr std::int64_t selectedAt = 1000;
+    const core::LearningSnapshot snapshot({{"试", "shi", "前文", "", 1, selectedAt}});
+    libime::PinyinDictionary dictionary;
+    double previous = 2.0;
+    for (const auto age : {0, 30, 300}) {
+        core::CandidateScore score;
+        score.text = "试";
+        score.full_pinyin = "shi";
+        const auto clock = selectedAt + age * day;
+        pinyin::populateCandidateFeatures(score, dictionary,
+            {"shi", &snapshot, nullptr, clock, "前文", ""});
+        EXPECT_DOUBLE_EQ(score.context_bonus, snapshot.contextBoost("试", "shi", "前文", "", clock));
+        EXPECT_LT(score.context_bonus, previous);
+        previous = score.context_bonus;
+        EXPECT_DOUBLE_EQ(score.learning_boost, snapshot.boostAt("试", "shi", clock));
+    }
+    for (const std::int64_t clock : {0LL, 500LL}) {
+        core::CandidateScore score;
+        score.text = "试";
+        score.full_pinyin = "shi";
+        pinyin::populateCandidateFeatures(score, dictionary,
+            {"shi", &snapshot, nullptr, clock, "前文", ""});
+        EXPECT_DOUBLE_EQ(score.context_bonus, snapshot.contextBoost("试", "shi", "前文", "", clock));
+    }
+    core::CandidateScore noContext;
+    noContext.text = "试";
+    noContext.full_pinyin = "shi";
+    pinyin::populateCandidateFeatures(noContext, dictionary,
+        {"shi", &snapshot, nullptr, selectedAt + 300 * day, "", ""});
+    EXPECT_EQ(noContext.context_bonus, 0.0);
+    EXPECT_EQ(snapshot.entry("试", "shi", "前文", "")->lastSelectedMs, selectedAt);
+}
+
+TEST_F(CandidateRankingRegression, ContextDecayReachesNativePipelineAndController) {
+    constexpr std::int64_t day = 24LL * 60 * 60 * 1000;
+    const auto clock = nowMs();
+    const auto selectedAt = clock - 300 * day;
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.open());
+        ASSERT_TRUE(store.recordSelection("试", "shi", "前文", "", selectedAt));
+    }
+    auto resources = pinyin::PinyinSharedResources::create(paths, {});
+    const auto snapshot = resources->visibleLearning();
+    ASSERT_NE(snapshot, nullptr);
+    libime::PinyinContext context(resources->ime.get());
+    ASSERT_TRUE(context.type("shi"));
+    for (const auto age : {0, 30, 300}) {
+        const auto requestTime = selectedAt + age * day;
+        const auto result = pinyin::buildCandidatePipeline(context, *resources->ime->dict(),
+            snapshot.get(), requestTime, "前文", "");
+        const auto found = std::find_if(result.scored.begin(), result.scored.end(),
+            [](const auto &candidate) { return candidate.text == "试" && candidate.full_pinyin == "shi"; });
+        ASSERT_NE(found, result.scored.end());
+        EXPECT_DOUBLE_EQ(found->context_bonus,
+            snapshot->contextBoost("试", "shi", "前文", "", requestTime));
+        EXPECT_EQ(found->consumed_input_bytes, 3U);
+        EXPECT_NE(std::find(result.order.begin(), result.order.end(),
+            static_cast<std::size_t>(found - result.scored.begin())), result.order.end());
+    }
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    controller.setContext("前文", "");
+    feedKeys(controller, "shi");
+    const auto index = rank(controller.page(), "试");
+    ASSERT_LT(index, controller.page().items.size());
+    EXPECT_EQ(controller.page().items[index].fullPinyin, "shi");
+    EXPECT_EQ(controller.page().items[index].consumedInputBytes, 3U);
+    ASSERT_TRUE(controller.select(index));
+    EXPECT_EQ(host.committed, "试");
+    EXPECT_TRUE(controller.page().rawInput.empty());
+    ASSERT_TRUE(provider.flush());
+    // 选择后的新事实不能改写仍在读的旧不可变快照。
+    EXPECT_EQ(snapshot->entry("试", "shi", "前文", "")->frequency, 1);
+    EXPECT_EQ(snapshot->entry("试", "shi", "前文", "")->lastSelectedMs, selectedAt);
+}
 
 TEST_F(CandidateRankingRegression, NumericMacrosPreserveValueAtRepresentationLimits) {
     pinyin::PinyinProviderOptions options;
