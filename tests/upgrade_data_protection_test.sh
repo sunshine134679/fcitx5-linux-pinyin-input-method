@@ -236,7 +236,7 @@ test "$old_so_inode" != "$new_so_inode"
 test "$(cat "$old_so_path")" = "ELF-v0.1.8-fcitx5-plugin"
 
 # Verify Fcitx5 restart was triggered
-grep -F 'fcitx5:-d -r -u modernime-ui' "$fcitx_log" >/dev/null
+grep -Fx 'fcitx5:-d -r' "$fcitx_log" >/dev/null
 grep -F 'fcitx5-remote:-s modernime' "$fcitx_log" >/dev/null
 
 # Verify schema migration upgraded user_version to 1 and added suppressed + negative_feedback columns

@@ -145,6 +145,16 @@ private:
         gtk_label_set_line_wrap(GTK_LABEL(previewScaleHint), TRUE);
         setTarget(previewScaleHint, "candidate-preview-scale");
         gtk_box_pack_start(GTK_BOX(previewCard), previewScaleHint, FALSE, FALSE, 0);
+        if (g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0 ||
+            g_getenv("WAYLAND_DISPLAY") != nullptr) {
+            auto *nativeHint = gtk_label_new(
+                "Wayland 候选由桌面或应用面板显示；此预览用于 ModernIME 自绘候选栏。"
+                "GNOME 面板字体请在输入法面板扩展设置中调整。");
+            addStyleClass(nativeHint, "modernime-description");
+            gtk_label_set_xalign(GTK_LABEL(nativeHint), 0.0F);
+            gtk_label_set_line_wrap(GTK_LABEL(nativeHint), TRUE);
+            gtk_box_pack_start(GTK_BOX(previewCard), nativeHint, FALSE, FALSE, 0);
+        }
         definitionPreview = gtk_label_new("hello · int. 你好；喂");
         addStyleClass(definitionPreview, "modernime-description");
         gtk_widget_set_halign(definitionPreview, GTK_ALIGN_START);

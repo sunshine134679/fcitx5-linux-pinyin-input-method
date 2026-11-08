@@ -626,9 +626,9 @@ run_fcitx5_remote() {
 start_fcitx5_safely() {
     "${fcitx_environment[@]}" bash -c '
         if command -v timeout >/dev/null 2>&1; then
-            timeout --kill-after=1s 3s fcitx5 -d -r -u modernime-ui || true
+            timeout --kill-after=1s 3s fcitx5 -d -r || true
         else
-            fcitx5 -d -r -u modernime-ui || true
+            fcitx5 -d -r || true
         fi
     ' modernime-fcitx5-start >/dev/null 2>&1
 }
@@ -647,12 +647,12 @@ elif ! command -v fcitx5 >/dev/null 2>&1; then
 elif ! command -v fcitx5-remote >/dev/null 2>&1; then
     printf 'fcitx5-remote executable not found; file deployment completed (runtime activation skipped due to missing fcitx5-remote)\n' >&2
 elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
-    printf 'No graphical session detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5 -u modernime-ui\n' >&2
+    printf 'No graphical session detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5\n' >&2
 elif [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-    printf 'DBus session not detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5 -u modernime-ui\n' >&2
+    printf 'DBus session not detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5\n' >&2
 else
     start_fcitx5_safely &
-    printf 'Fcitx5 restart requested with the ModernIME UI addon\n'
+    printf 'Fcitx5 restart requested with automatic desktop UI selection\n'
     activated=false
     for attempt in {1..20}; do
         if run_fcitx5_remote -s modernime >/dev/null &&
@@ -683,7 +683,7 @@ if [[ "$is_system_prefix" == true ]]; then
 else
     printf 'Desktop shortcut: %s\n' "$desktop_shortcut"
 fi
-printf 'Select the UI addon with: fcitx5 -u modernime-ui\n'
+printf 'Start with automatic desktop UI selection: fcitx5\n'
 printf '\n'
 printf '【会话环境变量配置提示】\n'
 printf ' 若您在 LightDM/UKUI/X11 等桌面会话中无法调出输入法，请确保以下变量已生效：\n'

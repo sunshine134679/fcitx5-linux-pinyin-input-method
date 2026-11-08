@@ -384,7 +384,7 @@ cmake --install build/fcitx5-debug
 在正常桌面会话中，安装脚本会尝试自动重载。若输入法没有立即出现，可以在当前用户终端执行：
 
 ```bash
-fcitx5 -d -u modernime-ui
+fcitx5 -d
 fcitx5-remote -r
 fcitx5-remote -s modernime
 ```
@@ -592,7 +592,7 @@ ModernIME 在真实 Linux 桌面环境中全面模拟 **IT研发、财务会计�
 
 ## Wayland 与会话说明
 
-候选栏在 X11 会话中锚定到输入光标下方（靠近屏幕底部时自动翻到光标上方，并钳制在显示器工作区内）。Wayland 协议不允许客户端自行定位浮动窗口，`gtk_window_move` 是空操作；在接入 Fcitx5 窗口系统（windowing）接口之前，Wayland 会话中的候选栏位置由合成器决定，这不影响输入法本身的全部功能。安装脚本在检测到图形会话时会以 `fcitx5 -d -u modernime-ui` 启动。
+X11 会话使用 ModernIME 自绘候选栏，锚定到光标下方，靠近屏幕底部时翻到上方。Wayland 会话使用应用提供的候选面板或由 Fcitx5 选择可用的桌面面板；GNOME Shell 面板需启用随项目提供的输入法面板扩展（Kimpanel）。安装、自启与设置中的重启均保留自动 UI 选择。请勿在 Wayland 下强制 `-u modernime-ui`：GTK 自绘弹窗无法跨应用定位。GNOME 面板字体通过扩展设置调整，设置客户端的自绘预览不代表该面板；扩展不可用时请在“系统与诊断”检查会话与扩展状态。原生 GTK/Qt/浏览器的完整兼容性仍按应用分别验收。
 
 所有 ModernIME 自己的配置和数据都保存在当前用户目录下，不修改系统其他输入法：
 
@@ -875,6 +875,6 @@ ModernIME 针对拼音切分、中英防抢占、艾宾浩斯时间遗忘衰减�
 ## 故障排查
 
 - CMake 提示找不到 `Fcitx5Core`、`LibIMEPinyin`、`libime_pinyindict` 或 GTK3：确认已安装上面的开发包，然后重新执行 `./install.sh`；
-- `fcitx5-remote` 没有输出：没有输入焦点时 `-n` 可为空；先运行 `fcitx5-remote` 检查状态，在普通用户的图形与 DBus 会话中执行 `modernime-session-init` 恢复启动和配置。仍失败时从终端运行 `fcitx5 -D -u modernime-ui` 查看启动诊断；
+- `fcitx5-remote` 没有输出：没有输入焦点时 `-n` 可为空；先运行 `fcitx5-remote` 检查状态，在普通用户的图形与 DBus 会话中执行 `modernime-session-init` 恢复启动和配置。仍失败时从终端运行 `fcitx5 -D` 查看启动诊断；
 - 设置客户端找不到：直接运行 `~/.local/bin/modernime-settings`，并确认 `~/.local/share/applications/modernime-settings.desktop` 存在；
 - 在 SSH、容器或无桌面的终端安装：这是受支持的，安装脚本会跳过 Fcitx5 自动启动；回到图形会话后手动启动 Fcitx5 即可。

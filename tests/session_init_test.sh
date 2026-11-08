@@ -71,6 +71,7 @@ export MODERNIME_CONFIG_HOME="$test_root/config with space"
 mkdir -p "$MODERNIME_PREFIX/lib/fcitx5"
 : > "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so"
 MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/scripts/modernime-session-init" >/dev/null
+! grep -F -- "-u modernime-ui" "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 (
     set -a
     source "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"

@@ -107,9 +107,9 @@ int main(int argc, char **argv) {
     std::stringstream runningFcitxContents;
     runningFcitxContents << runningFcitxStream.rdbuf();
     assertTrue(runningFcitxContents.str().find(
-                   "args -d --replace -u modernime-ui") !=
+                   "args -d --replace\n") !=
                    std::string::npos,
-               "running Fcitx5 is replaced with the ModernIME UI");
+               "running Fcitx5 replacement allows native UI selection");
     assertTrue(runningFcitxContents.str().find(
                    "addon=/demo-prefix/lib/fcitx5:/usr/lib/fcitx5") !=
                    std::string::npos,
@@ -199,9 +199,9 @@ int main(int argc, char **argv) {
     std::ifstream stoppedFcitxStream(stoppedFcitxLog);
     std::stringstream stoppedFcitxContents;
     stoppedFcitxContents << stoppedFcitxStream.rdbuf();
-    assertTrue(stoppedFcitxContents.str().find("args -d -u modernime-ui") !=
+    assertTrue(stoppedFcitxContents.str().find("args -d\n") !=
                    std::string::npos,
-               "stopped Fcitx5 starts with the ModernIME UI override");
+               "stopped Fcitx5 allows native UI selection");
     assertTrue(stoppedFcitxContents.str().find("args -d -r") ==
                    std::string::npos,
                "stopped Fcitx5 does not receive a duplicate restart flag");

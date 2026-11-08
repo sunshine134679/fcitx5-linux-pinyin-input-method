@@ -104,7 +104,7 @@ env_tmp=$(mktemp "$environment_dir/.modernime-env.XXXXXX")
 # 4. Write autostart entry
 mkdir -p "$autostart_dir"
 auto_tmp=$(mktemp "$autostart_dir/.modernime-auto.XXXXXX")
-autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d -u modernime-ui"
+autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d"
 {
     printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
     printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
@@ -321,7 +321,7 @@ else
         else
             case "$current_state" in
                 0|1|2) run_remote -r >/dev/null || true ;;
-                *) "${fcitx_environment[@]}" timeout --kill-after=1s 3s fcitx5 -d -u modernime-ui >/dev/null 2>&1 || true ;;
+                *) "${fcitx_environment[@]}" timeout --kill-after=1s 3s fcitx5 -d >/dev/null 2>&1 || true ;;
             esac
             activated=false
             for attempt in {1..10}; do

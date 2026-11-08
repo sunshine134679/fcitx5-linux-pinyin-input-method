@@ -26,6 +26,9 @@
 #include <fcitx/action.h>
 #include <fcitx/statusarea.h>
 #include <gtk/gtk.h>
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/gdkwayland.h>
+#endif
 #include <pango/pango.h>
 
 #include <algorithm>
@@ -205,7 +208,6 @@ struct ModernIMEUserInterface::Impl final {
     bool gtkAvailable = false;
     bool suspended = false;
     bool wayland = false;
-    bool waylandAnchorWarningLogged = false;
     std::unique_ptr<fcitx::EventSourceTime> gtkEventSource;
     // 测量缓存：textWidth 在每次按键的布局/分页路径上对全部候选反复调用，
     // 原实现每次都新建再销毁 PangoLayout 和字体描述，并重复测量相同文本。
@@ -356,21 +358,9 @@ struct ModernIMEUserInterface::Impl final {
 
     // 把候选栏锚定到输入光标下方；光标所在显示器放不下时翻到光标上方，
     // 并把窗口完全钳制在工作区内。
-    // 注意：Wayland 不支持客户端定位浮动窗口（gtk_window_move 是空操作），
-    // 位置由合成器决定；尚未接入 fcitx5 窗口系统（windowing）接口前，
-    // Wayland 会话中的候选栏定位属于平台限制。
+    // Wayland 会话由 Fcitx5 的原生桌面面板负责，本窗口仅用于 X11。
     void positionWindow(fcitx::InputContext *inputContext) {
         if (inputContext == nullptr || !pendingFrame) {
-            return;
-        }
-        if (wayland) {
-            if (!waylandAnchorWarningLogged) {
-                g_warning(
-                    "ModernIME candidate bar cannot be anchored on Wayland; "
-                    "the compositor decides its position. X11 sessions anchor "
-                    "the bar to the text cursor.");
-                waylandAnchorWarningLogged = true;
-            }
             return;
         }
         const auto &cursor = inputContext->cursorRect();
@@ -626,16 +616,21 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     if (!impl_->gtkAvailable) {
         return;
     }
+#ifdef GDK_WINDOWING_WAYLAND
+    impl_->wayland = GDK_IS_WAYLAND_DISPLAY(gdk_display_get_default());
+#endif
+    // A Wayland session may explicitly start GTK through XWayland. Its popup
+    // still cannot reliably follow native application cursors across surfaces.
+    impl_->wayland = impl_->wayland ||
+        g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0;
+    if (impl_->wayland) {
+        g_message("ModernIME: using the desktop's native candidate panel on Wayland");
+        return;
+    }
     impl_->refreshSettingsIfNeeded();
     impl_->sessionBus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
     impl_->window = gtk_window_new(GTK_WINDOW_POPUP);
     configureWindow(impl_->window);
-    if (GdkDisplay *display = gtk_widget_get_display(impl_->window);
-        display != nullptr) {
-        const auto *backendName = gdk_display_get_name(display);
-        impl_->wayland = backendName != nullptr &&
-                         std::string_view(backendName).starts_with("wayland");
-    }
     if (g_appIndicator.init()) {
         impl_->indicator = g_appIndicator.app_indicator_new(
             "modernime-fcitx5", std::string(StatusIndicator::iconName()).c_str(),
@@ -753,7 +748,7 @@ void ModernIMEUserInterface::draw(cairo_t *context) {
 
 void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
                                     fcitx::InputContext *inputContext) {
-    if (!impl_->gtkAvailable || inputContext == nullptr) {
+    if (!available() || inputContext == nullptr) {
         return;
     }
     impl_->refreshSettingsIfNeeded();
@@ -833,7 +828,7 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
     impl_->pumpPendingGtkEvents();
 }
 
-bool ModernIMEUserInterface::available() { return impl_->gtkAvailable; }
+bool ModernIMEUserInterface::available() { return impl_->gtkAvailable && !impl_->wayland; }
 
 void ModernIMEUserInterface::suspend() {
     impl_->suspended = true;

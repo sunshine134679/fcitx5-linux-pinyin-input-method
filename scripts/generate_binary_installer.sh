@@ -270,7 +270,7 @@ case "${MODERNIME_SKIP_FCITX_RESTART:-}" in
 esac
 if [[ "$skip_fcitx_restart" != true && -n "${DISPLAY:-${WAYLAND_DISPLAY:-}}" ]]; then
     if command -v fcitx5-remote >/dev/null 2>&1; then
-        fcitx5 -d -r -u modernime-ui 2>/dev/null || true
+        fcitx5 -d -r 2>/dev/null || true
         fcitx5-remote -s modernime 2>/dev/null || true
     fi
 fi

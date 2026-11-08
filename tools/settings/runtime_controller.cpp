@@ -359,14 +359,14 @@ RuntimeResult RuntimeController::reload(
 
     if (current.running) {
         const auto replace = startCommand(
-            fcitxExecutable, {"-d", "--replace", "-u", "modernime-ui"},
+            fcitxExecutable, {"-d", "--replace"},
             environment);
         if (!replace.started || !replace.successful) {
             return {false, failureMessage(replace, "Fcitx5 替换")};
         }
     } else {
         const auto start =
-            startCommand(fcitxExecutable, {"-d", "-u", "modernime-ui"},
+            startCommand(fcitxExecutable, {"-d"},
                          environment);
         if (!start.started || !start.successful) {
             return {false, failureMessage(start, "Fcitx5 启动")};
