@@ -464,9 +464,13 @@ private:
     fcitx::Instance *instance_ = nullptr;
     fcitx::AddonInstance *clipboardAddon_ = nullptr;
     bool clipboardAddonLookupAttempted_ = false;
+    // Owned by the host event loop; excluded intervals and failed reads
+    // invalidate the baseline even when they occur between timer ticks.
+    bool clipboardNeedsBaseline_ = true;
     core::PersistentClipboardHistory clipboardHistory_;
     std::string lastHistoryError_;
     std::unique_ptr<fcitx::HandlerTableEntryBase> surroundingWatcher_;
+    std::unique_ptr<fcitx::HandlerTableEntryBase> clipboardCapabilityWatcher_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     std::unique_ptr<fcitx::EventSourceTime> fileTimer_;
     core::SettingsFileStamp settingsStamp_{};

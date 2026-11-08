@@ -19,6 +19,9 @@ public:
     explicit PersistentClipboardHistory(std::filesystem::path path);
 
     bool load(std::string *error = nullptr);
+    // Begin an allowed observation interval without recording its initial
+    // clipboard value. Does not touch history, pending copies or the file.
+    void setObservationBaseline(std::string_view text);
     bool observe(std::string_view text, std::string *error = nullptr);
     bool flush(std::string *error = nullptr);
     // Reloads from disk when another process (e.g. the settings client)

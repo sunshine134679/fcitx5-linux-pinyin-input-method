@@ -534,6 +534,18 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
                     }
                 }
             });
+        clipboardCapabilityWatcher_ = instance_->watchEvent(
+            fcitx::EventType::InputContextCapabilityChanged,
+            fcitx::EventWatcherPhase::Default,
+            [this](fcitx::Event &event) {
+                auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
+                if (ic != nullptr &&
+                    ic == instance_->inputContextManager().mostRecentInputContext() &&
+                    (ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+                     ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive))) {
+                    clipboardNeedsBaseline_ = true;
+                }
+            });
         clipboardTimer_ = instance_->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 500000, 500000,
             [this](fcitx::EventSourceTime *source, std::uint64_t) {
@@ -741,21 +753,22 @@ bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
 }
 
 void ModernIMEInputMethod::pollClipboard() {
-    if (!keyBindings_.clipboardEnabled || manager_ == nullptr ||
+    if (!keyBindings_.clipboardEnabled || !settings_.inputEnabled || manager_ == nullptr ||
         instance_ == nullptr) {
+        clipboardNeedsBaseline_ = true;
         return;
     }
     // 先做最廉价的短路判断再查 addon：ModernIME 非当前输入法时
     // 完全跳过后续的 addon 查找与调用，轮询空转成本降到最低。
     auto *inputContext =
         instance_->inputContextManager().mostRecentInputContext();
-    if (inputContext == nullptr) {
-        return;
-    }
-    // Collect only while ModernIME is the active input method: clipboard
-    // content copied under other input methods or keyboard layouts must not
-    // end up in the history file.
-    if (instance_->inputMethod(inputContext) != "modernime") {
+    // The Clipboard addon returns global content; it does not filter by ic.
+    // Check eligibility before querying the addon or polling the history file.
+    if (inputContext == nullptr || !inputContext->hasFocus() ||
+        inputContext->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+        inputContext->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive) ||
+        instance_->inputMethod(inputContext) != "modernime") {
+        clipboardNeedsBaseline_ = true;
         return;
     }
     if (!clipboardAddonLookupAttempted_) {
@@ -779,6 +792,13 @@ void ModernIMEInputMethod::pollClipboard() {
         const auto text = clipboardAddon_->callWithSignature<
             std::string(const fcitx::InputContext *)>(
             "Clipboard::clipboard", inputContext);
+        if (clipboardNeedsBaseline_) {
+            // A value left during an excluded interval is not a new allowed
+            // copy. Only later changes may enter history; dedup stays in core.
+            clipboardHistory_.setObservationBaseline(text);
+            clipboardNeedsBaseline_ = false;
+            return;
+        }
         std::string historyError;
         clipboardHistory_.observe(text, &historyError);
         if (!historyError.empty()) {
@@ -793,6 +813,7 @@ void ModernIMEInputMethod::pollClipboard() {
             lastHistoryError_.clear();
         }
     } catch (const std::exception &) {
+        clipboardNeedsBaseline_ = true;
         // A third-party or older clipboard addon may not expose this optional
         // function. Clipboard mode remains harmlessly empty in that case.
     }
@@ -830,6 +851,9 @@ void ModernIMEInputMethod::pollFileChanges() {
                 if (loadResult.contentHash != appliedVersion_.contentHash) {
                     settings_ = loadResult.settings;
                     keyBindings_ = keyBindings(settings_);
+                    if (!settings_.inputEnabled || !keyBindings_.clipboardEnabled) {
+                        clipboardNeedsBaseline_ = true;
+                    }
                     ++settingsGeneration_;
                     appliedVersion_ = {loadResult.contentHash, settingsGeneration_};
                     writeRuntimeState(settingsPaths().runtimeState, loadResult.contentHash,
@@ -1024,6 +1048,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 
 void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
                                     fcitx::InputContextEvent &event) {
+    clipboardNeedsBaseline_ = true;
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         if (contextState->settingsGeneration() != settingsGeneration_) {
             contextState->applySettings(settings_, settingsGeneration_);
@@ -1042,6 +1067,7 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
 
 void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
                                       fcitx::InputContextEvent &event) {
+    clipboardNeedsBaseline_ = true;
     shiftPressed_ = false;
     otherKeyPressedWhileShift_ = false;
     if (readyEndpoint_) {

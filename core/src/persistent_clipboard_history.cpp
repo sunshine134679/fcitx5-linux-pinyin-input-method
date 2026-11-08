@@ -75,6 +75,11 @@ bool PersistentClipboardHistory::load(std::string *error) {
     return loaded_;
 }
 
+void PersistentClipboardHistory::setObservationBaseline(std::string_view text) {
+    lastObservedText_ = text;
+    hasObservedText_ = true;
+}
+
 bool PersistentClipboardHistory::observe(std::string_view text,
                                          std::string *error) {
     if (error != nullptr) {

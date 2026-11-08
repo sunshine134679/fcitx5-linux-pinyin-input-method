@@ -25,6 +25,7 @@
 | 子进程、包更新及采集器 | `modernime_process_runner`、`modernime_update_controller`、`modernime_updates_page_contract`、`modernime_updates_page_gtk`；fork 反例、输出预算、启动不明、等待超时、队列、旧 ID、页面关闭及安装后内部模式；更新页真实缓存/失败/在途/搜索焦点与命令复制 |
 | 设置文件、路径、运行时诊断 | `modernime_settings`、`modernime_settings_model`、`modernime_runtime_controller`、`modernime_runtime_controller_concurrency`、`modernime_configuration_contract`、`modernime_ui_addon`、`modernime_adapter_recovery`；同 stamp 故障解除、原子替换与真实消费者 |
 | GTK 数据页与导航 | `modernime_data_controller`、`modernime_settings_data_async_gtk`、`modernime_settings_focus_gtk`、`modernime_settings_shell_gtk`、`modernime_settings_save_gtk`、`modernime_page_registry`、`modernime_settings_navigation_dbus`；真实在途打断/读后挂起、主循环心跳及实际控件状态 |
+| 剪贴板采集、去重及历史持久化 | `modernime_clipboard_capture`、`modernime_persistent_clipboard_history`、`modernime_clipboard_trigger`、`modernime_clipboard_history_model`；真实共享插件的敏感/焦点/输入法/配置区间、恢复首轮、外部清空、失败待写及V+2实际提交 |
 | 依赖或 CMake/CI | full 与 core-only 配置，`modernime_required_tests_contract`、`tests/required_tests_contract_test.py`；注册和执行双检查，失败/缺报告/非法 skip 负向保护 |
 | 安装、卸载、迁移或数据备份 | `modernime_install_transaction`、`modernime_install_runtime`、`modernime_install_environment`、`modernime_install_channel_collision`、`modernime_upgrade_data_protection`、`modernime_install_rollback_concurrent_writes` 等；按 AGENTS 执行 `tests/verify_fresh_clone.sh` 与相关真实包门禁 |
 | 正式发布或更新协议 | 软件源/安装门禁、网站 Python/Node 测试、生产签名、不可变 tag→源码→资产身份；真实旧客户端/旧渠道升级，不能只跑 `tests/previous_release_upgrade_test.sh` 就宣称 APT/DNF 旧 GUI 直升 |

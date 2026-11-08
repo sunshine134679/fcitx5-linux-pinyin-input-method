@@ -32,12 +32,45 @@ void bumpMtime(const std::filesystem::path &path) {
 } // namespace
 
 int main() {
-    const auto directory = std::filesystem::temp_directory_path() /
-                           "modernime-persistent-clipboard-history-test";
+    char temporary[] = "/tmp/modernime-persistent-clipboard-history-XXXXXX";
+    const auto *created = ::mkdtemp(temporary);
+    assertTrue(created != nullptr, "isolated history directory is created");
+    const std::filesystem::path directory(created);
     std::error_code filesystemError;
-    std::filesystem::remove_all(directory, filesystemError);
-    std::filesystem::create_directories(directory, filesystemError);
-    assertTrue(!filesystemError, "persistent history test directory is created");
+
+    // A resume baseline is an observation, not a new copy. It must never
+    // enter visible history or become a pending write, even after flush.
+    const auto baselinePath = directory / "baseline.bin";
+    modernime::core::PersistentClipboardHistory baseline(baselinePath);
+    std::string baselineError;
+    assertTrue(baseline.load(&baselineError), "baseline history loads");
+    baseline.setObservationBaseline("synthetic-excluded");
+    assertTrue(baseline.entries().empty() && baseline.flush(&baselineError) &&
+                   !std::filesystem::exists(baselinePath),
+               "baseline does not create a history file");
+    assertTrue(!baseline.observe("synthetic-excluded", &baselineError) &&
+                   baseline.entries().empty(),
+               "unchanged baseline is never recorded");
+    assertTrue(baseline.observe("allowed copy", &baselineError),
+               "changed allowed content is recorded");
+    auto baselineBlocked = baselinePath;
+    baselineBlocked += ".tmp";
+    std::filesystem::create_directory(baselineBlocked);
+    assertTrue(baseline.observe("allowed pending", &baselineError) &&
+                   !baselineError.empty(), "allowed copy has a failed save");
+    baseline.setObservationBaseline("synthetic-resume");
+    std::filesystem::remove(baselineBlocked);
+    modernime::core::ClipboardHistory clearedBaseline;
+    assertTrue(clearedBaseline.save(baselinePath, &baselineError),
+               "external clear replaces history during failed save");
+    assertTrue(!baseline.observe("synthetic-resume", &baselineError) &&
+                   baselineError.empty(), "same baseline retries only allowed pending copy");
+    assertTrue(clearedBaseline.load(baselinePath, &baselineError) &&
+                   clearedBaseline.entries() == std::vector<std::string>{"allowed pending"},
+               "baseline preserves pending copy but cannot resurrect cleared base");
+    assertTrue(!baseline.observe("", &baselineError) &&
+                   baseline.observe("synthetic-resume", &baselineError),
+               "explicit content change permits a later recopy of baseline text");
 
     const auto path = directory / "clipboard-history.bin";
     modernime::core::ClipboardHistory legacy;
@@ -402,5 +435,7 @@ int main() {
                    "copy vs clear concurrency does not resurrect cleared history");
     }
 
+    std::filesystem::remove_all(directory, filesystemError);
+    assertTrue(!filesystemError, "isolated history directory is removed");
     return EXIT_SUCCESS;
 }
