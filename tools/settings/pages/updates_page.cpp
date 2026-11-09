@@ -503,8 +503,6 @@ private:
 
         guideDescLabel = wrappedLabel("");
         addStyleClass(guideDescLabel, "modernime-setting-desc");
-        gtk_widget_set_halign(guideDescLabel, GTK_ALIGN_START);
-        gtk_label_set_line_wrap(GTK_LABEL(guideDescLabel), TRUE);
         gtk_box_pack_start(GTK_BOX(section), guideDescLabel, FALSE, FALSE, 0);
 
         commandLabel = wrappedLabel("", true);
