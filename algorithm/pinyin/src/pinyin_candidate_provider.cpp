@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/candidate_diagnostics.h"
 #include "modernime/pinyin/shuangpin_input.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
 
@@ -1034,6 +1035,10 @@ public:
         pageAuthorized_ = false;
         ++generation;
         page_.generation = generation;
+        if (diagnostics_) {
+            *diagnostics_ = {};
+            diagnostics_->generation = generation;
+        }
         page_.items.clear();
     }
 
@@ -1549,6 +1554,20 @@ public:
 
     std::shared_ptr<SharedResources> sharedResources() const { return shared_; }
 
+    void setDiagnosticsEnabled(bool enabled) {
+        if (enabled) {
+            diagnostics_.emplace();
+            refresh();
+        } else {
+            diagnostics_.reset();
+        }
+    }
+
+    const PinyinDiagnostics *diagnostics() const {
+        (void)page();
+        return diagnostics_ ? &*diagnostics_ : nullptr;
+    }
+
     void setOnReadyCallback(std::function<void()> callback) {
         if (shared_) {
             shared_->setOnReadyCallback(std::move(callback));
@@ -1602,6 +1621,11 @@ private:
         page_.preedit = rawInput;
         ++generation;
         page_.generation = generation;
+        if (diagnostics_) {
+            *diagnostics_ = {};
+            diagnostics_->generation = generation;
+            diagnostics_->nativeOffset = nativeOffset;
+        }
         if (rawInput.empty()) {
             pageAuthorized_ = false;
             return;
@@ -1678,6 +1702,12 @@ private:
         page_.hasMoreCandidates = result.hasMoreCandidates;
         const auto segmentedInput =
             shuangpin ? shuangpin->preedit() : automaticallySegmentedPreedit(rawInput, result);
+        if (diagnostics_) {
+            diagnostics_->timestampMs = requestNowMs;
+            diagnostics_->segmentedInput = segmentedInput;
+            diagnostics_->scored = result.scored;
+            diagnostics_->order = result.order;
+        }
         const auto prefixEnds = shuangpin ? shuangpin->prefixEnds()
             : syllablePrefixEnds(rawInput, segmentedInput);
         std::vector<std::pair<std::size_t, std::string>> canonicalPrefixes;
@@ -1974,8 +2004,10 @@ private:
                        : 0.0);
         compInput.isSuppressed = isSuppressed;
         compInput.isLexicalWord = lexicalWordCheck;
+        compInput.recordMoves = diagnostics_.has_value();
 
         auto compResult = composeCandidates(compInput);
+        if (diagnostics_) diagnostics_->moves = std::move(compResult.moves);
         page_.items = std::move(compResult.items);
         page_.preedit = std::move(compResult.preedit);
         // 内联读音提示（2026-10-25 调研后重做，规则同主流输入法"读音有误
@@ -2086,6 +2118,7 @@ private:
     bool clipboardEnabled_ = true;
     std::string clipboardTrigger_ = "V+2";
     core::CandidatePage page_;
+    std::optional<PinyinDiagnostics> diagnostics_;
     std::string contextBefore_;
     std::string contextAfter_;
     std::string fallbackContextBefore_;
@@ -2108,6 +2141,14 @@ PinyinCandidateProvider::PinyinCandidateProvider(
     : impl_(std::make_unique<Impl>(std::move(shared), options)) {}
 
 PinyinCandidateProvider::~PinyinCandidateProvider() = default;
+
+void PinyinCandidateProvider::setDiagnosticsEnabled(bool enabled) {
+    impl_->setDiagnosticsEnabled(enabled);
+}
+
+const PinyinDiagnostics *PinyinCandidateProvider::diagnostics() const {
+    return impl_->diagnostics();
+}
 
 bool PinyinCandidateProvider::append(std::string_view input) {
     return impl_->append(input);

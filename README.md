@@ -588,6 +588,21 @@ GNOME 扩展仅在当前 GNOME 图形与 DBus 会话中自动部署。ModernIME 
 
 此前的商业输入法评分表缺少可复核的同条件测量，已撤下；目前不宣称固定的对标达成率、超越商业输入法或零延迟。已实施能力、直接测量条件和剩余边界见[升级路线图](docs/全面升级审计与路线图-2026-11-08.md)。版本化质量语料及跨应用桌面综合验收仍在推进，局部构建和检查通过不代表整体产品验收完成。
 
+### 候选质量诊断与回放
+
+开发构建可开启 `MODERNIME_BUILD_TOOLS=ON`，增量编译 `modernime_pinyin_diagnose`。例如（将构建路径换成自己的目录）：
+
+```bash
+cmake -S . -B build/dev -DMODERNIME_BUILD_LIBIME_PINYIN=ON -DMODERNIME_BUILD_TOOLS=ON
+cmake --build build/dev --target modernime_pinyin_diagnose -j4
+build/dev/tools/modernime_pinyin_diagnose --input chongqi --expected 充气 --pinyin "chong'qi" --before 气球
+python3 tools/replay_pinyin_quality.py --binary build/dev/tools/modernime_pinyin_diagnose --output build/质量回放
+```
+
+单例输出JSON，包含实际切分、词典完整词条查找、混排前评分、最终名次/来源/消费范围、上下文开关对照；`--scheme xiaohe|ziranma`使用双拼，`--learn 5`通过实际选择重复学习，再用新会话观察最终排序。工具使用临时个人词典与学习库，不修改日常数据。默认词典/模型来自系统，扩展与热词明确使用本次构建产物，可用`--dictionary/--model/--extension/--hotwords`指定。
+
+回放使用版本化的`data/pinyin/候选质量-v1.tsv`，输出`环境.json`、`汇总.json`和`候选诊断.jsonl`，记录二进制、词典、模型及LibIME运行库的SHA-256，并分别呈现解析、词典、分词、语言模型、上下文和用户词频证据。命令退出0仅表示测量完成，未达标目标始终保留在汇总中；这些定向样本不代表总体准确率。未进入首批不等于词库不存在，整句不在词典中也不等于缺词；单次耗时包含诊断采集，不是桌面按键到像素延迟。目前记录实际时钟，尚未提供固定时钟重放。
+
 ## Wayland 与会话说明
 
 X11 会话使用 ModernIME 自绘候选栏，锚定到光标下方，靠近屏幕底部时翻到上方。Wayland 会话使用应用提供的候选面板或由 Fcitx5 选择可用的桌面面板；GNOME Shell 面板需启用随项目提供的输入法面板扩展（Kimpanel）。安装、自启与设置中的重启均保留自动 UI 选择。请勿在 Wayland 下强制 `-u modernime-ui`：GTK 自绘弹窗无法跨应用定位。GNOME 面板字体通过扩展设置调整，设置客户端的自绘预览不代表该面板；扩展不可用时请在“系统与诊断”检查会话与扩展状态。原生 GTK/Qt/浏览器的完整兼容性仍按应用分别验收。

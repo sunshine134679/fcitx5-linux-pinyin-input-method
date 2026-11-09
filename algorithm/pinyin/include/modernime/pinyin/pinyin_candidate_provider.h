@@ -10,6 +10,7 @@
 #include <string_view>
 
 namespace modernime::pinyin {
+struct PinyinDiagnostics;
 
 // 返回当前系统探测到的默认拼音词典路径（支持多发行版探测与环境变量覆盖）
 std::string defaultDictionaryPath();
@@ -107,6 +108,10 @@ public:
     const core::CandidatePage &page() const override;
 
     bool flush();
+
+    // Disabled by default. Same input-thread ownership as page().
+    void setDiagnosticsEnabled(bool enabled);
+    const PinyinDiagnostics *diagnostics() const;
 
     void setContext(std::string_view before, std::string_view after);
     void applyOptions(const PinyinProviderOptions &options);

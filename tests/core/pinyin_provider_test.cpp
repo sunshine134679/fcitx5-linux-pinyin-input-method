@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/candidate_diagnostics.h"
 #include "modernime/pinyin/candidate_mixer.h"
 
 #include "modernime/core/learning_store.h"
@@ -1474,6 +1475,27 @@ void testContextualLanguageModel() {
 }
 
 int main(int argc, char **argv) {
+    {
+        modernime::pinyin::PinyinProviderOptions options;
+        options.learningEnabled = false;
+        modernime::pinyin::PinyinCandidateProvider provider(modernime::pinyin::PinyinDataPaths{}, options);
+        assertTrue(provider.append("nihao") && provider.diagnostics() == nullptr,
+                   "ordinary input collects no diagnostics");
+        const auto before = provider.page();
+        provider.setDiagnosticsEnabled(true);
+        const auto &after = provider.page();
+        assertTrue(before.items.size() == after.items.size(), "diagnostics preserve candidate count");
+        for (std::size_t i = 0; i < before.items.size(); ++i)
+            assertTrue(modernime::core::candidateIdentity(before.items[i], before) ==
+                           modernime::core::candidateIdentity(after.items[i], after),
+                       "diagnostics preserve order, identity and consumption");
+        assertTrue(provider.diagnostics()->generation == after.generation &&
+                       !provider.diagnostics()->scored.empty(), "trace describes published generation");
+        provider.reset();
+        assertTrue(provider.diagnostics()->scored.empty(), "clearing input clears captured evidence");
+        provider.setDiagnosticsEnabled(false);
+        assertTrue(provider.diagnostics() == nullptr, "diagnostics can be disabled");
+    }
     testLearnedWordSentenceDecoding();
     if (argc == 2 && std::string_view(argv[1]) == "--learned-sentence") return 0;
     testContextualLanguageModel();
