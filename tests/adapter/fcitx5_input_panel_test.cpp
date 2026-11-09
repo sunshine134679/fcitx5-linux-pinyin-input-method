@@ -6,14 +6,19 @@
 #include <fcitx/instance.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/event.h>
+#include <fcitx/statusarea.h>
+#include <fcitx/userinterfacemanager.h>
 #include <fcitx-utils/keysymgen.h>
 #include <filesystem>
 #include <getopt.h>
 
 #include <cstdlib>
+#include <chrono>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -137,6 +142,67 @@ void testDisabledActivationPreservesChineseMode() {
                        context.inputPanel().clientPreedit().toString() == "n",
                    "the activated context accepts pinyin after hot reenabling");
     }
+    std::filesystem::remove_all(root);
+}
+
+void testStatusMenu() {
+    char path[] = "/tmp/modernime-status-menu-XXXXXX";
+    const auto *root = mkdtemp(path);
+    assertTrue(root != nullptr, "isolated status menu directory created");
+    setenv("XDG_CONFIG_HOME", root, 1);
+    setenv("XDG_DATA_HOME", root, 1);
+    const std::string oldPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+    setenv("PATH", (std::string(root) + ':' + oldPath).c_str(), 1);
+    const auto client = std::filesystem::path(root) / "modernime-settings";
+    const auto result = std::filesystem::path(root) / "page";
+    std::ofstream(client) << "#!/bin/sh\n[ \"$1\" = --page ] || exit 1\nprintf '%s' \"$2\" > '"
+                          << result.string() << "'\n";
+    std::filesystem::permissions(client, std::filesystem::perms::owner_all);
+    char program[] = "modernime-menu-test";
+    char disable[] = "--disable=all";
+    char *argv[] = {program, disable, nullptr};
+    {
+        optind = 0;
+        fcitx::Instance instance(2, argv);
+        instance.initialize();
+        modernime::fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+        TestInputContext context(instance.inputContextManager());
+        const auto entries = engine.listInputMethods();
+        fcitx::InputContextEvent activation(&context, fcitx::EventType::InputContextFocusIn);
+        engine.activate(entries.front(), activation);
+        auto &manager = instance.userInterfaceManager();
+        auto *mode = manager.lookupAction("modernime-mode");
+        auto *settings = manager.lookupAction("modernime-settings");
+        assertTrue(mode && mode->id() != 0 && settings && settings->id() != 0,
+                   "mode and settings are registered for native panels");
+        const auto status = context.statusArea().actions(fcitx::StatusGroup::InputMethod);
+        assertTrue(status.size() == 2 && status[0] == mode && status[1] == settings,
+                   "activation publishes mode and settings menu");
+        mode->activate(&context);
+        assertTrue(!engine.state(&context)->controller().active() && mode->shortText(&context) == "英",
+                   "native mode action switches the existing controller to English");
+        mode->activate(&context);
+        assertTrue(engine.state(&context)->controller().active() && mode->shortText(&context) == "中",
+                   "native mode action returns to Chinese");
+        assertTrue(settings->menu() && settings->menu()->actions().size() == 4,
+                   "one-level settings menu has four working destinations");
+        for (const auto *page : {"overview", "dictionary", "clipboard", "diagnostics"}) {
+            auto *action = manager.lookupAction(std::string("modernime-settings-") + page);
+            assertTrue(action && action->id() != 0, "submenu item has a native action identity");
+            std::filesystem::remove(result);
+            action->activate(&context);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            std::string actual;
+            do {
+                std::ifstream input(result);
+                std::getline(input, actual);
+                if (actual == page) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            } while (std::chrono::steady_clock::now() < deadline);
+            assertTrue(actual == page, "menu launches the requested settings page without a shell command");
+        }
+    }
+    setenv("PATH", oldPath.c_str(), 1);
     std::filesystem::remove_all(root);
 }
 
@@ -348,6 +414,7 @@ void testSensitiveContextStaysUnlearnedAfterSettingsReload() {
 } // namespace
 
 int main() {
+    testStatusMenu();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     testSensitiveContextStaysUnlearnedAfterSettingsReload();
 #endif

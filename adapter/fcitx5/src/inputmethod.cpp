@@ -1,4 +1,5 @@
 #include "modernime/fcitx5/fcitx_engine.h"
+#include "modernime/fcitx5/settings_shortcuts.h"
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
 #include "modernime/pinyin/pinyin_shared_resources.h"
@@ -14,6 +15,7 @@
 #include <fcitx/instance.h>
 #include <fcitx/statusarea.h>
 #include <fcitx/surroundingtext.h>
+#include <fcitx/userinterfacemanager.h>
 #include <fcitx-utils/keysymgen.h>
 #include <fcitx-utils/log.h>
 #include <fcitx-utils/utf8.h>
@@ -459,6 +461,31 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
     subModeAction_.setShortText("中");
     subModeAction_.setLongText("中文输入法");
     subModeAction_.setIcon("input-keyboard-symbolic");
+    if (instance_) {
+        subModeAction_.registerAction("modernime-mode", &instance_->userInterfaceManager());
+        settingsAction_.registerAction("modernime-settings", &instance_->userInterfaceManager());
+    }
+    settingsAction_.setShortText("ModernIME 设置");
+    settingsAction_.setLongText("打开设置、个人词典、剪贴板与诊断");
+    settingsAction_.setIcon("preferences-system-symbolic");
+    settingsAction_.setMenu(&settingsMenu_);
+    for (const auto &shortcut : settingsShortcuts) {
+        auto action = std::make_unique<fcitx::SimpleAction>();
+        action->setShortText(shortcut.label);
+        action->setLongText(shortcut.label);
+        action->setIcon(shortcut.icon);
+        if (instance_) {
+            action->registerAction(std::string("modernime-settings-") + shortcut.page,
+                                   &instance_->userInterfaceManager());
+        }
+        action->connect<fcitx::SimpleAction::Activated>(
+            [page = shortcut.page](fcitx::InputContext *) {
+                static const char moduleAnchor = 0;
+                openSettingsPage(page, &moduleAnchor);
+            });
+        settingsMenu_.addAction(action.get());
+        settingsShortcuts_.push_back(std::move(action));
+    }
     subModeAction_.connect<fcitx::SimpleAction::Activated>([this](fcitx::InputContext *ic) {
         if (auto *contextState = state(ic)) {
             contextState->controller().handle({KeyKind::Toggle, 0, 0});
@@ -1068,6 +1095,7 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
         subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
         if (auto *ic = event.inputContext()) {
             ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, &subModeAction_);
+            ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, &settingsAction_);
             subModeAction_.update(ic);
             ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
         }

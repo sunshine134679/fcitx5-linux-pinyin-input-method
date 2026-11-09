@@ -4,6 +4,7 @@
 #include <filesystem>
 
 #include "modernime/fcitx5/fcitx_engine.h"
+#include "modernime/fcitx5/settings_shortcuts.h"
 #include "modernime/ui/cairo_render_surface.h"
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_pagination.h"
@@ -25,6 +26,7 @@
 #include <dlfcn.h>
 #include <fcitx/action.h>
 #include <fcitx/statusarea.h>
+#include <fcitx/userinterfacemanager.h>
 #include <gtk/gtk.h>
 #ifdef GDK_WINDOWING_WAYLAND
 #include <gdk/gdkwayland.h>
@@ -553,8 +555,19 @@ namespace {
 void toggleInputMethod(GtkMenuItem *, gpointer data) {
     if (auto *instance = static_cast<fcitx::Instance *>(data);
         instance != nullptr) {
-        instance->toggle();
+        auto *context = instance->lastFocusedInputContext();
+        auto *action = instance->userInterfaceManager().lookupAction("modernime-mode");
+        if (context && instance->inputMethod(context) == "modernime" && action) {
+            action->activate(context);
+        } else {
+            instance->toggle();
+        }
     }
+}
+
+void openSettings(GtkMenuItem *, gpointer data) {
+    static const char moduleAnchor = 0;
+    fcitx5::openSettingsPage(static_cast<const char *>(data), &moduleAnchor);
 }
 
 gboolean drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
@@ -675,11 +688,17 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
         impl_->lastIndicatorTitle = std::string(StatusIndicator::title());
 
         impl_->indicatorMenu = gtk_menu_new();
-        auto *indicatorItem = gtk_menu_item_new_with_label(
-            std::string(StatusIndicator::title()).c_str());
+        auto *indicatorItem = gtk_menu_item_new_with_label("切换中英文");
         g_signal_connect(indicatorItem, "activate",
                          G_CALLBACK(toggleInputMethod), instance);
         gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), indicatorItem);
+        gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), gtk_separator_menu_item_new());
+        for (const auto &shortcut : fcitx5::settingsShortcuts) {
+            auto *item = gtk_menu_item_new_with_label(shortcut.label);
+            g_signal_connect(item, "activate", G_CALLBACK(openSettings),
+                             const_cast<char *>(shortcut.page));
+            gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), item);
+        }
         gtk_widget_show_all(impl_->indicatorMenu);
         g_appIndicator.app_indicator_set_menu(
             impl_->indicator, GTK_MENU(impl_->indicatorMenu));

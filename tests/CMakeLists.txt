@@ -646,7 +646,7 @@ if(MODERNIME_BUILD_FCITX5)
         ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
     )
     target_link_libraries(modernime_clipboard_trigger_tests
-        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils ${CMAKE_DL_LIBS}
     )
     add_test(NAME modernime_clipboard_trigger
         COMMAND modernime_clipboard_trigger_tests
@@ -684,7 +684,7 @@ if(MODERNIME_BUILD_FCITX5)
         ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
     )
     target_link_libraries(modernime_fcitx5_input_panel_tests
-        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils ${CMAKE_DL_LIBS}
     )
     if(MODERNIME_BUILD_LIBIME_PINYIN)
         target_compile_definitions(modernime_fcitx5_input_panel_tests PRIVATE
@@ -705,7 +705,7 @@ if(MODERNIME_BUILD_FCITX5)
         ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
     )
     target_link_libraries(modernime_key_translation_tests
-        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils ${CMAKE_DL_LIBS}
     )
     add_test(NAME modernime_key_translation
         COMMAND modernime_key_translation_tests
@@ -843,7 +843,7 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
                 modernime_core
                 Fcitx5::Core
                 Fcitx5::Config
-                Fcitx5::Utils
+                Fcitx5::Utils ${CMAKE_DL_LIBS}
                 PkgConfig::GTK3
                 PkgConfig::PANGOCAIRO
                 SQLite::SQLite3

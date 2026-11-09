@@ -10,6 +10,7 @@
 #include <fcitx/action.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputpanel.h>
+#include <fcitx/menu.h>
 #include <fcitx-utils/event.h>
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/handlertable.h>
@@ -26,6 +27,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace fcitx {
 class AddonInstance;
@@ -508,6 +510,9 @@ private:
 #endif
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
     fcitx::SimpleAction subModeAction_;
+    fcitx::SimpleAction settingsAction_;
+    fcitx::Menu settingsMenu_;
+    std::vector<std::unique_ptr<fcitx::SimpleAction>> settingsShortcuts_;
 };
 
 } // namespace modernime::fcitx5
