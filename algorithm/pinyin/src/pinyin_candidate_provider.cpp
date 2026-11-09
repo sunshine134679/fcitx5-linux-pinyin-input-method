@@ -1527,6 +1527,12 @@ public:
         return page_;
     }
 
+    bool loadMoreCandidates() {
+        if (!page().hasMoreCandidates || !pageAuthorized_) return false;
+        refresh(true);
+        return true;
+    }
+
     std::shared_ptr<SharedResources> sharedResources() const { return shared_; }
 
     void setOnReadyCallback(std::function<void()> callback) {
@@ -1556,17 +1562,23 @@ private:
         refresh();
     }
 
-    void refresh() {
+    void refresh(bool extend = false) {
         if (checkResourceChanges()) {
+            extend = false;
             const auto currentInput = context->userInput();
             if (!currentInput.empty()) {
                 context->clear();
                 context->type(currentInput);
             }
         }
+        core::CandidatePage published;
+        if (extend) published = std::move(page_);
+        else nextNativeCandidate_ = 0;
+        const auto nativeOffset = nextNativeCandidate_;
+        const auto &previousItems = extend ? published.items : page_.items;
         std::vector<std::string> previousOrder;
-        previousOrder.reserve(page_.items.size());
-        for (const auto &item : page_.items) {
+        previousOrder.reserve(previousItems.size());
+        for (const auto &item : previousItems) {
             previousOrder.push_back(
                 core::candidateOrderKey(item.text, item.fullPinyin));
         }
@@ -1610,7 +1622,7 @@ private:
         std::optional<ShuangpinInput> shuangpin;
         if (useShuangpin) shuangpin.emplace(rawInput, *ime().shuangpinProfile(), ime().fuzzyFlags());
         const auto correctedInput = correctTypoInput(rawInput);
-        if (!useShuangpin && correctedInput != rawInput) {
+        if (!extend && !useShuangpin && correctedInput != rawInput) {
             try {
                 typoContext =
                     std::make_unique<libime::PinyinContext>(shared_->ime.get());
@@ -1624,7 +1636,7 @@ private:
         // （de/qu/zhang 等单音节不做变体，避免高频输入的噪声与额外解码）。
         std::unique_ptr<libime::PinyinContext> variantContext;
         std::string variantInput;
-        if (!useShuangpin && rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
+        if (!extend && !useShuangpin && rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
             !core::PinyinMatchPolicy::isStandardSyllable(rawInput)) {
             variantInput = core::PinyinMatchPolicy::rhymeVariantInput(rawInput);
             if (variantInput != rawInput) {
@@ -1642,7 +1654,9 @@ private:
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
-            variantContext.get(), shuangpin ? &*shuangpin : nullptr);
+            variantContext.get(), shuangpin ? &*shuangpin : nullptr, nativeOffset);
+        nextNativeCandidate_ = result.nextNativeCandidate;
+        page_.hasMoreCandidates = result.hasMoreCandidates;
         const auto segmentedInput =
             shuangpin ? shuangpin->preedit() : automaticallySegmentedPreedit(rawInput, result);
         const auto prefixEnds = shuangpin ? shuangpin->prefixEnds()
@@ -2034,6 +2048,12 @@ private:
                 ++hinted;
             }
         }
+        if (extend) {
+            page_.items = appendCandidateBatch(std::move(published.items),
+                std::move(page_.items), rawInput.size());
+            page_.preedit = std::move(published.preedit);
+            page_.cursor = published.cursor;
+        }
         pageAuthorized_ = !page_.items.empty();
     }
 
@@ -2053,6 +2073,7 @@ private:
     std::unordered_set<std::string> suppressedLearned_;
     std::uint64_t generation = 0;
     bool pageAuthorized_ = false;
+    std::size_t nextNativeCandidate_ = 0;
     std::uint64_t observedDictionaryGeneration_ = 0;
     std::uint64_t observedInputConfigurationGeneration_ = 0;
     std::int64_t observedLearningRevision_ = 0;
@@ -2074,6 +2095,8 @@ bool PinyinCandidateProvider::append(std::string_view input) {
 }
 
 bool PinyinCandidateProvider::eraseLast() { return impl_->eraseLast(); }
+
+bool PinyinCandidateProvider::loadMoreCandidates() { return impl_->loadMoreCandidates(); }
 
 bool PinyinCandidateProvider::replaceInput(std::string_view input) {
     return impl_->replaceInput(input);

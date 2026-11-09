@@ -1215,12 +1215,29 @@ void ModernIMEController::setPageBoundaries(std::vector<core::PageBoundary> boun
     setPageBoundaries(displayGeneration_, layoutGeneration_, std::move(boundaries));
 }
 
-void ModernIMEController::publishProviderPage(bool adoptRemainingComposition) {
+bool ModernIMEController::loadMoreCandidates() {
+    if (clipboardMode_ || !provider_ || !provider_->loadMoreCandidates()) return false;
+    const auto &extended = provider_->page();
+    const auto oldSize = page_.items.size();
+    const bool samePrefix = page_.rawInput == extended.rawInput && extended.items.size() >= oldSize &&
+        std::equal(page_.items.begin(), page_.items.end(), extended.items.begin(),
+            [&](const auto &a, const auto &b) {
+                return core::candidateIdentity(a, page_) == core::candidateIdentity(b, extended);
+            });
+    const auto cursor = samePrefix
+        ? (extended.items.size() > oldSize ? oldSize : page_.cursor) : std::size_t{0};
+    publishProviderPage(false, cursor);
+    return true;
+}
+
+void ModernIMEController::publishProviderPage(bool adoptRemainingComposition,
+                                             std::optional<std::size_t> cursor) {
     displayGeneration_++;
     page_ = provider_->page();
     page_.sessionId = sessionId_;
     page_.displayGeneration = displayGeneration_;
     providerGeneration_ = page_.generation;
+    if (cursor && !page_.items.empty()) page_.cursor = std::min(*cursor, page_.items.size() - 1);
     if (adoptRemainingComposition && !page_.rawInput.empty()) {
         compositionInput_ = page_.rawInput;
         compositionCursor_ = compositionInput_.size();

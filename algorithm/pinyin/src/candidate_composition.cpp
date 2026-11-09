@@ -660,4 +660,17 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     };
 }
 
+std::vector<core::CandidateItem> appendCandidateBatch(
+    std::vector<core::CandidateItem> published,
+    std::vector<core::CandidateItem> next, std::size_t inputBytes) {
+    std::unordered_set<core::CandidateIdentity> seen;
+    seen.reserve(published.size() + next.size());
+    for (const auto &item : published) seen.insert(core::candidateIdentity(item, inputBytes));
+    for (auto &item : next) {
+        if (seen.insert(core::candidateIdentity(item, inputBytes)).second)
+            published.push_back(std::move(item));
+    }
+    return published;
+}
+
 } // namespace modernime::pinyin

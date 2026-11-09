@@ -307,7 +307,7 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
     auto candidates = std::make_unique<FcitxCandidateList>(
         controller_ ? controller_->endpoint() : std::weak_ptr<core::SelectionEndpoint>{},
         controller_ ? controller_->displayGeneration() : page.displayGeneration,
-        controller_ ? controller_->layoutGeneration() : 1);
+        controller_ ? controller_->layoutGeneration() : 1, page.hasMoreCandidates);
     const bool clipboard = page.mode == core::CandidatePageMode::Clipboard;
     candidates->setLayoutHint(clipboard ? fcitx::CandidateLayoutHint::Vertical
                                         : fcitx::CandidateLayoutHint::Horizontal);

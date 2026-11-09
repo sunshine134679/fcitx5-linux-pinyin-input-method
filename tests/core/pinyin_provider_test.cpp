@@ -1366,7 +1366,38 @@ void testShuangpinSchemes() {
     }
 }
 
+void testColdCandidatePaging() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("cold-paging.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    assertTrue(provider.append("yi"), "cold input accepted");
+    const auto initial = provider.page();
+    assertTrue(initial.hasMoreCandidates, "native candidates beyond initial budget remain discoverable");
+    const modernime::core::CandidateSelectionRequest oldRequest{
+        .globalIndex = 0,
+        .expected = modernime::core::candidateIdentity(initial.items.front(), initial)};
+    assertTrue(provider.loadMoreCandidates(), "next bounded batch loads");
+    const auto extended = provider.page();
+    assertTrue(extended.items.size() > initial.items.size(), "cold batch adds selectable candidates");
+    for (std::size_t i = 0; i < initial.items.size(); ++i)
+        assertTrue(modernime::core::candidateIdentity(initial.items[i], initial) ==
+                   modernime::core::candidateIdentity(extended.items[i], extended), "published positions stay stable");
+    assertTrue(!provider.selectConfirmed(oldRequest, initial.generation), "old selection generation is revoked");
+    const auto coldIndex = initial.items.size();
+    const auto cold = extended.items[coldIndex];
+    assertTrue(cold.source == modernime::core::CandidateSource::Engine, "new candidate comes from native tail");
+    assertTrue(provider.select(coldIndex) && provider.flush(), "cold candidate selects and persists");
+    assertTrue(provider.page().rawInput == std::string("yi").substr(cold.consumedInputBytes), "cold choice consumes declared input");
+    modernime::pinyin::PinyinCandidateProvider reopened(paths);
+    assertTrue(reopened.append("yi"), "reopened input accepted");
+    assertTrue(hasText(reopened.page(), cold.text), "learned cold choice is recalled in the first batch after reopen");
+    std::cout << "[PASS] cold paging " << initial.items.size() << " -> " << extended.items.size()
+              << ", learned=" << cold.text << ", reopened_index=" << indexOf(reopened.page(), cold.text) << '\n';
+}
+
 int main(int argc, char **argv) {
+    testColdCandidatePaging();
+    if (argc == 2 && std::string_view(argv[1]) == "--cold-recall") return 0;
     testShuangpinSchemes();
     if (argc == 2 && std::string_view(argv[1]) == "--shuangpin") return 0;
     testFuzzyPinyinOptions();

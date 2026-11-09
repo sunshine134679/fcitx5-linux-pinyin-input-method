@@ -77,19 +77,19 @@ CandidatePipelineResult buildCandidatePipeline(
     std::string_view contextBefore, std::string_view contextAfter,
     const std::vector<std::string> &previousOrder,
     const libime::PinyinContext *typoContext, const RecentChoices *recentChoices,
-    const libime::PinyinContext *variantContext, const ShuangpinInput *shuangpin) {
+    const libime::PinyinContext *variantContext, const ShuangpinInput *shuangpin,
+    std::size_t nativeOffset) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
     // libime 保留 N-best 整句在前，后续候选按解码分数降序排列；高分更优。
     // 简拼输入（如 yyds）会展开出
     // 数千个候选，全部进入学习 boost + 词典加分评分循环会让单键耗时
-    // 超过 100ms；用户翻页永远看不到 128 名以外的候选，这里按 libime
-    // 原生顺序截断头部再评分，保证评分管线只在有限集合上工作。
+    // 超过 100ms；每批只处理128项，后续批次由翻页按需请求。
     constexpr std::size_t kMaxScoredCandidates = 128;
-    const std::size_t scoreLimit =
-        nativeCandidates.size() < kMaxScoredCandidates
-            ? nativeCandidates.size()
-            : kMaxScoredCandidates;
+    const auto begin = std::min(nativeOffset, nativeCandidates.size());
+    const auto scoreLimit = std::min(kMaxScoredCandidates, nativeCandidates.size() - begin);
+    result.nextNativeCandidate = begin + scoreLimit;
+    result.hasMoreCandidates = result.nextNativeCandidate < nativeCandidates.size();
 
     struct NativeCandidateEntry {
         std::string text;
@@ -101,7 +101,7 @@ CandidatePipelineResult buildCandidatePipeline(
     };
     std::vector<NativeCandidateEntry> nativeEntries;
     nativeEntries.reserve(scoreLimit);
-    for (std::size_t index = 0; index < scoreLimit; ++index) {
+    for (std::size_t index = begin; index < result.nextNativeCandidate; ++index) {
         NativeCandidateEntry entry;
         entry.source_index = index;
         entry.text = nativeCandidates[index].toString();
@@ -168,7 +168,7 @@ CandidatePipelineResult buildCandidatePipeline(
         result.scored.push_back(std::move(candidate));
     }
 
-    if (typoContext != nullptr) {
+    if (nativeOffset == 0 && typoContext != nullptr) {
         const auto &typoCandidates = typoContext->candidates();
         const std::size_t typoLimit =
             std::min<std::size_t>(typoCandidates.size(), 16);
@@ -217,7 +217,7 @@ CandidatePipelineResult buildCandidatePipeline(
         }
     }
 
-    if (variantContext != nullptr) {
+    if (nativeOffset == 0 && variantContext != nullptr) {
         const auto &variantCandidates = variantContext->candidates();
         const std::size_t variantLimit =
             std::min<std::size_t>(variantCandidates.size(), 16);
@@ -254,7 +254,7 @@ CandidatePipelineResult buildCandidatePipeline(
 
     const auto recallInputs = shuangpin != nullptr ? shuangpin->recallInputs()
         : std::vector<std::string>{context.userInput()};
-    if (learning != nullptr) {
+    if (nativeOffset == 0 && learning != nullptr) {
       for (const auto &recallInput : recallInputs) {
         const auto recalled = learning->recallCandidates(
             recallInput, nowMs, contextBefore, contextAfter);

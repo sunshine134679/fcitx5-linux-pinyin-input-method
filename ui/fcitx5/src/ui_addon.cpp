@@ -627,6 +627,7 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
         dynamic_cast<const fcitx5::FcitxCandidateList *>(candidates.get());
     if (variableCandidates != nullptr) {
         page.pageBoundaries = variableCandidates->pageBoundaries();
+        page.hasMoreCandidates = variableCandidates->hasMoreCandidates();
     }
     const auto pageBegin = variableCandidates == nullptr
                                ? std::size_t{0}

@@ -20,6 +20,8 @@ class ShuangpinInput;
 struct CandidatePipelineResult final {
     std::vector<core::CandidateScore> scored;
     std::vector<std::size_t> order;
+    std::size_t nextNativeCandidate = 0;
+    bool hasMoreCandidates = false;
 };
 
 CandidatePipelineResult buildCandidatePipeline(
@@ -36,6 +38,7 @@ CandidatePipelineResult buildCandidatePipeline(
     // 变体解码（如 kazhu -> kazhe）。变体候选扣除 2.0 解码分，作为低位补充
     // 召回来源，不改写主解码排序。
     const libime::PinyinContext *variantContext = nullptr,
-    const ShuangpinInput *shuangpin = nullptr);
+    const ShuangpinInput *shuangpin = nullptr,
+    std::size_t nativeOffset = 0);
 
 } // namespace modernime::pinyin

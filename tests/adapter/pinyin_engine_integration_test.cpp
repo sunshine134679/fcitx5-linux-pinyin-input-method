@@ -102,9 +102,36 @@ void testShuangpinController(const std::filesystem::path &directory) {
                host.commits.back() == "你好", "editing after switch uses new scheme");
 }
 
+void testColdPagingController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "cold-paging.sqlite3";
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    for (const char c : std::string_view("zh"))
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    const auto count = controller.page().items.size();
+    assertTrue(controller.page().hasMoreCandidates, "controller receives continuation availability");
+    for (std::size_t i = 1, pages = controller.page().pageBoundaries.size(); i < pages; ++i)
+        assertTrue(controller.movePage(1), "browse existing pages");
+    assertTrue(controller.movePage(1), "next page requests native tail");
+    assertTrue(controller.page().items.size() > count && controller.page().cursor == count,
+               "first newly exposed candidate is focused");
+    const auto selected = controller.page().items[count];
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}), "space commits cold selection");
+    assertTrue(host.commits.back() == selected.text, "cold page commits exactly the displayed candidate");
+    assertTrue(controller.page().rawInput == std::string("zh").substr(selected.consumedInputBytes),
+               "cold page preserves unconsumed abbreviation");
+    std::cout << "[PASS] controller cold page=" << selected.text << '\n';
+}
+
 int main(int argc, char **argv) {
     // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
     TempDirectory tempDirectory;
+    testColdPagingController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--cold-recall") return 0;
     testShuangpinController(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--shuangpin") return 0;
     std::cout << "Test directory: " << tempDirectory.path() << std::endl;

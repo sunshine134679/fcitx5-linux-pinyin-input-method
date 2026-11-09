@@ -98,6 +98,7 @@ public:
     bool extractCharacter(std::size_t index, bool firstChar,
                           std::string *outText = nullptr) override;
     bool remove(std::size_t index) override;
+    bool loadMoreCandidates() override;
     void onCommitEvent(const core::CommitEvent &event) override;
     void onNegativeFeedback(std::string_view phrase,
                             std::string_view pinyin) override;

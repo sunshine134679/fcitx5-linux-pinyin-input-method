@@ -98,6 +98,7 @@ struct CandidatePage final {
     std::uint64_t sessionId = 0;
     std::uint64_t displayGeneration = 0;
     CandidatePageMode mode = CandidatePageMode::Pinyin;
+    bool hasMoreCandidates = false;
 
     bool select(std::size_t index);
     void clear();

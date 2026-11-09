@@ -70,6 +70,7 @@ void CandidatePage::clear() {
     sessionId = 0;
     displayGeneration = 0;
     mode = CandidatePageMode::Pinyin;
+    hasMoreCandidates = false;
 }
 
 } // namespace modernime::core

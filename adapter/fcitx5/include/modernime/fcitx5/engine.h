@@ -143,6 +143,7 @@ public:
         const auto next =
             std::clamp(current + delta, std::ptrdiff_t{0}, last);
         if (next == current) {
+            if (delta > 0 && page_.hasMoreCandidates) return loadMoreCandidates();
             return true;
         }
         page_.cursor = static_cast<std::size_t>(next);
@@ -161,6 +162,7 @@ public:
         const auto next =
             std::clamp(current + delta, std::ptrdiff_t{0}, last);
         if (next == current) {
+            if (delta > 0 && page_.hasMoreCandidates) return loadMoreCandidates();
             return true;
         }
         page_.cursor = page_.pageBoundaries.empty()
@@ -182,6 +184,7 @@ public:
     void refreshPage();
 
 private:
+    bool loadMoreCandidates();
     void clearComposition();
     bool commitCurrent();
     bool commitRawPreedit(std::string_view suffix = {});
@@ -189,7 +192,8 @@ private:
     bool openClipboard();
     bool replaceComposition(std::string nextInput,
                             std::size_t nextCursor);
-    void publishProviderPage(bool adoptRemainingComposition = false);
+    void publishProviderPage(bool adoptRemainingComposition = false,
+                             std::optional<std::size_t> cursor = std::nullopt);
     void updatePreeditCursor();
     void ensurePageBoundaries();
     core::PageBoundary currentPageBoundary() const;

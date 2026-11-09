@@ -80,6 +80,16 @@ public:
         candidateCount_ = count;
         current_.cursor = cursor;
     }
+    void offerMoreCandidates() { current_.hasMoreCandidates = true; }
+    bool loadMoreCandidates() override {
+        if (!current_.hasMoreCandidates) return false;
+        const auto count = current_.items.size();
+        for (std::size_t i = count; i < count + 4; ++i)
+            current_.items.push_back({"候选" + std::to_string(i + 1), current_.rawInput, i});
+        current_.hasMoreCandidates = false;
+        ++current_.generation;
+        return true;
+    }
 
 private:
     modernime::core::CandidatePage current_;
@@ -643,6 +653,19 @@ int main() {
     assertTrue(variableList->label(5).toString() == "6. ", "label 5 is 6.");
     assertTrue(variableList->label(8).toString() == "9. ", "label 8 is 9.");
     assertTrue(variableList->label(9).toString().empty(), "label 9 is out of bounds");
+
+    provider.offerMoreCandidates();
+    pagedController.refreshPage();
+    while (pagedController.currentPageIndex() + 1 < pagedController.page().pageBoundaries.size())
+        pagedController.movePage(1);
+    pagedList = inputContext.inputPanel().candidateList();
+    assertTrue(pagedList->toPageable()->hasNext(), "native panel exposes continuation at the loaded last page");
+    pagedList->toPageable()->next();
+    assertTrue(pagedController.page().items.size() == 14 && pagedController.page().cursor == 10,
+               "native next-page action requests and focuses the appended batch");
+    pagedList = inputContext.inputPanel().candidateList();
+    pagedList->candidate(pagedList->cursorIndex()).select(&inputContext);
+    assertTrue(inputContext.commits.back() == "候选11", "native panel selects the new candidate identity");
 
     return EXIT_SUCCESS;
 }

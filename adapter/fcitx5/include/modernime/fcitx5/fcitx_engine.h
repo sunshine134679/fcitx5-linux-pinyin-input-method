@@ -119,15 +119,19 @@ class FcitxCandidateList final : public fcitx::CommonCandidateList {
 public:
     FcitxCandidateList(std::weak_ptr<core::SelectionEndpoint> endpoint,
                        std::uint64_t displayGeneration = 0,
-                       std::uint64_t layoutGeneration = 0)
+                       std::uint64_t layoutGeneration = 0,
+                       bool hasMoreCandidates = false)
         : endpoint_(std::move(endpoint)),
           displayGeneration_(displayGeneration),
-          layoutGeneration_(layoutGeneration) {}
+          layoutGeneration_(layoutGeneration), hasMoreCandidates_(hasMoreCandidates) {}
 
     explicit FcitxCandidateList(ModernIMEController *controller)
         : endpoint_(controller ? controller->endpoint() : std::weak_ptr<core::SelectionEndpoint>{}),
           displayGeneration_(controller ? controller->displayGeneration() : 0),
-          layoutGeneration_(controller ? controller->layoutGeneration() : 0) {}
+          layoutGeneration_(controller ? controller->layoutGeneration() : 0),
+          hasMoreCandidates_(controller && controller->page().hasMoreCandidates) {}
+
+    bool hasMoreCandidates() const { return hasMoreCandidates_; }
 
     void setPageBoundaries(std::vector<core::PageBoundary> boundaries,
                            bool notifyController = true) {
@@ -191,7 +195,8 @@ public:
 
     bool hasPrev() const override { return currentPage() > 0; }
     bool hasNext() const override {
-        return currentPage() + 1 < totalPages();
+        return currentPage() + 1 < totalPages() ||
+               (hasMoreCandidates_ && !endpoint_.expired());
     }
     void prev() override {
         if (hasPrev()) {
@@ -261,7 +266,8 @@ public:
     }
     void nextCandidate() override {
         const auto global = globalCursorIndex();
-        if (global >= 0 && global + 1 < totalSize()) {
+        if (global >= 0 && (global + 1 < totalSize() ||
+                           (hasMoreCandidates_ && !endpoint_.expired()))) {
             if (auto ep = endpoint_.lock()) {
                 ep->moveCursor(1);
                 return;
@@ -297,6 +303,7 @@ private:
     std::weak_ptr<core::SelectionEndpoint> endpoint_;
     std::uint64_t displayGeneration_ = 0;
     std::uint64_t layoutGeneration_ = 0;
+    bool hasMoreCandidates_ = false;
     std::vector<core::PageBoundary> boundaries_;
     bool usedNextBefore_ = false;
 };
