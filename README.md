@@ -1,18 +1,26 @@
 # ModernIME
 
-**官方网站：[了解 ModernIME 与下载安装](https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/)** · [GitHub Releases](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest)
+**下载安装：[GitHub Releases](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest)**
 
 ModernIME 是一个面向 Linux 桌面的 Fcitx5 中文输入法，提供全拼/简拼、小鹤与自然码双拼、可配置模糊音、本地用户学习、个人词典、剪贴板、数字金额与符号输入，以及独立 GTK3 设置客户端。X11 使用自绘候选栏，Wayland 通过 Fcitx5 连接应用或桌面候选面板。功能和兼容性的实际验证范围见下文及项目验收记录。
 
-## 快速安装与发行包下载
+## 官网本地预览
 
-官网首屏列出拼音容错、本地习惯学习、专业词库、V 模式与独立设置客户端；输入体验包含紧凑场景示意和真实 GTK3 客户端图库。截图使用同源 1× / 3× 无损 WebP，按屏幕分辨率加载，支持预解码缓存、交叉淡入和 PNG 原图查看。下载区优先提供签名 APT / DNF 软件源的分步复制命令，保留安装包直接下载，并在附近展示“重新登录 → 添加 ModernIME → 开始输入”。手机导航可直接跳转体验、设置与安装；最新正式发布查询失败时保留已核验版本的下载链接。官网和签名 APT/RPM 软件源共用 GitHub Pages，网站更新及版本发布均保留软件源路径。网站源码及维护说明见 [`website/README.md`](website/README.md)。 官网与 Linux 桌面入口统一使用蓝色 MI 图标；桌面图标随离线安装部署到 hicolor 主题，自定义前缀启动器使用绝对图标路径。官网手机首屏精简为三个核心能力，图库保持预解码切换并采用 240 ms 过渡、明确加载反馈和可见错误提示。 首屏支持输入场景轮播、暂停和重播，后台或离屏时停止计时；动效脚本独立加载并响应系统减少动态效果偏好。
+全新官网位于 `website/`，使用原生 HTML、CSS 与 JavaScript，无需安装前端依赖。页面包含实时外观体验、雾紫主题高清客户端截图、功能说明和分平台安装指引。
+
+```bash
+python3 -m http.server 4173 --bind 127.0.0.1 --directory website
+```
+
+打开 <http://localhost:4173>。设计与维护说明见 [官网开发说明](website/开发说明.md)。此入口仅用于本地预览，不改变现有软件源与发布流程。
+
+## 快速安装与发行包下载
 
 ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**，方便后续升级；也提供 **GitHub Releases 安装包直接下载**与 **源码一键构建安装**。Ubuntu / Debian 与 openEuler 的版本、架构和依赖边界见下表，其他发行版请按源码构建说明准备依赖。
 
 ### 方式一：软件源安装与预编译安装包
 
-在[官网下载安装区](https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/#download)选择系统并展开 APT / DNF 安装，可复制三组命令；也可进入 [GitHub Releases 页面](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases) 下载适合您系统架构的安装包。已有脚本安装请先[迁移安装渠道](#install-channel-migration)，避免跨渠道覆盖。
+按下方说明配置对应系统的软件源，或进入 [GitHub Releases 页面](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases) 下载适合您系统架构的安装包。已有脚本安装请先[迁移安装渠道](#install-channel-migration)，避免跨渠道覆盖。
 
 #### 平台与资产兼容矩阵
 
