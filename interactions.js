@@ -241,6 +241,10 @@
     const client = document.querySelector('.client-stage');
     const surface = document.querySelector('.client-scroll-surface');
     const header = document.querySelector('.site-header');
+    const main = document.querySelector('main');
+    const chapters = [...document.querySelectorAll('.page-chapter')].map((element, index) => ({
+      element, sheet: element.querySelector('.chapter-sheet'), surface: element.querySelector('.chapter-surface'), index
+    }));
     const illustrations = [...document.querySelectorAll('.personal-details .detail-art')];
     const compact = matchMedia('(max-width: 800px)');
     const written = new Map();
@@ -250,7 +254,10 @@
 
     function metric(element) {
       let top = 0;
-      for (let node = element; node; node = node.offsetParent) top += node.offsetTop;
+      // Sticky sheets move visually; their original chapter remains the layout anchor.
+      for (let node = element; node; node = node.offsetParent) {
+        if (!node.classList.contains('chapter-sheet')) top += node.offsetTop;
+      }
       return { top, height: element.offsetHeight };
     }
 
@@ -267,17 +274,27 @@
       frame = 0;
       written.forEach((properties, element) => properties.forEach((_, property) => element.style.removeProperty(property)));
       written.clear();
-      document.documentElement.classList.remove('scroll-depth');
+      document.documentElement.classList.remove('scroll-depth', 'chapters-ready');
     }
 
     function render() {
       frame = 0;
       if (preference.matches || document.hidden) return;
       if (needsMeasure) {
+        const viewport = document.documentElement.clientHeight;
+        const headerHeight = header.offsetHeight;
+        document.documentElement.classList.add('chapters-ready');
+        set(main, '--chapter-height', (viewport - headerHeight) + 'px');
+        chapters.forEach(({ element, sheet, surface, index }) => {
+          set(element, '--chapter-order', index + 1);
+          // Tall chapters scroll completely before their last viewport is held.
+          set(sheet, '--chapter-pin', Math.min(headerHeight, viewport - surface.offsetHeight) + 'px');
+        });
         geometry = {
           hero: metric(hero), studio: metric(studio), client: metric(client),
           illustrations: illustrations.map(metric),
-          viewport: document.documentElement.clientHeight,
+          chapters: chapters.map(({ element }) => metric(element)), headerHeight,
+          viewport,
           range: Math.max(1, document.documentElement.scrollHeight - document.documentElement.clientHeight)
         };
         needsMeasure = false;
@@ -288,6 +305,23 @@
       const deg = value => value.toFixed(3) + 'deg';
       document.documentElement.classList.add('scroll-depth');
       set(header, '--reading-progress', clamp(y / geometry.range).toFixed(4));
+
+      // Each new sheet rises over the held final viewport of the preceding chapter.
+      const arrivals = geometry.chapters.map((bounds, index) => index === 0 ? 1 :
+        smooth(clamp((height - (bounds.top - y)) / (height - geometry.headerHeight - 24))));
+      chapters.forEach(({ surface }, index) => {
+        const focused = surface.contains(document.activeElement);
+        const entering = focused ? 0 : 1 - arrivals[index];
+        const leaving = focused ? 0 : (arrivals[index + 1] || 0);
+        const lift = entering * (compact.matches ? 46 : 104);
+        const scale = 1 - entering * (compact.matches ? .055 : .12) - leaving * (compact.matches ? .018 : .045);
+        const radius = entering * (compact.matches ? 26 : 48) + leaving * 24;
+        set(surface, '--chapter-transform', entering < .001 && leaving < .001 ? 'none' : `translate3d(0,${px(lift)},0) scale(${scale.toFixed(5)})`);
+        set(surface, '--chapter-origin', entering > .001 ? '50% 0' : '50% 100%');
+        set(surface, '--chapter-radius', px(radius));
+        set(surface, '--chapter-shadow', (entering * .16).toFixed(3));
+        set(surface, '--chapter-shade', (leaving * .08).toFixed(3));
+      });
 
       const heroStart = Math.max(0, geometry.hero.top - height * .35);
       const departure = clamp((y - heroStart) / (geometry.hero.height + height * .25)) * strength;
@@ -322,16 +356,44 @@
       if (!frame && !preference.matches && !document.hidden) frame = requestAnimationFrame(render);
     }
     function measure() { needsMeasure = true; schedule(); }
+    function anchorTarget(hash) {
+      if (!hash || hash === '#') return main;
+      try { return document.getElementById(decodeURIComponent(hash.slice(1))); }
+      catch { return null; }
+    }
+    function alignAnchor(hash, behavior = 'instant') {
+      const target = anchorTarget(hash);
+      if (!target) return;
+      const inset = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || header.offsetHeight;
+      scrollTo({ top: hash && hash !== '#' ? metric(target).top - inset : 0, behavior });
+    }
+    // Navigate to the original layout position, not the temporary sticky/scale position.
+    document.addEventListener('click', event => {
+      const link = event.target.closest('a[href^="#"]');
+      if (!link || event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const hash = link.getAttribute('href');
+      const target = anchorTarget(hash);
+      if (!target) return;
+      event.preventDefault();
+      if (location.hash !== hash) history.pushState(history.state, '', hash);
+      if (event.detail === 0) {
+        target.setAttribute('tabindex', '-1');
+        target.focus({ preventScroll: true });
+      }
+      alignAnchor(hash, preference.matches ? 'instant' : 'smooth');
+    });
+    window.addEventListener('hashchange', () => alignAnchor(location.hash));
+    window.addEventListener('pageshow', event => {
+      if (!event.persisted && location.hash) requestAnimationFrame(() => alignAnchor(location.hash));
+    });
     window.addEventListener('scroll', schedule, { passive: true });
     window.addEventListener('resize', measure, { passive: true });
     window.addEventListener('pageshow', measure);
-    [studio, client].forEach(element => {
-      element.addEventListener('focusin', schedule);
-      element.addEventListener('focusout', schedule);
-    });
+    main.addEventListener('focusin', schedule);
+    main.addEventListener('focusout', schedule);
     if ('ResizeObserver' in window) {
       const observer = new ResizeObserver(measure);
-      [document.querySelector('main'), hero, studio, client].forEach(element => observer.observe(element));
+      [main, hero, studio, client, ...chapters.map(({ surface }) => surface)].forEach(element => observer.observe(element));
     }
     document.fonts.ready.then(measure);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) measure(); });
