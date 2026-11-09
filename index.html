@@ -21,14 +21,14 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/">
   <link rel="canonical" href="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/">
-  <meta property="og:image" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/assets/client-candidates.png">
+  <meta property="og:image" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/assets/client-v021-candidates-lavender.png">
   <meta property="og:image:alt" content="ModernIME 雾紫主题的真实设置客户端">
   <meta name="twitter:card" content="summary_large_image">
   <title>ModernIME · 让表达，自然发生</title>
   <link rel="icon" href="assets/modernime-icon.png" type="image/png">
-  <link rel="stylesheet" href="styles.css?v=5765d1756ed8">
+  <link rel="stylesheet" href="styles.css?v=8b30fc6e4772">
   <script src="interactions.js?v=b06ceecd3486" defer></script>
-  <script src="app.js?v=f93c69d0b9e5" defer></script>
+  <script src="app.js?v=5e4519489b2d" defer></script>
   <script src="studio.js?v=00f7a6890d16" defer></script>
 </head>
 <body>
@@ -111,7 +111,7 @@
           <div class="studio-bottom"><div class="sample-switch" role="group" aria-label="候选样例"><button type="button" data-sample="double" aria-pressed="true">双字</button><button type="button" data-sample="single" aria-pressed="false">单字</button><button type="button" data-sample="mixed" aria-pressed="false">混合词组</button></div><span id="studio-current-theme">雾紫</span></div>
         </div>
         <form class="studio-controls" aria-label="实时外观设置">
-          <fieldset class="palette-field"><legend>候选配色<span>9 种风格</span></legend><div id="studio-palettes" class="studio-palettes"></div></fieldset>
+          <fieldset class="palette-field"><legend>候选栏配色<span>9 种风格</span></legend><div id="studio-palettes" class="studio-palettes"></div></fieldset>
           <fieldset><legend>轮廓</legend><div class="studio-segmented" role="group" aria-label="候选轮廓"><button type="button" data-shape="rounded" aria-pressed="true">圆润</button><button type="button" data-shape="square" aria-pressed="false">方正</button><button type="button" data-shape="capsule" aria-pressed="false">胶囊</button></div></fieldset>
           <div class="studio-range"><label for="studio-font-size">字号<output id="studio-font-value" for="studio-font-size">20 pt</output></label><input id="studio-font-size" type="range" min="14" max="28" step="1" value="20"><div class="range-ends"><span>14</span><span>28</span></div></div>
           <fieldset><legend>间距</legend><div class="studio-segmented" role="group" aria-label="候选间距"><button type="button" data-spacing="compact" aria-pressed="false">紧凑</button><button type="button" data-spacing="standard" aria-pressed="true">标准</button><button type="button" data-spacing="spacious" aria-pressed="false">宽松</button></div></fieldset>
@@ -140,16 +140,29 @@
     </div></div></div>
     <div class="page-chapter" data-chapter="client"><div class="chapter-sheet"><div class="chapter-surface">
     <section id="client" class="client-section section-space page-width" aria-labelledby="client-title">
-      <div class="section-heading"><div><p class="section-kicker">看得见，也调得顺手</p><h2 id="client-title">好用，应该表里如一。</h2></div><p class="section-description">独立的 GTK3 设置客户端。<br>从按键到外观，把输入调成自己的样子。</p></div>
+      <div class="section-heading"><div><p class="section-kicker">看得见，也调得顺手</p><h2 id="client-title">好用，应该表里如一。</h2></div><p class="section-description">七套界面主题，九套候选配色。<br>分别选择，搭出自己的习惯。</p></div>
       <div class="client-tabs" role="tablist" aria-label="客户端页面">
         <button id="client-tab-candidates" role="tab" aria-selected="true" aria-controls="client-panel" data-client="candidates">候选与外观</button><button id="client-tab-input" role="tab" aria-selected="false" aria-controls="client-panel" tabindex="-1" data-client="input">输入与按键</button><button id="client-tab-learning" role="tab" aria-selected="false" aria-controls="client-panel" tabindex="-1" data-client="learning">智能学习</button>
       </div>
+      <div class="client-theme-picker" role="group" aria-labelledby="client-theme-label">
+        <span id="client-theme-label">换一套界面主题</span>
+        <div class="client-theme-options">
+          <button type="button" data-client-theme="lavender" aria-pressed="true" aria-controls="client-panel" style="--swatch:#7052ad"><i aria-hidden="true"></i>雾紫</button>
+          <button type="button" data-client-theme="blue" aria-pressed="false" aria-controls="client-panel" style="--swatch:#1262ff"><i aria-hidden="true"></i>晴空蓝</button>
+          <button type="button" data-client-theme="jade" aria-pressed="false" aria-controls="client-panel" style="--swatch:#087f73"><i aria-hidden="true"></i>青竹绿</button>
+          <button type="button" data-client-theme="amber" aria-pressed="false" aria-controls="client-panel" style="--swatch:#a65f16"><i aria-hidden="true"></i>暖砂橙</button>
+          <button type="button" data-client-theme="rose" aria-pressed="false" aria-controls="client-panel" style="--swatch:#a83d63"><i aria-hidden="true"></i>玫瑰粉</button>
+          <button type="button" data-client-theme="night" aria-pressed="false" aria-controls="client-panel" style="--swatch:#243449"><i aria-hidden="true"></i>深海夜</button>
+          <button type="button" data-client-theme="contrast" aria-pressed="false" aria-controls="client-panel" style="--swatch:#ffe066"><i aria-hidden="true"></i>高对比</button>
+        </div>
+      </div>
       <div class="client-stage" id="client-panel" role="tabpanel" aria-labelledby="client-tab-candidates">
         <div class="client-annotation annotation-left"><span class="annotation-line"></span><span>每一种偏好，<br>都有它的位置。</span></div>
-        <div class="client-scroll-surface"><button class="screenshot-button" id="open-screenshot" aria-label="放大查看候选与外观客户端截图"><img id="client-screenshot" src="assets/client-candidates.webp" alt="ModernIME 实际客户端：候选与外观，可调整配色、轮廓、字体和间距" width="980" height="720" loading="lazy"><span class="screenshot-expand"><svg class="icon"><use href="#i-expand"/></svg>查看高清图</span></button></div>
+        <div class="client-scroll-surface"><button class="screenshot-button" id="open-screenshot" aria-label="放大查看雾紫主题的候选与外观客户端截图"><img id="client-screenshot" src="assets/client-v021-candidates-lavender.webp" alt="ModernIME 实际客户端：雾紫界面主题，候选与外观页面" width="980" height="720" loading="lazy"><span class="screenshot-expand"><svg class="icon"><use href="#i-expand"/></svg>查看高清图</span></button></div>
         <div class="client-annotation annotation-right"><svg class="icon"><use href="#i-spark"/></svg><span>调整，预览，<br>顺手就保存。</span></div>
       </div>
-      <div class="client-caption"><p id="client-description">九套候选配色，三种轮廓。字号与间距随你调整，预览后再保存。</p><span>本机 v0.2.0 · 雾紫主题实拍</span></div>
+      <div class="client-caption"><p id="client-description">界面主题与候选栏配色独立选择。调整轮廓、字号和间距，即时预览后保存。</p><span id="client-capture-label" role="status" aria-live="polite">雾紫 · 2940 × 2160 实拍</span></div>
+      <p class="client-build-note">展示为本机 v0.2.1 的界面改进版预览；下载安装以正式发布版本为准。</p>
 
     </section>
 
@@ -181,7 +194,7 @@
     </div></div></div>
   </main>
   <footer class="page-width site-footer"><a class="brand" href="#"><img src="assets/modernime-icon.png" width="30" height="30" alt=""><span>ModernIME</span></a><p>为 Linux 桌面的每一次表达。</p><div><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method" target="_blank" rel="noopener">源代码</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/README.md" target="_blank" rel="noopener">文档</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/LICENSE" target="_blank" rel="noopener">开源许可</a></div></footer>
-  <dialog id="screenshot-dialog" aria-label="客户端截图大图"><button class="dialog-close icon-button" aria-label="关闭大图"><svg class="icon"><use href="#i-close"/></svg></button><img src="assets/client-candidates.webp" width="980" height="720" alt="ModernIME 候选与外观客户端截图"><div class="dialog-caption"><span>雾紫主题 · 2940 × 2160 原生截图</span><a id="original-screenshot" href="assets/client-candidates.png" target="_blank" rel="noopener">打开原始高清 PNG</a></div></dialog>
+  <dialog id="screenshot-dialog" aria-label="客户端截图大图"><button class="dialog-close icon-button" aria-label="关闭大图"><svg class="icon"><use href="#i-close"/></svg></button><img src="assets/client-v021-candidates-lavender.webp" width="980" height="720" alt="ModernIME 雾紫主题的候选与外观客户端截图"><div class="dialog-caption"><span id="screenshot-caption">雾紫主题 · 2940 × 2160 原生截图</span><a id="original-screenshot" href="assets/client-v021-candidates-lavender.png" target="_blank" rel="noopener">打开原始高清 PNG</a></div></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
