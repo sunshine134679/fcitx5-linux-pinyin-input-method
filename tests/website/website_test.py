@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check website destinations, assets, and signed repository preservation."""
 import hashlib
+import re
 import xml.etree.ElementTree as ET
 import struct
 import importlib.util
@@ -100,14 +101,18 @@ class WebsiteTests(unittest.TestCase):
         tree = ET.fromstring((ROOT / "website/sitemap.xml").read_text())
         self.assertEqual(tree.find("{*}url/{*}loc").text, base)
         digests = []
+        themes = re.findall(r'data-client-theme="([a-z]+)"', html)
+        self.assertEqual(set(themes), {"blue", "jade", "amber", "rose", "lavender", "night", "contrast"})
         for name in ("candidates", "input", "learning"):
-            data = (ROOT / f"website/assets/client-{name}.png").read_bytes()
-            self.assertEqual(data[:8], bytes.fromhex("89504e470d0a1a0a"))
-            self.assertEqual(struct.unpack(">II", data[16:24]), (2940, 2160))
-            digests.append(hashlib.sha256(data).hexdigest())
-            data = (ROOT / f"website/assets/client-{name}.webp").read_bytes()
-            self.assertEqual(data[8:16], b"WEBPVP8L")
-        self.assertEqual(len(set(digests)), 3)
+            for theme in themes:
+                with self.subTest(page=name, theme=theme):
+                    data = (ROOT / f"website/assets/client-v021-{name}-{theme}.png").read_bytes()
+                    self.assertEqual(data[:8], bytes.fromhex("89504e470d0a1a0a"))
+                    self.assertEqual(struct.unpack(">II", data[16:24]), (2940, 2160))
+                    digests.append(hashlib.sha256(data).hexdigest())
+                    data = (ROOT / f"website/assets/client-v021-{name}-{theme}.webp").read_bytes()
+                    self.assertEqual(data[8:16], b"WEBPVP8L")
+        self.assertEqual(len(set(digests)), 21)
         self.assertIn("/releases/latest", html)
 
     def test_overlay_preserves_every_package_file_and_is_idempotent(self):

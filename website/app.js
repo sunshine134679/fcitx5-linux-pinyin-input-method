@@ -88,25 +88,57 @@ document.querySelector('#hero-replay').addEventListener('click', () => {
 heroChoices.forEach((button, i) => button.setAttribute('aria-pressed', String(i === 0)));
 
 const clientPages = {
-  candidates: { title: '候选与外观', description: '九套候选配色，三种轮廓。字号与间距随你调整，预览后再保存。', alt: 'ModernIME 实际客户端：候选与外观，可调整配色、轮廓、字体和间距' },
+  candidates: { title: '候选与外观', description: '界面主题与候选栏配色独立选择。调整轮廓、字号和间距，即时预览后保存。', alt: 'ModernIME 实际客户端：候选与外观，可调整配色、轮廓、字体和间距' },
   input: { title: '输入与按键', description: '全拼、小鹤与自然码双拼。切换按键和模糊音，都可以按习惯调整。', alt: 'ModernIME 实际客户端：输入与按键，可设置拼音方案、中英文切换与模糊音' },
   learning: { title: '智能学习', description: '候选记忆与上下文学习，由你决定开关。学习记录可以备份后清空。', alt: 'ModernIME 实际客户端：智能学习，展示学习开关和本地记录管理' }
 };
 const screenshot = document.querySelector('#client-screenshot');
 const screenshotDialog = document.querySelector('#screenshot-dialog');
-wireTabs(document.querySelector('.client-tabs'), tab => {
-  const page = clientPages[tab.dataset.client];
-  const src = 'assets/client-' + tab.dataset.client + '.webp';
-  if (window.siteMotion) window.siteMotion.image(screenshot, src, page.alt);
-  else { screenshot.src = src; screenshot.alt = page.alt; }
+// Native captures use the client palettes from commit 35682c2. Candidate colors
+// remain independent: all appearance-page captures keep the lavender candidate bar.
+const clientThemes = {
+  lavender: { name: '雾紫', canvas: '#ece9f3', accent: '#7052ad', ink: '#6c6577', border: '#c7c0d5' },
+  blue: { name: '晴空蓝', canvas: '#eaf0f7', accent: '#1262ff', ink: '#5d697a', border: '#bac6d6' },
+  jade: { name: '青竹绿', canvas: '#e9f0ec', accent: '#087f73', ink: '#606d68', border: '#bdccc5' },
+  amber: { name: '暖砂橙', canvas: '#f0ece5', accent: '#a65f16', ink: '#70665d', border: '#c9c0b3' },
+  rose: { name: '玫瑰粉', canvas: '#f1eaee', accent: '#a83d63', ink: '#71636b', border: '#cdbfc5' },
+  night: { name: '深海夜', canvas: '#1d2c3e', accent: '#296ad8', ink: '#b5c3d5', border: '#43556c' },
+  contrast: { name: '高对比', canvas: '#101010', accent: '#ffe066', ink: '#ffffff', border: '#ededed' }
+};
+const clientSection = document.querySelector('#client');
+let clientPage = 'candidates';
+let clientTheme = 'lavender';
+function updateClientPreview() {
+  const page = clientPages[clientPage];
+  const theme = clientThemes[clientTheme];
+  const src = `assets/client-v021-${clientPage}-${clientTheme}.webp`;
+  const alt = `${page.alt}，${theme.name}界面主题`;
+  if (window.siteMotion) window.siteMotion.image(screenshot, src, alt);
+  else { screenshot.src = src; screenshot.alt = alt; }
+  clientSection.dataset.previewTheme = clientTheme;
+  for (const key of ['canvas', 'accent', 'ink', 'border']) clientSection.style.setProperty('--client-' + key, theme[key]);
+  document.querySelectorAll('.client-theme-options button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.clientTheme === clientTheme)));
   document.querySelector('#client-description').textContent = page.description;
-  document.querySelector('#open-screenshot').setAttribute('aria-label', '高清查看' + page.title + '客户端截图');
+  document.querySelector('#client-capture-label').textContent = `${theme.name} · 2940 × 2160 实拍`;
+  document.querySelector('#open-screenshot').setAttribute('aria-label', `高清查看${theme.name}主题的${page.title}客户端截图`);
+}
+wireTabs(document.querySelector('.client-tabs'), tab => {
+  clientPage = tab.dataset.client;
+  updateClientPreview();
+});
+document.querySelectorAll('.client-theme-options button').forEach(button => {
+  button.addEventListener('click', () => {
+    if (clientTheme === button.dataset.clientTheme) return;
+    clientTheme = button.dataset.clientTheme;
+    updateClientPreview();
+  });
 });
 document.querySelector('#open-screenshot').addEventListener('click', () => {
   const full = screenshotDialog.querySelector('img');
   full.src = screenshot.src;
   full.alt = screenshot.alt;
   document.querySelector('#original-screenshot').href = screenshot.src.replace('.webp', '.png');
+  document.querySelector('#screenshot-caption').textContent = `${clientThemes[clientTheme].name}主题 · ${clientPages[clientPage].title} · 2940 × 2160 原生截图`;
   screenshotDialog.showModal();
   window.siteMotion?.openDialog(screenshotDialog);
   document.body.style.overflow = 'hidden';
