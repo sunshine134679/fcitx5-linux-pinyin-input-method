@@ -450,10 +450,13 @@ std::string buildFallbackCommand(PackageManagerKind manager, PackageOperationKin
 std::vector<std::string> buildRefreshCacheArgv(PackageManagerKind manager,
                                                const std::string &pkexecPath,
                                                const std::string &managerPath) {
+    // A successful refresh must not silently reuse stale metadata from a
+    // repository that failed to synchronize.
     if (manager == PackageManagerKind::Dnf) {
-        return {pkexecPath, managerPath, "makecache", "--refresh"};
+        return {pkexecPath, managerPath, "makecache", "--refresh",
+                "--setopt=*.skip_if_unavailable=False"};
     }
-    return {pkexecPath, managerPath, "update"};
+    return {pkexecPath, managerPath, "update", "--error-on=any"};
 }
 
 std::vector<std::string> buildUpgradeArgv(PackageManagerKind manager,
@@ -472,6 +475,8 @@ std::string formatFailureMessage(const CommandResult &result,
     message += "未完成";
     if (result.state == CommandState::NotStarted) {
         message += "（无法启动系统认证或包管理器）";
+    } else if (result.exitStatus == 126) {
+        message += "（已取消系统授权）";
     } else if (result.exitStatus >= 0) {
         message += "（退出码 " + std::to_string(result.exitStatus) + "）";
     }

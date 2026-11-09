@@ -106,8 +106,8 @@ RenderStyle RenderStyle::fromSettings(const core::ModernIMESettings &settings) {
     style.annotationText.size = std::max(10, settings.candidateFontSize - 6);
     style.clipboardText.size = settings.candidateFontSize;
     style.clipboardSubmitIconText.size = std::max(12, settings.candidateFontSize - 2);
-    if (settings.candidateTheme == core::CandidateTheme::ClassicBlue) return style;
-    style.shadow = {0.0, 0.0, 0.0, 0.10};
+    if (settings.candidateTheme != core::CandidateTheme::ClassicBlue)
+        style.shadow = {0.0, 0.0, 0.0, 0.10};
     if (settings.candidateTheme == core::CandidateTheme::Dark) {
         style.panel = {0.12, 0.13, 0.14, 1.0};
         style.border = {0.29, 0.30, 0.31, 1.0};
@@ -118,7 +118,7 @@ RenderStyle RenderStyle::fromSettings(const core::ModernIMESettings &settings) {
         style.selectedAnnotation = {0.28, 0.29, 0.30, 1.0};
         style.clipboardSeparator = {0.25, 0.26, 0.27, 1.0};
         style.clipboardSubmitBackground = {0.77, 0.78, 0.79, 1.0};
-    } else {
+    } else if (settings.candidateTheme == core::CandidateTheme::Light) {
         style.panel = {1.0, 1.0, 1.0, 0.99};
         style.border = {0.86, 0.86, 0.86, 1.0};
         style.selected = {0.17, 0.17, 0.17, 1.0};
@@ -129,6 +129,40 @@ RenderStyle RenderStyle::fromSettings(const core::ModernIMESettings &settings) {
         style.clipboardSeparator = {0.90, 0.90, 0.90, 1.0};
         style.clipboardSubmitBackground = {0.29, 0.29, 0.29, 1.0};
     }
+    const auto color = [](unsigned int hex) -> Color {
+        return {((hex >> 16) & 255) / 255.0, ((hex >> 8) & 255) / 255.0,
+                (hex & 255) / 255.0, 1.0};
+    };
+    const auto palette = [&](unsigned int panel, unsigned int ink, unsigned int accent,
+                             unsigned int selectedInk, unsigned int muted, unsigned int border) {
+        style.panel = color(panel); style.text = color(ink); style.selected = color(accent);
+        style.selectedText = style.selectedAnnotation = color(selectedInk);
+        style.preedit = style.annotation = color(muted); style.border = color(border);
+        style.clipboardSeparator = style.border;
+        // The clipboard submit mark uses selectedText, so keep its surface in
+        // the same contrast range as the selected candidate.
+        style.clipboardSubmitBackground = style.selected;
+    };
+    switch (settings.candidateTheme) {
+    case core::CandidateTheme::Jade: palette(0xf2faf6, 0x163c31, 0x087f63, 0xffffff, 0x527469, 0xc2ddcf); break;
+    case core::CandidateTheme::Amber: palette(0xfff8ed, 0x3c2b1b, 0xa65f16, 0xffffff, 0x7c654d, 0xe4cdaa); break;
+    case core::CandidateTheme::Rose: palette(0xfff4f7, 0x452634, 0xa83d63, 0xffffff, 0x81586b, 0xe7c4d0); break;
+    case core::CandidateTheme::Lavender: palette(0xf7f3ff, 0x33284b, 0x7052ad, 0xffffff, 0x706080, 0xd9ccec); break;
+    case core::CandidateTheme::Midnight: palette(0x182536, 0xedf4ff, 0x89b9ff, 0x142339, 0xb0c1d8, 0x405570); break;
+    case core::CandidateTheme::HighContrast: palette(0x090909, 0xffffff, 0xffe066, 0x111111, 0xd8d8d8, 0xeeeeee); break;
+    default: break;
+    }
+    if (settings.candidateShape == core::CandidateShape::Square) {
+        style.panelRadius = style.clipboardPanelRadius = 3.0;
+        style.selectedRadius = style.clipboardSelectedRadius = style.clipboardSubmitRadius = 2.0;
+        style.shadow.alpha = 0.0;
+    } else if (settings.candidateShape == core::CandidateShape::Capsule) {
+        style.panelRadius = 28.0;
+        style.selectedRadius = 24.0;
+        style.clipboardPanelRadius = 20.0;
+        style.clipboardSelectedRadius = style.clipboardSubmitRadius = 16.0;
+    }
+    if (settings.candidateTheme == core::CandidateTheme::HighContrast) style.shadow.alpha = 0.0;
     return style;
 }
 

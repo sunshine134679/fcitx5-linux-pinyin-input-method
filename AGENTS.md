@@ -1,5 +1,11 @@
 # ModernIME 开发与维护规范 (Engineering Guidelines)
 
+## 客户端前端设计（用户要求，2026-11-09）
+
+- 后续客户端界面、显示、交互及动画工作先加载 Anthropic 官方 `frontend-design` Skill，再按项目原生 GTK3 技术栈实施。
+- 当前官方入口为 <https://github.com/anthropics/claude-plugins-official/tree/main/plugins/frontend-design>；用户最初提供的 `anthropics/claude-code/plugins/frontend-design` 路径已失效。本机安装位置为 `/home/wsl/.codex/skills/frontend-design/SKILL.md`，其他环境需从官方源获取。
+- 以用户任务和真实内容决定信息层次；主题、浮层、键盘焦点与动画保持一致。尊重系统禁用动画偏好，保持搜索定位、保存/放弃、异步生命周期和用户数据边界。按长期偏好只做受影响的必要验证。
+
 ## 当前用户要求：交付速度与验证范围（2026-11-08）
 
 - 用户明确要求减少过多的防御性测试，并要求后续持续遵守。局部改动仅做增量编译和直接受影响功能的必要验证；已有相关检查通过后立即收口。

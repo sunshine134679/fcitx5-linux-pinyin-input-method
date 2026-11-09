@@ -113,6 +113,39 @@ void testDefaultsAndRoundTrip() {
                "character extraction round-trips");
 }
 
+void testClientThemeRoundTrip() {
+    const auto path = testDirectory() / "settings.conf";
+    {
+        std::ofstream input(path);
+        input << "appearance.client_theme=jade\n";
+    }
+    const auto loaded = modernime::core::SettingsStore::load(path);
+    assertTrue(loaded.diagnostics.empty(), "client theme is a supported setting");
+    assertTrue(loaded.settings.clientTheme == "jade", "client theme loads the selected palette");
+    std::string error;
+    assertTrue(modernime::core::SettingsStore::save(path, loaded.settings, &error),
+               "client theme saves through the settings store");
+    std::ifstream output(path);
+    const std::string saved((std::istreambuf_iterator<char>(output)), {});
+    assertTrue(saved.find("appearance.client_theme=jade") != std::string::npos,
+               "client theme survives save and reload");
+    for (std::size_t i = 0; i < modernime::core::kCandidateThemes.size(); ++i) {
+        auto settings = modernime::core::defaultSettings();
+        settings.clientTheme = modernime::core::kClientThemes[i % modernime::core::kClientThemes.size()].key;
+        settings.candidateTheme = modernime::core::kCandidateThemes[i].value;
+        settings.candidateShape = modernime::core::kCandidateShapes[i % modernime::core::kCandidateShapes.size()].value;
+        assertTrue(modernime::core::SettingsStore::save(path, settings, &error), "appearance preset saves");
+        const auto reloaded = modernime::core::SettingsStore::load(path);
+        assertTrue(reloaded.diagnostics.empty() && reloaded.settings == settings,
+                   "every preset and shape survives real settings serialization");
+    }
+    auto shaped = modernime::core::defaultSettings();
+    const auto originalHash = modernime::core::computeSettingsHash(shaped);
+    shaped.candidateShape = modernime::core::CandidateShape::Capsule;
+    assertTrue(originalHash != modernime::core::computeSettingsHash(shaped),
+               "shape participates in save and runtime application identity");
+}
+
 void testDiagnosticsAndPerKeyFallback() {
     const auto directory = testDirectory();
     const auto path = directory / "settings.conf";
@@ -559,6 +592,7 @@ int main() {
     testOversizedIntegersAreRejectedWithoutWrapping();
     testPaths();
     testDefaultsAndRoundTrip();
+    testClientThemeRoundTrip();
     testDiagnosticsAndPerKeyFallback();
     testFailedSavePreservesExistingTarget();
     testSharedValidationAcceptsOnlyRuntimeToggleKeys();

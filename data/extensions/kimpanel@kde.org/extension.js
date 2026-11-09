@@ -107,7 +107,7 @@ class Kimpanel extends GObject.Object {
         this.fontSignal = this.settings.connect(
             'changed::font',
             () => this.inputpanel.updateFont(this.getTextStyle()));
-        this.appearanceSignals = ['panel-theme', 'candidate-spacing'].map(key =>
+        this.appearanceSignals = ['panel-theme', 'candidate-spacing', 'candidate-shape'].map(key =>
             this.settings.connect(`changed::${key}`, () => this.inputpanel.updateAppearance()));
 
         this.addToShell();

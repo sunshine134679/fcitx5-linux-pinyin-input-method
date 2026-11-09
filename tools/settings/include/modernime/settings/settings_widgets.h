@@ -3,6 +3,7 @@
 #include <gtk/gtk.h>
 
 #include <initializer_list>
+#include <array>
 #include <string_view>
 
 namespace modernime::settings {
@@ -20,6 +21,16 @@ inline constexpr std::string_view kSettingsShortcutButtonClass =
     "modernime-shortcut-btn";
 
 void installSettingsStyles();
+void applySettingsTheme(std::string_view theme);
+GtkWidget *createSettingsChoice();
+void appendSettingsChoice(GtkWidget *choice, std::string_view text);
+void appendSettingsPaletteChoice(GtkWidget *choice, std::string_view text,
+                                 const std::array<GdkRGBA, 3> &colors);
+std::array<GdkRGBA, 3> settingsThemeColors(std::string_view theme);
+int settingsChoiceActive(GtkWidget *choice);
+void setSettingsChoiceActive(GtkWidget *choice, int index);
+enum class SettingsStatusArt { Release, Input };
+GtkWidget *createSettingsStatusArt(SettingsStatusArt kind);
 std::string_view settingsStyles();
 void setAccessibleWidgetText(GtkWidget *widget, std::string_view name,
                              std::string_view description);

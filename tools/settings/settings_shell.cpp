@@ -298,7 +298,9 @@ private:
         static_cast<Impl *>(data)->saveEditedSettings(false);
     }
 
-    static void onEditDefaults(GtkMenuItem *, gpointer data) {
+    static void onEditDefaults(GtkWidget *button, gpointer data) {
+        auto *popover = gtk_widget_get_ancestor(button, GTK_TYPE_POPOVER);
+        if (popover) gtk_popover_popdown(GTK_POPOVER(popover));
         static_cast<Impl *>(data)->editDefaults();
     }
 
@@ -371,6 +373,7 @@ private:
                                     minimumSize.height);
         addStyleClass(windowOwner.get(), kSettingsWindowClass);
         installSettingsStyles();
+        applySettingsTheme(model.settings().clientTheme);
         g_signal_connect(windowOwner.get(), "delete-event",
                          G_CALLBACK(onWindowDelete), this);
         g_signal_connect(windowOwner.get(), "key-press-event",
@@ -402,7 +405,7 @@ private:
         gtk_widget_set_size_request(sidebar, 220, -1);
         gtk_widget_set_hexpand(sidebar, FALSE);
 
-        // Keep the wordmark in the same neutral palette as the application.
+        // The wordmark follows the chosen client accent.
         auto *brandBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         gtk_widget_set_margin_start(brandBox, 16);
         gtk_widget_set_margin_top(brandBox, 16);
@@ -429,6 +432,8 @@ private:
         gtk_box_pack_start(GTK_BOX(sidebar), searchEntry, FALSE, FALSE, 0);
 
         searchPopover = gtk_popover_new(searchEntry);
+        g_object_set_data_full(G_OBJECT(searchPopover), "modernime-settings-target",
+                               g_strdup("settings-search-popover"), g_free);
         // Search suggestions must leave the entry usable for continuous typing.
         gtk_popover_set_modal(GTK_POPOVER(searchPopover), FALSE);
         gtk_popover_set_position(GTK_POPOVER(searchPopover), GTK_POS_RIGHT);
@@ -455,6 +460,7 @@ private:
             auto *button = gtk_button_new();
             addStyleClass(button, "modernime-nav-button");
             gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+            gtk_widget_set_focus_on_click(button, FALSE);
             gtk_widget_set_hexpand(button, TRUE);
             gtk_widget_set_margin_start(button, 6);
             gtk_widget_set_margin_end(button, 6);
@@ -526,7 +532,8 @@ private:
         stack = stackGuard.get();
         addStyleClass(stack, "modernime-page-stack");
         gtk_stack_set_transition_type(GTK_STACK(stack),
-                                      GTK_STACK_TRANSITION_TYPE_NONE);
+                                      GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+        gtk_stack_set_transition_duration(GTK_STACK(stack), 160);
 
         const auto notify = [this](std::string message) {
             onPageMessage(std::move(message));
@@ -599,17 +606,19 @@ private:
     }
 
     void addInputPageMenu() {
-        detail::GtkWidgetGuard menuGuard(gtk_menu_new());
+        detail::GtkWidgetGuard menuGuard(gtk_popover_new(nullptr));
         auto *menu = menuGuard.get();
-        auto *defaults = gtk_menu_item_new_with_label("恢复默认");
+        auto *defaults = gtk_model_button_new();
+        g_object_set(defaults, "text", "恢复默认", nullptr);
+        gtk_container_set_border_width(GTK_CONTAINER(menu), 6);
         gtk_widget_set_tooltip_text(
             defaults, "只修改当前设置草稿，不删除个人词典或学习数据");
         setAccessibleWidgetText(
             defaults, "恢复默认",
             "只修改当前设置草稿，不删除个人词典或学习数据");
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), defaults);
+        gtk_container_add(GTK_CONTAINER(menu), defaults);
         gtk_widget_show(defaults);
-        g_signal_connect(defaults, "activate", G_CALLBACK(onEditDefaults),
+        g_signal_connect(defaults, "clicked", G_CALLBACK(onEditDefaults),
                          this);
 
         detail::GtkWidgetGuard menuButtonGuard(gtk_menu_button_new());
@@ -622,7 +631,8 @@ private:
         g_object_set_data_full(G_OBJECT(menuButton),
                                "modernime-settings-target",
                                g_strdup("input-more"), g_free);
-        gtk_menu_button_set_popup(GTK_MENU_BUTTON(menuButton), menu);
+        gtk_menu_button_set_popover(GTK_MENU_BUTTON(menuButton), menu);
+        menuGuard.release();
         setPageHeaderAction(inputPage->widget(), menuButton);
         prependSettingsFocusChainChild(inputPage->widget(), menuButton);
         menuButtonGuard.release();
@@ -637,8 +647,7 @@ private:
         editState = gtk_label_new(nullptr);
         gtk_label_set_ellipsize(GTK_LABEL(editState), PANGO_ELLIPSIZE_END);
         gtk_label_set_max_width_chars(GTK_LABEL(editState), 32);
-        gtk_label_set_markup(GTK_LABEL(editState),
-                             "<span foreground='#858585'>●</span> 所有设置已保存");
+        gtk_label_set_text(GTK_LABEL(editState), "● 所有设置已保存");
         addStyleClass(editState, "modernime-status");
         gtk_widget_set_halign(editState, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(bar), editState, FALSE, FALSE, 0);
@@ -703,6 +712,7 @@ private:
             const auto &entry = results[index];
             auto *button = gtk_button_new();
             gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+            gtk_widget_set_focus_on_click(button, FALSE);
             auto *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
             auto *title = gtk_label_new(std::string(entry.title).c_str());
             gtk_widget_set_halign(title, GTK_ALIGN_START);
@@ -774,6 +784,7 @@ private:
     }
 
     void updateActionState() {
+        applySettingsTheme(model.settings().clientTheme);
         const auto validation = model.validation();
         const bool canSave = model.dirty() && validation.valid && !actionBusy;
         gtk_widget_set_sensitive(saveButton, canSave);
@@ -787,16 +798,13 @@ private:
             const auto message = validation.issues.empty()
                                      ? std::string("当前设置无法保存")
                                      : validation.issues.front().message;
-            const std::string markup =
-                "<span foreground='#9d3434'>●</span> " + message;
-            gtk_label_set_markup(GTK_LABEL(editState), markup.c_str());
+            const std::string status = "● " + message;
+            gtk_label_set_text(GTK_LABEL(editState), status.c_str());
         } else if (model.dirty()) {
             addStyleClass(editState, "modernime-status-dirty");
-            gtk_label_set_markup(GTK_LABEL(editState),
-                                 "<span foreground='#292929'>●</span> 有未保存的修改");
+            gtk_label_set_text(GTK_LABEL(editState), "● 有未保存的修改");
         } else {
-            gtk_label_set_markup(GTK_LABEL(editState),
-                                 "<span foreground='#858585'>●</span> 所有设置已保存");
+            gtk_label_set_text(GTK_LABEL(editState), "● 所有设置已保存");
         }
     }
 

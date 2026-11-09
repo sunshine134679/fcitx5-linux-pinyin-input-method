@@ -133,6 +133,9 @@ ModernIMESettings defaultSettings() { return {}; }
 
 SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     SettingsValidationResult result;
+    if (std::none_of(kClientThemes.begin(), kClientThemes.end(), [&](const auto &option) { return option.key == settings.clientTheme; })) {
+        result.issues.push_back({"appearance.client_theme", "请选择支持的客户端主题"});
+    }
     if (!validToggleKey(settings.toggleKey)) {
         result.issues.push_back(
             {"input.toggle_key",
@@ -152,7 +155,9 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     if (!validCandidateFontFamily(settings.candidateFontFamily))
         result.issues.push_back({"candidate.font_family", "请选择有效的候选字体"});
     if (std::none_of(kCandidateThemes.begin(), kCandidateThemes.end(), [&](const auto &option) { return option.value == settings.candidateTheme; }))
-        result.issues.push_back({"candidate.theme", "请选择浅色、深色或经典蓝配色"});
+        result.issues.push_back({"candidate.theme", "请选择支持的候选配色"});
+    if (std::none_of(kCandidateShapes.begin(), kCandidateShapes.end(), [&](const auto &option) { return option.value == settings.candidateShape; }))
+        result.issues.push_back({"candidate.shape", "请选择圆润、方正或胶囊轮廓"});
     if (std::none_of(kCandidateSpacings.begin(), kCandidateSpacings.end(), [&](const auto &option) { return option.value == settings.candidateSpacing; }))
         result.issues.push_back({"candidate.spacing", "请选择紧凑、标准或宽松间距"});
     if (!validClipboardTrigger(settings.clipboardTrigger)) {
@@ -172,6 +177,7 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
                                                             : "english")
            << '\n'
            << "input.toggle_key=" << settings.toggleKey << '\n'
+           << "appearance.client_theme=" << settings.clientTheme << '\n'
            << "candidate.page_size=" << settings.candidatePageSize << '\n'
            << "candidate.font_size=" << settings.candidateFontSize << '\n'
            << "candidate.font_family=" << settings.candidateFontFamily << '\n'
@@ -196,6 +202,8 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
            << (settings.characterExtractionEnabled ? "true" : "false") << '\n';
     for (const auto &option : kCandidateThemes)
         if (option.value == settings.candidateTheme) output << "candidate.theme=" << option.key << '\n';
+    for (const auto &option : kCandidateShapes)
+        if (option.value == settings.candidateShape) output << "candidate.shape=" << option.key << '\n';
     for (const auto &option : kCandidateSpacings)
         if (option.value == settings.candidateSpacing) output << "candidate.spacing=" << option.key << '\n';
     for (const auto &option : kFuzzyPinyinOptions) {
@@ -350,6 +358,11 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 }
             } else if (fuzzy != kFuzzyPinyinOptions.end()) {
                 parsed = parseBoolean(value, result.settings.fuzzyPinyin.*fuzzy->member);
+            } else if (key == "appearance.client_theme") {
+                if (std::any_of(kClientThemes.begin(), kClientThemes.end(), [&](const auto &option) { return option.key == value; })) {
+                    result.settings.clientTheme = value;
+                    parsed = true;
+                }
             } else if (key == "input.enabled") {
                 parsed = parseBoolean(value, result.settings.inputEnabled);
             } else if (key == "input.default_mode") {
@@ -387,6 +400,11 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
             } else if (key == "candidate.theme") {
                 for (const auto &option : kCandidateThemes) if (option.key == value) {
                     result.settings.candidateTheme = option.value;
+                    parsed = true;
+                }
+            } else if (key == "candidate.shape") {
+                for (const auto &option : kCandidateShapes) if (option.key == value) {
+                    result.settings.candidateShape = option.value;
                     parsed = true;
                 }
             } else if (key == "candidate.spacing") {
@@ -521,6 +539,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["input.default_mode"] =
         settings.defaultMode == InputMode::Chinese ? "chinese" : "english";
     knownSettings["input.toggle_key"] = settings.toggleKey;
+    knownSettings["appearance.client_theme"] = settings.clientTheme;
     knownSettings["candidate.page_size"] =
         std::to_string(settings.candidatePageSize);
     knownSettings["candidate.font_size"] =
@@ -528,6 +547,8 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["candidate.font_family"] = settings.candidateFontFamily;
     for (const auto &option : kCandidateThemes)
         if (option.value == settings.candidateTheme) knownSettings["candidate.theme"] = option.key;
+    for (const auto &option : kCandidateShapes)
+        if (option.value == settings.candidateShape) knownSettings["candidate.shape"] = option.key;
     for (const auto &option : kCandidateSpacings)
         if (option.value == settings.candidateSpacing) knownSettings["candidate.spacing"] = option.key;
     knownSettings["candidate.number_selection"] =
@@ -588,13 +609,13 @@ SettingsSaveResult SettingsStore::saveWithResult(
         }
     }
 
-    const std::array<const char *, 25> keyOrder{
+    const std::array<const char *, 27> keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
         "pinyin.scheme",
         "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",
         "pinyin.fuzzy_l_n", "pinyin.fuzzy_en_eng", "pinyin.fuzzy_in_ing",
-        "candidate.page_size", "candidate.font_size",
-        "candidate.font_family", "candidate.theme", "candidate.spacing",
+        "appearance.client_theme", "candidate.page_size", "candidate.font_size",
+        "candidate.font_family", "candidate.theme", "candidate.shape", "candidate.spacing",
         "candidate.number_selection", "candidate.arrow_navigation",
         "candidate.page_navigation", "punctuation.enabled",
         "learning.enabled", "learning.context_enabled",
