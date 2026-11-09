@@ -51,6 +51,8 @@ modernime_enable_warnings(modernime_settings_logic)
 add_library(modernime_settings_gtk STATIC
     settings_choice.cpp
     settings_widgets.cpp
+    settings_motion.cpp
+    settings_disclosure.cpp
     settings_shell.cpp
     settings_window.cpp
     pages/candidates_page.cpp

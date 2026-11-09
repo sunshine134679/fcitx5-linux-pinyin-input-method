@@ -14,6 +14,7 @@
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/runtime_environment.h"
 #include "modernime/settings/settings_model.h"
+#include "modernime/settings/settings_motion.h"
 #include "modernime/settings/settings_shell_state.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
@@ -85,6 +86,18 @@ void clearContainer(GtkWidget *container) {
         gtk_widget_destroy(GTK_WIDGET(item->data));
     }
     g_list_free(children);
+}
+
+GtkWidget *findSettingsTarget(GtkWidget *widget, std::string_view target) {
+    const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
+    if (id && target == id) return widget;
+    if (!GTK_IS_CONTAINER(widget)) return nullptr;
+    auto *children = gtk_container_get_children(GTK_CONTAINER(widget));
+    GtkWidget *found = nullptr;
+    for (auto *item = children; item && !found; item = item->next)
+        found = findSettingsTarget(GTK_WIDGET(item->data), target);
+    g_list_free(children);
+    return found;
 }
 
 struct OverviewTask final {
@@ -193,6 +206,7 @@ public:
     }
 
     ~Impl() {
+        motion.reset();
         if (taskStatusTimeout != 0) g_source_remove(taskStatusTimeout);
     }
 
@@ -207,6 +221,7 @@ public:
     }
 
     void show(SettingsPageId page, std::string_view target) {
+        if (motion) { motion->finishTheme(); motion->cancelHint(); }
         const auto &definition = pageDefinition(page);
         gtk_stack_set_visible_child_name(GTK_STACK(stack),
                                          std::string(definition.name).c_str());
@@ -240,7 +255,12 @@ public:
         }
 
         if (!target.empty()) {
-            focusPageTarget(page, target);
+            const bool focused = focusPageTarget(page, target);
+            if (motion) {
+                auto *control = focused ? gtk_window_get_focus(GTK_WINDOW(windowOwner.get()))
+                    : findSettingsTarget(gtk_stack_get_visible_child(GTK_STACK(stack)), target);
+                motion->hintFocus(control);
+            }
         }
     }
 
@@ -255,11 +275,13 @@ public:
         }
         gtk_label_set_text(GTK_LABEL(taskStatus), compact.c_str());
         gtk_widget_set_tooltip_text(taskStatus, std::string(message).c_str());
+        if (motion) motion->showMessage();
         if (message.empty()) return;
         taskStatusTimeout = g_timeout_add(5000, +[](gpointer data) -> gboolean {
             auto &owner = *static_cast<Impl *>(data);
             owner.taskStatusTimeout = 0;
-            gtk_label_set_text(GTK_LABEL(owner.taskStatus), "");
+            if (owner.motion) owner.motion->hideMessage();
+            else gtk_label_set_text(GTK_LABEL(owner.taskStatus), "");
             gtk_widget_set_tooltip_text(owner.taskStatus, nullptr);
             return G_SOURCE_REMOVE;
         }, this);
@@ -392,6 +414,7 @@ private:
         addStyleClass(windowOwner.get(), kSettingsWindowClass);
         installSettingsStyles();
         applySettingsTheme(model.settings().clientTheme);
+        appliedTheme = model.settings().clientTheme;
         g_signal_connect(windowOwner.get(), "delete-event",
                          G_CALLBACK(onWindowDelete), this);
         g_signal_connect(windowOwner.get(), "key-press-event",
@@ -400,7 +423,9 @@ private:
         detail::GtkWidgetGuard rootGuard(
             gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
         auto *root = rootGuard.get();
-        gtk_container_add(GTK_CONTAINER(windowOwner.get()), root);
+        auto *overlay = gtk_overlay_new();
+        gtk_container_add(GTK_CONTAINER(windowOwner.get()), overlay);
+        gtk_container_add(GTK_CONTAINER(overlay), root);
         rootGuard.release();
 
         detail::GtkWidgetGuard bodyGuard(
@@ -412,6 +437,8 @@ private:
         gtk_box_pack_start(GTK_BOX(body), buildSidebar(), FALSE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(body), buildPageStack(), TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), buildBottomBar(), FALSE, FALSE, 0);
+        motion = std::make_unique<SettingsMotion>(windowOwner.get(), overlay, root,
+                                                  navigationBox, editState, taskStatus);
         updateActionState();
     }
 
@@ -474,6 +501,7 @@ private:
                          }), this);
 
         auto *navBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        navigationBox = navBox;
         for (const auto &definition : settingsPageDefinitions()) {
             auto *button = gtk_button_new();
             addStyleClass(button, "modernime-nav-button");
@@ -665,7 +693,9 @@ private:
 
         editState = gtk_label_new(nullptr);
         gtk_label_set_ellipsize(GTK_LABEL(editState), PANGO_ELLIPSIZE_END);
-        gtk_label_set_max_width_chars(GTK_LABEL(editState), 32);
+        gtk_label_set_max_width_chars(GTK_LABEL(editState), 22);
+        gtk_label_set_width_chars(GTK_LABEL(editState), 22);
+        gtk_label_set_xalign(GTK_LABEL(editState), 0);
         gtk_label_set_text(GTK_LABEL(editState), "● 所有设置已保存");
         addStyleClass(editState, "modernime-status");
         gtk_widget_set_halign(editState, GTK_ALIGN_START);
@@ -706,8 +736,11 @@ private:
     void updateNavigation(SettingsPageId selected) {
         for (const auto &[page, button] : navigationButtons) {
             removeStyleClass(button, "modernime-nav-selected");
+            gtk_widget_unset_state_flags(button, GTK_STATE_FLAG_SELECTED);
             if (page == selected) {
+                if (motion) motion->selectNavigation(button);
                 addStyleClass(button, "modernime-nav-selected");
+                gtk_widget_set_state_flags(button, GTK_STATE_FLAG_SELECTED, FALSE);
             }
         }
     }
@@ -810,27 +843,40 @@ private:
     }
 
     void updateActionState() {
-        applySettingsTheme(model.settings().clientTheme);
+        const auto &theme = model.settings().clientTheme;
+        if (theme != appliedTheme) {
+            auto *origin = restoringTheme ? restoreButton : findSettingsTarget(candidatesPage->widget(), "client-theme");
+            if (motion) motion->changeTheme(appliedTheme, theme, origin, restoringTheme ? 300 : 440);
+            else applySettingsTheme(theme);
+            appliedTheme = theme;
+        }
         const auto validation = model.validation();
         const bool canSave = model.dirty() && validation.valid && !actionBusy;
         gtk_widget_set_sensitive(saveButton, canSave);
         gtk_widget_set_sensitive(restoreButton,
                                  model.dirty() && !actionBusy);
 
-        removeStyleClass(editState, "modernime-status-dirty");
-        removeStyleClass(editState, "modernime-status-error");
+        std::string stateClass;
+        std::string status;
         if (!validation.valid) {
-            addStyleClass(editState, "modernime-status-error");
+            stateClass = "modernime-status-error";
             const auto message = validation.issues.empty()
                                      ? std::string("当前设置无法保存")
                                      : validation.issues.front().message;
-            const std::string status = "● " + message;
-            gtk_label_set_text(GTK_LABEL(editState), status.c_str());
+            status = "! " + message;
         } else if (model.dirty()) {
-            addStyleClass(editState, "modernime-status-dirty");
-            gtk_label_set_text(GTK_LABEL(editState), "● 有未保存的修改");
+            stateClass = "modernime-status-dirty";
+            status = "● 有未保存的修改";
         } else {
-            gtk_label_set_text(GTK_LABEL(editState), "● 所有设置已保存");
+            status = savedFeedback ? "✓ 所有设置已保存" : "● 所有设置已保存";
+        }
+        if (status != editStatusText) {
+            if (motion && !editStatusText.empty()) motion->transitionStatus(!model.dirty() && savedFeedback ? 180 : 150);
+            removeStyleClass(editState, "modernime-status-dirty");
+            removeStyleClass(editState, "modernime-status-error");
+            if (!stateClass.empty()) addStyleClass(editState, stateClass);
+            gtk_label_set_text(GTK_LABEL(editState), status.c_str());
+            editStatusText = status;
         }
     }
 
@@ -863,6 +909,7 @@ private:
         setActionBusy(true);
         std::string error;
         const bool saved = model.save(&error);
+        if (saved) savedFeedback = true;
         setActionBusy(false);
         if (!saved) {
             presentError(error.empty() ? "设置保存失败，修改仍保留" : error);
@@ -880,10 +927,12 @@ private:
     }
 
     void restoreEdits() {
+        restoringTheme = true;
         model.resetEdits();
         refreshSettingsPages();
         requestOverviewRefresh();
         updateActionState();
+        restoringTheme = false;
         presentError("已恢复未保存的修改");
     }
 
@@ -1072,9 +1121,14 @@ private:
     Environment environment;
 
     bool actionBusy = false;
+    bool restoringTheme = false;
+    bool savedFeedback = false;
+    std::string appliedTheme;
+    std::string editStatusText;
     std::string savedStatusHash;
 
     GtkWidget *stack = nullptr;
+    GtkWidget *navigationBox = nullptr;
     GtkWidget *searchEntry = nullptr;
     GtkWidget *searchPopover = nullptr;
     GtkWidget *searchResults = nullptr;
@@ -1094,6 +1148,7 @@ private:
     std::unique_ptr<UpdatesPage> updatesPage;
     std::unique_ptr<DiagnosticsPage> diagnosticsPage;
     GtkWidgetOwner windowOwner;
+    std::unique_ptr<SettingsMotion> motion;
     OverviewRefreshState overviewRefresh;
     OverviewSetupAction pendingSetupAction = OverviewSetupAction::None;
     OverviewPresentationState overviewPresentation;

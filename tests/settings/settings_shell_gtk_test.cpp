@@ -798,9 +798,8 @@ int main(int argc, char **argv) {
         assert(std::string_view(gtk_button_get_label(GTK_BUTTON(toggleKey))) == "Ctrl+Shift+Space");
         gtk_button_clicked(GTK_BUTTON(save));
 
-        const bool initialInputEnabled = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(inputEnabled));
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled), FALSE);
+        const bool initialInputEnabled = gtk_switch_get_active(GTK_SWITCH(inputEnabled));
+        gtk_switch_set_active(GTK_SWITCH(inputEnabled), FALSE);
         shell.show(modernime::settings::SettingsPageId::Input,
                    "default-mode");
         drainEvents();
@@ -818,7 +817,7 @@ int main(int argc, char **argv) {
             gtk_widget_get_style_context(defaultModeFallback),
             std::string(modernime::settings::kSettingsFocusFallbackClass)
                 .c_str()));
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
+        gtk_switch_set_active(GTK_SWITCH(inputEnabled),
                                      initialInputEnabled);
 
         // Disabling the default-mode control can clear the window's focus;
@@ -958,7 +957,7 @@ int main(int argc, char **argv) {
                    "input-enabled");
         drainEvents();
 
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
+        gtk_switch_set_active(GTK_SWITCH(inputEnabled),
                                      !initialInputEnabled);
         drainEvents();
         assert(gtk_widget_get_sensitive(save));
@@ -977,7 +976,7 @@ int main(int argc, char **argv) {
         assert(!gtk_widget_get_sensitive(raceReload));
         shell.show(modernime::settings::SettingsPageId::Input,
                    "input-enabled");
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
+        gtk_switch_set_active(GTK_SWITCH(inputEnabled),
                                      initialInputEnabled);
         drainEvents();
         assert(gtk_widget_get_sensitive(save));

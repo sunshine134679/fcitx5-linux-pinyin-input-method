@@ -228,7 +228,7 @@ public:
 
     void buildPage() {
         auto *section = createSectionCard(
-            "我的词条", "输入词条即可建议拼音；选中已有词条可修改读音或删除。");
+            "我的词条", "输入词条即可建议拼音；词条修改完成后自动保存。");
         gtk_box_pack_start(GTK_BOX(page), section, TRUE, TRUE, 0);
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);

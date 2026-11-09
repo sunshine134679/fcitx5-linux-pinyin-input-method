@@ -268,6 +268,16 @@ if(MODERNIME_BUILD_SETTINGS)
         TIMEOUT 20
     )
 
+    add_executable(modernime_settings_motion_gtk_tests settings/settings_motion_gtk_test.cpp)
+    target_link_libraries(modernime_settings_motion_gtk_tests PRIVATE modernime_settings_components)
+    add_test(NAME modernime_settings_motion_gtk COMMAND modernime_settings_motion_gtk_tests)
+    set_tests_properties(modernime_settings_motion_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 25
+    )
+
     add_executable(modernime_settings_save_gtk_tests
         settings/settings_save_gtk_test.cpp
     )

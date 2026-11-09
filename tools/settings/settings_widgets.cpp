@@ -13,18 +13,26 @@ namespace {
 
 struct ClientPalette {
     std::string_view key;
-    const char *canvas, *surface, *ink, *muted, *border, *accent, *selectedInk;
+    const char *canvas, *surface, *sidebar, *inset, *control;
+    const char *ink, *muted, *border, *controlBorder, *accent, *selectedInk;
     bool dark;
 };
 const ClientPalette &clientPalette(std::string_view key) {
     static constexpr ClientPalette palettes[]{
-        {"blue", "#f3f6fb", "#ffffff", "#182031", "#657184", "#dce4ef", "#1262ff", "#ffffff", false},
-        {"jade", "#f0f6f4", "#ffffff", "#18352d", "#567167", "#cbded5", "#087f73", "#ffffff", false},
-        {"night", "#162231", "#213246", "#ecf3fc", "#aabbd0", "#4c647e", "#296ad8", "#ffffff", true},
-        {"amber", "#f8f2e8", "#fffcf5", "#3c2b1b", "#79644e", "#dfcdb4", "#a65f16", "#ffffff", false},
-        {"rose", "#faf0f4", "#fffafd", "#452634", "#81586b", "#e4c9d4", "#a83d63", "#ffffff", false},
-        {"lavender", "#f1eef8", "#fdfbff", "#33284b", "#706080", "#d5cbe5", "#7052ad", "#ffffff", false},
-        {"contrast", "#090909", "#141414", "#ffffff", "#dedede", "#bdbdbd", "#ffe066", "#111111", true},
+        {"blue", "#f3f6fb", "#ffffff", "#eaf0f7", "#edf2f8", "#ffffff",
+         "#202938", "#5d697a", "#dde3ec", "#bac6d6", "#1262ff", "#ffffff", false},
+        {"jade", "#f2f6f4", "#fdfefd", "#e9f0ec", "#edf2ef", "#ffffff",
+         "#26322e", "#606d68", "#dbe3df", "#bdccc5", "#087f73", "#ffffff", false},
+        {"night", "#162231", "#243449", "#1d2c3e", "#1b2a3c", "#2c3f56",
+         "#edf3fb", "#b5c3d5", "#43556c", "#637892", "#296ad8", "#ffffff", true},
+        {"amber", "#f7f4ef", "#fffdfa", "#f0ece5", "#f3efe9", "#fffefd",
+         "#332e28", "#70665d", "#e1ddd6", "#c9c0b3", "#a65f16", "#ffffff", false},
+        {"rose", "#f8f3f5", "#fffefe", "#f1eaee", "#f4eef1", "#ffffff",
+         "#332c31", "#71636b", "#e3dce0", "#cdbfc5", "#a83d63", "#ffffff", false},
+        {"lavender", "#f3f1f8", "#fdfcff", "#ece9f3", "#efedf6", "#fefeff",
+         "#302d3c", "#6c6577", "#e0dce8", "#c7c0d5", "#7052ad", "#ffffff", false},
+        {"contrast", "#090909", "#141414", "#101010", "#090909", "#1c1c1c",
+         "#ffffff", "#ededed", "#bdbdbd", "#ededed", "#ffe066", "#111111", true},
     };
     for (const auto &palette : palettes) if (palette.key == key) return palette;
     return palettes[0];
@@ -174,6 +182,12 @@ void setDialogResponseAccessibility(GtkDialog *dialog, int response,
     if (dialog == nullptr) {
         return;
     }
+    // Application-owned prompts use the same theme as their parent window.
+    // Keep native file chooser presentation and behavior under GTK's control.
+    if (!GTK_IS_FILE_CHOOSER(dialog)) {
+        addStyleClass(GTK_WIDGET(dialog), kSettingsWindowClass);
+        addStyleClass(GTK_WIDGET(dialog), "modernime-dialog");
+    }
     auto *button = gtk_dialog_get_widget_for_response(dialog, response);
     if (GTK_IS_BUTTON(button) && !name.empty()) {
         gtk_button_set_label(GTK_BUTTON(button), std::string(name).c_str());
@@ -259,25 +273,32 @@ std::string_view settingsStyles() {
         /* Shared surface hierarchy: canvas, raised cards, interactive controls. */
         @define-color theme_bg_color #f3f6fb;
         @define-color theme_base_color #ffffff;
-        @define-color theme_fg_color #182031;
-        @define-color insensitive_fg_color #657184;
-        @define-color borders #dce4ef;
+        @define-color theme_fg_color #202938;
+        @define-color insensitive_fg_color #5d697a;
+        @define-color borders #dde3ec;
         @define-color theme_selected_bg_color #1262ff;
         @define-color theme_selected_fg_color #ffffff;
-        @define-color modernime_sidebar_color #eaf0f8;
-        @define-color modernime_control_border #cbd6e5;
+        @define-color modernime_sidebar_color #eaf0f7;
+        @define-color modernime_control_border #bac6d6;
         @define-color modernime_accent_surface #e5eeff;
         @define-color modernime_nav_fg_color #0b55eb;
         @define-color modernime_shadow #203a64;
-        @define-color warning_color #966400;
-        @define-color error_color #c23838;
-        @define-color success_color #168463;
+        @define-color warning_color #805800;
+        @define-color error_color #b83042;
+        @define-color success_color #147452;
         @define-color modernime_hover_color #f7faff;
         @define-color modernime_pressed_color #dce8ff;
-        @define-color modernime_inset_color #edf2fa;
+        @define-color modernime_inset_color #edf2f8;
         @define-color modernime_accent_hover #0957ed;
         @define-color modernime_accent_pressed #084bd0;
         @define-color modernime_muted_control #9aa9bd;
+        @define-color modernime_control_surface #ffffff;
+        @define-color modernime_switch_thumb #ffffff;
+        @define-color modernime_disabled_fg #748195;
+        @define-color modernime_nav_border_color alpha(@theme_selected_bg_color, 0.32);
+        @define-color modernime_nav_marker_color transparent;
+        @define-color modernime_focus_hint_fill alpha(@theme_selected_bg_color, 0.08);
+        @define-color modernime_focus_hint_border alpha(@theme_selected_bg_color, 0.55);
         .modernime-settings {
             background-color: @theme_bg_color;
             color: @theme_fg_color;
@@ -289,7 +310,7 @@ std::string_view settingsStyles() {
         .modernime-sidebar {
             border-right: 1px solid @borders;
             background-color: @modernime_sidebar_color;
-            box-shadow: inset -1px 0 0 alpha(@theme_base_color, 0.65);
+            box-shadow: none;
             padding: 10px 8px;
         }
 
@@ -313,9 +334,9 @@ std::string_view settingsStyles() {
             background-image: none;
             background-color: @theme_base_color;
             border: 1px solid @modernime_control_border;
-            box-shadow: 0 1px 3px alpha(@modernime_shadow, 0.06);
+            box-shadow: none;
             color: @theme_fg_color;
-            padding: 8px 10px;
+            padding: 7px 10px;
             margin-bottom: 6px;
         }
 
@@ -328,40 +349,52 @@ std::string_view settingsStyles() {
             margin: 2px 0;
             border: 1px solid transparent;
             color: @theme_fg_color;
-            transition: background-color 150ms ease, border-color 150ms ease;
+            transition: none;
         }
 
         .modernime-settings .modernime-nav-button:hover {
             background-color: @modernime_hover_color;
             border-color: @borders;
-            box-shadow: 0 1px 3px alpha(@modernime_shadow, 0.06);
+            box-shadow: none;
         }
 
         .modernime-settings .modernime-nav-button:active {
             background-color: @modernime_pressed_color;
-            box-shadow: inset 0 1px 2px alpha(@modernime_shadow, 0.08);
+            box-shadow: none;
         }
 
         .modernime-settings .modernime-nav-button.modernime-nav-selected {
             background-color: @modernime_accent_surface;
-            border-color: alpha(@theme_selected_bg_color, 0.3);
+            border-color: @modernime_nav_border_color;
             background-image: none;
             color: @modernime_nav_fg_color;
             outline-color: @theme_selected_bg_color;
-            box-shadow: inset 0 0 0 1px alpha(@theme_base_color, 0.6),
-                        0 2px 4px alpha(@modernime_shadow, 0.08);
+            box-shadow: inset 3px 0 0 @modernime_nav_marker_color;
             font-weight: 600;
         }
         .modernime-settings .modernime-nav-button.modernime-nav-selected:hover {
             background-color: @modernime_pressed_color;
-            border-color: alpha(@theme_selected_bg_color, 0.4);
+            border-color: @modernime_nav_border_color;
         }
         .modernime-settings .modernime-nav-button.modernime-nav-selected:active {
             background-color: @modernime_pressed_color;
-            box-shadow: inset 0 1px 3px alpha(@modernime_shadow, 0.1);
+            box-shadow: inset 3px 0 0 @modernime_nav_marker_color;
         }
         .modernime-nav-button.modernime-nav-selected * {
             color: @modernime_nav_fg_color;
+        }
+        .modernime-settings .modernime-nav-button,
+        .modernime-settings .modernime-nav-button * {
+            transition: none;
+        }
+        /* The moving selection is painted once by the navigation container. */
+        .modernime-settings .modernime-nav-motion .modernime-nav-button.modernime-nav-selected,
+        .modernime-settings .modernime-nav-motion .modernime-nav-button.modernime-nav-selected:hover,
+        .modernime-settings .modernime-nav-motion .modernime-nav-button.modernime-nav-selected:active {
+            background-color: transparent;
+            background-image: none;
+            border-color: transparent;
+            box-shadow: none;
         }
 
         .modernime-code-block {
@@ -437,7 +470,7 @@ std::string_view settingsStyles() {
         .modernime-update-status { font-size: 13px; color: @insensitive_fg_color; }
         .modernime-diagnostics-card { padding: 18px 22px; }
         .modernime-diagnostics-card .modernime-setting-row { padding: 16px 0; }
-        .modernime-diagnostics-card .modernime-setting-title { font-size: 15px; }
+        .modernime-diagnostics-card .modernime-setting-title { font-size: 14px; }
         .modernime-runtime-summary {
             background-color: transparent;
             border: none;
@@ -465,14 +498,13 @@ std::string_view settingsStyles() {
         }
         .modernime-diagnostics-card .modernime-badge-amber { color: @warning_color; }
         .modernime-diagnostics-card .modernime-badge-red { color: @error_color; }
-        .modernime-diagnostics-card button { padding: 10px 16px; }
+        .modernime-diagnostics-card button { padding: 7px 13px; }
 
         .modernime-section {
             border: 1px solid @borders;
             border-radius: 12px;
             background-color: @theme_base_color;
-            box-shadow: 0 2px 6px alpha(@modernime_shadow, 0.055),
-                        0 1px 2px alpha(@modernime_shadow, 0.04);
+            box-shadow: none;
             padding: 16px 20px;
             margin-bottom: 4px;
         }
@@ -614,7 +646,10 @@ std::string_view settingsStyles() {
         /* Status & Badges */
         .modernime-status {
             border-radius: 6px;
+            color: @insensitive_fg_color;
+            transition: color 150ms ease;
         }
+        .modernime-status label, .modernime-status image { transition: color 150ms ease; }
 
         .modernime-status-banner {
             background-color: @modernime_accent_surface;
@@ -663,39 +698,43 @@ std::string_view settingsStyles() {
         }
 
         .modernime-badge-green {
-            background-color: rgba(34, 197, 94, 0.12);
+            background-color: alpha(@success_color, 0.12);
             color: @success_color;
             font-weight: 600;
             font-size: 12.5px;
             border-radius: 6px;
             padding: 3px 8px;
+            border: 1px solid transparent;
         }
 
         .modernime-badge-amber {
-            background-color: rgba(245, 158, 11, 0.12);
+            background-color: alpha(@warning_color, 0.12);
             color: @warning_color;
             font-weight: 600;
             font-size: 12.5px;
             border-radius: 6px;
             padding: 3px 8px;
+            border: 1px solid transparent;
         }
 
         .modernime-badge-red {
-            background-color: rgba(239, 68, 68, 0.12);
+            background-color: alpha(@error_color, 0.12);
             color: @error_color;
             font-weight: 600;
             font-size: 12.5px;
             border-radius: 6px;
             padding: 3px 8px;
+            border: 1px solid transparent;
         }
 
         .modernime-badge-neutral {
-            background-color: rgba(100, 116, 139, 0.10);
+            background-color: @modernime_inset_color;
             color: @theme_fg_color;
             font-weight: 500;
             font-size: 12.5px;
             border-radius: 6px;
             padding: 3px 8px;
+            border: 1px solid transparent;
         }
 
         .modernime-status-dirty {
@@ -723,7 +762,7 @@ std::string_view settingsStyles() {
         .modernime-bottom-bar {
             border-top: 1px solid @borders;
             background-color: @theme_base_color;
-            box-shadow: 0 -2px 8px alpha(@modernime_shadow, 0.045);
+            box-shadow: none;
             border-radius: 0 0 12px 12px;
             padding: 12px 24px;
         }
@@ -818,24 +857,24 @@ std::string_view settingsStyles() {
             font-family: monospace, DejaVu Sans Mono, Liberation Mono, sans-serif;
             font-size: 13px;
             font-weight: 600;
-            padding: 6px 16px;
+            padding: 7px 13px;
             min-width: 140px;
             border-radius: 8px;
             border: 1px solid @borders;
-            background-color: rgba(128, 128, 128, 0.08);
+            background-color: @modernime_control_surface;
             color: @theme_fg_color;
             transition: all 120ms ease;
         }
 
         .modernime-shortcut-btn:hover {
-            background-color: rgba(128, 128, 128, 0.15);
-            border-color: rgba(128, 128, 128, 0.4);
+            background-color: @modernime_hover_color;
+            border-color: @modernime_control_border;
         }
 
         .modernime-settings .modernime-shortcut-btn.recording {
             border-color: @theme_selected_bg_color;
-            background-color: rgba(59, 130, 246, 0.12);
-            color: @theme_selected_bg_color;
+            background-color: @modernime_accent_surface;
+            color: @modernime_nav_fg_color;
             box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
         }
 
@@ -844,7 +883,7 @@ std::string_view settingsStyles() {
             border: 1px solid @borders;
             border-radius: 10px;
             background-color: @modernime_inset_color;
-            box-shadow: inset 0 1px 3px alpha(@modernime_shadow, 0.06);
+            box-shadow: none;
             padding: 14px 18px;
             margin-bottom: 4px;
         }
@@ -882,11 +921,11 @@ std::string_view settingsStyles() {
         button {
             border-radius: 8px;
             background-image: none;
-            background-color: @theme_base_color;
-            box-shadow: inset 0 1px 0 @theme_base_color,
-                        0 1px 2px alpha(@modernime_shadow, 0.08);
+            background-color: @modernime_control_surface;
+            box-shadow: none;
             border: 1px solid @modernime_control_border;
             color: @theme_fg_color;
+            min-height: 24px;
             padding: 7px 13px;
             transition: background-color 120ms ease, border-color 120ms ease,
                         box-shadow 120ms ease;
@@ -903,8 +942,7 @@ std::string_view settingsStyles() {
             color: @theme_selected_fg_color;
             border-color: @modernime_accent_hover;
             outline-color: @theme_selected_bg_color;
-            box-shadow: inset 0 1px 0 alpha(@theme_base_color, 0.2),
-                        0 2px 4px alpha(@theme_selected_bg_color, 0.22);
+            box-shadow: none;
             font-weight: 600;
         }
 
@@ -922,9 +960,29 @@ std::string_view settingsStyles() {
         .modernime-settings treeview,
         .modernime-settings textview text {
             background-image: none;
-            background-color: @theme_base_color;
+            background-color: @modernime_control_surface;
             color: @theme_fg_color;
+            border-color: @modernime_control_border;
+        }
+        .modernime-settings entry {
+            min-height: 24px;
+            padding: 7px 10px;
+            border: 1px solid @modernime_control_border;
+            border-radius: 8px;
+            box-shadow: none;
+        }
+        .modernime-settings entry:disabled,
+        .modernime-settings spinbutton:disabled,
+        .modernime-settings textview:disabled text {
+            background-color: @modernime_inset_color;
+            color: @modernime_disabled_fg;
             border-color: @borders;
+        }
+        .modernime-settings entry selection,
+        .modernime-settings textview text selection,
+        .modernime-settings treeview:selected {
+            background-color: @theme_selected_bg_color;
+            color: @theme_selected_fg_color;
         }
         .modernime-settings entry:focus,
         .modernime-settings spinbutton:focus {
@@ -937,7 +995,7 @@ std::string_view settingsStyles() {
         }
         .modernime-settings button:active {
             background-color: @modernime_pressed_color;
-            box-shadow: inset 0 1px 3px alpha(@modernime_shadow, 0.12);
+            box-shadow: none;
         }
         .modernime-settings button:focus {
             outline: 2px solid alpha(@theme_selected_bg_color, 0.6);
@@ -950,7 +1008,7 @@ std::string_view settingsStyles() {
         .modernime-settings button.suggested-action:active {
             background-color: @modernime_accent_pressed;
             border-color: @modernime_accent_pressed;
-            box-shadow: inset 0 2px 3px alpha(#103675, 0.25);
+            box-shadow: none;
         }
         .modernime-settings button.destructive-action {
             color: @error_color;
@@ -967,13 +1025,13 @@ std::string_view settingsStyles() {
         .modernime-settings button:disabled {
             background-color: @modernime_inset_color;
             border-color: @borders;
-            color: @modernime_muted_control;
+            color: @modernime_disabled_fg;
             box-shadow: none;
         }
         .modernime-settings button.suggested-action:disabled {
             background-color: @modernime_accent_surface;
             border-color: @modernime_accent_surface;
-            color: @modernime_muted_control;
+            color: @modernime_disabled_fg;
         }
         .modernime-settings button:disabled label { color: inherit; }
         .modernime-settings .modernime-bottom-bar button { min-width: 84px; }
@@ -981,7 +1039,7 @@ std::string_view settingsStyles() {
             background-image: none;
             background-color: @modernime_muted_control;
             border: 1px solid @modernime_muted_control;
-            box-shadow: inset 0 1px 2px alpha(@modernime_shadow, 0.1);
+            box-shadow: none;
             border-radius: 16px;
             min-width: 42px;
             min-height: 24px;
@@ -993,13 +1051,35 @@ std::string_view settingsStyles() {
         }
         .modernime-settings switch slider {
             background-image: none;
-            background-color: #ffffff;
+            background-color: @modernime_switch_thumb;
             border: none;
             border-radius: 50%;
             min-width: 20px;
             min-height: 20px;
             margin: 2px;
             box-shadow: 0 1px 2px alpha(@theme_fg_color, 0.12);
+        }
+        .modernime-settings switch:checked slider { background-color: @theme_selected_fg_color; }
+        .modernime-settings switch:disabled {
+            background-color: @modernime_inset_color;
+            border-color: @modernime_control_border;
+        }
+        .modernime-settings switch:disabled slider {
+            background-color: @modernime_disabled_fg;
+            box-shadow: none;
+        }
+        .modernime-settings switch:focus,
+        .modernime-settings checkbutton:focus check,
+        .modernime-settings radiobutton:focus radio {
+            outline: 2px solid @theme_selected_bg_color;
+            outline-offset: 2px;
+        }
+        .modernime-settings checkbutton check,
+        .modernime-settings radiobutton radio {
+            background-image: none;
+            background-color: @modernime_control_surface;
+            border: 1px solid @modernime_control_border;
+            color: @theme_fg_color;
         }
         .modernime-settings checkbutton check:checked,
         .modernime-settings radiobutton radio:checked {
@@ -1018,18 +1098,38 @@ std::string_view settingsStyles() {
             border-radius: 12px;
             box-shadow: 0 8px 24px alpha(@modernime_shadow, 0.18);
         }
-        popover label, popover modelbutton { color: @theme_fg_color; }
-        popover modelbutton {
+        popover label, popover modelbutton, menu menuitem { color: @theme_fg_color; }
+        popover modelbutton, menu menuitem {
             border-radius: 7px;
-            min-height: 32px;
-            padding: 5px 12px;
+            min-height: 24px;
+            padding: 7px 12px;
         }
-        popover modelbutton:hover, popover modelbutton:focus {
+        popover modelbutton:hover, popover modelbutton:focus,
+        menu menuitem:hover {
             background-color: @modernime_accent_surface;
             color: @modernime_nav_fg_color;
         }
+        popover modelbutton:hover label, popover modelbutton:focus label,
+        menu menuitem:hover label { color: @modernime_nav_fg_color; }
+        popover button:focus, popover modelbutton:focus {
+            outline: 2px solid @theme_selected_bg_color;
+            outline-offset: -2px;
+        }
+        popover button:disabled, popover modelbutton:disabled,
+        popover button:disabled label, popover modelbutton:disabled label,
+        menu menuitem:disabled, menu menuitem:disabled label {
+            color: @modernime_disabled_fg;
+        }
+        popover separator, menu separator { background-color: @borders; }
         popover modelbutton:checked { color: @modernime_nav_fg_color; }
-        popover radio:checked, popover check:checked {
+        popover radio, popover check, menu radio, menu check {
+            background-image: none;
+            background-color: @modernime_control_surface;
+            border: 1px solid @modernime_control_border;
+            color: @theme_fg_color;
+        }
+        popover radio:checked, popover check:checked,
+        menu radio:checked, menu check:checked {
             background-image: none;
             background-color: @theme_selected_bg_color;
             border-color: @theme_selected_bg_color;
@@ -1039,7 +1139,7 @@ std::string_view settingsStyles() {
         .modernime-settings .modernime-choice:checked {
             background-color: @modernime_accent_surface;
             border-color: @theme_selected_bg_color;
-            box-shadow: 0 0 0 3px alpha(@theme_selected_bg_color, 0.10);
+            box-shadow: none;
         }
         .modernime-choice-popover .modernime-palette-option {
             background-image: none;
@@ -1083,8 +1183,27 @@ std::string_view settingsStyles() {
             box-shadow: none;
         }
         .modernime-setting-desc { margin-top: 3px; }
-        .modernime-settings spinbutton { border-radius: 8px; }
-        .modernime-settings spinbutton button { padding: 3px 8px; box-shadow: none; }
+        .modernime-settings spinbutton {
+            min-height: 38px;
+            padding: 0;
+            border: 1px solid @modernime_control_border;
+            border-radius: 8px;
+        }
+        .modernime-settings spinbutton entry {
+            min-height: 24px;
+            padding: 7px 10px;
+            border: none;
+            border-radius: 8px 0 0 8px;
+        }
+        .modernime-settings spinbutton button {
+            min-height: 24px;
+            padding: 7px 8px;
+            border: none;
+            border-left: 1px solid @modernime_control_border;
+            border-radius: 0;
+            box-shadow: none;
+        }
+        .modernime-settings spinbutton button:last-child { border-radius: 0 8px 8px 0; }
         .modernime-settings .modernime-badge-code,
         .modernime-settings .modernime-badge-url,
         .modernime-settings .modernime-badge-multiline,
@@ -1175,7 +1294,27 @@ std::string_view settingsStyles() {
         .modernime-settings button.modernime-source-link drawingarea { color: inherit; }
         .modernime-settings button.modernime-check-button image { margin-right: 6px; }
 
-        /* FontButton's transient window is outside the main window hierarchy. */
+        /* Application prompts and FontButton windows are separate toplevels. */
+        .modernime-dialog headerbar {
+            background-image: none;
+            background-color: @theme_base_color;
+            color: @theme_fg_color;
+            border-bottom: 1px solid @borders;
+            box-shadow: none;
+        }
+        .modernime-dialog .dialog-action-area {
+            padding: 12px;
+        }
+        .modernime-dialog .dim-label { color: @insensitive_fg_color; opacity: 1; }
+        .modernime-settings tooltip, tooltip {
+            background-image: none;
+            background-color: @theme_base_color;
+            color: @theme_fg_color;
+            border: 1px solid @modernime_control_border;
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        tooltip label { color: @theme_fg_color; }
         .modernime-font-dialog { border-radius: 12px; }
         .modernime-font-dialog headerbar {
             background-image: none;
@@ -1190,8 +1329,8 @@ std::string_view settingsStyles() {
         .modernime-font-dialog .modernime-font-chooser { font-size: 12px; }
         .modernime-font-dialog .modernime-font-search {
             font-size: 13px;
-            min-height: 28px;
-            padding: 4px 10px;
+            min-height: 24px;
+            padding: 7px 10px;
             margin-bottom: 6px;
             border-radius: 8px;
         }
@@ -1237,6 +1376,24 @@ std::string_view settingsStyles() {
             background-color: alpha(@error_color, 0.12); color: @error_color;
         }
         .modernime-clipboard-type label, .modernime-clipboard-type image { color: inherit; }
+        /* The reveal composites complete old/new frames; inner CSS transitions
+           would otherwise leave controls halfway between their two palettes. */
+        .modernime-settings.modernime-theme-static,
+        .modernime-settings.modernime-theme-static *,
+        .modernime-settings.modernime-theme-static *:hover,
+        .modernime-settings.modernime-theme-static *:active,
+        .modernime-settings.modernime-theme-static *:checked,
+        .modernime-settings.modernime-theme-static *:focus,
+        .modernime-theme-reveal,
+        .modernime-theme-reveal *,
+        .modernime-settings.modernime-theme-reveal,
+        .modernime-settings.modernime-theme-reveal *,
+        .modernime-settings.modernime-theme-reveal *:hover,
+        .modernime-settings.modernime-theme-reveal *:active,
+        .modernime-settings.modernime-theme-reveal *:checked,
+        .modernime-settings.modernime-theme-reveal *:focus {
+            transition: none;
+        }
     )css";
 }
 
@@ -1277,28 +1434,88 @@ void applySettingsTheme(std::string_view theme) {
     define("borders", palette.border);
     define("theme_selected_bg_color", palette.accent);
     define("theme_selected_fg_color", palette.selectedInk);
-    define("modernime_control_border", palette.border);
-    define("modernime_sidebar_color", "mix(@theme_bg_color, @theme_selected_bg_color, 0.045)");
+    define("modernime_control_border", palette.controlBorder);
+    define("modernime_control_surface", palette.control);
+    define("modernime_sidebar_color", palette.sidebar);
+    define("modernime_inset_color", palette.inset);
     define("modernime_accent_surface", "mix(@theme_base_color, @theme_selected_bg_color, 0.12)");
-    define("modernime_hover_color", "mix(@theme_base_color, @theme_selected_bg_color, 0.06)");
+    define("modernime_hover_color", "mix(@modernime_control_surface, @theme_selected_bg_color, 0.06)");
     define("modernime_pressed_color", "mix(@theme_base_color, @theme_selected_bg_color, 0.18)");
-    define("modernime_inset_color", "mix(@theme_bg_color, @theme_selected_bg_color, 0.04)");
     define("modernime_accent_hover", "shade(@theme_selected_bg_color, 0.92)");
     define("modernime_accent_pressed", "shade(@theme_selected_bg_color, 0.84)");
+    define("modernime_shadow", palette.ink);
+    define("modernime_muted_control", "mix(@modernime_control_border, @insensitive_fg_color, 0.3)");
+    define("modernime_disabled_fg", "mix(@insensitive_fg_color, @theme_base_color, 0.18)");
+    define("modernime_nav_border_color", "alpha(@theme_selected_bg_color, 0.32)");
+    define("modernime_nav_marker_color", "transparent");
+    define("modernime_focus_hint_fill", "alpha(@theme_selected_bg_color, 0.08)");
+    define("modernime_focus_hint_border", "alpha(@theme_selected_bg_color, 0.55)");
     define("modernime_nav_fg_color", palette.dark
         ? "mix(@theme_selected_bg_color, @theme_fg_color, 0.55)" : "@theme_selected_bg_color");
+    define("success_color", "#147452");
+    define("warning_color", "#805800");
+    define("error_color", "#b83042");
     if (palette.dark) {
         define("modernime_shadow", "#070e19");
-        define("modernime_muted_control", "#6d839e");
+        define("modernime_switch_thumb", "#edf3fb");
+        define("modernime_disabled_fg", "#91a2b9");
+        define("modernime_nav_border_color", "#6495e6");
         define("success_color", "#6bd3af");
         define("warning_color", "#efc16b");
         define("error_color", "#ff9399");
     }
     if (theme == "contrast") {
+        define("modernime_accent_surface", "#252525");
+        define("modernime_hover_color", "#303030");
+        define("modernime_pressed_color", "#3c3c3c");
+        define("modernime_accent_hover", "#ffeb99");
+        define("modernime_accent_pressed", "#e6c84f");
+        define("modernime_nav_fg_color", "@theme_selected_bg_color");
+        define("modernime_nav_border_color", "@theme_selected_bg_color");
+        define("modernime_nav_marker_color", "@theme_selected_bg_color");
+        define("modernime_focus_hint_fill", "transparent");
+        define("modernime_focus_hint_border", "@theme_selected_bg_color");
+        define("modernime_muted_control", "#808080");
+        define("modernime_disabled_fg", "#bdbdbd");
+        define("modernime_switch_thumb", "#ffffff");
+        define("success_color", "#72f0bc");
+        define("warning_color", "#ffe066");
+        define("error_color", "#ff9aab");
         css += R"css(
-            .modernime-settings .modernime-section { box-shadow: none; border-color: @borders; }
-            .modernime-settings button:focus, popover button:focus { outline: 2px solid @theme_selected_bg_color; }
+            .modernime-settings .modernime-section,
+            .modernime-settings .modernime-preview-card,
+            popover, popover.background, menu { box-shadow: none; border-color: @borders; }
+            .modernime-settings button:focus,
+            popover button:focus, popover modelbutton:focus { outline: 2px solid @theme_selected_bg_color; }
+            .modernime-settings entry:focus, .modernime-settings spinbutton:focus {
+                box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
+            }
             .modernime-settings .modernime-setting-desc, .modernime-settings .modernime-description { opacity: 1; }
+            .modernime-settings .modernime-status-banner,
+            .modernime-settings button.destructive-action,
+            .modernime-settings .modernime-badge-green,
+            .modernime-settings .modernime-badge-amber,
+            .modernime-settings .modernime-badge-red,
+            .modernime-settings .modernime-badge-neutral,
+            .modernime-settings .modernime-diagnostics-value.modernime-badge-green,
+            .modernime-settings .modernime-diagnostics-value.modernime-badge-amber,
+            .modernime-settings .modernime-diagnostics-value.modernime-badge-red,
+            .modernime-settings .modernime-diagnostics-value.modernime-badge-neutral,
+            .modernime-settings .modernime-badge-code,
+            .modernime-settings .modernime-badge-url,
+            .modernime-settings .modernime-badge-text,
+            .modernime-settings .modernime-badge-multiline {
+                background-color: @modernime_inset_color;
+                border-color: currentColor;
+            }
+            .modernime-settings .modernime-status-banner.success { border-color: @success_color; }
+            .modernime-settings .modernime-status-banner.warning { border-color: @warning_color; }
+            .modernime-settings .modernime-status-banner.error { border-color: @error_color; }
+            .modernime-settings button:disabled,
+            .modernime-settings button.suggested-action:disabled {
+                border-color: @borders;
+                background-color: @modernime_inset_color;
+            }
         )css";
     }
     GError *error = nullptr;

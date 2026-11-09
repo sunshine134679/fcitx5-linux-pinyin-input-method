@@ -119,23 +119,23 @@ int main(int argc, char **argv) {
         assert(enabled != nullptr && save != nullptr);
         assert(waitUntil([window] { return hasLabel(window, "ModernIME 正在运行"); }));
         std::ofstream(slowRemote) << "delay\n";
-        const bool initial = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(enabled));
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), !initial);
+        const bool initial = gtk_switch_get_active(GTK_SWITCH(enabled));
+        gtk_switch_set_active(GTK_SWITCH(enabled), !initial);
         saveWithoutBlocking(save);
         const auto firstHash = modernime::core::computeFileContentHash(paths.settingsFile);
         std::ofstream(paths.runtimeState) << "applied_content_hash=" << firstHash << "\npid=" << getpid() << '\n';
 
         // A second save while the first probe runs must report the second hash.
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), initial);
+        gtk_switch_set_active(GTK_SWITCH(enabled), initial);
         saveWithoutBlocking(save);
         assert(modernime::core::computeFileContentHash(paths.settingsFile) != firstHash);
         assert(waitUntil([window] { return hasLabel(window, "已保存，等待输入法读取"); }));
 
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), !initial);
+        gtk_switch_set_active(GTK_SWITCH(enabled), !initial);
         saveWithoutBlocking(save);
         assert(modernime::core::computeFileContentHash(paths.settingsFile) == firstHash);
         assert(waitUntil([window] { return hasLabel(window, "已保存并应用"); }));
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), true);
+        gtk_switch_set_active(GTK_SWITCH(enabled), true);
         auto *scheme = findWidget(window, [](GtkWidget *widget) {
             const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
             return target && std::string_view(target) == "pinyin.scheme";

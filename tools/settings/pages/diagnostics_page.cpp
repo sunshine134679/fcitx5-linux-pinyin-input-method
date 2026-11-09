@@ -2,6 +2,7 @@
 
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/runtime_controller.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
@@ -294,28 +295,7 @@ private:
         gtk_box_pack_end(GTK_BOX(header), arrow, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(detailsToggle), header);
         auto *revealer = gtk_revealer_new();
-        gtk_revealer_set_transition_type(GTK_REVEALER(revealer),
-                                         GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-        gtk_revealer_set_transition_duration(GTK_REVEALER(revealer), 220);
-        g_signal_connect_object(
-            detailsToggle, "toggled",
-            G_CALLBACK(+[](GtkToggleButton *button, gpointer child) {
-                gboolean animations = TRUE;
-                g_object_get(gtk_widget_get_settings(GTK_WIDGET(button)),
-                             "gtk-enable-animations", &animations, nullptr);
-                gtk_revealer_set_transition_duration(GTK_REVEALER(child),
-                                                     animations ? 220 : 0);
-                gtk_revealer_set_reveal_child(GTK_REVEALER(child),
-                                              gtk_toggle_button_get_active(button));
-            }), revealer, static_cast<GConnectFlags>(0));
-        g_signal_connect_object(
-            detailsToggle, "toggled",
-            G_CALLBACK(+[](GtkToggleButton *button, gpointer image) {
-                gtk_image_set_from_icon_name(
-                    GTK_IMAGE(image), gtk_toggle_button_get_active(button)
-                        ? "pan-down-symbolic" : "go-next-symbolic",
-                    GTK_ICON_SIZE_MENU);
-            }), arrow, static_cast<GConnectFlags>(0));
+        bindSettingsDisclosure(detailsToggle, revealer, arrow);
         auto *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         addStyleClass(content, "modernime-details-content");
         auto *statusRows = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);

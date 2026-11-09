@@ -138,6 +138,59 @@ void openPanelPreferences(GtkButton *, gpointer label) {
     }, status);
 }
 
+double previewMix(double from, double to, double progress) {
+    return from + (to - from) * progress;
+}
+
+ui::Rect previewMix(const ui::Rect &from, const ui::Rect &to, double progress) {
+    return {previewMix(from.x, to.x, progress), previewMix(from.y, to.y, progress),
+            previewMix(from.width, to.width, progress),
+            previewMix(from.height, to.height, progress)};
+}
+
+ui::Color previewMix(const ui::Color &from, const ui::Color &to, double progress) {
+    return {previewMix(from.red, to.red, progress), previewMix(from.green, to.green, progress),
+            previewMix(from.blue, to.blue, progress), previewMix(from.alpha, to.alpha, progress)};
+}
+
+double previewProgress(gint64 elapsed, double duration) {
+    const double remaining = 1.0 - std::clamp(elapsed / duration, 0.0, 1.0);
+    return 1.0 - remaining * remaining * remaining;
+}
+
+// Only the settings preview clips transitioning tail text. All measurements,
+// glyphs, panel and pill drawing still go through the native renderer.
+class PreviewRenderSurface final : public ui::RenderSurface {
+public:
+    PreviewRenderSurface(cairo_t *context, const ui::Rect &clip)
+        : context_(context), surface_(context), clip_(clip) {}
+
+    void roundedRect(const ui::Rect &bounds, double radius, const ui::Color &color,
+                     bool fill) override {
+        surface_.roundedRect(bounds, radius, color, fill);
+    }
+    void shadowRoundedRect(const ui::Rect &bounds, double radius, const ui::Color &color,
+                           double blurRadius) override {
+        surface_.shadowRoundedRect(bounds, radius, color, blurRadius);
+    }
+    ui::TextMetrics textMetrics(std::string_view value, const ui::TextStyle &style) const override {
+        return surface_.textMetrics(value, style);
+    }
+    void text(std::string_view value, double x, double baseline, const ui::TextStyle &style,
+              const ui::Color &color) override {
+        cairo_save(context_);
+        cairo_rectangle(context_, clip_.x, clip_.y, clip_.width, clip_.height);
+        cairo_clip(context_);
+        surface_.text(value, x, baseline, style, color);
+        cairo_restore(context_);
+    }
+
+private:
+    cairo_t *context_;
+    ui::CairoRenderSurface surface_;
+    ui::Rect clip_;
+};
+
 } // namespace
 
 class CandidatesPage::Impl final {
@@ -145,6 +198,14 @@ public:
     Impl(SettingsWindowModel &modelRef, std::function<void()> changedCallback)
         : model(modelRef), changed(std::move(changedCallback)) {
         buildUi();
+    }
+
+    ~Impl() {
+        finishPreviewTransition();
+        if (candidatePreview != nullptr) {
+            g_object_set_data(G_OBJECT(candidatePreview), "modernime-preview-owner", nullptr);
+            g_signal_handlers_disconnect_by_data(candidatePreview, this);
+        }
     }
 
     GtkWidget *widget() const { return page; }
@@ -220,7 +281,7 @@ public:
 private:
     void buildUi() {
         detail::GtkWidgetGuard pageGuard(
-            createPageShell("候选与外观", "调整候选栏的显示方式，不改变候选排序规则"));
+            createPageShell("候选与外观", "调整显示与操作，不改变候选排序"));
         page = pageGuard.get();
 
         buildPreviewCard();
@@ -241,7 +302,7 @@ private:
         gtk_box_pack_start(GTK_BOX(page), previewCard, FALSE, FALSE, 0);
 
         auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        auto *headerLabel = gtk_label_new("外观预览 · 不记录学习");
+        auto *headerLabel = gtk_label_new("候选预览 · 不记录学习");
         addStyleClass(headerLabel, "modernime-preview-header");
         gtk_widget_set_halign(headerLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(header), headerLabel, TRUE, TRUE, 0);
@@ -268,9 +329,36 @@ private:
         gtk_box_pack_start(GTK_BOX(previewCard), candidatePreview, FALSE, FALSE, 0);
         g_signal_connect(candidatePreview, "draw", G_CALLBACK(onPreviewDraw), this);
         g_signal_connect(candidatePreview, "size-allocate",
-                         G_CALLBACK(+[](GtkWidget *, GtkAllocation *, gpointer data) {
-                             static_cast<Impl *>(data)->updateScaleHint();
+                         G_CALLBACK(+[](GtkWidget *, GtkAllocation *allocation, gpointer data) {
+                             auto *self = static_cast<Impl *>(data);
+                             if (self->previewAllocatedWidth != allocation->width) {
+                                 self->previewAllocatedWidth = allocation->width;
+                                 self->finishPreviewTransition();
+                             }
+                             self->updateScaleHint();
                          }), this);
+        g_signal_connect(candidatePreview, "unmap", G_CALLBACK(+[](GtkWidget *, gpointer data) {
+            static_cast<Impl *>(data)->finishPreviewTransition();
+        }), this);
+        g_signal_connect(candidatePreview, "notify::scale-factor",
+                         G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {
+                             static_cast<Impl *>(data)->finishPreviewTransition();
+                         }), this);
+        g_signal_connect(candidatePreview, "destroy", G_CALLBACK(+[](GtkWidget *preview, gpointer data) {
+            auto *self = static_cast<Impl *>(data);
+            self->finishPreviewTransition();
+            g_object_set_data(G_OBJECT(preview), "modernime-preview-owner", nullptr);
+            self->candidatePreview = nullptr;
+        }), this);
+        // The widget owns this settings subscription, so no callback can outlive
+        // the preview. Its data is cleared before the C++ owner is destroyed.
+        g_object_set_data(G_OBJECT(candidatePreview), "modernime-preview-owner", this);
+        g_signal_connect_object(gtk_widget_get_settings(candidatePreview), "notify::gtk-enable-animations",
+            G_CALLBACK(+[](GObject *, GParamSpec *, GtkWidget *preview) {
+                auto *self = static_cast<Impl *>(g_object_get_data(
+                    G_OBJECT(preview), "modernime-preview-owner"));
+                if (self != nullptr && !self->previewAnimationsEnabled()) self->finishPreviewTransition();
+            }), candidatePreview, static_cast<GConnectFlags>(0));
         g_signal_connect(previewExample, "changed", G_CALLBACK(onExampleChanged), this);
         previewSummary = gtk_label_new(nullptr);
         addStyleClass(previewSummary, "modernime-description");
@@ -286,13 +374,12 @@ private:
         gtk_box_pack_start(GTK_BOX(previewCard), previewScaleHint, FALSE, FALSE, 0);
         appearanceActions = gtk_grid_new();
         gtk_grid_set_column_spacing(GTK_GRID(appearanceActions), 12);
-        gtk_widget_set_margin_top(appearanceActions, 6);
+        gtk_widget_set_margin_top(appearanceActions, 4);
         gtk_box_pack_start(GTK_BOX(previewCard), appearanceActions, FALSE, FALSE, 0);
         if (g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0 ||
             g_getenv("WAYLAND_DISPLAY") != nullptr) {
             auto *nativeHint = gtk_label_new(
-                "Wayland 候选由桌面或应用面板显示；此预览用于 ModernIME 自绘候选栏。"
-                "GNOME 面板的字体、配色、轮廓与间距可在面板设置中调整。");
+                "此预览用于自绘候选栏；Wayland 外观由桌面或应用面板管理。");
             addStyleClass(nativeHint, "modernime-description");
             gtk_label_set_xalign(GTK_LABEL(nativeHint), 0.0F);
             gtk_label_set_line_wrap(GTK_LABEL(nativeHint), TRUE);
@@ -309,7 +396,7 @@ private:
         definitionPreview = gtk_label_new("hello · int. 你好；喂");
         addStyleClass(definitionPreview, "modernime-description");
         gtk_widget_set_halign(definitionPreview, GTK_ALIGN_START);
-        gtk_widget_set_margin_top(definitionPreview, 8);
+        gtk_widget_set_margin_top(definitionPreview, 4);
         gtk_widget_set_no_show_all(definitionPreview, TRUE);
         gtk_box_pack_start(GTK_BOX(previewCard), definitionPreview, FALSE, FALSE, 0);
     }
@@ -372,9 +459,11 @@ private:
                 {rgba(palette.panel), rgba(palette.text), rgba(palette.selected)});
         }
         setTarget(candidateTheme, "candidate-theme");
-        setAccessibleWidgetText(candidateTheme, "候选配色", "选择候选栏和剪贴板菜单的配色，立即预览");
+        setAccessibleWidgetText(candidateTheme, "候选栏配色", "选择候选栏和剪贴板菜单的配色，立即预览，不改变界面主题");
         candidateThemeFallback = previewCard;
-        gtk_grid_attach(GTK_GRID(appearanceActions), gtk_label_new("配色"), 0, 0, 1, 1);
+        auto *paletteLabel = gtk_label_new("候选栏配色");
+        gtk_label_set_mnemonic_widget(GTK_LABEL(paletteLabel), candidateTheme);
+        gtk_grid_attach(GTK_GRID(appearanceActions), paletteLabel, 0, 0, 1, 1);
         gtk_grid_attach(GTK_GRID(appearanceActions), candidateTheme, 1, 0, 1, 1);
         candidateShape = createSettingsChoice();
         for (const auto &option : core::kCandidateShapes)
@@ -437,8 +526,16 @@ private:
         for (const auto &option : core::kClientThemes)
             appendSettingsPaletteChoice(clientTheme, option.label, settingsThemeColors(option.key));
         setTarget(clientTheme, "client-theme");
-        setAccessibleWidgetText(clientTheme, "客户端主题", "即时预览客户端配色，保存后记住选择");
-        setPageHeaderAction(page, clientTheme);
+        setAccessibleWidgetText(clientTheme, "界面主题", "即时预览客户端配色，保存后记住选择，不改变候选栏配色");
+        auto *themeControl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        auto *themeLabel = gtk_label_new("界面主题");
+        addStyleClass(themeLabel, "modernime-description");
+        gtk_label_set_mnemonic_widget(GTK_LABEL(themeLabel), clientTheme);
+        gtk_widget_set_valign(themeLabel, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(clientTheme, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(themeControl), themeLabel, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(themeControl), clientTheme, FALSE, FALSE, 0);
+        setPageHeaderAction(page, themeControl);
         g_signal_connect(clientTheme, "changed", G_CALLBACK(+[](GtkWidget *, gpointer data) {
             auto *self = static_cast<Impl *>(data);
             if (self->refreshing) return;
@@ -462,7 +559,24 @@ private:
         const int example = settingsChoiceActive(previewExample);
         const auto &samples = example == 0 ? single : example == 1 ? doubleWords : mixed;
         const auto settings = controlSettings();
-        const int capacity = settings.candidatePageSize;
+        gtk_widget_set_visible(definitionPreview, settings.englishDefinitionEnabled);
+        const bool fontChanged = previewSettings.candidateFontSize != settings.candidateFontSize ||
+            previewSettings.candidateFontFamily != settings.candidateFontFamily;
+        const bool shapeChanged = previewSettings.candidateShape != settings.candidateShape;
+        const bool appearanceChanged = !previewInitialized || fontChanged || shapeChanged ||
+            previewSettings.candidateTheme != settings.candidateTheme ||
+            previewSettings.candidateSpacing != settings.candidateSpacing ||
+            previewSettings.candidatePageSize != settings.candidatePageSize || previewSample != example;
+        if (!appearanceChanged) return;
+
+        const bool animate = previewInitialized && !fontChanged && previewSample == example &&
+            gtk_widget_get_mapped(candidatePreview) && previewAnimationsEnabled();
+        if (previewTick != 0) advancePreview(g_get_monotonic_time());
+        previewFromLayout = displayedLayout;
+        previewFromStyle = displayedStyle;
+        previewFromWidth = displayedCanvasWidth;
+        previewSettings = settings;
+        previewSample = example;
         metrics = ui::CandidateBarMetrics::fromSettings(settings);
         renderStyle = ui::RenderStyle::fromSettings(settings);
         core::CandidatePage candidatePage;
@@ -487,6 +601,16 @@ private:
             previewLayout = ui::CandidateBarLayout::measure(candidatePage, metrics, textWidth);
         }
         cairo_surface_destroy(surface);
+        previewInitialized = true;
+        if (animate) {
+            previewStarted = g_get_monotonic_time();
+            previewDuration = previewFromStyle.panelRadius != renderStyle.panelRadius ||
+                previewFromStyle.selectedRadius != renderStyle.selectedRadius ? 220000 : 180000;
+            if (previewTick == 0)
+                previewTick = gtk_widget_add_tick_callback(candidatePreview, onPreviewTick, this, nullptr);
+        } else {
+            finishPreviewTransition();
+        }
         gtk_widget_set_size_request(candidatePreview, 1, static_cast<int>(std::ceil(metrics.canvasHeight)));
         gtk_label_set_markup(GTK_LABEL(compositionLabel), example == 0
             ? "ni<b>|</b>" : "nihao<b>|</b>");
@@ -496,12 +620,86 @@ private:
             accessibleCandidates += candidate.displayText;
         }
         setAccessibleWidgetText(candidatePreview, "候选栏预览", accessibleCandidates);
-        const auto summary = "长度可容纳 " + std::to_string(capacity) +
-            " 个单字候选 · 当前页 " + std::to_string(previewLayout.candidates.size()) + " 个 · 按词长自动分页";
+        const auto summary = "当前页 " + std::to_string(previewLayout.candidates.size()) +
+            " 个 · 按词长自动分页";
         gtk_label_set_text(GTK_LABEL(previewSummary), summary.c_str());
         updateScaleHint();
         gtk_widget_queue_draw(candidatePreview);
-        gtk_widget_set_visible(definitionPreview, gtk_switch_get_active(GTK_SWITCH(englishDefinition)));
+    }
+
+    bool previewAnimationsEnabled() const {
+        gboolean enabled = FALSE;
+        if (candidatePreview != nullptr)
+            g_object_get(gtk_widget_get_settings(candidatePreview), "gtk-enable-animations", &enabled, nullptr);
+        return enabled;
+    }
+
+    void finishPreviewTransition() {
+        if (previewTick != 0 && candidatePreview != nullptr)
+            gtk_widget_remove_tick_callback(candidatePreview, previewTick);
+        previewTick = 0;
+        displayedLayout = previewLayout;
+        displayedStyle = renderStyle;
+        displayedCanvasWidth = metrics.canvasWidth;
+        if (candidatePreview != nullptr) gtk_widget_queue_draw(candidatePreview);
+    }
+
+    void advancePreview(gint64 now) {
+        const gint64 elapsed = std::max<gint64>(0, now - previewStarted);
+        const double progress = previewProgress(elapsed, 180000.0);
+        const double shapeProgress = previewProgress(elapsed, 220000.0);
+        displayedLayout = previewLayout;
+        displayedLayout.panel = previewMix(previewFromLayout.panel, previewLayout.panel, progress);
+        displayedLayout.selectedPill = previewMix(previewFromLayout.selectedPill,
+                                                  previewLayout.selectedPill, progress);
+        displayedCanvasWidth = previewMix(previewFromWidth, metrics.canvasWidth, progress);
+        if (progress < 1.0) {
+            // The real pagination result stays in previewLayout. Transitional
+            // tail geometry is paint-only and never becomes a candidate page.
+            const auto count = std::max(previewFromLayout.candidates.size(), previewLayout.candidates.size());
+            displayedLayout.candidates.resize(count);
+            for (std::size_t index = 0; index < count; ++index) {
+                const bool hasFrom = index < previewFromLayout.candidates.size();
+                const bool hasTo = index < previewLayout.candidates.size();
+                const auto &candidate = hasTo ? previewLayout.candidates[index]
+                                             : previewFromLayout.candidates[index];
+                auto from = hasFrom ? previewFromLayout.candidates[index].bounds : candidate.bounds;
+                auto to = hasTo ? previewLayout.candidates[index].bounds : candidate.bounds;
+                if (!hasFrom)
+                    from.x = std::max(from.x, previewFromLayout.panel.x + previewFromLayout.panel.width);
+                if (!hasTo)
+                    to.x = std::max(to.x, previewLayout.panel.x + previewLayout.panel.width);
+                displayedLayout.candidates[index] = candidate;
+                displayedLayout.candidates[index].bounds = previewMix(from, to, progress);
+            }
+        }
+        displayedStyle = renderStyle;
+        for (const auto color : {&ui::RenderStyle::shadow, &ui::RenderStyle::panel,
+                                 &ui::RenderStyle::border, &ui::RenderStyle::selected,
+                                 &ui::RenderStyle::text, &ui::RenderStyle::selectedText,
+                                 &ui::RenderStyle::preedit, &ui::RenderStyle::annotation,
+                                 &ui::RenderStyle::selectedAnnotation}) {
+            displayedStyle.*color = previewMix(previewFromStyle.*color, renderStyle.*color, progress);
+        }
+        displayedStyle.panelRadius = previewMix(previewFromStyle.panelRadius,
+                                                 renderStyle.panelRadius, shapeProgress);
+        displayedStyle.selectedRadius = previewMix(previewFromStyle.selectedRadius,
+                                                    renderStyle.selectedRadius, shapeProgress);
+    }
+
+    static gboolean onPreviewTick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+        auto *self = static_cast<Impl *>(data);
+        const auto now = gdk_frame_clock_get_frame_time(clock);
+        if (!self->previewAnimationsEnabled() || now - self->previewStarted >= self->previewDuration) {
+            // GTK removes the current callback after G_SOURCE_REMOVE; clearing
+            // its ID first avoids removing it twice from the finish helper.
+            self->previewTick = 0;
+            self->finishPreviewTransition();
+            return G_SOURCE_REMOVE;
+        }
+        self->advancePreview(now);
+        gtk_widget_queue_draw(widget);
+        return G_SOURCE_CONTINUE;
     }
 
     double previewScale() const {
@@ -521,11 +719,20 @@ private:
 
     static gboolean onPreviewDraw(GtkWidget *, cairo_t *context, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        const double scale = impl->previewScale();
+        const double scale = std::min(1.0, gtk_widget_get_allocated_width(impl->candidatePreview) /
+                                             std::max(1.0, impl->displayedCanvasWidth));
         cairo_save(context);
         cairo_scale(context, scale, scale);
-        ui::CairoRenderSurface surface(context);
-        ui::CandidateBarRenderer::render(surface, impl->previewLayout, impl->renderStyle);
+        if (impl->previewTick != 0) {
+            auto clip = impl->displayedLayout.panel;
+            clip.x += impl->metrics.horizontalPadding;
+            clip.width = std::max(0.0, clip.width - 2.0 * impl->metrics.horizontalPadding);
+            PreviewRenderSurface surface(context, clip);
+            ui::CandidateBarRenderer::render(surface, impl->displayedLayout, impl->displayedStyle);
+        } else {
+            ui::CairoRenderSurface surface(context);
+            ui::CandidateBarRenderer::render(surface, impl->previewLayout, impl->renderStyle);
+        }
         cairo_restore(context);
         return FALSE;
     }
@@ -599,6 +806,19 @@ private:
     ui::CandidateBarMetrics metrics;
     ui::CandidateBarLayout previewLayout;
     ui::RenderStyle renderStyle;
+    ui::CandidateBarLayout displayedLayout;
+    ui::RenderStyle displayedStyle;
+    ui::CandidateBarLayout previewFromLayout;
+    ui::RenderStyle previewFromStyle;
+    core::ModernIMESettings previewSettings;
+    double displayedCanvasWidth = 1.0;
+    double previewFromWidth = 1.0;
+    gint64 previewStarted = 0;
+    gint64 previewDuration = 0;
+    guint previewTick = 0;
+    int previewSample = -1;
+    int previewAllocatedWidth = 0;
+    bool previewInitialized = false;
     GtkWidget *definitionPreview = nullptr;
 
     GtkWidget *candidatePageSize = nullptr;

@@ -3,6 +3,7 @@
 #include "modernime/settings/clipboard_history_model.h"
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_ui_contract.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -128,27 +129,11 @@ public:
                                 "展开或收起剪贴板开关与触发键设置");
         gtk_box_pack_start(GTK_BOX(settingsDisclosure), settingsToggle, FALSE, FALSE, 0);
         settingsRevealer = gtk_revealer_new();
-        gtk_revealer_set_transition_type(GTK_REVEALER(settingsRevealer),
-                                         GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-        gtk_revealer_set_transition_duration(GTK_REVEALER(settingsRevealer), 220);
         auto *settingsSection = createSectionCard("", "");
         gtk_container_add(GTK_CONTAINER(settingsRevealer), settingsSection);
         gtk_box_pack_start(GTK_BOX(settingsDisclosure), settingsRevealer, FALSE, FALSE, 0);
-        g_signal_connect(settingsToggle, "toggled", G_CALLBACK(+[](GtkToggleButton *button, gpointer data) {
-            auto *impl = static_cast<Impl *>(data);
-            const bool expanded = gtk_toggle_button_get_active(button);
-            if (!expanded) {
-                auto *window = impl->parentWindow();
-                auto *focus = window != nullptr ? gtk_window_get_focus(window) : nullptr;
-                if (focus != nullptr && gtk_widget_is_ancestor(focus, impl->settingsRevealer)) {
-                    gtk_widget_grab_focus(GTK_WIDGET(button));
-                }
-            }
-            gtk_image_set_from_icon_name(
-                GTK_IMAGE(gtk_button_get_image(GTK_BUTTON(button))),
-                expanded ? "pan-up-symbolic" : "pan-down-symbolic", GTK_ICON_SIZE_MENU);
-            gtk_revealer_set_reveal_child(GTK_REVEALER(impl->settingsRevealer), expanded);
-        }), this);
+        bindSettingsDisclosure(settingsToggle, settingsRevealer,
+            gtk_button_get_image(GTK_BUTTON(settingsToggle)), true);
 
         clipboardEnabled = gtk_switch_new();
         setAccessibleWidgetText(clipboardEnabled, "启用剪贴板",
@@ -178,7 +163,7 @@ public:
         gtk_box_pack_start(GTK_BOX(settingsSection), clipboardTriggerFallback,
                            FALSE, FALSE, 0);
         auto *historySection = createSectionCard(
-            "剪贴板历史", "最近使用的内容在前。双击记录即可复制，长内容可展开阅读。");
+            "剪贴板历史", "最近内容在前，可双击复制或展开长文本。历史操作完成后无需再保存设置。");
         gtk_box_pack_start(GTK_BOX(page), historySection, TRUE, TRUE, 0);
         auto *historySummary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         historyCount = gtk_label_new("正在读取…");
@@ -444,7 +429,7 @@ public:
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
                 if (control == clipboardEnabled || control == clipboardTrigger) {
-                    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(settingsToggle), TRUE);
+                    setSettingsDisclosureExpanded(settingsToggle, true, false);
                 }
                 return focusWidgetOrFallback(control, fallback);
             }
@@ -761,10 +746,7 @@ private:
         }
 
         auto *previewRevealer = gtk_revealer_new();
-        gtk_revealer_set_transition_type(GTK_REVEALER(previewRevealer),
-                                         GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-        gtk_revealer_set_transition_duration(GTK_REVEALER(previewRevealer), 220);
-        gtk_revealer_set_reveal_child(GTK_REVEALER(previewRevealer), TRUE);
+        setSettingsRevealed(previewRevealer, true, false);
         gtk_container_add(GTK_CONTAINER(previewRevealer), previewLabel);
 
         GtkWidget *expandedBox = nullptr;
@@ -797,9 +779,6 @@ private:
                                            GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
             gtk_widget_set_size_request(expandedBox, -1, 180);
             expandedRevealer = gtk_revealer_new();
-            gtk_revealer_set_transition_type(GTK_REVEALER(expandedRevealer),
-                                             GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-            gtk_revealer_set_transition_duration(GTK_REVEALER(expandedRevealer), 220);
             gtk_container_add(GTK_CONTAINER(expandedRevealer), expandedBox);
 
             struct ToggleData {
@@ -851,11 +830,17 @@ private:
                         gtk_button_set_label(b, "收起");
                         gtk_widget_set_tooltip_text(GTK_WIDGET(b), "收起完整内容预览");
                     } else {
+                        auto *window = gtk_widget_get_toplevel(GTK_WIDGET(b));
+                        auto *focus = GTK_IS_WINDOW(window)
+                            ? gtk_window_get_focus(GTK_WINDOW(window)) : nullptr;
+                        if (focus != nullptr && gtk_widget_is_ancestor(focus, td->expanded)) {
+                            gtk_widget_grab_focus(GTK_WIDGET(b));
+                        }
                         gtk_button_set_label(b, "展开");
                         gtk_widget_set_tooltip_text(GTK_WIDGET(b), "展开查看完整内容");
                     }
-                    gtk_revealer_set_reveal_child(GTK_REVEALER(td->preview), !isExpanded);
-                    gtk_revealer_set_reveal_child(GTK_REVEALER(td->revealer), isExpanded);
+                    setSettingsRevealed(td->preview, !isExpanded);
+                    setSettingsRevealed(td->revealer, isExpanded);
                 }),
                 tdata,
                 [](gpointer d, GClosure *) { delete static_cast<ToggleData *>(d); },

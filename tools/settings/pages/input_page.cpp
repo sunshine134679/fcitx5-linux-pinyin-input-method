@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/input_page.h"
 
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include <gtk/gtk.h>
@@ -189,7 +190,7 @@ public:
             "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
-        inputEnabled = gtk_check_button_new();
+        inputEnabled = gtk_switch_new();
         setTarget(inputEnabled, "input-enabled");
         gtk_box_pack_start(GTK_BOX(section),
                             createSettingRow("启用 ModernIME",
@@ -225,9 +226,14 @@ public:
         addStyleClass(fuzzyExpander, "modernime-fuzzy-expander");
         setAccessibleWidgetText(fuzzyExpander, "模糊音设置",
             "展开后按发音习惯选择需要混用的音，保存后生效。");
+        auto *disclosure = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        auto *revealer = gtk_revealer_new();
         auto *section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-        gtk_container_add(GTK_CONTAINER(fuzzyExpander), section);
-        gtk_box_pack_start(GTK_BOX(schemeSection), fuzzyExpander, FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(revealer), section);
+        gtk_box_pack_start(GTK_BOX(disclosure), fuzzyExpander, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(disclosure), revealer, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(schemeSection), disclosure, FALSE, FALSE, 0);
+        bindSettingsDisclosure(fuzzyExpander, revealer);
         for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
             const auto &option = core::kFuzzyPinyinOptions[i];
             auto *control = gtk_switch_new();
@@ -402,8 +408,8 @@ public:
             return;
         }
         auto settings = impl->model.settings();
-        settings.inputEnabled = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->inputEnabled));
+        settings.inputEnabled = gtk_switch_get_active(
+            GTK_SWITCH(impl->inputEnabled));
         settings.defaultMode = settingsChoiceActive(impl->defaultMode) == 1
                                    ? core::InputMode::English
                                    : core::InputMode::Chinese;
@@ -427,8 +433,7 @@ public:
     void refresh() {
         refreshing = true;
         const auto &settings = model.settings();
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
-                                     settings.inputEnabled);
+        gtk_switch_set_active(GTK_SWITCH(inputEnabled), settings.inputEnabled);
         setSettingsChoiceActive(defaultMode,
                                  settings.defaultMode == core::InputMode::English
                                      ? 1
@@ -487,7 +492,7 @@ public:
         if (target == "pinyin.scheme") return focusWidgetOrFallback(pinyinScheme, nullptr);
         for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
             if (target == core::kFuzzyPinyinOptions[i].key) {
-                gtk_expander_set_expanded(GTK_EXPANDER(fuzzyExpander), TRUE);
+                setSettingsDisclosureExpanded(fuzzyExpander, true, false);
                 return focusWidgetOrFallback(fuzzyControls[i], fuzzyExpander);
             }
         }

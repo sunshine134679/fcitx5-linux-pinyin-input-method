@@ -2,6 +2,7 @@
 
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 #include "modernime/settings/update_controller.h"
 
@@ -30,15 +31,6 @@ void addStyleClass(GtkWidget *widget, std::string_view className) {
 void setTarget(GtkWidget *widget, std::string_view target) {
     g_object_set_data_full(G_OBJECT(widget), "modernime-settings-target",
                            g_strdup(std::string(target).c_str()), g_free);
-}
-
-void revealDetails(GtkToggleButton *button, GtkRevealer *revealer) {
-    gboolean animations = TRUE;
-    g_object_get(gtk_widget_get_settings(GTK_WIDGET(button)),
-                 "gtk-enable-animations", &animations, nullptr);
-    gtk_revealer_set_transition_duration(revealer, animations ? 220 : 0);
-    gtk_revealer_set_reveal_child(revealer,
-                                  gtk_toggle_button_get_active(button));
 }
 
 std::string_view upgradeCommand(const UpdateStatus &status) {
@@ -198,19 +190,19 @@ public:
         if (target == "updates-check" || target == "diagnostics-check-update" ||
             target == "updates-refresh-cache") {
             if (lastStatus.updateAvailable) {
-                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(versionDetails), TRUE);
+                setSettingsDisclosureExpanded(versionDetails, true, false);
                 return focusWidgetOrFallback(recheckButton, versionDetails);
             }
             return focusWidgetOrFallback(checkButton, checkButton);
         }
         if (target == "updates-copy-command") {
-            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(upgradeDetails), TRUE);
+            setSettingsDisclosureExpanded(upgradeDetails, true, false);
             const bool focused = focusWidgetOrFallback(copyCommandButton, upgradeDetails);
             focusCopyWhenReady = focused && busy;
             return focused;
         }
         if (target == "updates-source" || target == "updates-source-jump") {
-            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(versionDetails), TRUE);
+            setSettingsDisclosureExpanded(versionDetails, true, false);
             return focusWidgetOrFallback(sourceJumpButton, sourceJumpButton);
         }
         return false;
@@ -309,21 +301,7 @@ private:
         gtk_box_pack_end(GTK_BOX(header), arrow, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(*expander), header);
         auto *revealer = gtk_revealer_new();
-        gtk_revealer_set_transition_type(GTK_REVEALER(revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-        gtk_revealer_set_transition_duration(GTK_REVEALER(revealer), 220);
-        g_signal_connect_object(
-            *expander, "toggled",
-            G_CALLBACK(+[](GtkToggleButton *button, gpointer child) {
-                revealDetails(button, GTK_REVEALER(child));
-            }), revealer, static_cast<GConnectFlags>(0));
-        g_signal_connect_object(
-            *expander, "toggled",
-            G_CALLBACK(+[](GtkToggleButton *button, gpointer image) {
-                gtk_image_set_from_icon_name(
-                    GTK_IMAGE(image), gtk_toggle_button_get_active(button)
-                        ? "pan-down-symbolic" : "go-next-symbolic",
-                    GTK_ICON_SIZE_MENU);
-            }), arrow, static_cast<GConnectFlags>(0));
+        bindSettingsDisclosure(*expander, revealer, arrow);
         auto *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         addStyleClass(content, "modernime-details-content");
         gtk_container_add(GTK_CONTAINER(revealer), content);
