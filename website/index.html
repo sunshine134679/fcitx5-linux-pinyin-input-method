@@ -3,6 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // A refresh starts a new visit; direct section links and Back keep their meaning.
+    if (performance.getEntriesByType('navigation')[0]?.type === 'reload') {
+      history.scrollRestoration = 'manual';
+      if (location.hash) history.replaceState(history.state, '', location.pathname + location.search);
+      addEventListener('pageshow', () => {
+        scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        requestAnimationFrame(() => { history.scrollRestoration = 'auto'; });
+      }, { once: true });
+    }
+  </script>
   <meta name="theme-color" content="#f8faff">
   <meta name="description" content="ModernIME，为 Linux 桌面打造的中文输入法。全拼与双拼、本地学习、个人词典和精心设计的设置客户端，让每一次表达自然发生。">
   <meta property="og:title" content="ModernIME · 让表达，自然发生">
@@ -47,7 +58,8 @@
       </nav>
     </div>
   </header>
-  <main id="main">
+  <main id="main" class="page-chapters">
+    <div class="page-chapter" data-chapter="intro"><div class="chapter-sheet"><div class="chapter-surface">
     <section class="hero page-width" aria-labelledby="hero-title">
       <div class="hero-copy">
         <p class="hero-intro"><span class="intro-mark">中</span> 为 Linux 而生的中文输入法</p>
@@ -74,6 +86,8 @@
     </section>
     <div class="product-strip page-width"><p>你的 Linux 桌面，<br class="mobile-break">值得顺手的中文输入。</p><div><span>全拼 / 简拼</span><span>小鹤 / 自然码</span><span>X11 / Wayland</span></div></div>
 
+    </div></div></div>
+    <div class="page-chapter" data-chapter="experience"><div class="chapter-sheet"><div class="chapter-surface">
     <section id="experience" class="experience section-space page-width" aria-labelledby="experience-title">
       <div class="section-heading"><div><p class="section-kicker">现在，就调成你喜欢的样子</p><h2 id="experience-title">你的输入法。<br>你的颜色。</h2></div><p class="section-description">点一下配色，拖动字号。<br>每一次调整，都在这里实时发生。</p></div>
       <div id="appearance-studio" class="appearance-studio" data-theme="lavender">
@@ -110,6 +124,8 @@
       <noscript><p>实时外观体验需要启用 JavaScript；下方仍可查看紫色客户端实际截图及安装说明。</p></noscript>
     </section>
 
+    </div></div></div>
+    <div class="page-chapter" data-chapter="personal"><div class="chapter-sheet"><div class="chapter-surface">
     <section class="personal-section" aria-labelledby="personal-title">
       <div class="page-width personal-layout">
         <div class="personal-copy"><p class="section-kicker">越来越合拍，始终属于你</p><h2 id="personal-title">习惯被记住。<br>表达留在本地。</h2><p>常选的词，慢慢成为默契。ModernIME 在本地记录候选选择，也让你亲手管理自己的词语与学习记录。</p><div class="privacy-note"><svg class="icon"><use href="#i-lock"/></svg><span>输入与学习无需云端服务</span></div></div>
@@ -121,6 +137,8 @@
       </div>
     </section>
 
+    </div></div></div>
+    <div class="page-chapter" data-chapter="client"><div class="chapter-sheet"><div class="chapter-surface">
     <section id="client" class="client-section section-space page-width" aria-labelledby="client-title">
       <div class="section-heading"><div><p class="section-kicker">看得见，也调得顺手</p><h2 id="client-title">好用，应该表里如一。</h2></div><p class="section-description">独立的 GTK3 设置客户端。<br>从按键到外观，把输入调成自己的样子。</p></div>
       <div class="client-tabs" role="tablist" aria-label="客户端页面">
@@ -135,6 +153,8 @@
 
     </section>
 
+    </div></div></div>
+    <div class="page-chapter" data-chapter="install"><div class="chapter-sheet"><div class="chapter-surface">
     <section id="install" class="install-section" aria-labelledby="install-title">
       <div class="page-width"><div class="section-heading"><div><p class="section-kicker">下一句，从这里开始</p><h2 id="install-title">把 ModernIME<br>带到你的桌面。</h2></div><div class="install-intro"><p>下载适合你系统的安装包，<br>开始用 ModernIME 写下下一句。</p><a id="download-package" class="button install-download" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest" target="_blank" rel="noopener" aria-describedby="download-destination"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>下载安装包</a><small id="download-destination">前往 GitHub Releases 选择安装包</small></div></div>
         <div class="install-alternatives"><h3>软件源与源码安装</h3><p>软件源安装后，可随系统包管理器持续升级。</p></div>
@@ -147,6 +167,8 @@
       </div>
     </section>
 
+    </div></div></div>
+    <div class="page-chapter" data-chapter="questions"><div class="chapter-sheet"><div class="chapter-surface">
     <section id="questions" class="faq-section section-space page-width" aria-labelledby="faq-title"><div><p class="section-kicker">再多了解一点</p><h2 id="faq-title">你可能还想问。</h2><a class="quiet-link" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/issues" target="_blank" rel="noopener">反馈问题<svg class="icon"><use href="#i-arrow"/></svg></a></div><div class="faq-list">
       <details><summary>我的 Linux 发行版可以用吗？<svg class="icon"><use href="#i-plus"/></svg></summary><div><p>目前预编译 APT 源支持 Ubuntu 24.04 LTS amd64，DNF 源面向 openEuler 24.09 x86_64。openEuler 24.03 SP4 需要按文档配置限定范围的 24.09 EPOL 依赖源。其他系统与 ARM64 等架构可参照源码构建说明准备依赖；不代表每个发行版都已完成验证。</p></div></details>
       <details><summary>X11 和 Wayland 的体验有什么区别？<svg class="icon"><use href="#i-plus"/></svg></summary><div><p>X11 使用 ModernIME 自绘候选栏；Wayland 由 Fcitx5 连接应用或桌面候选面板，因此具体外观与桌面环境有关。GNOME 原生面板可通过项目提供的桌面扩展调整外观，详细配置请查阅项目文档。</p></div></details>
@@ -156,6 +178,7 @@
     </div></section>
 
     <section class="closing page-width"><div class="closing-symbol" aria-hidden="true">文<span class="text-caret"></span></div><p>让工具退后一步。<br>让你的表达，走到前面。</p><a class="button" href="#install">开始你的下一句<svg class="icon"><use href="#i-arrow"/></svg></a></section>
+    </div></div></div>
   </main>
   <footer class="page-width site-footer"><a class="brand" href="#"><img src="assets/modernime-icon.png" width="30" height="30" alt=""><span>ModernIME</span></a><p>为 Linux 桌面的每一次表达。</p><div><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method" target="_blank" rel="noopener">源代码</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/README.md" target="_blank" rel="noopener">文档</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/LICENSE" target="_blank" rel="noopener">开源许可</a></div></footer>
   <dialog id="screenshot-dialog" aria-label="客户端截图大图"><button class="dialog-close icon-button" aria-label="关闭大图"><svg class="icon"><use href="#i-close"/></svg></button><img src="assets/client-candidates.webp" width="980" height="720" alt="ModernIME 候选与外观客户端截图"><div class="dialog-caption"><span>雾紫主题 · 2940 × 2160 原生截图</span><a id="original-screenshot" href="assets/client-candidates.png" target="_blank" rel="noopener">打开原始高清 PNG</a></div></dialog>

@@ -2621,6 +2621,40 @@ h1 {
 }
 
 /* Three scroll scenes, anchored to the browser's own scroll position. */
+.chapter-surface { display: flow-root; }
+@media (prefers-reduced-motion: no-preference) {
+  .chapters-ready .page-chapters { isolation: isolate; background: #e4e9f3; }
+  .chapters-ready .page-chapter { position: relative; z-index: var(--chapter-order); }
+  .chapters-ready .page-chapter:not(:last-child)::after { content: ""; display: block; height: var(--chapter-height); pointer-events: none; }
+  .chapters-ready .page-chapter + .page-chapter { margin-top: calc(-1 * var(--chapter-height)); }
+  .chapters-ready .chapter-sheet { position: sticky; top: var(--chapter-pin,0px); }
+  .chapters-ready .chapter-surface {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: var(--chapter-height);
+    background: var(--chapter-paper,var(--paper));
+    transform: var(--chapter-transform,none);
+    transform-origin: var(--chapter-origin,50% 0);
+    border-radius: var(--chapter-radius,0px);
+    overflow: clip;
+    box-shadow: 0 -18px 60px rgb(34 39 67 / var(--chapter-shadow,0));
+  }
+  .chapters-ready .chapter-surface > * { flex-shrink: 0; }
+  .chapters-ready .chapter-surface::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    border-radius: inherit;
+    background: #23304a;
+    opacity: var(--chapter-shade,0);
+    pointer-events: none;
+  }
+  [data-chapter="personal"] { --chapter-paper: #eef3fa; }
+  [data-chapter="install"] { --chapter-paper: #edf2fc; }
+}
 .client-scroll-surface { min-width: 0; transform-origin: 50% 0; }
 .site-header::after {
   content: "";
