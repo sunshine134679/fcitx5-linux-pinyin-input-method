@@ -1455,6 +1455,68 @@ std::vector<RecalledCandidate> LearningSnapshot::recallCandidates(std::string_vi
     }
     return result;
 }
+std::vector<RecalledCandidate> LearningSnapshot::recallSentenceWords(
+    const std::vector<std::string> &readings, std::int64_t now) const {
+    if (entryCount_ == 0) return {};
+    std::unordered_set<std::string> keys;
+    for (std::size_t r = 0; r < std::min<std::size_t>(16, readings.size()); ++r) {
+        if (readings[r].size() > 256) continue;
+        const auto segmented = PinyinMatchPolicy::segmentPinyin(readings[r]);
+        std::vector<std::string_view> syllables;
+        for (std::size_t begin = 0; begin < segmented.size();) {
+            const auto end = segmented.find('\'', begin);
+            syllables.emplace_back(std::string_view(segmented).substr(begin,
+                end == std::string::npos ? end : end - begin));
+            if (end == std::string::npos) break;
+            begin = end + 1;
+        }
+        // Proper subwords only: the existing recall path owns whole words.
+        for (std::size_t size = 2; size <= 8 && size < syllables.size(); ++size) {
+            for (std::size_t begin = 0; begin + size <= syllables.size(); ++begin) {
+                std::string key;
+                for (auto j = begin; j < begin + size; ++j) key += syllables[j];
+                if (keys.size() < 512) keys.insert(std::move(key));
+            }
+        }
+    }
+    if (keys.empty()) return {};
+    using Entry = std::tuple<std::string, std::string, std::string>;
+    struct Cursor { const std::vector<Entry> *entries; std::size_t offset; const std::string *key; };
+    const auto later = [](const Cursor &a, const Cursor &b) {
+        return (*a.entries)[a.offset] > (*b.entries)[b.offset];
+    };
+    std::priority_queue<Cursor, std::vector<Cursor>, decltype(later)> ranges(later);
+    for (const auto &shard : shards_) if (shard) {
+        const auto &index = shard->ensureRecallIndex().prefixIndex;
+        for (const auto &key : keys) {
+            const auto found = std::lower_bound(index.begin(), index.end(), key,
+                [](const auto &entry, const auto &value) { return std::get<0>(entry) < value; });
+            if (found != index.end() && std::get<0>(*found) == key)
+                ranges.push({&index, static_cast<std::size_t>(found - index.begin()), &key});
+        }
+    }
+    std::vector<RecalledCandidate> result;
+    std::unordered_set<std::string> seen;
+    for (std::size_t scanned = 0; scanned < 256 && !ranges.empty(); ++scanned) {
+        auto cursor = ranges.top(); ranges.pop();
+        const auto &[key, phrase, pinyin] = (*cursor.entries)[cursor.offset];
+        if (seen.insert(candidateOrderKey(phrase, pinyin)).second &&
+            !isRecallableEnglishWord(phrase) && hasPositiveFrequency(phrase, pinyin)) {
+            const auto boost = boostAt(phrase, pinyin, now);
+            if (std::isfinite(boost) && boost >= 1.8)
+                result.push_back({phrase, pinyin, boost, 0.0});
+        }
+        if (++cursor.offset < cursor.entries->size() &&
+            std::get<0>((*cursor.entries)[cursor.offset]) == *cursor.key) ranges.push(cursor);
+    }
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
+        if (a.learningBoost != b.learningBoost) return a.learningBoost > b.learningBoost;
+        return std::tie(a.phrase, a.pinyin) < std::tie(b.phrase, b.pinyin);
+    });
+    if (result.size() > 64) result.resize(64);
+    return result;
+}
+
 std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(std::string_view prefix,
     std::size_t limit, std::int64_t now) const {
     std::vector<RecalledEnglishWord> result;

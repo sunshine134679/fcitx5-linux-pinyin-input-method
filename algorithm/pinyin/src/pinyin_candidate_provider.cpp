@@ -1658,8 +1658,9 @@ private:
         }
         const auto requestNowMs = nowMilliseconds();
         std::optional<ContextDecoder> contextual;
-        if (learningEnabled_ && contextLearningEnabled_ && !contextBefore_.empty())
-            contextual.emplace(*context, contextBefore_);
+        if (learning)
+            contextual.emplace(*context, contextLearningEnabled_ ? contextBefore_ : std::string_view{},
+                               learning.get(), requestNowMs);
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,

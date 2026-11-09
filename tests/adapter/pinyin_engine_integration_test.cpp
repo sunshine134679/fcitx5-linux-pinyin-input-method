@@ -3,6 +3,7 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -127,6 +128,39 @@ void testColdPagingController(const std::filesystem::path &directory) {
     std::cout << "[PASS] controller cold page=" << selected.text << '\n';
 }
 
+void testLearnedSentenceController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "learned-sentence.sqlite3";
+    modernime::pinyin::PinyinProviderOptions options;
+    options.pinyinScheme = modernime::core::PinyinScheme::Xiaohe;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    modernime::core::CommitEvent term;
+    term.text = "云汐引擎";
+    term.fullPinyin = "yun'xi'yin'qing";
+    term.rawKeystrokes = "yyxiybqk";
+    term.consumedInputBytes = term.rawKeystrokes.size();
+    term.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (int i = 0; i < 5; ++i) provider.onCommitEvent(term);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    const auto type = [&] {
+        for (const char c : std::string_view("yyxiybqkhfhcys"))
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    };
+    type();
+    const auto index = indexOf(controller.page(), "云汐引擎很好用");
+    assertTrue(index < std::min<std::size_t>(5, controller.page().items.size()) && controller.select(index),
+               "learned word participates in shuangpin sentence decoding and selection");
+    assertTrue(host.commits.back() == "云汐引擎很好用" && controller.page().rawInput.empty(),
+               "learned sentence commits with raw code consumption");
+    controller.setSensitive(true);
+    type();
+    assertTrue(indexOf(controller.page(), "云汐引擎很好用") == controller.page().items.size(),
+               "sensitive input excludes learned sentence vocabulary");
+    std::cout << "[PASS] learned sentence controller, shuangpin and sensitive input\n";
+}
+
 void testContextModelController(const std::filesystem::path &directory) {
     modernime::pinyin::PinyinDataPaths paths;
     paths.learningStore = directory / "context-model.sqlite3";
@@ -154,6 +188,8 @@ void testContextModelController(const std::filesystem::path &directory) {
 int main(int argc, char **argv) {
     // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
     TempDirectory tempDirectory;
+    testLearnedSentenceController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--learned-sentence") return 0;
     testContextModelController(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--context-model") return 0;
     testColdPagingController(tempDirectory.path());

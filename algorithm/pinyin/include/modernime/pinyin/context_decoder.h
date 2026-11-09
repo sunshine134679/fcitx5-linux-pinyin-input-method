@@ -6,12 +6,14 @@
 #include <vector>
 
 namespace libime { class PinyinContext; class SentenceResult; }
+namespace modernime::core { class LearningSnapshot; }
 namespace modernime::pinyin {
 
-// Request-local, read-only model evidence. Never updates LibIME history.
+// Request-local model evidence and learned vocabulary. Never updates LibIME history.
 class ContextDecoder final {
 public:
-    ContextDecoder(libime::PinyinContext &context, std::string_view before);
+    ContextDecoder(libime::PinyinContext &context, std::string_view before,
+                   const core::LearningSnapshot *learning, std::int64_t nowMs);
     double gain(const libime::SentenceResult &sentence) const;
     std::vector<core::CandidateScore> candidates() const;
 private:
@@ -20,6 +22,8 @@ private:
     libime::State baseline_;
     libime::State state_;
     bool active_ = false;
+    const core::LearningSnapshot *learning_;
+    std::int64_t nowMs_;
 };
 
 } // namespace modernime::pinyin

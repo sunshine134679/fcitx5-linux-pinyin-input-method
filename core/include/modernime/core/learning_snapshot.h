@@ -81,6 +81,11 @@ public:
         std::string_view contextBefore = {},
         std::string_view contextAfter = {}) const;
 
+    // Indexed, bounded word-span lookup for request-local sentence decoding.
+    // Inputs are full-pinyin readings, never raw shuangpin codes.
+    std::vector<RecalledCandidate> recallSentenceWords(
+        const std::vector<std::string> &readings, std::int64_t nowMs) const;
+
     std::vector<RecalledEnglishWord> recallEnglishWords(
         std::string_view prefix, std::size_t limit = 5,
         std::int64_t nowMs = 0) const;

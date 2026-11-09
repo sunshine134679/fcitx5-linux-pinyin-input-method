@@ -60,6 +60,9 @@ struct CandidateScore final {
     double context_bonus = 0.0;
     // Conditional LM gain is independent of learned context similarity.
     double language_context_bonus = 0.0;
+    // Evidence of learned subwords, never the whole sentence's own frequency.
+    double learned_word_bonus = 0.0;
+    bool learned_rare_coverage = false;
     double unigram_anchor = 0.0;
     double unigram_prominence = 0.0;
     std::int64_t last_selected_ms = 0;
@@ -83,6 +86,7 @@ struct CandidateScore final {
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                LanguageContextPriorWeight * language_context_bonus -
+               LearningPriorWeight * learned_word_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor - unigram_prominence;
         if (!is_rare && is_level1) {
             score -= 2.0;
@@ -98,7 +102,7 @@ struct CandidateScore final {
         return score;
     }
 
-    double rare_penalty() const { return is_rare && learning_boost < 1.8 ? 100.0 : 0.0; }
+    double rare_penalty() const { return is_rare && learning_boost < 1.8 && !learned_rare_coverage ? 100.0 : 0.0; }
 
     // Keep the established trusted-abbreviation admission boundary separate
     // from the bounded preference cost used within an admitted group.

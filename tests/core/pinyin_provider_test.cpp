@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1395,6 +1396,52 @@ void testColdCandidatePaging() {
               << ", learned=" << cold.text << ", reopened_index=" << indexOf(reopened.page(), cold.text) << '\n';
 }
 
+void testLearnedWordSentenceDecoding() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("learned-sentence.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    // A confirmed newly formed term goes through the ordinary learning policy.
+    modernime::core::CommitEvent term;
+    term.text = "云汐引擎";
+    term.fullPinyin = "yun'xi'yin'qing";
+    term.rawKeystrokes = "yunxiyinqing";
+    term.consumedInputBytes = term.rawKeystrokes.size();
+    term.role = modernime::core::CommitCandidateRole::Chinese;
+    term.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (int i = 0; i < 5; ++i) provider.onCommitEvent(term);
+    provider.append("yunxiyinqinghenhaoyong");
+    auto index = indexOf(provider.page(), "云汐引擎很好用");
+    assertTrue(index < std::min<std::size_t>(5, provider.page().items.size()),
+               "a learned term combines with an unseen suffix on the first page");
+    const auto &item = provider.page().items[index];
+    assertTrue(item.fullPinyin == "yun'xi'yin'qing'hen'hao'yong" &&
+                   item.consumedInputBytes == provider.page().rawInput.size(),
+               "learned sentence carries the complete reading and raw span");
+    provider.reset();
+    provider.append("wozaishiyongyunxiyinqing");
+    index = indexOf(provider.page(), "我在使用云汐引擎");
+    assertTrue(index < std::min<std::size_t>(5, provider.page().items.size()),
+               "the same learned term works inside a previously unseen sentence");
+    provider.setLearningEnabled(false);
+    assertTrue(!hasText(provider.page(), "我在使用云汐引擎"),
+               "disabled learning excludes learned decoder vocabulary");
+    provider.setLearningEnabled(true);
+    index = indexOf(provider.page(), "我在使用云汐引擎");
+    assertTrue(index < provider.page().items.size() && provider.select(index) && provider.page().rawInput.empty(),
+               "a learned sentence commits and consumes the full composition");
+    assertTrue(provider.flush(), "learned sentence flushes normally");
+    modernime::core::LearningStore store(paths.learningStore);
+    assertTrue(store.open() && store.clear(), "clear the learning store");
+    auto resources = provider.sharedResources();
+    modernime::pinyin::PinyinCandidateProvider::reloadLearningStore(resources);
+    assertTrue(provider.flush(), "wait for the cleared learning epoch");
+    provider.append("yunxiyinqinghenhaoyong");
+    assertTrue(!hasText(provider.page(), "云汐引擎很好用"),
+               "clearing learning removes the request-local decoder vocabulary");
+    std::cout << "[PASS] learned term sentence decoding and clearing\n";
+}
+
 void testContextualLanguageModel() {
     modernime::pinyin::PinyinDataPaths paths;
     paths.learningStore = testPath("context-decoder.sqlite3");
@@ -1427,6 +1474,8 @@ void testContextualLanguageModel() {
 }
 
 int main(int argc, char **argv) {
+    testLearnedWordSentenceDecoding();
+    if (argc == 2 && std::string_view(argv[1]) == "--learned-sentence") return 0;
     testContextualLanguageModel();
     if (argc == 2 && std::string_view(argv[1]) == "--context-model") return 0;
     testColdCandidatePaging();

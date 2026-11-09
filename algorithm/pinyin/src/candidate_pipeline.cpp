@@ -268,8 +268,11 @@ CandidatePipelineResult buildCandidatePipeline(
             const auto key = spanKey(candidate.text, candidate.full_pinyin, *candidate.consumed_input_bytes);
             if (!seenKeys.insert(key).second) {
                 for (auto &existing : result.scored)
-                    if (spanKey(existing.text, existing.full_pinyin, existing.consumed_input_bytes.value_or(0)) == key)
+                    if (spanKey(existing.text, existing.full_pinyin, existing.consumed_input_bytes.value_or(0)) == key) {
                         existing.language_context_bonus = std::max(existing.language_context_bonus, candidate.language_context_bonus);
+                        existing.learned_word_bonus = std::max(existing.learned_word_bonus, candidate.learned_word_bonus);
+                        existing.learned_rare_coverage |= candidate.learned_rare_coverage;
+                    }
                 continue;
             }
             seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
