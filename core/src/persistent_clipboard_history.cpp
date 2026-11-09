@@ -39,37 +39,12 @@ PersistentClipboardHistory::currentFileState() const {
             true};
 }
 
-bool PersistentClipboardHistory::quarantineCorruptFile() const {
-    std::error_code filesystemError;
-    if (!std::filesystem::exists(path_, filesystemError) || filesystemError) {
-        return false;
-    }
-    const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
-                           std::chrono::system_clock::now().time_since_epoch())
-                           .count();
-    auto backup = path_;
-    backup += ".corrupt-";
-    backup += std::to_string(stamp);
-    std::filesystem::rename(path_, backup, filesystemError);
-    return !filesystemError;
-}
-
 bool PersistentClipboardHistory::load(std::string *error) {
     if (error != nullptr) {
         error->clear();
     }
     const auto state = currentFileState();
-    const bool result = history_.load(path_, error);
-    if (!result && quarantineCorruptFile()) {
-        // 损坏或不可读的文件已改名备份；剪贴板以空历史继续运行，
-        // 而不是永久失效直到用户手动删除。
-        loaded_ = true;
-        if (error != nullptr) {
-            error->clear();
-        }
-    } else {
-        loaded_ = result;
-    }
+    loaded_ = history_.load(path_, error, /*recoverCorrupt=*/true);
     dirty_ = false;
     pendingObservations_.clear();
     knownFileState_ = loaded_ ? std::optional(state) : std::nullopt;
@@ -126,16 +101,7 @@ bool PersistentClipboardHistory::reloadIfExternallyChanged(
     if (loaded_ && knownFileState_ && state == *knownFileState_) {
         return false;
     }
-    const bool result = history_.load(path_, error);
-    if (!result && quarantineCorruptFile()) {
-        // 外部修改把文件写坏时同样隔离备份并继续运行。
-        loaded_ = true;
-        if (error != nullptr) {
-            error->clear();
-        }
-    } else {
-        loaded_ = result;
-    }
+    loaded_ = history_.load(path_, error, /*recoverCorrupt=*/true);
     dirty_ = false;
     knownFileState_ = loaded_ ? std::optional(state) : std::nullopt;
     return loaded_;

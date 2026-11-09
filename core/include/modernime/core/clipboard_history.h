@@ -19,8 +19,10 @@ public:
     // Returns whether the visible history order changed.
     bool observe(std::string_view text);
 
-    // Loads the history from a local file. A missing file is treated as empty.
-    bool load(const std::filesystem::path &path, std::string *error = nullptr);
+    // Missing files are empty; failed reads preserve the last loaded history.
+    // Recovery rechecks under the writer lock and quarantines only corrupt data.
+    bool load(const std::filesystem::path &path, std::string *error = nullptr,
+              bool recoverCorrupt = false);
 
     // Atomically saves the history to a local file with owner-only access (0600).
     // Note: Production writers should use updateFile() to coordinate across processes.
@@ -44,6 +46,8 @@ public:
     const std::vector<std::string> &entries() const { return entries_; }
 
 private:
+    enum class LoadResult { Ready, Corrupt, Unavailable };
+    LoadResult readFile(const std::filesystem::path &path, std::string *error);
     std::vector<std::string> entries_;
 };
 

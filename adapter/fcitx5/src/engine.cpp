@@ -861,9 +861,8 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
         }
 
         if (!sensitive_ && options_.learningEnabled &&
-            outcome->selected.role != core::CommitCandidateRole::Command &&
-            outcome->selected.role != core::CommitCandidateRole::English &&
-            outcome->selected.role != core::CommitCandidateRole::Raw &&
+            (outcome->selected.role == core::CommitCandidateRole::Chinese ||
+             outcome->selected.role == core::CommitCandidateRole::UserDictionary) &&
             !outcome->selected.text.empty()) {
             initRecentCommit(page_.items[request.globalIndex], basePrefix, contextAfter_);
         } else {

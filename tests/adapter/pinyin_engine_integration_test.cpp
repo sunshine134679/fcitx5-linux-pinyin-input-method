@@ -185,9 +185,47 @@ void testContextModelController(const std::filesystem::path &directory) {
     std::cout << "[PASS] contextual controller and sensitive boundary\n";
 }
 
+void testGeneratedTextLearning(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "generated.sqlite3";
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths);
+        RecordingHost host;
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+        for (int repeat = 0; repeat < 3; ++repeat) {
+            for (const auto input : {"v123", "rq", "sj", "xq", "gantanhao"}) {
+                for (const char c : std::string_view(input))
+                    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Character, c, 0}),
+                               "generated input key handled");
+                const auto &page = controller.page();
+                std::size_t index = 0;
+                while (index < page.items.size() &&
+                       page.items[index].commitRole != modernime::core::CommitCandidateRole::Generated) ++index;
+                assertTrue(index < page.items.size(), "generated candidate has its own learning role");
+                const auto text = page.items[index].text;
+                assertTrue(!provider.remove(index) && !provider.extractCharacter(index, true),
+                           "generated text cannot suppress a dictionary word or form an extracted word");
+                assertTrue(controller.select(index) && host.commits.back() == text &&
+                               controller.page().rawInput.empty(), "generated text commits and consumes input");
+                for (const unsigned char c : text) {
+                    if ((c & 0xc0) != 0x80)
+                        controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+                }
+            }
+        }
+        controller.reset();
+    }
+    modernime::core::LearningStore reopened(paths.learningStore);
+    assertTrue(reopened.open() && reopened.snapshot()->entries().empty(),
+               "generated selections, repeated phrase formation and deletion leave no persisted learning");
+    std::cout << "[PASS] generated text commits without learning pollution\n";
+}
+
 int main(int argc, char **argv) {
     // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
     TempDirectory tempDirectory;
+    testGeneratedTextLearning(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--generated-text") return 0;
     testLearnedSentenceController(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--learned-sentence") return 0;
     testContextModelController(tempDirectory.path());

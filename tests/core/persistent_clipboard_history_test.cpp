@@ -5,9 +5,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <fcntl.h>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -195,6 +198,43 @@ int main() {
                "same-timestamp clear is reloaded");
     assertTrue(!collision.observe("original", &error) && collision.entries().empty(),
                "same clipboard does not resurrect a same-timestamp clear");
+
+    // Permission failures must keep the real file and the last visible history.
+    const auto unreadablePath = directory / "unreadable.bin";
+    modernime::core::PersistentClipboardHistory unreadable(unreadablePath);
+    assertTrue(unreadable.load() && unreadable.observe("preserve me"), "unreadable fixture saves");
+    assertTrue(::chmod(unreadablePath.c_str(), 0000) == 0, "remove read permission");
+    assertTrue(!unreadable.reloadIfExternallyChanged(&error) && !error.empty() &&
+                   std::filesystem::exists(unreadablePath) &&
+                   unreadable.entries() == std::vector<std::string>{"preserve me"},
+               "failed read retains original file and previous history");
+    assertTrue(::chmod(unreadablePath.c_str(), 0600) == 0, "restore read permission");
+    assertTrue(unreadable.reloadIfExternallyChanged(&error) && error.empty() &&
+                   unreadable.entries() == std::vector<std::string>{"preserve me"},
+               "history recovers when access returns");
+
+    // Recovery must obey the same lock as an editor replacing failed data.
+    const auto replacementPath = directory / "replacement.bin";
+    { std::ofstream output(replacementPath); output << "broken"; }
+    const auto lockPath = directory / ".replacement.bin.lock";
+    const int lockFd = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    assertTrue(lockFd >= 0 && ::flock(lockFd, LOCK_EX) == 0, "editor owns the history lock");
+    modernime::core::PersistentClipboardHistory replacement(replacementPath);
+    assertTrue(!replacement.load(&error) && std::filesystem::exists(replacementPath),
+               "recovery leaves failed file alone while editor owns the lock");
+    modernime::core::ClipboardHistory validReplacement;
+    validReplacement.observe("valid external replacement");
+    assertTrue(validReplacement.save(replacementPath), "editor replaces failed data while holding lock");
+    ::close(lockFd);
+    assertTrue(replacement.reloadIfExternallyChanged(&error) && error.empty() &&
+                   replacement.entries() == validReplacement.entries(),
+               "recovery reads valid external replacement without quarantining it");
+    for (const auto &entry : std::filesystem::directory_iterator(directory)) {
+        const auto name = entry.path().filename().string();
+        assertTrue(name.rfind("replacement.bin.corrupt-", 0) != 0 &&
+                       name.rfind("unreadable.bin.corrupt-", 0) != 0,
+                   "valid and unreadable histories have no corrupt backups");
+    }
 
     // A corrupt history file must be quarantined and rebuilt instead of
     // permanently disabling the clipboard feature.

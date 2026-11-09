@@ -116,7 +116,8 @@ bool LearningWriter::enqueueCommit(const CommitEvent &event) {
     std::lock_guard lock(mutex_);
 
     if (viewState_ == EpochViewState::Reloading) {
-        if (event.role == CommitCandidateRole::Command) {
+        if (event.role == CommitCandidateRole::Command ||
+            event.role == CommitCandidateRole::Generated) {
             return true;
         }
         if (event.role == CommitCandidateRole::Raw &&

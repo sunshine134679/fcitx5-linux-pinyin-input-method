@@ -962,7 +962,8 @@ public:
             phraseTracker_.resetCommitHistory();
             return;
         }
-        if (event.role == core::CommitCandidateRole::Command) {
+        if (event.role == core::CommitCandidateRole::Command ||
+            event.role == core::CommitCandidateRole::Generated) {
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
             return;
@@ -1091,13 +1092,18 @@ public:
         outcome.selected = expectedId;
 
         if (candidate.source == core::CandidateSource::EnglishDefinition ||
-            candidate.source == core::CandidateSource::Command) {
+            candidate.source == core::CandidateSource::Command ||
+            expectedId.role == core::CommitCandidateRole::Generated) {
             const auto source = candidate.source;
             outcome.action = (source == core::CandidateSource::Command)
                 ? core::SelectionAction::OpenClipboard
                 : core::SelectionAction::CommitText;
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
+            if (expectedId.role == core::CommitCandidateRole::Generated) {
+                fallbackContextBefore_.clear();
+                contextBefore_.clear();
+            }
             context->clear();
             refresh();
             outcome.remainingInput = context->userInput();
@@ -1226,7 +1232,8 @@ public:
             return false;
         }
         const auto &candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::None ||
+        if (candidate.commitRole == core::CommitCandidateRole::Generated ||
+            candidate.source == core::CandidateSource::None ||
             candidate.source == core::CandidateSource::Command ||
             candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Raw) {
@@ -1336,7 +1343,8 @@ public:
             return false;
         }
         const auto candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::None ||
+        if (candidate.commitRole == core::CommitCandidateRole::Generated ||
+            candidate.source == core::CandidateSource::None ||
             candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Command) {
             return false;

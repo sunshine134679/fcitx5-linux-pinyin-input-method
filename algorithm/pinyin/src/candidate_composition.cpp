@@ -234,7 +234,7 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
             item.text = macroText;
             item.fullPinyin = std::string(input.rawInput);
             item.source = core::CandidateSource::Engine;
-            item.commitRole = core::CommitCandidateRole::Chinese;
+            item.commitRole = core::CommitCandidateRole::Generated;
             item.origins = {item.source};
             item.sourceIndex = std::numeric_limits<std::size_t>::max();
             item.consumedInputBytes = input.rawInput.size();
