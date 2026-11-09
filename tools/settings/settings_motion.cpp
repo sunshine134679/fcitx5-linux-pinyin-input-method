@@ -64,6 +64,9 @@ public:
           edit(edit_), message(message_) {
         g_weak_ref_init(&hintTarget, nullptr);
         layer = gtk_drawing_area_new();
+        // Overlay pass-through applies to its wrapper, not child GdkWindows.
+        // Keep this paint-only layer windowless so pointer events reach controls.
+        gtk_widget_set_has_window(layer, FALSE);
         gtk_widget_set_hexpand(layer, TRUE);
         gtk_widget_set_vexpand(layer, TRUE);
         gtk_widget_set_can_focus(layer, FALSE);

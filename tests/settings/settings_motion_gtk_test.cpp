@@ -2,6 +2,9 @@
 #include "modernime/settings/settings_widgets.h"
 #include "modernime/core/settings.h"
 #include <gtk/gtk.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/gdkx.h>
+#endif
 #include <cassert>
 #include <chrono>
 #include <filesystem>
@@ -34,6 +37,39 @@ template<class F> bool wait(F predicate, int milliseconds = 2000) {
 void frames(int milliseconds) {
     const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
     assert(wait([&] { return std::chrono::steady_clock::now() >= end; }, milliseconds + 500));
+}
+void pointerClick(GtkWidget *widget) {
+    assert(GTK_IS_BUTTON(widget));
+#ifdef GDK_WINDOWING_X11
+    auto *display = gtk_widget_get_display(widget);
+    auto *xdotool = g_find_program_in_path("xdotool");
+    if (GDK_IS_X11_DISPLAY(display) && xdotool) {
+        auto *window = gtk_widget_get_toplevel(widget);
+        int x = 0, y = 0, rootX = 0, rootY = 0;
+        assert(gtk_widget_translate_coordinates(widget, window,
+            gtk_widget_get_allocated_width(widget) / 2,
+            gtk_widget_get_allocated_height(widget) / 2, &x, &y));
+        gdk_window_get_origin(gtk_widget_get_window(window), &rootX, &rootY);
+        auto *pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(display));
+        gdk_device_warp(pointer, gtk_widget_get_screen(widget), rootX + x, rootY + y);
+        frames(40);
+        // XTest follows native input routing; widget signals and XSendEvent do not.
+        char *arguments[]{xdotool, const_cast<char *>("click"), const_cast<char *>("1"), nullptr};
+        int status = -1;
+        GError *error = nullptr;
+        assert(g_spawn_sync(nullptr, arguments, nullptr, G_SPAWN_DEFAULT, nullptr,
+                            nullptr, nullptr, nullptr, &status, &error));
+        assert(!error && g_spawn_check_wait_status(status, &error));
+        g_free(xdotool);
+        frames(50);
+        return;
+    }
+    g_free(xdotool);
+#endif
+    static bool reported = false;
+    if (!reported) std::cout << "Native pointer routing check not run: requires X11 and xdotool\n";
+    reported = true;
+    gtk_button_clicked(GTK_BUTTON(widget));
 }
 } // namespace
 
@@ -73,6 +109,11 @@ int main(int argc, char **argv) {
         assert(theme && candidate && shape && length && spacing && restore && save);
         auto *stack = gtk_widget_get_ancestor(theme, GTK_TYPE_STACK);
         assert(stack && wait([&] { return !gtk_stack_get_transition_running(GTK_STACK(stack)); }));
+        pointerClick(find(window, "输入与按键"));
+        assert(std::string(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "input");
+        pointerClick(find(window, "候选与外观"));
+        assert(std::string(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "candidates");
+        assert(wait([&] { return !gtk_stack_get_transition_running(GTK_STACK(stack)); }));
         frames(30);
         const auto revealing = [&] { return gtk_style_context_has_class(
             gtk_widget_get_style_context(window), "modernime-theme-reveal"); };
@@ -88,12 +129,13 @@ int main(int argc, char **argv) {
         record("blue");
         const int originalCandidate = settings::settingsChoiceActive(candidate);
         // Exercise the actual menu selection boundary, including popover cleanup.
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(theme), TRUE);
+        pointerClick(theme);
+        assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(theme)));
         frames(160);
         auto *popover = GTK_WIDGET(gtk_menu_button_get_popover(GTK_MENU_BUTTON(theme)));
         auto *jadeOption = find(popover, "青竹绿");
         assert(GTK_IS_RADIO_BUTTON(jadeOption));
-        gtk_button_clicked(GTK_BUTTON(jadeOption));
+        pointerClick(jadeOption);
         assert(!gtk_widget_get_visible(popover));
         assert(revealing());
         frames(50);
@@ -102,7 +144,7 @@ int main(int argc, char **argv) {
         assert(revealing());
         assert(wait([&] { return !revealing(); }));
         assert(settings::settingsChoiceActive(candidate) == originalCandidate);
-        gtk_button_clicked(GTK_BUTTON(restore));
+        pointerClick(restore);
         assert(settings::settingsChoiceActive(theme) == 0 && revealing());
         assert(wait([&] { return !revealing(); }));
         for (std::size_t i = 1; i < core::kClientThemes.size(); ++i) {
@@ -149,7 +191,7 @@ int main(int argc, char **argv) {
         }));
         frames(270);
         record("搜索定位");
-        gtk_button_clicked(GTK_BUTTON(save));
+        pointerClick(save);
         const auto saved = core::SettingsStore::load(paths.settingsFile);
         assert(saved.isSuccess() && saved.settings.clientTheme == "lavender");
         assert(saved.settings.candidateTheme == core::CandidateTheme::Light);
