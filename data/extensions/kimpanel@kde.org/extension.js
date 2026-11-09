@@ -4,7 +4,8 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {InputPanel} from './panel.js';
 import {KimIndicator} from './indicator.js';
@@ -683,6 +684,55 @@ class OverviewSearchBridge {
 var kimpanel = null;
 var searchBridge = null;
 
+// GNOME 46 creates a replacement IBus context asynchronously but does not
+// forward an existing Wayland focus to it. Keep this workaround version-bound;
+// other Shell versions must be checked against their own InputMethod lifecycle.
+class NativeInputContextRecovery {
+    constructor() {
+        this._injections = new InjectionManager();
+        this._nameWatchId = 0;
+        this._hasFcitx = false;
+        if (Config.PACKAGE_VERSION.split('.')[0] !== '46')
+            return;
+
+        const inputMethod = Main.inputMethod;
+        let previousContext = inputMethod._context;
+        this._nameWatchId = Gio.bus_watch_name(
+            Gio.BusType.SESSION, 'org.fcitx.Fcitx5',
+            Gio.BusNameWatcherFlags.NONE,
+            () => { this._hasFcitx = true; },
+            () => { this._hasFcitx = false; });
+
+        // _onConnected calls this after wiring the new context's signals. The
+        // context identity check also prevents recursion through focus_in/update.
+        const recovery = this;
+        this._injections.overrideMethod(inputMethod, '_updateCapabilities', original => function (...args) {
+            const result = original.apply(this, args);
+            const context = this._context;
+            if (context === previousContext)
+                return result;
+            previousContext = context;
+            if (!context || !recovery._hasFcitx || !this.currentFocus)
+                return result;
+
+            // _clear resets Shell's IBus hints/purpose. Clutter still owns the
+            // current field's actual properties, including password/privacy.
+            this.vfunc_update_content_purpose(this.content_purpose);
+            this.vfunc_update_content_hints(this.content_hints);
+            this.vfunc_focus_in(this.currentFocus);
+            return result;
+        });
+    }
+
+    destroy() {
+        this._injections.clear();
+        if (this._nameWatchId)
+            Gio.bus_unwatch_name(this._nameWatchId);
+        this._nameWatchId = 0;
+        this._hasFcitx = false;
+    }
+}
+
 export default class KimpanelExtension extends Extension {
     constructor(...args) {
         super(...args);
@@ -690,6 +740,7 @@ export default class KimpanelExtension extends Extension {
     }
 
     enable() {
+        this._contextRecovery = new NativeInputContextRecovery();
         if (!kimpanel) {
             kimpanel = new Kimpanel(this._settings);
         }
@@ -699,6 +750,8 @@ export default class KimpanelExtension extends Extension {
     }
 
     disable() {
+        this._contextRecovery?.destroy();
+        this._contextRecovery = null;
         if (kimpanel) {
             kimpanel.destroy();
             kimpanel = null;

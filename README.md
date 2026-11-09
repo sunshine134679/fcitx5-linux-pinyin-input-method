@@ -613,7 +613,7 @@ python3 tools/replay_pinyin_quality.py --binary build/dev/tools/modernime_pinyin
 
 X11 会话使用 ModernIME 自绘候选栏，锚定到光标下方，靠近屏幕底部时翻到上方。Wayland 会话使用应用提供的候选面板或由 Fcitx5 选择可用的桌面面板；GNOME Shell 面板需启用随项目提供的输入法面板扩展（Kimpanel）。安装、自启与设置中的重启均保留自动 UI 选择。请勿在 Wayland 下强制 `-u modernime-ui`：GTK 自绘弹窗无法跨应用定位。GNOME 面板字体通过扩展设置调整，设置客户端的自绘预览不代表该面板；扩展不可用时请在“系统与诊断”检查会话与扩展状态。
 
-Ubuntu 24.04 / GNOME 46 的隔离桌面已验证原生 GTK、Qt 5.15 Wayland、Chrome 157 原生 Wayland 和系统概览搜索通过实际按键上屏中文；概览搜索支持在表情后插入中文而不破坏已有字符。Chrome 使用 `--ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3`，Fcitx 的 IBus 前端需启用。刚启动或重启输入法后，需等待连接就绪，再聚焦输入框；本轮浏览器过早聚焦曾收到原始拼音。跨应用验证与限制记录在[升级路线图](docs/全面升级审计与路线图-2026-11-08.md)，不代表所有应用版本和显示配置均已验证。
+Ubuntu 24.04 / GNOME 46 的隔离桌面已验证原生 GTK、Qt 5.15 Wayland、Chrome 157 原生 Wayland 和系统概览搜索通过实际按键上屏中文；概览搜索支持在表情后插入中文而不破坏已有字符。Chrome 使用 `--ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3`，Fcitx 的 IBus 前端需启用。随项目提供的扩展现会在 GNOME 46 新输入连接建立后恢复已有输入焦点及输入框类型；已验证先打开浏览器、再启动输入法时无需重新聚焦即可输入中文，密码框仍保持原始输入。该恢复适配仅针对 GNOME 46；扩展更新仍需重新登录加载。跨应用验证与限制记录在[升级路线图](docs/全面升级审计与路线图-2026-11-08.md)，不代表所有应用版本和显示配置均已验证。
 
 GNOME 原生 Chrome 已验证在组合输入期间从100%屏幕移至150%屏幕：候选面板跟随合成器提供的光标位置，完整留在目标屏内，移动后可继续提交。Qt 5 在本次环境使用应用自身的候选窗口，也完成了跨屏后的输入；其外观不等同于 GNOME 面板或 X11 自绘候选栏。
 
