@@ -18,9 +18,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.1.25_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.1.25-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.1.25-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.0_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.2.0-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.0-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -709,14 +709,14 @@ modernime-session-init --remove-gnome-extension
 
 ## 版本更新记录
 
-### v0.2.0（本地预览，尚未正式发布）
+### v0.2.0 (2026-11-09)
 
 - 全拼、简拼之外新增小鹤和自然码双拼、可配置模糊音；改善内部拆音、冷候选续取和学习词参与整句解码。
 - 八页设置客户端采用中性浅色设计，补齐空状态、搜索反馈、首次启用引导与 GNOME 面板诊断；字体、间距和配色可配置。
 - GNOME 原生 Wayland 候选面板支持外观热更新，修复已有窗口焦点恢复，概览搜索改用原生异步输入；剪贴板持久化移出输入线程。
-- 本轮集中验证、实际桌面输入和干净源码安装已完成相应检查；两项冷启动语境首选仍未达标，长期日用及正式旧渠道在线升级尚未验收。详见 [v0.2.0 发布准备说明](docs/releases/v0.2.0-发布说明.md)。
+- 本轮集中验证、实际桌面输入和干净源码安装已完成相应检查；两项冷启动语境首选仍未达标，长期日用及正式旧渠道在线升级尚未验收。详见 [v0.2.0 发布说明](docs/releases/v0.2.0-发布说明.md)。
 
-当前官网及上文软件源下载仍指向已发布的 v0.1.25。本分支的 v0.2.0 不表示线上版本已更新。
+本节列出 v0.2.0 的发行目标；实际公开版本、安装包及签名软件源是否已更新，以 GitHub Release 和发行流水线结果为准。
 
 ### v0.1.25 (2026-11-02)
 
