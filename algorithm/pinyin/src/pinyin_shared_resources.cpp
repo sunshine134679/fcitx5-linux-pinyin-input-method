@@ -21,7 +21,10 @@
 namespace {
 
 libime::PinyinFuzzyFlags fuzzyFlags(const modernime::core::FuzzyPinyinOptions &options) {
-    libime::PinyinFuzzyFlags flags;
+    // Keep valid internal syllable boundaries (xian -> xi'an, jie -> ji'e)
+    // in the native graph. These are exact alternative readings, not fuzzy sounds.
+    libime::PinyinFuzzyFlags flags{libime::PinyinFuzzyFlag::Inner};
+    flags |= libime::PinyinFuzzyFlag::InnerShort;
     if (options.zZh) flags |= libime::PinyinFuzzyFlag::Z_ZH;
     if (options.cCh) flags |= libime::PinyinFuzzyFlag::C_CH;
     if (options.sSh) flags |= libime::PinyinFuzzyFlag::S_SH;

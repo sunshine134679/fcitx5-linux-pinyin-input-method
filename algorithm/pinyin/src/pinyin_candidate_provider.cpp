@@ -822,6 +822,12 @@ std::string automaticallySegmentedPreedit(
             continue;
         }
         const auto &candidate = result.scored[sourceIndex];
+        // A leading single character can coexist with an inner-syllable word.
+        // Do not display the lower candidate's split above that single character.
+        if (candidate.full_pinyin.find('\'') == std::string::npos &&
+            core::PinyinMatchPolicy::exactInputMatch(rawInput, candidate.full_pinyin)) {
+            return std::string(rawInput);
+        }
         const auto alignment =
             alignPreeditToCandidate(rawInput, candidate.full_pinyin);
         if (alignment.has_value()) {

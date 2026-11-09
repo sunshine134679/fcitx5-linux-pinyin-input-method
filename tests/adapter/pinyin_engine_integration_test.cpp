@@ -221,9 +221,37 @@ void testGeneratedTextLearning(const std::filesystem::path &directory) {
     std::cout << "[PASS] generated text commits without learning pollution\n";
 }
 
+void testAmbiguousSyllableController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "ambiguous.sqlite3";
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths);
+        RecordingHost host;
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+        for (int repeat = 0; repeat < 5; ++repeat) {
+            for (const char c : std::string_view("xian"))
+                controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            const auto index = indexOf(controller.page(), "西安");
+            assertTrue(index < 3 && controller.select(index) && host.commits.back() == "西安" &&
+                           controller.page().rawInput.empty(), "ambiguous word commits through controller");
+        }
+    }
+    modernime::pinyin::PinyinCandidateProvider reopened(paths);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &reopened);
+    for (const char c : std::string_view("xian"))
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    assertTrue(controller.page().items.front().text == "西安" &&
+                   controller.page().items.front().consumedInputBytes == 4 &&
+                   controller.page().preedit == "xi'an", "reopened learned word becomes first with matching preedit");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) && host.commits.back() == "西安",
+               "space selects the learned first-page word");
+}
+
 int main(int argc, char **argv) {
     // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
     TempDirectory tempDirectory;
+    testAmbiguousSyllableController(tempDirectory.path());
     testGeneratedTextLearning(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--generated-text") return 0;
     testLearnedSentenceController(tempDirectory.path());

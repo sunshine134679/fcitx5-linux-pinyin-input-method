@@ -1479,6 +1479,22 @@ int main(int argc, char **argv) {
         modernime::pinyin::PinyinProviderOptions options;
         options.learningEnabled = false;
         modernime::pinyin::PinyinCandidateProvider provider(modernime::pinyin::PinyinDataPaths{}, options);
+        assertTrue(provider.append("xian"), "ambiguous syllable input is accepted");
+        const auto index = indexOf(provider.page(), "西安");
+        assertTrue(provider.page().items.front().text == "先" && provider.page().preedit == "xian" && index < 3,
+                   "native character stays first while the alternate word is reachable in top three");
+        assertTrue(provider.page().items[index].fullPinyin == "xi'an" &&
+                       provider.page().items[index].consumedInputBytes == 4,
+                   "internal split keeps complete reading and raw consumption");
+        provider.reset();
+        provider.append("xianren");
+        assertTrue(provider.select(indexOf(provider.page(), "西安")) && provider.page().rawInput == "ren",
+                   "alternate-word prefix leaves the unconsumed syllable");
+    }
+    {
+        modernime::pinyin::PinyinProviderOptions options;
+        options.learningEnabled = false;
+        modernime::pinyin::PinyinCandidateProvider provider(modernime::pinyin::PinyinDataPaths{}, options);
         assertTrue(provider.append("nihao") && provider.diagnostics() == nullptr,
                    "ordinary input collects no diagnostics");
         const auto before = provider.page();

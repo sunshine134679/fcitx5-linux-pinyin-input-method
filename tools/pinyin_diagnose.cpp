@@ -147,6 +147,7 @@ void writeReport(std::ostream &out, const Report &report,
                  {"learning_boost", score.learning_boost}, {"context_bonus", score.context_bonus},
                  {"language_context_bonus", score.language_context_bonus},
                  {"learned_word_bonus", score.learned_word_bonus}, {"rare_penalty", score.rare_penalty()},
+                 {"native_rank_scale", score.native_rank_scale},
                  {"base_prior", score.base_prior()}, {"final_cost", score.final_score()}}) {
             out << ',' << json(key) << ':'; number(out, value);
         }

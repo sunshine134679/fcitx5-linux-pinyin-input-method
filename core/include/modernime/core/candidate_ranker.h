@@ -23,6 +23,7 @@ inline constexpr double ContextPriorWeight = 14.0;
 inline constexpr double LearningPriorCap = 180.0;
 inline constexpr double DecoderPriorWeight = 0.25;
 inline constexpr double LanguageContextPriorWeight = 4.0;
+inline constexpr double DenseNativeRankStep = 0.08;
 
 inline double computeAdaptiveLearning(double learning_boost, double dormant_factor = 1.0) {
     if (!std::isfinite(learning_boost)) {
@@ -65,6 +66,8 @@ struct CandidateScore final {
     bool learned_rare_coverage = false;
     double unigram_anchor = 0.0;
     double unigram_prominence = 0.0;
+    // Comparable native-rank spacing when one raw syllable also spells a word.
+    double native_rank_scale = 1.0;
     std::int64_t last_selected_ms = 0;
     double dormant_factor = 1.0;
     bool is_rare = false;
@@ -81,8 +84,8 @@ struct CandidateScore final {
 
 
     double base_prior() const {
-        const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? 0.08 : 1.0;
-        double score = sourceStep * static_cast<double>(source_index) -
+        const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? DenseNativeRankStep : 1.0;
+        double score = native_rank_scale * sourceStep * static_cast<double>(source_index) -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                LanguageContextPriorWeight * language_context_bonus -

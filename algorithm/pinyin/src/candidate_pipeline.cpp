@@ -319,6 +319,24 @@ CandidatePipelineResult buildCandidatePipeline(
     for (auto &candidate : result.scored) {
         populateCandidateFeatures(candidate, dictionary, request);
     }
+    // A valid multi-syllable word competes with single characters for the same
+    // complete keystrokes. Global character frequency is not word-frequency
+    // evidence: use the same dense native-rank spacing for both interpretations.
+    // Keep the native first-character anchor, lexical evidence and all learning.
+    if (shuangpin == nullptr && core::PinyinMatchPolicy::isStandardSyllable(context.userInput()) &&
+        std::any_of(result.scored.begin(), result.scored.end(), [&](const auto &candidate) {
+            return candidate.is_lexical && candidate.phrase_length >= 2 &&
+                candidate.consumed_input_bytes == context.userInput().size() &&
+                core::PinyinMatchPolicy::exactInputMatch(context.userInput(), candidate.full_pinyin);
+        })) {
+        for (auto &candidate : result.scored) {
+            if (candidate.consumed_input_bytes == context.userInput().size() &&
+                core::PinyinMatchPolicy::exactInputMatch(context.userInput(), candidate.full_pinyin)) {
+                candidate.native_rank_scale = core::DenseNativeRankStep;
+                candidate.unigram_prominence = 0.0;
+            }
+        }
+    }
     result.order = core::CandidateRanker::rank(
         shuangpin != nullptr && !recallInputs.empty() ? recallInputs.front() : context.userInput(),
         result.scored, previousOrder);
