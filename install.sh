@@ -210,6 +210,7 @@ check_native_package_collision() {
         "$prefix/bin/modernime-session-init"
         "$prefix/bin/modernime-data-guard"
         "$prefix/bin/modernime-migrate-channel"
+        "$prefix/bin/modernime-update"
         "$prefix/share/fcitx5/addon/modernime.conf"
         "$prefix/share/fcitx5/addon/modernime-ui.conf"
         "$prefix/share/fcitx5/inputmethod/modernime.conf"

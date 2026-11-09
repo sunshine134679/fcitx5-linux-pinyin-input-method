@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+"""客户端下载发布资产；安装事务与界面生命周期由调用方管理。"""
+
+import argparse
+import hashlib
+import http.client
+import json
+import os
+from pathlib import Path, PurePosixPath
+import platform
+import re
+import shutil
+import ssl
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.parse
+import urllib.request
+
+
+RELEASE_ROOT = "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/download/"
+MAX_DOWNLOAD = 1024 * 1024 * 1024
+MAX_UNPACKED = 3 * 1024 * 1024 * 1024
+MAX_MEMBERS = 50000
+CHUNK = 128 * 1024
+NETWORK_TIMEOUT = 30
+DOWNLOAD_TIMEOUT = 15 * 60
+
+
+class UpdateError(Exception):
+    pass
+
+
+def progress(directory, phase, received=0, total=0, message=""):
+    message = message.replace("\n", " ").replace("\r", " ")[:512]
+    atomic_write(directory / "progress.ini", (
+        f"[update]\nphase={phase}\nreceived={received}\ntotal={total}\nmessage={message}\n"
+    ).encode())
+
+
+def atomic_write(path, data):
+    descriptor, temporary = tempfile.mkstemp(prefix=".update-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def absolute_path(value):
+    path = Path(value)
+    if not path.is_absolute() or ".." in path.parts or path == Path("/"):
+        raise UpdateError("安装前缀和下载目录必须是明确的绝对路径，不能是根目录。")
+    return path.resolve(strict=True)
+
+
+def private_directory(value):
+    path = absolute_path(value)
+    if Path(value).is_symlink():
+        raise UpdateError("下载目录不能是符号链接。")
+    info = path.stat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise UpdateError("下载目录必须属于当前用户，且权限为 0700。")
+    return path
+
+
+def read_regular(path, maximum):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
+            raise UpdateError(f"文件类型或大小不符合要求：{path.name}")
+        data = stream.read(maximum + 1)
+        if len(data) > maximum:
+            raise UpdateError(f"文件超过大小限制：{path.name}")
+        return data
+
+
+def channel_metadata(prefix):
+    fields = {}
+    for line in read_regular(prefix / "share/modernime/install-channel.txt", 4096).decode().splitlines():
+        if not line.strip():
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or key in fields:
+            raise UpdateError("安装渠道标记损坏，不能自动更新。")
+        fields[key] = value
+    return fields
+
+
+def query(argv):
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=20, check=False)
+    if result.returncode:
+        raise UpdateError(f"无法核对安装包身份：{argv[0]}（退出码 {result.returncode}）")
+    return result.stdout.strip()
+
+
+def validate_installation(prefix, channel):
+    metadata = channel_metadata(prefix)
+    if metadata.get("channel") != channel or metadata.get("prefix") != str(prefix):
+        raise UpdateError("安装前缀或渠道与现有安装不一致，已停止更新。")
+    executable = prefix / "bin/modernime-settings"
+    if not executable.is_file() or not executable.resolve().is_relative_to(prefix):
+        raise UpdateError("原安装前缀中缺少 ModernIME 客户端。")
+    if channel == "script":
+        manifest = read_regular(prefix / "share/modernime/install-manifest.txt", 8 * 1024 * 1024).decode()
+        if str(executable) not in manifest.splitlines():
+            raise UpdateError("原安装清单未登记客户端，不能自动覆盖未知安装。")
+        if not os.access(prefix, os.W_OK):
+            raise UpdateError("当前用户不能写入脚本安装前缀，请由该安装的所有者更新。")
+    else:
+        if prefix != Path("/usr"):
+            raise UpdateError("系统安装包只支持原有 /usr 安装前缀。")
+        if channel == "deb":
+            owner = query(["dpkg-query", "-S", str(executable)])
+            if owner not in (f"modernime: {executable}", f"modernime:amd64: {executable}"):
+                raise UpdateError("客户端不属于已安装的 ModernIME DEB 包。")
+        elif query(["rpm", "-qf", "--qf", "%{NAME}\n", str(executable)]) != "modernime":
+            raise UpdateError("客户端不属于已安装的 ModernIME RPM 包。")
+
+
+def select_asset(version, channel):
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise UpdateError("更新版本号格式无效。")
+    if platform.system() != "Linux" or platform.machine().lower() not in ("x86_64", "amd64"):
+        raise UpdateError("此架构没有匹配的官方预编译更新包；自动更新仅支持 Linux x86_64。")
+    if channel == "script":
+        libc, libc_version = platform.libc_ver()
+        match = re.fullmatch(r"([0-9]+)\.([0-9]+)(?:\.[0-9]+)*", libc_version)
+        if libc != "glibc" or not match or tuple(map(int, match.groups())) < (2, 34):
+            raise UpdateError("此便携更新包要求 glibc 2.34 或更新版本，当前系统不满足要求。")
+        return f"modernime-{version}-linux-x86_64.tar.gz"
+    release = platform.freedesktop_os_release()
+    distro, release_version = release.get("ID", "").lower(), release.get("VERSION_ID", "")
+    if channel == "deb" and distro == "ubuntu" and release_version == "24.04":
+        return f"modernime_{version}_amd64_ubuntu24.04.deb"
+    if channel == "rpm" and distro == "openeuler" and release_version in ("24.09", "24.03"):
+        return f"modernime-{version}-1.oe24.x86_64.rpm"
+    raise UpdateError(f"当前系统 {distro} {release_version} 没有匹配的 {channel} 发布包。")
+
+
+class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        if urllib.parse.urlparse(newurl).scheme != "https":
+            raise UpdateError("更新下载拒绝跳转到非 HTTPS 地址。")
+        return super().redirect_request(request, fp, code, message, headers, newurl)
+
+
+def fetch(url, destination, directory, maximum):
+    opener = urllib.request.build_opener(
+        HTTPSRedirectHandler(), urllib.request.HTTPSHandler(context=ssl.create_default_context())
+    )
+    request = urllib.request.Request(url, headers={"User-Agent": "ModernIME-Updater", "Accept-Encoding": "identity"})
+    started = time.monotonic()
+    descriptor, temporary = tempfile.mkstemp(prefix=".download-", dir=directory)
+    try:
+        with os.fdopen(descriptor, "wb") as output, opener.open(request, timeout=NETWORK_TIMEOUT) as response:
+            if urllib.parse.urlparse(response.geturl()).scheme != "https":
+                raise UpdateError("更新下载必须使用 HTTPS。")
+            raw_length = response.headers.get("Content-Length")
+            total = int(raw_length) if raw_length else 0
+            if total < 0 or total > maximum:
+                raise UpdateError("更新文件超过允许的下载大小。")
+            received, last_progress = 0, 0.0
+            while True:
+                if time.monotonic() - started > DOWNLOAD_TIMEOUT:
+                    raise UpdateError("下载超过时限，请检查网络后重试。")
+                data = response.read1(CHUNK)
+                if not data:
+                    break
+                received += len(data)
+                if received > maximum:
+                    raise UpdateError("更新文件超过允许的下载大小。")
+                output.write(data)
+                now = time.monotonic()
+                if now - last_progress >= 0.2:
+                    progress(directory, "download", received, total)
+                    last_progress = now
+            if total and received != total:
+                raise UpdateError("下载内容不完整，请重试。")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, destination)
+        progress(directory, "download", received, total or received)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def expected_hash(directory, asset):
+    matches = []
+    for line in read_regular(directory / "SHA256SUMS.txt", 1024 * 1024).decode("utf-8").splitlines():
+        match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *](.+)", line)
+        if match and match.group(2) == asset:
+            matches.append(match.group(1).lower())
+    if len(matches) != 1:
+        raise UpdateError("官方校验清单未唯一登记这个更新包。")
+    return matches[0]
+
+
+def verify_hash(path, expected):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_DOWNLOAD:
+            raise UpdateError("更新文件类型或大小无效。")
+        digest = hashlib.sha256()
+        while data := stream.read(CHUNK):
+            digest.update(data)
+    if digest.hexdigest() != expected:
+        raise UpdateError("更新包 SHA256 校验失败，未执行安装；请重新下载。")
+
+
+def download(args, prefix, directory):
+    validate_installation(prefix, args.channel)
+    asset = select_asset(args.version, args.channel)
+    # 新一轮下载使旧准备状态失效；失败时不得误装上一份资产。
+    (directory / "prepared.json").unlink(missing_ok=True)
+    base = RELEASE_ROOT + "v" + args.version + "/"
+    print("正在下载官方校验清单…", flush=True)
+    fetch(base + "SHA256SUMS.txt", directory / "SHA256SUMS.txt", directory, 1024 * 1024)
+    checksum = expected_hash(directory, asset)
+    print(f"正在下载 {asset}…", flush=True)
+    fetch(base + asset, directory / asset, directory, MAX_DOWNLOAD)
+    progress(directory, "verify")
+    verify_hash(directory / asset, checksum)
+    atomic_write(directory / "prepared.json", json.dumps({
+        "version": args.version, "channel": args.channel, "prefix": str(prefix),
+        "asset": asset, "sha256": checksum,
+    }, ensure_ascii=False).encode())
+    progress(directory, "ready")
+    print("下载及 SHA256 校验完成。", flush=True)
+
+
+def member_path(name, root):
+    path = PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != root:
+        raise UpdateError("更新包包含越界路径。")
+    return path
+
+
+def safe_extract(archive, destination, root):
+    # 先审查全部成员，再写入新建私有目录；不让 tarfile 跟随归档中的链接。
+    with tarfile.open(archive, "r:gz") as tar:
+        members, paths, links = [], {}, {}
+        size = 0
+        for member in tar:
+            path = member_path(member.name, root)
+            if path in paths or len(members) >= MAX_MEMBERS:
+                raise UpdateError("更新包成员重复或数量超过限制。")
+            if not (member.isdir() or member.isfile() or member.issym() or member.islnk()):
+                raise UpdateError("更新包包含设备或其他不支持的文件类型。")
+            if member.size < 0:
+                raise UpdateError("更新包包含无效文件大小。")
+            size += member.size
+            if size > MAX_UNPACKED:
+                raise UpdateError("更新包解压大小超过限制。")
+            if member.issym() or member.islnk():
+                target = PurePosixPath(member.linkname)
+                if target.is_absolute():
+                    raise UpdateError("更新包包含绝对链接。")
+                parts = list(path.parent.parts if member.issym() else ())
+                for part in target.parts:
+                    if part == "..":
+                        if len(parts) <= 1:
+                            raise UpdateError("更新包链接指向包外。")
+                        parts.pop()
+                    elif part != ".":
+                        parts.append(part)
+                target = member_path(str(PurePosixPath(*parts)), root)
+                links[path] = target
+            members.append(member)
+            paths[path] = member
+        for path, member in paths.items():
+            for parent in path.parents:
+                if parent in paths and not paths[parent].isdir():
+                    raise UpdateError("更新包将文件或链接用作目录。")
+            if member.islnk() and (links[path] not in paths or not paths[links[path]].isfile()):
+                raise UpdateError("更新包硬链接未指向包内普通文件。")
+        for path in links:
+            seen, current = set(), path
+            while current in links:
+                if current in seen:
+                    raise UpdateError("更新包包含循环链接。")
+                seen.add(current)
+                current = links[current]
+        for member in members:
+            target = destination / member.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if member.isdir():
+                target.mkdir(exist_ok=True)
+            elif member.isfile():
+                with tar.extractfile(member) as source, target.open("xb") as output:
+                    shutil.copyfileobj(source, output, CHUNK)
+                target.chmod(0o755 if member.mode & 0o111 else 0o644)
+        for member in members:
+            target = destination / member.name
+            if member.issym():
+                target.symlink_to(member.linkname)
+            elif member.islnk():
+                os.link(destination / str(links[PurePosixPath(member.name)]), target)
+        for path in links:
+            try:
+                resolved = (destination / str(path)).resolve()
+            except RuntimeError as error:
+                raise UpdateError("更新包包含循环链接。") from error
+            if not resolved.is_relative_to(destination / root):
+                raise UpdateError("更新包的组合链接指向包外。")
+    installer = destination / root / "install.sh"
+    if installer.is_symlink() or not installer.is_file():
+        raise UpdateError("发布包缺少普通文件 install.sh。")
+    return installer
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise UpdateError("下载准备信息包含重复字段。")
+        result[key] = value
+    return result
+
+
+def check_payload_dependencies(root):
+    client = root / "usr/bin/modernime-settings"
+    plugins = sorted((root / "usr").glob("lib*/**/fcitx5/modernime*.so"))
+    if not client.is_file() or not any(path.name == "modernime_fcitx5.so" for path in plugins):
+        raise UpdateError("便携发布包缺少客户端或输入法插件。")
+    for binary in [client, *plugins]:
+        dependencies = query(["ldd", str(binary)])
+        if "not found" in dependencies:
+            missing = "; ".join(line.strip() for line in dependencies.splitlines() if "not found" in line)
+            raise UpdateError(f"当前系统缺少 {binary.name} 所需的运行库：{missing}；未执行安装。")
+
+
+def install(args, prefix, directory):
+    validate_installation(prefix, args.channel)
+    prepared = json.loads(read_regular(directory / "prepared.json", 4096), object_pairs_hook=unique_object)
+    if not isinstance(prepared, dict) or not all(isinstance(prepared.get(key), str) for key in ("version", "channel", "prefix", "asset", "sha256")):
+        raise UpdateError("下载准备信息损坏，请重新下载。")
+    asset = select_asset(prepared["version"], args.channel)
+    if prepared["channel"] != args.channel or prepared["prefix"] != str(prefix) or prepared["asset"] != asset:
+        raise UpdateError("下载的安装包与原安装身份不一致。")
+    checksum = expected_hash(directory, asset)
+    if prepared["sha256"] != checksum:
+        raise UpdateError("下载准备信息与官方校验清单不一致。")
+    progress(directory, "verify")
+    package = directory / asset
+    verify_hash(package, checksum)
+    if args.channel == "script":
+        with tempfile.TemporaryDirectory(prefix="unpack-", dir=directory) as unpacked:
+            installer = safe_extract(package, Path(unpacked), asset[:-7])
+            check_payload_dependencies(installer.parent)
+            environment = os.environ.copy()
+            # 禁止继承跨渠道覆盖和跳过依赖保护；其余 HOME/XDG 保留给原安装生命周期。
+            for key in ("MODERNIME_OVERWRITE_PACKAGE", "MODERNIME_ALLOW_MISSING_DEPS", "MODERNIME_ALLOW_ROOT", "MODERNIME_FORCE_SYSTEM_PREFIX"):
+                environment.pop(key, None)
+            environment["MODERNIME_PREFIX"] = str(prefix)
+            environment["MODERNIME_SKIP_FCITX_RESTART"] = "1"
+            progress(directory, "install")
+            result = subprocess.run(["bash", str(installer)], cwd=installer.parent, env=environment, check=False)
+    else:
+        if args.channel == "deb":
+            identity = query(["dpkg-deb", "--show", "--showformat=${Package}\n${Version}\n${Architecture}\n", str(package)])
+            architecture = "amd64"
+            command = ["pkexec", "apt-get", "install", "--only-upgrade", "-y", str(package)]
+        else:
+            identity = query(["rpm", "-qp", "--qf", "%{NAME}\n%{VERSION}\n%{ARCH}\n", str(package)])
+            architecture = "x86_64"
+            command = ["pkexec", "dnf", "upgrade", "-y", "--setopt=localpkg_gpgcheck=1", str(package)]
+        if identity.splitlines() != ["modernime", prepared["version"], architecture]:
+            raise UpdateError("安装包内部的名称、版本或架构与发布资产不一致。")
+        progress(directory, "install")
+        result = subprocess.run(command, check=False)
+    if result.returncode:
+        raise UpdateError(f"安装未成功（退出码 {result.returncode}）；保留下载材料，未自动重试安装。")
+    reported_version = query([str(prefix / "bin/modernime-settings"), "--version"])
+    if reported_version != "ModernIME settings " + prepared["version"]:
+        raise UpdateError("安装命令已结束，但客户端实际版本不匹配；请查看安装诊断，未自动重试。")
+    progress(directory, "complete")
+    print("安装完成，可以重启 ModernIME。", flush=True)
+
+
+def process_start_time(pid):
+    try:
+        status = Path(f"/proc/{pid}/stat").read_text()
+        fields = status[status.rfind(")") + 2:].split()
+        return None if fields[0] == "Z" else fields[19]
+    except FileNotFoundError:
+        return None
+
+
+def restart(args, prefix):
+    if args.parent_pid <= 0 or not re.fullmatch(r"[0-9]+", args.parent_start_time):
+        raise UpdateError("原客户端的进程身份无效。")
+    deadline = time.monotonic() + 60
+    while process_start_time(args.parent_pid) == args.parent_start_time:
+        if time.monotonic() >= deadline:
+            raise UpdateError("原客户端未退出，已停止自动重启；安装文件已保留。")
+        time.sleep(0.1)
+    executable = prefix / "bin/modernime-settings"
+    if not executable.is_file() or not os.access(executable, os.X_OK) or not executable.resolve().is_relative_to(prefix):
+        raise UpdateError("找不到更新后的可执行客户端。")
+    activated = False
+    try:
+        subprocess.Popen(["fcitx5", "-d", "-r"], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, close_fds=True)
+        deadline = time.monotonic() + 15
+        time.sleep(0.5)
+        while time.monotonic() < deadline:
+            try:
+                result = subprocess.run(["fcitx5-remote", "-s", "modernime"], stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2, check=False)
+                if result.returncode == 0:
+                    activated = True
+                    break
+            except subprocess.TimeoutExpired:
+                pass
+            time.sleep(0.25)
+    except OSError as error:
+        print(f"输入法重启失败：{error}", file=sys.stderr, flush=True)
+    if not activated:
+        print("输入法暂未就绪，正在打开更新后的客户端。", file=sys.stderr, flush=True)
+    if args.directory:
+        directory = private_directory(args.directory)
+        progress(directory, "complete", message="输入法已重启" if activated else "输入法重启未完成，请查看运行诊断")
+    os.execv(str(executable), [str(executable), "--page", "updates"])
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="ModernIME 客户端原生更新助手")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for command in ("download", "install", "restart"):
+        child = commands.add_parser(command)
+        child.add_argument("--prefix", required=True)
+        if command == "restart":
+            child.add_argument("--parent-pid", type=int, required=True)
+            child.add_argument("--parent-start-time", required=True)
+            child.add_argument("--directory")
+        else:
+            child.add_argument("--channel", choices=("script", "deb", "rpm"), required=True)
+            child.add_argument("--directory", required=True)
+            if command == "download":
+                child.add_argument("--version", required=True)
+    args = parser.parse_args(argv)
+    try:
+        prefix = absolute_path(args.prefix)
+        if args.command == "restart":
+            restart(args, prefix)
+        else:
+            directory = private_directory(args.directory)
+            (download if args.command == "download" else install)(args, prefix, directory)
+        return 0
+    except (UpdateError, OSError, ValueError, tarfile.TarError, subprocess.SubprocessError, http.client.HTTPException) as error:
+        print(f"ModernIME 更新失败：{error}", file=sys.stderr, flush=True)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

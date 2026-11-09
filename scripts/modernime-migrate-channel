@@ -432,6 +432,7 @@ for pre_file in \
     "$target_prefix/bin/modernime-session-init" \
     "$target_prefix/bin/modernime-data-guard" \
     "$target_prefix/bin/modernime-migrate-channel" \
+    "$target_prefix/bin/modernime-update" \
     "$target_prefix/share/applications/modernime-settings.desktop" \
     "$target_prefix/share/fcitx5/addon/modernime.conf" \
     "$target_prefix/share/fcitx5/addon/modernime-ui.conf" \
@@ -591,6 +592,7 @@ cleanup_target_prefix_files() {
         "$pfx/bin/modernime-session-init" \
         "$pfx/bin/modernime-data-guard" \
         "$pfx/bin/modernime-migrate-channel" \
+        "$pfx/bin/modernime-update" \
         "$pfx/share/applications/modernime-settings.desktop" \
         "$pfx/share/fcitx5/addon/modernime.conf" \
         "$pfx/share/fcitx5/addon/modernime-ui.conf" \

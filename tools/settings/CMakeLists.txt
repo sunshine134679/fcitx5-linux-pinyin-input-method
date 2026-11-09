@@ -1,6 +1,13 @@
 find_package(PkgConfig REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
+find_program(MODERNIME_LDD_EXECUTABLE ldd REQUIRED)
+execute_process(COMMAND "${Python3_EXECUTABLE}" -c
+    "import ssl; assert ssl.create_default_context().get_ca_certs(), '请安装 ca-certificates'"
+    RESULT_VARIABLE modernime_https_ready ERROR_VARIABLE modernime_https_error)
+if(NOT modernime_https_ready EQUAL 0)
+    message(FATAL_ERROR "客户端在线更新需要 Python SSL 和 ca-certificates: ${modernime_https_error}")
+endif()
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0>=3.24)
 pkg_check_modules(FCITX5_UTILS QUIET Fcitx5Utils)
 
@@ -19,6 +26,7 @@ add_library(modernime_settings_logic STATIC
     process_runner.cpp
     package_policy.cpp
     update_controller.cpp
+    update_download.cpp
     clipboard_history_model.cpp
     overview_model.cpp
     page_registry.cpp
@@ -85,6 +93,7 @@ install(PROGRAMS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-session-init
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-data-guard
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-migrate-channel
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-update
     DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/desktop/modernime-settings.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)

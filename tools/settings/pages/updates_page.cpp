@@ -8,9 +8,9 @@
 #include <gio/gio.h>
 #include <gtk/gtk.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -52,30 +52,47 @@ std::string_view upgradeCommand(const UpdateStatus &status) {
 
 struct UpdateCheckTask final {
     Environment environment;
-    bool refreshCache = false;
+    bool online = false;
 };
 
 struct UpdateCheckResult final {
     UpdateStatus status;
-    std::optional<RuntimeResult> cacheRefresh;
 };
 
 void updateTaskFunction(GTask *task, gpointer, gpointer data, GCancellable *) {
     const auto *request = static_cast<const UpdateCheckTask *>(data);
     auto result = std::make_unique<UpdateCheckResult>();
-    if (request->refreshCache) {
-        UpdateStatus channel;
-        channel.installChannel = UpdateController::detectInstallChannel(request->environment);
-        if (channel.installChannel == "rpm") channel.manager = PackageManagerKind::Dnf;
-        if (channel.installChannel == "deb") channel.manager = PackageManagerKind::Apt;
-        result->cacheRefresh = UpdateController::refreshPackageCache(
-            channel, request->environment, /* waitForCompletion = */ true);
-    } else {
-        result->status = UpdateController::checkForUpdates(request->environment);
-    }
+    result->status = request->online
+        ? UpdateController::checkOnlineRelease(request->environment)
+        : UpdateController::checkForUpdates(request->environment);
     g_task_return_pointer(
         task, result.release(),
         [](gpointer value) { delete static_cast<UpdateCheckResult *>(value); });
+}
+
+struct UpdateActionTask final {
+    Environment environment;
+    UpdateStatus status;
+    DownloadedUpdate download;
+    bool install = false;
+    UpdateProgressCallback progress;
+};
+
+struct UpdateActionResult final {
+    DownloadedUpdate download;
+    RuntimeResult installation{false, {}};
+};
+
+void updateActionFunction(GTask *task, gpointer, gpointer data, GCancellable *) {
+    const auto &request = *static_cast<UpdateActionTask *>(data);
+    auto result = std::make_unique<UpdateActionResult>();
+    if (request.install) {
+        result->installation = UpdateController::installUpdate(request.download, request.environment, request.progress);
+    } else {
+        result->download = UpdateController::downloadUpdate(request.status, request.environment, request.progress);
+    }
+    g_task_return_pointer(task, result.release(),
+        [](gpointer value) { delete static_cast<UpdateActionResult *>(value); });
 }
 
 std::string resolveSourceUrl(std::string_view source) {
@@ -96,6 +113,34 @@ std::string resolveSourceUrl(std::string_view source) {
     return "https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/";
 }
 
+std::string updateFailureSummary(std::string message) {
+    if (message.find("invalid choice: 'unknown'") != std::string::npos)
+        return "无法识别当前安装方式，请重新打开客户端后再试。";
+    if (message.find("HTTP Error 404") != std::string::npos)
+        return "暂未找到此版本的安装包，请重新检查更新。";
+    if (message.find("HTTP Error 403") != std::string::npos || message.find("HTTP Error 429") != std::string::npos)
+        return "下载服务暂时拒绝连接，请稍后重试。";
+    if (message.find("CERTIFICATE_VERIFY_FAILED") != std::string::npos)
+        return "无法验证下载连接，请检查系统时间和网络代理。";
+    if (message.find("timed out") != std::string::npos || message.find("Timeout") != std::string::npos)
+        return "下载连接超时，请检查网络后重试。";
+    if (message.find("urlopen error") != std::string::npos)
+        return "无法连接下载服务，请检查网络或代理后重试。";
+    for (const std::string_view prefix : {"下载未完成：", "安装未完成：", "ModernIME 更新失败："}) {
+        if (message.starts_with(prefix)) message.erase(0, prefix.size());
+    }
+    message = message.substr(0, message.find_first_of("\r\n"));
+    if (g_utf8_validate(message.c_str(), -1, nullptr)) {
+        const auto first = g_utf8_get_char(message.c_str());
+        if (first >= 0x4e00 && first <= 0x9fff) {
+            if (g_utf8_strlen(message.c_str(), -1) > 100)
+                message.resize(static_cast<std::size_t>(g_utf8_offset_to_pointer(message.c_str(), 100) - message.c_str()));
+            return message;
+        }
+    }
+    return "更新助手未能完成操作。可以重试，或展开“检查详情”查看具体原因。";
+}
+
 } // namespace
 
 class UpdatesPage::Impl final {
@@ -106,9 +151,13 @@ public:
     static constexpr const char *kStateKey = "modernime-updates-page-lifetime";
 
     Impl(Environment currentEnvironment,
-         std::function<void(std::string)> notifyCallback)
+         std::function<void(std::string)> notifyCallback,
+         std::function<bool()> beforeRestart,
+         std::function<void()> closeCallback)
         : environment(std::move(currentEnvironment)),
-          notify(std::move(notifyCallback)) {
+          notify(std::move(notifyCallback)),
+          prepareRestart(std::move(beforeRestart)),
+          closeForRestart(std::move(closeCallback)) {
         lastStatus.currentVersion = MODERNIME_VERSION;
 
         lifetime = detail::GObjectHandle<GObject>::adopt(
@@ -136,14 +185,22 @@ public:
     GtkWidget *widget() const { return page; }
 
     void refresh() {
+        if (nativePhase != NativePhase::None) return;
         focusCopyWhenReady = false;
         startCheck();
     }
 
     bool focusTarget(std::string_view target) {
         focusCopyWhenReady = false;
+        if (target == "updates-download") {
+            return focusWidgetOrFallback(checkButton, checkButton);
+        }
         if (target == "updates-check" || target == "diagnostics-check-update" ||
             target == "updates-refresh-cache") {
+            if (lastStatus.updateAvailable) {
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(versionDetails), TRUE);
+                return focusWidgetOrFallback(recheckButton, versionDetails);
+            }
             return focusWidgetOrFallback(checkButton, checkButton);
         }
         if (target == "updates-copy-command") {
@@ -167,8 +224,23 @@ private:
     static void onCheckClicked(GtkButton *, gpointer data) {
         auto *shared = static_cast<SharedLifetime *>(data);
         (*shared)->withOwner([](Impl &owner) {
-            owner.startCheck(true);
+            if (owner.busy) return;
+            if (owner.nativePhase == NativePhase::Ready) {
+                owner.startUpdateAction(true);
+            } else if (owner.nativePhase == NativePhase::Installed) {
+                owner.restartClient();
+            } else if (owner.lastStatus.updateAvailable &&
+                (!owner.lastStatus.packageManagerLocked || owner.lastStatus.checkedOnline)) {
+                owner.startUpdateAction(false);
+            } else {
+                owner.startCheck(true);
+            }
         });
+    }
+
+    static void onRecheckClicked(GtkButton *, gpointer data) {
+        auto *shared = static_cast<SharedLifetime *>(data);
+        (*shared)->withOwner([](Impl &owner) { owner.startCheck(true); });
     }
 
     static void onJumpSourceClicked(GtkButton *, gpointer data) {
@@ -215,7 +287,7 @@ private:
         buildUpgradeGuideSection(details);
 
         setSettingsFocusChain(
-            page, {checkButton, versionDetails, sourceJumpButton, releaseDetails,
+            page, {checkButton, versionDetails, sourceJumpButton, recheckButton, releaseDetails,
                    upgradeDetails, copyCommandButton});
         applyStatus(lastStatus);
     }
@@ -344,6 +416,14 @@ private:
         addStyleClass(statusHintLabel, "modernime-status-hint");
         setTarget(statusHintLabel, "updates-status-hint");
         gtk_box_pack_start(GTK_BOX(section), statusHintLabel, FALSE, FALSE, 0);
+        recheckButton = gtk_button_new_with_label("重新检查");
+        gtk_widget_set_halign(recheckButton, GTK_ALIGN_START);
+        setTarget(recheckButton, "updates-recheck");
+        setAccessibleWidgetText(recheckButton, "重新检查", "在线查询官方最新版本，无需管理员授权");
+        gtk_box_pack_start(GTK_BOX(section), recheckButton, FALSE, FALSE, 0);
+        g_signal_connect_data(recheckButton, "clicked", G_CALLBACK(onRecheckClicked),
+                              new SharedLifetime(state), destroySignalState,
+                              static_cast<GConnectFlags>(0));
     }
 
     void buildCheckSection() {
@@ -372,7 +452,7 @@ private:
         gtk_button_set_always_show_image(GTK_BUTTON(checkButton), TRUE);
         gtk_widget_set_valign(checkButton, GTK_ALIGN_CENTER);
         setTarget(checkButton, "updates-check");
-        setAccessibleWidgetText(checkButton, "检查更新", "刷新软件源后自动检查 ModernIME 新版本；需要时请求系统授权");
+        setAccessibleWidgetText(checkButton, "检查更新", "在线查询 ModernIME 官方最新版本，无需管理员授权");
 
         gtk_box_pack_end(GTK_BOX(summary), checkButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section), summary, FALSE, FALSE, 0);
@@ -387,7 +467,19 @@ private:
         gtk_box_pack_start(GTK_BOX(progress), progressSpinner, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(progress), statusMessageLabel, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(version), progress, FALSE, FALSE, 0);
-
+        downloadProgress = gtk_progress_bar_new();
+        setTarget(downloadProgress, "updates-download-progress");
+        addStyleClass(downloadProgress, "modernime-update-progress");
+        gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(downloadProgress), TRUE);
+        gtk_widget_set_no_show_all(downloadProgress, TRUE);
+        gtk_widget_set_margin_top(downloadProgress, 12);
+        gtk_box_pack_start(GTK_BOX(section), downloadProgress, FALSE, FALSE, 0);
+        errorSummaryLabel = wrappedLabel("");
+        setTarget(errorSummaryLabel, "updates-error-summary");
+        addStyleClass(errorSummaryLabel, "modernime-description");
+        gtk_widget_set_no_show_all(errorSummaryLabel, TRUE);
+        gtk_widget_set_margin_top(errorSummaryLabel, 8);
+        gtk_box_pack_start(GTK_BOX(section), errorSummaryLabel, FALSE, FALSE, 0);
 
         g_signal_connect_data(checkButton, "clicked", G_CALLBACK(onCheckClicked),
                              new SharedLifetime(state), destroySignalState,
@@ -458,18 +550,156 @@ private:
         }
     }
 
-    void startCheck(bool refreshCache = false) {
-        if (busy) {
+    enum class NativePhase { None, Downloading, Ready, Installing, Installed };
+
+    struct ProgressEvent final {
+        SharedLifetime state;
+        std::uint64_t generation;
+        UpdateProgress progress;
+    };
+
+    static void updateActionFinished(GObject *source, GAsyncResult *result, gpointer) {
+        GError *error = nullptr;
+        auto *value = static_cast<UpdateActionResult *>(g_task_propagate_pointer(G_TASK(result), &error));
+        auto *shared = static_cast<SharedLifetime *>(g_object_get_data(source, kStateKey));
+        if (shared) (*shared)->withOwner([value, error](Impl &owner) { owner.finishUpdateAction(value, error); });
+        delete value;
+        g_clear_error(&error);
+    }
+
+    void showProgress(const UpdateProgress &progress) {
+        if (progress.total > 0) {
+            const double fraction = std::min(1.0, static_cast<double>(progress.received) /
+                                                  static_cast<double>(progress.total));
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(downloadProgress), fraction);
+            const auto text = std::to_string(static_cast<int>(fraction * 100)) + "%";
+            gtk_progress_bar_set_text(GTK_PROGRESS_BAR(downloadProgress), text.c_str());
+        }
+        if (progress.phase == "verify") {
+            setSummary("正在校验安装包…", "核对下载内容的完整性。", "neutral");
+            gtk_progress_bar_set_text(GTK_PROGRESS_BAR(downloadProgress), "正在校验");
+        } else if (progress.phase == "install") {
+            setSummary("正在安装更新…", "正在保护现有数据并安装，请等待完成。", "neutral");
+            gtk_progress_bar_set_text(GTK_PROGRESS_BAR(downloadProgress), "正在安装");
+        }
+    }
+
+    void startUpdateAction(bool install) {
+        if (busy) return;
+        if (install && prepareRestart && !prepareRestart()) return;
+        busy = true;
+        gtk_widget_hide(errorSummaryLabel);
+        nativePhase = install ? NativePhase::Installing : NativePhase::Downloading;
+        ++actionGeneration;
+        gtk_widget_set_sensitive(checkButton, FALSE);
+        gtk_widget_set_sensitive(recheckButton, FALSE);
+        gtk_widget_set_sensitive(copyCommandButton, FALSE);
+        gtk_widget_show(downloadProgress);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(downloadProgress), 0);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(downloadProgress), install ? "正在安装" : "正在连接下载服务");
+        setPrimaryAction(install ? "正在更新…" : "下载中…", "folder-download-symbolic",
+                         install ? "安装完成后自动重启" : "正在下载并校验更新");
+        setSummary(install ? "正在安装更新…" : "正在下载安装包…",
+                   install ? "安装完成后将自动重启输入法和设置窗口。"
+                           : "下载完成后，可点击“重启并更新”完成安装。", "neutral");
+        gboolean animations = TRUE;
+        g_object_get(gtk_widget_get_settings(page), "gtk-enable-animations", &animations, nullptr);
+        if (animations) {
+            gtk_widget_show(progressSpinner);
+            gtk_spinner_start(GTK_SPINNER(progressSpinner));
+        }
+        auto request = std::make_unique<UpdateActionTask>();
+        request->environment = environment;
+        request->status = lastStatus;
+        request->download = downloaded;
+        request->install = install;
+        request->progress = [shared = state, generation = actionGeneration](const UpdateProgress &progress) {
+            auto *event = new ProgressEvent{shared, generation, progress};
+            g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer data) -> gboolean {
+                const auto &pending = *static_cast<ProgressEvent *>(data);
+                pending.state->withOwner([&pending](Impl &owner) {
+                    if (owner.busy && owner.actionGeneration == pending.generation) owner.showProgress(pending.progress);
+                });
+                return G_SOURCE_REMOVE;
+            }, event, [](gpointer data) { delete static_cast<ProgressEvent *>(data); });
+        };
+        auto *task = g_task_new(lifetime.get(), nullptr, updateActionFinished, nullptr);
+        g_task_set_task_data(task, request.release(), [](gpointer value) { delete static_cast<UpdateActionTask *>(value); });
+        g_task_run_in_thread(task, updateActionFunction);
+        g_object_unref(task);
+    }
+
+    void finishUpdateAction(const UpdateActionResult *result, const GError *error) {
+        const bool wasInstalling = nativePhase == NativePhase::Installing;
+        busy = false;
+        gtk_spinner_stop(GTK_SPINNER(progressSpinner));
+        gtk_widget_hide(progressSpinner);
+        gtk_widget_set_sensitive(checkButton, TRUE);
+        const RuntimeResult outcome = error || !result
+            ? RuntimeResult{false, error ? error->message : "更新未完成。"}
+            : wasInstalling ? result->installation : result->download.result;
+        if (!outcome.success) {
+            nativePhase = wasInstalling ? NativePhase::Ready : NativePhase::None;
+            gtk_widget_hide(downloadProgress);
+            setSummary(wasInstalling ? "安装未完成" : "下载未完成", "可重试，展开检查详情查看原因。", "warning");
+            gtk_label_set_text(GTK_LABEL(errorSummaryLabel), updateFailureSummary(outcome.message).c_str());
+            gtk_widget_show(errorSummaryLabel);
+            gtk_label_set_text(GTK_LABEL(checkDetailsLabel), outcome.message.c_str());
+            setPrimaryAction(wasInstalling ? "重试安装" : "重试下载", "view-refresh-symbolic",
+                             wasInstalling ? "使用已下载的安装包重试安装" : "重新下载并校验安装包");
+            gtk_widget_set_sensitive(recheckButton, !wasInstalling);
+            if (notify) notify(wasInstalling ? "安装未完成，原因已显示在更新页面。" : "下载未完成，原因已显示在更新页面。");
+            return;
+        }
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(downloadProgress), 1);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(downloadProgress), wasInstalling ? "安装完成" : "下载与校验完成");
+        if (wasInstalling) {
+            nativePhase = NativePhase::Installed;
+            setSummary("更新已安装", "重启输入法和设置窗口后生效。", "success");
+            setPrimaryAction("立即重启", "view-refresh-symbolic", "重启输入法和设置窗口，完成更新");
+            restartClient();
+        } else {
+            downloaded = result->download;
+            nativePhase = NativePhase::Ready;
+            setSummary(downloaded.version + " 已准备就绪", "点击“重启并更新”，自动安装并重新打开设置。", "success");
+            setPrimaryAction("重启并更新", "view-refresh-symbolic", "安装已下载的更新，然后重启输入法和设置窗口");
+            gtk_label_set_text(GTK_LABEL(checkDetailsLabel), "安装包已下载并通过 SHA256 完整性校验。");
+        }
+    }
+
+    void restartClient() {
+        if (prepareRestart && !prepareRestart()) return;
+        if (!closeForRestart) {
+            if (notify) notify("更新已安装，请重新启动输入法与设置窗口。");
+            return;
+        }
+        const auto result = UpdateController::restartUpdatedClient(downloaded, environment);
+        if (notify) notify(result.message);
+        if (result.success) closeForRestart();
+        else gtk_label_set_text(GTK_LABEL(checkDetailsLabel), result.message.c_str());
+    }
+
+    void setPrimaryAction(const char *label, const char *icon, const char *description) {
+        gtk_button_set_label(GTK_BUTTON(checkButton), label);
+        gtk_image_set_from_icon_name(GTK_IMAGE(gtk_button_get_image(GTK_BUTTON(checkButton))),
+                                     icon, GTK_ICON_SIZE_BUTTON);
+        setAccessibleWidgetText(checkButton, label, description);
+        gtk_widget_set_tooltip_text(checkButton, description);
+    }
+
+    void startCheck(bool online = false) {
+        if (busy || nativePhase != NativePhase::None) {
             return;
         }
         busy = true;
-        cacheRefreshed = false;
+        gtk_widget_hide(errorSummaryLabel);
+        gtk_widget_set_sensitive(recheckButton, FALSE);
         gtk_widget_set_sensitive(checkButton, FALSE);
         gtk_widget_set_sensitive(copyCommandButton, FALSE);
-        gtk_button_set_label(GTK_BUTTON(checkButton), "检查中…");
-        setSummary(refreshCache ? "正在刷新软件源…" : "正在读取版本信息…",
-                   refreshCache ? "需要时请完成系统授权，刷新后会自动检查版本。"
-                                : "正在读取已保存的软件源信息。", "neutral");
+        setPrimaryAction("检查中…", "view-refresh-symbolic", "正在查询版本信息");
+        setSummary(online ? "正在查询官方新版本…" : "正在读取版本信息…",
+                   online ? "正在连接官方发布服务，无需管理员授权。"
+                          : "正在读取已保存的软件源信息。", "neutral");
         gboolean animations = TRUE;
         g_object_get(gtk_widget_get_settings(page), "gtk-enable-animations", &animations, nullptr);
         if (animations) {
@@ -484,14 +714,14 @@ private:
         gtk_label_set_text(GTK_LABEL(checkDetailsLabel), "正在读取完整检查结果…");
         gtk_label_set_text(GTK_LABEL(guideDescLabel), "正在检查安装渠道，请稍候。");
 
-        launchTask(refreshCache);
+        launchTask(online);
     }
 
-    void launchTask(bool refreshCache) {
+    void launchTask(bool online) {
         auto *task = g_task_new(lifetime.get(), nullptr, updateTaskFinished, nullptr);
         auto request = std::make_unique<UpdateCheckTask>();
         request->environment = environment;
-        request->refreshCache = refreshCache;
+        request->online = online;
         g_task_set_task_data(
             task, request.release(),
             [](gpointer value) {
@@ -502,26 +732,20 @@ private:
     }
 
     void finishCheck(const UpdateCheckResult *result, const GError *error) {
-        if (error == nullptr && result != nullptr && result->cacheRefresh &&
-            result->cacheRefresh->success) {
-            cacheRefreshed = true;
-            setSummary("正在检查新版本…", "软件源已刷新，正在读取可用版本。", "neutral");
-            launchTask(false);
-            return;
-        }
         busy = false;
         gtk_spinner_stop(GTK_SPINNER(progressSpinner));
         gtk_widget_hide(progressSpinner);
         gtk_widget_set_sensitive(checkButton, TRUE);
-        gtk_button_set_label(GTK_BUTTON(checkButton), "重新检查");
-        if (error != nullptr || result == nullptr || result->cacheRefresh) {
+        gtk_widget_set_sensitive(recheckButton, TRUE);
+        setPrimaryAction("重新检查", "view-refresh-symbolic", "在线查询官方最新版本，无需管理员授权");
+        if (error != nullptr || result == nullptr) {
+            lastStatus.updateAvailable = false;
+            lastStatus.downloadUrl.clear();
             const char *errMsg = error != nullptr && error->message != nullptr
                                      ? error->message
-                                     : result && result->cacheRefresh
-                                     ? result->cacheRefresh->message.c_str()
                                      : "未知错误";
             g_warning("[ModernIME Updates] Check error: %s", errMsg);
-            setSummary(result && result->cacheRefresh ? "软件源刷新未完成" : "未能完成检查",
+            setSummary("未能完成检查",
                        "可重新检查，展开检查详情查看原因。",
                        "warning");
             gtk_label_set_text(GTK_LABEL(checkDetailsLabel), errMsg);
@@ -588,37 +812,35 @@ private:
                                ? (status.checked ? "检查未提供额外说明。" : "检查后可在这里查看完整结果。")
                                : status.statusMessage.c_str());
         if (status.cacheMayBeStale && !status.packageManagerLocked) {
-            gtk_label_set_text(GTK_LABEL(checkDetailsLabel), cacheRefreshed
-                ? "已刷新已配置的软件源，并完成版本检查；未发现比当前安装版本更高的版本。"
-                : "当前显示的是本地软件源缓存。点击“检查更新”会刷新软件源，并自动查询可用版本。");
+            gtk_label_set_text(GTK_LABEL(checkDetailsLabel),
+                "当前显示的是本地软件源缓存。点击“检查更新”在线查询官方版本，无需刷新系统软件源。");
         }
 
         gtk_label_set_text(
             GTK_LABEL(changelogLabel),
             status.changelogSummary.empty() ? "暂无更新说明" : status.changelogSummary.c_str());
 
-        if (status.packageManagerLocked) {
-            setSummary("软件包管理器正忙", "等待当前安装或更新结束后，再重新检查。",
-                       "warning");
+        const bool downloadable = status.updateAvailable &&
+            (!status.packageManagerLocked || status.checkedOnline);
+        setPrimaryAction(downloadable ? "下载更新" : status.checked ? "重新检查" : "检查更新",
+                         downloadable ? "folder-download-symbolic" : "view-refresh-symbolic",
+                         downloadable ? "下载并校验适合当前安装渠道的更新包"
+                                      : "在线查询官方最新版本，无需管理员授权");
+        if (status.packageManagerLocked && !status.checkedOnline) {
+            setSummary("软件包管理器正忙", "仍可在线检查官方版本；安装请等待系统包操作结束。", "warning");
         } else if (status.updateAvailable) {
             setSummary("可更新至 " + status.candidateVersion,
-                       cacheRefreshed ? "已刷新软件源，展开升级引导查看安装方式。"
-                                      : "本地软件源中有可用版本，点击检查更新可刷新版本信息。",
-                       "success");
+                       "自动选择当前安装渠道的更新包，下载后可重启完成安装。", "success");
         } else if (status.offlineOrUnreachable) {
-            setSummary("暂时无法确认更新", "请重新检查；若仍失败，可展开检查详情查看原因。",
-                       "warning");
+            setSummary("暂时无法确认更新", "请重新检查；若仍失败，可展开检查详情查看原因。", "warning");
+        } else if (status.checkedOnline) {
+            setSummary("未发现新版本", "已查询官方最新正式版本。", "neutral");
         } else if (status.cacheMayBeStale) {
-            setSummary(cacheRefreshed ? "未发现新版本" : "本地软件源缓存未发现更新",
-                       cacheRefreshed ? "已刷新软件源，当前没有比已安装版本更新的版本。"
-                                      : "点击检查更新，会自动刷新软件源并查询新版本。",
-                       "neutral");
+            setSummary("本地软件源缓存未发现更新", "点击检查更新，在线查询官方最新版本。", "neutral");
         } else if (status.checked) {
-            setSummary("检查已结束", "暂无可用版本信息，可展开检查详情查看原因。",
-                       "neutral");
+            setSummary("检查已结束", "暂无可用版本信息，可展开检查详情查看原因。", "neutral");
         } else {
-            setSummary("尚未检查更新", "检查已配置的软件源，查看是否有可用版本。",
-                       "neutral");
+            setSummary("尚未检查更新", "检查官方发布，查看是否有可用版本。", "neutral");
         }
 
         const auto cmd = upgradeCommand(status);
@@ -657,10 +879,14 @@ private:
 
     Environment environment;
     std::function<void(std::string)> notify;
+    std::function<bool()> prepareRestart;
+    std::function<void()> closeForRestart;
+    DownloadedUpdate downloaded;
+    NativePhase nativePhase = NativePhase::None;
+    std::uint64_t actionGeneration = 0;
     UpdateStatus lastStatus;
     bool busy = false;
     bool focusCopyWhenReady = false;
-    bool cacheRefreshed = false;
 
     GtkWidget *page = nullptr;
     GtkWidget *summaryCard = nullptr;
@@ -677,9 +903,12 @@ private:
     GtkWidget *statusMessageLabel = nullptr;
     GtkWidget *statusHintLabel = nullptr;
     GtkWidget *progressSpinner = nullptr;
+    GtkWidget *downloadProgress = nullptr;
+    GtkWidget *errorSummaryLabel = nullptr;
     GtkWidget *guideDescLabel = nullptr;
     GtkWidget *commandLabel = nullptr;
     GtkWidget *checkButton = nullptr;
+    GtkWidget *recheckButton = nullptr;
     GtkWidget *copyCommandButton = nullptr;
 
     detail::GObjectHandle<GObject> lifetime;
@@ -687,8 +916,11 @@ private:
 };
 
 UpdatesPage::UpdatesPage(Environment environment,
-                         std::function<void(std::string)> notify)
-    : impl_(std::make_unique<Impl>(std::move(environment), std::move(notify))) {}
+                         std::function<void(std::string)> notify,
+                         std::function<bool()> prepareRestart,
+                         std::function<void()> closeForRestart)
+    : impl_(std::make_unique<Impl>(std::move(environment), std::move(notify),
+                                  std::move(prepareRestart), std::move(closeForRestart))) {}
 
 UpdatesPage::~UpdatesPage() = default;
 

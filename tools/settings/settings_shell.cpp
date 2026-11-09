@@ -192,7 +192,9 @@ public:
         showLoadDiagnostics();
     }
 
-    ~Impl() = default;
+    ~Impl() {
+        if (taskStatusTimeout != 0) g_source_remove(taskStatusTimeout);
+    }
 
     GtkWidget *window() const { return windowOwner.get(); }
 
@@ -243,8 +245,24 @@ public:
     }
 
     void presentError(std::string_view message) {
-        gtk_label_set_text(GTK_LABEL(taskStatus), std::string(message).c_str());
+        if (taskStatusTimeout != 0) {
+            g_source_remove(taskStatusTimeout);
+            taskStatusTimeout = 0;
+        }
+        std::string compact(message);
+        for (auto &character : compact) {
+            if (character == '\n' || character == '\r' || character == '\t') character = ' ';
+        }
+        gtk_label_set_text(GTK_LABEL(taskStatus), compact.c_str());
         gtk_widget_set_tooltip_text(taskStatus, std::string(message).c_str());
+        if (message.empty()) return;
+        taskStatusTimeout = g_timeout_add(5000, +[](gpointer data) -> gboolean {
+            auto &owner = *static_cast<Impl *>(data);
+            owner.taskStatusTimeout = 0;
+            gtk_label_set_text(GTK_LABEL(owner.taskStatus), "");
+            gtk_widget_set_tooltip_text(owner.taskStatus, nullptr);
+            return G_SOURCE_REMOVE;
+        }, this);
     }
 
 private:
@@ -575,7 +593,8 @@ private:
             model, paths.learningStore,
             [this] { updateActionState(); }, notify);
         addPage(SettingsPageId::Learning, learningPage->widget());
-        updatesPage = std::make_unique<UpdatesPage>(environment, notify);
+        updatesPage = std::make_unique<UpdatesPage>(environment, notify,
+            [this] { return prepareUpdateRestart(); }, [this] { hideWindow(); });
         addPage(SettingsPageId::Updates, updatesPage->widget());
         diagnosticsPage = std::make_unique<DiagnosticsPage>(
             fcitx, remote, environment, notify,
@@ -653,8 +672,14 @@ private:
         gtk_box_pack_start(GTK_BOX(bar), editState, FALSE, FALSE, 0);
 
         taskStatus = gtk_label_new("");
+        g_object_set_data_full(G_OBJECT(taskStatus), "modernime-settings-target",
+                              g_strdup("settings-task-status"), g_free);
         addStyleClass(taskStatus, "modernime-status");
         gtk_label_set_ellipsize(GTK_LABEL(taskStatus), PANGO_ELLIPSIZE_END);
+        gtk_label_set_single_line_mode(GTK_LABEL(taskStatus), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(taskStatus), 40);
+        gtk_label_set_xalign(GTK_LABEL(taskStatus), 0);
+        gtk_widget_set_valign(taskStatus, GTK_ALIGN_CENTER);
         gtk_widget_set_halign(taskStatus, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(bar), taskStatus, TRUE, TRUE, 0);
 
@@ -668,6 +693,7 @@ private:
         setAccessibleWidgetText(saveButton, labels[1],
                                 "保存设置但保持窗口打开，可按 Ctrl+Enter");
         for (auto *button : {restoreButton, saveButton}) {
+            gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
             gtk_box_pack_start(GTK_BOX(buttons), button, FALSE, FALSE, 0);
         }
         gtk_box_pack_end(GTK_BOX(bar), buttons, FALSE, FALSE, 0);
@@ -890,6 +916,32 @@ private:
         learningPage->refreshSettings();
     }
 
+    bool prepareUpdateRestart() {
+        if (!model.dirty()) return true;
+        auto *dialog = gtk_message_dialog_new(GTK_WINDOW(windowOwner.get()), GTK_DIALOG_MODAL,
+            GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "更新前如何处理未保存的设置？");
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "暂不更新", GTK_RESPONSE_CANCEL);
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "放弃修改并更新", GTK_RESPONSE_REJECT);
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "保存并更新", GTK_RESPONSE_ACCEPT);
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+            "暂不更新", "保留设置草稿，暂不安装或重启");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_REJECT,
+            "放弃修改并更新", "放弃尚未保存的设置，继续更新");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT,
+            "保存并更新", "保存当前设置，成功后继续更新");
+        gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+        const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        if (response == GTK_RESPONSE_ACCEPT) return saveEditedSettings(false);
+        if (response == GTK_RESPONSE_REJECT) {
+            model.resetEdits();
+            refreshSettingsPages();
+            updateActionState();
+            return true;
+        }
+        return false;
+    }
+
     void requestClose() {
         if (!model.dirty()) {
             hideWindow();
@@ -1028,6 +1080,7 @@ private:
     GtkWidget *searchResults = nullptr;
     GtkWidget *editState = nullptr;
     GtkWidget *taskStatus = nullptr;
+    guint taskStatusTimeout = 0;
     GtkWidget *restoreButton = nullptr;
     GtkWidget *saveButton = nullptr;
     std::vector<std::pair<SettingsPageId, GtkWidget *>> navigationButtons;

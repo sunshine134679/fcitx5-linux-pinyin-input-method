@@ -13,6 +13,8 @@ BuildRequires:  cmake >= 3.24
 BuildRequires:  make
 BuildRequires:  python3 >= 3.10
 BuildRequires:  coreutils
+BuildRequires:  ca-certificates
+BuildRequires:  /usr/bin/ldd
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  sqlite-devel >= 3.31.0
 BuildRequires:  lmdb-devel >= 0.9.24
@@ -34,6 +36,8 @@ Requires:       sqlite >= 3.31.0
 Requires:       lmdb-libs >= 0.9.24
 Requires:       python3 >= 3.10
 Requires:       coreutils
+Requires:       ca-certificates
+Requires:       /usr/bin/ldd
 
 %description
 ModernIME is a modern Pinyin input method engine for Fcitx5 on Linux desktops,
@@ -92,6 +96,7 @@ fi
 %{_datadir}/modernime/gnome_extension.py
 %{_bindir}/modernime-data-guard
 %{_bindir}/modernime-migrate-channel
+%{_bindir}/modernime-update
 %{_libdir}/fcitx5/modernime_fcitx5.so
 %{_libdir}/fcitx5/modernime_ui.so
 %{_datadir}/fcitx5/addon/modernime.conf

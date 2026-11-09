@@ -1410,6 +1410,15 @@ int main(int argc, char **argv) {
         window.presentError("Unknown settings page: bogus_page");
         drainEvents();
         assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "candidates");
+        const std::string longError = "下载未完成：\nusage: update-helper.py download\n" + std::string(600, 'x');
+        window.presentError(longError);
+        drainEvents();
+        auto *notice = findTarget(winWidget, "settings-task-status");
+        assert(GTK_IS_LABEL(notice));
+        assert(gtk_label_get_single_line_mode(GTK_LABEL(notice)));
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(notice))).find('\n') == std::string_view::npos);
+        assert(waitUntil([notice] { return std::string_view(gtk_label_get_text(GTK_LABEL(notice))).empty(); },
+                         std::chrono::seconds(6)));
     }
 
     CloseApplicationProbe closeProbe;

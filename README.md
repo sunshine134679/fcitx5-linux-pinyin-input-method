@@ -65,7 +65,7 @@ EOF
 # 4. 安装与日常升级（升级前自动触发事务级 SQLite WAL 与 LMDB 备份校验）
 sudo apt update
 sudo apt install -y modernime
-# 终端中检查并仅升级 ModernIME（设置客户端的「检查更新」已整合软件源刷新）：
+# 终端中刷新软件源并仅升级 ModernIME（客户端检查官方版本无需管理员授权）：
 sudo apt update && sudo apt install --only-upgrade -y modernime
 
 # 5. 版本回退（在线源保留 0.1.9 及后续历史版本；仓库建立前的 0.1.8 需从 GitHub Releases 下载离线包）
@@ -192,7 +192,7 @@ sudo ./install.sh /usr
 ```bash
 sudo apt update
 sudo apt install \
-    build-essential cmake git pkg-config python3 coreutils util-linux \
+    build-essential cmake git pkg-config python3 coreutils util-linux ca-certificates libc-bin \
     libsqlite3-dev liblmdb-dev libboost-dev \
     libgtest-dev libbenchmark-dev \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
@@ -209,7 +209,7 @@ sudo dnf config-manager --set-enabled EPOL || true
 
 # 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
 sudo dnf install -y \
-    gcc gcc-c++ cmake make git pkgconf-pkg-config python3 coreutils util-linux \
+    gcc gcc-c++ cmake make git pkgconf-pkg-config python3 coreutils util-linux ca-certificates /usr/bin/ldd \
     sqlite-devel lmdb-devel boost-devel \
     gtest-devel google-benchmark-devel \
     fcitx5-devel libime libime-devel \
@@ -219,7 +219,7 @@ sudo dnf install -y \
 
 #### 执行一键安装
 
-安装与数据备份工具需要 Python 3.10 或更高版本；会话启动使用 `coreutils` 的 `timeout` 限制远程状态查询时间。CMake 会检查这些工具，正常安装仍为离线流程。
+安装与数据备份工具需要 Python 3.10 或更高版本；会话启动使用 `coreutils` 的 `timeout` 限制远程状态查询时间。客户端在线更新使用 Python SSL 与 `ca-certificates` 验证 HTTPS，使用 glibc 的 `ldd` 检查便携包运行库。CMake 会检查这些工具，正常安装仍为离线流程。
 ```bash
 # 克隆仓库 (推荐 HTTPS)
 git clone https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method.git
@@ -337,7 +337,7 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 - **个人词典**：输入词条后从本地离线词库自动建议拼音；已有词优先使用整词读音，新词按汉字组合建议。人名、多音字可直接修改读音或从列表选择；没有可用读音时可手动填写完整拼音。排序加成默认使用 0，收在「高级设置」中，普通添加无需调整。编辑保留已有拼音和排序加成，词条列表以词条和拼音为主；继续支持搜索、删除、导入和导出，导入前可检查冲突与合并结果。保存后运行中的输入法会自动读取词典，通常约 2 秒生效。
 - **剪贴板**：历史内容优先展示，V+2 开关与触发键收在「剪贴板设置」中，搜索定位时自动展开。记录使用类型图标与配色区分文本、链接与代码；默认最多预览两行，超出内容按需展开，全文阅读区可独立滚动并选择文字。复制保留完整内容，删除和清空需要确认。
 - **智能学习**：控制候选选择记忆与上下文排序；开启时，获准的当前前文也参与本地语言模型的多字候选与整句解码，无需先反复学习同一句话。关闭上下文或学习、进入敏感输入时停用该语境能力。反复选定的新词还可参与整句解码，与未见过的前后缀组合；关闭学习或进入敏感输入时停用，清空学习后同步移除。页面显示读取进度、记录数量和空库状态；读取失败时显示原因并可重试。清空前自动备份并校验，失败时保留记录；操作结果和备份位置会留在页面上，不被后台统计刷新覆盖。
-- **更新与安装**：显示当前版本和检查动作，点击「检查更新」自动刷新软件源并查询版本，需要时通过系统请求授权；检查详情、更新说明、升级引导按需展开。页面自动读取的本地缓存结果明确标注范围；安装渠道未知时不猜测升级命令。搜索详情中的控件时会自动展开对应条目。
+- **更新与安装**：点击「检查更新」在线查询官方最新正式版本，无需管理员授权；发现新版后主按钮变为「下载更新」，在客户端内下载匹配安装渠道的官方安装包并显示进度；校验完成后点击「重启并更新」，自动安装并重新打开客户端。「重新检查」保留在检查详情中；更新说明、升级引导按需展开。页面自动读取的本地缓存结果明确标注范围；安装渠道未知时不猜测升级命令。搜索详情中的控件时会自动展开对应条目。
 - **系统与诊断**：先显示能否正常输入与下一步建议，区分正常运行、等待切换、无输入焦点与不可用；技术检测值收在「运行详情」中，支持手动刷新和重载。
 
 客户端主题通过 `appearance.client_theme=blue|jade|night|amber|rose|lavender|contrast` 写入原有设置文件，仅影响设置窗口，不改变输入法候选配色或排序。字体选择弹窗同步使用当前主题，统一搜索、字体列表、预览和确认按钮；更新页使用版本叠页图形，诊断页使用输入键盘图形，软件源通过「访问软件源」按钮在浏览器打开，不展示仓库地址。
@@ -348,9 +348,9 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 
 ### 在线更新与缓存
 
-进入「更新与安装」页面时只读取本地缓存，不弹出授权。点击「检查更新」后，会通过系统授权刷新软件源，再自动查询可用版本，无需先到终端刷新。DEB 安装使用 APT，RPM 安装使用 DNF；即使系统同时提供两种工具，也按实际安装渠道选择。检查过程中显示刷新与查询进度；较长刷新会继续跟踪同一事务，不重复启动。查询不会自动安装软件。
+进入「更新与安装」页面时只读取本地缓存。点击「检查更新」后，通过 HTTPS 查询 GitHub 官方仓库的最新正式发布，无需刷新系统软件源或输入管理员密码。发现新版后主按钮变为「下载更新」，下载匹配当前安装渠道的官方安装包并核对 SHA256；检查详情中仍可重新查询。下载完成后点击「重启并更新」，客户端沿用原安装前缀和渠道完成安装，随后重启输入法并重新打开设置。存在未保存的设置时，先选择保存、放弃或暂不更新。检查与下载在后台进行，不阻塞界面，也不请求管理员密码。
 
-刷新失败或取消授权时会显示原因，不把旧缓存当作本次成功检查的结果。APT 刷新使用 `--error-on=any`，DNF 刷新禁用跳过不可用源；授权组件不可用时，在检查详情中提供终端备用命令。需要在终端升级时可执行：
+网络失败或发布信息无效时会显示原因，不把旧缓存当作本次成功检查的结果。安装渠道从正在运行的客户端目录识别，支持用户安装目录与自定义前缀。下载或安装失败时，简短原因直接显示在更新卡片中，完整诊断保留在「检查详情」；底部通知保持单行，5 秒后自动消失。安装失败会保留已下载的安装包，可重试安装。DEB 使用 APT 安装下载的本地包，RPM 使用 DNF 并保留签名校验，脚本安装调用发布包的一键安装程序及原有备份流程，不自动跨渠道覆盖。系统包安装时仍使用系统原有授权机制。当前预编译资产面向 Linux x86_64，DEB 对应 Ubuntu 24.04、RPM 对应 openEuler 24.03/24.09，便携包要求 glibc 2.34 及匹配运行库；没有兼容包时说明原因，不盲目安装。需要在终端升级时可执行：
 
 ```bash
 # Ubuntu / Debian

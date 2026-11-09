@@ -19,6 +19,7 @@ if [[ " $* " == *" --install "* ]]; then
         cp "$PROJECT_ROOT/config/icons/${icon_size}x${icon_size}/modernime.png" "$icon_dir/modernime.png"
     done
     : >"$FAKE_PREFIX/bin/modernime-settings"
+    cp "$PROJECT_ROOT/scripts/modernime-update" "$FAKE_PREFIX/bin/modernime-update"
     : >"$FAKE_PREFIX/share/modernime/pinyin/modernime-knowledge.dict"
     cp "$PROJECT_ROOT/config/desktop/modernime-settings.desktop" \
         "$FAKE_PREFIX/share/applications/modernime-settings.desktop"
@@ -70,6 +71,7 @@ env \
 manifest="$prefix/share/modernime/install-manifest.txt"
 grep -Fqx "$prefix/share/modernime/pinyin/modernime-knowledge.dict" "$manifest"
 grep -Fqx "$prefix/bin/modernime-settings" "$manifest"
+grep -Fqx "$prefix/bin/modernime-update" "$manifest"
 grep -Fqx "$prefix/share/applications/modernime-settings.desktop" "$manifest"
 grep -Fqx "$test_root/home/Desktop/modernime-settings.desktop" "$manifest"
 for icon_size in 16 32 48 64 128 256 512; do
@@ -151,6 +153,7 @@ env \
     PATH="$fake_bin:/usr/bin:/bin" \
     bash "$project_root/uninstall.sh" >/dev/null
 test ! -e "$prefix/bin/modernime-settings"
+test ! -e "$prefix/bin/modernime-update"
 test ! -e "$prefix/share/applications/modernime-settings.desktop"
 for icon_size in 16 32 48 64 128 256 512; do
     test ! -e "$prefix/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"

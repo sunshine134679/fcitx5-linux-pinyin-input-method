@@ -14,6 +14,19 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+// Intercept only the external browser boundary; the GTK button and page callbacks
+// remain real, and the test never launches the user's browser.
+std::string openedUri;
+bool browserAvailable = true;
+extern "C" gboolean gtk_show_uri_on_window(GtkWindow *, const gchar *uri, guint32, GError **error) {
+    openedUri = uri;
+    if (!browserAvailable) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "fixture browser unavailable");
+        return FALSE;
+    }
+    return TRUE;
+}
+
 namespace {
 int failures = 0;
 
@@ -84,6 +97,7 @@ int main(int argc, char **argv) {
     assert(created);
     const std::filesystem::path root(created);
     std::filesystem::create_directory(root / "bin");
+    std::filesystem::create_directories(root / "prefix/bin");
     writeFile(root / "channel", "channel=deb\n");
     // The external package query is the only double. Parsing, policy, GTask,
     // lifetime dispatch and the visible GTK consumer are production code.
@@ -115,6 +129,8 @@ esac
     const Environment environment{
         {"PATH", (root / "bin").string()},
         {"UPDATE_TEST_ROOT", root.string()},
+        {"MODERNIME_PREFIX", (root / "prefix").string()},
+        {"XDG_CACHE_HOME", (root / "cache").string()},
         {"MODERNIME_CURRENT_VERSION", "0.1.23"},
         {"MODERNIME_INSTALL_CHANNEL_FILE", (root / "channel").string()},
         {"MODERNIME_UPDATE_METADATA_FILE", (root / "absent").string()},
@@ -130,13 +146,18 @@ esac
     auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     {
         std::string notification;
-        UpdatesPage page(environment, [&notification](std::string text) { notification = text; });
+        bool allowRestart = false;
+        bool restartRequested = false;
+        UpdatesPage page(environment, [&notification](std::string text) { notification = text; },
+                         [&allowRestart] { return allowRestart; },
+                         [&restartRequested] { restartRequested = true; });
         gtk_container_add(GTK_CONTAINER(window), page.widget());
         gtk_widget_show_all(window);
         auto *status = findTarget(page.widget(), "updates-status");
         auto *hint = findTarget(page.widget(), "updates-status-hint");
         auto *button = findTarget(page.widget(), "updates-check");
         auto *copy = findTarget(page.widget(), "updates-copy-command");
+        auto *recheck = findTarget(page.widget(), "updates-recheck");
         assert(status && hint && button && copy);
         // Window activation is asynchronous. Search focus must be exercised
         // after the fixture owns keyboard focus, as in the real client.
@@ -178,6 +199,8 @@ esac
               "searching copy during a query must focus it once the command is ready");
         check(message().find("0.1.24") != std::string::npos && containsLabel(page.widget(), "0.1.24"),
               "newer candidate must reach both summary and version details");
+        check(std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "下载更新",
+              "available update must turn the primary action into download");
         check(containsLabel(page.widget(), "Fixture package description"), "real package description must be retained");
         check(gtk_widget_get_sensitive(copy), "completed query must restore copy action");
         gtk_button_clicked(GTK_BUTTON(copy));
@@ -252,100 +275,161 @@ printf 'Available Packages\nName : modernime\nVersion : 0.1.22\nRelease : 1\nRep
         g_free(copied);
         writeFile(root / "channel", "channel=deb\n");
 
-        // Only the external package tools are doubled. A button click must
-        // refresh first, wait for its own transaction, then query the new cache.
-        writeFile(root / "bin/pkexec", R"sh(#!/bin/sh
-printf 'authorize\n' >> "$UPDATE_TEST_ROOT/authorizations"
-[ ! -f "$UPDATE_TEST_ROOT/cancel" ] || exit 126
-exec "$@"
-)sh");
-        writeFile(root / "bin/apt-get", R"sh(#!/bin/sh
-[ "$*" = 'update --error-on=any' ] || exit 42
-: > "$UPDATE_TEST_ROOT/refresh-started"
-count=0
-while [ -f "$UPDATE_TEST_ROOT/refresh-hold" ]; do
-  /bin/sleep 0.01
-  count=$((count + 1))
-  [ "$count" -lt 400 ] || exit 99
-done
-if [ -f "$UPDATE_TEST_ROOT/refresh-fail" ]; then
-  echo 'Failed to fetch repository metadata' >&2
-  exit 100
-fi
-/bin/cp "$UPDATE_TEST_ROOT/refreshed-policy" "$UPDATE_TEST_ROOT/policy"
-)sh");
+        // Real HTTPS request construction and release parsing execute in Python;
+        // only the network transport is replaced. No host authentication/updates.
+        writeFile(root / "bin/python3", R"py(#!/usr/bin/python3
+import io, json, os, pathlib, sys, time, urllib.error, urllib.request
+if sys.argv[1] != '-c':
+    os.execv('/usr/bin/python3', ['/usr/bin/python3', *sys.argv[1:]])
+root = pathlib.Path(os.environ['UPDATE_TEST_ROOT'])
+def urlopen(request, timeout):
+    if request.full_url == 'https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest':
+        assert request.get_method() == 'HEAD'
+        response = io.BytesIO()
+        response.geturl = lambda: 'https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/tag/' + json.loads((root / 'release.json').read_text())['tag_name']
+        return response
+    assert request.full_url == 'https://api.github.com/repos/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest'
+    assert timeout <= 10
+    with (root / 'online-queries').open('a') as log:
+        log.write('query\n')
+    (root / 'online-started').touch()
+    deadline = time.monotonic() + 4
+    while (root / 'online-hold').exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if (root / 'online-fail').exists():
+        raise urllib.error.URLError('fixture network unavailable')
+    if (root / 'rate-limited').exists():
+        raise urllib.error.HTTPError(request.full_url, 403, 'rate limit exceeded', {}, None)
+    return io.BytesIO((root / 'release.json').read_bytes())
+urllib.request.urlopen = urlopen
+exec(sys.argv[2])
+)py");
+        writeFile(root / "bin/pkexec", "#!/bin/sh\n: > \"$UPDATE_TEST_ROOT/authorization-forbidden\"\nexit 99\n");
+        assert(::chmod((root / "bin/python3").c_str(), 0755) == 0);
         assert(::chmod((root / "bin/pkexec").c_str(), 0755) == 0);
-        assert(::chmod((root / "bin/apt-get").c_str(), 0755) == 0);
-        policy("0.1.25");
-        std::filesystem::copy_file(root / "policy", root / "refreshed-policy");
+        const auto release = [&root](std::string_view version) {
+            writeFile(root / "release.json", "{\"tag_name\":\"v" + std::string(version) +
+                "\",\"draft\":false,\"prerelease\":false,\"body\":\"正式发布说明\"}");
+        };
         policy("0.1.22");
         query();
-        check(!std::filesystem::exists(root / "authorizations"),
-              "page entry must never request authorization or refresh repositories");
-        writeFile(root / "refresh-hold", "hold");
+        release("0.1.25");
+        writeFile(root / "online-hold", "hold");
         gtk_button_clicked(GTK_BUTTON(button));
-        if (waitUntil([&] { return std::filesystem::exists(root / "refresh-started"); })) {
-            check(message().find("刷新软件源") != std::string::npos &&
-                      !gtk_widget_get_sensitive(button) && !gtk_widget_get_sensitive(copy),
-                  "refresh must expose progress and disable duplicate actions");
-            check(waitUntil([] { return UpdateController::currentPackageOperationPhase() ==
-                                          PackageOperationPhase::Continuing; }),
-                  "fixture must exercise a refresh that outlives the initial wait");
-            check(!gtk_widget_get_sensitive(button), "continuing refresh must keep the same check pending");
-        } else {
-            check(false, "check button must start the package cache refresh");
-        }
-        std::filesystem::remove(root / "refresh-hold");
+        assert(waitUntil([&root] { return std::filesystem::exists(root / "online-started"); }));
+        check(message().find("查询官方") != std::string::npos &&
+                  !gtk_widget_get_sensitive(button) && !gtk_widget_get_sensitive(recheck),
+              "online check must expose progress and disable duplicate actions");
+        check(!UpdateController::hasActivePackageOperation(),
+              "read-only online check must not acquire a package transaction");
+        std::filesystem::remove(root / "online-hold");
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
-        check(message().find("0.1.25") != std::string::npos,
-              "one click must query the newly refreshed cache without a second action");
-        check(UpdateController::unconsumedPackageOperationCount() == 0,
-              "check must consume only its completed refresh result");
-
-        policy("0.1.23");
-        std::filesystem::copy_file(root / "policy", root / "refreshed-policy",
-                                   std::filesystem::copy_options::overwrite_existing);
+        check(message() == "可更新至 0.1.25" &&
+                  std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "下载更新",
+              "online release must replace cached version and enable download");
+        check(containsLabel(page.widget(), "正式发布说明\n"),
+              "online release notes must reach the page");
+        writeFile(root / "online-fail", "fail");
+        gtk_button_clicked(GTK_BUTTON(recheck));
+        assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
+        check(message() == "暂时无法确认更新" &&
+                  detailsMessage().find("fixture network unavailable") != std::string::npos &&
+                  std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "重新检查",
+              "network failure must clear the previous download action and preserve its cause");
+        std::filesystem::remove(root / "online-fail");
+        release("0.1.23");
         gtk_button_clicked(GTK_BUTTON(button));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
-        check(message() == "未发现新版本" && nextStep().find("已刷新") != std::string::npos,
-              "successful online check must not ask the user to refresh again");
+        check(message() == "未发现新版本" && nextStep().find("官方") != std::string::npos,
+              "online no-update result must not ask users to refresh repositories");
         check(detailsMessage().find("sudo apt update") == std::string::npos,
-              "completed refresh must remove obsolete manual refresh instructions");
-
-        const auto querySize = std::filesystem::file_size(root / "queries");
-        writeFile(root / "refresh-fail", "fail");
-        gtk_button_clicked(GTK_BUTTON(button));
-        assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
-        check(message().find("未完成") != std::string::npos &&
-                  detailsMessage().find("Failed to fetch") != std::string::npos,
-              "failed refresh must expose the actual cause instead of reporting no updates");
-        check(std::filesystem::file_size(root / "queries") == querySize &&
-                  !gtk_widget_get_sensitive(copy),
-              "failed refresh must not query stale metadata or expose an old upgrade action");
-        std::filesystem::remove(root / "refresh-fail");
-        writeFile(root / "cancel", "cancel");
-        gtk_button_clicked(GTK_BUTTON(button));
-        assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
-        check(detailsMessage().find("取消") != std::string::npos &&
-                  std::filesystem::file_size(root / "queries") == querySize,
-              "cancelled authorization must end the check without querying stale metadata");
-        std::filesystem::remove(root / "cancel");
+              "online result must remove obsolete privileged-refresh instructions");
 
         writeFile(root / "channel", "channel=rpm\n");
-        writeFile(root / "bin/dnf", R"sh(#!/bin/sh
-case "$*" in
-  'makecache --refresh --setopt=*.skip_if_unavailable=False')
-    : > "$UPDATE_TEST_ROOT/dnf-refreshed" ;;
-  '--cacheonly --setopt=*.repo_gpgcheck=0 -q info modernime')
-    [ -f "$UPDATE_TEST_ROOT/dnf-refreshed" ] || exit 42
-    printf 'Available Packages\nName : modernime\nVersion : 0.1.26\nRelease : 1\nRepository : modernime-test\nSummary : RPM fixture\n' ;;
-  *) exit 42 ;;
-esac
-)sh");
+        release("0.1.26");
+        writeFile(root / "rate-limited", "403");
         gtk_button_clicked(GTK_BUTTON(button));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
-        check(message().find("0.1.26-1") != std::string::npos,
-              "RPM one-click check must refresh with DNF even when APT is present");
+        check(message() == "可更新至 0.1.26" && containsLabel(page.widget(), "rpm (Fedora/openEuler 软件源)"),
+              "online checks must preserve the RPM installation channel");
+        check(containsLabel(page.widget(), "完整更新说明可在官方下载页查看。\n"),
+              "API rate limit must fall back to the official latest release redirect");
+        check(!std::filesystem::exists(root / "authorization-forbidden"),
+              "repeated online checks must never invoke pkexec or request a password");
+
+        // Exercise the real native action worker, process ownership and GTK flow.
+        // Only the external downloader/installer boundary uses a private fixture.
+        writeFile(root / "prefix/bin/modernime-update", R"py(import os, pathlib, sys, time
+root = pathlib.Path(os.environ['UPDATE_TEST_ROOT'])
+action = sys.argv[1]
+directory = pathlib.Path(sys.argv[sys.argv.index('--directory') + 1])
+with (root / (action + '-calls')).open('a') as log:
+    log.write('call\n')
+(root / (action + '-started')).touch()
+if action == 'restart':
+    sys.exit(0)
+(directory / 'progress.ini').write_text('[update]\nphase=' + action + '\nreceived=50\ntotal=100\n')
+deadline = time.monotonic() + 4
+while (root / (action + '-hold')).exists() and time.monotonic() < deadline:
+    time.sleep(0.01)
+if (root / (action + '-fail')).exists():
+    print('fixture installation failed', file=sys.stderr)
+    sys.exit(1)
+(root / (action + '-completed')).touch()
+)py");
+        auto *progress = findTarget(page.widget(), "updates-download-progress");
+        assert(GTK_IS_PROGRESS_BAR(progress));
+        writeFile(root / "channel", "channel=unknown\n");
+        gtk_button_clicked(GTK_BUTTON(button));
+        assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
+        auto *errorSummary = findTarget(page.widget(), "updates-error-summary");
+        check(GTK_IS_LABEL(errorSummary) && gtk_widget_get_mapped(errorSummary) &&
+                  std::string_view(gtk_label_get_text(GTK_LABEL(errorSummary))).find("安装记录") != std::string_view::npos,
+              "missing installation metadata must explain the cause directly in the update card");
+        check(notification.find("usage:") == std::string::npos && notification.find('\n') == std::string::npos &&
+                  notification.size() < 100 && !std::filesystem::exists(root / "download-calls"),
+              "unknown channel must stop before invoking the helper and show only a compact notice");
+        writeFile(root / "channel", "channel=rpm\n");
+        const auto onlineQuerySize = std::filesystem::file_size(root / "online-queries");
+        writeFile(root / "download-hold", "hold");
+        gtk_button_clicked(GTK_BUTTON(button));
+        assert(waitUntil([progress] { return gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(progress)) == 0.5; }));
+        check(!gtk_widget_get_visible(errorSummary), "retry must clear the previous inline error");
+        check(gtk_widget_get_visible(progress) && !gtk_widget_get_sensitive(button),
+              "native download must expose progress and disable duplicate actions");
+        check(openedUri.empty(), "native download must never open a browser");
+        check(!UpdateController::hasActivePackageOperation(), "download must not begin installation");
+        std::filesystem::remove(root / "download-hold");
+        assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
+        check(std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "重启并更新",
+              "verified download must offer restart and update");
+        check(!std::filesystem::exists(root / "install-started"), "download alone must not install");
+        check(std::filesystem::file_size(root / "online-queries") == onlineQuerySize,
+              "download must use the checked version without checking again");
+        gtk_button_clicked(GTK_BUTTON(button));
+        check(!std::filesystem::exists(root / "install-started"),
+              "cancelling unsaved settings handling must cancel installation");
+        allowRestart = true;
+        writeFile(root / "install-fail", "fail");
+        gtk_button_clicked(GTK_BUTTON(button));
+        assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
+        check(detailsMessage().find("fixture installation failed") != std::string::npos && !restartRequested,
+              "installation failure must retain its diagnostic in details and never restart");
+        check(std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "重试安装",
+              "failed installation must retain the verified download for retry");
+        std::filesystem::remove(root / "install-fail");
+        writeFile(root / "install-hold", "hold");
+        gtk_button_clicked(GTK_BUTTON(button));
+        assert(waitUntil([] { return UpdateController::currentPackageOperationPhase() == PackageOperationPhase::Continuing; }));
+        check(!gtk_widget_get_sensitive(button), "background installation must retain its operation and keep UI responsive");
+        std::filesystem::remove(root / "install-hold");
+        assert(waitUntil([&restartRequested] { return restartRequested; }));
+        assert(waitUntil([&root] { return std::filesystem::exists(root / "restart-started"); }));
+        check(!UpdateController::hasActivePackageOperation(), "completed installation must release its transaction");
+        check(std::filesystem::file_size(root / "download-calls") == 5,
+              "installation retry must reuse the verified download");
+        check(!std::filesystem::exists(root / "authorization-forbidden"),
+              "download and script installation must not request administrator authorization");
         writeFile(root / "channel", "channel=deb\n");
         gtk_widget_destroy(window);
     }

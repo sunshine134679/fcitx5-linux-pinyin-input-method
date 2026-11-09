@@ -719,6 +719,7 @@ EOF
             printf '%s\n' "$prefix/share/modernime/install_lifecycle.sh"
             printf '%s\n' "$prefix/bin/modernime-data-guard"
             printf '%s\n' "$prefix/bin/modernime-migrate-channel"
+            printf '%s\n' "$prefix/bin/modernime-update"
             printf '%s\n' "$prefix/share/applications/modernime-settings.desktop"
             for icon_size in 16 32 48 64 128 256 512; do
                 printf '%s\n' "$prefix/share/icons/hicolor/${icon_size}x${icon_size}/apps/modernime.png"

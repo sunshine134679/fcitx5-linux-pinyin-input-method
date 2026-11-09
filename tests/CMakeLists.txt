@@ -313,6 +313,9 @@ if(MODERNIME_BUILD_SETTINGS)
         modernime_settings_logic
     )
     add_test(NAME modernime_update_controller COMMAND modernime_update_controller_tests)
+    add_test(NAME modernime_native_update_helper
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/settings/native_update_helper_test.py")
+    set_tests_properties(modernime_native_update_helper PROPERTIES TIMEOUT 30)
 
     add_executable(modernime_process_runner_tests
         settings/process_runner_test.cpp

@@ -238,6 +238,8 @@ req_list = [
     ("lmdb-libs", GE, "0.9.24"),
     ("python3", GE, "3.10"),
     ("coreutils", ANY, ""),
+    ("ca-certificates", ANY, ""),
+    ("/usr/bin/ldd", ANY, ""),
     ("desktop-file-utils", ANY, ""),
     ("hicolor-icon-theme", ANY, ""),
     ("/bin/sh", ANY, ""),

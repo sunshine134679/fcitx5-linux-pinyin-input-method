@@ -431,6 +431,8 @@ std::string_view settingsStyles() {
         .modernime-details:last-child { border-bottom: none; }
         .modernime-details-content { padding: 4px 10px 18px; }
         .modernime-update-summary { padding: 20px 22px; }
+        .modernime-update-progress trough { min-height: 6px; border-radius: 6px; background: @modernime_accent_surface; border: none; }
+        .modernime-update-progress progress { min-height: 6px; border-radius: 6px; background: @theme_selected_bg_color; border: none; }
         .modernime-current-version { font-size: 26px; font-weight: 600; }
         .modernime-update-status { font-size: 13px; color: @insensitive_fg_color; }
         .modernime-diagnostics-card { padding: 18px 22px; }
