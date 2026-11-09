@@ -151,8 +151,8 @@ CandidateRanker::rank(std::string_view userInput,
     // F1（2026-10-24 容错专项）：LibIME 模糊解码把击键形读音候选（如
     // zongwen 输入下的 zong'wen）判为 prio=2、规范读音候选（zhong'wen）判为
     // prio=0，组间排序不受学习影响，成熟偏好永远无法越过一次声母误差。
-    // prio=0（全覆盖模糊变体）候选在学习增益达到既有成熟学习者阈值
-    // 1.8，且当前原始输入有连续明确纠正证据后，才可与 prio=2 竞争。
+    // prio=0 标准模糊音在成熟学习阈值 1.8 后仍可与 prio=2 竞争；
+    // 额外近音纠错则须有当前原始输入的明确重复选择证据。
     // 门槛收紧：候选读音必须与输入音节数一致（模糊变体天然保持音节结构），
     // 排除"王绍龙王"类分段造词产生的音节数不符学习词条越组晋升。
     std::size_t inputSyllables = 0;
@@ -182,7 +182,8 @@ CandidateRanker::rank(std::string_view userInput,
             }
         }
     }
-    const auto effectivePriority = [&candidates, inputSyllables,
+    const auto fuzzyInputKey = PinyinMatchPolicy::phoneticFuzzyKey(userInput);
+    const auto effectivePriority = [&candidates, inputSyllables, &fuzzyInputKey,
                                     inputIsFullPinyin](std::size_t index) {
         const auto &candidate = candidates[index];
         if (candidate.match_priority != 0 || !std::isfinite(candidate.learning_boost) ||
@@ -197,21 +198,27 @@ CandidateRanker::rank(std::string_view userInput,
         if (candidateSyllables != inputSyllables) {
             return candidate.match_priority;
         }
-        // 普通词频只表达词语偏好，不证明用户在当前拼音下想要纠错。
-        // 单字、多字均需当前原始输入的明确重复选择证据，避免在正确
-        // 拼音下学到的词跨组夺走其他完整拼音的首选。
-        if (candidate.recent_choice_bonus <= 0.0) {
+        // 保留多音节标准模糊音的持久偏好。单字及额外近音替换不能
+        // 仅凭普通词频跨组夺首，须有当前原始输入的明确纠正证据。
+        const bool standardFuzzy = inputSyllables > 1 && !fuzzyInputKey.empty() &&
+            PinyinMatchPolicy::phoneticFuzzyKey(candidate.full_pinyin) == fuzzyInputKey;
+        if (!standardFuzzy && candidate.recent_choice_bonus <= 0.0) {
             return candidate.match_priority;
         }
         return 2;
     };
+    std::vector<int> effectivePriorities;
+    effectivePriorities.reserve(candidates.size());
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        effectivePriorities.push_back(effectivePriority(i));
+    }
     std::stable_sort(order.begin(), order.end(),
                      [&candidates, &abbreviationPromoted, &preferenceCosts,
-                      &effectivePriority](std::size_t left, std::size_t right) -> bool {
+                      &effectivePriorities](std::size_t left, std::size_t right) -> bool {
         const auto &a = candidates[left];
         const auto &b = candidates[right];
-        const auto aPriority = effectivePriority(left);
-        const auto bPriority = effectivePriority(right);
+        const auto aPriority = effectivePriorities[left];
+        const auto bPriority = effectivePriorities[right];
         if (aPriority != bPriority) {
             return aPriority > bPriority;
         }
