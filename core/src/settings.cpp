@@ -122,6 +122,13 @@ std::filesystem::path homePath(std::string_view home) {
 
 } // namespace
 
+namespace {
+bool validCandidateFontFamily(std::string_view value) {
+    return !value.empty() && value.size() <= 128 && trim(value) == value &&
+           std::none_of(value.begin(), value.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; });
+}
+}
+
 ModernIMESettings defaultSettings() { return {}; }
 
 SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
@@ -142,6 +149,12 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
         result.issues.push_back(
             {"candidate.font_size", "候选框字号仅支持 14 到 28 之间的整数"});
     }
+    if (!validCandidateFontFamily(settings.candidateFontFamily))
+        result.issues.push_back({"candidate.font_family", "请选择有效的候选字体"});
+    if (std::none_of(kCandidateThemes.begin(), kCandidateThemes.end(), [&](const auto &option) { return option.value == settings.candidateTheme; }))
+        result.issues.push_back({"candidate.theme", "请选择浅色、深色或经典蓝配色"});
+    if (std::none_of(kCandidateSpacings.begin(), kCandidateSpacings.end(), [&](const auto &option) { return option.value == settings.candidateSpacing; }))
+        result.issues.push_back({"candidate.spacing", "请选择紧凑、标准或宽松间距"});
     if (!validClipboardTrigger(settings.clipboardTrigger)) {
         result.issues.push_back(
             {"clipboard.trigger", "剪贴板触发键必须符合字母+数字格式，例如 V+2"});
@@ -161,6 +174,7 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
            << "input.toggle_key=" << settings.toggleKey << '\n'
            << "candidate.page_size=" << settings.candidatePageSize << '\n'
            << "candidate.font_size=" << settings.candidateFontSize << '\n'
+           << "candidate.font_family=" << settings.candidateFontFamily << '\n'
            << "candidate.number_selection="
            << (settings.numberSelection ? "true" : "false") << '\n'
            << "candidate.arrow_navigation="
@@ -180,6 +194,10 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
            << (settings.englishDefinitionEnabled ? "true" : "false") << '\n'
            << "candidate.character_extraction="
            << (settings.characterExtractionEnabled ? "true" : "false") << '\n';
+    for (const auto &option : kCandidateThemes)
+        if (option.value == settings.candidateTheme) output << "candidate.theme=" << option.key << '\n';
+    for (const auto &option : kCandidateSpacings)
+        if (option.value == settings.candidateSpacing) output << "candidate.spacing=" << option.key << '\n';
     for (const auto &option : kFuzzyPinyinOptions) {
         output << option.key << '=' << (settings.fuzzyPinyin.*option.member ? "true" : "false") << '\n';
     }
@@ -361,6 +379,21 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                     result.settings.candidateFontSize = val;
                     parsed = true;
                 }
+            } else if (key == "candidate.font_family") {
+                if (validCandidateFontFamily(value)) {
+                    result.settings.candidateFontFamily = value;
+                    parsed = true;
+                }
+            } else if (key == "candidate.theme") {
+                for (const auto &option : kCandidateThemes) if (option.key == value) {
+                    result.settings.candidateTheme = option.value;
+                    parsed = true;
+                }
+            } else if (key == "candidate.spacing") {
+                for (const auto &option : kCandidateSpacings) if (option.key == value) {
+                    result.settings.candidateSpacing = option.value;
+                    parsed = true;
+                }
             } else if (key == "candidate.number_selection") {
                 parsed = parseBoolean(value, result.settings.numberSelection);
             } else if (key == "candidate.arrow_navigation") {
@@ -492,6 +525,11 @@ SettingsSaveResult SettingsStore::saveWithResult(
         std::to_string(settings.candidatePageSize);
     knownSettings["candidate.font_size"] =
         std::to_string(settings.candidateFontSize);
+    knownSettings["candidate.font_family"] = settings.candidateFontFamily;
+    for (const auto &option : kCandidateThemes)
+        if (option.value == settings.candidateTheme) knownSettings["candidate.theme"] = option.key;
+    for (const auto &option : kCandidateSpacings)
+        if (option.value == settings.candidateSpacing) knownSettings["candidate.spacing"] = option.key;
     knownSettings["candidate.number_selection"] =
         settings.numberSelection ? "true" : "false";
     knownSettings["candidate.arrow_navigation"] =
@@ -550,12 +588,13 @@ SettingsSaveResult SettingsStore::saveWithResult(
         }
     }
 
-    const std::array<const char *, 22> keyOrder{
+    const std::array<const char *, 25> keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
         "pinyin.scheme",
         "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",
         "pinyin.fuzzy_l_n", "pinyin.fuzzy_en_eng", "pinyin.fuzzy_in_ing",
         "candidate.page_size", "candidate.font_size",
+        "candidate.font_family", "candidate.theme", "candidate.spacing",
         "candidate.number_selection", "candidate.arrow_navigation",
         "candidate.page_navigation", "punctuation.enabled",
         "learning.enabled", "learning.context_enabled",

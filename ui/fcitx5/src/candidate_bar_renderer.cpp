@@ -95,6 +95,43 @@ RenderStyle RenderStyle::reference() {
     return style;
 }
 
+RenderStyle RenderStyle::fromSettings(const core::ModernIMESettings &settings) {
+    auto style = reference();
+    for (auto *text : {&style.candidateText, &style.candidateNumberText, &style.preeditText,
+                       &style.annotationText, &style.clipboardText, &style.clipboardSubmitIconText})
+        text->family = settings.candidateFontFamily;
+    style.candidateText.size = settings.candidateFontSize;
+    style.candidateNumberText.size = std::max(10, settings.candidateFontSize - 4);
+    style.preeditText.size = std::max(12, settings.candidateFontSize - 2);
+    style.annotationText.size = std::max(10, settings.candidateFontSize - 6);
+    style.clipboardText.size = settings.candidateFontSize;
+    style.clipboardSubmitIconText.size = std::max(12, settings.candidateFontSize - 2);
+    if (settings.candidateTheme == core::CandidateTheme::ClassicBlue) return style;
+    style.shadow = {0.0, 0.0, 0.0, 0.10};
+    if (settings.candidateTheme == core::CandidateTheme::Dark) {
+        style.panel = {0.12, 0.13, 0.14, 1.0};
+        style.border = {0.29, 0.30, 0.31, 1.0};
+        style.selected = {0.88, 0.89, 0.90, 1.0};
+        style.text = {0.94, 0.95, 0.96, 1.0};
+        style.selectedText = {0.10, 0.11, 0.12, 1.0};
+        style.preedit = style.annotation = {0.68, 0.69, 0.70, 1.0};
+        style.selectedAnnotation = {0.28, 0.29, 0.30, 1.0};
+        style.clipboardSeparator = {0.25, 0.26, 0.27, 1.0};
+        style.clipboardSubmitBackground = {0.77, 0.78, 0.79, 1.0};
+    } else {
+        style.panel = {1.0, 1.0, 1.0, 0.99};
+        style.border = {0.86, 0.86, 0.86, 1.0};
+        style.selected = {0.17, 0.17, 0.17, 1.0};
+        style.text = {0.13, 0.13, 0.13, 1.0};
+        style.selectedText = {1.0, 1.0, 1.0, 1.0};
+        style.preedit = style.annotation = {0.43, 0.43, 0.43, 1.0};
+        style.selectedAnnotation = {0.85, 0.85, 0.85, 1.0};
+        style.clipboardSeparator = {0.90, 0.90, 0.90, 1.0};
+        style.clipboardSubmitBackground = {0.29, 0.29, 0.29, 1.0};
+    }
+    return style;
+}
+
 void CandidateBarRenderer::render(RenderSurface &surface,
                                   const CandidateBarLayout &layout,
                                   const RenderStyle &style) {

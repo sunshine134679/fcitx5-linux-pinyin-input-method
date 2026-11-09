@@ -1,7 +1,7 @@
 find_package(PkgConfig REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
-pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0>=3.24)
 pkg_check_modules(FCITX5_UTILS QUIET Fcitx5Utils)
 
 set(modernime_system_fcitx5_addon_dir "")

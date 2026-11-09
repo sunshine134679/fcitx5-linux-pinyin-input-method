@@ -157,13 +157,13 @@ std::vector<core::CandidateScore> ContextDecoder::candidates() const {
             const auto pinyin = libime::PinyinEncoder::decodeFullPinyin(part);
             const auto found = learnedWords.find(core::candidateOrderKey(node->word(), pinyin));
             if (found != learnedWords.end())
-                componentEvidence += std::min(found->second, 3.0) * (part.size() / 2);
+                componentEvidence += std::min(found->second, 3.0) * static_cast<double>(part.size() / 2);
             else if (core::CommonCharacters::containsRare(node->word())) rareCovered = false;
         }
         if (evidence < 1.0 && componentEvidence == 0.0) continue;
         if (componentEvidence > 0.0) {
             candidate.decoder_score = sentence.score();
-            candidate.learned_word_bonus = componentEvidence / (encoded.size() / 2);
+            candidate.learned_word_bonus = componentEvidence / static_cast<double>(encoded.size() / 2);
             candidate.learned_rare_coverage = rareCovered;
         }
         candidate.full_pinyin = libime::PinyinEncoder::decodeFullPinyin(encoded.data(), encoded.size());

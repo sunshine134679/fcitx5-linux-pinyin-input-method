@@ -55,6 +55,7 @@ struct RenderStyle final {
     double clipboardSubmitRadius = 0.0;
 
     static RenderStyle reference();
+    static RenderStyle fromSettings(const core::ModernIMESettings &settings);
 };
 
 class RenderSurface {

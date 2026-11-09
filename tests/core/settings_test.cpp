@@ -66,6 +66,9 @@ void testDefaultsAndRoundTrip() {
     expected.toggleKey = "Alt+Space";
     expected.candidatePageSize = 5;
     expected.candidateFontSize = 24;
+    expected.candidateFontFamily = "DejaVu Sans";
+    expected.candidateTheme = modernime::core::CandidateTheme::Dark;
+    expected.candidateSpacing = modernime::core::CandidateSpacing::Compact;
     expected.numberSelection = false;
     expected.arrowNavigation = false;
     expected.pageNavigation = false;
@@ -89,6 +92,10 @@ void testDefaultsAndRoundTrip() {
                "candidate page size round-trips");
     assertTrue(loaded.settings.candidateFontSize == expected.candidateFontSize,
                "candidate font size round-trips");
+    assertTrue(loaded.settings.candidateFontFamily == expected.candidateFontFamily &&
+                   loaded.settings.candidateTheme == expected.candidateTheme &&
+                   loaded.settings.candidateSpacing == expected.candidateSpacing,
+               "candidate font, theme and spacing round-trip");
     assertTrue(loaded.settings.numberSelection == expected.numberSelection &&
                    loaded.settings.arrowNavigation == expected.arrowNavigation &&
                    loaded.settings.pageNavigation == expected.pageNavigation,

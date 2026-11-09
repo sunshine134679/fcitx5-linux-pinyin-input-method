@@ -491,6 +491,33 @@ int main(int argc, char *argv[]) {
     assertTrue(activeList->candidate(selectedIndex).text().toString() == "你好",
                "Selected candidate text semantics preserved");
 
+    // Change only the new appearance settings: same size, fresh geometry.
+    newSettings.candidateFontFamily = "DejaVu Sans";
+    newSettings.candidateTheme = modernime::core::CandidateTheme::Dark;
+    newSettings.candidateSpacing = modernime::core::CandidateSpacing::Compact;
+    g_usleep(1600000);
+    assertTrue(modernime::core::SettingsStore::save(settingsFile, newSettings), "save new appearance");
+    selectedIndex = -1;
+    uiAddon.handleButtonPress(30.0, 20.0);
+    assertTrue(selectedIndex == -1, "font/theme/spacing invalidate the previous painted frame");
+    uiAddon.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(uiAddon);
+    auto *appearanceSurface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1000, 120);
+    auto *appearanceContext = cairo_create(appearanceSurface);
+    uiAddon.draw(appearanceContext);
+    cairo_surface_flush(appearanceSurface);
+    const auto *pixels = cairo_image_surface_get_data(appearanceSurface);
+    const auto *row = reinterpret_cast<const std::uint32_t *>(pixels + 5 * cairo_image_surface_get_stride(appearanceSurface));
+    assertTrue((row[200] >> 24) == 255 && ((row[200] >> 16) & 255) > 20 &&
+                   ((row[200] >> 16) & 255) < 64, "production candidate panel actually renders the dark theme");
+    if (const auto *capture = std::getenv("MODERNIME_TEST_APPEARANCE_CAPTURE"))
+        assertTrue(cairo_surface_write_to_png(appearanceSurface, capture) == CAIRO_STATUS_SUCCESS, "capture production appearance");
+    cairo_destroy(appearanceContext);
+    cairo_surface_destroy(appearanceSurface);
+    drainGtkEvents();
+    uiAddon.handleButtonPress(30.0, 20.0);
+    assertTrue(selectedIndex == 0 && context.commits.back() == "你好", "new appearance preserves the displayed selection");
+
     context.focusOut();
     }
     for (const auto *scenario : {"replacement", "page", "unpainted", "focus", "destroy",

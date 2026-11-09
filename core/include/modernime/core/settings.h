@@ -2,6 +2,7 @@
 
 #include "modernime/core/pinyin_options.h"
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -11,12 +12,28 @@ namespace modernime::core {
 
 enum class InputMode { Chinese, English };
 
+enum class CandidateTheme { Light, Dark, ClassicBlue };
+enum class CandidateSpacing { Compact, Standard, Spacious };
+struct CandidateThemeOption { CandidateTheme value; std::string_view key; std::string_view label; };
+struct CandidateSpacingOption { CandidateSpacing value; std::string_view key; std::string_view label; };
+inline constexpr std::array kCandidateThemes{
+    CandidateThemeOption{CandidateTheme::Light, "light", "浅色"},
+    CandidateThemeOption{CandidateTheme::Dark, "dark", "深色"},
+    CandidateThemeOption{CandidateTheme::ClassicBlue, "classic-blue", "经典蓝"}};
+inline constexpr std::array kCandidateSpacings{
+    CandidateSpacingOption{CandidateSpacing::Compact, "compact", "紧凑"},
+    CandidateSpacingOption{CandidateSpacing::Standard, "standard", "标准"},
+    CandidateSpacingOption{CandidateSpacing::Spacious, "spacious", "宽松"}};
+
 struct ModernIMESettings final {
     bool inputEnabled = true;
     InputMode defaultMode = InputMode::Chinese;
     std::string toggleKey = "Ctrl+Shift+Space";
     int candidatePageSize = 9;
     int candidateFontSize = 20;
+    std::string candidateFontFamily = "Noto Sans CJK SC";
+    CandidateTheme candidateTheme = CandidateTheme::Light;
+    CandidateSpacing candidateSpacing = CandidateSpacing::Standard;
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;

@@ -46,6 +46,14 @@ public:
                                  settings.candidatePageSize - core::kMinimumCandidatePageSize);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFontSize),
                                   settings.candidateFontSize);
+        auto *font = pango_font_description_new();
+        pango_font_description_set_family(font, settings.candidateFontFamily.c_str());
+        gtk_font_chooser_set_font_desc(GTK_FONT_CHOOSER(candidateFontFamily), font);
+        pango_font_description_free(font);
+        for (const auto &option : core::kCandidateThemes)
+            if (option.value == settings.candidateTheme) gtk_combo_box_set_active_id(GTK_COMBO_BOX(candidateTheme), option.key.data());
+        for (const auto &option : core::kCandidateSpacings)
+            if (option.value == settings.candidateSpacing) gtk_combo_box_set_active_id(GTK_COMBO_BOX(candidateSpacing), option.key.data());
         gtk_switch_set_active(GTK_SWITCH(numberSelection),
                               settings.numberSelection);
         gtk_switch_set_active(GTK_SWITCH(arrowNavigation),
@@ -65,6 +73,12 @@ public:
         if (target == "candidate-font-size") {
             return focusWidgetOrFallback(candidateFontSize, candidateFontSizeFallback);
         }
+        if (target == "candidate-font-family")
+            return focusWidgetOrFallback(candidateFontFamily, candidateFontSizeFallback);
+        if (target == "candidate-theme")
+            return focusWidgetOrFallback(candidateTheme, candidateThemeFallback);
+        if (target == "candidate-spacing")
+            return focusWidgetOrFallback(candidateSpacing, candidateSpacingFallback);
         if (target == "number-selection") {
             return focusWidgetOrFallback(numberSelection, numberSelectionFallback);
         }
@@ -90,7 +104,8 @@ private:
         buildSettingsCard();
 
         setSettingsFocusChain(
-            page, {previewExample, candidatePageSize, candidateFontSize, numberSelection,
+            page, {previewExample, candidatePageSize, candidateFontFamily, candidateFontSize,
+                   candidateSpacing, candidateTheme, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation});
         refresh();
         pageGuard.release();
@@ -180,6 +195,15 @@ private:
         gtk_box_pack_start(GTK_BOX(card), candidatePageSizeFallback, FALSE, FALSE, 0);
 
         auto *fontControl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        candidateFontFamily = gtk_font_button_new();
+        gtk_font_button_set_title(GTK_FONT_BUTTON(candidateFontFamily), "选择候选字体");
+        gtk_font_button_set_show_size(GTK_FONT_BUTTON(candidateFontFamily), FALSE);
+        gtk_font_button_set_show_style(GTK_FONT_BUTTON(candidateFontFamily), FALSE);
+        gtk_font_chooser_set_level(GTK_FONT_CHOOSER(candidateFontFamily), GTK_FONT_CHOOSER_LEVEL_FAMILY);
+        gtk_font_chooser_set_preview_text(GTK_FONT_CHOOSER(candidateFontFamily), "你好，世界。ModernIME");
+        setTarget(candidateFontFamily, "candidate-font-family");
+        setAccessibleWidgetText(candidateFontFamily, "候选字体", "选择系统中已安装的字体");
+        gtk_box_pack_start(GTK_BOX(fontControl), candidateFontFamily, FALSE, FALSE, 0);
         candidateFontSize = gtk_spin_button_new_with_range(
             core::kMinimumCandidateFontSize, core::kMaximumCandidateFontSize, 1.0);
         gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(candidateFontSize), TRUE);
@@ -190,8 +214,21 @@ private:
         addStyleClass(unit, "modernime-description");
         gtk_box_pack_start(GTK_BOX(fontControl), unit, FALSE, FALSE, 0);
         candidateFontSizeFallback = createSettingRow(
-            "候选文字大小", "可设置 14–28 pt，预览随调整即时更新", fontControl);
+            "候选字体", "选择已安装字体，字号可设置 14–28 pt", fontControl);
         gtk_box_pack_start(GTK_BOX(card), candidateFontSizeFallback, FALSE, FALSE, 0);
+
+        candidateSpacing = gtk_combo_box_text_new();
+        for (const auto &option : core::kCandidateSpacings)
+            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(candidateSpacing), option.key.data(), option.label.data());
+        setTarget(candidateSpacing, "candidate-spacing");
+        candidateSpacingFallback = createSettingRow("候选间距", "紧凑节省横向空间，宽松便于浏览", candidateSpacing);
+        gtk_box_pack_start(GTK_BOX(card), candidateSpacingFallback, FALSE, FALSE, 0);
+        candidateTheme = gtk_combo_box_text_new();
+        for (const auto &option : core::kCandidateThemes)
+            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(candidateTheme), option.key.data(), option.label.data());
+        setTarget(candidateTheme, "candidate-theme");
+        candidateThemeFallback = createSettingRow("候选配色", "选择候选栏和剪贴板菜单的配色", candidateTheme);
+        gtk_box_pack_start(GTK_BOX(card), candidateThemeFallback, FALSE, FALSE, 0);
 
         // Row 3: 数字键选词
         numberSelection = gtk_switch_new();
@@ -228,6 +265,9 @@ private:
 
         g_signal_connect(candidatePageSize, "changed", G_CALLBACK(onSpinChanged), this);
         g_signal_connect(candidateFontSize, "value-changed", G_CALLBACK(onSpinChanged), this);
+        g_signal_connect(candidateFontFamily, "font-set", G_CALLBACK(onSpinChanged), this);
+        g_signal_connect(candidateTheme, "changed", G_CALLBACK(onSpinChanged), this);
+        g_signal_connect(candidateSpacing, "changed", G_CALLBACK(onSpinChanged), this);
 
         for (auto *control : {numberSelection, arrowNavigation, pageNavigation,
                               englishDefinition}) {
@@ -246,14 +286,10 @@ private:
             "你好", "你号", "拟好", "你好啊", "你好呀", "你好吗", "你还好", "你好吧", "你好哇"};
         const int example = gtk_combo_box_get_active(GTK_COMBO_BOX(previewExample));
         const auto &samples = example == 0 ? single : example == 1 ? doubleWords : mixed;
-        const int capacity = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) +
-                             core::kMinimumCandidatePageSize;
-        const int fontSize = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFontSize));
-        metrics = ui::CandidateBarMetrics::reference(fontSize, capacity);
-        renderStyle = ui::RenderStyle::reference();
-        renderStyle.candidateText.size = fontSize;
-        renderStyle.candidateNumberText.size = std::max(10, fontSize - 4);
-        renderStyle.preeditText.size = std::max(12, fontSize - 2);
+        const auto settings = controlSettings();
+        const int capacity = settings.candidatePageSize;
+        metrics = ui::CandidateBarMetrics::fromSettings(settings);
+        renderStyle = ui::RenderStyle::fromSettings(settings);
         core::CandidatePage candidatePage;
         for (const auto *sample : samples) {
             core::CandidateItem item;
@@ -278,8 +314,8 @@ private:
         cairo_surface_destroy(surface);
         gtk_widget_set_size_request(candidatePreview, 1, static_cast<int>(std::ceil(metrics.canvasHeight)));
         gtk_label_set_markup(GTK_LABEL(compositionLabel), example == 0
-            ? "ni<span foreground='#2563eb' font_weight='bold'>|</span>"
-            : "nihao<span foreground='#2563eb' font_weight='bold'>|</span>");
+            ? "ni<span foreground='#252525' font_weight='bold'>|</span>"
+            : "nihao<span foreground='#252525' font_weight='bold'>|</span>");
         std::string accessibleCandidates;
         for (const auto &candidate : previewLayout.candidates) {
             if (!accessibleCandidates.empty()) accessibleCandidates += " · ";
@@ -341,22 +377,29 @@ private:
         impl->applyToModel();
     }
 
-    void applyToModel() {
-        const int pageSize = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) +
-            core::kMinimumCandidatePageSize;
-        const int fontSize = gtk_spin_button_get_value_as_int(
-            GTK_SPIN_BUTTON(candidateFontSize));
-        const bool numSelect =
-            gtk_switch_get_active(GTK_SWITCH(numberSelection));
-        const bool arrowNav =
-            gtk_switch_get_active(GTK_SWITCH(arrowNavigation));
-        const bool pageNav =
-            gtk_switch_get_active(GTK_SWITCH(pageNavigation));
-        const bool engDef =
-            gtk_switch_get_active(GTK_SWITCH(englishDefinition));
+    core::ModernIMESettings controlSettings() const {
+        auto settings = model.settings();
+        settings.candidatePageSize = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) + core::kMinimumCandidatePageSize;
+        settings.candidateFontSize = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFontSize));
+        if (auto *font = gtk_font_chooser_get_font_desc(GTK_FONT_CHOOSER(candidateFontFamily))) {
+            if (const auto *family = pango_font_description_get_family(font)) settings.candidateFontFamily = family;
+            pango_font_description_free(font);
+        }
+        const auto *theme = gtk_combo_box_get_active_id(GTK_COMBO_BOX(candidateTheme));
+        for (const auto &option : core::kCandidateThemes)
+            if (theme && option.key == theme) settings.candidateTheme = option.value;
+        const auto *spacing = gtk_combo_box_get_active_id(GTK_COMBO_BOX(candidateSpacing));
+        for (const auto &option : core::kCandidateSpacings)
+            if (spacing && option.key == spacing) settings.candidateSpacing = option.value;
+        settings.numberSelection = gtk_switch_get_active(GTK_SWITCH(numberSelection));
+        settings.arrowNavigation = gtk_switch_get_active(GTK_SWITCH(arrowNavigation));
+        settings.pageNavigation = gtk_switch_get_active(GTK_SWITCH(pageNavigation));
+        settings.englishDefinitionEnabled = gtk_switch_get_active(GTK_SWITCH(englishDefinition));
+        return settings;
+    }
 
-        model.setCandidateSettings(pageSize, fontSize, numSelect, arrowNav,
-                                   pageNav, engDef);
+    void applyToModel() {
+        model.setSettings(controlSettings());
         if (changed) {
             changed();
         }
@@ -384,6 +427,11 @@ private:
     GtkWidget *candidateFontSize = nullptr;
     GtkWidget *candidateFontSizeFallback = nullptr;
 
+    GtkWidget *candidateFontFamily = nullptr;
+    GtkWidget *candidateTheme = nullptr;
+    GtkWidget *candidateThemeFallback = nullptr;
+    GtkWidget *candidateSpacing = nullptr;
+    GtkWidget *candidateSpacingFallback = nullptr;
     GtkWidget *numberSelection = nullptr;
     GtkWidget *numberSelectionFallback = nullptr;
     GtkWidget *arrowNavigation = nullptr;

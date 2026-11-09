@@ -112,6 +112,27 @@ int main() {
                    surface.textBaseline[5] == 33.75,
                "candidate text is vertically centered in its slot");
 
+    auto settings = modernime::core::defaultSettings();
+    const auto normalMetrics = modernime::ui::CandidateBarMetrics::fromSettings(settings);
+    settings.candidateFontFamily = "DejaVu Sans";
+    settings.candidateTheme = modernime::core::CandidateTheme::Dark;
+    settings.candidateSpacing = modernime::core::CandidateSpacing::Compact;
+    const auto darkStyle = modernime::ui::RenderStyle::fromSettings(settings);
+    const auto compactMetrics = modernime::ui::CandidateBarMetrics::fromSettings(settings);
+    assertTrue(darkStyle.panel.red < darkStyle.text.red &&
+                   darkStyle.selected.red > darkStyle.selectedText.red,
+               "dark theme keeps candidate and selected text legible");
+    assertTrue(darkStyle.candidateText.family == settings.candidateFontFamily &&
+                   darkStyle.clipboardText.family == settings.candidateFontFamily &&
+                   compactMetrics.fontFamily == settings.candidateFontFamily,
+               "candidate and clipboard use the selected font");
+    assertTrue(compactMetrics.panelWidth < normalMetrics.panelWidth &&
+                   compactMetrics.candidateGap < normalMetrics.candidateGap,
+               "compact spacing reduces the actual bar width");
+    settings.candidateSpacing = modernime::core::CandidateSpacing::Spacious;
+    assertTrue(modernime::ui::CandidateBarMetrics::fromSettings(settings).panelWidth > normalMetrics.panelWidth,
+               "spacious spacing expands the actual bar width");
+
     modernime::core::CandidatePage clipboardPage;
     clipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
     clipboardPage.items = {{"first clipboard", {}, 0},

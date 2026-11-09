@@ -203,8 +203,9 @@ struct ModernIMEUserInterface::Impl final {
         }
     }
     WindowAnchor windowAnchor;
-    RenderStyle style = RenderStyle::reference();
-    CandidateBarMetrics metrics = CandidateBarMetrics::reference();
+    core::ModernIMESettings appearance = core::defaultSettings();
+    RenderStyle style = RenderStyle::fromSettings(appearance);
+    CandidateBarMetrics metrics = CandidateBarMetrics::fromSettings(appearance);
     double configuredPanelWidth = metrics.panelWidth;
     bool gtkAvailable = false;
     bool suspended = false;
@@ -230,8 +231,6 @@ struct ModernIMEUserInterface::Impl final {
     core::SettingsFileStamp lastSettingsStamp{};
     std::string lastContentHash;
     std::uint64_t layoutGeneration = 0;
-    int currentFontSize = 20;
-    int currentPageSize = 9;
     bool loadFailed = false;
     int retryCount = 0;
 
@@ -275,23 +274,19 @@ struct ModernIMEUserInterface::Impl final {
                     if (loadResult.contentHash != lastContentHash) {
                         lastContentHash = loadResult.contentHash;
                         const auto &loaded = loadResult.settings;
-                        if (loaded.candidateFontSize != currentFontSize ||
-                            loaded.candidatePageSize != currentPageSize) {
-                            currentFontSize = loaded.candidateFontSize;
-                            currentPageSize = loaded.candidatePageSize;
+                        if (loaded.candidateFontSize != appearance.candidateFontSize ||
+                            loaded.candidatePageSize != appearance.candidatePageSize ||
+                            loaded.candidateFontFamily != appearance.candidateFontFamily ||
+                            loaded.candidateTheme != appearance.candidateTheme ||
+                            loaded.candidateSpacing != appearance.candidateSpacing) {
+                            appearance = loaded;
                             ++layoutGeneration;
-                            metrics = CandidateBarMetrics::reference(
-                                static_cast<double>(currentFontSize),
-                                static_cast<std::size_t>(currentPageSize));
+                            metrics = CandidateBarMetrics::fromSettings(appearance);
+                            style = RenderStyle::fromSettings(appearance);
                             configuredPanelWidth = metrics.panelWidth;
                             metrics.layoutGeneration = layoutGeneration;
-                            metrics.maxCandidates = static_cast<std::size_t>(currentPageSize);
-                            metrics.candidateFontSize = static_cast<double>(currentFontSize);
-                            style.candidateText.size = static_cast<double>(currentFontSize);
-                            style.candidateNumberText.size =
-                                std::max(10.0, static_cast<double>(currentFontSize) - 4.0);
-                            style.preeditText.size =
-                                std::max(12.0, static_cast<double>(currentFontSize) - 2.0);
+                            for (auto &[key, font] : sharedFontCache) pango_font_description_free(font);
+                            sharedFontCache.clear();
                             sharedWidthCache.clear();
                             lastWindowWidth = -1;
                             lastWindowHeight = -1;

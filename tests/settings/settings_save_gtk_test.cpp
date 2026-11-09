@@ -151,9 +151,28 @@ int main(int argc, char **argv) {
             assert(gtk_switch_get_active(GTK_SWITCH(control)));
             gtk_switch_set_active(GTK_SWITCH(control), false);
         }
+        const auto targetWidget = [&](std::string_view name) {
+            return findWidget(window, [&](GtkWidget *widget) {
+                const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
+                return target && name == target;
+            });
+        };
+        auto *font = targetWidget("candidate-font-family");
+        auto *theme = targetWidget("candidate-theme");
+        auto *spacing = targetWidget("candidate-spacing");
+        assert(font && theme && spacing);
+        auto *description = pango_font_description_from_string("DejaVu Sans 20");
+        gtk_font_chooser_set_font_desc(GTK_FONT_CHOOSER(font), description);
+        pango_font_description_free(description);
+        g_signal_emit_by_name(font, "font-set");
+        assert(gtk_combo_box_set_active_id(GTK_COMBO_BOX(theme), "dark"));
+        assert(gtk_combo_box_set_active_id(GTK_COMBO_BOX(spacing), "compact"));
         saveWithoutBlocking(save);
         const auto saved = modernime::core::SettingsStore::load(paths.settingsFile);
         assert(saved.isSuccess());
+        assert(saved.settings.candidateFontFamily == "DejaVu Sans");
+        assert(saved.settings.candidateTheme == modernime::core::CandidateTheme::Dark);
+        assert(saved.settings.candidateSpacing == modernime::core::CandidateSpacing::Compact);
         assert(saved.settings.pinyinScheme == modernime::core::PinyinScheme::Xiaohe);
         for (const auto &option : modernime::core::kFuzzyPinyinOptions)
             assert(!(saved.settings.fuzzyPinyin.*option.member));
