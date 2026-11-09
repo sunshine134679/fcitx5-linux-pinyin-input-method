@@ -5,6 +5,7 @@
 #include "modernime/pinyin/candidate_composition.h"
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/candidate_pipeline.h"
+#include "modernime/pinyin/context_decoder.h"
 #include "modernime/pinyin/candidate_prefixes.h"
 #include "modernime/pinyin/recent_choice.h"
 #include "modernime/pinyin/user_dictionary.h"
@@ -1430,6 +1431,7 @@ public:
     }
 
     void resetCommitHistory() {
+        if (!contextBefore_.empty()) pageAuthorized_ = false;
         recentChoices_.clear();
         phraseTracker_.resetCommitHistory();
         fallbackContextBefore_.clear();
@@ -1439,17 +1441,20 @@ public:
 
     void setContext(std::string_view before, std::string_view after) {
         if (!contextLearningEnabled_ || !learningEnabled_) {
+            if (!contextBefore_.empty()) pageAuthorized_ = false;
             contextBefore_.clear();
             contextAfter_.clear();
             fallbackContextBefore_.clear();
             return;
         }
+        if (contextBefore_ != before || contextAfter_ != after) pageAuthorized_ = false;
         contextBefore_ = before;
         contextAfter_ = after;
         fallbackContextBefore_ = before;
     }
 
     void setLearningEnabled(bool enabled) {
+        if (learningEnabled_ != enabled) pageAuthorized_ = false;
         learningEnabled_ = enabled;
         if (!enabled) {
             recentChoices_.clear();
@@ -1466,6 +1471,7 @@ public:
     }
 
     void setContextLearningEnabled(bool enabled) {
+        if (contextLearningEnabled_ != enabled) pageAuthorized_ = false;
         contextLearningEnabled_ = enabled;
         if (!enabled) {
             contextBefore_.clear();
@@ -1651,10 +1657,14 @@ private:
             }
         }
         const auto requestNowMs = nowMilliseconds();
+        std::optional<ContextDecoder> contextual;
+        if (learningEnabled_ && contextLearningEnabled_ && !contextBefore_.empty())
+            contextual.emplace(*context, contextBefore_);
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
-            variantContext.get(), shuangpin ? &*shuangpin : nullptr, nativeOffset);
+            variantContext.get(), shuangpin ? &*shuangpin : nullptr, nativeOffset,
+            contextual ? &*contextual : nullptr);
         nextNativeCandidate_ = result.nextNativeCandidate;
         page_.hasMoreCandidates = result.hasMoreCandidates;
         const auto segmentedInput =

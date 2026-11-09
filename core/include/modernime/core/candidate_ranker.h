@@ -22,6 +22,7 @@ inline constexpr double ContextPriorWeight = 14.0;
 // front page / rank 0, overcoming system dictionary and native rank.
 inline constexpr double LearningPriorCap = 180.0;
 inline constexpr double DecoderPriorWeight = 0.25;
+inline constexpr double LanguageContextPriorWeight = 4.0;
 
 inline double computeAdaptiveLearning(double learning_boost, double dormant_factor = 1.0) {
     if (!std::isfinite(learning_boost)) {
@@ -57,6 +58,8 @@ struct CandidateScore final {
     double stability_bonus = 0.0;
     double dictionary_bonus = 0.0;
     double context_bonus = 0.0;
+    // Conditional LM gain is independent of learned context similarity.
+    double language_context_bonus = 0.0;
     double unigram_anchor = 0.0;
     double unigram_prominence = 0.0;
     std::int64_t last_selected_ms = 0;
@@ -79,6 +82,7 @@ struct CandidateScore final {
         double score = sourceStep * static_cast<double>(source_index) -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
+               LanguageContextPriorWeight * language_context_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor - unigram_prominence;
         if (!is_rare && is_level1) {
             score -= 2.0;

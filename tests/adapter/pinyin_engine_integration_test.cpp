@@ -127,9 +127,35 @@ void testColdPagingController(const std::filesystem::path &directory) {
     std::cout << "[PASS] controller cold page=" << selected.text << '\n';
 }
 
+void testContextModelController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "context-model.sqlite3";
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    const auto type = [&] {
+        for (const char c : std::string_view("beijinghenmei"))
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    };
+    controller.setContext("故事的", "");
+    type();
+    assertTrue(controller.page().items.front().text == "背景很美", "host context reaches conditional decoding");
+    controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+    assertTrue(host.commits.back() == "背景很美", "contextual sentence is committed through the controller");
+    controller.setSensitive(true);
+    controller.setContext("故事的", "");
+    type();
+    assertTrue(controller.page().items.front().text == "北京很美", "sensitive input does not inherit model or learned context");
+    controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+    assertTrue(host.commits.back() == "北京很美", "sensitive input keeps ordinary conversion usable");
+    std::cout << "[PASS] contextual controller and sensitive boundary\n";
+}
+
 int main(int argc, char **argv) {
     // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
     TempDirectory tempDirectory;
+    testContextModelController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--context-model") return 0;
     testColdPagingController(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--cold-recall") return 0;
     testShuangpinController(tempDirectory.path());

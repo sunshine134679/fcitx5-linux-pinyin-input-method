@@ -1,6 +1,7 @@
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/candidate_features.h"
 #include "modernime/pinyin/shuangpin_input.h"
+#include "modernime/pinyin/context_decoder.h"
 
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/common_characters.h"
@@ -78,7 +79,7 @@ CandidatePipelineResult buildCandidatePipeline(
     const std::vector<std::string> &previousOrder,
     const libime::PinyinContext *typoContext, const RecentChoices *recentChoices,
     const libime::PinyinContext *variantContext, const ShuangpinInput *shuangpin,
-    std::size_t nativeOffset) {
+    std::size_t nativeOffset, const ContextDecoder *contextDecoder) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
     // libime 保留 N-best 整句在前，后续候选按解码分数降序排列；高分更优。
@@ -95,6 +96,7 @@ CandidatePipelineResult buildCandidatePipeline(
         std::string text;
         std::string full_pinyin;
         float decoder_score = 0.0F;
+        double language_context_bonus = 0.0;
         int match_priority = 0;
         std::size_t consumed = 0;
         std::size_t source_index = 0;
@@ -114,6 +116,7 @@ CandidatePipelineResult buildCandidatePipeline(
         if (!consumed) continue;
         entry.consumed = *consumed;
         entry.decoder_score = nativeCandidates[index].score();
+        if (contextDecoder) entry.language_context_bonus = contextDecoder->gain(nativeCandidates[index]);
         if (shuangpin != nullptr) {
             const auto match = shuangpin->match(entry.full_pinyin);
             if (!match || match->consumed != entry.consumed) continue;
@@ -160,6 +163,7 @@ CandidatePipelineResult buildCandidatePipeline(
         candidate.text = std::move(entry.text);
         candidate.full_pinyin = std::move(entry.full_pinyin);
         candidate.decoder_score = entry.decoder_score;
+        candidate.language_context_bonus = entry.language_context_bonus;
         if (entry.source_index == 0) candidate.unigram_anchor = 7.0;
         candidate.consumed_input_bytes = entry.consumed;
         if (shuangpin != nullptr) candidate.decoded_match_priority = entry.match_priority;
@@ -213,6 +217,7 @@ CandidatePipelineResult buildCandidatePipeline(
             seenWords.insert(core::candidateOrderKey(text, fullPinyin));
             // 分数越高越优，容错补充扣除 0.8，避免把纠错惩罚变成奖励。
             candidate.decoder_score = adjustedScore;
+            if (contextDecoder) candidate.language_context_bonus = contextDecoder->gain(typoCandidates[index]);
             result.scored.push_back(std::move(candidate));
         }
     }
@@ -248,10 +253,29 @@ CandidatePipelineResult buildCandidatePipeline(
             // 近音变体是最低位的补充召回来源：扣分幅度高于纠错候选（0.8），
             // 且只依赖 F1 的成熟学习提升或既有混排插位获得可见性。
             candidate.decoder_score = variantCandidates[index].score() - 2.0F;
+            if (contextDecoder) candidate.language_context_bonus = contextDecoder->gain(variantCandidates[index]);
             result.scored.push_back(std::move(candidate));
         }
     }
 
+    if (nativeOffset == 0 && contextDecoder) {
+        for (auto candidate : contextDecoder->candidates()) {
+            if (shuangpin) {
+                const auto match = shuangpin->match(candidate.full_pinyin);
+                if (!match || match->consumed != candidate.consumed_input_bytes) continue;
+                candidate.decoded_match_priority = match->priority;
+            }
+            const auto key = spanKey(candidate.text, candidate.full_pinyin, *candidate.consumed_input_bytes);
+            if (!seenKeys.insert(key).second) {
+                for (auto &existing : result.scored)
+                    if (spanKey(existing.text, existing.full_pinyin, existing.consumed_input_bytes.value_or(0)) == key)
+                        existing.language_context_bonus = std::max(existing.language_context_bonus, candidate.language_context_bonus);
+                continue;
+            }
+            seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
+            result.scored.push_back(std::move(candidate));
+        }
+    }
     const auto recallInputs = shuangpin != nullptr ? shuangpin->recallInputs()
         : std::vector<std::string>{context.userInput()};
     if (nativeOffset == 0 && learning != nullptr) {

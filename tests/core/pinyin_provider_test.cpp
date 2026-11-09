@@ -1395,7 +1395,40 @@ void testColdCandidatePaging() {
               << ", learned=" << cold.text << ", reopened_index=" << indexOf(reopened.page(), cold.text) << '\n';
 }
 
+void testContextualLanguageModel() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("context-decoder.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    provider.append("beijinghenmei");
+    const auto original = provider.page();
+    const modernime::core::CandidateSelectionRequest oldRequest{
+        .globalIndex = 0,
+        .expected = modernime::core::candidateIdentity(original.items.front(), original)};
+    provider.setContext("故事的", "");
+    assertTrue(!provider.selectConfirmed(oldRequest, original.generation), "changed context invalidates old selection before republishing");
+    assertTrue(provider.page().items.front().text == "背景很美", "untrained context disambiguates a complete sentence");
+    const auto prefix = indexOf(provider.page(), "背景");
+    assertTrue(prefix < provider.page().items.size() && provider.select(prefix), "contextual word prefix selects");
+    assertTrue(provider.page().rawInput == "henmei", "contextual prefix preserves the raw suffix");
+    provider.reset();
+    provider.setContext("故事的", "");
+    provider.append("beijing");
+    assertTrue(provider.page().items.front().text == "背景", "context changes a homophone without training");
+    provider.setContext("明天去", "");
+    assertTrue(provider.page().items.front().text == "北京", "a different current context restores the city");
+    provider.setContext("故事的", "");
+    provider.setContextLearningEnabled(false);
+    assertTrue(provider.page().items.front().text == "北京", "context switch disables model evidence immediately");
+    provider.setContextLearningEnabled(true);
+    provider.setContext("故事的", "");
+    provider.setLearningEnabled(false);
+    assertTrue(provider.page().items.front().text == "北京", "disabled learning also excludes contextual model evidence");
+    std::cout << "[PASS] contextual word, sentence, partial consumption and disabled context\n";
+}
+
 int main(int argc, char **argv) {
+    testContextualLanguageModel();
+    if (argc == 2 && std::string_view(argv[1]) == "--context-model") return 0;
     testColdCandidatePaging();
     if (argc == 2 && std::string_view(argv[1]) == "--cold-recall") return 0;
     testShuangpinSchemes();
