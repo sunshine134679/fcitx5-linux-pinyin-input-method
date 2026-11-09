@@ -135,9 +135,10 @@ void overviewTaskFunction(GTask *task, gpointer, gpointer data,
         setupMessage = RuntimeController::reload(request->fcitxExecutable,
             request->remoteExecutable, request->environment).message;
     }
-    const auto runtime = RuntimeController::probe(request->remoteExecutable,
+    auto runtime = RuntimeController::probe(request->remoteExecutable,
                                                   request->paths.runtimeState,
                                                   request->environment);
+    runtime.desktopPanel = RuntimeController::probeDesktopPanel(request->environment);
     g_task_return_pointer(
         task,
         new OverviewResult{
@@ -537,6 +538,8 @@ private:
                     show(SettingsPageId::Updates, {});
                 } else if (action == OverviewSetupAction::Configure) {
                     show(SettingsPageId::Input, "input-enabled");
+                } else if (action == OverviewSetupAction::DesktopPanel) {
+                    show(SettingsPageId::Diagnostics, "diagnostics-panel-enable");
                 } else if (action != OverviewSetupAction::None) {
                     pendingSetupAction = action;
                     overviewPage->setSetupBusy(true);

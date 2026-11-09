@@ -82,6 +82,12 @@ void testCollectsOverviewFromPersistedData() {
                "healthy persisted data produces no notices");
     assertTrue(snapshot.setupAction == modernime::settings::OverviewSetupAction::None,
                "active method needs no setup action");
+    runtime.desktopPanel = {modernime::settings::DesktopPanelState::Pending, "等待重新登录", "重新登录后检查候选面板"};
+    const auto pendingPanel = modernime::settings::collectOverviewSnapshot(paths, modernime::core::defaultSettings(), runtime);
+    assertTrue(pendingPanel.setupAction == modernime::settings::OverviewSetupAction::DesktopPanel &&
+                   pendingPanel.setupDescription == runtime.desktopPanel.message,
+               "active engine does not hide a missing desktop candidate panel");
+    runtime.desktopPanel = {};
     runtime.modernimeActive = false;
     auto settings = modernime::core::defaultSettings();
     settings.pinyinScheme = modernime::core::PinyinScheme::Xiaohe;

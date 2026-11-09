@@ -10,7 +10,7 @@
 
 namespace modernime::settings {
 
-enum class OverviewSetupAction { None, Configure, Install, Start, Reload, Activate };
+enum class OverviewSetupAction { None, Configure, Install, Start, Reload, Activate, DesktopPanel };
 
 struct OverviewNotice final {
     SettingsPageId destination;

@@ -104,6 +104,11 @@ OverviewSnapshot collectOverviewSnapshot(
         snapshot.setupAction = OverviewSetupAction::Reload;
         snapshot.setupActionLabel = "重新加载插件";
         snapshot.setupDescription = "Fcitx5 尚未加载 ModernIME。安装后可重新加载；仍失败时查看系统与诊断。";
+    } else if (runtime.desktopPanel.state != DesktopPanelState::NotApplicable &&
+               runtime.desktopPanel.state != DesktopPanelState::Active) {
+        snapshot.setupAction = OverviewSetupAction::DesktopPanel;
+        snapshot.setupActionLabel = "检查候选面板";
+        snapshot.setupDescription = runtime.desktopPanel.message;
     } else if (!runtime.modernimeActive) {
         snapshot.setupAction = OverviewSetupAction::Activate;
         snapshot.setupActionLabel = "启用 ModernIME";

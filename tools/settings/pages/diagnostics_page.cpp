@@ -32,8 +32,10 @@ void setLabel(GtkWidget *label, const char *text) {
     gtk_label_set_text(GTK_LABEL(label), text);
 }
 
+enum class RuntimeAction { Probe, Reload, EnablePanel };
+
 struct RuntimeTask final {
-    bool reload = false;
+    RuntimeAction action = RuntimeAction::Probe;
     std::filesystem::path fcitxExecutable;
     std::filesystem::path remoteExecutable;
     Environment environment;
@@ -43,19 +45,19 @@ struct RuntimeTask final {
 void runtimeTaskFunction(GTask *task, gpointer, gpointer data,
                          GCancellable *) {
     const auto *request = static_cast<const RuntimeTask *>(data);
-    if (request->reload) {
+    if (request->action != RuntimeAction::Probe) {
         g_task_return_pointer(
             task,
-            new RuntimeResult(RuntimeController::reload(
-                request->fcitxExecutable, request->remoteExecutable,
-                request->environment)),
+            new RuntimeResult(request->action == RuntimeAction::EnablePanel
+                ? RuntimeController::enableDesktopPanel(request->environment)
+                : RuntimeController::reload(request->fcitxExecutable, request->remoteExecutable, request->environment)),
             [](gpointer value) { delete static_cast<RuntimeResult *>(value); });
         return;
     }
+    auto *status = new RuntimeStatus(RuntimeController::probe(request->remoteExecutable, request->environment));
+    status->desktopPanel = RuntimeController::probeDesktopPanel(request->environment);
     g_task_return_pointer(
-        task,
-        new RuntimeStatus(RuntimeController::probe(request->remoteExecutable,
-                                                   request->environment)),
+        task, status,
         [](gpointer value) { delete static_cast<RuntimeStatus *>(value); });
 }
 
@@ -114,23 +116,23 @@ public:
 
     GtkWidget *widget() const { return page; }
 
-    void refresh() { startTask(false); }
+    void refresh() { startTask(RuntimeAction::Probe); }
 
-    void reload() { startTask(true); }
+    void reload() { startTask(RuntimeAction::Reload); }
 
     bool focusTarget(std::string_view target) {
-        for (auto *control : {refreshButton, reloadButton}) {
+        for (auto *control : {refreshButton, reloadButton, panelEnableButton}) {
             if (control == nullptr) {
                 continue;
             }
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
-                if (!gtk_widget_get_sensitive(control)) {
+                if (!gtk_widget_get_sensitive(control) && busy) {
                     pendingFocusTarget = target;
                     return true;
                 }
-                return focusWidgetOrFallback(control);
+                return focusWidgetOrFallback(control, control == panelEnableButton ? panelSection : nullptr);
             }
         }
         return false;
@@ -166,13 +168,14 @@ private:
             g_object_get_data(source, kStateKey));
         GError *error = nullptr;
 
-        if (request->reload) {
+        if (request->action != RuntimeAction::Probe) {
             auto *reloadResult = static_cast<RuntimeResult *>(
                 g_task_propagate_pointer(task, &error));
             if (state != nullptr) {
                 const auto revision = request->reloadRevision;
-                (*state)->withOwner([reloadResult, error, revision](Impl &owner) {
-                    owner.finishReload(reloadResult, error, revision);
+                const auto action = request->action;
+                (*state)->withOwner([reloadResult, error, revision, action](Impl &owner) {
+                    owner.finishReload(reloadResult, error, revision, action);
                 });
             }
             delete reloadResult;
@@ -252,18 +255,40 @@ private:
             new SharedLifetime(state), destroySignalState,
             static_cast<GConnectFlags>(0));
 
-        setSettingsFocusChain(page, {refreshButton, reloadButton});
+        panelSection = createSectionCard("GNOME 候选面板", "");
+        gtk_box_pack_start(GTK_BOX(page), panelSection, FALSE, FALSE, 0);
+        panelTitle = gtk_label_new("检测中…");
+        setTarget(panelTitle, "diagnostics-panel-state");
+        gtk_widget_set_halign(panelTitle, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(panelSection), panelTitle, FALSE, FALSE, 0);
+        panelMessage = gtk_label_new("");
+        gtk_label_set_line_wrap(GTK_LABEL(panelMessage), TRUE);
+        gtk_label_set_xalign(GTK_LABEL(panelMessage), 0);
+        gtk_box_pack_start(GTK_BOX(panelSection), panelMessage, FALSE, FALSE, 0);
+        panelEnableButton = gtk_button_new_with_label("启用候选面板");
+        setTarget(panelEnableButton, "diagnostics-panel-enable");
+        gtk_widget_set_halign(panelEnableButton, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(panelSection), panelEnableButton, FALSE, FALSE, 0);
+        g_signal_connect_data(panelEnableButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
+            static_cast<SharedLifetime *>(data)->get()->withOwner([](Impl &owner) {
+                owner.startTask(RuntimeAction::EnablePanel);
+            });
+        }), new SharedLifetime(state), destroySignalState, static_cast<GConnectFlags>(0));
+        gtk_widget_show_all(panelSection);
+        gtk_widget_set_no_show_all(panelSection, TRUE);
+        gtk_widget_hide(panelSection);
+        setSettingsFocusChain(page, {refreshButton, reloadButton, panelEnableButton});
     }
 
-    void startTask(bool reload) {
+    void startTask(RuntimeAction action) {
         if (busy) {
             return;
         }
         setBusy(true);
         auto *task = g_task_new(lifetime.get(), nullptr, runtimeTaskFinished,
                                 nullptr);
-        const auto revision = reload && reloadRevision ? reloadRevision() : 0;
-        auto *request = new RuntimeTask{reload, fcitx, remote, environment,
+        const auto revision = action == RuntimeAction::Reload && reloadRevision ? reloadRevision() : 0;
+        auto *request = new RuntimeTask{action, fcitx, remote, environment,
                                         revision};
         g_task_set_task_data(task, request, [](gpointer value) {
             delete static_cast<RuntimeTask *>(value);
@@ -282,7 +307,7 @@ private:
     }
 
     void finishReload(const RuntimeResult *result, const GError *error,
-                      std::uint64_t revision) {
+                      std::uint64_t revision, RuntimeAction action) {
         const bool success = result != nullptr && result->success;
         setBusy(false, !success);
         if (result == nullptr) {
@@ -292,7 +317,7 @@ private:
         }
         notifyMessage(result->message);
         if (result->success) {
-            if (reloadSucceeded) {
+            if (action == RuntimeAction::Reload && reloadSucceeded) {
                 reloadSucceeded(revision);
             }
             refresh();
@@ -300,6 +325,15 @@ private:
     }
 
     void updateStatus(const RuntimeStatus &runtimeStatus) {
+        const auto &panel = runtimeStatus.desktopPanel;
+        panelCanEnable = panel.state == DesktopPanelState::Disabled;
+        if (panel.state != DesktopPanelState::NotApplicable) {
+            gtk_widget_show_all(panelSection);
+            gtk_widget_show(panelSection);
+            setLabel(panelTitle, panel.title.c_str());
+            setLabel(panelMessage, panel.message.c_str());
+            gtk_widget_set_visible(panelEnableButton, panelCanEnable);
+        } else gtk_widget_hide(panelSection);
         const auto availText = runtimeStatus.available ? "可用" : "不可用";
         setLabel(availability, availText);
         applyStatusBadge(availability, availText);
@@ -386,6 +420,7 @@ private:
         busy = value;
         gtk_widget_set_sensitive(refreshButton, !busy);
         gtk_widget_set_sensitive(reloadButton, !busy);
+        gtk_widget_set_sensitive(panelEnableButton, !busy && panelCanEnable);
         if (!busy && resolvePendingFocus && !pendingFocusTarget.empty()) {
             const auto target = std::move(pendingFocusTarget);
             pendingFocusTarget.clear();
@@ -408,6 +443,7 @@ private:
     detail::GObjectHandle<GObject> lifetime;
     SharedLifetime state;
     bool busy = false;
+    bool panelCanEnable = false;
     std::string pendingFocusTarget;
     GtkWidget *page = nullptr;
     GtkWidget *statusBanner = nullptr;
@@ -419,6 +455,10 @@ private:
     GtkWidget *modernime = nullptr;
     GtkWidget *refreshButton = nullptr;
     GtkWidget *reloadButton = nullptr;
+    GtkWidget *panelSection = nullptr;
+    GtkWidget *panelTitle = nullptr;
+    GtkWidget *panelMessage = nullptr;
+    GtkWidget *panelEnableButton = nullptr;
 };
 
 DiagnosticsPage::DiagnosticsPage(std::filesystem::path fcitx,

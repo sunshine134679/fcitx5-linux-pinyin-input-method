@@ -20,15 +20,57 @@ void assertTrue(bool condition, std::string_view message) {
     }
 }
 
+
+void testDesktopPanel(const std::filesystem::path &directory) {
+    using namespace modernime::settings;
+    const auto tool = directory / "gnome-extensions";
+    std::ofstream(tool) << R"SH(#!/bin/sh
+uuid=modernime-panel@sunshine134679.github.io
+case "$1" in
+list) [ ! -f "$PANEL_TEST_ROOT/listed" ] || echo "$uuid"; [ ! -f "$PANEL_TEST_ROOT/legacy" ] || echo kimpanel@kde.org; exit 0;;
+info) if [ "$2" = kimpanel@kde.org ]; then echo 'State: ACTIVE'; else printf 'State: '; cat "$PANEL_TEST_ROOT/state"; fi;;
+enable) echo ACTIVE > "$PANEL_TEST_ROOT/state";;
+esac
+)SH";
+    std::filesystem::permissions(tool, std::filesystem::perms::owner_all);
+    Environment env{{"XDG_CURRENT_DESKTOP", "ubuntu:GNOME"}, {"XDG_SESSION_TYPE", "wayland"},
+                    {"WAYLAND_DISPLAY", "test"}, {"XDG_DATA_HOME", directory.string()}, {"PANEL_TEST_ROOT", directory.string()}};
+    const auto probe = [&] { return RuntimeController::probeDesktopPanel(env, tool); };
+    assertTrue(probe().state == DesktopPanelState::Missing, "undiscovered absent panel needs installation");
+    const auto metadata = directory / "gnome-shell/extensions/modernime-panel@sunshine134679.github.io/metadata.json";
+    std::filesystem::create_directories(metadata.parent_path());
+    std::ofstream(metadata) << "{}";
+    assertTrue(probe().state == DesktopPanelState::Pending, "deployed undiscovered panel needs a new Shell session");
+    std::ofstream(directory / "listed") << "yes";
+    std::ofstream(directory / "state") << "INACTIVE\n";
+    assertTrue(probe().state == DesktopPanelState::Disabled, "discovered inactive panel can be enabled");
+    assertTrue(RuntimeController::enableDesktopPanel(env, tool).success && probe().state == DesktopPanelState::Active,
+               "explicit enable is confirmed against the loaded state");
+    std::ofstream(directory / "state") << "INACTIVE\n";
+    std::ofstream(directory / "legacy") << "yes";
+    assertTrue(probe().state == DesktopPanelState::LegacyActive && !RuntimeController::enableDesktopPanel(env, tool).success,
+               "an existing upstream panel is reported without enabling a competing panel");
+    env.emplace_back("XDG_SESSION_TYPE", "x11"); env.emplace_back("WAYLAND_DISPLAY", "");
+    assertTrue(probe().state == DesktopPanelState::NotApplicable, "X11 keeps its own candidate route");
+    std::cout << "[PASS] GNOME panel discovery and explicit enable\n";
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
-    assertTrue(argc == 3, "test receives fake remote and fcitx executables");
+
     std::string pattern = (std::filesystem::temp_directory_path() /
                            "modernime-runtime-controller-XXXXXX").string();
     char *createdDir = ::mkdtemp(pattern.data());
     assertTrue(createdDir != nullptr, "mkdtemp creates isolated test directory");
     const std::filesystem::path directory(pattern);
+    if (argc == 2 && std::string_view(argv[1]) == "--desktop-panel") {
+        testDesktopPanel(directory);
+        std::filesystem::remove_all(directory);
+        return 0;
+    }
+    assertTrue(argc == 3, "test receives fake remote and fcitx executables");
+    testDesktopPanel(directory);
     const auto runningFcitxLog = directory / "running-fcitx.log";
     const auto runningRemoteLog = directory / "running-remote.log";
     const auto stoppedFcitxLog = directory / "stopped-fcitx.log";
