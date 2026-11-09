@@ -166,7 +166,7 @@ if [[ ":${current_desktop,,}:" == *:gnome:* &&
       -n "${DISPLAY:-${WAYLAND_DISPLAY:-}}" && -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
     bundled_ext_dir=""
     for ext_candidate in \
-        "$prefix/share/modernime/extensions/kimpanel@kde.org" \
+        "$prefix/share/modernime/extensions/modernime-panel@sunshine134679.github.io" \
         "$script_dir/../data/extensions/kimpanel@kde.org"; do
         if [[ -d "$ext_candidate" && -f "$ext_candidate/metadata.json" ]]; then
             bundled_ext_dir="$ext_candidate"

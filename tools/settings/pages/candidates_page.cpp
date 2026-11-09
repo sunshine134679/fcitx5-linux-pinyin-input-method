@@ -28,6 +28,45 @@ void setTarget(GtkWidget *widget, std::string_view target) {
 }
 
 
+void finishPanelPreferences(GWeakRef *status, GError *error) {
+    if (auto *label = g_weak_ref_get(status)) {
+        const auto message = error == nullptr ? std::string("已打开 GNOME 面板设置，修改立即生效")
+            : std::string("无法打开 GNOME 面板设置：") + error->message;
+        gtk_label_set_text(GTK_LABEL(label), message.c_str());
+        g_object_unref(label);
+    }
+    g_clear_error(&error);
+    g_weak_ref_clear(status);
+    delete status;
+}
+
+void openPanelPreferences(GtkButton *, gpointer label) {
+    gtk_label_set_text(GTK_LABEL(label), "正在打开 GNOME 面板设置…");
+    auto *status = new GWeakRef;
+    g_weak_ref_init(status, label);
+    g_bus_get(G_BUS_TYPE_SESSION, nullptr, +[](GObject *, GAsyncResult *result, gpointer data) {
+        GError *error = nullptr;
+        auto *connection = g_bus_get_finish(result, &error);
+        auto *pendingStatus = static_cast<GWeakRef *>(data);
+        if (connection == nullptr) {
+            finishPanelPreferences(pendingStatus, error);
+            return;
+        }
+        g_dbus_connection_call(connection, "org.gnome.Shell.Extensions",
+            "/org/gnome/Shell/Extensions", "org.gnome.Shell.Extensions", "OpenExtensionPrefs",
+            g_variant_new("(ss@a{sv})", "modernime-panel@sunshine134679.github.io", "",
+                          g_variant_new_array(G_VARIANT_TYPE("{sv}"), nullptr, 0)),
+            nullptr, G_DBUS_CALL_FLAGS_NONE, 5000, nullptr,
+            +[](GObject *source, GAsyncResult *reply, gpointer state) {
+                GError *callError = nullptr;
+                auto *value = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), reply, &callError);
+                if (value != nullptr) g_variant_unref(value);
+                finishPanelPreferences(static_cast<GWeakRef *>(state), callError);
+            }, pendingStatus);
+        g_object_unref(connection);
+    }, status);
+}
+
 } // namespace
 
 class CandidatesPage::Impl final {
@@ -104,7 +143,7 @@ private:
         buildSettingsCard();
 
         setSettingsFocusChain(
-            page, {previewExample, candidatePageSize, candidateFontFamily, candidateFontSize,
+            page, {previewExample, nativePanelSettings, candidatePageSize, candidateFontFamily, candidateFontSize,
                    candidateSpacing, candidateTheme, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation});
         refresh();
@@ -164,11 +203,19 @@ private:
             g_getenv("WAYLAND_DISPLAY") != nullptr) {
             auto *nativeHint = gtk_label_new(
                 "Wayland 候选由桌面或应用面板显示；此预览用于 ModernIME 自绘候选栏。"
-                "GNOME 面板字体请在输入法面板扩展设置中调整。");
+                "GNOME 面板的字体、配色与间距可在面板设置中调整。");
             addStyleClass(nativeHint, "modernime-description");
             gtk_label_set_xalign(GTK_LABEL(nativeHint), 0.0F);
             gtk_label_set_line_wrap(GTK_LABEL(nativeHint), TRUE);
             gtk_box_pack_start(GTK_BOX(previewCard), nativeHint, FALSE, FALSE, 0);
+            const auto *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+            if (desktop != nullptr && std::string_view(desktop).find("GNOME") != std::string_view::npos) {
+                nativePanelSettings = gtk_button_new_with_label("打开 GNOME 面板设置");
+                setTarget(nativePanelSettings, "native-panel-settings");
+                gtk_widget_set_halign(nativePanelSettings, GTK_ALIGN_START);
+                g_signal_connect(nativePanelSettings, "clicked", G_CALLBACK(openPanelPreferences), nativeHint);
+                gtk_box_pack_start(GTK_BOX(previewCard), nativePanelSettings, FALSE, FALSE, 0);
+            }
         }
         definitionPreview = gtk_label_new("hello · int. 你好；喂");
         addStyleClass(definitionPreview, "modernime-description");
@@ -416,6 +463,7 @@ private:
     GtkWidget *compositionLabel = nullptr;
     GtkWidget *previewSummary = nullptr;
     GtkWidget *previewScaleHint = nullptr;
+    GtkWidget *nativePanelSettings = nullptr;
     ui::CandidateBarMetrics metrics;
     ui::CandidateBarLayout previewLayout;
     ui::RenderStyle renderStyle;

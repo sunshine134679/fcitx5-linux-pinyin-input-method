@@ -4,6 +4,7 @@ import ast
 import fcntl
 import json
 import os
+import runpy
 from pathlib import Path
 import shutil
 import shlex
@@ -12,7 +13,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-UUID = "kimpanel@kde.org"
+UUID = "modernime-panel@sunshine134679.github.io"
 
 # Only desktop services are simulated. File publication, ownership, and removal
 # use the actual scripts and filesystem. GNOME 46 enable updates both keys.
@@ -23,7 +24,7 @@ tool = Path(sys.argv[0]).name
 root = Path(os.environ["GNOME_TEST_ROOT"])
 with (root / "calls").open("a") as log:
     log.write(json.dumps([tool, *sys.argv[1:]]) + "\n")
-uuid = "kimpanel@kde.org"
+uuid = sys.argv[2] if tool == "gnome-extensions" else "modernime-panel@sunshine134679.github.io"
 settings_file = root / "settings.json"
 settings = json.loads(settings_file.read_text())
 if tool == "glib-compile-schemas":
@@ -118,6 +119,63 @@ class GnomeExtensionLifecycleTest(unittest.TestCase):
 
     def remove(self, ok=True):
         return self.run_script("scripts/modernime-session-init", "--remove-gnome-extension", ok=ok)
+
+    def prepare_legacy_panel(self):
+        self.deploy()
+        legacy = self.target.with_name("kimpanel@kde.org")
+        self.target.rename(legacy)
+        (legacy / "metadata.json").write_text(json.dumps({"uuid": legacy.name}))
+        record_path = self.config / "modernime/session-managed-files/modernime-panel.json"
+        record = json.loads(record_path.read_text())
+        record["target"] = str(legacy)
+        record["digest"] = runpy.run_path(str(ROOT / "scripts/gnome_extension.py"))["tree_digest"](legacy)
+        old_record = record_path.with_name("gnome-extension.json")
+        old_record.write_text(json.dumps(record))
+        record_path.unlink()
+        previous = {**self.initial, "enabled-extensions": self.initial["enabled-extensions"] + [legacy.name]}
+        self.set_settings(previous)
+        return legacy, old_record, previous
+
+    def test_owned_upstream_uuid_migrates_after_replacement_is_ready(self):
+        legacy, old_record, previous = self.prepare_legacy_panel()
+        (self.root / "schema-fail").touch()
+        self.assertNotEqual(self.deploy(ok=False).returncode, 0)
+        self.assertTrue(legacy.exists())
+        self.assertEqual(self.settings(), previous)
+        (self.root / "schema-fail").unlink()
+        (self.root / "info-fail").touch()
+        self.assertIn("Old panel retained", self.deploy().stdout)
+        self.assertTrue(legacy.exists())
+        self.assertEqual(self.settings(), previous)
+        (self.root / "info-fail").unlink()
+        self.deploy()
+        self.assertFalse(legacy.exists())
+        self.assertFalse(old_record.exists())
+        self.assertTrue(self.target.exists())
+        self.assertIn(UUID, self.settings()["enabled-extensions"])
+        self.assertNotIn(legacy.name, self.settings()["enabled-extensions"])
+        self.remove()
+        self.assertEqual(self.settings(), self.initial)
+
+    def test_disabled_legacy_panel_stays_disabled_after_migration(self):
+        legacy, _, _ = self.prepare_legacy_panel()
+        self.set_settings({**self.initial, "disabled-extensions": [legacy.name]})
+        self.deploy()
+        self.assertFalse(legacy.exists())
+        self.assertTrue(self.target.exists())
+        self.assertNotIn(UUID, self.settings()["enabled-extensions"])
+
+    def test_third_party_upstream_panel_is_preserved_without_double_activation(self):
+        legacy = self.target.with_name("kimpanel@kde.org")
+        legacy.mkdir(parents=True)
+        (legacy / "extension.js").write_text("third party")
+        previous = {**self.initial, "enabled-extensions": self.initial["enabled-extensions"] + [legacy.name]}
+        self.set_settings(previous)
+        result = self.deploy()
+        self.assertIn("existing Kimpanel is enabled", result.stdout)
+        self.assertTrue(self.target.exists())
+        self.assertEqual((legacy / "extension.js").read_text(), "third party")
+        self.assertEqual(self.settings(), previous)
 
     def test_preexisting_user_copy_is_not_overwritten_or_enabled(self):
         self.target.mkdir(parents=True)
@@ -252,7 +310,7 @@ class GnomeExtensionLifecycleTest(unittest.TestCase):
     def test_record_publication_failure_restores_previous_tree(self):
         self.deploy()
         (self.bundle / "extension.js").write_text("new version")
-        record = self.config / "modernime/session-managed-files/gnome-extension.json"
+        record = self.config / "modernime/session-managed-files/modernime-panel.json"
         original_record = record.read_bytes()
         # Fail the actual atomic record publication, after the tree rename. No
         # production hooks; patch only the OS failure boundary in this child.
@@ -348,7 +406,7 @@ exit 0
         self.assertEqual((external / "extension.js").read_text(), "external version")
         self.target.unlink()
         self.deploy()
-        record = self.config / "modernime/session-managed-files/gnome-extension.json"
+        record = self.config / "modernime/session-managed-files/modernime-panel.json"
         record.write_text("broken ownership record")
         (self.bundle / "extension.js").write_text("new version")
         self.deploy()
@@ -369,7 +427,7 @@ exit 0
 
     def test_malformed_activation_record_preserves_copy_without_traceback(self):
         self.deploy()
-        record = self.config / "modernime/session-managed-files/gnome-extension.json"
+        record = self.config / "modernime/session-managed-files/modernime-panel.json"
         value = json.loads(record.read_text())
         value["activation"]["before"] = ["enabled-extensions", "disabled-extensions"]
         record.write_text(json.dumps(value))
@@ -400,7 +458,7 @@ exit 0
 
     def test_real_bundled_schema_compiles_and_invalid_update_preserves_old_copy(self):
         shutil.rmtree(self.bundle)
-        shutil.copytree(ROOT / "data/extensions" / UUID, self.bundle)
+        shutil.copytree(ROOT / "data/extensions/kimpanel@kde.org", self.bundle)
         (self.bin / "glib-compile-schemas").unlink()
         self.deploy()
         compiled = (self.target / "schemas/gschemas.compiled").read_bytes()
@@ -459,7 +517,7 @@ with patch.object(module.ExtensionLifecycle, "save", lambda *_: os._exit(77)):
         (self.root / "info-fail").touch()
         before = self.settings()
         self.remove()
-        self.assertFalse((self.config / "modernime/session-managed-files/gnome-extension.json").exists())
+        self.assertFalse((self.config / "modernime/session-managed-files/modernime-panel.json").exists())
         self.assertEqual(self.settings(), before)
         self.deploy()
         self.assertTrue(self.target.exists())
@@ -485,7 +543,7 @@ with patch.object(module.ExtensionLifecycle, "save", lambda *_: os._exit(77)):
     def test_source_migration_failure_preserves_extension_and_settings(self):
         self.deploy()
         self.make_migration_source()
-        record = self.config / "modernime/session-managed-files/gnome-extension.json"
+        record = self.config / "modernime/session-managed-files/modernime-panel.json"
         before_record, before_settings = record.read_bytes(), self.settings()
         result = self.run_script("scripts/modernime-migrate-channel", "--from-prefix", str(self.prefix),
                                  "--target-prefix", str(self.root / "new-native"), "--to-channel", "deb",
@@ -514,7 +572,7 @@ with patch.object(module.ExtensionLifecycle, "save", lambda *_: os._exit(77)):
         self.assertTrue(self.target.exists())
         self.assertEqual(self.settings(), before)
         self.assertFalse((self.prefix / "bin/modernime-settings").exists())
-        record = json.loads((self.config / "modernime/session-managed-files/gnome-extension.json").read_text())
+        record = json.loads((self.config / "modernime/session-managed-files/modernime-panel.json").read_text())
         self.assertEqual(record["prefix"], str(native))
         self.env["MODERNIME_PREFIX"] = str(native)
         result = subprocess.run(["bash", str(native / "bin/modernime-session-init"), "--remove-gnome-extension"],

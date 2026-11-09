@@ -107,6 +107,8 @@ class Kimpanel extends GObject.Object {
         this.fontSignal = this.settings.connect(
             'changed::font',
             () => this.inputpanel.updateFont(this.getTextStyle()));
+        this.appearanceSignals = ['panel-theme', 'candidate-spacing'].map(key =>
+            this.settings.connect(`changed::${key}`, () => this.inputpanel.updateAppearance()));
 
         this.addToShell();
         this.dbusSignal = this.conn.signal_subscribe(
@@ -270,6 +272,8 @@ class Kimpanel extends GObject.Object {
         }
         this.settings.disconnect(this.verticalSignal);
         this.settings.disconnect(this.fontSignal);
+        for (const id of this.appearanceSignals)
+            this.settings.disconnect(id);
         this.settings = null;
         this.conn.signal_unsubscribe(this.dbusSignal);
         this.conn = null;

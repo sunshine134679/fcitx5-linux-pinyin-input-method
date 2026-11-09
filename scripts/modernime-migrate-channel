@@ -285,7 +285,8 @@ chmod +x "$temp_work/modernime-data-guard"
 # The installed entry point will delete its own prefix payload. Keep the same
 # ownership implementation available until the verified package can take over.
 gnome_record="$config_home/modernime/session-managed-files/gnome-extension.json"
-if [[ -e "$gnome_record" || -L "$gnome_record" ]]; then
+panel_record="$config_home/modernime/session-managed-files/modernime-panel.json"
+if [[ -e "$gnome_record" || -L "$gnome_record" || -e "$panel_record" || -L "$panel_record" ]]; then
     for helper in "$script_dir/gnome_extension.py" "$from_prefix/share/modernime/gnome_extension.py"; do
         if [[ -f "$helper" ]]; then
             cp "$helper" "$temp_work/gnome_extension.py"

@@ -60,6 +60,7 @@ export class InputPanel extends GObject.Object {
 
         this.upperLayout.add_child(this.auxText);
         this.upperLayout.add_child(this.preeditText);
+        this.updateAppearance();
         this.hide();
         this.panel.hide();
     }
@@ -170,6 +171,17 @@ export class InputPanel extends GObject.Object {
         }
     }
     setVertical(vertical) { this.lookupTableLayout.set_vertical(vertical); }
+    updateAppearance() {
+        for (const theme of ['light', 'dark', 'classic'])
+            this.panel.remove_style_class_name(`modernime-panel-${theme}`);
+        const theme = ['system', 'light', 'dark', 'classic'][this.kimpanel.settings.get_uint('panel-theme')];
+        if (theme !== 'system')
+            this.panel.add_style_class_name(`modernime-panel-${theme}`);
+        for (const spacing of ['compact', 'standard', 'relaxed'])
+            this.panel.remove_style_class_name(`modernime-spacing-${spacing}`);
+        const spacing = ['compact', 'standard', 'relaxed'][this.kimpanel.settings.get_uint('candidate-spacing')];
+        this.panel.add_style_class_name(`modernime-spacing-${spacing}`);
+    }
     updateFont(textStyle) {
         this.text_style = textStyle;
         this.auxText.set_style(this.text_style);

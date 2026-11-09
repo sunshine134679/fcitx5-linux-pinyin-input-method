@@ -11,5 +11,15 @@
         <summary>Font of input and candidate text panel</summary>
         <description>Set font of kimpanel input and candidate text.</description>
     </key>
+    <key type="u" name="panel-theme">
+        <default>0</default>
+        <range min="0" max="3"/>
+        <summary>Candidate palette: system, light, dark, classic blue</summary>
+    </key>
+    <key type="u" name="candidate-spacing">
+        <default>1</default>
+        <range min="0" max="2"/>
+        <summary>Candidate spacing: compact, standard, relaxed</summary>
+    </key>
   </schema>
 </schemalist>

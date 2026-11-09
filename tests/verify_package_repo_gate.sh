@@ -77,7 +77,7 @@ for required_path in \
     "./usr/share/doc/modernime/LICENSE" \
     "./usr/share/doc/modernime/copyright" \
     "./usr/share/modernime/install-channel.txt" \
-    "./usr/share/modernime/extensions/kimpanel@kde.org/metadata.json"; do
+    "./usr/share/modernime/extensions/modernime-panel@sunshine134679.github.io/metadata.json"; do
     printf '%s\n' "${deb_contents}" | grep -Fq "${required_path}" ||
         fail "DEB missing required file: ${required_path}"
 done
@@ -280,8 +280,8 @@ icon_paths = [rootfs / f"usr/share/icons/hicolor/{size}x{size}/apps/modernime.pn
 for icon in icon_paths:
     assert icon.is_file(), f"RPM missing application icon: {icon}"
     assert icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), f"Invalid PNG icon: {icon}"
-ext_paths = sorted(p for p in (rootfs / "usr/share/modernime/extensions/kimpanel@kde.org").rglob("*") if p.is_file() and not p.is_symlink())
-assert (rootfs / "usr/share/modernime/extensions/kimpanel@kde.org/metadata.json").is_file(), "RPM missing kimpanel metadata.json"
+ext_paths = sorted(p for p in (rootfs / "usr/share/modernime/extensions/modernime-panel@sunshine134679.github.io").rglob("*") if p.is_file() and not p.is_symlink())
+assert (rootfs / "usr/share/modernime/extensions/modernime-panel@sunshine134679.github.io/metadata.json").is_file(), "RPM missing kimpanel metadata.json"
 assert len(ext_paths) == 20, f"Expected exactly 20 kimpanel extension files in RPM, got {len(ext_paths)}: {[p.name for p in ext_paths]}"
 for p in ext_paths:
     assert ".mimosa" not in p.parts and ".v2c" not in p.parts, f"RPM payload contains dirty files: {p}"

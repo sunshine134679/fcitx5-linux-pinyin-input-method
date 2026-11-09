@@ -40,3 +40,47 @@
 .icon-disable {
   color:rgba(150,150,150,0.5);
 }
+
+/* Native panel palettes preserve Shell positioning, focus and hit testing. */
+.modernime-panel-light .kimpanel-popup-content {
+  background-color: #fafafa;
+  border-color: #d8d8d8;
+  color: #202020;
+}
+.modernime-panel-dark .kimpanel-popup-content {
+  background-color: #242424;
+  border-color: #484848;
+  color: #f2f2f2;
+}
+.modernime-panel-classic .kimpanel-popup-content {
+  background-color: #f7faff;
+  border-color: #ccd8e8;
+  color: #202020;
+}
+.modernime-panel-light .kimpanel-candidate-item:hover {
+  background-color: #eeeeee;
+  color: #202020;
+}
+.modernime-panel-light .kimpanel-candidate-item:active {
+  background-color: #dedede;
+  color: #151515;
+}
+.modernime-panel-dark .kimpanel-candidate-item:hover {
+  background-color: #383838;
+  color: #f2f2f2;
+}
+.modernime-panel-dark .kimpanel-candidate-item:active {
+  background-color: #505050;
+  color: #ffffff;
+}
+.modernime-panel-classic .kimpanel-candidate-item:hover {
+  background-color: #e6effa;
+  color: #202020;
+}
+.modernime-panel-classic .kimpanel-candidate-item:active {
+  background-color: #2467b8;
+  color: #ffffff;
+}
+.modernime-spacing-compact .kimpanel-label { padding: 0.25em; }
+.modernime-spacing-standard .kimpanel-label { padding: 0.4em; }
+.modernime-spacing-relaxed .kimpanel-label { padding: 0.6em; }

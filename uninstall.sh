@@ -132,7 +132,8 @@ fi
 # Remove only the current user's unchanged managed extension before deleting
 # the helper or bundle. A failed settings restoration keeps a retryable install.
 gnome_record="$config_home/modernime/session-managed-files/gnome-extension.json"
-if [[ "$keep_gnome_extension" != true && ( -e "$gnome_record" || -L "$gnome_record" ) ]]; then
+panel_record="$config_home/modernime/session-managed-files/modernime-panel.json"
+if [[ "$keep_gnome_extension" != true && ( -e "$gnome_record" || -L "$gnome_record" || -e "$panel_record" || -L "$panel_record" ) ]]; then
     python3 "$project_root/scripts/gnome_extension.py" remove --prefix "$prefix" \
         --config-home "$config_home" --data-home "${MODERNIME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}}"
 fi
