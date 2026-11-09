@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
             return name != nullptr && std::string_view(name) == "保存设置";
         });
         assert(enabled != nullptr && save != nullptr);
-        assert(waitUntil([window] { return hasLabel(window, "● ModernIME 正在运行"); }));
+        assert(waitUntil([window] { return hasLabel(window, "ModernIME 正在运行"); }));
         std::ofstream(slowRemote) << "delay\n";
         const bool initial = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(enabled));
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), !initial);

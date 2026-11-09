@@ -164,13 +164,13 @@ void setDialogResponseAccessibility(GtkDialog *dialog, int response,
 
 std::string_view settingsStyles() {
     return R"css(
-        /* Fixed light palette from the approved client references. */
+        /* Shared neutral light palette; color is reserved for status feedback. */
         @define-color theme_bg_color #ffffff;
         @define-color theme_base_color #ffffff;
-        @define-color theme_fg_color #182031;
-        @define-color insensitive_fg_color #657184;
-        @define-color borders #e1e6ee;
-        @define-color theme_selected_bg_color #1262ff;
+        @define-color theme_fg_color #242424;
+        @define-color insensitive_fg_color #696969;
+        @define-color borders #e2e2e2;
+        @define-color theme_selected_bg_color #292929;
         @define-color theme_selected_fg_color #ffffff;
         @define-color warning_color #966400;
         @define-color error_color #c23838;
@@ -184,7 +184,7 @@ std::string_view settingsStyles() {
 
         .modernime-sidebar {
             border-right: 1px solid @borders;
-            background-color: #f6f7f9;
+            background-color: #f7f7f7;
             padding: 10px 8px;
         }
 
@@ -207,7 +207,7 @@ std::string_view settingsStyles() {
             border-radius: 8px;
             background-image: none;
             background-color: #ffffff;
-            border: 1px solid #d7dee8;
+            border: 1px solid #d9d9d9;
             color: @theme_fg_color;
             padding: 8px 10px;
             margin-bottom: 6px;
@@ -226,45 +226,45 @@ std::string_view settingsStyles() {
         }
 
         .modernime-nav-button:hover {
-            background-color: #edf0f5;
+            background-color: #ededed;
         }
 
         .modernime-settings .modernime-nav-button.modernime-nav-selected {
-            background-color: #eaf0ff;
-            border-color: #dce6fb;
+            background-color: #e7e7e7;
+            border-color: #dedede;
             background-image: none;
-            color: @theme_selected_bg_color;
+            color: @theme_fg_color;
             outline-color: @theme_selected_bg_color;
             box-shadow: none;
             font-weight: 600;
         }
         .modernime-settings .modernime-nav-button.modernime-nav-selected:hover,
         .modernime-settings .modernime-nav-button.modernime-nav-selected:active {
-            background-color: #dbe7ff;
+            background-color: #dedede;
         }
         .modernime-nav-button.modernime-nav-selected * {
             color: @theme_selected_bg_color;
         }
 
         .modernime-code-block {
-            background-color: #f6f7f9;
+            background-color: #f7f7f7;
             border: 1px solid @borders;
             border-radius: 8px;
             padding: 12px;
-            color: #34445c;
+            color: #444444;
             font-family: monospace;
             font-size: 12px;
         }
 
         .modernime-update-notice {
-            background-color: #eef4ff;
-            border: 1px solid #dce7ff;
+            background-color: #f6f6f6;
+            border: 1px solid #e2e2e2;
             border-radius: 8px;
             padding: 12px;
-            color: #284870;
+            color: #454545;
         }
         .modernime-update-notice label, .modernime-update-notice image {
-            color: #284870;
+            color: #454545;
         }
 
         .modernime-page,
@@ -308,7 +308,7 @@ std::string_view settingsStyles() {
             box-shadow: none;
         }
         .modernime-details {
-            border-bottom: 1px solid #edf0f4;
+            border-bottom: 1px solid #ededed;
         }
         .modernime-details:last-child { border-bottom: none; }
         .modernime-details-content { padding: 0 0 16px; }
@@ -337,7 +337,7 @@ std::string_view settingsStyles() {
         .modernime-diagnostics-card .modernime-diagnostics-value {
             font-size: 15px;
             font-weight: 500;
-            color: #385a7d;
+            color: #484848;
             background-color: transparent;
             border: none;
             border-radius: 0;
@@ -368,7 +368,7 @@ std::string_view settingsStyles() {
 
         .modernime-setting-row {
             padding: 10px 0;
-            border-bottom: 1px solid #edf0f4;
+            border-bottom: 1px solid #ededed;
         }
 
         .modernime-setting-row:last-child {
@@ -386,13 +386,14 @@ std::string_view settingsStyles() {
             color: @insensitive_fg_color;
         }
 
-        /* Overview Bento Cards */
+        /* Overview summary and navigation list */
         .modernime-hero-card {
-            border: 1px solid @borders;
-            border-radius: 12px;
+            border: none;
+            border-bottom: 1px solid @borders;
+            border-radius: 0;
             background-color: @theme_base_color;
-            padding: 12px 18px;
-            margin-bottom: 10px;
+            padding: 8px 0 22px;
+            margin-bottom: 6px;
         }
 
         .modernime-hero-title {
@@ -401,31 +402,19 @@ std::string_view settingsStyles() {
             color: @theme_fg_color;
         }
 
-        .modernime-bento-card {
-            border: 1px solid @borders;
-            border-radius: 10px;
-            background-color: @theme_base_color;
-            padding: 12px 16px;
+        .modernime-settings button.modernime-overview-row {
+            border: none;
+            border-bottom: 1px solid @borders;
+            border-radius: 0;
+            padding: 17px 4px;
+            background-color: transparent;
         }
-
-        .modernime-bento-title {
-            font-size: 12px;
-            font-weight: 600;
-            color: @insensitive_fg_color;
-        }
-
-        .modernime-bento-value {
-            font-size: 18px;
-            font-weight: 600;
-            color: @theme_fg_color;
-            margin: 3px 0 2px 0;
-        }
-
-        .modernime-bento-desc {
-            font-size: 11.5px;
-            color: @insensitive_fg_color;
-            margin-bottom: 8px;
-        }
+        .modernime-settings button.modernime-overview-row:last-child { border-bottom: none; }
+        .modernime-settings button.modernime-overview-row:hover { background-color: #f7f7f7; }
+        .modernime-overview-row .modernime-setting-title { font-weight: 600; }
+        .modernime-overview-value { color: @insensitive_fg_color; font-size: 13px; }
+        .modernime-fuzzy-expander { padding: 12px 0 2px; }
+        .modernime-fuzzy-expander > title { padding: 4px 0; }
 
         /* Status & Badges */
         .modernime-status {
@@ -433,54 +422,54 @@ std::string_view settingsStyles() {
         }
 
         .modernime-status-banner {
-            background-color: #f0f6ff;
-            border: 1px solid #d0e1fd;
+            background-color: #f7f7f7;
+            border: 1px solid #e2e2e2;
             border-radius: 8px;
             padding: 9px 13px;
             margin-bottom: 14px;
         }
         .modernime-status-banner label {
-            color: #1e3a8a;
+            color: #454545;
             font-size: 13px;
             font-weight: 500;
         }
         .modernime-status-banner image {
-            color: #2563eb;
+            color: #555555;
         }
         .modernime-status-banner.error {
-            background-color: #fef2f2;
-            border-color: #fecaca;
+            background-color: #fbf4f3;
+            border-color: #ebd3d0;
         }
         .modernime-status-banner.error label {
-            color: #991b1b;
+            color: #9d3434;
         }
         .modernime-status-banner.error image {
-            color: #dc2626;
+            color: #ae4141;
         }
         .modernime-status-banner.warning {
-            background-color: #fffbeb;
-            border-color: #fde68a;
+            background-color: #faf7ef;
+            border-color: #e8ddc3;
         }
         .modernime-status-banner.warning label {
-            color: #92400e;
+            color: #806322;
         }
         .modernime-status-banner.warning image {
-            color: #d97706;
+            color: #96742a;
         }
         .modernime-status-banner.success {
-            background-color: #f0fdf4;
-            border-color: #bbf7d0;
+            background-color: #f3f7f3;
+            border-color: #d5e3d5;
         }
         .modernime-status-banner.success label {
-            color: #166534;
+            color: #3d6746;
         }
         .modernime-status-banner.success image {
-            color: #16a34a;
+            color: #487651;
         }
 
         .modernime-badge-green {
-            background-color: rgba(34, 197, 94, 0.12);
-            color: #15803d;
+            background-color: rgba(61, 103, 70, 0.08);
+            color: #3d6746;
             font-weight: 600;
             font-size: 12.5px;
             border-radius: 6px;
@@ -488,8 +477,8 @@ std::string_view settingsStyles() {
         }
 
         .modernime-badge-amber {
-            background-color: rgba(245, 158, 11, 0.12);
-            color: #b45309;
+            background-color: rgba(128, 99, 34, 0.08);
+            color: #806322;
             font-weight: 600;
             font-size: 12.5px;
             border-radius: 6px;
@@ -497,8 +486,8 @@ std::string_view settingsStyles() {
         }
 
         .modernime-badge-red {
-            background-color: rgba(239, 68, 68, 0.12);
-            color: #b91c1c;
+            background-color: rgba(157, 52, 52, 0.08);
+            color: #9d3434;
             font-weight: 600;
             font-size: 12.5px;
             border-radius: 6px;
@@ -506,8 +495,8 @@ std::string_view settingsStyles() {
         }
 
         .modernime-badge-neutral {
-            background-color: rgba(100, 116, 139, 0.10);
-            color: #334155;
+            background-color: rgba(0, 0, 0, 0.05);
+            color: #555555;
             font-weight: 500;
             font-size: 12.5px;
             border-radius: 6px;
@@ -545,7 +534,7 @@ std::string_view settingsStyles() {
 
         /* Preview Box */
         .modernime-preview-bar {
-            background-color: #f6f7f9;
+            background-color: #f7f7f7;
             border: 1px solid @borders;
             border-radius: 10px;
             padding: 12px 16px;
@@ -558,11 +547,11 @@ std::string_view settingsStyles() {
             background-color: transparent;
             padding: 3px 0;
             border: none;
-            color: #172b4d;
+            color: #292929;
         }
         .modernime-clipboard-list row:selected { background-color: transparent; }
         .modernime-clipboard-card {
-            border: 1px solid #e4eaf3;
+            border: 1px solid #e5e5e5;
             border-left: 3px solid transparent;
             border-radius: 8px;
             background-color: #ffffff;
@@ -571,62 +560,62 @@ std::string_view settingsStyles() {
             transition: background-color 140ms ease, border-color 140ms ease;
         }
         .modernime-clipboard-card:hover {
-            background-color: #f7f9fd;
-            border-color: #dbe4f3;
+            background-color: #f7f7f7;
+            border-color: #dedede;
         }
         .modernime-clipboard-list row:selected .modernime-clipboard-card {
-            border-color: #d5e2ff;
-            border-left-color: #1262ff;
-            background-color: #f2f6ff;
+            border-color: #d6d6d6;
+            border-left-color: #292929;
+            background-color: #f0f0f0;
             box-shadow: none;
         }
         .modernime-card-index {
             min-width: 20px;
             font-size: 11px;
             font-weight: 600;
-            color: #7a89a0;
+            color: #737373;
         }
         .modernime-badge-code, .modernime-badge-url,
         .modernime-badge-multiline, .modernime-badge-text {
             font-size: 12px;
-            color: #627693;
+            color: #626262;
         }
-        .modernime-card-meta { font-size: 11px; color: #7a89a0; }
-        .modernime-card-preview { font-size: 14px; color: #172b4d; }
+        .modernime-card-meta { font-size: 11px; color: #737373; }
+        .modernime-card-preview { font-size: 14px; color: #292929; }
         .modernime-card-expanded-box {
             border-radius: 6px;
-            border: 1px solid #dce5f3;
+            border: 1px solid #e1e1e1;
             background-color: #ffffff;
         }
         .modernime-clipboard-reader, .modernime-clipboard-reader text {
             font-size: 14px;
-            color: #172b4d;
+            color: #292929;
             background-color: #ffffff;
         }
         .modernime-card-code {
             font-family: monospace;
             font-size: 13px;
-            color: #172b4d;
+            color: #292929;
         }
         .modernime-toggle-btn, .modernime-card-btn {
             font-size: 12px;
             min-height: 22px;
             padding: 2px 8px;
             border-radius: 5px;
-            color: #1262ff;
+            color: #292929;
             border: 1px solid transparent;
             background-image: none;
             background-color: transparent;
             box-shadow: none;
         }
         .modernime-toggle-btn:hover, .modernime-card-btn:hover {
-            background-color: #e7eeff;
-            border-color: #cbdcff;
+            background-color: #ededed;
+            border-color: #d0d0d0;
         }
         .modernime-toggle-btn:focus, .modernime-card-btn:focus {
-            border-color: #1262ff;
+            border-color: #292929;
         }
-        .modernime-toggle-btn label, .modernime-card-btn label { color: #1262ff; }
+        .modernime-toggle-btn label, .modernime-card-btn label { color: #292929; }
         .modernime-clipboard-toolbar { margin: 4px 0 8px; }
 
         .modernime-shortcut-btn {
@@ -649,7 +638,7 @@ std::string_view settingsStyles() {
 
         .modernime-shortcut-btn.recording {
             border-color: @theme_selected_bg_color;
-            background-color: rgba(59, 130, 246, 0.12);
+            background-color: rgba(0, 0, 0, 0.06);
             color: @theme_selected_bg_color;
             box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
         }
@@ -658,7 +647,7 @@ std::string_view settingsStyles() {
         .modernime-preview-card {
             border: 1px solid @borders;
             border-radius: 10px;
-            background-color: #f6f7f9;
+            background-color: #f7f7f7;
             padding: 14px 18px;
             margin-bottom: 4px;
         }
@@ -680,7 +669,7 @@ std::string_view settingsStyles() {
         .modernime-tip-note {
             font-size: 12px;
             color: @insensitive_fg_color;
-            background-color: #f6f7f9;
+            background-color: #f7f7f7;
             border-radius: 8px;
             padding: 10px 12px;
             margin-top: 4px;
@@ -725,7 +714,7 @@ std::string_view settingsStyles() {
         }
 
         .modernime-nav-label { font-size: 14px; }
-        .modernime-brand { font-size: 22px; font-weight: 700; }
+        .modernime-brand { font-size: 21px; font-weight: 600; letter-spacing: -0.3px; }
         .modernime-settings entry,
         .modernime-settings spinbutton,
         .modernime-settings treeview,
@@ -740,26 +729,26 @@ std::string_view settingsStyles() {
             border-color: @theme_selected_bg_color;
             box-shadow: inset 0 0 0 1px alpha(@theme_selected_bg_color, 0.15);
         }
-        .modernime-settings button:hover { background-color: #f1f4f9; }
+        .modernime-settings button:hover { background-color: #f1f1f1; }
         .modernime-settings button.suggested-action:hover,
         .modernime-settings button.suggested-action:active {
             background-color: @theme_selected_bg_color;
         }
         .modernime-settings button:disabled {
-            background-color: #f4f6f9;
-            border-color: #e5e9ef;
-            color: #9aa3b2;
+            background-color: #f4f4f4;
+            border-color: #e6e6e6;
+            color: #949494;
         }
         .modernime-settings button.suggested-action:disabled {
-            background-color: #e7efff;
-            border-color: #e7efff;
-            color: #7193d5;
+            background-color: #ededed;
+            border-color: #ededed;
+            color: #999999;
         }
         .modernime-settings button:disabled label { color: inherit; }
         .modernime-settings .modernime-bottom-bar button { min-width: 84px; }
         .modernime-settings switch {
             background-image: none;
-            background-color: #b7bec9;
+            background-color: #bdbdbd;
             border: none;
             border-radius: 16px;
             min-width: 42px;
@@ -767,6 +756,15 @@ std::string_view settingsStyles() {
             color: transparent;
         }
         .modernime-settings switch:checked { background-color: @theme_selected_bg_color; }
+        .modernime-settings switch:disabled { background-color: #dddddd; }
+        .modernime-settings switch:disabled slider { background-color: #f3f3f3; }
+        .modernime-settings button:focus,
+        .modernime-settings switch:focus {
+            outline-color: #777777;
+            outline-style: solid;
+            outline-width: 1px;
+            outline-offset: 2px;
+        }
         .modernime-settings switch slider {
             background-image: none;
             background-color: #ffffff;
@@ -775,7 +773,7 @@ std::string_view settingsStyles() {
             min-width: 20px;
             min-height: 20px;
             margin: 2px;
-            box-shadow: 0 1px 2px alpha(#182031, 0.12);
+            box-shadow: 0 1px 2px alpha(#242424, 0.12);
         }
         .modernime-settings checkbutton check:checked,
         .modernime-settings radiobutton radio:checked {

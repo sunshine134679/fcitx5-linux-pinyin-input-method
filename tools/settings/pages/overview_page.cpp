@@ -79,7 +79,7 @@ public:
     void setSnapshot(const OverviewSnapshot &snapshot) {
         clearContainer(content);
 
-        // 1. Hero Status Card
+        // Runtime summary, followed by direct navigation to local settings.
         auto *heroCard = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
         addStyleClass(heroCard, "modernime-hero-card");
 
@@ -92,11 +92,8 @@ public:
         gtk_widget_set_halign(heroTitle, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(heroLeft), heroTitle, FALSE, FALSE, 0);
 
-        const bool isRunning = snapshot.runtimeSummary.find("运行") != std::string::npos &&
-                               snapshot.runtimeSummary.find("未运行") == std::string::npos;
-        auto *statusBadge = gtk_label_new(
-            (std::string(isRunning ? "● " : "○ ") + snapshot.runtimeSummary).c_str());
-        addStyleClass(statusBadge, isRunning ? "modernime-badge-green" : "modernime-badge-amber");
+        auto *statusBadge = gtk_label_new(snapshot.runtimeSummary.c_str());
+        addStyleClass(statusBadge, "modernime-setting-desc");
         gtk_widget_set_halign(statusBadge, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(heroLeft), statusBadge, FALSE, FALSE, 0);
 
@@ -109,86 +106,82 @@ public:
 
         gtk_box_pack_start(GTK_BOX(content), heroCard, FALSE, FALSE, 0);
 
-        // 2. 2x2 Bento Grid
-        auto *grid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-        gtk_widget_set_hexpand(grid, TRUE);
+        auto *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_widget_set_hexpand(list, TRUE);
 
-        const auto createBentoCard = [this](std::string_view iconName,
+        const auto createOverviewRow = [this](std::string_view iconName,
                                             std::string_view title,
                                             std::string_view value,
                                             std::string_view desc,
                                             std::string_view actionText,
                                             SettingsPageId dest) {
-            auto *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-            addStyleClass(card, "modernime-bento-card");
-            gtk_widget_set_hexpand(card, TRUE);
-
-            auto *hBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+            auto *button = createDestinationButton(actionText, dest, navigate, desc);
+            gtk_widget_destroy(gtk_bin_get_child(GTK_BIN(button)));
+            addStyleClass(button, "modernime-overview-row");
+            gtk_widget_set_halign(button, GTK_ALIGN_FILL);
+            auto *hBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
             auto *icon = gtk_image_new_from_icon_name(std::string(iconName).c_str(), GTK_ICON_SIZE_BUTTON);
             gtk_box_pack_start(GTK_BOX(hBox), icon, FALSE, FALSE, 0);
+            auto *labels = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+            gtk_widget_set_hexpand(labels, TRUE);
             auto *titleLabel = gtk_label_new(std::string(title).c_str());
-            addStyleClass(titleLabel, "modernime-bento-title");
+            addStyleClass(titleLabel, "modernime-setting-title");
             gtk_widget_set_halign(titleLabel, GTK_ALIGN_START);
-            gtk_box_pack_start(GTK_BOX(hBox), titleLabel, TRUE, TRUE, 0);
-            gtk_box_pack_start(GTK_BOX(card), hBox, FALSE, FALSE, 0);
-
-            auto *valLabel = gtk_label_new(std::string(value).c_str());
-            addStyleClass(valLabel, "modernime-bento-value");
-            gtk_widget_set_halign(valLabel, GTK_ALIGN_START);
-            gtk_box_pack_start(GTK_BOX(card), valLabel, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(labels), titleLabel, FALSE, FALSE, 0);
 
             auto *descLabel = gtk_label_new(std::string(desc).c_str());
-            addStyleClass(descLabel, "modernime-bento-desc");
-            gtk_widget_set_halign(descLabel, GTK_ALIGN_START);
+            addStyleClass(descLabel, "modernime-setting-desc");
+            gtk_label_set_xalign(GTK_LABEL(descLabel), 0.0F);
             gtk_label_set_line_wrap(GTK_LABEL(descLabel), TRUE);
-            gtk_box_pack_start(GTK_BOX(card), descLabel, TRUE, TRUE, 0);
-
-            auto *btn = createDestinationButton(actionText, dest, navigate);
-            gtk_widget_set_halign(btn, GTK_ALIGN_START);
-            gtk_box_pack_end(GTK_BOX(card), btn, FALSE, FALSE, 0);
-
-            return card;
+            gtk_box_pack_start(GTK_BOX(labels), descLabel, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(hBox), labels, TRUE, TRUE, 0);
+            auto *valLabel = gtk_label_new(std::string(value).c_str());
+            addStyleClass(valLabel, "modernime-overview-value");
+            gtk_box_pack_start(GTK_BOX(hBox), valLabel, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(hBox),
+                gtk_image_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_MENU),
+                FALSE, FALSE, 0);
+            gtk_container_add(GTK_CONTAINER(button), hBox);
+            return button;
         };
 
-        auto *inputCard = createBentoCard(
+        auto *inputCard = createOverviewRow(
             "input-keyboard-symbolic",
-            "输入体验",
+            "输入与按键",
             snapshot.defaultMode + "模式",
             "快捷键：" + snapshot.toggleKey,
             "配置输入体验",
             SettingsPageId::Input);
-        gtk_grid_attach(GTK_GRID(grid), inputCard, 0, 0, 1, 1);
+        gtk_box_pack_start(GTK_BOX(list), inputCard, FALSE, FALSE, 0);
 
-        auto *dictCard = createBentoCard(
+        auto *dictCard = createOverviewRow(
             "accessories-dictionary-symbolic",
             "个人词典",
             std::to_string(snapshot.dictionaryEntries) + " 条词条",
             "本地专业词汇与短语管理",
             "管理个人词典",
             SettingsPageId::Dictionary);
-        gtk_grid_attach(GTK_GRID(grid), dictCard, 1, 0, 1, 1);
+        gtk_box_pack_start(GTK_BOX(list), dictCard, FALSE, FALSE, 0);
 
-        auto *learningCard = createBentoCard(
+        auto *learningCard = createOverviewRow(
             "starred-symbolic",
             "智能学习",
             std::to_string(snapshot.learningEntries) + " 条记录",
             "自适应调频与高频词置顶",
             "查看学习数据",
             SettingsPageId::Learning);
-        gtk_grid_attach(GTK_GRID(grid), learningCard, 0, 1, 1, 1);
+        gtk_box_pack_start(GTK_BOX(list), learningCard, FALSE, FALSE, 0);
 
-        auto *clipCard = createBentoCard(
+        auto *clipCard = createOverviewRow(
             "edit-paste-symbolic",
             "剪贴板",
             std::to_string(snapshot.clipboardEntries) + " 条记录",
             "输入 v+2 快捷呼出面板",
             "查看剪贴板",
             SettingsPageId::Clipboard);
-        gtk_grid_attach(GTK_GRID(grid), clipCard, 1, 1, 1, 1);
+        gtk_box_pack_start(GTK_BOX(list), clipCard, FALSE, FALSE, 0);
 
-        gtk_box_pack_start(GTK_BOX(content), grid, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(content), list, FALSE, FALSE, 0);
 
         if (!snapshot.notices.empty()) {
             auto *notices = createSectionCard(

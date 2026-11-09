@@ -13,6 +13,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -546,7 +547,7 @@ int main(int argc, char **argv) {
         auto *save = findAccessibleWidget(window, GTK_TYPE_BUTTON, "保存设置");
         assert(search != nullptr && save != nullptr);
 
-        // A selected navigation item must retain readable blue text on focus.
+        // Selected navigation text stays dark and neutral on focus and hover.
         shell.show(modernime::settings::SettingsPageId::Overview);
         auto *overviewNav = findAccessibleWidget(window, GTK_TYPE_BUTTON, "概览");
         assert(overviewNav != nullptr);
@@ -558,7 +559,9 @@ int main(int argc, char **argv) {
             GdkRGBA color{};
             gtk_style_context_get_color(gtk_widget_get_style_context(navLabel),
                                         gtk_widget_get_state_flags(navLabel), &color);
-            assert(color.blue > 0.85 && color.red < 0.2 && color.green < 0.5);
+            assert(color.red > 0.1 && color.red < 0.2);
+            assert(std::abs(color.red - color.green) < 0.01);
+            assert(std::abs(color.red - color.blue) < 0.01);
         };
         // Let CSS transitions settle before checking the focused descendant.
         std::this_thread::sleep_for(std::chrono::milliseconds(180));

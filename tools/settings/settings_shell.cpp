@@ -388,15 +388,14 @@ private:
         gtk_widget_set_size_request(sidebar, 220, -1);
         gtk_widget_set_hexpand(sidebar, FALSE);
 
-        // Product wordmark: ModernIME matching layout-1.png
+        // Keep the wordmark in the same neutral palette as the application.
         auto *brandBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         gtk_widget_set_margin_start(brandBox, 16);
         gtk_widget_set_margin_top(brandBox, 16);
         gtk_widget_set_margin_bottom(brandBox, 14);
         auto *brandLabel = gtk_label_new(nullptr);
         addStyleClass(brandLabel, "modernime-brand");
-        gtk_label_set_markup(GTK_LABEL(brandLabel),
-            "<b><span color='#182031'>Modern</span><span color='#1262ff'>IME</span></b>");
+        gtk_label_set_text(GTK_LABEL(brandLabel), "ModernIME");
         gtk_widget_set_halign(brandLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(brandBox), brandLabel, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(sidebar), brandBox, FALSE, FALSE, 0);
@@ -611,7 +610,7 @@ private:
         gtk_label_set_ellipsize(GTK_LABEL(editState), PANGO_ELLIPSIZE_END);
         gtk_label_set_max_width_chars(GTK_LABEL(editState), 32);
         gtk_label_set_markup(GTK_LABEL(editState),
-                             "<span foreground='#94a3b8'>●</span> 所有设置已保存");
+                             "<span foreground='#858585'>●</span> 所有设置已保存");
         addStyleClass(editState, "modernime-status");
         gtk_widget_set_halign(editState, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(bar), editState, FALSE, FALSE, 0);
@@ -761,15 +760,15 @@ private:
                                      ? std::string("当前设置无法保存")
                                      : validation.issues.front().message;
             const std::string markup =
-                "<span foreground='#ef4444'>●</span> " + message;
+                "<span foreground='#9d3434'>●</span> " + message;
             gtk_label_set_markup(GTK_LABEL(editState), markup.c_str());
         } else if (model.dirty()) {
             addStyleClass(editState, "modernime-status-dirty");
             gtk_label_set_markup(GTK_LABEL(editState),
-                                 "<span foreground='#1262ff'>●</span> 有未保存的修改");
+                                 "<span foreground='#292929'>●</span> 有未保存的修改");
         } else {
             gtk_label_set_markup(GTK_LABEL(editState),
-                                 "<span foreground='#94a3b8'>●</span> 所有设置已保存");
+                                 "<span foreground='#858585'>●</span> 所有设置已保存");
         }
     }
 
