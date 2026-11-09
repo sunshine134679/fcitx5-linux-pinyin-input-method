@@ -2,10 +2,12 @@
 set -euo pipefail
 
 keep=false
+install_only=false
 for argument in "$@"; do
     case "$argument" in
         --keep) keep=true ;;
-        *) printf '用法：%s [--keep]\n' "$0" >&2; exit 2 ;;
+        --install-only) install_only=true ;;
+        *) printf '用法：%s [--keep] [--install-only]\n' "$0" >&2; exit 2 ;;
     esac
 done
 
@@ -86,20 +88,26 @@ git -C "$test_root/repo" rev-parse HEAD > "$test_root/source-commit.txt"
 printf '验证快照：%s\n' "$(cat "$test_root/source-commit.txt")"
 
 printf '=== 2. 在沙箱环境中执行 install.sh ===\n'
+if [[ "$install_only" == true ]]; then
+    export MODERNIME_SKIP_TESTS=1
+    printf '仅安装验收：复用已完成的功能回归，本次不重跑通用测试。\n'
+fi
 (cd "$test_root/repo" && ./install.sh)
 
 # Installer success alone does not prove the required tests actually ran.
-report_dir="$MODERNIME_BUILD_DIR/Testing"
-for report in install-registered.json install-junit.xml install-gtest.xml; do
-    if [[ ! -s "$report_dir/$report" ]]; then
-        printf '缺少本次安装测试报告：%s\n' "$report_dir/$report" >&2
-        exit 1
-    fi
-done
-python3 "$test_root/repo/tests/verify_required_tests.py" \
-    --registered "$report_dir/install-registered.json" \
-    --junit "$report_dir/install-junit.xml" --gtest-xml "$report_dir" \
-    --profile full --stage final --check execution --execution headless
+if [[ "$install_only" == false ]]; then
+    report_dir="$MODERNIME_BUILD_DIR/Testing"
+    for report in install-registered.json install-junit.xml install-gtest.xml; do
+        if [[ ! -s "$report_dir/$report" ]]; then
+            printf '缺少本次安装测试报告：%s\n' "$report_dir/$report" >&2
+            exit 1
+        fi
+    done
+    python3 "$test_root/repo/tests/verify_required_tests.py" \
+        --registered "$report_dir/install-registered.json" \
+        --junit "$report_dir/install-junit.xml" --gtest-xml "$report_dir" \
+        --profile full --stage final --check execution --execution headless
+fi
 
 printf '=== 3. 验证沙箱安装产物完整性 ===\n'
 test -f "$MODERNIME_PREFIX/bin/modernime-settings"
@@ -367,6 +375,11 @@ PYEOF
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
 test -f "$MODERNIME_PREFIX/share/modernime/gnome_extension.py"
+python3 - "$MODERNIME_PREFIX/share/modernime/extensions/modernime-panel@sunshine134679.github.io/metadata.json" <<'PY'
+import json, pathlib, sys
+metadata = pathlib.Path(sys.argv[1])
+assert json.loads(metadata.read_text())["uuid"] == metadata.parent.name
+PY
 test -x "$MODERNIME_PREFIX/bin/modernime-session-init"
 { test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so" || \
   test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so" || \
@@ -418,5 +431,9 @@ done
 test ! -e "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test ! -e "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 
-printf '=== 6. 源码构建、必需测试及既有安装卸载检查通过（headless） ===\n'
+if [[ "$install_only" == true ]]; then
+    printf '=== 6. 源码构建与安装卸载检查通过（headless；通用测试未运行） ===\n'
+else
+    printf '=== 6. 源码构建、必需测试及既有安装卸载检查通过（headless） ===\n'
+fi
 printf '桌面会话与用户扩展生命周期需另行专项验收。\n'

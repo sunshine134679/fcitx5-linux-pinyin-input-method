@@ -422,7 +422,9 @@ GNOME 扩展仅在当前 GNOME 图形与 DBus 会话中自动部署。ModernIME 
 
 开发验证运行 `ctest --test-dir build/fcitx5-debug --output-on-failure` 和 `./tests/verify_fresh_clone.sh`。后者在临时 Git 快照中纳入暂存、未暂存和未跟踪改动，再全新克隆、离线安装与卸载；不会修改原工作区的 Git 索引或提交。验证入口隔离 HOME、XDG、ModernIME 数据/配置/构建目录及显示与 D-Bus 会话，取消继承的跳测、GTest 过滤与 Git 路径覆盖，禁止重启日常输入法。CTest 串行执行以保留原生性能门禁，构建并行度仍可通过 `CMAKE_BUILD_PARALLEL_LEVEL` 设置。
 
-需要保留失败现场或验收证据时运行 `./tests/verify_fresh_clone.sh --keep`，脚本会打印本次目录的绝对路径；默认成功或失败后均清理。保留目录包含源快照 SHA、克隆、构建和安装清单，子测试自行清理的临时对象不保留。源码安装的同一次 CTest 会在构建目录 `Testing/` 中生成 `install-registered.json`、`install-junit.xml` 和 `install-gtest.xml`；fresh-clone 要求这些原生报告齐全，并按 full/final/headless 核对必需项。安装或测试失败、缺报告、缺必需项、非法跳过或卸载失败均返回非零。无图形环境允许的桌面测试跳过单独记录，不能代替 GNOME/X11、Wayland 或缩放场景的实机验收。
+若本轮功能回归已完成，仅需验证新克隆的安装交付，可运行 `./tests/verify_fresh_clone.sh --install-only --keep`。该模式仍从干净源码构建并实际安装、检查已安装客户端与插件发现、核对 GNOME 面板标识、执行卸载，但明确跳过通用 CTest/GTest/Benchmark；它不等于完整回归通过，需与本轮已有功能证据配合使用。默认模式的必需测试和报告核验保持不变。
+
+需要保留失败现场或验收证据时运行 `./tests/verify_fresh_clone.sh --keep`，脚本会打印本次目录的绝对路径；默认成功或失败后均清理。保留目录包含源快照 SHA、克隆、构建和安装清单，子测试自行清理的临时对象不保留。源码安装的同一次 CTest 会在构建目录 `Testing/` 中生成 `install-registered.json`、`install-junit.xml` 和 `install-gtest.xml`；fresh-clone 默认模式要求这些原生报告齐全，并按 full/final/headless 核对必需项。安装或测试失败、缺报告、缺必需项、非法跳过或卸载失败均返回非零。无图形环境允许的桌面测试跳过单独记录，不能代替 GNOME/X11、Wayland 或缩放场景的实机验收。
 
 这是环境隔离验证，并非虚拟机或发行版依赖容器：它仍使用本机工具链、系统库及 CMake 实际找到的只读依赖。显式 CMake 依赖搜索路径可以保留，验收时应记录 `CMakeCache.txt` 中的实际来源；命中用户目录中的开发库不能称为干净系统依赖验证。
 
