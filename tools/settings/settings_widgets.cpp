@@ -999,7 +999,9 @@ std::string_view settingsStyles() {
         }
         .modernime-settings button:focus {
             outline: 2px solid alpha(@theme_selected_bg_color, 0.6);
-            outline-offset: 2px;
+            /* Keep the focus stroke inside the control's paint/allocation box.
+               An outset ring doubles its border and can survive partial redraws. */
+            outline-offset: -2px;
         }
         .modernime-settings button.suggested-action:hover {
             background-color: @modernime_accent_hover;
@@ -1072,7 +1074,7 @@ std::string_view settingsStyles() {
         .modernime-settings checkbutton:focus check,
         .modernime-settings radiobutton:focus radio {
             outline: 2px solid @theme_selected_bg_color;
-            outline-offset: 2px;
+            outline-offset: -2px;
         }
         .modernime-settings checkbutton check,
         .modernime-settings radiobutton radio {
