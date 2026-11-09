@@ -449,14 +449,12 @@ class OverviewSearchBridge {
                 return;
 
             clutterText.delete_selection();
-            let pos = clutterText.get_cursor_position();
-            let currentText = clutterText.get_text() || '';
-            if (pos < 0 || pos > currentText.length)
-                pos = currentText.length;
-
-            let newText = currentText.slice(0, pos) + text + currentText.slice(pos);
-            clutterText.set_text(newText);
-            clutterText.set_cursor_position(pos + text.length);
+            const pos = clutterText.get_cursor_position();
+            // Clutter positions count Unicode characters; JS string offsets
+            // count UTF-16 units and can split an existing emoji in half.
+            clutterText.insert_text(text, pos);
+            const next = pos < 0 ? -1 : pos + [...text].length;
+            clutterText.set_selection(next, next);
         } catch (e) {
             console.error('ModernIME CommitString error: ' + e.message);
         }

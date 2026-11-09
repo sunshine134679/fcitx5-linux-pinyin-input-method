@@ -611,7 +611,9 @@ python3 tools/replay_pinyin_quality.py --binary build/dev/tools/modernime_pinyin
 
 ## Wayland 与会话说明
 
-X11 会话使用 ModernIME 自绘候选栏，锚定到光标下方，靠近屏幕底部时翻到上方。Wayland 会话使用应用提供的候选面板或由 Fcitx5 选择可用的桌面面板；GNOME Shell 面板需启用随项目提供的输入法面板扩展（Kimpanel）。安装、自启与设置中的重启均保留自动 UI 选择。请勿在 Wayland 下强制 `-u modernime-ui`：GTK 自绘弹窗无法跨应用定位。GNOME 面板字体通过扩展设置调整，设置客户端的自绘预览不代表该面板；扩展不可用时请在“系统与诊断”检查会话与扩展状态。原生 GTK/Qt/浏览器的完整兼容性仍按应用分别验收。
+X11 会话使用 ModernIME 自绘候选栏，锚定到光标下方，靠近屏幕底部时翻到上方。Wayland 会话使用应用提供的候选面板或由 Fcitx5 选择可用的桌面面板；GNOME Shell 面板需启用随项目提供的输入法面板扩展（Kimpanel）。安装、自启与设置中的重启均保留自动 UI 选择。请勿在 Wayland 下强制 `-u modernime-ui`：GTK 自绘弹窗无法跨应用定位。GNOME 面板字体通过扩展设置调整，设置客户端的自绘预览不代表该面板；扩展不可用时请在“系统与诊断”检查会话与扩展状态。
+
+Ubuntu 24.04 / GNOME 46 的隔离桌面已验证原生 GTK、Qt 5.15 Wayland 和系统概览搜索通过实际按键上屏中文；概览搜索支持在表情后插入中文而不破坏已有字符。Chrome 157 原生 Wayland 的 `text-input-v3` 链路仍未通过：当前 GNOME 与 Fcitx5 5.1.7 的 IBus 接口存在兼容障碍，浏览器仍收到原始拼音。不能据上述 GTK/Qt 结果推断浏览器可用；跨应用验证与限制记录在[升级路线图](docs/全面升级审计与路线图-2026-11-08.md)。
 
 所有 ModernIME 自己的配置和数据都保存在当前用户目录下，不修改系统其他输入法：
 
