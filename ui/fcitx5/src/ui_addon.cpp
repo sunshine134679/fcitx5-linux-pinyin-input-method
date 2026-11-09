@@ -136,6 +136,7 @@ struct ModernIMEUserInterface::Impl final {
             std::optional<std::string> mutableText;
         };
         CandidateBarLayout layout;
+        int scale = 1;
         fcitx::TrackableObjectReference<fcitx::InputContext> context;
         std::weak_ptr<fcitx::CandidateList> list;
         std::vector<Binding> bindings;
@@ -355,14 +356,26 @@ struct ModernIMEUserInterface::Impl final {
             originY + style.shadowOffsetY));
     }
 
+    GdkRectangle logicalCursor(fcitx::InputContext *inputContext) const {
+        const auto &cursor = inputContext->cursorRect();
+        const auto scale = static_cast<double>(gtk_widget_get_scale_factor(window));
+        // X11 frontends publish physical root coordinates (including clients
+        // at a different toolkit scale). Convert with this GTK UI's scale,
+        // not InputContext::scaleFactor(), which may remain 1 on X11.
+        return {static_cast<int>(std::floor(cursor.left() / scale)),
+                static_cast<int>(std::floor(cursor.top() / scale)),
+                static_cast<int>(std::ceil(cursor.width() / scale)),
+                static_cast<int>(std::ceil(cursor.height() / scale))};
+    }
+
     std::optional<GdkRectangle> workareaFor(fcitx::InputContext *inputContext) const {
         auto *display = gtk_widget_get_display(window);
         if (!inputContext || !display) {
             return std::nullopt;
         }
-        const auto &cursor = inputContext->cursorRect();
+        const auto cursor = logicalCursor(inputContext);
         auto *monitor = gdk_display_get_monitor_at_point(
-            display, cursor.left(), cursorAnchorBottom(cursor.top(), cursor.height()));
+            display, cursor.x, cursorAnchorBottom(cursor.y, cursor.height));
         if (!monitor) {
             return std::nullopt;
         }
@@ -396,9 +409,9 @@ struct ModernIMEUserInterface::Impl final {
         if (inputContext == nullptr || !pendingFrame) {
             return;
         }
-        const auto &cursor = inputContext->cursorRect();
-        int desiredX = cursor.left();
-        int desiredY = cursorAnchorBottom(cursor.top(), cursor.height());
+        const auto cursor = logicalCursor(inputContext);
+        int desiredX = cursor.x;
+        int desiredY = cursorAnchorBottom(cursor.y, cursor.height);
         const auto panelWidth = windowWidth();
         const auto panelHeight = windowHeight();
         if (const auto area = workareaFor(inputContext)) {
@@ -407,7 +420,7 @@ struct ModernIMEUserInterface::Impl final {
                 workarea.x, workarea.x + workarea.width - panelWidth);
             desiredX = std::clamp(desiredX, workarea.x, maxX);
             if (desiredY + panelHeight > workarea.y + workarea.height) {
-                desiredY = cursor.top() - panelHeight;
+                desiredY = cursor.y - panelHeight;
             }
             const auto maxY = std::max(
                 workarea.y, workarea.y + workarea.height - panelHeight);
@@ -716,6 +729,10 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
                      G_CALLBACK(buttonPressCallback), this);
     gtk_widget_set_size_request(impl_->drawingArea, 1, 1);
     gtk_widget_realize(impl_->window);
+    g_signal_connect(impl_->window, "notify::scale-factor",
+        G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {
+            static_cast<ModernIMEUserInterface *>(data)->refreshDisplayScale();
+        }), this);
     // 预热 Pango 布局与 Fontconfig 字体库缓存，消除首键测量中文字体的冷启动开销
     impl_->textWidth("你好世界");
     impl_->textWidth("1234567890");
@@ -768,6 +785,9 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
 }
 
 ModernIMEUserInterface::~ModernIMEUserInterface() {
+    if (impl_->window) {
+        g_signal_handlers_disconnect_by_data(impl_->window, this);
+    }
     impl_->invalidateFrame();
     impl_->contextWatchers.clear();
     impl_->gtkEventSource.reset();
@@ -795,6 +815,10 @@ ModernIMEUserInterface::~ModernIMEUserInterface() {
 
 void ModernIMEUserInterface::draw(cairo_t *context) {
     const auto frame = impl_->pendingFrame;
+    if (frame && frame->scale != gtk_widget_get_scale_factor(impl_->window)) {
+        refreshDisplayScale();
+        return;
+    }
     if (impl_->suspended || !frame || !frame->currentList()) {
         return;
     }
@@ -805,6 +829,22 @@ void ModernIMEUserInterface::draw(cairo_t *context) {
     cairo_restore(context);
     if (cairo_status(context) == CAIRO_STATUS_SUCCESS) {
         impl_->finishDraw(frame);
+    }
+}
+
+void ModernIMEUserInterface::refreshDisplayScale() {
+    const auto frame = impl_->pendingFrame;
+    impl_->invalidateFrame();
+    impl_->windowAnchor.reset();
+    impl_->sharedWidthCache.clear();
+    if (impl_->sharedTextLayout) {
+        pango_layout_context_changed(impl_->sharedTextLayout);
+    }
+    impl_->metrics.layoutGeneration = ++impl_->layoutGeneration;
+    impl_->lastWindowWidth = -1;
+    impl_->lastWindowHeight = -1;
+    if (frame && frame->currentList()) {
+        update(fcitx::UserInterfaceComponent::InputPanel, frame->context.get());
     }
 }
 
@@ -859,6 +899,7 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         }
         const auto page = pageFromInputPanel(panel);
         auto frame = std::make_shared<Impl::CandidateFrame>();
+        frame->scale = gtk_widget_get_scale_factor(impl_->window);
         frame->layout = CandidateBarLayout::measure(page, impl_->metrics, textWidth);
         frame->context = inputContext->watch();
         frame->list = list;
@@ -909,6 +950,10 @@ bool ModernIMEUserInterface::handleButtonPress(double x, double y) {
     }
     impl_->refreshSettingsIfNeeded();
     const auto frame = impl_->paintedFrame;
+    if (frame && frame->scale != gtk_widget_get_scale_factor(impl_->window)) {
+        refreshDisplayScale();
+        return false;
+    }
     const auto list = frame ? frame->currentList() : nullptr;
     if (!list) {
         return false;

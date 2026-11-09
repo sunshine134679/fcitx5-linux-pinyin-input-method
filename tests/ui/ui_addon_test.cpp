@@ -9,6 +9,9 @@
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
 #include <gtk/gtk.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/gdkx.h>
+#endif
 
 #include <cassert>
 #include <cstdlib>
@@ -234,6 +237,58 @@ void testWorkarea(fcitx::Instance &instance) {
     std::cout << "[PASS] workarea pagination, cursor movement and selection\n";
 }
 
+void testScaledCursor(fcitx::Instance &instance) {
+    TestInputContext context(instance.inputContextManager());
+    context.focusIn();
+    modernime::ui::ModernIMEUserInterface ui(&instance);
+    auto *area = candidateArea();
+    const int scale = gtk_widget_get_scale_factor(area);
+    PrefixProvider provider;
+    modernime::fcitx5::FcitxEngineHost host(context);
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    host.setController(controller);
+    // X11 frontends send root coordinates in physical pixels, with scale=1
+    // in the Fcitx context even when the application is displayed at 200%.
+    context.setCursorRect(fcitx::Rect(80 * scale, 80 * scale,
+                                      81 * scale, 100 * scale));
+    for (const char c : std::string("nihaoma"))
+        controller.handle({modernime::fcitx5::KeyKind::Character, c});
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(ui);
+    gdk_display_sync(gtk_widget_get_display(area));
+    drainGtkEvents();
+    int x = 0, y = 0;
+    gtk_window_get_position(GTK_WINDOW(gtk_widget_get_toplevel(area)), &x, &y);
+    std::cout << "SCALE " << scale << " PHYSICAL_CURSOR " << 80 * scale << ' '
+              << 100 * scale << " LOGICAL_WINDOW " << x << ' ' << y << '\n';
+    assertTrue(x == 80 && y == 100,
+               "physical caret maps once to GTK logical coordinates");
+#ifdef GDK_WINDOWING_X11
+    const int nextScale = scale == 1 ? 2 : 1;
+    gdk_window_freeze_updates(gtk_widget_get_window(area));
+    gdk_x11_display_set_window_scale(gtk_widget_get_display(area), nextScale);
+    assertTrue(gtk_widget_get_scale_factor(area) == nextScale,
+               "the actual GTK display changes scale while composing");
+    assertTrue(!ui.handleButtonPress(30, 20) && context.commits.empty(),
+               "scale change revokes old drawing selection before repaint");
+    gdk_window_thaw_updates(gtk_widget_get_window(area));
+    paint(ui);
+    gdk_display_sync(gtk_widget_get_display(area));
+    drainGtkEvents();
+    gtk_window_get_position(GTK_WINDOW(gtk_widget_get_toplevel(area)), &x, &y);
+    std::cout << "RESCALED " << nextScale << " LOGICAL_WINDOW " << x << ' ' << y << '\n';
+    assertTrue(x == 80 * scale / nextScale && y == 100 * scale / nextScale,
+               "live scale change follows the same physical caret without a new key");
+#endif
+    click();
+    assertTrue(context.commits == std::vector<std::string>{"你好"} &&
+                   controller.page().rawInput == "ma",
+               "scaled mouse selection retains candidate identity and consumption");
+#ifdef GDK_WINDOWING_X11
+    gdk_x11_display_set_window_scale(gtk_widget_get_display(area), scale);
+#endif
+}
+
 void testSelection(fcitx::Instance &instance, std::string_view scenario) {
     int selected = -1;
     auto context = std::make_unique<TestInputContext>(instance.inputContextManager());
@@ -413,6 +468,11 @@ int main(int argc, char *argv[]) {
     fcitx::Instance instance(2, fcitxArgv);
     instance.initialize();
 
+    if (argc == 2 && std::string_view(argv[1]) == "--scale") {
+        testScaledCursor(instance);
+        std::filesystem::remove_all(testDir);
+        return 0;
+    }
     if (workareaTest) {
         testWorkarea(instance);
         std::filesystem::remove_all(testDir);
@@ -424,6 +484,8 @@ int main(int argc, char *argv[]) {
         std::filesystem::remove_all(testDir);
         return 0;
     }
+
+    testScaledCursor(instance);
 
     {
     TestInputContext context(instance.inputContextManager());

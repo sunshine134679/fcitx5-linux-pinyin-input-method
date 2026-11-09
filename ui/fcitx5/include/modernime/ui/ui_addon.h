@@ -26,6 +26,7 @@ public:
     bool handleButtonPress(double x, double y);
 
 private:
+    void refreshDisplayScale();
     struct Impl;
 
     std::unique_ptr<Impl> impl_;
