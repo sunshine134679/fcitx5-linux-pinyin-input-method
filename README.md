@@ -598,6 +598,8 @@ GNOME 扩展仅在当前 GNOME 图形与 DBus 会话中自动部署。ModernIME 
 
 全拼保留 `xian / xi'an`、`jie / ji'e` 等合理内部拆音，不必先手动输入隔音符才能召回多音节词。对于相同完整击键，已收录词与单字按可比较的位置先验竞争，继续保留常用原生首字保护和个人学习。当前模型下 `xian` 默认“先”首选、“西安”第2，重复选择后可学为首选；`xianren` 可输入“西安人”，选取前缀“西安”仍保留 `ren`。需要明确拆音时仍可使用隔音符。
 
+后续源码改进（尚未发布）：离线独立语境模型只调整当前前文与候选首词的衔接，保留系统主模型的简拼、句内解码及个人学习。前文最多32字符、每位置保留4种分词；“气球”后`chongqi`与“他的”后`shenqing`在空学习库分别首选“充气”“神情”。模型缺失时回退原系统模型，关闭上下文或学习时停用语境评分。附加模型约39MiB，当前诊断进程峰值内存约增加36MiB；不代表所有语境均能正确判断。
+
 ### 候选质量诊断与回放
 
 开发构建可开启 `MODERNIME_BUILD_TOOLS=ON`，增量编译 `modernime_pinyin_diagnose`。例如（将构建路径换成自己的目录）：
@@ -609,7 +611,7 @@ build/dev/tools/modernime_pinyin_diagnose --input chongqi --expected 充气 --pi
 python3 tools/replay_pinyin_quality.py --binary build/dev/tools/modernime_pinyin_diagnose --output build/质量回放
 ```
 
-单例输出JSON，包含实际切分、词典完整词条查找、混排前评分、最终名次/来源/消费范围、上下文开关对照；`--scheme xiaohe|ziranma`使用双拼，`--learn 5`通过实际选择重复学习，再用新会话观察最终排序。工具使用临时个人词典与学习库，不修改日常数据。默认词典/模型来自系统，扩展与热词明确使用本次构建产物，可用`--dictionary/--model/--extension/--hotwords`指定。
+单例输出JSON，包含实际切分、词典完整词条查找、混排前评分、最终名次/来源/消费范围、上下文开关对照；`--scheme xiaohe|ziranma`使用双拼，`--learn 5`通过实际选择重复学习，再用新会话观察最终排序。工具使用临时个人词典与学习库，不修改日常数据。默认词典/模型来自系统，扩展与热词明确使用本次构建产物，可用`--dictionary/--model/--context-model/--extension/--hotwords`指定；独立语境模型默认使用本次构建产物，其实际加载路径与摘要也写入回放记录。
 
 回放使用版本化的`data/pinyin/候选质量-v1.tsv`，输出`环境.json`、`汇总.json`和`候选诊断.jsonl`，记录二进制、词典、模型及LibIME运行库的SHA-256，并分别呈现解析、词典、分词、语言模型、上下文和用户词频证据。命令退出0仅表示测量完成，未达标目标始终保留在汇总中；这些定向样本不代表总体准确率。未进入首批不等于词库不存在，整句不在词典中也不等于缺词；单次耗时包含诊断采集，不是桌面按键到像素延迟。目前记录实际时钟，尚未提供固定时钟重放。
 
@@ -630,7 +632,7 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/modernime/
 ${XDG_DATA_HOME:-$HOME/.local/share}/modernime/
 ```
 
-`libime-bin` 提供构建内置离线拼音词典所需的 `libime_pinyindict`，全新 Debian/Ubuntu 环境需与开发库一起安装。
+`libime-bin` 提供构建内置离线拼音词典和语境模型所需的 `libime_pinyindict`、`libime_slm_build_binary`，全新 Debian/Ubuntu 环境需与开发库一起安装。语境模型源数据随仓库提供，构建不额外联网下载。
 
 ## 自定义安装位置
 

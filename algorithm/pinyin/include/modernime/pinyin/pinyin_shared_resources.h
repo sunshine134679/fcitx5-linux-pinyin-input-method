@@ -9,6 +9,7 @@
 #include "modernime/core/phrase_formation.h"
 
 #include <libime/pinyin/pinyinime.h>
+#include <libime/core/languagemodel.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -65,6 +66,8 @@ public:
     }
 
     std::unique_ptr<libime::PinyinIME> ime;
+    std::shared_ptr<const libime::StaticLanguageModelFile> contextLanguageModel;
+    std::filesystem::path contextLanguageModelPath;
     std::unique_ptr<core::LearningWriter> learning;
     UserDictionary userDictionary;
     std::filesystem::path userDictionaryPath;

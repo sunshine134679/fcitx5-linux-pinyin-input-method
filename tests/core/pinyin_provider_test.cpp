@@ -1447,6 +1447,17 @@ void testContextualLanguageModel() {
     modernime::pinyin::PinyinDataPaths paths;
     paths.learningStore = testPath("context-decoder.sqlite3");
     modernime::pinyin::PinyinCandidateProvider provider(paths);
+    provider.setContext("气球", "");
+    provider.append("chongqi");
+    assertTrue(provider.page().items.front().text == "充气",
+               "cold context selects inflation without prior learning");
+    provider.reset();
+    provider.setContext("他的", "");
+    provider.append("shenqing");
+    assertTrue(provider.page().items.front().text == "神情",
+               "context segmentation preserves the model's expression preference");
+    provider.reset();
+    provider.setContext("", "");
     provider.append("beijinghenmei");
     const auto original = provider.page();
     const modernime::core::CandidateSelectionRequest oldRequest{
@@ -1471,6 +1482,13 @@ void testContextualLanguageModel() {
     provider.setContext("故事的", "");
     provider.setLearningEnabled(false);
     assertTrue(provider.page().items.front().text == "北京", "disabled learning also excludes contextual model evidence");
+    paths.contextLanguageModel = testPath("absent-context-model.lm");
+    paths.learningStore = testPath("context-model-fallback.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider fallback(paths);
+    fallback.setContext("故事的", "");
+    fallback.append("beijinghenmei");
+    assertTrue(fallback.page().items.front().text == "背景很美",
+               "missing optional context model retains existing contextual decoding");
     std::cout << "[PASS] contextual word, sentence, partial consumption and disabled context\n";
 }
 

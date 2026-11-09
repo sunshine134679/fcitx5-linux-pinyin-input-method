@@ -1698,7 +1698,7 @@ private:
         std::optional<ContextDecoder> contextual;
         if (learning)
             contextual.emplace(*context, contextLearningEnabled_ ? contextBefore_ : std::string_view{},
-                               learning.get(), requestNowMs);
+                               learning.get(), requestNowMs, shared_->contextLanguageModel);
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,

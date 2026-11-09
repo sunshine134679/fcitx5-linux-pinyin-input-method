@@ -27,6 +27,8 @@ struct PinyinDataPaths final {
     std::string userDictionary;
     std::string learningStore;
     std::string englishDefinitionDictionary;
+    // Empty: discover the bundled, read-only contextual model.
+    std::string contextLanguageModel;
 };
 
 struct PinyinProviderOptions final {

@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -204,6 +205,19 @@ void testContextModelController(const std::filesystem::path &directory) {
     modernime::pinyin::PinyinCandidateProvider provider(paths);
     RecordingHost host;
     modernime::fcitx5::ModernIMEController controller(host, &provider);
+    for (const auto &[before, input, expected] : {
+             std::tuple{"气球", "chongqi", "充气"},
+             std::tuple{"他的", "shenqing", "神情"}}) {
+        controller.setContext(before, "");
+        for (const char c : std::string_view(input))
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        assertTrue(controller.page().items.front().text == expected && controller.currentPageIndex() == 0,
+                   "untrained context word is the selectable first candidate");
+        controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+        assertTrue(host.commits.back() == expected && controller.page().rawInput.empty(),
+                   "space commits contextual word and consumes all input");
+        controller.reset();
+    }
     const auto type = [&] {
         for (const char c : std::string_view("beijinghenmei"))
             controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});

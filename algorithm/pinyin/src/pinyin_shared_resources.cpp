@@ -81,6 +81,27 @@ std::filesystem::path defaultLearningPath() {
         .learningStore;
 }
 
+std::filesystem::path resolveContextLanguageModelPath(std::string_view configuredPath) {
+    // An explicit path also allows diagnostics to exercise the old-model fallback.
+    if (!configuredPath.empty()) return std::filesystem::path(configuredPath);
+    std::vector<std::filesystem::path> candidates;
+    if (const auto *dataHome = std::getenv("XDG_DATA_HOME"); dataHome && *dataHome) {
+        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime/pinyin/modernime-context.lm");
+    } else if (const auto *home = std::getenv("HOME"); home && *home) {
+        candidates.emplace_back(std::filesystem::path(home) / ".local/share/modernime/pinyin/modernime-context.lm");
+    }
+    appendDataDirectoryCandidates(candidates, "modernime-context.lm");
+#ifdef MODERNIME_CONTEXT_MODEL_INSTALL_BINARY
+    candidates.emplace_back(MODERNIME_CONTEXT_MODEL_INSTALL_BINARY);
+#endif
+#ifdef MODERNIME_CONTEXT_MODEL_BUILD_BINARY
+    candidates.emplace_back(MODERNIME_CONTEXT_MODEL_BUILD_BINARY);
+#endif
+    for (const auto &candidate : candidates)
+        if (isRegularFile(candidate)) return candidate;
+    return {};
+}
+
 std::filesystem::path defaultUserDictionaryPath() {
     const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
     const auto *dataHome = std::getenv("XDG_DATA_HOME");
@@ -380,6 +401,17 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
 
     resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
                                                          std::move(model));
+    const auto contextPath = resolveContextLanguageModelPath(paths.contextLanguageModel);
+    if (!contextPath.empty()) {
+        try {
+            resources->contextLanguageModel =
+                std::make_shared<const libime::StaticLanguageModelFile>(contextPath.c_str());
+            resources->contextLanguageModelPath = contextPath;
+        } catch (const std::exception &error) {
+            std::cerr << "ModernIME 警告: 语境模型加载失败，沿用系统模型: "
+                      << contextPath << ": " << error.what() << '\n';
+        }
+    }
     resources->setFuzzyOptions(options.fuzzyPinyin);
     resources->setPinyinScheme(options.pinyinScheme);
     resources->ime->setNBest(32);
