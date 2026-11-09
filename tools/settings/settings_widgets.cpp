@@ -530,8 +530,7 @@ std::string_view settingsStyles() {
             border: 1px solid @borders;
             border-radius: 12px;
             background-color: @theme_base_color;
-            background-image: linear-gradient(to bottom, @theme_base_color,
-                mix(@theme_base_color, @theme_bg_color, 0.35));
+            background-image: none;
             box-shadow: inset 0 1px 2px alpha(@modernime_shadow, 0.035),
                         0 3px 8px alpha(@modernime_shadow, 0.035);
             color: @theme_fg_color;

@@ -347,6 +347,9 @@ void testSmartLearningDynamics(const std::filesystem::path &learningPath) {
         assertTrue(provider.select(zhengIndex), "select 整 once");
         provider.reset();
 
+        // 检查这次选择对全局词频的影响，而非连续输入“整整”的语境排序。
+        // 保留学习记录，只让宿主明确报告下一次查询没有前文。
+        provider.setContext("", "");
         // 再次输入 zhegn，正 依然必须稳居 Rank 0
         assertTrue(provider.append("zhegn"), "re-append zhegn after selecting 整 once");
         assertTrue(provider.page().items.front().text == "正",
@@ -884,25 +887,30 @@ void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
         }
 
         // 每 50 轮模拟一次偶发次选，验证不会发生单次偶选篡位
+        // 与主循环一致，每次查询按独立输入处理；不评价“键盘试”等连续语境。
         if (round % 50 == 25) {
             provider.reset();
+            provider.setContext("", "");
             assertTrue(provider.append("shi"), "append shi for occasional pick");
             const auto shiIdx = indexOf(provider.page(), "试");
             if (shiIdx < provider.page().items.size()) {
                 provider.select(shiIdx);
             }
             provider.reset();
+            provider.setContext("", "");
             assertTrue(provider.append("shi"), "append shi post occasional pick");
             assertTrue(provider.page().items.front().text == "是",
                        "Occasional selection of '试' must not hijack '是'");
 
             provider.reset();
+            provider.setContext("", "");
             assertTrue(provider.append("de"), "append de for occasional pick");
             const auto deIdx = indexOf(provider.page(), "地");
             if (deIdx < provider.page().items.size()) {
                 provider.select(deIdx);
             }
             provider.reset();
+            provider.setContext("", "");
             assertTrue(provider.append("de"), "append de post occasional pick");
             assertTrue(provider.page().items.front().text == "的",
                        "Occasional selection of '地' must not hijack '的'");
