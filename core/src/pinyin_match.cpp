@@ -1549,6 +1549,26 @@ bool PinyinMatchPolicy::isFullTypoMatch(std::string_view userInput,
     return offset == userInput.size() && hadTypo;
 }
 
+std::string PinyinMatchPolicy::phoneticFuzzyKey(std::string_view fullPinyin) {
+    const auto segmented = segmentPinyin(fullPinyin);
+    std::string key;
+    for (std::size_t start = 0; start < segmented.size();) {
+        const auto separator = segmented.find('\'', start);
+        const auto end = separator == std::string::npos ? segmented.size() : separator;
+        auto syllable = segmented.substr(start, end - start);
+        if (!isStandardSyllable(syllable)) return {};
+        if (syllable.starts_with("zh") || syllable.starts_with("ch") ||
+            syllable.starts_with("sh")) syllable.erase(1, 1);
+        if (syllable.front() == 'l') syllable.front() = 'n';
+        if (syllable.ends_with("eng") || syllable.ends_with("ing")) syllable.pop_back();
+        if (!key.empty()) key += '\'';
+        key += syllable;
+        if (separator == std::string::npos) break;
+        start = separator + 1;
+    }
+    return key;
+}
+
 int PinyinMatchPolicy::priority(std::string_view userInput,
                                 std::string_view fullPinyin) {
     // 原实现经 exactInputMatch 兜底各调一次 canonical（每候选四次字符串

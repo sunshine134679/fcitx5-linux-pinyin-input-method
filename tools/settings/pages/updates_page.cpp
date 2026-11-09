@@ -8,8 +8,9 @@
 #include <gio/gio.h>
 #include <gtk/gtk.h>
 
+#include <cstdlib>
 #include <memory>
-#include <sstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -31,16 +32,50 @@ void setTarget(GtkWidget *widget, std::string_view target) {
                            g_strdup(std::string(target).c_str()), g_free);
 }
 
+void revealDetails(GtkToggleButton *button, GtkRevealer *revealer) {
+    gboolean animations = TRUE;
+    g_object_get(gtk_widget_get_settings(GTK_WIDGET(button)),
+                 "gtk-enable-animations", &animations, nullptr);
+    gtk_revealer_set_transition_duration(revealer, animations ? 220 : 0);
+    gtk_revealer_set_reveal_child(revealer,
+                                  gtk_toggle_button_get_active(button));
+}
+
+std::string_view upgradeCommand(const UpdateStatus &status) {
+    if (!status.checked || (status.installChannel != "deb" &&
+                            status.installChannel != "rpm" &&
+                            status.installChannel != "script")) {
+        return {};
+    }
+    return status.upgradeCommand;
+}
+
 struct UpdateCheckTask final {
     Environment environment;
+    bool refreshCache = false;
+};
+
+struct UpdateCheckResult final {
+    UpdateStatus status;
+    std::optional<RuntimeResult> cacheRefresh;
 };
 
 void updateTaskFunction(GTask *task, gpointer, gpointer data, GCancellable *) {
     const auto *request = static_cast<const UpdateCheckTask *>(data);
+    auto result = std::make_unique<UpdateCheckResult>();
+    if (request->refreshCache) {
+        UpdateStatus channel;
+        channel.installChannel = UpdateController::detectInstallChannel(request->environment);
+        if (channel.installChannel == "rpm") channel.manager = PackageManagerKind::Dnf;
+        if (channel.installChannel == "deb") channel.manager = PackageManagerKind::Apt;
+        result->cacheRefresh = UpdateController::refreshPackageCache(
+            channel, request->environment, /* waitForCompletion = */ true);
+    } else {
+        result->status = UpdateController::checkForUpdates(request->environment);
+    }
     g_task_return_pointer(
-        task,
-        new UpdateStatus(UpdateController::checkForUpdates(request->environment)),
-        [](gpointer value) { delete static_cast<UpdateStatus *>(value); });
+        task, result.release(),
+        [](gpointer value) { delete static_cast<UpdateCheckResult *>(value); });
 }
 
 std::string resolveSourceUrl(std::string_view source) {
@@ -85,7 +120,8 @@ public:
                 delete static_cast<SharedLifetime *>(value);
             });
 
-        detail::GtkWidgetGuard pageGuard(createPageShell("更新与安装", ""));
+        detail::GtkWidgetGuard pageGuard(createPageShell(
+            "更新与安装", ""));
         page = pageGuard.get();
         buildUi();
         pageGuard.release();
@@ -131,7 +167,7 @@ private:
     static void onCheckClicked(GtkButton *, gpointer data) {
         auto *shared = static_cast<SharedLifetime *>(data);
         (*shared)->withOwner([](Impl &owner) {
-            owner.startCheck();
+            owner.startCheck(true);
         });
     }
 
@@ -159,7 +195,7 @@ private:
         GError *error = nullptr;
         auto *statePtr = static_cast<SharedLifetime *>(
             g_object_get_data(source, kStateKey));
-        auto *status = static_cast<UpdateStatus *>(
+        auto *status = static_cast<UpdateCheckResult *>(
             g_task_propagate_pointer(G_TASK(result), &error));
         if (statePtr != nullptr) {
             (*statePtr)->withOwner([status, error](Impl &owner) {
@@ -189,6 +225,7 @@ private:
         auto *row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         addStyleClass(row, "modernime-details");
         *expander = gtk_toggle_button_new();
+        gtk_widget_set_focus_on_click(*expander, FALSE);
         addStyleClass(*expander, "modernime-details-button");
         setTarget(*expander, target);
         setAccessibleWidgetText(*expander, title, "展开或收起详情");
@@ -201,12 +238,11 @@ private:
         gtk_container_add(GTK_CONTAINER(*expander), header);
         auto *revealer = gtk_revealer_new();
         gtk_revealer_set_transition_type(GTK_REVEALER(revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-        gtk_revealer_set_transition_duration(GTK_REVEALER(revealer), 150);
+        gtk_revealer_set_transition_duration(GTK_REVEALER(revealer), 220);
         g_signal_connect_object(
             *expander, "toggled",
             G_CALLBACK(+[](GtkToggleButton *button, gpointer child) {
-                gtk_revealer_set_reveal_child(GTK_REVEALER(child),
-                                              gtk_toggle_button_get_active(button));
+                revealDetails(button, GTK_REVEALER(child));
             }), revealer, static_cast<GConnectFlags>(0));
         g_signal_connect_object(
             *expander, "toggled",
@@ -239,7 +275,7 @@ private:
     }
 
     void buildVersionSection(GtkWidget *parent) {
-        auto *section = detailsSection(parent, "版本与软件源",
+        auto *section = detailsSection(parent, "检查详情",
                                        "updates-version-details", &versionDetails);
 
         auto *grid = gtk_grid_new();
@@ -257,17 +293,38 @@ private:
         };
 
         addRow(0, "可用版本", "未检查", &candidateVersionLabel);
-        addRow(1, "安装渠道", "检测中…", &channelLabel);
+        addRow(1, "安装渠道", "尚未检查", &channelLabel);
 
         auto *sourceTitle = gtk_label_new("软件源");
         addStyleClass(sourceTitle, "modernime-description");
         gtk_widget_set_halign(sourceTitle, GTK_ALIGN_START);
-        gtk_widget_set_valign(sourceTitle, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(sourceTitle, GTK_ALIGN_START);
         gtk_grid_attach(GTK_GRID(grid), sourceTitle, 0, 2, 1, 1);
 
-        sourceJumpButton = gtk_button_new_with_label("一键跳转 ↗");
+        sourceJumpButton = gtk_button_new();
+        addStyleClass(sourceJumpButton, "modernime-source-link");
+        auto *linkContent = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        gtk_box_pack_start(GTK_BOX(linkContent), gtk_label_new("访问软件源"), FALSE, FALSE, 0);
+        auto *external = gtk_drawing_area_new();
+        gtk_widget_set_size_request(external, 16, 16);
+        gtk_widget_set_valign(external, GTK_ALIGN_CENTER);
+        g_signal_connect(external, "draw", G_CALLBACK(+[](GtkWidget *widget, cairo_t *cr, gpointer) -> gboolean {
+            GdkRGBA color{};
+            gtk_style_context_get_color(gtk_widget_get_style_context(widget), gtk_widget_get_state_flags(widget), &color);
+            gdk_cairo_set_source_rgba(cr, &color);
+            cairo_set_line_width(cr, 1.5);
+            cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+            cairo_move_to(cr, 6, 3); cairo_line_to(cr, 2, 3); cairo_line_to(cr, 2, 14);
+            cairo_line_to(cr, 13, 14); cairo_line_to(cr, 13, 10);
+            cairo_move_to(cr, 7, 9); cairo_line_to(cr, 14, 2);
+            cairo_move_to(cr, 8, 2); cairo_line_to(cr, 14, 2); cairo_line_to(cr, 14, 8);
+            cairo_stroke(cr);
+            return FALSE;
+        }), nullptr);
+        gtk_box_pack_start(GTK_BOX(linkContent), external, FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(sourceJumpButton), linkContent);
         setTarget(sourceJumpButton, "updates-source-jump");
-        setAccessibleWidgetText(sourceJumpButton, "软件源一键跳转", "在默认浏览器中打开官方软件源页面");
+        setAccessibleWidgetText(sourceJumpButton, "访问软件源", "在默认浏览器中查看软件源与安装说明");
         gtk_widget_set_tooltip_text(sourceJumpButton, "在默认浏览器中打开官方软件源页面");
         gtk_widget_set_halign(sourceJumpButton, GTK_ALIGN_START);
         gtk_widget_set_valign(sourceJumpButton, GTK_ALIGN_CENTER);
@@ -279,34 +336,58 @@ private:
         gtk_grid_attach(GTK_GRID(grid), sourceJumpButton, 1, 2, 1, 1);
 
         gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
+        checkDetailsLabel = wrappedLabel("检查后可在这里查看完整结果。", true);
+        addStyleClass(checkDetailsLabel, "modernime-check-details-message");
+        setTarget(checkDetailsLabel, "updates-check-details-message");
+        gtk_box_pack_start(GTK_BOX(section), checkDetailsLabel, FALSE, FALSE, 0);
+        statusHintLabel = wrappedLabel("");
+        addStyleClass(statusHintLabel, "modernime-status-hint");
+        setTarget(statusHintLabel, "updates-status-hint");
+        gtk_box_pack_start(GTK_BOX(section), statusHintLabel, FALSE, FALSE, 0);
     }
 
     void buildCheckSection() {
         auto *section = createSectionCard("", "");
         addStyleClass(section, "modernime-update-summary");
+        summaryCard = section;
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
-        auto *summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
-        auto *version = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+        auto *summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 18);
+        statusArt = createSettingsStatusArt(SettingsStatusArt::Release);
+        gtk_box_pack_start(GTK_BOX(summary), statusArt, FALSE, FALSE, 0);
+        auto *version = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        gtk_widget_set_valign(version, GTK_ALIGN_CENTER);
         gtk_widget_set_hexpand(version, TRUE);
-        auto *caption = wrappedLabel("当前版本");
-        addStyleClass(caption, "modernime-description");
-        gtk_box_pack_start(GTK_BOX(version), caption, FALSE, FALSE, 0);
-        currentVersionLabel = wrappedLabel(MODERNIME_VERSION);
-        addStyleClass(currentVersionLabel, "modernime-current-version");
+        auto *versionTitle = wrappedLabel("当前版本");
+        addStyleClass(versionTitle, "modernime-version-meta");
+        gtk_box_pack_start(GTK_BOX(version), versionTitle, FALSE, FALSE, 0);
+        currentVersionLabel = wrappedLabel("");
+        addStyleClass(currentVersionLabel, "modernime-release-version");
         gtk_box_pack_start(GTK_BOX(version), currentVersionLabel, FALSE, FALSE, 0);
-        statusMessageLabel = wrappedLabel("尚未检查");
-        addStyleClass(statusMessageLabel, "modernime-update-status");
-        setTarget(statusMessageLabel, "updates-status");
-        gtk_box_pack_start(GTK_BOX(version), statusMessageLabel, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(summary), version, TRUE, TRUE, 0);
         checkButton = gtk_button_new_with_label("检查更新");
+        addStyleClass(checkButton, "modernime-check-button");
         addStyleClass(checkButton, kSettingsPrimaryButtonClass);
+        gtk_button_set_image(GTK_BUTTON(checkButton),
+                             gtk_image_new_from_icon_name("view-refresh-symbolic", GTK_ICON_SIZE_BUTTON));
+        gtk_button_set_always_show_image(GTK_BUTTON(checkButton), TRUE);
         gtk_widget_set_valign(checkButton, GTK_ALIGN_CENTER);
         setTarget(checkButton, "updates-check");
-        setAccessibleWidgetText(checkButton, "检查更新", "查询本地软件源缓存中的 ModernIME 版本；不会自动刷新缓存或安装");
+        setAccessibleWidgetText(checkButton, "检查更新", "刷新软件源后自动检查 ModernIME 新版本；需要时请求系统授权");
 
         gtk_box_pack_end(GTK_BOX(summary), checkButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section), summary, FALSE, FALSE, 0);
+        statusMessageLabel = wrappedLabel("尚未检查更新");
+        addStyleClass(statusMessageLabel, "modernime-release-status");
+        setTarget(statusMessageLabel, "updates-status");
+        auto *progress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        progressSpinner = gtk_spinner_new();
+        gtk_widget_set_size_request(progressSpinner, 16, 16);
+        gtk_widget_set_valign(progressSpinner, GTK_ALIGN_CENTER);
+        gtk_widget_set_no_show_all(progressSpinner, TRUE);
+        gtk_box_pack_start(GTK_BOX(progress), progressSpinner, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(progress), statusMessageLabel, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(version), progress, FALSE, FALSE, 0);
+
 
         g_signal_connect_data(checkButton, "clicked", G_CALLBACK(onCheckClicked),
                              new SharedLifetime(state), destroySignalState,
@@ -322,20 +403,20 @@ private:
     }
 
     void buildUpgradeGuideSection(GtkWidget *parent) {
-        auto *section = detailsSection(parent, "安全升级引导",
+        auto *section = detailsSection(parent, "升级引导",
                                        "updates-upgrade-details", &upgradeDetails);
         g_signal_connect_data(upgradeDetails, "focus-out-event",
                               G_CALLBACK(onUpgradeFocusOut), new SharedLifetime(state),
                               destroySignalState, static_cast<GConnectFlags>(0));
 
-        guideDescLabel = gtk_label_new(
-            "检测到可更新版本时，请复制并在终端中运行以下升级命令：");
+        guideDescLabel = wrappedLabel("");
         addStyleClass(guideDescLabel, "modernime-setting-desc");
         gtk_widget_set_halign(guideDescLabel, GTK_ALIGN_START);
         gtk_label_set_line_wrap(GTK_LABEL(guideDescLabel), TRUE);
         gtk_box_pack_start(GTK_BOX(section), guideDescLabel, FALSE, FALSE, 0);
 
-        commandLabel = wrappedLabel("检查后显示升级命令", true);
+        commandLabel = wrappedLabel("", true);
+        gtk_widget_set_no_show_all(commandLabel, TRUE);
         addStyleClass(commandLabel, "modernime-code-block");
         gtk_widget_set_margin_top(commandLabel, 8);
         gtk_widget_set_margin_bottom(commandLabel, 10);
@@ -377,22 +458,40 @@ private:
         }
     }
 
-    void startCheck() {
+    void startCheck(bool refreshCache = false) {
         if (busy) {
             return;
         }
         busy = true;
+        cacheRefreshed = false;
         gtk_widget_set_sensitive(checkButton, FALSE);
         gtk_widget_set_sensitive(copyCommandButton, FALSE);
-        gtk_label_set_text(GTK_LABEL(statusMessageLabel), "正在检查更新…");
+        gtk_button_set_label(GTK_BUTTON(checkButton), "检查中…");
+        setSummary(refreshCache ? "正在刷新软件源…" : "正在读取版本信息…",
+                   refreshCache ? "需要时请完成系统授权，刷新后会自动检查版本。"
+                                : "正在读取已保存的软件源信息。", "neutral");
+        gboolean animations = TRUE;
+        g_object_get(gtk_widget_get_settings(page), "gtk-enable-animations", &animations, nullptr);
+        if (animations) {
+            gtk_widget_show(progressSpinner);
+            gtk_spinner_start(GTK_SPINNER(progressSpinner));
+        }
         gtk_label_set_text(GTK_LABEL(candidateVersionLabel), "检查中…");
         gtk_label_set_text(GTK_LABEL(channelLabel), "检测中…");
         gtk_label_set_text(GTK_LABEL(changelogLabel), "正在查询更新信息…");
-        gtk_label_set_text(GTK_LABEL(commandLabel), "检查后显示升级命令");
+        gtk_label_set_text(GTK_LABEL(commandLabel), "");
+        gtk_widget_hide(commandLabel);
+        gtk_label_set_text(GTK_LABEL(checkDetailsLabel), "正在读取完整检查结果…");
+        gtk_label_set_text(GTK_LABEL(guideDescLabel), "正在检查安装渠道，请稍候。");
 
+        launchTask(refreshCache);
+    }
+
+    void launchTask(bool refreshCache) {
         auto *task = g_task_new(lifetime.get(), nullptr, updateTaskFinished, nullptr);
         auto request = std::make_unique<UpdateCheckTask>();
         request->environment = environment;
+        request->refreshCache = refreshCache;
         g_task_set_task_data(
             task, request.release(),
             [](gpointer value) {
@@ -402,23 +501,38 @@ private:
         g_object_unref(task);
     }
 
-    void finishCheck(const UpdateStatus *status, const GError *error) {
+    void finishCheck(const UpdateCheckResult *result, const GError *error) {
+        if (error == nullptr && result != nullptr && result->cacheRefresh &&
+            result->cacheRefresh->success) {
+            cacheRefreshed = true;
+            setSummary("正在检查新版本…", "软件源已刷新，正在读取可用版本。", "neutral");
+            launchTask(false);
+            return;
+        }
         busy = false;
+        gtk_spinner_stop(GTK_SPINNER(progressSpinner));
+        gtk_widget_hide(progressSpinner);
         gtk_widget_set_sensitive(checkButton, TRUE);
-        if (error != nullptr || status == nullptr) {
+        gtk_button_set_label(GTK_BUTTON(checkButton), "重新检查");
+        if (error != nullptr || result == nullptr || result->cacheRefresh) {
             const char *errMsg = error != nullptr && error->message != nullptr
                                      ? error->message
+                                     : result && result->cacheRefresh
+                                     ? result->cacheRefresh->message.c_str()
                                      : "未知错误";
             g_warning("[ModernIME Updates] Check error: %s", errMsg);
-            gtk_label_set_text(GTK_LABEL(statusMessageLabel),
-                               "检查更新失败，请重试或查看诊断日志。");
+            setSummary(result && result->cacheRefresh ? "软件源刷新未完成" : "未能完成检查",
+                       "可重新检查，展开检查详情查看原因。",
+                       "warning");
+            gtk_label_set_text(GTK_LABEL(checkDetailsLabel), errMsg);
+            gtk_label_set_text(GTK_LABEL(guideDescLabel), "本次检查未完成，请重新检查后获取升级命令。");
             gtk_label_set_text(GTK_LABEL(candidateVersionLabel), "暂不可用");
             gtk_label_set_text(GTK_LABEL(channelLabel), "未检测");
             gtk_label_set_text(GTK_LABEL(changelogLabel), "未能获取更新说明");
             focusCopyWhenReady = false;
             return;
         }
-        lastStatus = *status;
+        lastStatus = result->status;
         applyStatus(lastStatus);
         // A search may arrive while copying is disabled. Complete that intent
         // only while the user still rests on its visible fallback control.
@@ -427,6 +541,18 @@ private:
             gtk_widget_has_focus(upgradeDetails)) {
             focusWidgetOrFallback(copyCommandButton, upgradeDetails);
         }
+    }
+
+    void setSummary(const std::string &message, const char *hint,
+                    const char *stateClass) {
+        gtk_label_set_text(GTK_LABEL(statusMessageLabel), message.c_str());
+        gtk_label_set_text(GTK_LABEL(statusHintLabel), hint);
+        auto *context = gtk_widget_get_style_context(summaryCard);
+        for (const auto *name : {"neutral", "success", "warning"}) {
+            gtk_style_context_remove_class(context, name);
+        }
+        gtk_style_context_add_class(context, stateClass);
+        gtk_widget_queue_draw(statusArt);
     }
 
     void applyStatus(const UpdateStatus &status) {
@@ -438,12 +564,13 @@ private:
                   status.updateAvailable,
                   status.statusMessage.c_str());
 
-        gtk_label_set_text(GTK_LABEL(currentVersionLabel),
-                           status.currentVersion.empty() ? MODERNIME_VERSION : status.currentVersion.c_str());
+        const std::string currentVersion = status.currentVersion.empty()
+            ? MODERNIME_VERSION : status.currentVersion;
+        gtk_label_set_text(GTK_LABEL(currentVersionLabel), currentVersion.c_str());
 
         std::string channelText = status.installChannel;
         if (channelText.empty() || channelText == "unknown") {
-            channelText = status.checked ? "未识别" : "未检测";
+            channelText = status.checked ? "未识别" : "尚未检查";
         } else if (channelText == "deb") {
             channelText = "deb (Debian/Ubuntu 软件源)";
         } else if (channelText == "rpm") {
@@ -456,40 +583,75 @@ private:
         const std::string candDisplay = !status.checked ? "未检查"
             : status.candidateVersion.empty() ? "暂不可用" : status.candidateVersion;
         gtk_label_set_text(GTK_LABEL(candidateVersionLabel), candDisplay.c_str());
+        gtk_label_set_text(GTK_LABEL(checkDetailsLabel),
+                           status.statusMessage.empty()
+                               ? (status.checked ? "检查未提供额外说明。" : "检查后可在这里查看完整结果。")
+                               : status.statusMessage.c_str());
+        if (status.cacheMayBeStale && !status.packageManagerLocked) {
+            gtk_label_set_text(GTK_LABEL(checkDetailsLabel), cacheRefreshed
+                ? "已刷新已配置的软件源，并完成版本检查；未发现比当前安装版本更高的版本。"
+                : "当前显示的是本地软件源缓存。点击“检查更新”会刷新软件源，并自动查询可用版本。");
+        }
 
         gtk_label_set_text(
             GTK_LABEL(changelogLabel),
             status.changelogSummary.empty() ? "暂无更新说明" : status.changelogSummary.c_str());
 
-        std::string userMsg;
         if (status.packageManagerLocked) {
-            userMsg = "系统包管理器正在运行中，请稍后重试。";
-        } else if (!status.statusMessage.empty()) {
-            userMsg = status.statusMessage;
+            setSummary("软件包管理器正忙", "等待当前安装或更新结束后，再重新检查。",
+                       "warning");
+        } else if (status.updateAvailable) {
+            setSummary("可更新至 " + status.candidateVersion,
+                       cacheRefreshed ? "已刷新软件源，展开升级引导查看安装方式。"
+                                      : "本地软件源中有可用版本，点击检查更新可刷新版本信息。",
+                       "success");
+        } else if (status.offlineOrUnreachable) {
+            setSummary("暂时无法确认更新", "请重新检查；若仍失败，可展开检查详情查看原因。",
+                       "warning");
+        } else if (status.cacheMayBeStale) {
+            setSummary(cacheRefreshed ? "未发现新版本" : "本地软件源缓存未发现更新",
+                       cacheRefreshed ? "已刷新软件源，当前没有比已安装版本更新的版本。"
+                                      : "点击检查更新，会自动刷新软件源并查询新版本。",
+                       "neutral");
         } else if (status.checked) {
-            userMsg = "检查已结束，暂无可用版本信息。";
+            setSummary("检查已结束", "暂无可用版本信息，可展开检查详情查看原因。",
+                       "neutral");
         } else {
-            userMsg = "尚未检查";
+            setSummary("尚未检查更新", "检查已配置的软件源，查看是否有可用版本。",
+                       "neutral");
         }
-        gtk_label_set_text(GTK_LABEL(statusMessageLabel), userMsg.c_str());
 
-        gtk_label_set_text(GTK_LABEL(commandLabel), status.upgradeCommand.empty()
-            ? "检查后显示升级命令" : status.upgradeCommand.c_str());
-        gtk_widget_set_sensitive(copyCommandButton,
-            status.checked && !status.upgradeCommand.empty());
+        const auto cmd = upgradeCommand(status);
+        gtk_label_set_text(GTK_LABEL(commandLabel), std::string(cmd).c_str());
+        gtk_widget_set_visible(commandLabel, !cmd.empty());
+        gtk_widget_set_sensitive(copyCommandButton, !busy && !cmd.empty());
+        if (cmd.empty()) {
+            gtk_label_set_text(GTK_LABEL(guideDescLabel), status.checked
+                ? "暂未确认适用的升级命令。请按原安装渠道升级，或打开软件源页面查看说明。"
+                : "先检查更新，确认安装渠道后会在这里显示对应命令。");
+        } else if (status.installChannel == "script") {
+            gtk_label_set_text(GTK_LABEL(guideDescLabel),
+                "当前为脚本安装。以下命令会迁移到系统包渠道；确认需要迁移后，再复制到终端执行。");
+        } else {
+            gtk_label_set_text(GTK_LABEL(guideDescLabel),
+                "复制以下命令到终端执行。系统包管理器会刷新软件源并确认升级内容。");
+        }
     }
 
     void copyCommand() {
-        if (!gtk_widget_get_sensitive(copyCommandButton)) {
+        if (busy || !gtk_widget_get_sensitive(copyCommandButton)) {
             return;
         }
-        const auto *cmd = gtk_label_get_text(GTK_LABEL(commandLabel));
-        if (cmd != nullptr && *cmd != '\0') {
+        const auto cmd = upgradeCommand(lastStatus);
+        if (!cmd.empty()) {
             auto *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
-            gtk_clipboard_set_text(clipboard, cmd, -1);
+            gtk_clipboard_set_text(clipboard, cmd.data(), static_cast<gint>(cmd.size()));
             if (notify) {
                 notify("已复制升级命令到剪贴板，请在终端执行");
             }
+        } else if (notify) {
+            notify(lastStatus.checked ? "尚未确认适用的升级命令，请按原安装渠道升级"
+                                      : "请先检查更新以确认安装渠道");
         }
     }
 
@@ -498,17 +660,23 @@ private:
     UpdateStatus lastStatus;
     bool busy = false;
     bool focusCopyWhenReady = false;
+    bool cacheRefreshed = false;
 
     GtkWidget *page = nullptr;
+    GtkWidget *summaryCard = nullptr;
+    GtkWidget *statusArt = nullptr;
     GtkWidget *versionDetails = nullptr;
     GtkWidget *releaseDetails = nullptr;
     GtkWidget *upgradeDetails = nullptr;
     GtkWidget *currentVersionLabel = nullptr;
     GtkWidget *channelLabel = nullptr;
+    GtkWidget *checkDetailsLabel = nullptr;
     GtkWidget *sourceJumpButton = nullptr;
     GtkWidget *candidateVersionLabel = nullptr;
     GtkWidget *changelogLabel = nullptr;
     GtkWidget *statusMessageLabel = nullptr;
+    GtkWidget *statusHintLabel = nullptr;
+    GtkWidget *progressSpinner = nullptr;
     GtkWidget *guideDescLabel = nullptr;
     GtkWidget *commandLabel = nullptr;
     GtkWidget *checkButton = nullptr;

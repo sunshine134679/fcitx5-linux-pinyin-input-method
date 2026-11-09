@@ -148,6 +148,7 @@ void writeReport(std::ostream &out, const Report &report,
                  {"language_context_bonus", score.language_context_bonus},
                  {"learned_word_bonus", score.learned_word_bonus}, {"rare_penalty", score.rare_penalty()},
                  {"native_rank_scale", score.native_rank_scale},
+                 {"unigram_anchor", score.unigram_anchor},
                  {"unigram_prominence", score.unigram_prominence},
                  {"unigram_comparison_offset", score.unigram_comparison_offset},
                  {"base_prior", score.base_prior()}, {"final_cost", score.final_score()}}) {
@@ -178,6 +179,7 @@ int main(int argc, char **argv) {
         std::map<std::string, std::string> args{{"--input", ""}, {"--expected", ""}, {"--pinyin", ""},
             {"--before", ""}, {"--after", ""}, {"--scheme", "full"}, {"--learn", "0"},
             {"--dictionary", pinyin::defaultDictionaryPath()}, {"--model", pinyin::defaultLanguageModelPath()},
+            {"--context-model", MODERNIME_CONTEXT_MODEL_BUILD_BINARY},
             {"--extension", MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY},
             {"--hotwords", MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY}};
         for (int i = 1; i < argc; ++i) {
@@ -186,6 +188,7 @@ int main(int argc, char **argv) {
                 std::cout << "用法：modernime_pinyin_diagnose --input 拼音 [--expected 词语 --pinyin 完整拼音]\n"
                              "  [--before 前文 --after 后文 --scheme full|xiaohe|ziranma --learn 重复选择次数]\n"
                              "  [--dictionary 词典 --model 模型 --extension 扩展词典 --hotwords 热词词典]\n"
+                             "  [--context-model 独立语境模型；无效路径回退系统模型]\n"
                              "输出JSON；使用临时词典/学习库，最多显示当前首批候选，不读取个人数据。\n";
                 return 0;
             }
@@ -205,6 +208,7 @@ int main(int argc, char **argv) {
         pinyin::PinyinDataPaths paths;
         paths.dictionary = args["--dictionary"];
         paths.languageModel = args["--model"];
+        paths.contextLanguageModel = args["--context-model"];
         paths.extensionDictionary = args["--extension"];
         paths.hotwordDictionary = args["--hotwords"];
         paths.userDictionary = (temporary.path / "user.dict").string();
@@ -243,6 +247,7 @@ int main(int argc, char **argv) {
         if (reading.empty() || expected.empty()) std::cout << "null";
         else std::cout << (dictionaryContains ? "true" : "false");
         std::cout << ",\"resource_paths\":{\"dictionary\":" << json(paths.dictionary)
+            << (shared->contextLanguageModelPath.empty() ? "" : ",\"context_model\":" + json(shared->contextLanguageModelPath.string()))
             << ",\"model\":" << json(paths.languageModel) << ",\"extension\":" << json(paths.extensionDictionary)
             << ",\"hotwords\":" << json(paths.hotwordDictionary) << "},\"without_context_rank\":";
         rank(std::cout, expectedIndex(neutral.page, expected, reading));

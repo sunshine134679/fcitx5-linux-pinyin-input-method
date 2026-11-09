@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace modernime::pinyin {
 namespace {
@@ -34,12 +35,61 @@ private:
     const libime::PinyinDictionary &base_;
     mutable libime::PinyinMatchState localMatch_;
 };
+
+// Keep up to four plausible tokenizations at each character boundary. The
+// previous greedy longest word can hide a useful suffix (e.g. a pronoun + 的).
+// Only static LM states survive; no WordNode or surrounding-text view escapes.
+std::vector<libime::State> contextStates(const libime::LanguageModel &model,
+                                       std::string_view before,
+                                       const std::vector<std::size_t> &ends,
+                                       std::size_t start) {
+    struct Hypothesis { libime::State state; double score; bool active; };
+    constexpr std::size_t beamSize = 4;
+    std::vector<std::vector<Hypothesis>> beams(ends.size());
+    beams[start].push_back({model.nullState(), 0.0, false});
+    const auto add = [&](std::size_t position, Hypothesis hypothesis) {
+        auto &beam = beams[position];
+        beam.push_back(std::move(hypothesis));
+        std::stable_sort(beam.begin(), beam.end(), [](const auto &a, const auto &b) {
+            return a.score > b.score;
+        });
+        if (beam.size() > beamSize) beam.resize(beamSize);
+    };
+    for (auto i = start; i + 1 < ends.size(); ++i) {
+        const auto character = before.substr(ends[i], ends[i + 1] - ends[i]);
+        if (character == " " || character == "\t") {
+            for (const auto &hypothesis : beams[i]) add(i + 1, hypothesis);
+            continue;
+        }
+        bool known = false;
+        for (auto j = std::min(i + 8, ends.size() - 1); j > i; --j) {
+            const auto word = before.substr(ends[i], ends[j] - ends[i]);
+            const auto index = model.index(word);
+            if (model.isUnknown(index, word)) continue;
+            known = true;
+            for (const auto &hypothesis : beams[i]) {
+                libime::State out;
+                const auto score = model.score(hypothesis.state, libime::WordNode(word, index), out);
+                add(j, {out, hypothesis.score + score, true});
+            }
+        }
+        if (!known && !beams[i].empty())
+            add(i + 1, {model.nullState(), 0.0, false});
+    }
+    std::vector<libime::State> result;
+    for (const auto &hypothesis : beams.back())
+        if (hypothesis.active) result.push_back(hypothesis.state);
+    return result;
+}
 } // namespace
 
 ContextDecoder::ContextDecoder(libime::PinyinContext &context, std::string_view before,
-                               const core::LearningSnapshot *learning, std::int64_t nowMs)
+                               const core::LearningSnapshot *learning, std::int64_t nowMs,
+                               std::shared_ptr<const libime::StaticLanguageModelFile> contextModel)
     : context_(context), model_(context.ime()->model()->languageModelFile()),
-      baseline_(model_.nullState()), state_(baseline_), learning_(learning), nowMs_(nowMs) {
+      baseline_(model_.nullState()), state_(baseline_),
+      evidenceModel_(contextModel ? contextModel : model_.languageModelFile()),
+      learning_(learning), nowMs_(nowMs) {
     if (before.size() > 128) {
         before.remove_prefix(before.size() - 128);
         while (!before.empty() && (static_cast<unsigned char>(before.front()) & 0xc0U) == 0x80U)
@@ -56,6 +106,7 @@ ContextDecoder::ContextDecoder(libime::PinyinContext &context, std::string_view 
             ends.push_back(i);
     // The host already bounds context; keep this public entry point bounded too.
     const auto start = ends.size() > 33 ? ends.size() - 33 : 0;
+    if (contextModel) evidenceStates_ = contextStates(evidenceModel_, before, ends, start);
     const auto &model = model_;
     for (auto i = start; i + 1 < ends.size();) {
         const auto character = before.substr(ends[i], ends[i + 1] - ends[i]);
@@ -79,23 +130,38 @@ ContextDecoder::ContextDecoder(libime::PinyinContext &context, std::string_view 
             ++i;
         } else i = next;
     }
+    if (!contextModel && active_) evidenceStates_.push_back(state_);
 }
 
 double ContextDecoder::gain(const libime::SentenceResult &sentence) const {
-    if (!active_ || fcitx::utf8::length(sentence.toString()) < 2) return 0.0;
-    // Score stable lattice nodes directly. UserLanguageModel states retain a
-    // WordNode pointer; the separate static model shares only the model file
-    // and neither borrows temporary word nodes nor adds another learning path.
+    if (evidenceStates_.empty()) return 0.0;
+    const bool independentModel = evidenceModel_.languageModelFile() != model_.languageModelFile();
+    // The independent model also carries character transitions. Retain the
+    // original multi-character-only policy when falling back to the main LM.
+    if (!independentModel && fcitx::utf8::length(sentence.toString()) < 2) return 0.0;
+    if (sentence.sentence().empty()) return 0.0;
+    const auto firstWord = sentence.sentence().front()->word();
+    if (independentModel && evidenceModel_.isUnknown(evidenceModel_.index(firstWord), firstWord)) return 0.0;
+    // Word indices belong to their model. Re-index primary-decoder nodes by
+    // text before scoring in the independent static context model.
     const auto score = [&](libime::State state) {
         double total = 0.0;
         for (const auto *node : sentence.sentence()) {
             libime::State out;
-            total += model_.score(state, *node, out);
+            total += evidenceModel_.score(state,
+                libime::WordNode(node->word(), evidenceModel_.index(node->word())), out);
             state = out;
+            // The independent model supplies evidence across the context/word
+            // boundary only. Internal fluency and tokenization remain owned by
+            // the primary decoder; comparing whole-sentence likelihood ratios
+            // across its tokenizations can reward an implausible split suffix.
+            if (independentModel) break;
         }
         return total;
     };
-    const auto difference = score(state_) - score(baseline_);
+    double contextual = -std::numeric_limits<double>::infinity();
+    for (const auto &state : evidenceStates_) contextual = std::max(contextual, score(state));
+    const auto difference = contextual - score(evidenceModel_.nullState());
     return std::isfinite(difference) ? std::clamp<double>(difference, -2.0, 2.0) : 0.0;
 }
 

@@ -387,6 +387,13 @@ void ModernIMEController::finalizeRecentCommitDeletion() {
             provider_->onCommitEvent(event);
         }
         provider_->resetCommitHistory();
+        // Learning sequence cleanup also clears the provider's context. The
+        // host has already reported the edited document, and unchanged later
+        // updates are deduplicated by setContext(), so restore that valid fact
+        // before the next composition starts.
+        if (contextAvailability_ == ContextAvailability::Valid) {
+            provider_->setContext(contextBefore_, contextAfter_);
+        }
     }
     recentCommit_.valid = false;
 }

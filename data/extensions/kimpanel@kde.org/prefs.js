@@ -41,7 +41,8 @@ class KimpanelPrefsWidget extends Adw.PreferencesPage {
         miscGroup.add(row);
 
         for (const [key, title, values] of [
-            ['panel-theme', '候选配色', ['跟随桌面', '浅色', '深色', '经典蓝']],
+            ['panel-theme', '候选配色', ['跟随桌面', '浅色', '深色', '经典蓝', '青竹绿', '暖砂橙', '玫瑰粉', '雾紫', '深海夜', '高对比']],
+            ['candidate-shape', '候选轮廓', ['圆润', '方正', '胶囊']],
             ['candidate-spacing', '候选间距', ['紧凑', '标准', '宽松']],
         ]) {
             const choice = new Adw.ComboRow({

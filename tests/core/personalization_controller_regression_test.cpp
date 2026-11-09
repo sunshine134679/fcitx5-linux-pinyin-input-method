@@ -148,6 +148,28 @@ TEST_F(PersonalizationControllerRegression, LearnedFuzzyInitialVariantCanReachTo
     EXPECT_EQ(controller->page().items.front().text, "中文");
 }
 
+TEST_F(PersonalizationControllerRegression, NormalWordLearningDoesNotPromoteAnotherSpelling) {
+    for (int n = 0; n < 7; ++n) {
+        commit("shezhi", "设置");
+        controller->setContext("", "");
+    }
+    controller->reset();
+    type("shuzi");
+    ASSERT_EQ(controller->page().items.front().text, "数字");
+    ASSERT_TRUE(controller->handle({KeyKind::Space, 0, 0}));
+    EXPECT_EQ(host.committed, "数字");
+    EXPECT_TRUE(controller->page().rawInput.empty());
+
+    // Deliberate repeated correction under this spelling still learns.
+    controller->setContext("", "");
+    for (int n = 0; n < 3; ++n) {
+        commit("shuzi", "设置");
+        controller->setContext("", "");
+    }
+    type("shuzi");
+    EXPECT_EQ(controller->page().items.front().text, "设置");
+}
+
 TEST_F(PersonalizationControllerRegression, ValidEmptyContextReplacesFallbackAfterDeletion) {
     commit("nihao", "你好");
     controller->setContext("你好", "");

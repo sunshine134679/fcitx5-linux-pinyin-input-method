@@ -30,6 +30,12 @@ ModernIME 自身源码、插件、设置客户端与自建热词表采用 `LGPL-
 2. **多音字纠错与分流**：利用 `wanxiang/duoyin`、`wanxiang/jichu`、`rime-ice/base`、`cc-cedict` 对早期 `THUOCL` 单字默认注音产生的多音字误注进行了整词级校准；对无注音词表（如 `rime-ice/tencent`）中含强多音字且缺少多源一致读音的词条，隔离至 `data/pinyin/POLYPHONIC_REVIEW.tsv`，不盲目入主词典。
 3. **排除范围**：未将 `rime-essay`（繁体）、`wanxiang/shici`（诗词大表）、`wanxiang/fangyan`（方言）、`abbrev`/`t9_abbrev`/`mixed`/`cuoyin` 直接并入简体标准全拼主词典。
 
+## 独立语境语言模型
+
+`lm_sc.arpa-20260629.tar.zst` 来自 [LibIME 官方数据站](https://download.fcitx-im.org/data/lm_sc.arpa-20260629.tar.zst)，SHA-256 为 `06808333b9173e5374cf2cb5afc12d08f5625bf9abb536489cac376fc05f2e7f`。原始源归档随本仓库提供，未修改其 ARPA 概率数据；派生二进制采用 `libime_slm_build_binary -s -a 22 -q 8 -S 256M trie` 构建。
+
+根据 [LibIME 上游 REUSE 声明](https://github.com/fcitx/libime/blob/master/REUSE.toml)，该模型归属为 Copyright 2022–2026 CSSlayer <wengxt@gmail.com>，许可为 `LGPL-2.1-or-later`；完整许可正文见 `licenses/LGPL-2.1.txt`。本归属仅适用于独立语言模型，不改变上文各词典来源的许可。对应源数据随 ModernIME 源码分发；发行二进制模型沿用相同许可。
+
 ## 各上游项目详细归属
 
 ### 1. 万象词库 / RIME-LMDG (`wanxiang-*`)

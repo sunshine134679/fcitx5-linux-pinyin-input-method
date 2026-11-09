@@ -35,6 +35,9 @@ public:
                              std::string_view syllable);
     static bool isFullTypoMatch(std::string_view userInput,
                                 std::string_view fullPinyin);
+    // 已召回候选的六组标准模糊音等价键；不含 u/e 等额外近音纠错。
+    // 只用于排序资格，是否启用各组仍由解码配置负责。
+    static std::string phoneticFuzzyKey(std::string_view fullPinyin);
     static int priority(std::string_view userInput,
                         std::string_view fullPinyin);
     static bool isValidPinyinSequence(std::string_view text);

@@ -328,6 +328,21 @@ CandidatePipelineResult buildCandidatePipeline(
         return candidate.consumed_input_bytes == context.userInput().size() &&
             core::PinyinMatchPolicy::exactInputMatch(context.userInput(), candidate.full_pinyin);
     };
+    // The native first-character anchor encodes a context-free preference.
+    // With strong conditional evidence in this exact, fully consumed group,
+    // let the bounded LM gain and each character's own frequency compete.
+    // Suppressed or rare candidates cannot withdraw that protection.
+    const bool contextualCharacter = std::any_of(result.scored.begin(), result.scored.end(),
+        [&](const auto &candidate) {
+            return candidate.phrase_length == 1 && !candidate.is_rare &&
+                completeMatch(candidate) && candidate.language_context_bonus >= 1.0 &&
+                (learning == nullptr || !learning->isSuppressed(candidate.text, candidate.full_pinyin));
+        });
+    if (contextualCharacter) {
+        for (auto &candidate : result.scored) {
+            if (candidate.phrase_length == 1 && completeMatch(candidate)) candidate.unigram_anchor = 0.0;
+        }
+    }
     if (shuangpin == nullptr && core::PinyinMatchPolicy::isStandardSyllable(context.userInput()) &&
         std::any_of(result.scored.begin(), result.scored.end(), [&](const auto &candidate) {
             return candidate.is_lexical && candidate.phrase_length >= 2 &&

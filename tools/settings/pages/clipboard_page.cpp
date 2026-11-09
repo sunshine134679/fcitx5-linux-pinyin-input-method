@@ -95,7 +95,8 @@ public:
           history(historyPath),
           settingsChanged(std::move(settingsChangedCallback)),
           notify(std::move(notifyCallback)) {
-        detail::GtkWidgetGuard pageGuard(createPageShell("剪贴板", ""));
+        detail::GtkWidgetGuard pageGuard(createPageShell(
+            "剪贴板", "找回最近复制的文字、链接与代码。历史仅保存在本机。"));
         page = pageGuard.get();
         buildPage();
         refreshSettings();
@@ -113,10 +114,41 @@ public:
     }
 
     void buildPage() {
-        auto *settingsSection = createSectionCard(
-            "",
-            "中文输入状态下输入触发字母后紧跟触发数字即可打开剪贴板。");
-        gtk_box_pack_start(GTK_BOX(page), settingsSection, FALSE, FALSE, 0);
+        auto *settingsDisclosure = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_box_pack_start(GTK_BOX(page), settingsDisclosure, FALSE, FALSE, 0);
+        settingsToggle = gtk_toggle_button_new_with_label("剪贴板设置");
+        addStyleClass(settingsToggle, "modernime-details-button");
+        gtk_widget_set_halign(settingsToggle, GTK_ALIGN_START);
+        gtk_widget_set_focus_on_click(settingsToggle, FALSE);
+        gtk_button_set_image(GTK_BUTTON(settingsToggle),
+                             gtk_image_new_from_icon_name("pan-down-symbolic", GTK_ICON_SIZE_MENU));
+        gtk_button_set_image_position(GTK_BUTTON(settingsToggle), GTK_POS_RIGHT);
+        gtk_button_set_always_show_image(GTK_BUTTON(settingsToggle), TRUE);
+        setAccessibleWidgetText(settingsToggle, "剪贴板设置",
+                                "展开或收起剪贴板开关与触发键设置");
+        gtk_box_pack_start(GTK_BOX(settingsDisclosure), settingsToggle, FALSE, FALSE, 0);
+        settingsRevealer = gtk_revealer_new();
+        gtk_revealer_set_transition_type(GTK_REVEALER(settingsRevealer),
+                                         GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+        gtk_revealer_set_transition_duration(GTK_REVEALER(settingsRevealer), 220);
+        auto *settingsSection = createSectionCard("", "");
+        gtk_container_add(GTK_CONTAINER(settingsRevealer), settingsSection);
+        gtk_box_pack_start(GTK_BOX(settingsDisclosure), settingsRevealer, FALSE, FALSE, 0);
+        g_signal_connect(settingsToggle, "toggled", G_CALLBACK(+[](GtkToggleButton *button, gpointer data) {
+            auto *impl = static_cast<Impl *>(data);
+            const bool expanded = gtk_toggle_button_get_active(button);
+            if (!expanded) {
+                auto *window = impl->parentWindow();
+                auto *focus = window != nullptr ? gtk_window_get_focus(window) : nullptr;
+                if (focus != nullptr && gtk_widget_is_ancestor(focus, impl->settingsRevealer)) {
+                    gtk_widget_grab_focus(GTK_WIDGET(button));
+                }
+            }
+            gtk_image_set_from_icon_name(
+                GTK_IMAGE(gtk_button_get_image(GTK_BUTTON(button))),
+                expanded ? "pan-up-symbolic" : "pan-down-symbolic", GTK_ICON_SIZE_MENU);
+            gtk_revealer_set_reveal_child(GTK_REVEALER(impl->settingsRevealer), expanded);
+        }), this);
 
         clipboardEnabled = gtk_switch_new();
         setAccessibleWidgetText(clipboardEnabled, "启用剪贴板",
@@ -124,7 +156,7 @@ public:
         setTarget(clipboardEnabled, "clipboard-enabled");
         gtk_box_pack_start(GTK_BOX(settingsSection),
                            createSettingRow("启用剪贴板",
-                                            "中文输入状态下输入触发字母后紧跟数字即可打开剪贴板。",
+                                            "在中文输入时快速取用最近复制的内容。",
                                             clipboardEnabled),
                            FALSE, FALSE, 0);
 
@@ -136,7 +168,7 @@ public:
         setTarget(clipboardTrigger, "clipboard-trigger");
         clipboardTriggerFallback = createSettingRow(
             "触发键",
-            "设置在中文输入状态打开本地剪贴板历史的按键",
+            "先输入字母，再紧跟数字。例如 V+2。",
             clipboardTrigger);
         setAccessibleWidgetText(clipboardTrigger, "剪贴板触发键",
             "设置在中文输入状态打开本地剪贴板历史的按键");
@@ -146,13 +178,20 @@ public:
         gtk_box_pack_start(GTK_BOX(settingsSection), clipboardTriggerFallback,
                            FALSE, FALSE, 0);
         auto *historySection = createSectionCard(
-            "剪贴板历史", "按最近使用排序 · 仅保存在本机 · 双击记录即可复制");
+            "剪贴板历史", "最近使用的内容在前。双击记录即可复制，长内容可展开阅读。");
         gtk_box_pack_start(GTK_BOX(page), historySection, TRUE, TRUE, 0);
+        auto *historySummary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         historyCount = gtk_label_new("正在读取…");
         addStyleClass(historyCount, "modernime-description");
         gtk_widget_set_halign(historyCount, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(historySection), historyCount, FALSE, FALSE,
-                           0);
+        gtk_box_pack_start(GTK_BOX(historySummary), historyCount, TRUE, TRUE, 0);
+        auto *refreshButton = gtk_button_new_with_label("刷新历史");
+        addStyleClass(refreshButton, "modernime-card-btn");
+        gtk_widget_set_tooltip_text(refreshButton, "重新读取磁盘上的剪贴板历史");
+        setAccessibleWidgetText(refreshButton, "刷新历史",
+                                "重新读取磁盘上的剪贴板历史");
+        gtk_box_pack_end(GTK_BOX(historySummary), refreshButton, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(historySection), historySummary, FALSE, FALSE, 0);
 
         historyListBox = gtk_list_box_new();
         addStyleClass(historyListBox, "modernime-clipboard-list");
@@ -181,7 +220,9 @@ public:
         historyState = gtk_label_new("正在读取…");
         addStyleClass(historyState, "modernime-description");
         gtk_widget_set_halign(historyState, GTK_ALIGN_START);
+        gtk_label_set_xalign(GTK_LABEL(historyState), 0.0f);
         gtk_label_set_line_wrap(GTK_LABEL(historyState), TRUE);
+        gtk_label_set_line_wrap_mode(GTK_LABEL(historyState), PANGO_WRAP_WORD_CHAR);
         gtk_widget_set_margin_top(historyState, 6);
         gtk_box_pack_start(GTK_BOX(historySection), historyState, FALSE, FALSE,
                            0);
@@ -192,6 +233,7 @@ public:
         copyButton = gtk_button_new_with_label(actionLabels[0].data());
         deleteButton = gtk_button_new_with_label(actionLabels[1].data());
         clearButton = gtk_button_new_with_label(actionLabels[2].data());
+        addStyleClass(clearButton, "destructive-action");
         gtk_widget_set_tooltip_text(copyButton, "复制选中的历史内容到系统剪贴板");
         gtk_widget_set_tooltip_text(deleteButton, "删除选中的历史内容");
         gtk_widget_set_tooltip_text(clearButton, "清空全部历史内容，需要确认");
@@ -201,20 +243,12 @@ public:
                                 "删除选中的历史内容");
         setAccessibleWidgetText(clearButton, actionLabels[2],
                                 "确认后清空全部本地剪贴板历史");
-        for (auto *button : {copyButton, deleteButton, clearButton}) {
+        for (auto *button : {copyButton, deleteButton}) {
             gtk_box_pack_start(GTK_BOX(historyActions), button, FALSE, FALSE, 0);
         }
+        gtk_box_pack_end(GTK_BOX(historyActions), clearButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(historySection), historyActions, FALSE, FALSE,
                            0);
-        gtk_box_reorder_child(GTK_BOX(historySection), historyActions, 3);
-        gtk_box_reorder_child(GTK_BOX(historySection), historyState, 4);
-
-        auto *refreshButton = gtk_button_new_with_label("刷新历史");
-        gtk_widget_set_halign(refreshButton, GTK_ALIGN_START);
-        gtk_widget_set_tooltip_text(refreshButton, "重新读取磁盘上的剪贴板历史");
-        setAccessibleWidgetText(refreshButton, "刷新历史",
-                                "重新读取磁盘上的剪贴板历史");
-        gtk_box_pack_end(GTK_BOX(historyActions), refreshButton, FALSE, FALSE, 0);
         g_signal_connect(refreshButton, "clicked", G_CALLBACK(onRefresh), this);
         g_signal_connect(copyButton, "clicked", G_CALLBACK(onCopy), this);
         g_signal_connect(deleteButton, "clicked", G_CALLBACK(onDelete), this);
@@ -224,7 +258,7 @@ public:
         g_signal_connect(clipboardTrigger, "changed", G_CALLBACK(onChanged),
                          this);
         setSettingsFocusChain(
-            page, {clipboardEnabled, clipboardTrigger, historyListBox,
+            page, {settingsToggle, clipboardEnabled, clipboardTrigger, historyListBox,
                    copyButton, deleteButton, clearButton, refreshButton});
     }
 
@@ -320,7 +354,7 @@ public:
 
         if (displayItems.empty()) {
             gtk_label_set_text(GTK_LABEL(historyState),
-                               "暂无剪贴板历史；复制内容后会自动记录");
+                               "还没有剪贴板历史\n复制一段文字后，可在这里查看和再次使用。若尚未出现，请刷新历史。");
             gtk_widget_set_visible(historyState, TRUE);
             gtk_label_set_text(
                 GTK_LABEL(historyCount),
@@ -409,6 +443,9 @@ public:
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
+                if (control == clipboardEnabled || control == clipboardTrigger) {
+                    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(settingsToggle), TRUE);
+                }
                 return focusWidgetOrFallback(control, fallback);
             }
         }
@@ -478,6 +515,9 @@ private:
         setDialogResponseAccessibility(
             GTK_DIALOG(dialog), GTK_RESPONSE_YES, "清空",
             "清空全部本地剪贴板历史且无法撤销");
+        addStyleClass(gtk_dialog_get_widget_for_response(
+                          GTK_DIALOG(dialog), GTK_RESPONSE_YES),
+                      "destructive-action");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
                                        "取消", "保留全部剪贴板历史");
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -678,17 +718,23 @@ private:
         auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         gtk_widget_set_valign(header, GTK_ALIGN_CENTER);
 
-        const auto number = std::to_string(index + 1);
-        auto *indexLabel = gtk_label_new((index < 9 ? "0" + number : number).c_str());
-        addStyleClass(indexLabel, "modernime-card-index");
-        gtk_box_pack_start(GTK_BOX(header), indexLabel, FALSE, FALSE, 0);
-
         const char *typeName = meta.badgeClass == "modernime-badge-code" ? "代码" :
                                meta.badgeClass == "modernime-badge-url" ? "链接" :
                                meta.badgeClass == "modernime-badge-multiline" ? "多行文本" : "文本";
+        const char *typeIcon = meta.badgeClass == "modernime-badge-code" ? "text-x-script-symbolic" :
+                               meta.badgeClass == "modernime-badge-url" ? "insert-link-symbolic" :
+                               "text-x-generic-symbolic";
+        auto *typeBadge = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+        addStyleClass(typeBadge, "modernime-clipboard-type");
+        addStyleClass(typeBadge, meta.badgeClass.c_str());
+        gtk_widget_set_valign(typeBadge, GTK_ALIGN_CENTER);
+        auto *typeImage = gtk_image_new_from_icon_name(typeIcon, GTK_ICON_SIZE_MENU);
+        gtk_image_set_pixel_size(GTK_IMAGE(typeImage), 14);
+        addStyleClass(typeImage, "modernime-clipboard-type-icon");
+        gtk_box_pack_start(GTK_BOX(typeBadge), typeImage, FALSE, FALSE, 0);
         auto *badgeLabel = gtk_label_new(typeName);
-        addStyleClass(badgeLabel, meta.badgeClass.c_str());
-        gtk_box_pack_start(GTK_BOX(header), badgeLabel, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(typeBadge), badgeLabel, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(header), typeBadge, FALSE, FALSE, 0);
 
         const std::string metaStr =
             (meta.lineCount > 1 ? std::to_string(meta.lineCount) + " 行 · " : "") +
@@ -710,9 +756,19 @@ private:
         gtk_widget_set_hexpand(previewLabel, TRUE);
         if (meta.badgeClass == "modernime-badge-code") {
             addStyleClass(previewLabel, "modernime-card-code");
+        } else if (meta.badgeClass == "modernime-badge-url") {
+            addStyleClass(previewLabel, "modernime-card-url");
         }
 
+        auto *previewRevealer = gtk_revealer_new();
+        gtk_revealer_set_transition_type(GTK_REVEALER(previewRevealer),
+                                         GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+        gtk_revealer_set_transition_duration(GTK_REVEALER(previewRevealer), 220);
+        gtk_revealer_set_reveal_child(GTK_REVEALER(previewRevealer), TRUE);
+        gtk_container_add(GTK_CONTAINER(previewRevealer), previewLabel);
+
         GtkWidget *expandedBox = nullptr;
+        GtkWidget *expandedRevealer = nullptr;
         if (meta.isLong || meta.lineCount > 1 || meta.charCount > 40) {
             auto *toggleBtn = gtk_button_new_with_label("展开");
             addStyleClass(toggleBtn, "modernime-toggle-btn");
@@ -724,7 +780,9 @@ private:
             g_signal_connect_object(
                 previewLabel, "size-allocate",
                 G_CALLBACK(+[](GtkWidget *label, GtkAllocation *, gpointer button) {
-                    if (gtk_widget_get_visible(label)) {
+                    auto *preview = gtk_widget_get_parent(label);
+                    if (gtk_widget_get_visible(label) &&
+                        gtk_revealer_get_reveal_child(GTK_REVEALER(preview))) {
                         const bool truncated = g_object_get_data(
                             G_OBJECT(button), "clipboard-preview-truncated") != nullptr;
                         gtk_widget_set_visible(GTK_WIDGET(button), truncated ||
@@ -738,18 +796,22 @@ private:
             gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(expandedBox),
                                            GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
             gtk_widget_set_size_request(expandedBox, -1, 180);
-            gtk_widget_set_no_show_all(expandedBox, TRUE);
-            gtk_widget_hide(expandedBox);
+            expandedRevealer = gtk_revealer_new();
+            gtk_revealer_set_transition_type(GTK_REVEALER(expandedRevealer),
+                                             GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+            gtk_revealer_set_transition_duration(GTK_REVEALER(expandedRevealer), 220);
+            gtk_container_add(GTK_CONTAINER(expandedRevealer), expandedBox);
 
             struct ToggleData {
                 Impl *impl;
                 GtkWidget *preview;
                 GtkWidget *expanded;
+                GtkWidget *revealer;
                 std::size_t index;
                 bool isCode;
-                bool isExpanded = false;
             };
-            auto *tdata = new ToggleData{this, previewLabel, expandedBox, index,
+            auto *tdata = new ToggleData{this, previewRevealer, expandedBox,
+                                         expandedRevealer, index,
                                          meta.badgeClass == "modernime-badge-code"};
             g_signal_connect_data(
                 toggleBtn, "clicked",
@@ -759,13 +821,15 @@ private:
                     if (rowWidget != nullptr && td->impl->historyListBox != nullptr) {
                         gtk_list_box_select_row(GTK_LIST_BOX(td->impl->historyListBox), GTK_LIST_BOX_ROW(rowWidget));
                     }
-                    td->isExpanded = !td->isExpanded;
-                    if (td->isExpanded) {
+                    const bool isExpanded =
+                        !gtk_revealer_get_reveal_child(GTK_REVEALER(td->revealer));
+                    if (isExpanded) {
                         // Allocate the full text only when requested, not for all 30 records.
                         if (gtk_bin_get_child(GTK_BIN(td->expanded)) == nullptr) {
                             auto *reader = gtk_text_view_new();
                             gtk_text_view_set_editable(GTK_TEXT_VIEW(reader), FALSE);
                             gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(reader), FALSE);
+                            gtk_text_view_set_monospace(GTK_TEXT_VIEW(reader), td->isCode);
                             gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(reader), GTK_WRAP_WORD_CHAR);
                             gtk_text_view_set_left_margin(GTK_TEXT_VIEW(reader), 12);
                             gtk_text_view_set_right_margin(GTK_TEXT_VIEW(reader), 12);
@@ -786,14 +850,12 @@ private:
                         }
                         gtk_button_set_label(b, "收起");
                         gtk_widget_set_tooltip_text(GTK_WIDGET(b), "收起完整内容预览");
-                        gtk_widget_hide(td->preview);
-                        gtk_widget_show(td->expanded);
                     } else {
                         gtk_button_set_label(b, "展开");
                         gtk_widget_set_tooltip_text(GTK_WIDGET(b), "展开查看完整内容");
-                        gtk_widget_hide(td->expanded);
-                        gtk_widget_show(td->preview);
                     }
+                    gtk_revealer_set_reveal_child(GTK_REVEALER(td->preview), !isExpanded);
+                    gtk_revealer_set_reveal_child(GTK_REVEALER(td->revealer), isExpanded);
                 }),
                 tdata,
                 [](gpointer d, GClosure *) { delete static_cast<ToggleData *>(d); },
@@ -825,10 +887,12 @@ private:
             GConnectFlags(0));
 
         gtk_box_pack_start(GTK_BOX(card), header, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(card), previewLabel, FALSE, FALSE, 0);
-        if (expandedBox != nullptr) {
-            gtk_box_pack_start(GTK_BOX(card), expandedBox, FALSE, FALSE, 0);
+        auto *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_box_pack_start(GTK_BOX(content), previewRevealer, FALSE, FALSE, 0);
+        if (expandedRevealer != nullptr) {
+            gtk_box_pack_start(GTK_BOX(content), expandedRevealer, FALSE, FALSE, 0);
         }
+        gtk_box_pack_start(GTK_BOX(card), content, FALSE, FALSE, 0);
 
         gtk_container_add(GTK_CONTAINER(row), card);
         return row;
@@ -865,6 +929,8 @@ private:
     std::function<void()> settingsChanged;
     std::function<void(std::string)> notify;
     GtkWidget *page = nullptr;
+    GtkWidget *settingsToggle = nullptr;
+    GtkWidget *settingsRevealer = nullptr;
     GtkWidget *clipboardEnabled = nullptr;
     GtkWidget *clipboardTrigger = nullptr;
     GtkWidget *clipboardTriggerFallback = nullptr;

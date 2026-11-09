@@ -353,7 +353,7 @@ void startBackgroundPackageTracking(std::uint64_t operationId,
                 finalRes.message =
                     exitedZero
                         ? "后台软件源缓存刷新已完成，可点击“检查更新”同步最新候选版本。"
-                        : ("后台软件源缓存刷新未成功完成，请在终端手动执行：" + fallbackCmd);
+                        : detail::formatFailureMessage(out, "刷新软件源缓存", fallbackCmd);
             }
             finishPackageOperation(operationId, finalRes, out.stdoutText, out.stderrText, true);
         } else {
@@ -611,7 +611,8 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
 }
 
 RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
-                                                    const Environment &environment) {
+                                                    const Environment &environment,
+                                                    bool waitForCompletion) {
     auto opId = tryBeginPackageOperation(PackageOperationKind::RefreshCache);
     if (!opId.has_value()) {
         if (hasActivePackageOperation()) {
@@ -702,6 +703,22 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
     if (out.state == detail::CommandState::Continuing) {
         advancePackageOperation(*opId, PackageOperationPhase::Running, PackageOperationPhase::Continuing);
         startBackgroundPackageTracking(*opId, PackageOperationKind::RefreshCache, fallbackCmd);
+        if (waitForCompletion) {
+            while (!g_packageTrackingShuttingDown.load()) {
+                // Read ownership before taking the result: completion may happen
+                // between these calls, but only this operation's result is consumed.
+                const auto activeId = currentPackageOperationId();
+                const auto phase = currentPackageOperationPhase();
+                if (auto completed = takeCompletedPackageOperationResult(*opId)) {
+                    return *completed;
+                }
+                if (activeId != opId || phase == PackageOperationPhase::Uncertain) {
+                    return {false, "无法确认软件源刷新结果。请在检查详情中核对系统包管理器状态后重试；状态不明的事务不会自动重复执行。"};
+                }
+                waitForActivePackageOperation(200);
+            }
+            return {false, "设置客户端正在退出，软件源刷新由系统包管理器继续处理。"};
+        }
         const std::string procHint = (manager == PackageManagerKind::Dnf) ? "ps aux | grep -E 'dnf|rpm'"
                                                                          : "ps aux | grep -E 'apt|dpkg'";
         return {false,

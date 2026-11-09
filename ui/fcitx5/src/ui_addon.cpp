@@ -281,6 +281,7 @@ struct ModernIMEUserInterface::Impl final {
                             loaded.candidatePageSize != appearance.candidatePageSize ||
                             loaded.candidateFontFamily != appearance.candidateFontFamily ||
                             loaded.candidateTheme != appearance.candidateTheme ||
+                            loaded.candidateShape != appearance.candidateShape ||
                             loaded.candidateSpacing != appearance.candidateSpacing) {
                             appearance = loaded;
                             ++layoutGeneration;
