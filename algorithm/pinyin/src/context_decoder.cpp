@@ -120,15 +120,19 @@ std::vector<core::CandidateScore> ContextDecoder::candidates() const {
         catch (const std::invalid_argument &) { continue; }
         if (encoded.size() / 2 != fcitx::utf8::length(word.phrase)) continue;
         bool known = false;
-        ime.dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view text, float) {
-            known |= text == word.phrase;
-            return !known;
+        float lexicalCost = 0.0F;
+        ime.dict()->matchWords(encoded.data(), encoded.size(), [&](std::string_view, std::string_view text, float cost) {
+            if (text == word.phrase) {
+                lexicalCost = known ? std::max(lexicalCost, cost) : cost;
+                known = true;
+            }
+            return true;
         });
-        if (known) continue;
-        // Mature learned vocabulary gets a bounded lexical cost. Frequency and
-        // time decay remain owned by LearningSnapshot, without LibIME history.
+        // Mature preferences also apply inside unseen sentences for known words.
+        // Preserve their dictionary cost; add only the bounded, decayed evidence
+        // in this request-local dictionary, without changing shared dictionaries.
         dictionary.addWord(1, word.pinyin, word.phrase,
-                           static_cast<float>(2.0 * std::clamp(word.learningBoost, 0.0, 3.0)));
+                           lexicalCost + static_cast<float>(2.0 * std::clamp(word.learningBoost, 0.0, 3.0)));
         learnedWords.emplace(core::candidateOrderKey(word.phrase, word.pinyin), word.learningBoost);
     }
     if (!active_ && learnedWords.empty()) return result;

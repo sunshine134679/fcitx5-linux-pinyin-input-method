@@ -161,6 +161,43 @@ void testLearnedSentenceController(const std::filesystem::path &directory) {
     std::cout << "[PASS] learned sentence controller, shuangpin and sensitive input\n";
 }
 
+void testKnownWordSentenceController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "known-word-sentence.sqlite3";
+    const std::string input = "qingbangwochongqi";
+    const auto type = [](auto &controller, std::string_view text) {
+        for (const char c : text)
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    };
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths);
+        RecordingHost host;
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+        type(controller, input);
+        std::cout << "known-word sentence before: " << controller.page().items.front().text << std::endl;
+        controller.reset();
+        for (int i = 0; i < 5; ++i) {
+            type(controller, "chongqi");
+            const auto index = indexOf(controller.page(), "充气");
+            assertTrue(index < controller.page().items.size() && controller.select(index),
+                       "ordinary dictionary word is learned through actual selection");
+        }
+        assertTrue(provider.flush(), "word preference persists");
+    }
+    modernime::pinyin::PinyinCandidateProvider reopened(paths);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &reopened);
+    type(controller, input);
+    const auto index = indexOf(controller.page(), "请帮我充气");
+    std::cout << "known-word sentence after: " << controller.page().items.front().text
+              << ", expected_index=" << index << std::endl;
+    assertTrue(index == 0 && controller.currentPageIndex() == 0,
+               "a known word preference promotes an unseen sentence to the first physical page after reopen");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) &&
+                   host.commits.back() == "请帮我充气" && controller.page().rawInput.empty(),
+               "space commits the personalized sentence and consumes the complete input");
+}
+
 void testContextModelController(const std::filesystem::path &directory) {
     modernime::pinyin::PinyinDataPaths paths;
     paths.learningStore = directory / "context-model.sqlite3";
@@ -255,6 +292,7 @@ int main(int argc, char **argv) {
     testGeneratedTextLearning(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--generated-text") return 0;
     testLearnedSentenceController(tempDirectory.path());
+    testKnownWordSentenceController(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--learned-sentence") return 0;
     testContextModelController(tempDirectory.path());
     if (argc == 2 && std::string_view(argv[1]) == "--context-model") return 0;
