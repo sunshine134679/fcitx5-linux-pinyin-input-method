@@ -10,6 +10,8 @@
 
 namespace modernime::settings {
 
+enum class OverviewSetupAction { None, Configure, Install, Start, Reload, Activate };
+
 struct OverviewNotice final {
     SettingsPageId destination;
     std::string message;
@@ -17,6 +19,11 @@ struct OverviewNotice final {
 
 struct OverviewSnapshot final {
     std::string runtimeSummary;
+    OverviewSetupAction setupAction = OverviewSetupAction::None;
+    std::string setupDescription;
+    std::string setupActionLabel;
+    std::string clipboardShortcut;
+    std::string trialInstructions;
     std::string defaultMode;
     std::string toggleKey;
     std::size_t dictionaryEntries = 0;

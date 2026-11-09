@@ -16,7 +16,9 @@ public:
     static constexpr auto pageId = SettingsPageId::Overview;
 
     explicit OverviewPage(
-        std::function<void(SettingsPageId)> navigate);
+        std::function<void(SettingsPageId)> navigate,
+        std::function<void(OverviewSetupAction)> setup = {},
+        std::function<void()> refresh = {});
     ~OverviewPage();
 
     OverviewPage(const OverviewPage &) = delete;
@@ -24,6 +26,7 @@ public:
 
     GtkWidget *widget() const;
     void setSnapshot(const OverviewSnapshot &snapshot);
+    void setSetupBusy(bool busy);
 
 private:
     class Impl;

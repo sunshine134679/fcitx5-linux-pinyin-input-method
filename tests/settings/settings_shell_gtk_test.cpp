@@ -464,6 +464,7 @@ int main(int argc, char **argv) {
     std::filesystem::create_directories(root / "bin", error);
     assert(!error);
     const auto fcitxLog = root / "fcitx5.log";
+    const auto activationState = root / "activated";
     const auto remote = root / "bin/fcitx5-remote";
     const auto fcitx = root / "bin/fcitx5";
     {
@@ -472,7 +473,10 @@ int main(int argc, char **argv) {
                   "case \"$1\" in\n"
                   "  -n) printf 'modernime\\n';;\n"
                   "  -m) printf 'modernime\\n';;\n"
-                  "  *) printf '2\\n';;\n"
+                  "  -s) touch \"" << activationState.string() << "\";;\n"
+                  "  -o) :;;\n"
+                  "  *) if test -f \"" << activationState.string()
+               << "\"; then printf '2\\n'; else printf '1\\n'; fi;;\n"
                   "esac\n";
     }
     {
@@ -546,6 +550,34 @@ int main(int argc, char **argv) {
             findAccessibleWidget(window, GTK_TYPE_SEARCH_ENTRY, "搜索设置");
         auto *save = findAccessibleWidget(window, GTK_TYPE_BUTTON, "保存设置");
         assert(search != nullptr && save != nullptr);
+
+        // The overview activates an already loaded method without restarting it.
+        GtkWidget *activate = nullptr;
+        assert(waitUntil([&] {
+            activate = findAccessibleWidget(window, GTK_TYPE_BUTTON, "启用 ModernIME");
+            return activate && gtk_widget_get_mapped(activate) && gtk_widget_get_sensitive(activate);
+        }));
+        gtk_button_clicked(GTK_BUTTON(activate));
+        assert(waitUntil([&] {
+            return std::filesystem::exists(activationState) &&
+                   findLabelText(window, "ModernIME 正在运行") != nullptr;
+        }));
+        assert(!std::filesystem::exists(fcitxLog));
+        auto *trial = findAccessibleWidget(window, GTK_TYPE_ENTRY, "试输入");
+        assert(trial != nullptr);
+        gtk_entry_set_text(GTK_ENTRY(trial), "你好");
+        assert(findLabelText(window, "已收到“你好”。可以继续试长句，或到其他应用输入。") != nullptr);
+        auto *oldSummary = findLabelText(window, "ModernIME 正在运行");
+        bool refreshed = false;
+        g_object_weak_ref(G_OBJECT(oldSummary), +[](gpointer data, GObject *) {
+            *static_cast<bool *>(data) = true;
+        }, &refreshed);
+        auto *refreshOverview = findAccessibleWidget(window, GTK_TYPE_BUTTON, "重新检查输入状态");
+        assert(refreshOverview != nullptr);
+        gtk_button_clicked(GTK_BUTTON(refreshOverview));
+        assert(waitUntil([&] { return refreshed; }));
+        assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(trial))) == "你好");
+        gtk_entry_set_text(GTK_ENTRY(trial), "");
 
         // Selected navigation text stays dark and neutral on focus and hover.
         shell.show(modernime::settings::SettingsPageId::Overview);

@@ -33,6 +33,8 @@ struct RuntimeResult final {
 
 class RuntimeController final {
 public:
+    static RuntimeResult activate(const std::filesystem::path &remoteExecutable,
+                                  const Environment &environment = {});
     static RuntimeStatus probe(const std::filesystem::path &executable,
                                const Environment &environment = {});
     static RuntimeStatus probe(const std::filesystem::path &executable,

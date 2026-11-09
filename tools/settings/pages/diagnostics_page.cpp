@@ -290,8 +290,7 @@ private:
                                            : error->message);
             return;
         }
-        notifyMessage(result->success ? "ModernIME 已重新加载并激活"
-                                      : result->message);
+        notifyMessage(result->message);
         if (result->success) {
             if (reloadSucceeded) {
                 reloadSucceeded(revision);

@@ -94,11 +94,14 @@ struct OverviewTask final {
     std::filesystem::path remoteExecutable;
     Environment environment;
     std::string savedContentHash;
+    std::filesystem::path fcitxExecutable;
+    OverviewSetupAction setupAction = OverviewSetupAction::None;
 };
 
 struct OverviewResult final {
     OverviewSnapshot snapshot;
     std::string applicationMessage;
+    std::string setupMessage;
 };
 
 struct GObjectUnref final {
@@ -123,6 +126,15 @@ using GtkWidgetOwner = std::unique_ptr<GtkWidget, GtkWidgetDestroy>;
 void overviewTaskFunction(GTask *task, gpointer, gpointer data,
                           GCancellable *) {
     const auto *request = static_cast<const OverviewTask *>(data);
+    std::string setupMessage;
+    if (request->setupAction == OverviewSetupAction::Activate) {
+        setupMessage = RuntimeController::activate(request->remoteExecutable,
+                                                    request->environment).message;
+    } else if (request->setupAction == OverviewSetupAction::Start ||
+               request->setupAction == OverviewSetupAction::Reload) {
+        setupMessage = RuntimeController::reload(request->fcitxExecutable,
+            request->remoteExecutable, request->environment).message;
+    }
     const auto runtime = RuntimeController::probe(request->remoteExecutable,
                                                   request->paths.runtimeState,
                                                   request->environment);
@@ -132,7 +144,8 @@ void overviewTaskFunction(GTask *task, gpointer, gpointer data,
             collectOverviewSnapshot(request->paths, request->settings, runtime),
             request->savedContentHash.empty()
                 ? std::string{}
-                : describeSettingsApplication(runtime, request->savedContentHash)},
+                : describeSettingsApplication(runtime, request->savedContentHash),
+            std::move(setupMessage)},
         [](gpointer value) { delete static_cast<OverviewResult *>(value); });
 }
 
@@ -338,7 +351,7 @@ private:
         if (state != nullptr) {
             (*state)->withOwner([snapshot, error, generation, request](Impl &owner) {
                 owner.finishOverviewRefresh(generation, request->savedContentHash,
-                                            snapshot, error);
+                                            snapshot, error, request->setupAction);
             });
         }
         delete snapshot;
@@ -518,7 +531,19 @@ private:
             onPageMessage(std::move(message));
         };
         overviewPage = std::make_unique<OverviewPage>(
-            [this](SettingsPageId page) { show(page, {}); });
+            [this](SettingsPageId page) { show(page, {}); },
+            [this](OverviewSetupAction action) {
+                if (action == OverviewSetupAction::Install) {
+                    show(SettingsPageId::Updates, {});
+                } else if (action == OverviewSetupAction::Configure) {
+                    show(SettingsPageId::Input, "input-enabled");
+                } else if (action != OverviewSetupAction::None) {
+                    pendingSetupAction = action;
+                    overviewPage->setSetupBusy(true);
+                    requestOverviewRefresh();
+                }
+            },
+            [this] { requestOverviewRefresh(); });
         addPage(SettingsPageId::Overview, overviewPage->widget());
         inputPage = std::make_unique<InputPage>(model, [this] {
             updateActionState();
@@ -922,7 +947,8 @@ private:
             overviewLifetime.get(), nullptr, overviewTaskFinished, nullptr)));
         auto request = std::make_unique<OverviewTask>(OverviewTask{
             generation, paths, model.settings(), remote, environment,
-            savedStatusHash});
+            savedStatusHash, fcitx,
+            std::exchange(pendingSetupAction, OverviewSetupAction::None)});
         g_task_set_task_data(G_TASK(taskOwner.get()), request.release(),
                              [](gpointer value) {
             delete static_cast<OverviewTask *>(value);
@@ -933,7 +959,7 @@ private:
     void finishOverviewRefresh(OverviewRefreshState::Generation generation,
                                const std::string &savedHash,
                                const OverviewResult *result,
-                               const GError *error) {
+                               const GError *error, OverviewSetupAction action) {
         const bool current = overviewRefresh.complete(generation);
         if (current && result != nullptr) {
             overviewPage->setSnapshot(result->snapshot);
@@ -946,6 +972,12 @@ private:
             presentError(error == nullptr || error->message == nullptr
                              ? "无法读取概览"
                              : error->message);
+        }
+        if (action != OverviewSetupAction::None) {
+            overviewPage->setSetupBusy(false);
+            if (result != nullptr && !result->setupMessage.empty()) {
+                presentError(result->setupMessage);
+            }
         }
         const auto pending = overviewRefresh.startPending();
         if (pending.has_value()) {
@@ -999,6 +1031,7 @@ private:
     std::unique_ptr<DiagnosticsPage> diagnosticsPage;
     GtkWidgetOwner windowOwner;
     OverviewRefreshState overviewRefresh;
+    OverviewSetupAction pendingSetupAction = OverviewSetupAction::None;
     OverviewPresentationState overviewPresentation;
     GObjectOwner overviewLifetime;
     ScopedLifetimeDeactivation<Lifetime> lifetimeGuard;

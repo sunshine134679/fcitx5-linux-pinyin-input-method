@@ -80,6 +80,11 @@ int main(int argc, char **argv) {
                    !inactive.inputMethodEnabled &&
                    !inactive.modernimeActive,
                "probe does not call an inactive input context activated");
+    inactiveEnvironment.emplace_back("FAKE_REMOTE_STATE_FILE", (directory / "activate.state").string());
+    const auto activation = modernime::settings::RuntimeController::activate(argv[1], inactiveEnvironment);
+    assertTrue(activation.success &&
+                   modernime::settings::RuntimeController::probe(argv[1], inactiveEnvironment).modernimeActive,
+               "activation enables a loaded method without starting or replacing Fcitx5");
 
     auto missingModernimeEnvironment = noContextEnvironment;
     missingModernimeEnvironment.emplace_back(

@@ -343,6 +343,22 @@ RuntimeStatus RuntimeController::probe(
     return status;
 }
 
+RuntimeResult RuntimeController::activate(
+    const std::filesystem::path &remoteExecutable,
+    const Environment &environment) {
+    const auto select = runCommand(remoteExecutable, {"-s", "modernime"}, environment);
+    if (!select.successful) return {false, failureMessage(select, "ModernIME 选择")};
+    const auto enable = runCommand(remoteExecutable, {"-o"}, environment);
+    if (!enable.successful) return {false, failureMessage(enable, "ModernIME 启用")};
+    const auto status = probe(remoteExecutable, environment);
+    if (!modernimeReady(status)) {
+        return {false, status.message.empty() ? "ModernIME 未能启用"
+                                             : "ModernIME 未能启用：" + status.message};
+    }
+    return {true, status.modernimeActive ? "ModernIME 已启用，可以开始输入"
+                                       : "ModernIME 已就绪，点击输入框开始试用"};
+}
+
 RuntimeResult RuntimeController::reload(
     const std::filesystem::path &fcitxExecutable,
     const std::filesystem::path &remoteExecutable,
@@ -375,23 +391,12 @@ RuntimeResult RuntimeController::reload(
 
     std::string lastError;
     for (int attempt = 0; attempt < reloadAttempts; ++attempt) {
-        const auto select = runCommand(
-            remoteExecutable, {"-s", "modernime"}, environment);
-        const auto enable = runCommand(remoteExecutable, {"-o"}, environment);
-        const auto status = probe(remoteExecutable, environment);
-        if (select.successful && enable.successful &&
-            modernimeReady(status)) {
+        const auto activation = activate(remoteExecutable, environment);
+        if (activation.success) {
             UpdateController::ensureDesktopShortcut(environment);
-            return {true, "ModernIME 已重新加载并激活"};
+            return {true, "已重新加载。" + activation.message};
         }
-
-        if (!select.successful) {
-            lastError = failureMessage(select, "ModernIME 激活");
-        } else if (!enable.successful) {
-            lastError = failureMessage(enable, "ModernIME 启用");
-        } else if (!status.message.empty()) {
-            lastError = status.message;
-        }
+        lastError = activation.message;
         if (attempt + 1 < reloadAttempts) {
             g_usleep(reloadIntervalUs);
         }
