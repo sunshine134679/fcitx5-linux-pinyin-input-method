@@ -151,8 +151,8 @@ CandidateRanker::rank(std::string_view userInput,
     // F1（2026-10-24 容错专项）：LibIME 模糊解码把击键形读音候选（如
     // zongwen 输入下的 zong'wen）判为 prio=2、规范读音候选（zhong'wen）判为
     // prio=0，组间排序不受学习影响，成熟偏好永远无法越过一次声母误差。
-    // 与简拼晋升同构：prio=0（全覆盖模糊变体）候选在学习增益达到既有
-    // 成熟学习者阈值 1.8 后，可与 prio=2 直接匹配组按最终分数竞争。
+    // prio=0（全覆盖模糊变体）候选在学习增益达到既有成熟学习者阈值
+    // 1.8，且当前原始输入有连续明确纠正证据后，才可与 prio=2 竞争。
     // 门槛收紧：候选读音必须与输入音节数一致（模糊变体天然保持音节结构），
     // 排除"王绍龙王"类分段造词产生的音节数不符学习词条越组晋升。
     std::size_t inputSyllables = 0;
@@ -197,13 +197,10 @@ CandidateRanker::rank(std::string_view userInput,
         if (candidateSyllables != inputSyllables) {
             return candidate.match_priority;
         }
-        // Single-syllable fuzzy candidates (match_priority == 0) must not be elevated to
-        // exact match priority (2) purely by generic unigram learning boost from their normal
-        // pronunciation (e.g. typing "le -> 了" must not hijack "ne -> 呢", "long -> 龙" must
-        // not hijack "nong -> 弄", "shi -> 是" must not hijack "si -> 四").
-        // Promotion across exact match group requires explicit correction evidence under the
-        // current raw input (recent_choice_bonus > 0.0).
-        if (inputSyllables <= 1 && candidate.recent_choice_bonus <= 0.0) {
+        // 普通词频只表达词语偏好，不证明用户在当前拼音下想要纠错。
+        // 单字、多字均需当前原始输入的明确重复选择证据，避免在正确
+        // 拼音下学到的词跨组夺走其他完整拼音的首选。
+        if (candidate.recent_choice_bonus <= 0.0) {
             return candidate.match_priority;
         }
         return 2;
