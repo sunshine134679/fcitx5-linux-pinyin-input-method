@@ -1,5 +1,5 @@
 Name:           modernime
-Version:        0.1.10
+Version:        0.2.1
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 # ModernIME engine, UI addon, and settings client are LGPL-2.1-or-later;
@@ -18,6 +18,7 @@ BuildRequires:  sqlite-devel >= 3.31.0
 BuildRequires:  lmdb-devel >= 0.9.24
 BuildRequires:  boost-devel >= 1.61
 BuildRequires:  fcitx5-devel >= 5.0.14
+BuildRequires:  libime >= 1.0.11
 BuildRequires:  libime-devel >= 1.0.11
 BuildRequires:  gtk3-devel >= 3.24.0
 BuildRequires:  pango-devel >= 1.44.0
@@ -37,7 +38,7 @@ Requires:       coreutils
 %description
 ModernIME is a modern Pinyin input method engine for Fcitx5 on Linux desktops,
 featuring smart candidate ranking, error correction, offline dictionaries,
-Bento-designed GTK3 settings client, and comprehensive character governance.
+native GTK3 settings client, and comprehensive character governance.
 
 %prep
 %autosetup -p1

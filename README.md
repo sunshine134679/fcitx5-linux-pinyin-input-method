@@ -18,9 +18,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.0_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.2.0-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.0-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.1_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.2.1-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.1-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -212,7 +212,7 @@ sudo dnf install -y \
     gcc gcc-c++ cmake make git pkgconf-pkg-config python3 coreutils util-linux \
     sqlite-devel lmdb-devel boost-devel \
     gtest-devel google-benchmark-devel \
-    fcitx5-devel libime-devel \
+    fcitx5-devel libime libime-devel \
     gtk3-devel pango-devel cairo-devel rpm-build \
     libappindicator-gtk3-devel
 ```
@@ -604,7 +604,7 @@ GNOME 扩展仅在当前 GNOME 图形与 DBus 会话中自动部署。ModernIME 
 
 全拼保留 `xian / xi'an`、`jie / ji'e` 等合理内部拆音，不必先手动输入隔音符才能召回多音节词。对于相同完整击键，已收录词与单字按可比较的位置先验竞争，继续保留常用原生首字保护和个人学习。当前模型下 `xian` 默认“先”首选、“西安”第2，重复选择后可学为首选；`xianren` 可输入“西安人”，选取前缀“西安”仍保留 `ren`。需要明确拆音时仍可使用隔音符。
 
-后续源码改进（尚未发布）：离线独立语境模型只调整当前前文与候选首词的衔接，保留系统主模型的简拼、句内解码及个人学习。前文最多32字符、每位置保留4种分词；“气球”后`chongqi`与“他的”后`shenqing`在空学习库分别首选“充气”“神情”。模型缺失时回退原系统模型，关闭上下文或学习时停用语境评分。附加模型约39MiB，当前诊断进程峰值内存约增加36MiB；不代表所有语境均能正确判断。
+v0.2.1 源码改进（发布准备中）：离线独立语境模型只调整当前前文与候选首词的衔接，保留系统主模型的简拼、句内解码及个人学习。前文最多32字符、每位置保留4种分词；“气球”后`chongqi`与“他的”后`shenqing`在空学习库分别首选“充气”“神情”。模型缺失时回退原系统模型，关闭上下文或学习时停用语境评分。附加模型约39MiB，当前诊断进程峰值内存约增加36MiB；不代表所有语境均能正确判断。
 
 单字也可利用明确语境，例如“我们去公”后输入`yuan`首选“园”。退格留字学习结算后继续保留当前有效前文，Qt6/X11中删去“公园”的“园”再输入可正确补回；无上下文时保留原单字排序。
 
@@ -718,6 +718,12 @@ modernime-session-init --remove-gnome-extension
 此命令只处理扩展，不重启 Fcitx5、不改其他会话配置。包已移除时可从源码运行 `MODERNIME_PREFIX=/usr ./scripts/modernime-session-init --remove-gnome-extension`，并沿用安装时的配置/数据路径。旧版遗留的无记录副本仍由用户自行备份或移除；回退到尚无此保护的旧版时，须先备份扩展并避免运行旧版初始化脚本，旧程序不会遵守新记录。
 
 ## 版本更新记录
+
+### v0.2.1（发布准备中）
+
+- 独立离线语境模型改善冷启动同音词和单字排序，保留主模型解码与个人学习；修复退格学习后丢失当前前文。
+- 保持八页结构，更新客户端交互、成套主题与候选轮廓；检查更新由明确操作触发缓存刷新，状态与错误反馈统一。
+- Ubuntu 24.04 / GNOME X11 的 Qt6 实际输入、选词、连续输入及退格补字通过；详细变化、性能代价和未覆盖范围见 [v0.2.1 发布说明](docs/releases/v0.2.1-发布说明.md)。当前正式发布仍为 v0.2.0，以上 v0.2.1 产物名用于本版发布准备。
 
 ### v0.2.0 (2026-11-09)
 
@@ -922,7 +928,7 @@ ModernIME 针对拼音切分、中英防抢占、艾宾浩斯时间遗忘衰减�
 
 ## 故障排查
 
-- CMake 提示找不到 `Fcitx5Core`、`LibIMEPinyin`、`libime_pinyindict` 或 GTK3：确认已安装上面的开发包，然后重新执行 `./install.sh`；
+- CMake 提示找不到 `Fcitx5Core`、`LibIMEPinyin`、`libime_pinyindict`、`libime_slm_build_binary` 或 GTK3：确认已安装上面的开发包，然后重新执行 `./install.sh`；
 - `fcitx5-remote` 没有输出：没有输入焦点时 `-n` 可为空；先运行 `fcitx5-remote` 检查状态，在普通用户的图形与 DBus 会话中执行 `modernime-session-init` 恢复启动和配置。仍失败时从终端运行 `fcitx5 -D` 查看启动诊断；
 - 设置客户端找不到：直接运行 `~/.local/bin/modernime-settings`，并确认 `~/.local/share/applications/modernime-settings.desktop` 存在；
 - 在 SSH、容器或无桌面的终端安装：这是受支持的，安装脚本会跳过 Fcitx5 自动启动；回到图形会话后手动启动 Fcitx5 即可。
