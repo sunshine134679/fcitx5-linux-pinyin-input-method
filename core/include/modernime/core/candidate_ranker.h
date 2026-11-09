@@ -66,6 +66,9 @@ struct CandidateScore final {
     bool learned_rare_coverage = false;
     double unigram_anchor = 0.0;
     double unigram_prominence = 0.0;
+    // Remove the shared absolute character-frequency advantage when comparing
+    // characters with split-syllable words, preserving differences among chars.
+    double unigram_comparison_offset = 0.0;
     // Comparable native-rank spacing when one raw syllable also spells a word.
     double native_rank_scale = 1.0;
     std::int64_t last_selected_ms = 0;
@@ -85,7 +88,8 @@ struct CandidateScore final {
 
     double base_prior() const {
         const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? DenseNativeRankStep : 1.0;
-        double score = native_rank_scale * sourceStep * static_cast<double>(source_index) -
+        double score = native_rank_scale * sourceStep * static_cast<double>(source_index) +
+               unigram_comparison_offset -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                LanguageContextPriorWeight * language_context_bonus -

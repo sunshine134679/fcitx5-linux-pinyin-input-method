@@ -125,6 +125,11 @@ esac
         auto *button = findTarget(page.widget(), "updates-check");
         auto *copy = findTarget(page.widget(), "updates-copy-command");
         assert(status && button && copy);
+        // Window activation is asynchronous. Search focus must be exercised
+        // after the fixture owns keyboard focus, as in the real client.
+        gtk_window_present(GTK_WINDOW(window));
+        gtk_widget_grab_focus(button);
+        assert(waitUntil([button] { return gtk_widget_has_focus(button); }));
         const auto message = [status] { return std::string(gtk_label_get_text(GTK_LABEL(status))); };
         const auto query = [&] {
             gtk_button_clicked(GTK_BUTTON(button));
@@ -151,7 +156,7 @@ esac
         check(!gtk_widget_get_sensitive(copy), "in-flight refresh must disable copying a previous upgrade command");
         check(!containsLabel(page.widget(), "0.1.22"), "in-flight refresh must not present the old candidate as current");
         check(message().find("正在") != std::string::npos, "in-flight query must remain visible");
-        page.focusTarget("updates-copy-command");
+        assert(page.focusTarget("updates-copy-command"));
         std::filesystem::remove(root / "hold");
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
         check(gtk_window_get_focus(GTK_WINDOW(window)) == copy,
@@ -171,8 +176,8 @@ esac
         writeFile(root / "hold", "hold");
         gtk_button_clicked(GTK_BUTTON(button));
         assert(waitUntil([&root] { return std::filesystem::exists(root / "started"); }));
-        page.focusTarget("updates-copy-command");
-        page.focusTarget("updates-source");
+        assert(page.focusTarget("updates-copy-command"));
+        assert(page.focusTarget("updates-source"));
         auto *source = findTarget(page.widget(), "updates-source-jump");
         assert(gtk_window_get_focus(GTK_WINDOW(window)) == source);
         std::filesystem::remove(root / "hold");

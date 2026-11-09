@@ -321,19 +321,31 @@ CandidatePipelineResult buildCandidatePipeline(
     }
     // A valid multi-syllable word competes with single characters for the same
     // complete keystrokes. Global character frequency is not word-frequency
-    // evidence: use the same dense native-rank spacing for both interpretations.
-    // Keep the native first-character anchor, lexical evidence and all learning.
+    // evidence: center that prior on the most prominent matching character,
+    // preserving the frequency differences between characters. Both kinds use
+    // dense native-rank spacing; anchors and personal evidence remain intact.
+    const auto completeMatch = [&](const auto &candidate) {
+        return candidate.consumed_input_bytes == context.userInput().size() &&
+            core::PinyinMatchPolicy::exactInputMatch(context.userInput(), candidate.full_pinyin);
+    };
     if (shuangpin == nullptr && core::PinyinMatchPolicy::isStandardSyllable(context.userInput()) &&
         std::any_of(result.scored.begin(), result.scored.end(), [&](const auto &candidate) {
             return candidate.is_lexical && candidate.phrase_length >= 2 &&
-                candidate.consumed_input_bytes == context.userInput().size() &&
-                core::PinyinMatchPolicy::exactInputMatch(context.userInput(), candidate.full_pinyin);
+                completeMatch(candidate);
         })) {
+        double prominenceBaseline = 0.0;
+        for (const auto &candidate : result.scored) {
+            if (candidate.phrase_length == 1 && completeMatch(candidate)) {
+                prominenceBaseline = std::max(prominenceBaseline, candidate.unigram_prominence);
+            }
+        }
         for (auto &candidate : result.scored) {
-            if (candidate.consumed_input_bytes == context.userInput().size() &&
-                core::PinyinMatchPolicy::exactInputMatch(context.userInput(), candidate.full_pinyin)) {
-                candidate.native_rank_scale = core::DenseNativeRankStep;
-                candidate.unigram_prominence = 0.0;
+            if (completeMatch(candidate)) {
+                const bool character = candidate.phrase_length == 1;
+                // base_prior already uses dense spacing for prominent chars.
+                candidate.native_rank_scale = character && candidate.unigram_prominence > 0.0
+                    ? 1.0 : core::DenseNativeRankStep;
+                candidate.unigram_comparison_offset = character ? prominenceBaseline : 0.0;
             }
         }
     }

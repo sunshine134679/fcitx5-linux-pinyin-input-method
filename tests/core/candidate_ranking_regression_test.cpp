@@ -390,7 +390,7 @@ TEST_F(CandidateRankingRegression, NumericMacrosPreserveValueAtRepresentationLim
                 actual.push_back(item.text);
                 EXPECT_EQ(item.fullPinyin, test.input);
                 EXPECT_EQ(item.consumedInputBytes, test.input.size());
-                EXPECT_EQ(item.commitRole, core::CommitCandidateRole::Chinese);
+                EXPECT_EQ(item.commitRole, core::CommitCandidateRole::Generated);
             }
         }
         EXPECT_EQ(actual, test.macros);
