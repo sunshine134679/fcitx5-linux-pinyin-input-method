@@ -47,6 +47,8 @@ FULL_BASELINE_REQUIRED = [
 ]
 
 FULL_FINAL_ADDITIONAL = [
+    "modernime_native_update_helper",
+    "modernime_settings_motion_gtk",
     "modernime_clipboard_capture",
     "modernime_clipboard_async",
     "modernime_updates_page_gtk",
@@ -94,6 +96,7 @@ CORE_ONLY_FINAL_ADDITIONAL = [
 ]
 
 HEADLESS_SKIP_WHITELIST = {
+    "modernime_settings_motion_gtk",
     "modernime_updates_page_gtk",
     "modernime_settings_focus_gtk",
     "modernime_settings_shell_gtk",
