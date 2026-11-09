@@ -1457,6 +1457,24 @@ void testContextualLanguageModel() {
     assertTrue(provider.page().items.front().text == "神情",
                "context segmentation preserves the model's expression preference");
     provider.reset();
+    provider.setContext("今天天气很好我们去公", "");
+    provider.append("yuan");
+    assertTrue(provider.page().items.front().text == "园" &&
+                   provider.page().items.front().fullPinyin == "yuan" &&
+                   provider.page().items.front().consumedInputBytes == 4,
+               "cold context ranks the missing character of a word first");
+    provider.setContextLearningEnabled(false);
+    assertTrue(provider.page().items.front().text == "原",
+               "disabling context restores the native character anchor");
+    provider.setContextLearningEnabled(true);
+    // Disabling context deliberately discards the old surrounding text.
+    provider.setContext("今天天气很好我们去公", "");
+    assertTrue(provider.page().items.front().text == "园",
+               "fresh authorized context updates the existing composition");
+    provider.setContext("", "");
+    assertTrue(provider.page().items.front().text == "原",
+               "leaving context retains ordinary single-character order");
+    provider.reset();
     provider.setContext("", "");
     provider.append("beijinghenmei");
     const auto original = provider.page();

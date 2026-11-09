@@ -148,6 +148,7 @@ void writeReport(std::ostream &out, const Report &report,
                  {"language_context_bonus", score.language_context_bonus},
                  {"learned_word_bonus", score.learned_word_bonus}, {"rare_penalty", score.rare_penalty()},
                  {"native_rank_scale", score.native_rank_scale},
+                 {"unigram_anchor", score.unigram_anchor},
                  {"unigram_prominence", score.unigram_prominence},
                  {"unigram_comparison_offset", score.unigram_comparison_offset},
                  {"base_prior", score.base_prior()}, {"final_cost", score.final_score()}}) {

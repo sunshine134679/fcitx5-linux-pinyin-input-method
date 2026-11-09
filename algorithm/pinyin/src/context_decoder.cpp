@@ -134,8 +134,11 @@ ContextDecoder::ContextDecoder(libime::PinyinContext &context, std::string_view 
 }
 
 double ContextDecoder::gain(const libime::SentenceResult &sentence) const {
-    if (evidenceStates_.empty() || fcitx::utf8::length(sentence.toString()) < 2) return 0.0;
+    if (evidenceStates_.empty()) return 0.0;
     const bool independentModel = evidenceModel_.languageModelFile() != model_.languageModelFile();
+    // The independent model also carries character transitions. Retain the
+    // original multi-character-only policy when falling back to the main LM.
+    if (!independentModel && fcitx::utf8::length(sentence.toString()) < 2) return 0.0;
     if (sentence.sentence().empty()) return 0.0;
     const auto firstWord = sentence.sentence().front()->word();
     if (independentModel && evidenceModel_.isUnknown(evidenceModel_.index(firstWord), firstWord)) return 0.0;
