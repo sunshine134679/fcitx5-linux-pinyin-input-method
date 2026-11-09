@@ -116,14 +116,12 @@ GtkWidget *findTarget(GtkWidget *widget, std::string_view target) {
     if (!GTK_IS_CONTAINER(widget)) {
         return nullptr;
     }
-    auto *children = gtk_container_get_children(GTK_CONTAINER(widget));
-    GtkWidget *result = nullptr;
-    for (auto *item = children; item != nullptr && result == nullptr;
-         item = item->next) {
-        result = findTarget(GTK_WIDGET(item->data), target);
-    }
-    g_list_free(children);
-    return result;
+    struct Search { std::string_view target; GtkWidget *result = nullptr; } search{target};
+    gtk_container_forall(GTK_CONTAINER(widget), +[](GtkWidget *child, gpointer data) {
+        auto &state = *static_cast<Search *>(data);
+        if (state.result == nullptr) state.result = findTarget(child, state.target);
+    }, &search);
+    return search.result;
 }
 
 GtkWidget *findAccessibleWidget(GtkWidget *widget, GType type,
@@ -500,6 +498,10 @@ int main(int argc, char **argv) {
     const auto path = (root / "bin").string() + ":" +
                       (oldPath == nullptr ? "" : oldPath);
     assert(g_setenv("PATH", path.c_str(), TRUE));
+    // Upgrade-copy focus requires an identified installation channel.
+    std::ofstream(root / "install-channel.txt") << "channel=deb\n";
+    assert(g_setenv("MODERNIME_INSTALL_CHANNEL_FILE",
+                    (root / "install-channel.txt").c_str(), TRUE));
     {
         libime::PinyinDictionary dictionary;
         dictionary.addWord(0, "chong'qing", "重庆");
@@ -566,7 +568,13 @@ int main(int argc, char **argv) {
         auto *trial = findAccessibleWidget(window, GTK_TYPE_ENTRY, "试输入");
         assert(trial != nullptr);
         gtk_entry_set_text(GTK_ENTRY(trial), "你好");
-        assert(findLabelText(window, "已收到“你好”。可以继续试长句，或到其他应用输入。") != nullptr);
+        // The trial keeps the entered text; instructions are available on
+        // demand instead of adding a second paragraph below the input.
+        assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(trial))) == "你好");
+        auto *trialHelp = gtk_widget_get_tooltip_text(trial);
+        assert(trialHelp != nullptr && std::string_view(trialHelp).find("按空格") != std::string_view::npos);
+        g_free(trialHelp);
+        assert(findLabelText(window, "已收到“你好”。可以继续试长句，或到其他应用输入。") == nullptr);
         auto *oldSummary = findLabelText(window, "ModernIME 正在运行");
         bool refreshed = false;
         g_object_weak_ref(G_OBJECT(oldSummary), +[](gpointer data, GObject *) {
@@ -579,7 +587,7 @@ int main(int argc, char **argv) {
         assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(trial))) == "你好");
         gtk_entry_set_text(GTK_ENTRY(trial), "");
 
-        // Selected navigation text stays dark and neutral on focus and hover.
+        // Selected navigation text keeps the chosen theme accent on focus and hover.
         shell.show(modernime::settings::SettingsPageId::Overview);
         auto *overviewNav = findAccessibleWidget(window, GTK_TYPE_BUTTON, "概览");
         assert(overviewNav != nullptr);
@@ -591,9 +599,12 @@ int main(int argc, char **argv) {
             GdkRGBA color{};
             gtk_style_context_get_color(gtk_widget_get_style_context(navLabel),
                                         gtk_widget_get_state_flags(navLabel), &color);
-            assert(color.red > 0.1 && color.red < 0.2);
-            assert(std::abs(color.red - color.green) < 0.01);
-            assert(std::abs(color.red - color.blue) < 0.01);
+            GdkRGBA expected{};
+            assert(gtk_style_context_lookup_color(gtk_widget_get_style_context(navLabel),
+                                                   "modernime_nav_fg_color", &expected));
+            assert(std::abs(color.red - expected.red) < 0.01);
+            assert(std::abs(color.green - expected.green) < 0.01);
+            assert(std::abs(color.blue - expected.blue) < 0.01);
         };
         // Let CSS transitions settle before checking the focused descendant.
         std::this_thread::sleep_for(std::chrono::milliseconds(180));
@@ -652,17 +663,17 @@ int main(int argc, char **argv) {
             window, GTK_TYPE_EVENT_BOX, "显示英文释义说明");
         assert(definitionHelp == nullptr);
         assert(findLabelText(window, "中文状态下，常用中文与用户明确选择优先") == nullptr);
-        assert(pageSize != nullptr && GTK_IS_COMBO_BOX(pageSize));
+        assert(pageSize != nullptr && GTK_IS_MENU_BUTTON(pageSize));
         assert(preview != nullptr && GTK_IS_DRAWING_AREA(preview));
         auto *example = findTarget(window, "candidate-preview-example");
         auto *summary = findTarget(window, "candidate-preview-summary");
         assert(example != nullptr && summary != nullptr);
-        const int originalSize = gtk_combo_box_get_active(GTK_COMBO_BOX(pageSize));
+        const int originalSize = modernime::settings::settingsChoiceActive(pageSize);
         const int originalFont = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFont));
         const bool originalNumbers = gtk_switch_get_active(GTK_SWITCH(numbers));
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), 20);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), 6);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(example), 0);
+        modernime::settings::setSettingsChoiceActive(pageSize, 6);
+        modernime::settings::setSettingsChoiceActive(example, 0);
         drainEvents();
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 9 个") != std::string_view::npos);
         assert(waitUntil([preview] {
@@ -684,22 +695,22 @@ int main(int argc, char **argv) {
         }));
         assert(gtk_widget_get_sensitive(save) == editedBeforeResize);
         assert(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFont)) == 20);
-        assert(gtk_combo_box_get_active(GTK_COMBO_BOX(pageSize)) == 6);
+        assert(modernime::settings::settingsChoiceActive(pageSize) == 6);
         gtk_window_resize(GTK_WINDOW(window), 720, 520);
         assert(waitUntil([preview, scaleHint, singleWidth, smallPercent] {
             return gtk_widget_get_allocated_width(preview) == singleWidth &&
                 std::string_view(gtk_label_get_text(GTK_LABEL(scaleHint))).find(smallPercent) != std::string_view::npos;
         }));
-        gtk_combo_box_set_active(GTK_COMBO_BOX(example), 1);
+        modernime::settings::setSettingsChoiceActive(example, 1);
         drainEvents();
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 7 个") != std::string_view::npos);
         assert(gtk_widget_get_allocated_width(preview) == singleWidth);
         const auto *description = atk_object_get_description(gtk_widget_get_accessible(preview));
         assert(description != nullptr && std::string_view(description).find("7.逆号") != std::string_view::npos);
         assert(std::string_view(description).find("8.") == std::string_view::npos);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), 0);
+        modernime::settings::setSettingsChoiceActive(pageSize, 0);
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 3 个") != std::string_view::npos);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), 6);
+        modernime::settings::setSettingsChoiceActive(pageSize, 6);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), 28);
         // At 28pt / 9 items the established unscaled width is 858 pixels.
         const auto largeFontPercent = std::to_string((singleWidth * 100 + 429) / 858) + "%";
@@ -707,9 +718,23 @@ int main(int argc, char **argv) {
         gtk_switch_set_active(GTK_SWITCH(numbers), FALSE);
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(summary))).find("当前页 7 个") != std::string_view::npos);
         // Number selection changes keyboard behavior, not the real bar's labels.
-        gtk_combo_box_set_active(GTK_COMBO_BOX(pageSize), originalSize);
+        modernime::settings::setSettingsChoiceActive(pageSize, originalSize);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFont), originalFont);
         gtk_switch_set_active(GTK_SWITCH(numbers), originalNumbers);
+
+        // Select through the actual popover, not only its programmatic value API.
+        modernime::settings::setSettingsChoiceActive(example, 1);
+        auto *choicePopover = GTK_WIDGET(gtk_menu_button_get_popover(GTK_MENU_BUTTON(example)));
+        gtk_widget_grab_focus(example);
+        drainEvents();
+        gtk_button_clicked(GTK_BUTTON(example));
+        assert(waitUntil([choicePopover] { return gtk_widget_get_mapped(choicePopover); }));
+        auto *singleCharacter = findAccessibleWidget(choicePopover, GTK_TYPE_MODEL_BUTTON, "单字");
+        assert(singleCharacter != nullptr);
+        gtk_button_clicked(GTK_BUTTON(singleCharacter));
+        assert(modernime::settings::settingsChoiceActive(example) == 0);
+        assert(waitUntil([choicePopover] { return !gtk_widget_get_mapped(choicePopover); }));
+        modernime::settings::setSettingsChoiceActive(example, 1);
 
         // Details stay collapsed until opened; search must reveal hidden targets.
         shell.show(modernime::settings::SettingsPageId::Updates);
@@ -805,7 +830,7 @@ int main(int argc, char **argv) {
         dispatchKey(window, GDK_KEY_f, GDK_CONTROL_MASK);
         assert(gtk_widget_has_focus(search));
         gtk_entry_set_text(GTK_ENTRY(search), "a");
-        auto *popover = findWidgetByType(window, GTK_TYPE_POPOVER);
+        auto *popover = findTarget(window, "settings-search-popover");
         assert(popover != nullptr);
         assert(waitUntil(
             [popover] { return gtk_widget_get_visible(popover); }));
@@ -1054,7 +1079,8 @@ int main(int argc, char **argv) {
         gtk_button_clicked(GTK_BUTTON(expandHistory));
         drainEvents();
         auto *historyReader = findWidgetByType(firstHistoryRow, GTK_TYPE_TEXT_VIEW);
-        assert(historyReader != nullptr && gtk_widget_get_mapped(historyReader));
+        assert(historyReader != nullptr);
+        assert(waitUntil([historyReader] { return gtk_widget_get_mapped(historyReader); }));
         auto *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(historyReader));
         GtkTextIter begin, end;
         gtk_text_buffer_get_bounds(buffer, &begin, &end);
@@ -1067,7 +1093,7 @@ int main(int argc, char **argv) {
         assert(gtk_widget_get_allocated_height(readingScroll) <= 220);
         gtk_button_clicked(GTK_BUTTON(expandHistory));
         drainEvents();
-        assert(!gtk_widget_get_mapped(historyReader));
+        assert(waitUntil([historyReader] { return !gtk_widget_get_mapped(historyReader); }));
         assert(gtk_list_box_row_get_index(gtk_list_box_get_selected_row(
                    GTK_LIST_BOX(historyList))) == 0);
 
@@ -1111,7 +1137,8 @@ int main(int argc, char **argv) {
             gtk_button_clicked(GTK_BUTTON(expandHuge));
             drainEvents();
             auto *hugeReader = findWidgetByType(hugeRow, GTK_TYPE_TEXT_VIEW);
-            assert(hugeReader != nullptr && gtk_widget_get_mapped(hugeReader));
+            assert(hugeReader != nullptr);
+            assert(waitUntil([hugeReader] { return gtk_widget_get_mapped(hugeReader); }));
             auto *hugeBuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(hugeReader));
             GtkTextIter hStart, hEnd;
             gtk_text_buffer_get_bounds(hugeBuf, &hStart, &hEnd);
@@ -1120,7 +1147,7 @@ int main(int argc, char **argv) {
             g_free(hugeReadText);
             gtk_button_clicked(GTK_BUTTON(expandHuge));
             drainEvents();
-            assert(!gtk_widget_get_mapped(hugeReader));
+            assert(waitUntil([hugeReader] { return !gtk_widget_get_mapped(hugeReader); }));
         }
     }
 

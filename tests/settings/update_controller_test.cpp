@@ -196,7 +196,8 @@ int main(int argc, char **argv) {
     assert(dnfStatus.privilegedCommand == "pkexec dnf upgrade --refresh -y modernime");
     assert((modernime::settings::detail::buildRefreshCacheArgv(
         PackageManagerKind::Dnf, "pkexec", "dnf") ==
-        std::vector<std::string>{"pkexec", "dnf", "makecache", "--refresh"}));
+        std::vector<std::string>{"pkexec", "dnf", "makecache", "--refresh",
+                                 "--setopt=*.skip_if_unavailable=False"}));
     assert((modernime::settings::detail::buildUpgradeArgv(
         PackageManagerKind::Dnf, "pkexec", "dnf") ==
         std::vector<std::string>{"pkexec", "dnf", "upgrade", "--refresh", "-y", "modernime"}));
@@ -470,7 +471,7 @@ int main(int argc, char **argv) {
         std::ifstream refreshLogIn(pkexecLog);
         std::string refreshLoggedArgs;
         std::getline(refreshLogIn, refreshLoggedArgs);
-        assert(refreshLoggedArgs.find("apt-get update") != std::string::npos);
+        assert(refreshLoggedArgs.find("apt-get update --error-on=any") != std::string::npos);
     }
 
     // Preserve the actual authorization failure instead of guessing network loss.

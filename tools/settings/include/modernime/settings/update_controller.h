@@ -44,11 +44,13 @@ public:
 
     static UpdateStatus checkForUpdates(const Environment &environment = {});
 
-    // 保留用于底层独立包管理器事务能力及自动化测试。
-    // 当前客户端设置 UI 采用无特权“复制命令到终端执行”的产品流程，不直接调用此接口进行自动提权升级。
+    // 显式检查更新时由工作线程调用。waitForCompletion 等待自身事务的最终结果，
+    // 初次等待超时仍由既有后台采集器跟踪；状态不明时保留操作锁并返回失败。
     static RuntimeResult refreshPackageCache(const UpdateStatus &status,
-                                             const Environment &environment = {});
+                                             const Environment &environment = {},
+                                             bool waitForCompletion = false);
 
+    // 客户端的实际升级仍采用复制命令到终端执行，不自动跨渠道安装。
     static RuntimeResult runSystemUpgrade(const UpdateStatus &status,
                                           const Environment &environment = {});
 

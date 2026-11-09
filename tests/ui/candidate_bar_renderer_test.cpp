@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -113,6 +114,35 @@ int main() {
                "candidate text is vertically centered in its slot");
 
     auto settings = modernime::core::defaultSettings();
+    const auto luminance = [](const modernime::ui::Color &color) {
+        const auto linear = [](double channel) {
+            return channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * linear(color.red) + 0.7152 * linear(color.green) + 0.0722 * linear(color.blue);
+    };
+    const auto contrast = [&](const modernime::ui::Color &a, const modernime::ui::Color &b) {
+        const double left = luminance(a), right = luminance(b);
+        return (std::max(left, right) + 0.05) / (std::min(left, right) + 0.05);
+    };
+    for (const auto &theme : modernime::core::kCandidateThemes) {
+        settings.candidateTheme = theme.value;
+        const auto palette = modernime::ui::RenderStyle::fromSettings(settings);
+        assertTrue(contrast(palette.panel, palette.text) >= 4.5 &&
+                       contrast(palette.selected, palette.selectedText) >= 4.5,
+                   "every candidate palette keeps normal and selected text readable");
+        RecordingSurface themed;
+        modernime::ui::CandidateBarRenderer::render(themed, layout, palette);
+        assertTrue(themed.operations == surface.operations,
+                   "palette changes preserve rendered candidate content and order");
+    }
+    settings.candidateShape = modernime::core::CandidateShape::Square;
+    const auto square = modernime::ui::RenderStyle::fromSettings(settings);
+    settings.candidateShape = modernime::core::CandidateShape::Capsule;
+    const auto capsule = modernime::ui::RenderStyle::fromSettings(settings);
+    assertTrue(capsule.panelRadius > square.panelRadius && capsule.selectedRadius > square.selectedRadius &&
+                   capsule.clipboardSelectedRadius > square.clipboardSelectedRadius,
+               "shape changes reach both candidate and clipboard rendering");
+    settings = modernime::core::defaultSettings();
     const auto normalMetrics = modernime::ui::CandidateBarMetrics::fromSettings(settings);
     settings.candidateFontFamily = "DejaVu Sans";
     settings.candidateTheme = modernime::core::CandidateTheme::Dark;

@@ -27,6 +27,77 @@ void setTarget(GtkWidget *widget, std::string_view target) {
                            g_strdup(std::string(target).c_str()), g_free);
 }
 
+void compactFontCellPadding(GObject *cell, GParamSpec *, gpointer) {
+    guint padding = 0;
+    g_object_get(cell, "ypad", &padding, nullptr);
+    // GTK restores 10px padding in its cell-data function for every row.
+    // Keep the native renderer and its font attributes; only reduce padding.
+    if (padding != 4) g_object_set(cell, "ypad", 4U, nullptr);
+}
+
+void styleFontChooserChild(GtkWidget *widget, gpointer) {
+    if (GTK_IS_FONT_CHOOSER_WIDGET(widget)) {
+        addStyleClass(widget, "modernime-font-chooser");
+    } else if (GTK_IS_SEARCH_ENTRY(widget)) {
+        addStyleClass(widget, "modernime-font-search");
+        gtk_entry_set_placeholder_text(GTK_ENTRY(widget), "搜索字体名称");
+    } else if (GTK_IS_ENTRY(widget) && !GTK_IS_SPIN_BUTTON(widget)) {
+        addStyleClass(widget, "modernime-font-preview");
+    } else if (GTK_IS_TREE_VIEW(widget)) {
+        addStyleClass(widget, "modernime-font-list");
+        // FontChooser renders font names with an explicit Pango size, which
+        // takes precedence over CSS. Scale that sample without replacing its
+        // native font-family, search model or selection callbacks.
+        auto *columns = gtk_tree_view_get_columns(GTK_TREE_VIEW(widget));
+        for (auto *column = columns; column; column = column->next) {
+            auto *cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(column->data));
+            for (auto *cell = cells; cell; cell = cell->next) {
+                if (GTK_IS_CELL_RENDERER_TEXT(cell->data)) {
+                    if (!g_object_get_data(G_OBJECT(cell->data), "modernime-compact-font-cell")) {
+                        g_object_set_data(G_OBJECT(cell->data), "modernime-compact-font-cell", GINT_TO_POINTER(1));
+                        g_signal_connect(cell->data, "notify::ypad", G_CALLBACK(compactFontCellPadding), nullptr);
+                    }
+                    g_object_set(cell->data, "scale", 0.62, "scale-set", TRUE,
+                                 "ypad", 4U, nullptr);
+                    gtk_cell_renderer_set_fixed_size(GTK_CELL_RENDERER(cell->data), -1, -1);
+                }
+            }
+            g_list_free(cells);
+        }
+        g_list_free(columns);
+    } else if (GTK_IS_SCROLLED_WINDOW(widget)) {
+        gtk_widget_set_size_request(widget, -1, 168);
+        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(widget), 168);
+    }
+    if (GTK_IS_CONTAINER(widget))
+        gtk_container_foreach(GTK_CONTAINER(widget), styleFontChooserChild, nullptr);
+}
+
+void styleFontChooser(GtkButton *button, gpointer) {
+    // GtkFontButton owns this dialog and its selection/response lifecycle.
+    // Scope presentation to its transient window, including subsequent opens.
+    auto *parent = gtk_widget_get_toplevel(GTK_WIDGET(button));
+    auto *windows = gtk_window_list_toplevels();
+    for (auto *item = windows; item != nullptr; item = item->next) {
+        auto *dialog = GTK_WIDGET(item->data);
+        if (!GTK_IS_FONT_CHOOSER_DIALOG(dialog) ||
+            gtk_window_get_transient_for(GTK_WINDOW(dialog)) != GTK_WINDOW(parent)) continue;
+        addStyleClass(dialog, kSettingsWindowClass);
+        addStyleClass(dialog, "modernime-font-dialog");
+        gtk_window_set_default_size(GTK_WINDOW(dialog), 400, 320);
+        gtk_container_set_border_width(GTK_CONTAINER(dialog), 0);
+        auto *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+        gtk_container_set_border_width(GTK_CONTAINER(content), 12);
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+                                       "取消", "保留原来的候选字体");
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_OK,
+                                       "使用字体", "在候选预览中使用选中的字体，保存设置后应用");
+        styleFontChooserChild(content, nullptr);
+        gtk_window_resize(GTK_WINDOW(dialog), 400, 320);
+    }
+    g_list_free(windows);
+}
+
 
 void finishPanelPreferences(GWeakRef *status, GError *error) {
     if (auto *label = g_weak_ref_get(status)) {
@@ -81,7 +152,10 @@ public:
     void refresh() {
         refreshing = true;
         const auto &settings = model.settings();
-        gtk_combo_box_set_active(GTK_COMBO_BOX(candidatePageSize),
+        for (std::size_t i = 0; i < core::kClientThemes.size(); ++i)
+            if (core::kClientThemes[i].key == settings.clientTheme)
+                setSettingsChoiceActive(clientTheme, static_cast<int>(i));
+        setSettingsChoiceActive(candidatePageSize,
                                  settings.candidatePageSize - core::kMinimumCandidatePageSize);
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(candidateFontSize),
                                   settings.candidateFontSize);
@@ -89,10 +163,17 @@ public:
         pango_font_description_set_family(font, settings.candidateFontFamily.c_str());
         gtk_font_chooser_set_font_desc(GTK_FONT_CHOOSER(candidateFontFamily), font);
         pango_font_description_free(font);
-        for (const auto &option : core::kCandidateThemes)
-            if (option.value == settings.candidateTheme) gtk_combo_box_set_active_id(GTK_COMBO_BOX(candidateTheme), option.key.data());
-        for (const auto &option : core::kCandidateSpacings)
-            if (option.value == settings.candidateSpacing) gtk_combo_box_set_active_id(GTK_COMBO_BOX(candidateSpacing), option.key.data());
+        for (std::size_t i = 0; i < core::kCandidateThemes.size(); ++i) {
+            if (core::kCandidateThemes[i].value == settings.candidateTheme)
+                setSettingsChoiceActive(candidateTheme, static_cast<int>(i));
+        }
+        for (std::size_t i = 0; i < core::kCandidateSpacings.size(); ++i) {
+            if (core::kCandidateSpacings[i].value == settings.candidateSpacing)
+                setSettingsChoiceActive(candidateSpacing, static_cast<int>(i));
+        }
+        for (std::size_t i = 0; i < core::kCandidateShapes.size(); ++i)
+            if (core::kCandidateShapes[i].value == settings.candidateShape)
+                setSettingsChoiceActive(candidateShape, static_cast<int>(i));
         gtk_switch_set_active(GTK_SWITCH(numberSelection),
                               settings.numberSelection);
         gtk_switch_set_active(GTK_SWITCH(arrowNavigation),
@@ -106,6 +187,7 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        if (target == "client-theme") return focusWidgetOrFallback(clientTheme);
         if (target == "candidate-page-size") {
             return focusWidgetOrFallback(candidatePageSize, candidatePageSizeFallback);
         }
@@ -118,6 +200,8 @@ public:
             return focusWidgetOrFallback(candidateTheme, candidateThemeFallback);
         if (target == "candidate-spacing")
             return focusWidgetOrFallback(candidateSpacing, candidateSpacingFallback);
+        if (target == "candidate-shape")
+            return focusWidgetOrFallback(candidateShape, candidateShapeFallback);
         if (target == "number-selection") {
             return focusWidgetOrFallback(numberSelection, numberSelectionFallback);
         }
@@ -140,11 +224,12 @@ private:
         page = pageGuard.get();
 
         buildPreviewCard();
+        buildClientAppearance();
         buildSettingsCard();
 
         setSettingsFocusChain(
-            page, {previewExample, nativePanelSettings, candidatePageSize, candidateFontFamily, candidateFontSize,
-                   candidateSpacing, candidateTheme, numberSelection,
+            page, {clientTheme, previewExample, candidateTheme, candidateShape, nativePanelSettings,
+                   candidatePageSize, candidateFontFamily, candidateFontSize, candidateSpacing, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation});
         refresh();
         pageGuard.release();
@@ -160,11 +245,11 @@ private:
         addStyleClass(headerLabel, "modernime-preview-header");
         gtk_widget_set_halign(headerLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(header), headerLabel, TRUE, TRUE, 0);
-        previewExample = gtk_combo_box_text_new();
+        previewExample = createSettingsChoice();
         for (const auto *text : {"单字", "双字", "混合词组"}) {
-            gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(previewExample), text);
+            appendSettingsChoice(previewExample, text);
         }
-        gtk_combo_box_set_active(GTK_COMBO_BOX(previewExample), 1);
+        setSettingsChoiceActive(previewExample, 1);
         setTarget(previewExample, "candidate-preview-example");
         setAccessibleWidgetText(previewExample, "预览示例", "切换单字、双字或不同长度的候选，比较同一候选栏的容量");
         gtk_box_pack_end(GTK_BOX(header), previewExample, FALSE, FALSE, 0);
@@ -199,11 +284,15 @@ private:
         gtk_label_set_line_wrap(GTK_LABEL(previewScaleHint), TRUE);
         setTarget(previewScaleHint, "candidate-preview-scale");
         gtk_box_pack_start(GTK_BOX(previewCard), previewScaleHint, FALSE, FALSE, 0);
+        appearanceActions = gtk_grid_new();
+        gtk_grid_set_column_spacing(GTK_GRID(appearanceActions), 12);
+        gtk_widget_set_margin_top(appearanceActions, 6);
+        gtk_box_pack_start(GTK_BOX(previewCard), appearanceActions, FALSE, FALSE, 0);
         if (g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0 ||
             g_getenv("WAYLAND_DISPLAY") != nullptr) {
             auto *nativeHint = gtk_label_new(
                 "Wayland 候选由桌面或应用面板显示；此预览用于 ModernIME 自绘候选栏。"
-                "GNOME 面板的字体、配色与间距可在面板设置中调整。");
+                "GNOME 面板的字体、配色、轮廓与间距可在面板设置中调整。");
             addStyleClass(nativeHint, "modernime-description");
             gtk_label_set_xalign(GTK_LABEL(nativeHint), 0.0F);
             gtk_label_set_line_wrap(GTK_LABEL(nativeHint), TRUE);
@@ -230,10 +319,10 @@ private:
         gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
 
         // Compact native controls keep all supported values keyboard-accessible.
-        candidatePageSize = gtk_combo_box_text_new();
+        candidatePageSize = createSettingsChoice();
         for (int value = core::kMinimumCandidatePageSize;
              value <= core::kMaximumCandidatePageSize; ++value) {
-            gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(candidatePageSize),
+            appendSettingsChoice(candidatePageSize,
                                           (std::to_string(value) + " 个").c_str());
         }
         setTarget(candidatePageSize, "candidate-page-size");
@@ -248,6 +337,7 @@ private:
         gtk_font_button_set_show_style(GTK_FONT_BUTTON(candidateFontFamily), FALSE);
         gtk_font_chooser_set_level(GTK_FONT_CHOOSER(candidateFontFamily), GTK_FONT_CHOOSER_LEVEL_FAMILY);
         gtk_font_chooser_set_preview_text(GTK_FONT_CHOOSER(candidateFontFamily), "你好，世界。ModernIME");
+        g_signal_connect_after(candidateFontFamily, "clicked", G_CALLBACK(styleFontChooser), nullptr);
         setTarget(candidateFontFamily, "candidate-font-family");
         setAccessibleWidgetText(candidateFontFamily, "候选字体", "选择系统中已安装的字体");
         gtk_box_pack_start(GTK_BOX(fontControl), candidateFontFamily, FALSE, FALSE, 0);
@@ -264,18 +354,36 @@ private:
             "候选字体", "选择已安装字体，字号可设置 14–28 pt", fontControl);
         gtk_box_pack_start(GTK_BOX(card), candidateFontSizeFallback, FALSE, FALSE, 0);
 
-        candidateSpacing = gtk_combo_box_text_new();
+        candidateSpacing = createSettingsChoice();
         for (const auto &option : core::kCandidateSpacings)
-            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(candidateSpacing), option.key.data(), option.label.data());
+            appendSettingsChoice(candidateSpacing, option.label);
         setTarget(candidateSpacing, "candidate-spacing");
         candidateSpacingFallback = createSettingRow("候选间距", "紧凑节省横向空间，宽松便于浏览", candidateSpacing);
         gtk_box_pack_start(GTK_BOX(card), candidateSpacingFallback, FALSE, FALSE, 0);
-        candidateTheme = gtk_combo_box_text_new();
-        for (const auto &option : core::kCandidateThemes)
-            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(candidateTheme), option.key.data(), option.label.data());
+        candidateTheme = createSettingsChoice();
+        for (const auto &option : core::kCandidateThemes) {
+            auto sample = core::defaultSettings();
+            sample.candidateTheme = option.value;
+            const auto palette = ui::RenderStyle::fromSettings(sample);
+            const auto rgba = [](const ui::Color &color) -> GdkRGBA {
+                return {color.red, color.green, color.blue, color.alpha};
+            };
+            appendSettingsPaletteChoice(candidateTheme, option.label,
+                {rgba(palette.panel), rgba(palette.text), rgba(palette.selected)});
+        }
         setTarget(candidateTheme, "candidate-theme");
-        candidateThemeFallback = createSettingRow("候选配色", "选择候选栏和剪贴板菜单的配色", candidateTheme);
-        gtk_box_pack_start(GTK_BOX(card), candidateThemeFallback, FALSE, FALSE, 0);
+        setAccessibleWidgetText(candidateTheme, "候选配色", "选择候选栏和剪贴板菜单的配色，立即预览");
+        candidateThemeFallback = previewCard;
+        gtk_grid_attach(GTK_GRID(appearanceActions), gtk_label_new("配色"), 0, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(appearanceActions), candidateTheme, 1, 0, 1, 1);
+        candidateShape = createSettingsChoice();
+        for (const auto &option : core::kCandidateShapes)
+            appendSettingsChoice(candidateShape, option.label);
+        setTarget(candidateShape, "candidate-shape");
+        setAccessibleWidgetText(candidateShape, "候选轮廓", "选择圆润、方正或胶囊形状，立即预览");
+        candidateShapeFallback = previewCard;
+        gtk_grid_attach(GTK_GRID(appearanceActions), gtk_label_new("轮廓"), 2, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(appearanceActions), candidateShape, 3, 0, 1, 1);
 
         // Row 3: 数字键选词
         numberSelection = gtk_switch_new();
@@ -314,6 +422,7 @@ private:
         g_signal_connect(candidateFontSize, "value-changed", G_CALLBACK(onSpinChanged), this);
         g_signal_connect(candidateFontFamily, "font-set", G_CALLBACK(onSpinChanged), this);
         g_signal_connect(candidateTheme, "changed", G_CALLBACK(onSpinChanged), this);
+        g_signal_connect(candidateShape, "changed", G_CALLBACK(onSpinChanged), this);
         g_signal_connect(candidateSpacing, "changed", G_CALLBACK(onSpinChanged), this);
 
         for (auto *control : {numberSelection, arrowNavigation, pageNavigation,
@@ -321,6 +430,25 @@ private:
             g_signal_connect(control, "notify::active",
                              G_CALLBACK(onSwitchChanged), this);
         }
+    }
+
+    void buildClientAppearance() {
+        clientTheme = createSettingsChoice();
+        for (const auto &option : core::kClientThemes)
+            appendSettingsPaletteChoice(clientTheme, option.label, settingsThemeColors(option.key));
+        setTarget(clientTheme, "client-theme");
+        setAccessibleWidgetText(clientTheme, "客户端主题", "即时预览客户端配色，保存后记住选择");
+        setPageHeaderAction(page, clientTheme);
+        g_signal_connect(clientTheme, "changed", G_CALLBACK(+[](GtkWidget *, gpointer data) {
+            auto *self = static_cast<Impl *>(data);
+            if (self->refreshing) return;
+            auto settings = self->model.settings();
+            const int selected = settingsChoiceActive(self->clientTheme);
+            if (selected < 0 || static_cast<std::size_t>(selected) >= core::kClientThemes.size()) return;
+            settings.clientTheme = core::kClientThemes[selected].key;
+            self->model.setSettings(std::move(settings));
+            if (self->changed) self->changed();
+        }), this);
     }
 
     void updatePreview() {
@@ -331,7 +459,7 @@ private:
             "你好", "你号", "拟好", "拟合", "霓虹", "倪皓", "逆号", "泥壕", "妮好"};
         static constexpr std::array mixed{
             "你好", "你号", "拟好", "你好啊", "你好呀", "你好吗", "你还好", "你好吧", "你好哇"};
-        const int example = gtk_combo_box_get_active(GTK_COMBO_BOX(previewExample));
+        const int example = settingsChoiceActive(previewExample);
         const auto &samples = example == 0 ? single : example == 1 ? doubleWords : mixed;
         const auto settings = controlSettings();
         const int capacity = settings.candidatePageSize;
@@ -361,8 +489,7 @@ private:
         cairo_surface_destroy(surface);
         gtk_widget_set_size_request(candidatePreview, 1, static_cast<int>(std::ceil(metrics.canvasHeight)));
         gtk_label_set_markup(GTK_LABEL(compositionLabel), example == 0
-            ? "ni<span foreground='#252525' font_weight='bold'>|</span>"
-            : "nihao<span foreground='#252525' font_weight='bold'>|</span>");
+            ? "ni<b>|</b>" : "nihao<b>|</b>");
         std::string accessibleCandidates;
         for (const auto &candidate : previewLayout.candidates) {
             if (!accessibleCandidates.empty()) accessibleCandidates += " · ";
@@ -426,18 +553,21 @@ private:
 
     core::ModernIMESettings controlSettings() const {
         auto settings = model.settings();
-        settings.candidatePageSize = gtk_combo_box_get_active(GTK_COMBO_BOX(candidatePageSize)) + core::kMinimumCandidatePageSize;
+        settings.candidatePageSize = settingsChoiceActive(candidatePageSize) + core::kMinimumCandidatePageSize;
         settings.candidateFontSize = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(candidateFontSize));
         if (auto *font = gtk_font_chooser_get_font_desc(GTK_FONT_CHOOSER(candidateFontFamily))) {
             if (const auto *family = pango_font_description_get_family(font)) settings.candidateFontFamily = family;
             pango_font_description_free(font);
         }
-        const auto *theme = gtk_combo_box_get_active_id(GTK_COMBO_BOX(candidateTheme));
-        for (const auto &option : core::kCandidateThemes)
-            if (theme && option.key == theme) settings.candidateTheme = option.value;
-        const auto *spacing = gtk_combo_box_get_active_id(GTK_COMBO_BOX(candidateSpacing));
-        for (const auto &option : core::kCandidateSpacings)
-            if (spacing && option.key == spacing) settings.candidateSpacing = option.value;
+        const int theme = settingsChoiceActive(candidateTheme);
+        if (theme >= 0 && static_cast<std::size_t>(theme) < core::kCandidateThemes.size())
+            settings.candidateTheme = core::kCandidateThemes[theme].value;
+        const int shape = settingsChoiceActive(candidateShape);
+        if (shape >= 0 && static_cast<std::size_t>(shape) < core::kCandidateShapes.size())
+            settings.candidateShape = core::kCandidateShapes[shape].value;
+        const int spacing = settingsChoiceActive(candidateSpacing);
+        if (spacing >= 0 && static_cast<std::size_t>(spacing) < core::kCandidateSpacings.size())
+            settings.candidateSpacing = core::kCandidateSpacings[spacing].value;
         settings.numberSelection = gtk_switch_get_active(GTK_SWITCH(numberSelection));
         settings.arrowNavigation = gtk_switch_get_active(GTK_SWITCH(arrowNavigation));
         settings.pageNavigation = gtk_switch_get_active(GTK_SWITCH(pageNavigation));
@@ -457,7 +587,9 @@ private:
     bool refreshing = false;
 
     GtkWidget *page = nullptr;
+    GtkWidget *clientTheme = nullptr;
     GtkWidget *previewCard = nullptr;
+    GtkWidget *appearanceActions = nullptr;
     GtkWidget *candidatePreview = nullptr;
     GtkWidget *previewExample = nullptr;
     GtkWidget *compositionLabel = nullptr;
@@ -478,6 +610,8 @@ private:
     GtkWidget *candidateFontFamily = nullptr;
     GtkWidget *candidateTheme = nullptr;
     GtkWidget *candidateThemeFallback = nullptr;
+    GtkWidget *candidateShape = nullptr;
+    GtkWidget *candidateShapeFallback = nullptr;
     GtkWidget *candidateSpacing = nullptr;
     GtkWidget *candidateSpacingFallback = nullptr;
     GtkWidget *numberSelection = nullptr;

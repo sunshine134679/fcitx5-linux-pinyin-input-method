@@ -41,6 +41,7 @@ target_compile_features(modernime_settings_logic PUBLIC cxx_std_20)
 modernime_enable_warnings(modernime_settings_logic)
 
 add_library(modernime_settings_gtk STATIC
+    settings_choice.cpp
     settings_widgets.cpp
     settings_shell.cpp
     settings_window.cpp

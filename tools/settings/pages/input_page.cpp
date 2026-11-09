@@ -197,9 +197,9 @@ public:
                                              inputEnabled),
                             FALSE, FALSE, 0);
 
-        defaultMode = gtk_combo_box_text_new();
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(defaultMode), "中文");
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(defaultMode), "英文");
+        defaultMode = createSettingsChoice();
+        appendSettingsChoice(defaultMode, "中文");
+        appendSettingsChoice(defaultMode, "英文");
         gtk_widget_set_hexpand(defaultMode, FALSE);
         setTarget(defaultMode, "default-mode");
         defaultModeFallback = createSettingRow(
@@ -214,9 +214,9 @@ public:
     void buildFuzzySection() {
         auto *schemeSection = createSectionCard("拼音方案", "选择熟悉的输入方式。保存后生效，保留正在输入的按键。");
         gtk_box_pack_start(GTK_BOX(page), schemeSection, FALSE, FALSE, 0);
-        pinyinScheme = gtk_combo_box_text_new();
+        pinyinScheme = createSettingsChoice();
         for (const auto &scheme : core::kPinyinSchemes)
-            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(pinyinScheme), scheme.key, scheme.label);
+            appendSettingsChoice(pinyinScheme, scheme.label);
         setTarget(pinyinScheme, "pinyin.scheme");
         gtk_box_pack_start(GTK_BOX(schemeSection), createSettingRow(
             "输入方案", "全拼兼容简拼；双拼支持小鹤、自然码。个人词典与学习记录共用。", pinyinScheme), FALSE, FALSE, 0);
@@ -404,8 +404,7 @@ public:
         auto settings = impl->model.settings();
         settings.inputEnabled = gtk_toggle_button_get_active(
             GTK_TOGGLE_BUTTON(impl->inputEnabled));
-        settings.defaultMode = gtk_combo_box_get_active(
-            GTK_COMBO_BOX(impl->defaultMode)) == 1
+        settings.defaultMode = settingsChoiceActive(impl->defaultMode) == 1
                                    ? core::InputMode::English
                                    : core::InputMode::Chinese;
         settings.toggleKey = impl->toggleKeyValue;
@@ -413,7 +412,7 @@ public:
             GTK_SWITCH(impl->punctuation));
         settings.characterExtractionEnabled = gtk_switch_get_active(
             GTK_SWITCH(impl->characterExtraction));
-        const auto schemeIndex = gtk_combo_box_get_active(GTK_COMBO_BOX(impl->pinyinScheme));
+        const auto schemeIndex = settingsChoiceActive(impl->pinyinScheme);
         if (schemeIndex >= 0 && static_cast<std::size_t>(schemeIndex) < core::kPinyinSchemes.size())
             settings.pinyinScheme = core::kPinyinSchemes[schemeIndex].scheme;
         for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
@@ -430,7 +429,7 @@ public:
         const auto &settings = model.settings();
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
                                      settings.inputEnabled);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(defaultMode),
+        setSettingsChoiceActive(defaultMode,
                                  settings.defaultMode == core::InputMode::English
                                      ? 1
                                      : 0);
@@ -446,9 +445,10 @@ public:
                               settings.characterExtractionEnabled);
         gtk_switch_set_active(GTK_SWITCH(punctuation),
                               settings.punctuationEnabled);
-        for (const auto &scheme : core::kPinyinSchemes)
-            if (scheme.scheme == settings.pinyinScheme)
-                gtk_combo_box_set_active_id(GTK_COMBO_BOX(pinyinScheme), scheme.key);
+        for (std::size_t i = 0; i < core::kPinyinSchemes.size(); ++i) {
+            if (core::kPinyinSchemes[i].scheme == settings.pinyinScheme)
+                setSettingsChoiceActive(pinyinScheme, static_cast<int>(i));
+        }
         for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
             gtk_switch_set_active(GTK_SWITCH(fuzzyControls[i]),
                 settings.fuzzyPinyin.*core::kFuzzyPinyinOptions[i].member);
