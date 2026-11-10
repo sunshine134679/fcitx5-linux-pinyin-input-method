@@ -328,6 +328,10 @@ public:
 
     void publishPage(const core::CandidatePage &page) override;
     void commit(std::string_view text) override;
+    std::optional<TextEditContext> textEditContext() const override;
+    bool insertPair(std::string_view opener, std::string_view closer) override;
+    bool replaceSurrounding(std::string_view before, std::string_view after,
+                            std::string_view replacement) override;
 
 private:
     fcitx::InputContext *inputContext_;
@@ -467,6 +471,8 @@ private:
     void consumeClipboardSnapshot();
     FcitxInputContextState *focusedActiveState() const;
     void pollFileChanges();
+    void rememberAppMode(fcitx::InputContext *context);
+    bool appStartsInChinese(fcitx::InputContext *context) const;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // 阻塞等待后台词典预热完成并落地 resources_.pinyin；fcitx5 事件循环
     // 串行调用本引擎，主线程内无需加锁。加载失败仅记录日志，保持空资源，
@@ -497,6 +503,7 @@ private:
     bool otherKeyPressedWhileShift_ = false;
     std::uint64_t settingsGeneration_ = 0;
     core::ModernIMESettings settings_;
+    std::map<std::string, core::InputMode> rememberedAppModes_;
     KeyBindings keyBindings_;
     fcitx::EventDispatcher dispatcher_;
     std::shared_ptr<ReadyNotificationEndpoint> readyEndpoint_;

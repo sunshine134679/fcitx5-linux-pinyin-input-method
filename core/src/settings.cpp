@@ -98,6 +98,44 @@ bool validToggleKey(std::string_view value) {
            value == "Shift_L" || value == "Shift_R";
 }
 
+bool validAppId(std::string_view value) {
+    return !value.empty() && value.size() <= 128 &&
+        std::all_of(value.begin(), value.end(), [](unsigned char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || c == '/' || c == '@';
+        });
+}
+
+bool punctuationKey(int key) {
+    return key >= 33 && key <= 126 && !((key >= 'a' && key <= 'z') ||
+        (key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9'));
+}
+
+bool validPunctuationText(std::string_view text) {
+    if (text.empty() || text.size() > 32 || trim(text) != text) return false;
+    for (std::size_t i = 0; i < text.size();) {
+        const auto c = static_cast<unsigned char>(text[i++]);
+        if (c < 0x20 || c == 0x7f) return false;
+        if (c < 0x80) continue;
+        int count = c >= 0xc2 && c <= 0xdf ? 1 : c >= 0xe0 && c <= 0xef ? 2 : c >= 0xf0 && c <= 0xf4 ? 3 : -1;
+        if (count < 0 || i + static_cast<std::size_t>(count) > text.size()) return false;
+        const auto next = static_cast<unsigned char>(text[i]);
+        if ((c == 0xe0 && next < 0xa0) || (c == 0xed && next >= 0xa0) ||
+            (c == 0xf0 && next < 0x90) || (c == 0xf4 && next >= 0x90)) return false;
+        while (count--) if ((static_cast<unsigned char>(text[i++]) & 0xc0) != 0x80) return false;
+    }
+    return true;
+}
+
+std::string_view underscoreName(UnderscoreStyle style) {
+    switch (style) {
+    case UnderscoreStyle::Smart: return "smart";
+    case UnderscoreStyle::Ascii: return "ascii";
+    case UnderscoreStyle::Chinese: return "chinese";
+    }
+    return "invalid";
+}
+
 bool validClipboardTrigger(std::string_view value) {
     if (value.size() != 3) {
         return false;
@@ -133,6 +171,16 @@ ModernIMESettings defaultSettings() { return {}; }
 
 SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     SettingsValidationResult result;
+    if (underscoreName(settings.underscoreStyle) == "invalid")
+        result.issues.push_back({"punctuation.underscore", "请选择 smart、ascii 或 chinese"});
+    for (const auto &[key, text] : settings.punctuationOverrides)
+        if (!punctuationKey(key) || !validPunctuationText(text))
+            result.issues.push_back({"punctuation.map." + std::to_string(static_cast<unsigned char>(key)), "映射须为 ASCII 标点到 1–32 字节单行 UTF-8 文本"});
+    if (settings.appInputModes.size() > 128)
+        result.issues.push_back({"input.app", "应用规则最多 128 条"});
+    for (const auto &[app, mode] : settings.appInputModes)
+        if (!validAppId(app) || (mode != InputMode::Chinese && mode != InputMode::English))
+            result.issues.push_back({"input.app." + app, "请输入有效的应用标识和中英文模式"});
     if (std::none_of(kClientThemes.begin(), kClientThemes.end(), [&](const auto &option) { return option.key == settings.clientTheme; })) {
         result.issues.push_back({"appearance.client_theme", "请选择支持的客户端主题"});
     }
@@ -170,6 +218,15 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
 
 std::string computeSettingsHash(const ModernIMESettings &settings) {
     std::ostringstream output;
+    output << "punctuation.auto_pair=" << settings.autoPairPunctuation << '\n'
+           << "punctuation.smart=" << settings.smartPunctuation << '\n'
+           << "punctuation.underscore=" << underscoreName(settings.underscoreStyle) << '\n'
+           << "input.remember_per_app=" << settings.rememberModePerApp << '\n'
+           << "input.undo_commit=" << settings.undoCommitEnabled << '\n';
+    for (const auto &[key, text] : settings.punctuationOverrides)
+        output << "punctuation.map." << static_cast<int>(key) << '=' << text << '\n';
+    for (const auto &[app, mode] : settings.appInputModes)
+        output << "input.app." << app << '=' << (mode == InputMode::Chinese ? "chinese" : "english") << '\n';
     output << "input.enabled=" << (settings.inputEnabled ? "true" : "false")
            << '\n'
            << "input.default_mode="
@@ -420,6 +477,33 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 parsed = parseBoolean(value, result.settings.pageNavigation);
             } else if (key == "punctuation.enabled") {
                 parsed = parseBoolean(value, result.settings.punctuationEnabled);
+            } else if (key == "punctuation.auto_pair") {
+                parsed = parseBoolean(value, result.settings.autoPairPunctuation);
+            } else if (key == "punctuation.smart") {
+                parsed = parseBoolean(value, result.settings.smartPunctuation);
+            } else if (key == "input.undo_commit") {
+                parsed = parseBoolean(value, result.settings.undoCommitEnabled);
+            } else if (key == "input.remember_per_app") {
+                parsed = parseBoolean(value, result.settings.rememberModePerApp);
+            } else if (key == "punctuation.underscore") {
+                if (value == "smart" || value == "ascii" || value == "chinese") {
+                    result.settings.underscoreStyle = value == "ascii" ? UnderscoreStyle::Ascii : value == "chinese" ? UnderscoreStyle::Chinese : UnderscoreStyle::Smart;
+                    parsed = true;
+                }
+            } else if (key.starts_with("punctuation.map.")) {
+                int code = 0;
+                if (parseInteger(std::string_view(key).substr(16), code) &&
+                    punctuationKey(code) && validPunctuationText(value)) {
+                    result.settings.punctuationOverrides[static_cast<char>(code)] = value;
+                    parsed = true;
+                }
+            } else if (key.starts_with("input.app.")) {
+                const auto app = key.substr(10);
+                if (validAppId(app) && (value == "chinese" || value == "english") &&
+                    (result.settings.appInputModes.contains(app) || result.settings.appInputModes.size() < 128)) {
+                    result.settings.appInputModes[app] = value == "chinese" ? InputMode::Chinese : InputMode::English;
+                    parsed = true;
+                }
             } else if (key == "learning.enabled") {
                 parsed = parseBoolean(value, result.settings.learningEnabled);
             } else if (key == "learning.context_enabled") {
@@ -539,6 +623,21 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["input.default_mode"] =
         settings.defaultMode == InputMode::Chinese ? "chinese" : "english";
     knownSettings["input.toggle_key"] = settings.toggleKey;
+    knownSettings["input.remember_per_app"] = settings.rememberModePerApp ? "true" : "false";
+    knownSettings["input.undo_commit"] = settings.undoCommitEnabled ? "true" : "false";
+    knownSettings["punctuation.auto_pair"] = settings.autoPairPunctuation ? "true" : "false";
+    knownSettings["punctuation.smart"] = settings.smartPunctuation ? "true" : "false";
+    knownSettings["punctuation.underscore"] = underscoreName(settings.underscoreStyle);
+    std::vector<std::string> dynamicKeys;
+    for (const auto &[key, text] : settings.punctuationOverrides) {
+        const auto name = "punctuation.map." + std::to_string(static_cast<unsigned char>(key));
+        knownSettings[name] = text; dynamicKeys.push_back(name);
+    }
+    for (const auto &[app, mode] : settings.appInputModes) {
+        const auto name = "input.app." + app;
+        knownSettings[name] = mode == InputMode::Chinese ? "chinese" : "english";
+        dynamicKeys.push_back(name);
+    }
     knownSettings["appearance.client_theme"] = settings.clientTheme;
     knownSettings["candidate.page_size"] =
         std::to_string(settings.candidatePageSize);
@@ -602,15 +701,17 @@ SettingsSaveResult SettingsStore::saveWithResult(
                 output << line << '\n';
                 writtenLines.push_back(std::move(line));
                 writtenKeys.insert(key);
-            } else {
+            } else if (!key.starts_with("punctuation.map.") && !key.starts_with("input.app.")) {
                 output << rawLine << '\n';
                 writtenLines.push_back(rawLine);
             }
         }
     }
 
-    const std::array<const char *, 27> keyOrder{
+    const std::array<const char *, 32> keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
+        "input.remember_per_app", "input.undo_commit",
+        "punctuation.auto_pair", "punctuation.smart", "punctuation.underscore",
         "pinyin.scheme",
         "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",
         "pinyin.fuzzy_l_n", "pinyin.fuzzy_en_eng", "pinyin.fuzzy_in_ing",
@@ -627,6 +728,12 @@ SettingsSaveResult SettingsStore::saveWithResult(
             std::string line = std::string(k) + "=" + knownSettings[k];
             output << line << '\n';
             writtenLines.push_back(std::move(line));
+        }
+    }
+    for (const auto &key : dynamicKeys) {
+        if (!writtenKeys.contains(key)) {
+            std::string line = key + "=" + knownSettings[key];
+            output << line << '\n'; writtenLines.push_back(std::move(line));
         }
     }
 

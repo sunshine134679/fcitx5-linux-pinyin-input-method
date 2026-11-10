@@ -587,7 +587,39 @@ void testFuzzyPinyinRoundTrip() {
     std::filesystem::remove_all(directory);
 }
 
+void testTypingSettings() {
+    const auto directory = testDirectory();
+    const auto path = directory / "settings.conf";
+    auto settings = modernime::core::defaultSettings();
+    settings.autoPairPunctuation = false;
+    settings.smartPunctuation = false;
+    settings.underscoreStyle = modernime::core::UnderscoreStyle::Ascii;
+    settings.punctuationOverrides = {{'_', "_"}, {'/', "/"}, {'=', "="}};
+    settings.appInputModes = {{"org.gnome.TextEditor", modernime::core::InputMode::Chinese},
+                              {"code", modernime::core::InputMode::English}};
+    settings.rememberModePerApp = true;
+    settings.undoCommitEnabled = false;
+    assertTrue(modernime::core::SettingsStore::save(path, settings), "save typing settings");
+    const auto loaded = modernime::core::SettingsStore::load(path);
+    assertTrue(loaded.diagnostics.empty() && loaded.settings == settings, "typing settings round-trip with exact app identifiers and literal equals");
+    auto edited = loaded.settings;
+    edited.appInputModes.erase("code"); edited.punctuationOverrides.erase('_');
+    const auto saved = modernime::core::SettingsStore::saveWithResult(path, edited,
+        modernime::core::SettingsExpectedBaseline::fromLoadResult(loaded), &loaded.rawLines);
+    assertTrue(saved.status == modernime::core::SettingsSaveStatus::Saved &&
+                   modernime::core::SettingsStore::load(path).settings == edited,
+               "deleting dynamic rules removes preserved old lines");
+    edited.punctuationOverrides['_'] = "bad\ntext";
+    assertTrue(!modernime::core::validateSettings(edited).valid, "multiline punctuation rejected");
+    std::ofstream(path) << "punctuation.map.95=_\npunctuation.map.65=字\ninput.app.code=invalid\npunctuation.underscore=wrong\n";
+    const auto invalid = modernime::core::SettingsStore::load(path);
+    assertTrue(invalid.settings.punctuationOverrides.at('_') == "_" && invalid.settings.appInputModes.empty() &&
+                   invalid.diagnostics.size() == 3, "bad rules do not discard valid punctuation map");
+    std::filesystem::remove_all(directory);
+}
+
 int main() {
+    testTypingSettings();
     testFuzzyPinyinRoundTrip();
     testOversizedIntegersAreRejectedWithoutWrapping();
     testPaths();

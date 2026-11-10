@@ -4,6 +4,7 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,6 +12,7 @@
 namespace modernime::core {
 
 enum class InputMode { Chinese, English };
+enum class UnderscoreStyle { Smart, Ascii, Chinese };
 
 enum class CandidateTheme { Light, Dark, ClassicBlue, Jade, Amber, Rose, Lavender, Midnight, HighContrast };
 enum class CandidateShape { Rounded, Square, Capsule };
@@ -64,6 +66,14 @@ struct ModernIMESettings final {
     std::string clientTheme = "blue";
     FuzzyPinyinOptions fuzzyPinyin;
     PinyinScheme pinyinScheme = PinyinScheme::Full;
+    bool autoPairPunctuation = true;
+    bool smartPunctuation = true;
+    UnderscoreStyle underscoreStyle = UnderscoreStyle::Smart;
+    // Printable ASCII punctuation key -> single-line literal UTF-8 text.
+    std::map<char, std::string> punctuationOverrides;
+    bool rememberModePerApp = false;
+    std::map<std::string, InputMode> appInputModes;
+    bool undoCommitEnabled = true;
 
     bool operator==(const ModernIMESettings &) const = default;
 };

@@ -45,6 +45,7 @@ enum class KeyKind {
     Punctuation,
     CommitFirstCharacter,
     CommitLastCharacter,
+    UndoCommit,
 };
 
 // Empty valid text is a real document state; unavailable clients may use the
@@ -69,6 +70,11 @@ struct ControllerOptions final {
     bool characterExtractionEnabled = true;
     bool learningEnabled = true;
     bool contextLearningEnabled = true;
+    bool autoPairPunctuation = true;
+    bool smartPunctuation = true;
+    core::UnderscoreStyle underscoreStyle = core::UnderscoreStyle::Smart;
+    std::map<char, std::string> punctuationOverrides;
+    bool undoCommitEnabled = true;
 };
 
 struct KeyBindings final {
@@ -79,6 +85,14 @@ struct KeyBindings final {
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
     bool characterExtractionEnabled = true;
+    bool undoCommitEnabled = true;
+};
+
+struct TextEditContext final {
+    std::string before;
+    std::string after;
+    std::size_t cursor = 0;
+    bool operator==(const TextEditContext &) const = default;
 };
 
 class EngineHost {
@@ -87,6 +101,12 @@ public:
 
     virtual void publishPage(const core::CandidatePage &page) = 0;
     virtual void commit(std::string_view text) = 0;
+    // Optional: only a focused, non-sensitive, selection-free document may
+    // expose this window. Unsupported hosts retain ordinary input behavior.
+    virtual std::optional<TextEditContext> textEditContext() const { return std::nullopt; }
+    virtual bool insertPair(std::string_view, std::string_view) { return false; }
+    virtual bool replaceSurrounding(std::string_view, std::string_view,
+                                    std::string_view) { return false; }
 };
 
 class ModernIMEController final {
@@ -105,6 +125,9 @@ public:
     void setContext(std::string before, std::string after,
                     ContextAvailability availability = ContextAvailability::Valid);
     void reset();
+    void invalidateTextActions();
+    void invalidateUndo() { undoCommit_.reset(); }
+    bool undoLastCommit();
     void setActive(bool active);
     void setSensitive(bool sensitive);
     bool isSensitive() const { return sensitive_; }
@@ -189,6 +212,11 @@ private:
     bool commitCurrent();
     bool commitRawPreedit(std::string_view suffix = {});
     bool commitPunctuation(char ascii);
+    bool editPairedPunctuation(char ascii);
+    bool eraseEmptyPair();
+    void rememberUndo(const std::optional<TextEditContext> &before,
+                      const core::CandidateIdentity &candidate,
+                      std::string rawInput, std::string remainingInput);
     bool openClipboard();
     bool replaceComposition(std::string nextInput,
                             std::size_t nextCursor);
@@ -242,6 +270,18 @@ private:
     // sensitive context prevents asynchronous UI updates.
     core::ClipboardAvailability clipboardPageAvailability_ = core::ClipboardAvailability::Ready;
     RecentCommit recentCommit_;
+    struct AutoPair final {
+        std::string opener, closer;
+        TextEditContext expected;
+    };
+    std::vector<AutoPair> autoPairs_;
+    struct UndoCommit final {
+        TextEditContext expected;
+        core::CandidateIdentity candidate;
+        std::string rawInput, remainingInput;
+        std::chrono::steady_clock::time_point timestamp;
+    };
+    std::optional<UndoCommit> undoCommit_;
     std::uint64_t sessionId_ = 0;
     std::uint64_t displayGeneration_ = 1;
     std::uint64_t layoutGeneration_ = 1;

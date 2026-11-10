@@ -36,6 +36,19 @@
 namespace modernime::fcitx5 {
 namespace {
 
+// Fcitx < 5.1.2 has no cursor commit API. Keep its existing build support.
+template <typename Context>
+bool commitWithCursor(Context *ic, const std::string &text, std::size_t cursor) {
+    if constexpr (requires { ic->commitStringWithCursor(text, cursor); }) {
+        constexpr auto capability = static_cast<fcitx::CapabilityFlag>(1ull << 41);
+        if (ic->capabilityFlags().test(capability)) {
+            ic->commitStringWithCursor(text, cursor);
+            return true;
+        }
+    }
+    return false;
+}
+
 void writeRuntimeState(const std::filesystem::path &statePath,
                        std::string_view contentHash,
                        std::uint64_t generation) {
@@ -129,14 +142,16 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             static_cast<std::size_t>(settings.candidatePageSize),
             settings.clipboardEnabled, settings.clipboardTrigger,
             settings.characterExtractionEnabled,
-            settings.learningEnabled, settings.contextLearningEnabled};
+            settings.learningEnabled, settings.contextLearningEnabled,
+            settings.autoPairPunctuation, settings.smartPunctuation,
+            settings.underscoreStyle, settings.punctuationOverrides, settings.undoCommitEnabled};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
     return {settings.toggleKey, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
             settings.clipboardEnabled, settings.clipboardTrigger,
-            settings.characterExtractionEnabled};
+            settings.characterExtractionEnabled, settings.undoCommitEnabled};
 }
 
 } // namespace
@@ -357,6 +372,42 @@ void FcitxEngineHost::commit(std::string_view text) {
     inputContext_->commitString(std::string(text));
 }
 
+std::optional<TextEditContext> FcitxEngineHost::textEditContext() const {
+    const auto flags = inputContext_->capabilityFlags();
+    const auto &text = inputContext_->surroundingText();
+    if (!inputContext_->hasFocus() ||
+        flags.testAny(fcitx::CapabilityFlag::PasswordOrSensitive) ||
+        !flags.test(fcitx::CapabilityFlag::SurroundingText) || !text.isValid() ||
+        text.cursor() != text.anchor()) return std::nullopt;
+    auto window = extractSurroundingContextState(text, 256);
+    if (window.availability != ContextAvailability::Valid) return std::nullopt;
+    return TextEditContext{std::move(window.first), std::move(window.second), text.cursor()};
+}
+
+bool FcitxEngineHost::insertPair(std::string_view opener, std::string_view closer) {
+    if (!textEditContext() || inputContext_->capabilityFlags().test(
+            fcitx::CapabilityFlag::Terminal)) return false;
+    const auto pair = std::string(opener) + std::string(closer);
+    if (commitWithCursor(inputContext_, pair, fcitx::utf8::length(opener))) return true;
+    inputContext_->commitString(pair);
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_Left));
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_Left), true);
+    return true;
+}
+
+bool FcitxEngineHost::replaceSurrounding(std::string_view before, std::string_view after,
+                                       std::string_view replacement) {
+    const auto current = textEditContext();
+    if (!current || !current->before.ends_with(before) ||
+        !current->after.starts_with(after)) return false;
+    const auto left = fcitx::utf8::length(before);
+    const auto right = fcitx::utf8::length(after);
+    inputContext_->deleteSurroundingText(-static_cast<int>(left),
+                                       static_cast<unsigned>(left + right));
+    if (!replacement.empty()) inputContext_->commitString(std::string(replacement));
+    return true;
+}
+
 FcitxInputContextState::FcitxInputContextState(
     fcitx::InputContext &inputContext, const core::ModernIMESettings &settings,
     const FcitxEngineResources &resources, std::uint64_t settingsGeneration)
@@ -381,6 +432,7 @@ FcitxInputContextState::FcitxInputContextState(
 
 void FcitxInputContextState::applySettings(
     const core::ModernIMESettings &settings, std::uint64_t generation) {
+    controller_.invalidateTextActions();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     if (provider_ != nullptr) {
         auto opts = pinyinOptions(settings);
@@ -489,6 +541,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
     subModeAction_.connect<fcitx::SimpleAction::Activated>([this](fcitx::InputContext *ic) {
         if (auto *contextState = state(ic)) {
             contextState->controller().handle({KeyKind::Toggle, 0, 0});
+            rememberAppMode(ic);
             const bool active = contextState->controller().active();
             subModeAction_.setShortText(active ? "中" : "英");
             subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
@@ -671,6 +724,11 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
     KeyEvent event;
     if (matchesToggleKey(key, bindings.toggleKey)) {
         event.kind = KeyKind::Toggle;
+        return event;
+    }
+    if (bindings.undoCommitEnabled && key.check(FcitxKey_BackSpace,
+            fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift}))) {
+        event.kind = KeyKind::UndoCommit;
         return event;
     }
     if (key.check(FcitxKey_Delete,
@@ -884,6 +942,9 @@ void ModernIMEInputMethod::pollFileChanges() {
                 settingsRetryCount_ = 0;
                 settingsStamp_ = loadResult.stamp;
                 if (loadResult.contentHash != appliedVersion_.contentHash) {
+                    if (settings_.appInputModes != loadResult.settings.appInputModes ||
+                        settings_.rememberModePerApp != loadResult.settings.rememberModePerApp)
+                        rememberedAppModes_.clear();
                     settings_ = loadResult.settings;
                     keyBindings_ = keyBindings(settings_);
                     if (!settings_.inputEnabled || !keyBindings_.clipboardEnabled) {
@@ -983,6 +1044,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                         contextState->controller().handle({KeyKind::Enter, 0, 0});
                     }
                     if (contextState->controller().handle({KeyKind::Toggle, 0, 0})) {
+                        rememberAppMode(event.inputContext());
                         const bool active = contextState->controller().active();
                         subModeAction_.setShortText(active ? "中" : "英");
                         subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
@@ -1033,6 +1095,19 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             contextState->controller().setContext("", "", availability);
         }
         auto modernEvent = translateKey(event.key(), keyBindings_);
+        if (modernEvent && modernEvent->kind == KeyKind::Character && modernEvent->character == '\'' &&
+            contextState->controller().page().preedit.empty()) modernEvent->kind = KeyKind::Punctuation;
+        if (modernEvent && contextState->controller().page().preedit.empty() &&
+            !contextState->controller().clipboardMode() && !hasNonShiftModifier(event.key()) &&
+            (modernEvent->kind == KeyKind::PreviousPage || modernEvent->kind == KeyKind::NextPage)) {
+            const auto c = fcitx::Key::keySymToUnicode(event.key().sym());
+            if (isAsciiPunctuation(c)) modernEvent = KeyEvent{KeyKind::Punctuation, static_cast<char>(c)};
+        }
+        // Fcitx normalizes Ctrl+Shift+BackSpace to Ctrl+BackSpace. Inspect the
+        // unnormalized key so the application's word deletion remains intact.
+        if (keyBindings_.undoCommitEnabled && event.rawKey().check(FcitxKey_BackSpace,
+                fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})))
+            modernEvent = KeyEvent{KeyKind::UndoCommit};
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
                                       contextState->controller().active();
         if (clipboardActive) {
@@ -1051,6 +1126,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             return;
         }
         if (!modernEvent.has_value()) {
+            if (hasNonShiftModifier(event.key())) contextState->controller().invalidateTextActions();
             if (contextState->controller().page().preedit.empty() &&
                 !event.inputContext()->surroundingText().isValid()) {
                 contextState->controller().setContext(
@@ -1065,6 +1141,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 
         if (contextState->controller().handle(*modernEvent)) {
             if (modernEvent->kind == KeyKind::Toggle) {
+                rememberAppMode(event.inputContext());
                 const bool active = contextState->controller().active();
                 subModeAction_.setShortText(active ? "中" : "英");
                 subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
@@ -1074,6 +1151,13 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                 }
             }
             event.filterAndAccept();
+        } else if (modernEvent->kind == KeyKind::Backspace || modernEvent->kind == KeyKind::DeleteForward) {
+            contextState->controller().invalidateUndo();
+        } else if (modernEvent->kind == KeyKind::MoveCompositionLeft ||
+                   modernEvent->kind == KeyKind::MoveCompositionRight ||
+                   modernEvent->kind == KeyKind::PreviousClipboardItem || modernEvent->kind == KeyKind::NextClipboardItem ||
+                   modernEvent->kind == KeyKind::PreviousPage || modernEvent->kind == KeyKind::NextPage) {
+            contextState->controller().invalidateTextActions();
         }
     } catch (const std::exception &error) {
         FCITX_ERROR() << "ModernIME keyEvent caught exception: " << error.what();
@@ -1089,7 +1173,7 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
         if (contextState->settingsGeneration() != settingsGeneration_) {
             contextState->applySettings(settings_, settingsGeneration_);
         }
-        const bool active = (settings_.defaultMode == core::InputMode::Chinese);
+        const bool active = appStartsInChinese(event.inputContext());
         contextState->controller().setActive(active);
         subModeAction_.setShortText(active ? "中" : "英");
         subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
@@ -1115,6 +1199,30 @@ void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().setActive(false);
     }
+}
+
+void ModernIMEInputMethod::rememberAppMode(fcitx::InputContext *context) {
+    if (!settings_.rememberModePerApp || !settings_.inputEnabled || !context ||
+        context->program().empty() || context->capabilityFlags().testAny(
+            fcitx::CapabilityFlag::PasswordOrSensitive)) return;
+    if (auto *contextState = state(context)) {
+        if (!rememberedAppModes_.contains(context->program()) && rememberedAppModes_.size() == 128)
+            rememberedAppModes_.erase(rememberedAppModes_.begin());
+        rememberedAppModes_[context->program()] = contextState->controller().active()
+            ? core::InputMode::Chinese : core::InputMode::English;
+    }
+}
+
+bool ModernIMEInputMethod::appStartsInChinese(fcitx::InputContext *context) const {
+    if (context && !context->program().empty()) {
+        if (settings_.rememberModePerApp) {
+            const auto remembered = rememberedAppModes_.find(context->program());
+            if (remembered != rememberedAppModes_.end()) return remembered->second == core::InputMode::Chinese;
+        }
+        const auto rule = settings_.appInputModes.find(context->program());
+        if (rule != settings_.appInputModes.end()) return rule->second == core::InputMode::Chinese;
+    }
+    return settings_.defaultMode == core::InputMode::Chinese;
 }
 
 void ModernIMEInputMethod::reset(const fcitx::InputMethodEntry &,

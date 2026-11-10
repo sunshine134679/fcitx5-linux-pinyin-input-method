@@ -731,6 +731,23 @@ if(MODERNIME_BUILD_FCITX5)
         COMMAND modernime_fcitx5_input_panel_tests
     )
 
+    add_executable(modernime_typing_features_tests
+        adapter/typing_features_test.cpp
+        ../adapter/fcitx5/src/inputmethod.cpp
+        ../adapter/fcitx5/src/engine.cpp)
+    target_include_directories(modernime_typing_features_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include)
+    target_link_libraries(modernime_typing_features_tests PRIVATE
+        modernime_core Fcitx5::Core Fcitx5::Utils ${CMAKE_DL_LIBS})
+    if(Fcitx5Core_VERSION VERSION_GREATER_EQUAL 5.1.2)
+        target_compile_definitions(modernime_typing_features_tests PRIVATE MODERNIME_TEST_CURSOR_API=1)
+    endif()
+    if(MODERNIME_BUILD_LIBIME_PINYIN)
+        target_compile_definitions(modernime_typing_features_tests PRIVATE MODERNIME_HAS_LIBIME_PINYIN=1)
+        target_link_libraries(modernime_typing_features_tests PRIVATE modernime_pinyin)
+    endif()
+    add_test(NAME modernime_typing_features COMMAND modernime_typing_features_tests)
+
     add_executable(modernime_key_translation_tests
         adapter/key_translation_test.cpp
         ../adapter/fcitx5/src/inputmethod.cpp
