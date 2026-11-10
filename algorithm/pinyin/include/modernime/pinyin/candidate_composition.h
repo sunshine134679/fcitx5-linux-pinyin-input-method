@@ -89,6 +89,7 @@ struct CandidateCompositionInput {
     bool recordMoves = false;
     bool shuangpin = false;
     std::optional<core::CandidatePin> pinnedCandidate;
+    bool calculatorEnabled = false;
 };
 
 struct CandidateCompositionResult {

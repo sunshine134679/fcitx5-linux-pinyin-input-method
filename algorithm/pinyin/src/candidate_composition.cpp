@@ -310,7 +310,8 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         std::tolower(static_cast<unsigned char>(rawInput.front())) == triggerChar;
 
     std::string preedit;
-    if (isSingleTriggerChar && rawInput == "v" && !input.shuangpin) {
+    if (rawInput == "v" && !input.shuangpin &&
+        (isSingleTriggerChar || input.calculatorEnabled)) {
         mixed.clear();
         core::CandidateItem rawItem;
         rawItem.text = "v";
@@ -323,7 +324,7 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         recordMove(core::CandidateSource::Raw, CompositionStage::CommandPlacement, 0,
                    MoveReason::CommandSingleTrigger);
 
-        if (input.clipboardEnabled) {
+        if (input.clipboardEnabled && isSingleTriggerChar) {
             core::CandidateItem cmdCandidate;
             cmdCandidate.text = "剪贴板 (" + input.clipboardTrigger + ")";
             cmdCandidate.fullPinyin = "v";
@@ -331,9 +332,23 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
             cmdCandidate.commitRole = core::CommitCandidateRole::Command;
             cmdCandidate.origins = {cmdCandidate.source};
             cmdCandidate.consumedInputBytes = 1;
+            cmdCandidate.action = core::SelectionAction::OpenClipboard;
             mixed.push_back(std::move(cmdCandidate));
             recordMove(core::CandidateSource::Command, CompositionStage::CommandPlacement, 1,
                        MoveReason::CommandSingleTrigger);
+        }
+        if (input.calculatorEnabled) {
+            core::CandidateItem calculator;
+            calculator.text = "离线计算器 (V=)";
+            calculator.fullPinyin = "v";
+            calculator.source = core::CandidateSource::Command;
+            calculator.commitRole = core::CommitCandidateRole::Command;
+            calculator.origins = {calculator.source};
+            calculator.consumedInputBytes = 1;
+            calculator.action = core::SelectionAction::OpenCalculator;
+            mixed.push_back(std::move(calculator));
+            recordMove(core::CandidateSource::Command, CompositionStage::CommandPlacement,
+                       mixed.size() - 1, MoveReason::CommandSingleTrigger);
         }
         preedit = "v";
     } else if (!input.macroCandidates.empty() && !rawInput.empty() && rawInput.front() == 'v') {

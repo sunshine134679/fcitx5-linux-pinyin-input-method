@@ -38,9 +38,7 @@ public:
         }
         CandidateSelectionOutcome outcome;
         outcome.selected = id;
-        outcome.action = (id.role == CommitCandidateRole::Command)
-            ? SelectionAction::OpenClipboard
-            : SelectionAction::CommitText;
+        outcome.action = id.action;
         outcome.remainingInput = page().rawInput;
         return outcome;
     }

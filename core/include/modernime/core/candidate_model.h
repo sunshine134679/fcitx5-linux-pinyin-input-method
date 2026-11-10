@@ -15,6 +15,7 @@ namespace modernime::core {
 
 enum class CandidateSource { Engine, UserDictionary, Learned, Raw, EnglishDefinition, Command, None };
 enum class CandidatePageMode { Pinyin, Clipboard };
+enum class SelectionAction { CommitText, OpenClipboard, NoCommit, OpenCalculator };
 
 struct PageBoundary final {
     std::size_t begin = 0;
@@ -47,6 +48,8 @@ struct CandidateItem final {
     // 码点之后插入提示。提示只属展示层，不进入身份、排序与消费范围。
     std::string readingHint = {};
     std::size_t readingHintAfterCharIndex = 0;
+    // Command behavior is independent of its translated display text.
+    SelectionAction action = SelectionAction::CommitText;
 };
 
 struct CandidateIdentity {
@@ -54,6 +57,7 @@ struct CandidateIdentity {
     std::string fullPinyin;
     CommitCandidateRole role = CommitCandidateRole::Chinese;
     std::size_t consumedInputBytes = 0;
+    SelectionAction action = SelectionAction::CommitText;
     bool operator==(const CandidateIdentity &) const = default;
     auto operator<=>(const CandidateIdentity &) const = default;
 };
@@ -64,8 +68,6 @@ struct CandidateSelectionRequest {
     std::size_t globalIndex = 0;
     CandidateIdentity expected;
 };
-
-enum class SelectionAction { CommitText, OpenClipboard, NoCommit };
 
 struct CandidateSelectionOutcome {
     CandidateIdentity selected;
@@ -120,6 +122,7 @@ struct hash<modernime::core::CandidateIdentity> {
         h ^= std::hash<std::string>{}(id.fullPinyin) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= std::hash<int>{}(static_cast<int>(id.role)) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= std::hash<std::size_t>{}(id.consumedInputBytes) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<int>{}(static_cast<int>(id.action)) + 0x9e3779b9 + (h << 6) + (h >> 2);
         return h;
     }
 };

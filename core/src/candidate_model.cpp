@@ -43,6 +43,11 @@ CandidateIdentity candidateIdentity(const CandidateItem &item,
     id.consumedInputBytes = (item.consumedInputBytes == 0)
                                 ? defaultConsumedBytes
                                 : item.consumedInputBytes;
+    if (id.role == CommitCandidateRole::Command) {
+        // Preserve legacy command items, which opened the clipboard implicitly.
+        id.action = item.action == SelectionAction::CommitText
+            ? SelectionAction::OpenClipboard : item.action;
+    }
     return id;
 }
 

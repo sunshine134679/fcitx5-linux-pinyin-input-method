@@ -269,8 +269,25 @@ void testCalculator(fcitx::Instance &instance) {
         fcitx::KeyEvent event(&doc, key); engine.keyEvent(entries.front(), event); return event.accepted();
     };
     auto type = [&](std::string_view s) { for (char c : s) check(send(fcitx::Key(std::string(1,c))), "calculator input accepted"); };
-    type("v=(2+3)*4");
     auto &controller = engine.state(&doc)->controller();
+    type("v");
+    const auto menu = controller.page();
+    check(menu.items.size() == 3 && menu.items[2].text == "离线计算器 (V=)", "v menu exposes calculator after clipboard");
+    core::CandidateSelectionRequest request;
+    request.sessionId = menu.sessionId; request.displayGeneration = menu.displayGeneration;
+    request.globalIndex = 2; request.expected = core::candidateIdentity(menu.items[2], menu);
+    auto endpoint = controller.endpoint().lock();
+    check(endpoint && endpoint->select(request) && controller.auxiliaryInputMode() == fcitx5::AuxiliaryInputMode::Calculator && doc.text.empty(),
+          "clicking calculator opens query mode without committing its label");
+    check(!endpoint->select(request), "stale v menu click cannot select a new result");
+    type("6*7"); send(fcitx::Key(FcitxKey_Return));
+    check(doc.text == "42", "calculator opened from menu commits computed result");
+    doc.text.clear(); doc.cursor = 0; doc.sync();
+    type("v"); send(fcitx::Key(FcitxKey_Tab)); send(fcitx::Key(FcitxKey_Tab)); send(fcitx::Key(FcitxKey_space));
+    check(controller.auxiliaryInputMode() == fcitx5::AuxiliaryInputMode::Calculator && doc.text.empty(),
+          "keyboard navigation opens calculator without repurposing numeric macro keys");
+    send(fcitx::Key(FcitxKey_Escape));
+    type("v=(2+3)*4");
     check(controller.auxiliaryInputMode() == fcitx5::AuxiliaryInputMode::Calculator &&
           controller.page().rawInput == "(2+3)*4" && controller.page().items.front().text == "20", "v= preserves digits and operators and evaluates precedence");
     check(send(fcitx::Key(FcitxKey_Return)) && doc.text == "20" && !controller.auxiliaryInputActive(), "enter commits result and returns to Chinese");

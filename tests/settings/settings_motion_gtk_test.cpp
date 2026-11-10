@@ -149,14 +149,20 @@ int main(int argc, char **argv) {
         assert(wait([&] { return !revealing(); }));
         for (std::size_t i = 1; i < core::kClientThemes.size(); ++i) {
             settings::setSettingsChoiceActive(theme, static_cast<int>(i));
-            if (core::kClientThemes[i].key == "contrast") assert(!revealing());
+            assert(revealing());
+            if (core::kClientThemes[i].key == "contrast" && !captures.empty()) {
+                frames(70);
+                record("高对比-切入中间帧");
+            }
             assert(wait([&] { return !revealing(); }));
             frames(30);
             record(std::string(core::kClientThemes[i].key));
             assert(settings::settingsChoiceActive(candidate) == originalCandidate);
         }
         settings::setSettingsChoiceActive(theme, 2);
-        assert(!revealing()); // Leaving high contrast is immediate as well.
+        assert(revealing());
+        if (!captures.empty()) { frames(70); record("高对比-切出中间帧"); }
+        assert(wait([&] { return !revealing(); }));
         for (std::size_t i = 0; i < core::kCandidateThemes.size(); ++i) {
             settings::setSettingsChoiceActive(candidate, static_cast<int>(i));
             frames(230);
@@ -174,6 +180,8 @@ int main(int argc, char **argv) {
         settings::setSettingsChoiceActive(theme, 1);
         assert(revealing());
         g_object_set(gtkSettings, "gtk-enable-animations", FALSE, nullptr);
+        assert(!revealing());
+        settings::setSettingsChoiceActive(theme, 6);
         assert(!revealing());
         settings::setSettingsChoiceActive(theme, 5);
         settings::setSettingsChoiceActive(shape, 1);

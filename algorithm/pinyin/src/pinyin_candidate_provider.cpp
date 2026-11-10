@@ -899,6 +899,7 @@ public:
           englishDefinitionEnabled_(options.englishDefinitionEnabled),
           clipboardEnabled_(options.clipboardEnabled),
           clipboardTrigger_(options.clipboardTrigger),
+          calculatorEnabled_(options.calculatorEnabled),
           candidatePins_(options.candidatePins),
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
@@ -1107,10 +1108,7 @@ public:
         if (candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Command ||
             expectedId.role == core::CommitCandidateRole::Generated) {
-            const auto source = candidate.source;
-            outcome.action = (source == core::CandidateSource::Command)
-                ? core::SelectionAction::OpenClipboard
-                : core::SelectionAction::CommitText;
+            outcome.action = expectedId.action;
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
             if (expectedId.role == core::CommitCandidateRole::Generated) {
@@ -1542,6 +1540,10 @@ public:
         }
         if (clipboardTrigger_ != opts.clipboardTrigger) {
             clipboardTrigger_ = opts.clipboardTrigger;
+            needRefresh = true;
+        }
+        if (calculatorEnabled_ != opts.calculatorEnabled) {
+            calculatorEnabled_ = opts.calculatorEnabled;
             needRefresh = true;
         }
         setLearningEnabled(opts.learningEnabled);
@@ -1998,6 +2000,7 @@ private:
         compInput.isEnglishWord = isEnglish;
         compInput.clipboardEnabled = clipboardEnabled_;
         compInput.clipboardTrigger = clipboardTrigger_;
+        compInput.calculatorEnabled = calculatorEnabled_;
         if (englishDefinitionEnabled_ && shared_) {
             compInput.resolveEnglishDefinition = [this](std::string_view word) -> std::string {
                 if (!englishDefinitionEnabled_ || !shared_ || word.size() < 4) {
@@ -2137,6 +2140,7 @@ private:
     bool englishDefinitionEnabled_ = false;
     bool clipboardEnabled_ = true;
     std::string clipboardTrigger_ = "V+2";
+    bool calculatorEnabled_ = true;
     std::vector<core::CandidatePin> candidatePins_;
     core::CandidatePage page_;
     std::optional<PinyinDiagnostics> diagnostics_;

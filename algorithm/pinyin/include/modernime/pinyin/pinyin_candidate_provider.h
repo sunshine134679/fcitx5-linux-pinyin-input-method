@@ -41,6 +41,7 @@ struct PinyinProviderOptions final {
     core::FuzzyPinyinOptions fuzzyPinyin;
     core::PinyinScheme pinyinScheme = core::PinyinScheme::Full;
     std::vector<core::CandidatePin> candidatePins;
+    bool calculatorEnabled = true;
 };
 
 struct ResourceChange final {

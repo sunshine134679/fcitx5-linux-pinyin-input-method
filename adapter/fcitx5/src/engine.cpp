@@ -960,6 +960,10 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
             }
             return openClipboard();
         }
+        if (outcome->action == core::SelectionAction::OpenCalculator) {
+            if (!options_.calculatorEnabled) return false;
+            return openAuxiliaryInput(AuxiliaryInputMode::Calculator, "v");
+        }
         if (outcome->action == core::SelectionAction::NoCommit) {
             return true;
         }
@@ -987,6 +991,11 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
     }
 
     if (page_.items[request.globalIndex].source == core::CandidateSource::Command) {
+        if (core::candidateIdentity(page_.items[request.globalIndex], page_).action ==
+            core::SelectionAction::OpenCalculator) {
+            if (!options_.calculatorEnabled) return false;
+            return openAuxiliaryInput(AuxiliaryInputMode::Calculator, "v");
+        }
         if (!options_.clipboardEnabled) {
             return false;
         }

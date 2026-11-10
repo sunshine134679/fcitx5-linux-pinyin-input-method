@@ -153,7 +153,7 @@ public:
             auto *popover = gtk_menu_button_get_popover(GTK_MENU_BUTTON(origin));
             if (popover) gtk_widget_hide(GTK_WIDGET(popover));
         }
-        if (!enabled() || previous == "contrast" || next == "contrast") {
+        if (!enabled()) {
             finishTheme();
             directThemeFrame = true;
             gtk_style_context_add_class(gtk_widget_get_style_context(window), "modernime-theme-static");

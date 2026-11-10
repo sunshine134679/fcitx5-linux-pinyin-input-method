@@ -772,16 +772,20 @@ void testVCommandMenuAndDeduplication() {
     std::error_code error;
     std::filesystem::remove(vLearningPath, error);
     vPaths.learningStore = vLearningPath.string();
-    modernime::pinyin::PinyinCandidateProvider provider(vPaths);
+    modernime::pinyin::PinyinProviderOptions options;
+    modernime::pinyin::PinyinCandidateProvider provider(vPaths, options);
     assertTrue(provider.append("v"), "v input accepted");
     auto page = provider.page();
-    assertTrue(page.items.size() == 2, "v produces exactly 2 candidates (raw + clipboard command)");
+    assertTrue(page.items.size() == 3, "v produces raw, clipboard and calculator commands");
     assertTrue(page.items[0].text == "v" &&
                page.items[0].source == modernime::core::CandidateSource::Raw,
                "candidate 0 is raw v");
     assertTrue(page.items[1].text == "剪贴板 (V+2)" &&
                page.items[1].source == modernime::core::CandidateSource::Command,
                "candidate 1 is clipboard command with trigger");
+    assertTrue(page.items[2].text == "离线计算器 (V=)" &&
+               page.items[2].source == modernime::core::CandidateSource::Command,
+               "calculator is discoverable alongside clipboard");
 
     std::size_t vCount = 0;
     for (const auto &item : page.items) {
@@ -793,17 +797,50 @@ void testVCommandMenuAndDeduplication() {
 
     provider.setClipboardEnabled(false);
     page = provider.page();
-    assertTrue(page.items.size() == 1 && page.items[0].text == "v",
-               "disabled clipboard shows only raw v without command");
+    assertTrue(page.items.size() == 2 && page.items[0].text == "v" &&
+               page.items[1].text == "离线计算器 (V=)",
+               "calculator remains available when clipboard is disabled");
 
     provider.setClipboardEnabled(true);
     provider.setClipboardTrigger("V+3");
     page = provider.page();
-    assertTrue(page.items.size() == 2 && page.items[1].text == "剪贴板 (V+3)",
+    assertTrue(page.items.size() == 3 && page.items[1].text == "剪贴板 (V+3)",
                "custom trigger V+3 updates command text");
 
     assertTrue(provider.select(1), "selecting command succeeds");
     assertTrue(provider.page().items.empty(), "selecting command clears candidates");
+
+    assertTrue(provider.append("v"), "v menu reopened");
+    page = provider.page();
+    modernime::core::CandidateSelectionRequest request;
+    request.globalIndex = 2;
+    request.expected = modernime::core::candidateIdentity(page.items[2], page);
+    auto wrongAction = request;
+    wrongAction.expected.action = modernime::core::SelectionAction::OpenClipboard;
+    assertTrue(!provider.selectConfirmed(wrongAction, page.generation),
+               "command action is part of the confirmed candidate identity");
+    const auto outcome = provider.selectConfirmed(request, page.generation);
+    assertTrue(outcome && outcome->action == modernime::core::SelectionAction::OpenCalculator &&
+               outcome->remainingInput.empty() && provider.page().items.empty(),
+               "calculator selection keeps its action after provider refresh");
+
+    options.calculatorEnabled = false;
+    options.clipboardTrigger = "V+3";
+    provider.applyOptions(options);
+    assertTrue(provider.append("v"), "v with calculator disabled");
+    page = provider.page();
+    assertTrue(page.items.size() == 2 && page.items[1].text == "剪贴板 (V+3)",
+               "disabled calculator is removed without changing clipboard");
+    options.clipboardEnabled = false;
+    provider.applyOptions(options);
+    assertTrue(provider.page().items.size() == 1 && provider.page().items[0].text == "v",
+               "both commands disabled leave raw v");
+    options.calculatorEnabled = true;
+    options.clipboardTrigger = "C+2";
+    provider.applyOptions(options);
+    assertTrue(provider.page().items.size() == 2 &&
+               provider.page().items[1].text == "离线计算器 (V=)",
+               "calculator menu does not depend on the clipboard trigger");
 }
 
 void testIndependentRecallInCandidateProvider() {
