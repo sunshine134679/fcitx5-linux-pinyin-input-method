@@ -242,6 +242,15 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_settings_gtk_raii_tests
     )
 
+    add_executable(modernime_input_editing_gtk_tests settings/input_editing_gtk_test.cpp)
+    target_link_libraries(modernime_input_editing_gtk_tests PRIVATE modernime_settings_components)
+    add_test(NAME modernime_input_editing_gtk COMMAND modernime_input_editing_gtk_tests)
+    set_tests_properties(modernime_input_editing_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 25)
+
     add_executable(modernime_settings_focus_gtk_tests
         settings/settings_focus_gtk_test.cpp
     )

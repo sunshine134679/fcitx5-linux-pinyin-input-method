@@ -77,6 +77,7 @@ modernime_enable_warnings(modernime_settings_logic)
 
 add_library(modernime_settings_gtk STATIC
     quick_phrase_editor.cpp
+    input_rule_dialog.cpp
     settings_choice.cpp
     settings_widgets.cpp
     settings_motion.cpp

@@ -15,6 +15,12 @@ SettingsFocusDestination chooseSettingsFocusDestination(
 
 std::optional<SettingsFocusRoute>
 settingsFocusRouteForIssue(std::string_view issueKey) {
+    if (issueKey == "punctuation.underscore")
+        return SettingsFocusRoute{SettingsPageId::Input, "punctuation.underscore"};
+    if (issueKey.starts_with("punctuation.map."))
+        return SettingsFocusRoute{SettingsPageId::Input, "punctuation.map"};
+    if (issueKey == "input.app" || issueKey.starts_with("input.app."))
+        return SettingsFocusRoute{SettingsPageId::Input, "input.app"};
     if (issueKey == "input.toggle_key") {
         return SettingsFocusRoute{SettingsPageId::Input, "toggle-key"};
     }

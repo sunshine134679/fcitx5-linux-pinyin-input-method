@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/input_page.h"
 
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/input_rule_dialog.h"
 #include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -171,18 +172,51 @@ public:
     Impl(SettingsWindowModel &modelRef, std::function<void()> changedCallback)
         : model(modelRef), changed(std::move(changedCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "输入与按键", "调整默认输入状态、中英文切换键与以词定字。"));
+            "输入与按键", "设置中英模式、拼音方案、按键与标点编辑习惯。"));
         page = pageGuard.get();
         buildInputStatusSection();
         buildFuzzySection();
         buildShortcutSection();
         buildPunctuationSection();
-        setSettingsFocusChain(page, {inputEnabled, defaultMode, pinyinScheme, fuzzyExpander,
+        setSettingsFocusChain(page, {inputEnabled, defaultMode, rememberPerApp, appRules, pinyinScheme, fuzzyExpander,
             fuzzyControls[0], fuzzyControls[1], fuzzyControls[2],
             fuzzyControls[3], fuzzyControls[4], fuzzyControls[5],
-            toggleKey, characterExtraction, punctuation});
+            toggleKey, characterExtraction, undoCommit, punctuation, autoPair, smartPunctuation,
+            punctuationAdvanced, underscore, punctuationRules});
         refresh();
         pageGuard.release();
+    }
+
+    ~Impl() {
+        if (activeRuleDialog) gtk_widget_destroy(activeRuleDialog);
+    }
+
+    GtkWidget *addEditingRow(GtkWidget *section, const char *label, const char *description,
+                            GtkWidget *control, const char *name) {
+        setTarget(control, name);
+        setAccessibleWidgetText(control, label, description);
+        auto *row = createSettingRow(label, description, control);
+        gtk_box_pack_start(GTK_BOX(section), row, FALSE, FALSE, 0);
+        editingControls.emplace_back(control, row);
+        return row;
+    }
+
+    void manageRules(InputRuleKind kind) {
+        if (activeRuleDialog) { gtk_window_present(GTK_WINDOW(activeRuleDialog)); return; }
+        auto *top = gtk_widget_get_toplevel(page);
+        activeRuleDialog = createInputRuleDialog(GTK_IS_WINDOW(top) ? GTK_WINDOW(top) : nullptr,
+            model.settings(), kind, [this, kind](core::ModernIMESettings draft) {
+                auto settings = model.settings();
+                if (kind == InputRuleKind::Application) settings.appInputModes = std::move(draft.appInputModes);
+                else settings.punctuationOverrides = std::move(draft.punctuationOverrides);
+                model.setSettings(std::move(settings));
+                updateState();
+                changed();
+            });
+        g_signal_connect(activeRuleDialog, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer p) {
+            static_cast<Impl *>(p)->activeRuleDialog = nullptr;
+        }), this);
+        gtk_widget_show_all(activeRuleDialog);
     }
 
     void buildInputStatusSection() {
@@ -204,9 +238,22 @@ public:
         gtk_widget_set_hexpand(defaultMode, FALSE);
         setTarget(defaultMode, "default-mode");
         defaultModeFallback = createSettingRow(
-            "默认输入状态", "选择启动或重置时默认使用中文或英文。", defaultMode);
+            "默认输入状态", "未记住应用状态、也未设置应用规则时，默认使用中文或英文。", defaultMode);
         gtk_box_pack_start(GTK_BOX(section), defaultModeFallback, FALSE, FALSE,
                             0);
+
+        rememberPerApp = gtk_switch_new();
+        addEditingRow(section, "按应用记住中英状态",
+            "在本次 Fcitx 运行期间，优先记住每个应用切换后的中英状态；重启后不保留。",
+            rememberPerApp, "input.remember_per_app");
+        appRules = gtk_button_new_with_label("管理规则");
+        addEditingRow(section, "应用默认输入状态",
+            "为编辑器等应用指定中文或英文；未设置的应用沿用全局默认，已记住的状态优先。",
+            appRules, "input.app");
+        g_signal_connect(rememberPerApp, "notify::active", G_CALLBACK(onSwitchChanged), this);
+        g_signal_connect(appRules, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) {
+            static_cast<Impl *>(p)->manageRules(InputRuleKind::Application);
+        }), this);
 
         g_signal_connect(inputEnabled, "notify::active", G_CALLBACK(onSwitchChanged), this);
         g_signal_connect(defaultMode, "changed", G_CALLBACK(onChanged), this);
@@ -275,6 +322,14 @@ public:
         gtk_box_pack_start(GTK_BOX(section), characterExtractionFallback, FALSE,
                             FALSE, 0);
 
+        undoCommit = gtk_switch_new();
+        addEditingRow(section, "撤销上屏并重新选词",
+            "Ctrl+Shift+BackSpace：15 秒内撤回最近一次候选上屏，恢复原始拼音；需应用支持。",
+            undoCommit, "input.undo_commit");
+        gtk_widget_set_tooltip_text(undoCommit,
+            "只支持最近一次普通候选提交，不含标点、剪贴板等。新输入、光标移动或切换应用后失效；Ctrl+BackSpace 仍留给应用删词。");
+        g_signal_connect(undoCommit, "notify::active", G_CALLBACK(onSwitchChanged), this);
+
         g_signal_connect(toggleKey, "clicked", G_CALLBACK(onToggleKeyClicked), this);
         g_signal_connect(toggleKey, "key-press-event", G_CALLBACK(onToggleKeyPress), this);
         g_signal_connect(toggleKey, "key-release-event", G_CALLBACK(onToggleKeyRelease), this);
@@ -293,6 +348,41 @@ public:
         gtk_box_pack_start(GTK_BOX(section), punctuationFallback, FALSE, FALSE,
                             0);
         g_signal_connect(punctuation, "notify::active", G_CALLBACK(onSwitchChanged), this);
+
+        autoPair = gtk_switch_new();
+        addEditingRow(section, "自动补全成对标点",
+            "补全（）、【】、《》和中文引号，光标留在中间；终端及不支持的应用使用普通标点。",
+            autoPair, "punctuation.auto_pair");
+        smartPunctuation = gtk_switch_new();
+        addEditingRow(section, "智能保留英文标点",
+            "网址、路径和连续英文标识符内保留半角，如 https://、snake__。",
+            smartPunctuation, "punctuation.smart");
+        for (auto *control : {autoPair, smartPunctuation})
+            g_signal_connect(control, "notify::active", G_CALLBACK(onSwitchChanged), this);
+
+        punctuationAdvanced = gtk_expander_new("更多标点设置");
+        setTarget(punctuationAdvanced, "punctuation-advanced");
+        auto *disclosure = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        auto *revealer = gtk_revealer_new();
+        auto *advanced = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_container_add(GTK_CONTAINER(revealer), advanced);
+        gtk_box_pack_start(GTK_BOX(disclosure), punctuationAdvanced, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(disclosure), revealer, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(section), disclosure, FALSE, FALSE, 0);
+        bindSettingsDisclosure(punctuationAdvanced, revealer);
+        underscore = createSettingsChoice();
+        for (const auto *label : {"智能", "始终 _", "始终 ——"}) appendSettingsChoice(underscore, label);
+        addEditingRow(advanced, "下划线输出",
+            "智能模式单独输入为 ——，英文标识符内为 _；逐键自定义优先。",
+            underscore, "punctuation.underscore");
+        punctuationRules = gtk_button_new_with_label("自定义标点");
+        addEditingRow(advanced, "逐键自定义",
+            "让 /、_ 等按键始终输出指定文本，覆盖该键的智能转换与配对。",
+            punctuationRules, "punctuation.map");
+        g_signal_connect(underscore, "changed", G_CALLBACK(onChanged), this);
+        g_signal_connect(punctuationRules, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) {
+            static_cast<Impl *>(p)->manageRules(InputRuleKind::Punctuation);
+        }), this);
     }
 
     static const char *shortcutLabel(const std::string &value) {
@@ -418,6 +508,14 @@ public:
             GTK_SWITCH(impl->punctuation));
         settings.characterExtractionEnabled = gtk_switch_get_active(
             GTK_SWITCH(impl->characterExtraction));
+        settings.autoPairPunctuation = gtk_switch_get_active(GTK_SWITCH(impl->autoPair));
+        settings.smartPunctuation = gtk_switch_get_active(GTK_SWITCH(impl->smartPunctuation));
+        settings.rememberModePerApp = gtk_switch_get_active(GTK_SWITCH(impl->rememberPerApp));
+        settings.undoCommitEnabled = gtk_switch_get_active(GTK_SWITCH(impl->undoCommit));
+        const std::array underscoreStyles{core::UnderscoreStyle::Smart, core::UnderscoreStyle::Ascii, core::UnderscoreStyle::Chinese};
+        const auto underscoreIndex = settingsChoiceActive(impl->underscore);
+        if (underscoreIndex >= 0 && underscoreIndex < static_cast<int>(underscoreStyles.size()))
+            settings.underscoreStyle = underscoreStyles[underscoreIndex];
         const auto schemeIndex = settingsChoiceActive(impl->pinyinScheme);
         if (schemeIndex >= 0 && static_cast<std::size_t>(schemeIndex) < core::kPinyinSchemes.size())
             settings.pinyinScheme = core::kPinyinSchemes[schemeIndex].scheme;
@@ -450,6 +548,12 @@ public:
                               settings.characterExtractionEnabled);
         gtk_switch_set_active(GTK_SWITCH(punctuation),
                               settings.punctuationEnabled);
+        gtk_switch_set_active(GTK_SWITCH(autoPair), settings.autoPairPunctuation);
+        gtk_switch_set_active(GTK_SWITCH(smartPunctuation), settings.smartPunctuation);
+        gtk_switch_set_active(GTK_SWITCH(rememberPerApp), settings.rememberModePerApp);
+        gtk_switch_set_active(GTK_SWITCH(undoCommit), settings.undoCommitEnabled);
+        setSettingsChoiceActive(underscore, settings.underscoreStyle == core::UnderscoreStyle::Ascii ? 1
+            : settings.underscoreStyle == core::UnderscoreStyle::Chinese ? 2 : 0);
         for (std::size_t i = 0; i < core::kPinyinSchemes.size(); ++i) {
             if (core::kPinyinSchemes[i].scheme == settings.pinyinScheme)
                 setSettingsChoiceActive(pinyinScheme, static_cast<int>(i));
@@ -470,6 +574,14 @@ public:
         for (auto *control : {defaultMode, pinyinScheme, toggleKey, characterExtraction, punctuation}) {
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         }
+        for (auto *control : {rememberPerApp, appRules, undoCommit})
+            gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
+        for (auto *control : {autoPair, smartPunctuation, underscore, punctuationRules})
+            gtk_widget_set_sensitive(control, state.dependentControlsSensitive && model.settings().punctuationEnabled);
+        const auto applicationSummary = "管理规则 · " + std::to_string(model.settings().appInputModes.size()) + " 条";
+        gtk_button_set_label(GTK_BUTTON(appRules), applicationSummary.c_str());
+        const auto punctuationSummary = "自定义 · " + std::to_string(model.settings().punctuationOverrides.size()) + " 项";
+        gtk_button_set_label(GTK_BUTTON(punctuationRules), punctuationSummary.c_str());
         for (auto *control : fuzzyControls) {
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         }
@@ -489,6 +601,14 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        for (const auto &[control, fallback] : editingControls) {
+            const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(control), "modernime-settings-target"));
+            if (id && target == id) {
+                if (control == underscore || control == punctuationRules)
+                    setSettingsDisclosureExpanded(punctuationAdvanced, true, false);
+                return focusWidgetOrFallback(control, fallback);
+            }
+        }
         if (target == "pinyin.scheme") return focusWidgetOrFallback(pinyinScheme, nullptr);
         for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
             if (target == core::kFuzzyPinyinOptions[i].key) {
@@ -533,6 +653,10 @@ public:
     GtkWidget *characterExtractionFallback = nullptr;
     GtkWidget *punctuation = nullptr;
     GtkWidget *punctuationFallback = nullptr;
+    GtkWidget *rememberPerApp = nullptr, *appRules = nullptr, *undoCommit = nullptr;
+    GtkWidget *autoPair = nullptr, *smartPunctuation = nullptr, *underscore = nullptr;
+    GtkWidget *punctuationAdvanced = nullptr, *punctuationRules = nullptr, *activeRuleDialog = nullptr;
+    std::vector<std::pair<GtkWidget *, GtkWidget *>> editingControls;
     bool refreshing = false;
 };
 
