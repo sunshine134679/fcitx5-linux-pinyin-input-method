@@ -233,6 +233,32 @@ void testTemporaryEnglish(fcitx::Instance &instance) {
     send(fcitx::Key(FcitxKey_Return));
     check(doc.text.ends_with("aX"), "temporary fragment supports cursor insertion and forward deletion");
 }
+void testUnderscoreKeepsRawEnglish(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    Document doc(instance.inputContextManager());
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entries.front(), in);
+    auto send = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key); engine.keyEvent(entries.front(), event); return event.accepted();
+    };
+    auto type = [&](std::string_view s) { for (char c : s) send(fcitx::Key(std::string(1,c))); };
+    type("inter");
+    auto &controller = engine.state(&doc)->controller();
+    const auto completion = std::find_if(controller.page().items.begin(), controller.page().items.end(),
+        [](const auto &item) { return item.text == "interface"; });
+    check(completion != controller.page().items.end(), "English completion is recalled");
+    controller.moveCursor(std::distance(controller.page().items.begin(), completion));
+    check(controller.page().items[controller.page().cursor].text == "interface", "expanded English completion is selected before underscore");
+    check(send(fcitx::Key(FcitxKey_underscore)) && doc.text == "inter_" && controller.page().rawInput.empty(),
+          "underscore commits typed English prefix rather than completion");
+    type("name"); send(fcitx::Key(FcitxKey_underscore));
+    check(doc.text == "inter_name_", "identifier continuation keeps raw spelling");
+    doc.text.clear(); doc.cursor = 0; doc.sync(); controller.reset();
+    type("nihao"); send(fcitx::Key(FcitxKey_underscore));
+    check(doc.text == "你好——", "Chinese candidate keeps standalone dash behavior");
+}
+
 void testComponentLookup(fcitx::Instance &instance) {
     fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
     const auto entries = engine.listInputMethods();
@@ -290,6 +316,7 @@ int main() {
 #endif
         testTemporaryEnglish(instance);
         testComponentLookup(instance);
+        testUnderscoreKeepsRawEnglish(instance);
     }
     std::filesystem::remove_all(root);
 }

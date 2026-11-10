@@ -700,6 +700,21 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::Space:
         return page_.items.empty() ? commitRawPreedit(" ") : commitCurrent();
     case KeyKind::Punctuation: {
+        if (event.character == '_' && !compositionInput_.empty() && !clipboardMode_) {
+            const auto mapping = options_.punctuationOverrides.find('_');
+            const bool literal = !options_.punctuationEnabled ||
+                (mapping != options_.punctuationOverrides.end() ? mapping->second == "_" :
+                 options_.underscoreStyle == core::UnderscoreStyle::Ascii ||
+                 (options_.underscoreStyle == core::UnderscoreStyle::Smart && options_.smartPunctuation));
+            const bool englishPending = !page_.items.empty() &&
+                page_.items[page_.cursor].source != core::CandidateSource::None &&
+                isAsciiText(page_.items[page_.cursor].text);
+            // '_' continues an identifier. Completing a word here changes the
+            // user's spelling (inter -> interface_) before their separator.
+            if (literal && (englishPending ||
+                    (options_.smartPunctuation && inAsciiToken(contextBefore_, contextAfter_))))
+                return commitRawPreedit("_");
+        }
         if (!compositionInput_.empty() && compositionInput_.front() == 'v' &&
             event.character == '.' && compositionInput_.find('.') == std::string::npos) {
             std::string nextInput = compositionInput_;
