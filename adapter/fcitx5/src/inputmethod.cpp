@@ -429,6 +429,7 @@ FcitxInputContextState::FcitxInputContextState(
         (void)resources;
 #endif
     controller_.setComponentLookup(resources.componentLookup);
+    controller_.setClipboardFavoriteHandler(resources.clipboardFavoriteHandler);
     host_.setController(controller_);
     controller_.setActive(settings.defaultMode == core::InputMode::Chinese);
 }
@@ -652,7 +653,11 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
             if (hasInstance) {
                 if (auto endpoint = clipboardEndpoint.lock()) endpoint->notify();
             }
-        });
+        }, settingsPaths().clipboardFavorites);
+    resources_.clipboardFavoriteHandler = [this](std::string_view text, bool favorite) -> std::uint64_t {
+        if (!settings_.clipboardEnabled || !settings_.inputEnabled || !clipboardHistory_ || !clipboardHistory_->setFavorite(text, favorite)) return 0;
+        return clipboardHistory_->lastAcceptedFavoriteOperationId();
+    };
 }
 
 ModernIMEInputMethod::~ModernIMEInputMethod() {
@@ -1106,6 +1111,10 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             (event.rawKey().check(FcitxKey_e, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})) ||
              event.rawKey().check(FcitxKey_E, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})))) {
             modernEvent = KeyEvent{KeyKind::ToggleTemporaryEnglish};
+        } else if (contextState->controller().clipboardMode() && (event.key().check(FcitxKey_f, fcitx::KeyState::Ctrl) || event.key().check(FcitxKey_F, fcitx::KeyState::Ctrl))) {
+            modernEvent = KeyEvent{KeyKind::StartClipboardSearch};
+        } else if (contextState->controller().clipboardMode() && (event.key().check(FcitxKey_d, fcitx::KeyState::Ctrl) || event.key().check(FcitxKey_D, fcitx::KeyState::Ctrl))) {
+            modernEvent = KeyEvent{KeyKind::ToggleClipboardFavorite};
         } else if (keyBindings_.componentLookupEnabled && !hasNonShiftModifier(event.key()) &&
                    !contextState->controller().auxiliaryInputActive() &&
                    contextState->controller().page().rawInput == "u" && event.key().check(FcitxKey_plus)) {
@@ -1118,7 +1127,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                    !contextState->controller().auxiliaryInputActive() && contextState->controller().page().rawInput == "v" &&
                    event.key().check(FcitxKey_semicolon)) {
             modernEvent = KeyEvent{KeyKind::OpenSymbols};
-        } else if (contextState->controller().auxiliaryInputActive() && !hasNonShiftModifier(event.key())) {
+        } else if ((contextState->controller().auxiliaryInputActive() || contextState->controller().clipboardSearching()) && !hasNonShiftModifier(event.key())) {
             const auto c = fcitx::Key::keySymToUnicode(event.key().sym());
             if (c > 0x20 && c <= 0x7e) modernEvent = KeyEvent{KeyKind::Character, static_cast<char>(c)};
         }

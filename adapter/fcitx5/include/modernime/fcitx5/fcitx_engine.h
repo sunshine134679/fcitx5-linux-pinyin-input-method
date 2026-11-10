@@ -314,6 +314,7 @@ private:
 // every input context.
 struct FcitxEngineResources final {
     std::shared_ptr<const core::ComponentLookup> componentLookup;
+    std::function<std::uint64_t(std::string_view, bool)> clipboardFavoriteHandler;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::shared_ptr<pinyin::PinyinCandidateProvider::SharedResources> pinyin;
 #endif
@@ -357,7 +358,7 @@ public:
         controller_.setClipboardEntries(std::move(entries));
     }
     void setClipboardSnapshot(const core::ClipboardSnapshot &snapshot) {
-        controller_.setClipboardSnapshot(snapshot.entries, snapshot.availability);
+        controller_.setClipboardSnapshot(snapshot);
     }
 
 private:

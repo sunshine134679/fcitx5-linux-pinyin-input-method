@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cstdint>
 #include <memory>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -52,6 +53,8 @@ enum class KeyKind {
     OpenCalculator,
     OpenSymbols,
     OpenFavoriteSymbols,
+    StartClipboardSearch,
+    ToggleClipboardFavorite,
 };
 
 enum class AuxiliaryInputMode { None, TemporaryEnglish, ComponentLookup, Calculator, Symbols };
@@ -226,6 +229,12 @@ public:
                               core::ClipboardAvailability availability);
     void setOptions(ControllerOptions options);
     bool clipboardMode() const { return clipboardMode_; }
+    bool clipboardSearching() const { return clipboardMode_ && clipboardSearching_; }
+    bool setClipboardQuery(std::string query, bool favoritesOnly = false);
+    void setClipboardSnapshot(const core::ClipboardSnapshot &snapshot);
+    void setClipboardFavoriteHandler(std::function<std::uint64_t(std::string_view, bool)> handler) { clipboardFavoriteHandler_ = std::move(handler); }
+    bool favoriteCurrentClipboard();
+    bool clipboardFavoritePending() const { return clipboardFavoritePendingId_ != 0; }
 
     bool active() const { return options_.inputEnabled && active_; }
     const core::CandidatePage &page() const { return page_; }
@@ -246,6 +255,8 @@ private:
                       const core::CandidateIdentity &candidate,
                       std::string rawInput, std::string remainingInput);
     bool openClipboard();
+    void publishClipboardPage();
+    bool handleClipboardSearch(const KeyEvent &event);
     bool replaceComposition(std::string nextInput,
                             std::size_t nextCursor);
     void publishProviderPage(bool adoptRemainingComposition = false,
@@ -288,6 +299,15 @@ private:
     ControllerOptions options_;
     bool active_ = true;
     bool clipboardMode_ = false;
+    bool clipboardSearching_ = false;
+    bool clipboardFavoritesOnly_ = false;
+    std::string clipboardQuery_;
+    std::size_t clipboardQueryCursor_ = 0;
+    std::shared_ptr<const std::vector<std::string>> clipboardFavorites_;
+    core::ClipboardAvailability clipboardFavoritesAvailability_ = core::ClipboardAvailability::Ready;
+    std::string clipboardFavoriteError_;
+    std::uint64_t clipboardFavoritePendingId_ = 0;
+    std::function<std::uint64_t(std::string_view, bool)> clipboardFavoriteHandler_;
     bool doubleQuoteOpen_ = false;
     bool singleQuoteOpen_ = false;
     std::string compositionInput_;

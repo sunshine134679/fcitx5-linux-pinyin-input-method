@@ -4,6 +4,7 @@
 #include "modernime/core/punctuation.h"
 #include "modernime/core/calculator.h"
 #include "modernime/core/symbol_catalog.h"
+#include "modernime/core/clipboard_queries.h"
 
 #include <algorithm>
 #include <atomic>
@@ -569,6 +570,14 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         publishAuxiliaryPage(); return true;
     }
     if (auxiliaryInputActive()) return handleAuxiliaryInput(event);
+    if (event.kind == KeyKind::StartClipboardSearch) {
+        return clipboardMode_ && setClipboardQuery(clipboardQuery_, clipboardFavoritesOnly_);
+    }
+    if (event.kind == KeyKind::ToggleClipboardFavorite) {
+        if (!clipboardMode_) return false;
+        favoriteCurrentClipboard(); return true;
+    }
+    if (clipboardMode_ && clipboardSearching_) return handleClipboardSearch(event);
     if (event.kind == KeyKind::UndoCommit) return undoLastCommit();
     if (event.kind != KeyKind::PreviousCandidate && event.kind != KeyKind::NextCandidate &&
         event.kind != KeyKind::PreviousPage && event.kind != KeyKind::NextPage &&
@@ -910,6 +919,8 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::OpenCalculator:
     case KeyKind::OpenSymbols:
     case KeyKind::OpenFavoriteSymbols:
+    case KeyKind::StartClipboardSearch:
+    case KeyKind::ToggleClipboardFavorite:
         break;
     }
     return false;
@@ -1293,6 +1304,7 @@ void ModernIMEController::clearComposition() {
     contextBefore_ = fallbackContextBefore_;
     contextAfter_.clear();
     clipboardMode_ = false;
+    clipboardSearching_ = false; clipboardFavoritesOnly_ = false; clipboardQuery_.clear(); clipboardQueryCursor_ = 0;
     clipboardEntries_.reset();
     compositionInput_.clear();
     compositionCursor_ = 0;
@@ -1333,6 +1345,7 @@ void ModernIMEController::setSensitive(bool sensitive) {
     sensitive_ = sensitive;
     if (sensitive_) {
         if (auxiliaryInputActive()) cancelAuxiliaryInput();
+        if (clipboardSearching_) clearComposition();
         invalidateTextActions();
         recentCommit_.valid = false;
         contextAvailability_ = ContextAvailability::Invalidated;
@@ -1414,12 +1427,91 @@ void ModernIMEController::setClipboardSnapshot(
     std::shared_ptr<const std::vector<std::string>> entries,
     core::ClipboardAvailability availability) {
     const bool refreshPlaceholder = clipboardMode_ && !sensitive_ &&
-        clipboardPageAvailability_ != core::ClipboardAvailability::Ready &&
-        clipboardPageAvailability_ != availability;
+        ((clipboardPageAvailability_ != core::ClipboardAvailability::Ready && clipboardPageAvailability_ != availability) ||
+         (clipboardSearching_ && entries != clipboardEntries_));
     if (entries == clipboardEntries_ && availability == clipboardAvailability_ && !refreshPlaceholder) return;
     clipboardEntries_ = std::move(entries);
     clipboardAvailability_ = availability;
-    if (refreshPlaceholder) openClipboard();
+    if (refreshPlaceholder) publishClipboardPage();
+}
+
+void ModernIMEController::setClipboardSnapshot(const core::ClipboardSnapshot &snapshot) {
+    const bool completed = clipboardFavoritePendingId_ && snapshot.lastFavoriteOperationId >= clipboardFavoritePendingId_;
+    if (completed) clipboardFavoritePendingId_ = 0;
+    const bool favoritesChanged = completed || clipboardFavorites_ != snapshot.favorites ||
+        clipboardFavoritesAvailability_ != snapshot.favoritesAvailability || clipboardFavoriteError_ != snapshot.favoritesError;
+    clipboardFavorites_ = snapshot.favorites;
+    clipboardFavoritesAvailability_ = snapshot.favoritesAvailability;
+    clipboardFavoriteError_ = snapshot.favoritesError;
+    setClipboardSnapshot(snapshot.entries, snapshot.availability);
+    if (favoritesChanged && clipboardMode_ && !sensitive_) publishClipboardPage();
+}
+
+bool ModernIMEController::setClipboardQuery(std::string query, bool favoritesOnly) {
+    if (!clipboardMode_ || sensitive_ || query.size() > 128) return false;
+    clipboardQuery_ = std::move(query); clipboardQueryCursor_ = clipboardQuery_.size();
+    clipboardSearching_ = true; clipboardFavoritesOnly_ = favoritesOnly;
+    publishClipboardPage(); return true;
+}
+
+bool ModernIMEController::favoriteCurrentClipboard() {
+    if (!clipboardMode_ || sensitive_ || page_.cursor >= page_.items.size() ||
+        page_.items[page_.cursor].source == core::CandidateSource::None ||
+        page_.items[page_.cursor].source == core::CandidateSource::Command) return false;
+    if (clipboardFavoritePendingId_) return false;
+    const auto &text = page_.items[page_.cursor].text;
+    const bool favorite = clipboardFavorites_ && std::find(clipboardFavorites_->begin(), clipboardFavorites_->end(), text) != clipboardFavorites_->end();
+    const auto operation = clipboardFavoriteHandler_ ? clipboardFavoriteHandler_(text, !favorite) : 0;
+    if (!operation) {
+        clipboardFavoriteError_ = "收藏操作未排队，请稍后重试";
+        publishClipboardPage(); return false;
+    }
+    clipboardFavoritePendingId_ = operation;
+    return true;
+}
+
+bool ModernIMEController::handleClipboardSearch(const KeyEvent &event) {
+    const auto previous = [&] {
+        auto pos = clipboardQueryCursor_;
+        if (pos) --pos;
+        while (pos && (static_cast<unsigned char>(clipboardQuery_[pos]) & 0xc0) == 0x80) --pos;
+        return pos;
+    };
+    const auto next = [&] {
+        auto pos = clipboardQueryCursor_;
+        if (pos < clipboardQuery_.size()) ++pos;
+        while (pos < clipboardQuery_.size() && (static_cast<unsigned char>(clipboardQuery_[pos]) & 0xc0) == 0x80) ++pos;
+        return pos;
+    };
+    switch (event.kind) {
+    case KeyKind::Character:
+    case KeyKind::Punctuation:
+    case KeyKind::Digit:
+    case KeyKind::Space: {
+        const char c = event.kind == KeyKind::Digit ? event.digit : event.kind == KeyKind::Space ? ' ' : event.character;
+        if (c < 0x20 || c > 0x7e) return false;
+        if (clipboardQuery_.size() < 128) clipboardQuery_.insert(clipboardQueryCursor_++, 1, c);
+        break;
+    }
+    case KeyKind::Backspace:
+        if (clipboardQuery_.empty()) { clipboardSearching_ = false; clipboardFavoritesOnly_ = false; }
+        else { const auto pos = previous(); clipboardQuery_.erase(pos, clipboardQueryCursor_ - pos); clipboardQueryCursor_ = pos; }
+        break;
+    case KeyKind::DeleteForward: clipboardQuery_.erase(clipboardQueryCursor_, next() - clipboardQueryCursor_); break;
+    case KeyKind::MoveCompositionLeft: clipboardQueryCursor_ = previous(); break;
+    case KeyKind::MoveCompositionRight: clipboardQueryCursor_ = next(); break;
+    case KeyKind::Enter: commitCurrent(); return true;
+    case KeyKind::Escape:
+        clipboardSearching_ = false; clipboardFavoritesOnly_ = false; clipboardQuery_.clear(); clipboardQueryCursor_ = 0; break;
+    case KeyKind::PreviousCandidate:
+    case KeyKind::PreviousClipboardItem: return moveCursor(-1);
+    case KeyKind::NextCandidate:
+    case KeyKind::NextClipboardItem: return moveCursor(1);
+    case KeyKind::PreviousPage: return movePage(-1);
+    case KeyKind::NextPage: return movePage(1);
+    default: return false;
+    }
+    publishClipboardPage(); return true;
 }
 
 std::size_t ModernIMEController::pageSize() const {
@@ -1727,42 +1819,44 @@ bool ModernIMEController::openClipboard() {
     } else {
         input_.clear();
     }
-    displayGeneration_++;
-    page_.clear();
-    page_.sessionId = sessionId_;
-    page_.displayGeneration = displayGeneration_;
-    page_.mode = core::CandidatePageMode::Clipboard;
-    compositionInput_.clear();
-    compositionCursor_ = 0;
+    compositionInput_.clear(); compositionCursor_ = 0;
+    clipboardSearching_ = false; clipboardFavoritesOnly_ = false; clipboardQuery_.clear(); clipboardQueryCursor_ = 0;
     clipboardMode_ = true;
+    publishClipboardPage(); return true;
+}
+
+void ModernIMEController::publishClipboardPage() {
+    page_.clear(); page_.sessionId = sessionId_; page_.displayGeneration = ++displayGeneration_;
+    page_.generation = displayGeneration_; page_.mode = core::CandidatePageMode::Clipboard;
     clipboardPageAvailability_ = clipboardAvailability_;
-    const auto count = clipboardEntries_ ? clipboardEntries_->size() : 0;
-    page_.items.reserve(count);
-    if (clipboardAvailability_ != core::ClipboardAvailability::Ready || count == 0) {
-        core::CandidateItem emptyItem;
-        emptyItem.text = clipboardAvailability_ == core::ClipboardAvailability::Loading
-            ? "(正在读取剪贴板…)"
-            : clipboardAvailability_ == core::ClipboardAvailability::Unavailable
-                ? "(剪贴板暂不可用)" : "(剪贴板为空)";
-        emptyItem.source = core::CandidateSource::Command;
-        emptyItem.commitRole = core::CommitCandidateRole::Command;
-        page_.items.push_back(std::move(emptyItem));
-    } else {
-        for (std::size_t index = 0; index < count; ++index) {
-            core::CandidateItem item;
-            item.text = (*clipboardEntries_)[index];
-            item.consumedInputBytes = index;
-            item.commitRole = core::CommitCandidateRole::Chinese;
-            page_.items.push_back(std::move(item));
-        }
+    if (clipboardSearching_) {
+        page_.preedit = (clipboardFavoritesOnly_ ? "收藏搜索：" : "剪贴板搜索：") + clipboardQuery_;
+        page_.preeditCursor = page_.preedit.size() - clipboardQuery_.size() + clipboardQueryCursor_;
     }
-    for (std::size_t begin = 0; begin < page_.items.size();
-         begin += kClipboardPageSize) {
-        page_.pageBoundaries.push_back(
-            {begin, std::min(begin + kClipboardPageSize, page_.items.size())});
+    if (!clipboardFavoriteError_.empty()) page_.preedit += "（收藏失败：" + clipboardFavoriteError_ + "）";
+    static const std::vector<std::string> empty;
+    const auto &history = clipboardEntries_ ? *clipboardEntries_ : empty;
+    const auto &favorites = clipboardFavorites_ ? *clipboardFavorites_ : empty;
+    const auto matches = core::searchClipboard(history, favorites, clipboardQuery_, clipboardFavoritesOnly_);
+    for (std::size_t i = 0; i < matches.size(); ++i) {
+        core::CandidateItem item;
+        item.text = matches[i].text; item.consumedInputBytes = i;
+        item.commitRole = core::CommitCandidateRole::Generated;
+        if (matches[i].favorite) item.annotation = "收藏";
+        page_.items.push_back(std::move(item));
     }
+    if (page_.items.empty()) {
+        core::CandidateItem hint;
+        hint.text = clipboardAvailability_ == core::ClipboardAvailability::Loading ? "(正在读取剪贴板…)" :
+            clipboardAvailability_ == core::ClipboardAvailability::Unavailable ? "(剪贴板暂不可用)" :
+            clipboardSearching_ ? "(没有匹配的剪贴板条目)" : "(剪贴板为空)";
+        hint.source = clipboardSearching_ ? core::CandidateSource::None : core::CandidateSource::Command;
+        hint.commitRole = core::CommitCandidateRole::Command;
+        page_.items.push_back(std::move(hint));
+    }
+    for (std::size_t begin = 0; begin < page_.items.size(); begin += kClipboardPageSize)
+        page_.pageBoundaries.push_back({begin, std::min(begin + kClipboardPageSize, page_.items.size())});
     host_.publishPage(page_);
-    return true;
 }
 
 bool ModernIMEController::commitCurrent() {

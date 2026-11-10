@@ -17,13 +17,23 @@ struct ClipboardSnapshot {
     ClipboardAvailability availability = ClipboardAvailability::Loading;
     std::uint64_t version = 0;
     std::string error;
+    std::shared_ptr<const std::vector<std::string>> favorites;
+    ClipboardAvailability favoritesAvailability = ClipboardAvailability::Loading;
+    std::string favoritesError;
+    // Zero means no favorite operation has completed. IDs increase in accepted
+    // request order. These fields describe the last completed operation;
+    // favoritesError also reports any earlier failure in the same batch.
+    std::uint64_t lastFavoriteOperationId = 0;
+    bool lastFavoriteOperationSucceeded = true;
+    std::string lastFavoriteOperationError;
 };
 
 // All public methods belong to one host thread. File operations belong solely
 // to the worker. notify runs on that worker and must marshal to the host loop.
 class AsyncClipboardHistory final {
 public:
-    AsyncClipboardHistory(std::filesystem::path path, std::function<void()> notify);
+    AsyncClipboardHistory(std::filesystem::path path, std::function<void()> notify,
+                          std::filesystem::path favoritesPath = {});
     ~AsyncClipboardHistory();
     AsyncClipboardHistory(const AsyncClipboardHistory &) = delete;
     AsyncClipboardHistory &operator=(const AsyncClipboardHistory &) = delete;
@@ -34,6 +44,15 @@ public:
     void observe(std::string_view text);
     void requestRefresh();
     void requestSave();
+    // Queues a full-text favorite add/remove without file I/O on the caller.
+    // An empty favorites path disables this API. Returns false after shutdown,
+    // for invalid text, or with 30 accepted operations still awaiting snapshot
+    // consumption. Accepted requests run once on the existing worker; consume
+    // snapshots for persistence results and to dispatch the next waiting batch.
+    bool setFavorite(std::string_view text, bool favorite);
+    // Host-thread acceptance ID. Rejected requests leave this value unchanged;
+    // lastFavoriteOperationId >= this ID confirms its worker batch completed.
+    std::uint64_t lastAcceptedFavoriteOperationId() const;
     std::optional<ClipboardSnapshot> takeSnapshot();
     // Only shutdown may wait for I/O. Drains accepted copies, returns the last
     // persistence error, and joins before the owner/notification target dies.

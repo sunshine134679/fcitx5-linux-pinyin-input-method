@@ -14,6 +14,7 @@
 #include <fcitx-utils/testing.h>
 #include <modernime/core/settings.h>
 #include <modernime/core/clipboard_history.h>
+#include <modernime/core/clipboard_queries.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -297,6 +298,10 @@ int worker(const std::string &addonDirectory, const std::string &mode) {
     settings.learningEnabled=false;
     const auto paths=modernime::core::SettingsPaths::fromEnvironment(tmp,tmp,tmp);
     require(modernime::core::SettingsStore::save(paths.settingsFile,settings), "settings saved");
+    if (mode == "search-favorites") {
+        modernime::core::ClipboardHistory seed; seed.observe("中文地址"); seed.observe("Alpha42");
+        require(seed.save(paths.clipboardHistory), "search fixture saved");
+    }
     HeldClipboardIo heldIo;
     if (mode == "async-load" || mode == "async-cancel") {
         modernime::core::ClipboardHistory seed; seed.observe("load-fixture");
@@ -325,6 +330,49 @@ int worker(const std::string &addonDirectory, const std::string &mode) {
     ic.focusIn();
     instance.setCurrentInputMethod(&ic,"modernime",false);
     require(instance.inputMethod(&ic) == "modernime" && ic.hasFocus(), "real focused ModernIME selected");
+
+    if (mode == "search-favorites") {
+        int phase = 0; std::string failure;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        auto timer = instance.eventLoop().addTimeEvent(CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 10000, 10000,
+            [&](fcitx::EventSourceTime *source, std::uint64_t) {
+                try {
+                    require(std::chrono::steady_clock::now() < deadline, "clipboard search/favorite completion deadline");
+                    modernime::core::ClipboardFavorites favorites(paths.clipboardFavorites);
+                    require(favorites.load(), "favorite state readable");
+                    if (phase == 0 || phase == 2 || phase == 3) {
+                        key(ic,FcitxKey_Escape); key(ic,FcitxKey_v); key(ic,FcitxKey_2);
+                        const auto list = ic.inputPanel().candidateList();
+                        require(list != nullptr, "history candidate list exists");
+                        if (phase == 0 && list->candidate(0).text().toString() == "Alpha42") {
+                            fcitx::KeyEvent search(&ic,fcitx::Key(FcitxKey_f,fcitx::KeyState::Ctrl)); ic.keyEvent(search);
+                            require(search.accepted(), "Ctrl+F enters native clipboard search");
+                            for (char c : std::string("ALPHA4")) key(ic,static_cast<fcitx::KeySym>(c));
+                            const auto filtered = ic.inputPanel().candidateList();
+                            require(filtered && filtered->size() == 1 && filtered->candidate(0).text().toString() == "Alpha42", "native search retains digit and full matching text");
+                            fcitx::KeyEvent save(&ic,fcitx::Key(FcitxKey_d,fcitx::KeyState::Ctrl)); ic.keyEvent(save);
+                            require(save.accepted(), "Ctrl+D queues native favorite"); phase = 1;
+                        } else if (phase == 2 && list->size() == 1 && list->candidate(0).text().toString() == "Alpha42") {
+                            require(favorites.entries() == std::vector<std::string>{"Alpha42"}, "history clear keeps persisted favorite");
+                            fcitx::KeyEvent remove(&ic,fcitx::Key(FcitxKey_d,fcitx::KeyState::Ctrl)); ic.keyEvent(remove);
+                            require(remove.accepted(), "Ctrl+D removes native favorite"); phase = 3;
+                        } else if (phase == 3 && favorites.entries().empty() && list->candidate(0).text().toString() == "(剪贴板为空)") {
+                            require(ic.commits == std::vector<std::string>{"Alpha42"}, "favorite operations never commit labels or change text");
+                            source->setEnabled(false); instance.eventLoop().exit(); return true;
+                        }
+                    } else if (phase == 1 && favorites.entries() == std::vector<std::string>{"Alpha42"}) {
+                        key(ic,FcitxKey_Return);
+                        require(ic.commits == std::vector<std::string>{"Alpha42"}, "native query result commits");
+                        require(modernime::core::ClipboardHistory::updateFile(paths.clipboardHistory, [](auto &h) { h.clear(); return true; }), "clear history separately");
+                        phase = 2;
+                    }
+                } catch (const std::exception &e) { failure = e.what(); source->setEnabled(false); instance.eventLoop().exit(); return true; }
+                source->setNextInterval(10000); source->setEnabled(true); return true;
+            });
+        instance.eventLoop().exec();
+        if (!failure.empty()) { std::cerr << failure << '\n'; return 1; }
+        std::cout << "PASS clipboard native search and favorites\n"; return 0;
+    }
 
     if (mode.starts_with("async-")) return asyncScenario(instance, ic, *clipboard, paths, mode, heldIo);
     if (mode.starts_with("navigation-")) return navigationScenario(instance, ic, *clipboard, paths, mode, heldIo);

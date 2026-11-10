@@ -350,7 +350,8 @@ SettingsPaths SettingsPaths::fromEnvironment(std::string_view xdgConfigHome,
             modernimeData / "user-dictionary.txt",
             modernimeData / "learning.sqlite3",
             modernimeData / "clipboard-history.bin",
-            modernimeConfig / "runtime.state"};
+            modernimeConfig / "runtime.state",
+            modernimeData / "clipboard-favorites.bin"};
 }
 
 SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {

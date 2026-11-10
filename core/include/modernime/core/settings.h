@@ -136,6 +136,7 @@ struct SettingsPaths final {
     std::filesystem::path learningStore;
     std::filesystem::path clipboardHistory;
     std::filesystem::path runtimeState;
+    std::filesystem::path clipboardFavorites;
 
     static SettingsPaths fromEnvironment(std::string_view xdgConfigHome,
                                          std::string_view xdgDataHome,

@@ -13,6 +13,7 @@ add_library(modernime_core STATIC
     src/personal_engine_state.cpp
     src/async_clipboard_history.cpp
     src/clipboard_observation.cpp
+    src/clipboard_queries.cpp
     src/clipboard_history.cpp
     src/persistent_clipboard_history.cpp
     src/symbol_catalog.cpp
