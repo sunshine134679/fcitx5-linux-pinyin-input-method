@@ -259,6 +259,34 @@ void testUnderscoreKeepsRawEnglish(fcitx::Instance &instance) {
     check(doc.text == "你好——", "Chinese candidate keeps standalone dash behavior");
 }
 
+void testCalculator(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    Document doc(instance.inputContextManager());
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entries.front(), in);
+    auto send = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key); engine.keyEvent(entries.front(), event); return event.accepted();
+    };
+    auto type = [&](std::string_view s) { for (char c : s) check(send(fcitx::Key(std::string(1,c))), "calculator input accepted"); };
+    type("v=(2+3)*4");
+    auto &controller = engine.state(&doc)->controller();
+    check(controller.auxiliaryInputMode() == fcitx5::AuxiliaryInputMode::Calculator &&
+          controller.page().rawInput == "(2+3)*4" && controller.page().items.front().text == "20", "v= preserves digits and operators and evaluates precedence");
+    check(send(fcitx::Key(FcitxKey_Return)) && doc.text == "20" && !controller.auxiliaryInputActive(), "enter commits result and returns to Chinese");
+    type("v=0.1+0.2=");
+    check(doc.text == "200.3" && !controller.auxiliaryInputActive(), "trailing equals commits decimal result");
+    type("v=1/0");
+    check(send(fcitx::Key(FcitxKey_space)) && doc.text == "200.3" && controller.auxiliaryInputActive(), "division error cannot commit hint or expression");
+    send(fcitx::Key(FcitxKey_BackSpace)); type("2");
+    check(controller.page().items.front().text == "0.5" && controller.select(0) && doc.text == "200.30.5", "invalid expression can be edited and result clicked");
+    type("v=42"); send(fcitx::Key(FcitxKey_Escape));
+    check(doc.text == "200.30.5" && !controller.auxiliaryInputActive(), "escape cancels calculator");
+    type("v123");
+    check(!controller.auxiliaryInputActive() && controller.page().rawInput == "v123", "existing numeric macro stays available");
+    controller.reset();
+}
+
 void testComponentLookup(fcitx::Instance &instance) {
     fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
     const auto entries = engine.listInputMethods();
@@ -317,6 +345,7 @@ int main() {
         testTemporaryEnglish(instance);
         testComponentLookup(instance);
         testUnderscoreKeepsRawEnglish(instance);
+        testCalculator(instance);
     }
     std::filesystem::remove_all(root);
 }

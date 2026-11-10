@@ -145,14 +145,14 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             settings.learningEnabled, settings.contextLearningEnabled,
             settings.autoPairPunctuation, settings.smartPunctuation,
             settings.underscoreStyle, settings.punctuationOverrides, settings.undoCommitEnabled,
-            settings.temporaryEnglishEnabled, settings.componentLookupEnabled};
+            settings.temporaryEnglishEnabled, settings.componentLookupEnabled, settings.calculatorEnabled};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
     return {settings.toggleKey, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
             settings.clipboardEnabled, settings.clipboardTrigger,
-            settings.characterExtractionEnabled, settings.undoCommitEnabled, settings.temporaryEnglishEnabled, settings.componentLookupEnabled};
+            settings.characterExtractionEnabled, settings.undoCommitEnabled, settings.temporaryEnglishEnabled, settings.componentLookupEnabled, settings.calculatorEnabled};
 }
 
 } // namespace
@@ -1106,6 +1106,10 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                    !contextState->controller().auxiliaryInputActive() &&
                    contextState->controller().page().rawInput == "u" && event.key().check(FcitxKey_plus)) {
             modernEvent = KeyEvent{KeyKind::OpenComponentLookup};
+        } else if (keyBindings_.calculatorEnabled && !hasNonShiftModifier(event.key()) &&
+                   !contextState->controller().auxiliaryInputActive() &&
+                   contextState->controller().page().rawInput == "v" && event.key().check(FcitxKey_equal)) {
+            modernEvent = KeyEvent{KeyKind::OpenCalculator};
         } else if (contextState->controller().auxiliaryInputActive() && !hasNonShiftModifier(event.key())) {
             const auto c = fcitx::Key::keySymToUnicode(event.key().sym());
             if (c > 0x20 && c <= 0x7e) modernEvent = KeyEvent{KeyKind::Character, static_cast<char>(c)};

@@ -246,6 +246,7 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
            << "punctuation.underscore=" << underscoreName(settings.underscoreStyle) << '\n'
            << "input.remember_per_app=" << settings.rememberModePerApp << '\n'
            << "input.undo_commit=" << settings.undoCommitEnabled << '\n';
+    output << "input.calculator=" << settings.calculatorEnabled << '\n';
     output << "input.component_lookup=" << settings.componentLookupEnabled << '\n';
     output << "input.temporary_english=" << settings.temporaryEnglishEnabled << '\n';
     for (const auto &[key, text] : settings.punctuationOverrides)
@@ -508,6 +509,8 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 parsed = parseBoolean(value, result.settings.smartPunctuation);
             } else if (key == "input.undo_commit") {
                 parsed = parseBoolean(value, result.settings.undoCommitEnabled);
+            } else if (key == "input.calculator") {
+                parsed = parseBoolean(value, result.settings.calculatorEnabled);
             } else if (key == "input.component_lookup") {
                 parsed = parseBoolean(value, result.settings.componentLookupEnabled);
             } else if (key == "input.temporary_english") {
@@ -669,6 +672,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["input.toggle_key"] = settings.toggleKey;
     knownSettings["input.remember_per_app"] = settings.rememberModePerApp ? "true" : "false";
     knownSettings["input.undo_commit"] = settings.undoCommitEnabled ? "true" : "false";
+    knownSettings["input.calculator"] = settings.calculatorEnabled ? "true" : "false";
     knownSettings["input.component_lookup"] = settings.componentLookupEnabled ? "true" : "false";
     knownSettings["input.temporary_english"] = settings.temporaryEnglishEnabled ? "true" : "false";
     knownSettings["punctuation.auto_pair"] = settings.autoPairPunctuation ? "true" : "false";
@@ -762,6 +766,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
     const std::array keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
         "input.remember_per_app", "input.undo_commit",
+        "input.calculator",
         "input.component_lookup",
         "input.temporary_english",
         "punctuation.auto_pair", "punctuation.smart", "punctuation.underscore",

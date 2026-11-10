@@ -1008,3 +1008,7 @@ add_executable(modernime_component_lookup_tests core/component_lookup_test.cpp)
 target_link_libraries(modernime_component_lookup_tests PRIVATE modernime_core)
 add_test(NAME modernime_component_lookup COMMAND modernime_component_lookup_tests
     "${PROJECT_SOURCE_DIR}/data/components/component_lookup.tsv")
+
+add_executable(modernime_calculator_tests core/calculator_test.cpp)
+target_link_libraries(modernime_calculator_tests PRIVATE modernime_core)
+add_test(NAME modernime_calculator COMMAND modernime_calculator_tests)

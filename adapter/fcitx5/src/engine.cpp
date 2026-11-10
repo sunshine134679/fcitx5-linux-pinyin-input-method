@@ -2,6 +2,7 @@
 
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/punctuation.h"
+#include "modernime/core/calculator.h"
 
 #include <algorithm>
 #include <atomic>
@@ -557,6 +558,10 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (!options_.componentLookupEnabled) return false;
         return openAuxiliaryInput(AuxiliaryInputMode::ComponentLookup, "u");
     }
+    if (event.kind == KeyKind::OpenCalculator) {
+        if (!options_.calculatorEnabled) return false;
+        return openAuxiliaryInput(AuxiliaryInputMode::Calculator, "v");
+    }
     if (auxiliaryInputActive()) return handleAuxiliaryInput(event);
     if (event.kind == KeyKind::UndoCommit) return undoLastCommit();
     if (event.kind != KeyKind::PreviousCandidate && event.kind != KeyKind::NextCandidate &&
@@ -896,6 +901,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::UndoCommit:
     case KeyKind::ToggleTemporaryEnglish:
     case KeyKind::OpenComponentLookup:
+    case KeyKind::OpenCalculator:
         break;
     }
     return false;
@@ -1340,7 +1346,8 @@ void ModernIMEController::setOptions(ControllerOptions options) {
         options.undoCommitEnabled != options_.undoCommitEnabled) invalidateTextActions();
     options_ = options;
     if (temporaryEnglishMode() && !options_.temporaryEnglishEnabled) finishTemporaryEnglish(true);
-    if (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup && !options_.componentLookupEnabled) cancelAuxiliaryInput();
+    if ((auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup && !options_.componentLookupEnabled) ||
+        (auxiliaryMode_ == AuxiliaryInputMode::Calculator && !options_.calculatorEnabled)) cancelAuxiliaryInput();
     if (!options_.learningEnabled) { recentCommit_.valid = false; }
     if (provider_ != nullptr && !sensitive_) {
         provider_->setLearningEnabled(options_.learningEnabled);
@@ -1539,7 +1546,9 @@ void ModernIMEController::publishAuxiliaryPage() {
     page_.displayGeneration = ++displayGeneration_;
     page_.generation = displayGeneration_;
     page_.rawInput = auxiliaryInput_;
-    page_.preedit = auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup ? "拆字：" + auxiliaryInput_ : auxiliaryInput_;
+    const std::string_view prefix = auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup ? "拆字：" :
+        auxiliaryMode_ == AuxiliaryInputMode::Calculator ? "计算：" : "";
+    page_.preedit = std::string(prefix) + auxiliaryInput_;
     if (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup) {
         if (componentLookup_) {
             for (const auto &match : componentLookup_->lookup(auxiliaryInput_)) {
@@ -1560,7 +1569,17 @@ void ModernIMEController::publishAuxiliaryPage() {
             page_.items.push_back(std::move(hint));
         }
     }
-    page_.preeditCursor = auxiliaryCursor_ + (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup ? std::string("拆字：").size() : 0);
+    if (auxiliaryMode_ == AuxiliaryInputMode::Calculator) {
+        const auto result = core::calculate(auxiliaryInput_);
+        core::CandidateItem item;
+        item.text = result.valid ? result.text : auxiliaryInput_.empty() ? "输入算式，如 (2+3)*4" : result.error;
+        item.source = result.valid ? core::CandidateSource::Engine : core::CandidateSource::None;
+        item.commitRole = core::CommitCandidateRole::Generated;
+        item.consumedInputBytes = auxiliaryInput_.size();
+        if (result.valid) item.annotation = "计算结果";
+        page_.items.push_back(std::move(item));
+    }
+    page_.preeditCursor = auxiliaryCursor_ + prefix.size();
     ensurePageBoundaries();
     host_.publishPage(page_);
 }
@@ -1576,16 +1595,19 @@ bool ModernIMEController::finishTemporaryEnglish(bool commitText) {
 
 bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {
     if (!temporaryEnglishMode()) {
-        if (event.kind == KeyKind::Space || event.kind == KeyKind::Enter) {
+        if (event.kind == KeyKind::Space || event.kind == KeyKind::Enter ||
+            (auxiliaryMode_ == AuxiliaryInputMode::Calculator && event.kind == KeyKind::Character && event.character == '=')) {
             select(page_.cursor); return true;
         }
-        if (event.kind == KeyKind::Digit ||
-            (event.kind == KeyKind::Character && event.character >= '1' && event.character <= '9')) {
+        if (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup && (event.kind == KeyKind::Digit ||
+            (event.kind == KeyKind::Character && event.character >= '1' && event.character <= '9'))) {
             if (options_.numberSelection) {
                 const auto digit = event.kind == KeyKind::Digit ? event.digit : event.character;
-                const auto boundary = currentPageBoundary();
-                const auto index = boundary.begin + static_cast<std::size_t>(digit - '1');
-                if (index < boundary.end) select(index);
+                if (digit >= '1' && digit <= '9') {
+                    const auto boundary = currentPageBoundary();
+                    const auto index = boundary.begin + static_cast<std::size_t>(digit - '1');
+                    if (index < boundary.end) select(index);
+                }
             }
             return true;
         }
@@ -1597,7 +1619,12 @@ bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {
     switch (event.kind) {
     case KeyKind::Character:
         if (event.character < 0x21 || event.character > 0x7e) return false;
-        if (auxiliaryInput_.size() < 128) auxiliaryInput_.insert(auxiliaryCursor_++, 1, event.character);
+        if (auxiliaryInput_.size() < (auxiliaryMode_ == AuxiliaryInputMode::Calculator ? 512U : 128U))
+            auxiliaryInput_.insert(auxiliaryCursor_++, 1, event.character);
+        break;
+    case KeyKind::Digit:
+        if (auxiliaryMode_ != AuxiliaryInputMode::Calculator) return false;
+        if (auxiliaryInput_.size() < 512) auxiliaryInput_.insert(auxiliaryCursor_++, 1, event.digit);
         break;
     case KeyKind::Backspace:
         if (auxiliaryInput_.empty()) { cancelAuxiliaryInput(); return true; }

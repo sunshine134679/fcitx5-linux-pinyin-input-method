@@ -49,9 +49,10 @@ enum class KeyKind {
     UndoCommit,
     ToggleTemporaryEnglish,
     OpenComponentLookup,
+    OpenCalculator,
 };
 
-enum class AuxiliaryInputMode { None, TemporaryEnglish, ComponentLookup };
+enum class AuxiliaryInputMode { None, TemporaryEnglish, ComponentLookup, Calculator };
 
 // Empty valid text is a real document state; unavailable clients may use the
 // bounded continuous-commit fallback. Invalidated state drops that fallback.
@@ -83,6 +84,7 @@ struct ControllerOptions final {
     bool undoCommitEnabled = true;
     bool temporaryEnglishEnabled = true;
     bool componentLookupEnabled = true;
+    bool calculatorEnabled = true;
 };
 
 struct KeyBindings final {
@@ -96,6 +98,7 @@ struct KeyBindings final {
     bool undoCommitEnabled = true;
     bool temporaryEnglishEnabled = true;
     bool componentLookupEnabled = true;
+    bool calculatorEnabled = true;
 };
 
 struct TextEditContext final {
