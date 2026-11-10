@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake pkg-config \
+            build-essential cmake pkg-config python3 ca-certificates \
             libsqlite3-dev liblmdb-dev libboost-dev libgtest-dev libbenchmark-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
             libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
@@ -134,7 +134,7 @@ jobs:
             sqlite sqlite-libs sqlite-devel lmdb-libs lmdb-devel boost-devel \
             fcitx5 fcitx5-devel libime libime-devel \
             gtk3 gtk3-devel pango pango-devel cairo cairo-devel \
-            desktop-file-utils hicolor-icon-theme python3 cpio gzip tar \
+            desktop-file-utils hicolor-icon-theme python3 ca-certificates cpio gzip tar \
             rpm rpm-build rpm-sign dnf gnupg2
 
           for native_tool in rpm rpmkeys rpmsign dnf rpmbuild; do

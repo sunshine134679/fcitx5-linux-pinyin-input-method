@@ -2,8 +2,28 @@ find_package(PkgConfig REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
 find_program(MODERNIME_LDD_EXECUTABLE ldd REQUIRED)
-execute_process(COMMAND "${Python3_EXECUTABLE}" -c
-    "import ssl; assert ssl.create_default_context().get_ca_certs(), '请安装 ca-certificates'"
+execute_process(COMMAND "${Python3_EXECUTABLE}" -c [=[
+import pathlib
+import re
+import ssl
+
+context = ssl.create_default_context()
+paths = ssl.get_default_verify_paths()
+# OpenSSL loads hashed capath certificates lazily, so an empty list before a
+# connection does not mean the system trust store is missing. Inspect those
+# certificates in this build-only context; runtime TLS keeps its defaults.
+if not context.get_ca_certs() and paths.capath:
+    for certificate in pathlib.Path(paths.capath).iterdir():
+        if not re.fullmatch(r'[0-9a-fA-F]{8}\.[0-9]+', certificate.name):
+            continue
+        try:
+            context.load_verify_locations(cafile=str(certificate))
+        except OSError:
+            continue
+        if context.get_ca_certs():
+            break
+assert context.get_ca_certs(), f'请安装 ca-certificates 并检查证书路径：{paths}'
+]=]
     RESULT_VARIABLE modernime_https_ready ERROR_VARIABLE modernime_https_error)
 if(NOT modernime_https_ready EQUAL 0)
     message(FATAL_ERROR "客户端在线更新需要 Python SSL 和 ca-certificates: ${modernime_https_error}")
