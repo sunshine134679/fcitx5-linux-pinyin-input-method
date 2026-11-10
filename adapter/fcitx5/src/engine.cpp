@@ -501,6 +501,7 @@ void ModernIMEController::setContext(std::string before, std::string after,
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
     }
+    if (temporaryEnglish_) return;
     if (!page_.items.empty()) {
         if (clipboardMode_) {
             displayGeneration_++;
@@ -547,6 +548,19 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     if (!active()) {
         return false;
     }
+    if (event.kind == KeyKind::ToggleTemporaryEnglish) {
+        if (!options_.temporaryEnglishEnabled) return false;
+        if (temporaryEnglish_) return finishTemporaryEnglish(true);
+        if (!compositionInput_.empty() || clipboardMode_) return false;
+        finalizeRecentCommitDeletion();
+        invalidateTextActions();
+        if (provider_) provider_->resetCommitHistory();
+        temporaryEnglish_ = true;
+        auxiliaryInput_.clear(); auxiliaryCursor_ = 0;
+        publishAuxiliaryPage();
+        return true;
+    }
+    if (temporaryEnglish_) return handleTemporaryEnglish(event);
     if (event.kind == KeyKind::UndoCommit) return undoLastCommit();
     if (event.kind != KeyKind::PreviousCandidate && event.kind != KeyKind::NextCandidate &&
         event.kind != KeyKind::PreviousPage && event.kind != KeyKind::NextPage &&
@@ -868,6 +882,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         return false;
     case KeyKind::Toggle:
     case KeyKind::UndoCommit:
+    case KeyKind::ToggleTemporaryEnglish:
         break;
     }
     return false;
@@ -1222,6 +1237,8 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
 }
 
 void ModernIMEController::clearComposition() {
+    temporaryEnglish_ = false;
+    auxiliaryInput_.clear(); auxiliaryCursor_ = 0;
     contextBefore_ = fallbackContextBefore_;
     contextAfter_.clear();
     clipboardMode_ = false;
@@ -1264,6 +1281,7 @@ void ModernIMEController::setSensitive(bool sensitive) {
     }
     sensitive_ = sensitive;
     if (sensitive_) {
+        if (temporaryEnglish_) finishTemporaryEnglish(false);
         invalidateTextActions();
         recentCommit_.valid = false;
         contextAvailability_ = ContextAvailability::Invalidated;
@@ -1300,6 +1318,7 @@ void ModernIMEController::setOptions(ControllerOptions options) {
         options.punctuationOverrides != options_.punctuationOverrides ||
         options.undoCommitEnabled != options_.undoCommitEnabled) invalidateTextActions();
     options_ = options;
+    if (temporaryEnglish_ && !options_.temporaryEnglishEnabled) finishTemporaryEnglish(true);
     if (!options_.learningEnabled) { recentCommit_.valid = false; }
     if (provider_ != nullptr && !sensitive_) {
         provider_->setLearningEnabled(options_.learningEnabled);
@@ -1307,6 +1326,8 @@ void ModernIMEController::setOptions(ControllerOptions options) {
     }
     if (!options_.inputEnabled) {
         reset();
+    } else if (temporaryEnglish_) {
+        publishAuxiliaryPage();
     } else if (!page_.items.empty()) {
         if (clipboardMode_) {
             displayGeneration_++;
@@ -1446,6 +1467,7 @@ void ModernIMEController::publishProviderPage(bool adoptRemainingComposition,
 }
 
 void ModernIMEController::refreshPage() {
+    if (temporaryEnglish_) { publishAuxiliaryPage(); return; }
     if (clipboardMode_) {
         return;
     }
@@ -1474,6 +1496,55 @@ void ModernIMEController::refreshPage() {
     }
     ensurePageBoundaries();
     host_.publishPage(page_);
+}
+
+void ModernIMEController::publishAuxiliaryPage() {
+    page_.clear();
+    page_.sessionId = sessionId_;
+    page_.displayGeneration = ++displayGeneration_;
+    page_.generation = displayGeneration_;
+    page_.rawInput = auxiliaryInput_;
+    page_.preedit = auxiliaryInput_;
+    page_.preeditCursor = auxiliaryCursor_;
+    host_.publishPage(page_);
+}
+
+bool ModernIMEController::finishTemporaryEnglish(bool commitText) {
+    if (!temporaryEnglish_) return false;
+    const auto text = auxiliaryInput_;
+    fallbackContextBefore_.clear();
+    clearComposition();
+    if (commitText && !text.empty()) host_.commit(text);
+    return true;
+}
+
+bool ModernIMEController::handleTemporaryEnglish(const KeyEvent &event) {
+    switch (event.kind) {
+    case KeyKind::Character:
+        if (event.character < 0x21 || event.character > 0x7e) return false;
+        if (auxiliaryInput_.size() < 128) auxiliaryInput_.insert(auxiliaryCursor_++, 1, event.character);
+        break;
+    case KeyKind::Backspace:
+        if (auxiliaryInput_.empty()) return finishTemporaryEnglish(false);
+        if (auxiliaryCursor_) auxiliaryInput_.erase(--auxiliaryCursor_, 1);
+        break;
+    case KeyKind::DeleteForward:
+        if (auxiliaryCursor_ < auxiliaryInput_.size()) auxiliaryInput_.erase(auxiliaryCursor_, 1);
+        break;
+    case KeyKind::MoveCompositionLeft:
+        if (auxiliaryCursor_) --auxiliaryCursor_;
+        break;
+    case KeyKind::MoveCompositionRight:
+        if (auxiliaryCursor_ < auxiliaryInput_.size()) ++auxiliaryCursor_;
+        break;
+    case KeyKind::Enter: return finishTemporaryEnglish(true);
+    case KeyKind::Space:
+        finishTemporaryEnglish(true); host_.commit(" "); return true;
+    case KeyKind::Escape: return finishTemporaryEnglish(false);
+    default: return false;
+    }
+    publishAuxiliaryPage();
+    return true;
 }
 
 bool ModernIMEController::replaceComposition(std::string nextInput,

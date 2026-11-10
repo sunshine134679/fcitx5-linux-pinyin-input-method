@@ -202,6 +202,37 @@ void testUndo(fcitx::Instance &instance) {
     send(fcitx::Key(FcitxKey_parenright));
     check(doc.text == "（你好）" && doc.cursor == 4, "closing pair commits pending Chinese without duplicating closer");
 }
+
+void testTemporaryEnglish(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    Document doc(instance.inputContextManager());
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entries.front(), in);
+    auto send = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key); engine.keyEvent(entries.front(), event); return event.accepted();
+    };
+    const auto trigger = fcitx::Key(FcitxKey_E,
+        fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift}));
+    check(send(trigger), "temporary English shortcut starts an idle fragment");
+    for (const char c : std::string("User_42@example.com"))
+        check(send(fcitx::Key(std::string(1,c))), "temporary English retains literal ASCII");
+    check(send(fcitx::Key(FcitxKey_Return)) && doc.text == "User_42@example.com", "literal fragment commits");
+    check(send(fcitx::Key(FcitxKey_n)) && engine.state(&doc)->controller().page().rawInput == "n", "Chinese resumes after temporary English");
+    check(!send(trigger) && engine.state(&doc)->controller().page().rawInput == "n", "existing Chinese composition is preserved");
+    send(fcitx::Key(FcitxKey_Escape));
+    send(trigger); send(fcitx::Key(FcitxKey_a)); send(fcitx::Key(FcitxKey_Escape));
+    check(doc.text == "User_42@example.com", "escape discards temporary fragment");
+    send(trigger); send(fcitx::Key(FcitxKey_x)); send(fcitx::Key(FcitxKey_space));
+    check(doc.text == "User_42@example.comx ", "space commits with literal separator");
+    send(trigger); send(fcitx::Key(FcitxKey_v)); send(fcitx::Key(FcitxKey_2));
+    send(fcitx::Key(FcitxKey_Return));
+    check(doc.text.ends_with("v2"), "temporary English bypasses clipboard trigger");
+    send(trigger); send(fcitx::Key(FcitxKey_a)); send(fcitx::Key(FcitxKey_b));
+    send(fcitx::Key(FcitxKey_Left)); send(fcitx::Key(FcitxKey_X)); send(fcitx::Key(FcitxKey_Delete));
+    send(fcitx::Key(FcitxKey_Return));
+    check(doc.text.ends_with("aX"), "temporary fragment supports cursor insertion and forward deletion");
+}
 }
 
 int main() {
@@ -221,6 +252,7 @@ int main() {
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
         testUndo(instance);
 #endif
+        testTemporaryEnglish(instance);
     }
     std::filesystem::remove_all(root);
 }

@@ -46,6 +46,7 @@ enum class KeyKind {
     CommitFirstCharacter,
     CommitLastCharacter,
     UndoCommit,
+    ToggleTemporaryEnglish,
 };
 
 // Empty valid text is a real document state; unavailable clients may use the
@@ -75,6 +76,7 @@ struct ControllerOptions final {
     core::UnderscoreStyle underscoreStyle = core::UnderscoreStyle::Smart;
     std::map<char, std::string> punctuationOverrides;
     bool undoCommitEnabled = true;
+    bool temporaryEnglishEnabled = true;
 };
 
 struct KeyBindings final {
@@ -86,6 +88,7 @@ struct KeyBindings final {
     std::string clipboardTrigger = "V+2";
     bool characterExtractionEnabled = true;
     bool undoCommitEnabled = true;
+    bool temporaryEnglishEnabled = true;
 };
 
 struct TextEditContext final {
@@ -128,6 +131,8 @@ public:
     void invalidateTextActions();
     void invalidateUndo() { undoCommit_.reset(); }
     bool undoLastCommit();
+    bool temporaryEnglishMode() const { return temporaryEnglish_; }
+    bool finishTemporaryEnglish(bool commitText);
     void setActive(bool active);
     void setSensitive(bool sensitive);
     bool isSensitive() const { return sensitive_; }
@@ -214,6 +219,8 @@ private:
     bool commitPunctuation(char ascii);
     bool editPairedPunctuation(char ascii);
     bool eraseEmptyPair();
+    bool handleTemporaryEnglish(const KeyEvent &event);
+    void publishAuxiliaryPage();
     void rememberUndo(const std::optional<TextEditContext> &before,
                       const core::CandidateIdentity &candidate,
                       std::string rawInput, std::string remainingInput);
@@ -282,6 +289,9 @@ private:
         std::chrono::steady_clock::time_point timestamp;
     };
     std::optional<UndoCommit> undoCommit_;
+    bool temporaryEnglish_ = false;
+    std::string auxiliaryInput_;
+    std::size_t auxiliaryCursor_ = 0;
     std::uint64_t sessionId_ = 0;
     std::uint64_t displayGeneration_ = 1;
     std::uint64_t layoutGeneration_ = 1;

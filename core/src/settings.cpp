@@ -223,6 +223,7 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
            << "punctuation.underscore=" << underscoreName(settings.underscoreStyle) << '\n'
            << "input.remember_per_app=" << settings.rememberModePerApp << '\n'
            << "input.undo_commit=" << settings.undoCommitEnabled << '\n';
+    output << "input.temporary_english=" << settings.temporaryEnglishEnabled << '\n';
     for (const auto &[key, text] : settings.punctuationOverrides)
         output << "punctuation.map." << static_cast<int>(key) << '=' << text << '\n';
     for (const auto &[app, mode] : settings.appInputModes)
@@ -483,6 +484,8 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 parsed = parseBoolean(value, result.settings.smartPunctuation);
             } else if (key == "input.undo_commit") {
                 parsed = parseBoolean(value, result.settings.undoCommitEnabled);
+            } else if (key == "input.temporary_english") {
+                parsed = parseBoolean(value, result.settings.temporaryEnglishEnabled);
             } else if (key == "input.remember_per_app") {
                 parsed = parseBoolean(value, result.settings.rememberModePerApp);
             } else if (key == "punctuation.underscore") {
@@ -625,6 +628,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["input.toggle_key"] = settings.toggleKey;
     knownSettings["input.remember_per_app"] = settings.rememberModePerApp ? "true" : "false";
     knownSettings["input.undo_commit"] = settings.undoCommitEnabled ? "true" : "false";
+    knownSettings["input.temporary_english"] = settings.temporaryEnglishEnabled ? "true" : "false";
     knownSettings["punctuation.auto_pair"] = settings.autoPairPunctuation ? "true" : "false";
     knownSettings["punctuation.smart"] = settings.smartPunctuation ? "true" : "false";
     knownSettings["punctuation.underscore"] = underscoreName(settings.underscoreStyle);
@@ -708,9 +712,10 @@ SettingsSaveResult SettingsStore::saveWithResult(
         }
     }
 
-    const std::array<const char *, 32> keyOrder{
+    const std::array<const char *, 33> keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
         "input.remember_per_app", "input.undo_commit",
+        "input.temporary_english",
         "punctuation.auto_pair", "punctuation.smart", "punctuation.underscore",
         "pinyin.scheme",
         "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",

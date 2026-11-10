@@ -144,14 +144,15 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             settings.characterExtractionEnabled,
             settings.learningEnabled, settings.contextLearningEnabled,
             settings.autoPairPunctuation, settings.smartPunctuation,
-            settings.underscoreStyle, settings.punctuationOverrides, settings.undoCommitEnabled};
+            settings.underscoreStyle, settings.punctuationOverrides, settings.undoCommitEnabled,
+            settings.temporaryEnglishEnabled};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
     return {settings.toggleKey, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
             settings.clipboardEnabled, settings.clipboardTrigger,
-            settings.characterExtractionEnabled, settings.undoCommitEnabled};
+            settings.characterExtractionEnabled, settings.undoCommitEnabled, settings.temporaryEnglishEnabled};
 }
 
 } // namespace
@@ -1095,7 +1096,16 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             contextState->controller().setContext("", "", availability);
         }
         auto modernEvent = translateKey(event.key(), keyBindings_);
+        if (keyBindings_.temporaryEnglishEnabled &&
+            (event.rawKey().check(FcitxKey_e, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})) ||
+             event.rawKey().check(FcitxKey_E, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})))) {
+            modernEvent = KeyEvent{KeyKind::ToggleTemporaryEnglish};
+        } else if (contextState->controller().temporaryEnglishMode() && !hasNonShiftModifier(event.key())) {
+            const auto c = fcitx::Key::keySymToUnicode(event.key().sym());
+            if (c > 0x20 && c <= 0x7e) modernEvent = KeyEvent{KeyKind::Character, static_cast<char>(c)};
+        }
         if (modernEvent && modernEvent->kind == KeyKind::Character && modernEvent->character == '\'' &&
+            !contextState->controller().temporaryEnglishMode() &&
             contextState->controller().page().preedit.empty()) modernEvent->kind = KeyKind::Punctuation;
         if (modernEvent && contextState->controller().page().preedit.empty() &&
             !contextState->controller().clipboardMode() && !hasNonShiftModifier(event.key()) &&
@@ -1109,7 +1119,8 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                 fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})))
             modernEvent = KeyEvent{KeyKind::UndoCommit};
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
-                                      contextState->controller().active();
+                                      contextState->controller().active() &&
+                                      !contextState->controller().temporaryEnglishMode();
         if (clipboardActive) {
             contextState->setClipboardSnapshot(clipboardSnapshot_);
         }
@@ -1126,6 +1137,8 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             return;
         }
         if (!modernEvent.has_value()) {
+            if (contextState->controller().temporaryEnglishMode() && hasNonShiftModifier(event.key()))
+                contextState->controller().finishTemporaryEnglish(true);
             if (hasNonShiftModifier(event.key())) contextState->controller().invalidateTextActions();
             if (contextState->controller().page().preedit.empty() &&
                 !event.inputContext()->surroundingText().isValid()) {

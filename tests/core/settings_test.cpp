@@ -599,6 +599,7 @@ void testTypingSettings() {
                               {"code", modernime::core::InputMode::English}};
     settings.rememberModePerApp = true;
     settings.undoCommitEnabled = false;
+    settings.temporaryEnglishEnabled = false;
     assertTrue(modernime::core::SettingsStore::save(path, settings), "save typing settings");
     const auto loaded = modernime::core::SettingsStore::load(path);
     assertTrue(loaded.diagnostics.empty() && loaded.settings == settings, "typing settings round-trip with exact app identifiers and literal equals");

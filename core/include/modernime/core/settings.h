@@ -74,6 +74,7 @@ struct ModernIMESettings final {
     bool rememberModePerApp = false;
     std::map<std::string, InputMode> appInputModes;
     bool undoCommitEnabled = true;
+    bool temporaryEnglishEnabled = true;
 
     bool operator==(const ModernIMESettings &) const = default;
 };
