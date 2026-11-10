@@ -159,7 +159,8 @@ public:
     ClipboardPage(SettingsWindowModel &settings,
                   std::filesystem::path historyPath,
                   std::function<void()> settingsChanged,
-                  std::function<void(std::string)> notify);
+                  std::function<void(std::string)> notify,
+                  std::filesystem::path favoritesPath = {});
     ~ClipboardPage();
 
     ClipboardPage(const ClipboardPage &) = delete;

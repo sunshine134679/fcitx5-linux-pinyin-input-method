@@ -80,6 +80,8 @@ add_library(modernime_settings_gtk STATIC
     quick_phrase_editor.cpp
     input_rule_dialog.cpp
     input_assist.cpp
+    script_conversion_control.cpp
+    symbol_browser.cpp
     candidate_pin_dialog.cpp
     settings_choice.cpp
     settings_widgets.cpp

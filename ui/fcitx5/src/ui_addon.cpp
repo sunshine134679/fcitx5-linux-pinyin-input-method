@@ -121,6 +121,16 @@ struct AppIndicatorAPI {
 
 static AppIndicatorAPI g_appIndicator;
 
+namespace {
+
+std::string outputText(fcitx::Instance *instance, fcitx::InputContext *context,
+                       const fcitx::Text &text) {
+    return instance ? instance->outputFilter(context, text).toString()
+                    : text.toString();
+}
+
+} // namespace
+
 struct ModernIMEUserInterface::Impl final {
     fcitx::Instance *instance = nullptr;
     GtkWidget *window = nullptr;
@@ -132,11 +142,14 @@ struct ModernIMEUserInterface::Impl final {
         struct Binding {
             const fcitx::CandidateWord *word;
             // ModernIME words are immutable. Generic Fcitx words may edit their
-            // text in place, so keep their displayed text as well.
+            // text in place, so keep their original text as well.
             std::optional<std::string> mutableText;
+            std::string displayText;
+            std::string displayAnnotation;
         };
         CandidateBarLayout layout;
         int scale = 1;
+        fcitx::Instance *instance = nullptr;
         fcitx::TrackableObjectReference<fcitx::InputContext> context;
         std::weak_ptr<fcitx::CandidateList> list;
         std::vector<Binding> bindings;
@@ -148,14 +161,25 @@ struct ModernIMEUserInterface::Impl final {
             }
             auto saved = list.lock();
             if (!saved || saved != ic->inputPanel().candidateList() ||
-                saved->size() != static_cast<int>(bindings.size())) {
+                saved->size() != static_cast<int>(bindings.size()) ||
+                outputText(instance, ic, ic->inputPanel().preedit()) !=
+                    layout.preedit) {
                 return {};
             }
             for (std::size_t i = 0; i < bindings.size(); ++i) {
                 const auto &word = saved->candidate(static_cast<int>(i));
                 if (&word != bindings[i].word ||
                     (bindings[i].mutableText &&
-                     word.text().toString() != *bindings[i].mutableText)) {
+                     word.text().toString() != *bindings[i].mutableText) ||
+                    outputText(instance, ic, word.text()) !=
+                        bindings[i].displayText) {
+                    return {};
+                }
+                if (const auto *modernWord =
+                        dynamic_cast<const fcitx5::FcitxCandidateWord *>(&word);
+                    modernWord &&
+                    outputText(instance, ic, fcitx::Text(modernWord->annotation())) !=
+                        bindings[i].displayAnnotation) {
                     return {};
                 }
             }
@@ -618,12 +642,17 @@ void configureWindow(GtkWidget *window) {
 }
 
 core::CandidateItem projectCandidateItem(const fcitx::CandidateWord &candidate,
-                                         std::size_t sourceIndex) {
+                                         std::size_t sourceIndex,
+                                         fcitx::Instance *instance,
+                                         fcitx::InputContext *context) {
     core::CandidateItem item;
-    item.text = candidate.text().toString();
+    // Output filters (including chttrans) affect only this display projection.
+    // CandidateWord and its selection request retain the original identity.
+    item.text = outputText(instance, context, candidate.text());
     if (const auto *word =
             dynamic_cast<const fcitx5::FcitxCandidateWord *>(&candidate)) {
-        item.annotation = word->annotation();
+        item.annotation = outputText(instance, context,
+                                     fcitx::Text(word->annotation()));
         // 易错音内联读音提示（卡qiǎ住）必须随候选词重建回页面
         // （2026-10-25 实机事故：该字段曾在此丢失导致提示不显示）。
         item.readingHint = word->readingHint();
@@ -633,9 +662,12 @@ core::CandidateItem projectCandidateItem(const fcitx::CandidateWord &candidate,
     return item;
 }
 
-core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
+core::CandidatePage pageFromInputPanel(
+    fcitx::InputContext *context, fcitx::Instance *instance,
+    const std::vector<core::CandidateItem> *allItems = nullptr) {
+    const auto &panel = context->inputPanel();
     core::CandidatePage page;
-    page.preedit = panel.preedit().toString();
+    page.preedit = outputText(instance, context, panel.preedit());
     const auto candidates = panel.candidateList();
     if (candidates == nullptr) {
         return page;
@@ -655,9 +687,11 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
                                ? std::size_t{0}
                                : variableCandidates->pageBegin();
     for (int index = 0; index < candidates->size(); ++index) {
-        const auto &candidate = candidates->candidate(index);
-        page.items.push_back(
-            projectCandidateItem(candidate, pageBegin + static_cast<std::size_t>(index)));
+        const auto globalIndex = pageBegin + static_cast<std::size_t>(index);
+        page.items.push_back(allItems
+            ? (*allItems)[globalIndex]
+            : projectCandidateItem(candidates->candidate(index), globalIndex,
+                                   instance, context));
     }
     return page;
 }
@@ -880,34 +914,43 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
             [impl = impl_.get()](std::string_view value) {
                 return impl->textWidth(value, impl->style.clipboardText);
             });
+        std::vector<core::CandidateItem> allItems;
+        bool projectedAllItems = false;
         if (mode == core::CandidatePageMode::Pinyin) {
             if (auto *variableCandidates =
                     dynamic_cast<fcitx5::FcitxCandidateList *>(list.get());
                 variableCandidates != nullptr) {
-                std::vector<core::CandidateItem> allItems;
                 const auto *bulk = list->toBulk();
                 const auto total = bulk == nullptr ? 0 : bulk->totalSize();
                 allItems.reserve(static_cast<std::size_t>(std::max(0, total)));
                 for (int index = 0; index < total; ++index) {
                     const auto &cand = bulk->candidateFromAll(index);
                     allItems.push_back(
-                        projectCandidateItem(cand, static_cast<std::size_t>(index)));
+                        projectCandidateItem(cand, static_cast<std::size_t>(index),
+                                             impl_->instance, inputContext));
                 }
+                projectedAllItems = true;
                 variableCandidates->setPageBoundaries(
                     CandidatePagination::partition(allItems, impl_->metrics,
                                                    textWidth));
             }
         }
-        const auto page = pageFromInputPanel(panel);
+        // Reuse the exact projection that determined physical page boundaries
+        // for measurement, painting and the frame's hit-test authorization.
+        const auto page = pageFromInputPanel(inputContext, impl_->instance,
+                                             projectedAllItems ? &allItems : nullptr);
         auto frame = std::make_shared<Impl::CandidateFrame>();
         frame->scale = gtk_widget_get_scale_factor(impl_->window);
+        frame->instance = impl_->instance;
         frame->layout = CandidateBarLayout::measure(page, impl_->metrics, textWidth);
         frame->context = inputContext->watch();
         frame->list = list;
         frame->bindings.reserve(static_cast<std::size_t>(list->size()));
         for (int index = 0; index < list->size(); ++index) {
             const auto &word = list->candidate(index);
-            Impl::CandidateFrame::Binding binding{&word, std::nullopt};
+            const auto &item = page.items[static_cast<std::size_t>(index)];
+            Impl::CandidateFrame::Binding binding{
+                &word, std::nullopt, item.text, item.annotation};
             if (!dynamic_cast<const fcitx5::FcitxCandidateWord *>(&word)) {
                 binding.mutableText = word.text().toString();
             }

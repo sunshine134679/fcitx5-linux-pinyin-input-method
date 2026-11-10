@@ -202,7 +202,7 @@ sudo apt update
 sudo apt install \
     build-essential cmake git pkg-config python3 coreutils util-linux ca-certificates libc-bin \
     libsqlite3-dev liblmdb-dev libboost-dev \
-    libgtest-dev libbenchmark-dev \
+    libgtest-dev libbenchmark-dev dbus-daemon \
     libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
     libimecore-dev libimepinyin-dev libime-bin \
     libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
@@ -351,6 +351,8 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 - **系统与诊断**：先显示能否正常输入与下一步建议，区分正常运行、等待切换、无输入焦点与不可用；技术检测值收在「运行详情」中，支持手动刷新和重载。
 
 「输入与按键 → 输入辅助」提供临时英文（`Ctrl+Shift+E`）、拆字查字（`u+`）和离线计算器（`v=`）开关。全拼输入 `v` 时，候选菜单也提供「离线计算器 (V=)」，可点选或用 Tab 选中后按空格进入；`v123` 等数字宏保持原用法。拆字和计算器可在原生弹窗中试用，查看部件、结果或简短错误，不必在正文中反复尝试。「候选与外观 → 候选置顶」可按方案和输入搜索、新增、更换或取消规则；新增从实际完整候选中选择，不生成新词，也不恢复被屏蔽的词。规则弹窗取消不改草稿，确认后仍需主窗口保存。详细触发方式、限制与接口见 [输入辅助功能接口](docs/输入辅助功能接口.md)。
+
+「输入与按键 → 简繁输出」读取 Fcitx 的实际状态及自定义快捷键，切换立即生效，独立于主窗口保存与放弃；自绘候选栏和上屏文字同步转换。「输入辅助 → 符号搜索」可按分类、中文、拼音或英文浏览符号、复制及管理收藏，收藏确认后仍需保存设置。「剪贴板」支持后台搜索、仅看收藏、收藏与取消，以及分别清空历史和收藏；这些操作即时保存，清空历史保留收藏。入口、数据边界及 Fcitx 插件要求见 [输入扩展功能接口](docs/输入扩展功能接口.md)。
 
 客户端主题通过 `appearance.client_theme=blue|jade|night|amber|rose|lavender|contrast` 写入原有设置文件，仅影响设置窗口，不改变输入法候选配色或排序。字体选择弹窗同步使用当前主题，统一搜索、字体列表、预览和确认按钮；更新页使用版本叠页图形，诊断页使用输入键盘图形，软件源通过「访问软件源」按钮在浏览器打开，不展示仓库地址。
 

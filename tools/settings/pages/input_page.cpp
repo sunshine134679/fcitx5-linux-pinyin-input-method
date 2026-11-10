@@ -3,6 +3,7 @@
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/input_rule_dialog.h"
 #include "modernime/settings/input_assist.h"
+#include "modernime/settings/script_conversion_control.h"
 #include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -178,13 +179,15 @@ public:
         buildInputStatusSection();
         buildFuzzySection();
         buildShortcutSection();
+        script = std::make_unique<ScriptConversionControl>();
+        gtk_box_pack_start(GTK_BOX(page), script->widget(), FALSE, FALSE, 0);
         assist = std::make_unique<InputAssist>(model, changed);
         gtk_box_pack_start(GTK_BOX(page), assist->widget(), FALSE, FALSE, 0);
         buildPunctuationSection();
         setSettingsFocusChain(page, {inputEnabled, defaultMode, rememberPerApp, appRules, pinyinScheme, fuzzyExpander,
             fuzzyControls[0], fuzzyControls[1], fuzzyControls[2],
             fuzzyControls[3], fuzzyControls[4], fuzzyControls[5],
-            toggleKey, characterExtraction, undoCommit, assist->widget(), punctuation, autoPair, smartPunctuation,
+            toggleKey, characterExtraction, undoCommit, script->widget(), assist->widget(), punctuation, autoPair, smartPunctuation,
             punctuationAdvanced, underscore, punctuationRules});
         refresh();
         pageGuard.release();
@@ -605,6 +608,7 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        if (script->focusTarget(target)) return true;
         if (assist->focusTarget(target)) return true;
         for (const auto &[control, fallback] : editingControls) {
             const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(control), "modernime-settings-target"));
@@ -663,6 +667,7 @@ public:
     GtkWidget *punctuationAdvanced = nullptr, *punctuationRules = nullptr, *activeRuleDialog = nullptr;
     std::vector<std::pair<GtkWidget *, GtkWidget *>> editingControls;
     std::unique_ptr<InputAssist> assist;
+    std::unique_ptr<ScriptConversionControl> script;
     bool refreshing = false;
 };
 

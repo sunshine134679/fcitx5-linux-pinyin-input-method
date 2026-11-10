@@ -75,13 +75,13 @@ int main(int argc, char **argv) {
     gtk_widget_show_all(window); gtk_window_present(GTK_WINDOW(window)); drain();
     wait([&] { return gtk_window_is_active(GTK_WINDOW(window)); });
     const auto switchHeight = gtk_widget_get_allocated_height(find(window, "input.temporary_english"));
-    for (const auto *name : {"input.component_lookup", "input.calculator"})
+    for (const auto *name : {"input.component_lookup", "input.calculator", "symbols.enabled"})
         assert(gtk_widget_get_allocated_height(find(window, name)) == switchHeight);
-    for (const auto *name : {"input.temporary_english", "input.component_lookup", "input.calculator"}) {
+    for (const auto *name : {"input.temporary_english", "input.component_lookup", "input.calculator", "symbols.enabled"}) {
         auto *control = find(window, name); assert(control && gtk_switch_get_active(GTK_SWITCH(control)));
         assert(input.focusTarget(name)); gtk_switch_set_active(GTK_SWITCH(control), false);
     }
-    assert(model.dirty() && !model.settings().temporaryEnglishEnabled && !model.settings().componentLookupEnabled && !model.settings().calculatorEnabled);
+    assert(model.dirty() && !model.settings().temporaryEnglishEnabled && !model.settings().componentLookupEnabled && !model.settings().calculatorEnabled && !model.settings().symbolSearchEnabled);
     assert(model.save());
     auto saved = modernime::core::SettingsStore::load(file); assert(saved.settings == model.settings());
     gtk_switch_set_active(GTK_SWITCH(find(window, "input.calculator")), true); model.resetEdits(); input.refresh();

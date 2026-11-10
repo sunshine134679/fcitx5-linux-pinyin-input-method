@@ -660,7 +660,7 @@ private:
         addPage(SettingsPageId::Dictionary, dictionaryPage->widget());
         clipboardPage = std::make_unique<ClipboardPage>(
             model, paths.clipboardHistory,
-            [this] { updateActionState(); }, notify);
+            [this] { updateActionState(); }, notify, paths.clipboardFavorites);
         addPage(SettingsPageId::Clipboard, clipboardPage->widget());
         learningPage = std::make_unique<LearningPage>(
             model, paths.learningStore,

@@ -8,6 +8,7 @@
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx-utils/signals.h>
 #include <gtk/gtk.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
@@ -81,6 +82,21 @@ void paint(modernime::ui::ModernIMEUserInterface &ui) {
     cairo_destroy(cr);
     cairo_surface_destroy(surface);
     drainGtkEvents();
+}
+
+std::vector<unsigned char> capture(modernime::ui::ModernIMEUserInterface &ui) {
+    auto *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1200, 400);
+    auto *cr = cairo_create(surface);
+    ui.draw(cr);
+    assertTrue(cairo_status(cr) == CAIRO_STATUS_SUCCESS, "capture production draw");
+    cairo_surface_flush(surface);
+    const auto *data = cairo_image_surface_get_data(surface);
+    std::vector<unsigned char> pixels(
+        data, data + cairo_image_surface_get_stride(surface) * 400);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+    drainGtkEvents();
+    return pixels;
 }
 
 GtkWidget *candidateArea() {
@@ -158,6 +174,100 @@ public:
 private:
     modernime::core::CandidatePage page_;
 };
+
+void testOutputProjection(fcitx::Instance &instance) {
+    TestInputContext context(instance.inputContextManager());
+    context.focusIn();
+    bool converted = false;
+    int filteredCandidates = 0;
+    const auto project = [](std::string text) {
+        if (text.rfind("软件", 0) == 0) {
+            text.replace(0, std::string("软件").size(), "軟體顯示轉換測試詞");
+        }
+        return text;
+    };
+    // Exercise the real Instance output-filter signal without loading a
+    // converter or reading the user's Fcitx configuration.
+    fcitx::ScopedConnection outputFilter = instance.connect<fcitx::Instance::OutputFilter>(
+        [&](fcitx::InputContext *ic, fcitx::Text &text) {
+            assertTrue(ic == &context, "output filter receives the owning input context");
+            if (converted) {
+                const auto original = text.toString();
+                const auto projected = project(original);
+                if (projected != original) ++filteredCandidates;
+                text = fcitx::Text(projected);
+            }
+        });
+    assertTrue(outputFilter.connected(), "real Instance output filter is connected");
+
+    modernime::ui::ModernIMEUserInterface ui(&instance);
+    PrefixProvider provider;
+    provider.texts.clear();
+    for (int i = 0; i < 9; ++i) provider.texts.push_back("软件" + std::to_string(i));
+    modernime::fcitx5::FcitxEngineHost host(context);
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    host.setController(controller);
+    for (const char c : std::string("nihaoma"))
+        controller.handle({modernime::fcitx5::KeyKind::Character, c});
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(ui);
+    auto list = std::dynamic_pointer_cast<modernime::fcitx5::FcitxCandidateList>(
+        context.inputPanel().candidateList());
+    assertTrue(list != nullptr, "projection uses real controller candidate words");
+    const auto rawPageSize = list->size();
+    const auto rawPixels = capture(ui);
+    const auto &firstWord = static_cast<const modernime::fcitx5::FcitxCandidateWord &>(
+        list->candidate(0));
+    const auto originalRequest = firstWord.request();
+
+    converted = true;
+    assertTrue(!ui.handleButtonPress(120, 20) && context.commits.empty(),
+               "changed output filter revokes the previously painted geometry");
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(ui);
+    const auto projectedPixels = capture(ui);
+    assertTrue(filteredCandidates > 0 && list->size() < rawPageSize,
+               "physical pagination measures the actual filtered text width");
+    assertTrue(firstWord.text().toString() == "软件0" &&
+                   firstWord.request().expected == originalRequest.expected &&
+                   firstWord.request().displayGeneration == originalRequest.displayGeneration,
+               "display projection preserves original text, expected identity and generation");
+    std::vector<std::string> displayed;
+    for (int i = 0; i < list->size(); ++i)
+        displayed.push_back(project(list->candidate(i).text().toString()));
+    const auto displayedPreedit = context.inputPanel().preedit().toString();
+
+    converted = false;
+    assertTrue(!ui.handleButtonPress(120, 20), "switching back rejects the old filtered frame");
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(ui);
+    assertTrue(list->size() == rawPageSize && capture(ui) == rawPixels,
+               "switching back restores original text and width without a stale projection cache");
+    converted = true;
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(ui);
+    assertTrue(ui.handleButtonPress(120, 20) &&
+                   context.commits == std::vector<std::string>{"软件0"} &&
+                   controller.page().rawInput == "ma",
+               "widened hit target selects the original candidate and exact consumed input");
+
+    // The filtered frame must match a frame whose input already contains the
+    // expected display strings, proving that the production renderer consumes
+    // the projection rather than only measuring it.
+    converted = false;
+    auto expectedList = std::make_unique<fcitx::CommonCandidateList>();
+    for (std::size_t i = 0; i < displayed.size(); ++i)
+        expectedList->append(std::make_unique<TestCandidateWord>(
+            displayed[i], static_cast<int>(i), nullptr));
+    expectedList->setGlobalCursorIndex(0);
+    context.inputPanel().setCandidateList(std::move(expectedList));
+    context.inputPanel().setPreedit(fcitx::Text(displayedPreedit));
+    ui.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(ui);
+    assertTrue(projectedPixels != rawPixels && capture(ui) == projectedPixels,
+               "production drawing displays the exact output-filter projection");
+    std::cout << "[PASS] output projection, width, live switch and original selection\n";
+}
 
 void testWorkarea(fcitx::Instance &instance) {
     TestInputContext context(instance.inputContextManager());
@@ -485,6 +595,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    testOutputProjection(instance);
     testScaledCursor(instance);
 
     {

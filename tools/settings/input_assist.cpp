@@ -3,6 +3,7 @@
 #include "modernime/core/component_lookup.h"
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/settings_widgets.h"
+#include "modernime/settings/symbol_browser.h"
 #include <exception>
 #include <string>
 #include <utility>
@@ -168,7 +169,7 @@ class InputAssist::Impl {
 public:
     SettingsWindowModel &model;
     std::function<void()> changed;
-    GtkWidget *root, *temporary, *component, *calculator, *componentPreview, *calculatorPreview, *dialog = nullptr;
+    GtkWidget *root, *temporary, *component, *calculator, *symbols, *componentPreview, *calculatorPreview, *symbolBrowser, *dialog = nullptr;
     bool refreshing = false;
     Impl(SettingsWindowModel &m, std::function<void()> c) : model(m), changed(std::move(c)) {
         root = createSectionCard("输入辅助", "在中文状态下临时输入英文、查找汉字或计算，完成后继续中文输入。");
@@ -186,12 +187,23 @@ public:
                 settings.temporaryEnglishEnabled = gtk_switch_get_active(GTK_SWITCH(o.temporary));
                 settings.componentLookupEnabled = gtk_switch_get_active(GTK_SWITCH(o.component));
                 settings.calculatorEnabled = gtk_switch_get_active(GTK_SWITCH(o.calculator));
+                settings.symbolSearchEnabled = gtk_switch_get_active(GTK_SWITCH(o.symbols));
                 o.model.setSettings(std::move(settings)); o.changed();
             }), this);
         };
         row("临时英文", "Ctrl+Shift+E 输入一段英文；Enter 确认、Esc 取消，结束后回到中文。", "input.temporary_english", temporary, nullptr);
         row("拆字查字", "输入 u+ 后填写部件拼音，如 u+mumu → 林；支持空格、数字或鼠标选字。", "input.component_lookup", component, &componentPreview);
         row("离线计算器", "输入 v= 后填写表达式，如 v=(2+3)*4 → 20；Enter 或空格上屏。", "input.calculator", calculator, &calculatorPreview);
+        row("符号搜索", "输入 v; 搜索名称或拼音；也可从 v 菜单进入符号与收藏。", "symbols.enabled", symbols, &symbolBrowser);
+        gtk_button_set_label(GTK_BUTTON(symbolBrowser), "浏览与收藏");
+        target(symbolBrowser, "symbol-browser");
+        setAccessibleWidgetText(symbolBrowser, "浏览符号与收藏", "按分类或名称查找符号，预览、复制并管理收藏");
+        g_signal_connect(symbolBrowser, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) {
+            auto &o = *static_cast<Impl *>(p); if (o.dialog) { gtk_window_present(GTK_WINDOW(o.dialog)); return; }
+            auto *top = gtk_widget_get_toplevel(o.root);
+            o.dialog = openSymbolBrowser(GTK_IS_WINDOW(top) ? GTK_WINDOW(top) : nullptr, o.model, o.changed);
+            g_signal_connect(o.dialog, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer data) { static_cast<Impl *>(data)->dialog = nullptr; }), &o);
+        }), this);
         target(componentPreview, "component-preview"); target(calculatorPreview, "calculator-preview");
         setAccessibleWidgetText(componentPreview, "试用拆字查字", "输入部件或拼音，预览离线查询结果");
         setAccessibleWidgetText(calculatorPreview, "试用离线计算器", "填写表达式并预览结果");
@@ -201,7 +213,7 @@ public:
             o.dialog = preview(GTK_IS_WINDOW(top) ? GTK_WINDOW(top) : nullptr, GTK_WIDGET(clicked) == o.componentPreview);
             g_signal_connect(o.dialog, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer data) { static_cast<Impl *>(data)->dialog = nullptr; }), &o);
         }), this);
-        setSettingsFocusChain(root, {temporary, componentPreview, component, calculatorPreview, calculator});
+        setSettingsFocusChain(root, {temporary, componentPreview, component, calculatorPreview, calculator, symbolBrowser, symbols});
         refresh();
     }
     ~Impl() { if (dialog) gtk_widget_destroy(dialog); }
@@ -210,11 +222,12 @@ public:
         gtk_switch_set_active(GTK_SWITCH(temporary), model.settings().temporaryEnglishEnabled);
         gtk_switch_set_active(GTK_SWITCH(component), model.settings().componentLookupEnabled);
         gtk_switch_set_active(GTK_SWITCH(calculator), model.settings().calculatorEnabled);
-        for (auto *control : {temporary, component, calculator}) gtk_widget_set_sensitive(control, model.settings().inputEnabled);
+        gtk_switch_set_active(GTK_SWITCH(symbols), model.settings().symbolSearchEnabled);
+        for (auto *control : {temporary, component, calculator, symbols}) gtk_widget_set_sensitive(control, model.settings().inputEnabled);
         refreshing = false;
     }
     bool focus(std::string_view id) {
-        for (auto *control : {temporary, component, calculator, componentPreview, calculatorPreview}) {
+        for (auto *control : {temporary, component, calculator, symbols, componentPreview, calculatorPreview, symbolBrowser}) {
             const auto *name = static_cast<const char *>(g_object_get_data(G_OBJECT(control), "modernime-settings-target"));
             if (name && id == name) return focusWidgetOrFallback(control, gtk_widget_get_parent(gtk_widget_get_parent(control)));
         }
