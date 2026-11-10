@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/candidate_pin.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,7 @@ enum class CompositionStage {
     FinalSuppression,
     DeduplicationAndOriginMerge,
     AmbiguityAnnotation,
+    ExplicitPin,
 };
 
 enum class MoveReason {
@@ -42,6 +44,7 @@ enum class MoveReason {
     DuplicateMerged,
     AmbiguityReadingAnnotated,
     AmbiguityRemainderAnnotated,
+    ExplicitUserPin,
 };
 
 struct CandidateMoveRecord {
@@ -85,6 +88,7 @@ struct CandidateCompositionInput {
 
     bool recordMoves = false;
     bool shuangpin = false;
+    std::optional<core::CandidatePin> pinnedCandidate;
 };
 
 struct CandidateCompositionResult {

@@ -201,6 +201,26 @@ TEST_F(PersonalizationControllerRegression, OrdinaryFuzzyWordFrequencyRespectsSt
     EXPECT_EQ(controller->page().items.front().text, "你的");
 }
 
+TEST_F(PersonalizationControllerRegression, ExplicitCandidatePinKeepsIdentityAndSuppression) {
+    modernime::pinyin::PinyinProviderOptions options;
+    options.candidatePins.push_back({modernime::core::PinyinScheme::Full, "shi", "试", "shi"});
+    provider->applyOptions(options);
+    type("shi");
+    ASSERT_EQ(controller->page().items.front().text, "试");
+    ASSERT_TRUE(controller->handle({KeyKind::Space}));
+    EXPECT_EQ(host.committed, "试");
+    EXPECT_TRUE(controller->page().rawInput.empty());
+    controller->reset();
+    type("shi");
+    ASSERT_TRUE(controller->removeCurrent());
+    EXPECT_NE(controller->page().items.front().text, "试") << "pin cannot revive suppressed word";
+    options.candidatePins.clear();
+    provider->applyOptions(options);
+    controller->reset();
+    type("shi");
+    EXPECT_EQ(controller->page().items.front().text, "是");
+}
+
 TEST_F(PersonalizationControllerRegression, ValidEmptyContextReplacesFallbackAfterDeletion) {
     commit("nihao", "你好");
     controller->setContext("你好", "");

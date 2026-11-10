@@ -2,6 +2,7 @@
 
 #include "modernime/core/candidate_provider.h"
 #include "modernime/core/pinyin_options.h"
+#include "modernime/core/candidate_pin.h"
 
 #include <cstdint>
 #include <functional>
@@ -39,6 +40,7 @@ struct PinyinProviderOptions final {
     std::string clipboardTrigger = "V+2";
     core::FuzzyPinyinOptions fuzzyPinyin;
     core::PinyinScheme pinyinScheme = core::PinyinScheme::Full;
+    std::vector<core::CandidatePin> candidatePins;
 };
 
 struct ResourceChange final {

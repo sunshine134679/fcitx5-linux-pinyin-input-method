@@ -44,6 +44,7 @@ public:
     // Engine-wide parsing configuration; read/written only on the input thread.
     bool setFuzzyOptions(const core::FuzzyPinyinOptions &options);
     bool setPinyinScheme(core::PinyinScheme scheme);
+    core::PinyinScheme pinyinScheme() const noexcept { return pinyinScheme_; }
     bool usesShuangpin() const noexcept { return pinyinScheme_ != core::PinyinScheme::Full; }
     std::uint64_t inputConfigurationGeneration() const noexcept {
         return inputConfigurationGeneration_;

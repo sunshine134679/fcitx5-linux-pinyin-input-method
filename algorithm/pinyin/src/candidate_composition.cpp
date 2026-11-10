@@ -628,6 +628,25 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     }
     mixed = std::move(deduplicated);
 
+    // Explicit user preference is applied once, after suppression and identity
+    // merging. It cannot invent a candidate or change its consumption/role.
+    if (input.pinnedCandidate && core::PinyinMatchPolicy::canonical(rawInput) ==
+            core::PinyinMatchPolicy::canonical(input.pinnedCandidate->input)) {
+        const auto &pin = *input.pinnedCandidate;
+        const auto found = std::find_if(mixed.begin(), mixed.end(), [&](const auto &item) {
+            const auto identity = core::candidateIdentity(item, rawInput.size());
+            return item.source != core::CandidateSource::None && item.text == pin.text &&
+                core::PinyinMatchPolicy::canonical(item.fullPinyin) == core::PinyinMatchPolicy::canonical(pin.fullPinyin) &&
+                identity.consumedInputBytes == rawInput.size() &&
+                (identity.role == core::CommitCandidateRole::Chinese || identity.role == core::CommitCandidateRole::UserDictionary);
+        });
+        if (found != mixed.end()) {
+            std::rotate(mixed.begin(), found, std::next(found));
+            if (mixed.front().annotation.empty()) mixed.front().annotation = "置顶";
+            recordMove(mixed.front().source, CompositionStage::ExplicitPin, 0, MoveReason::ExplicitUserPin);
+        }
+    }
+
     // Stage 8: Ambiguity annotations for items with identical display text
     std::unordered_map<std::string, std::size_t> textCounts;
     for (const auto &item : mixed) {

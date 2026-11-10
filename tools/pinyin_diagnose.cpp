@@ -158,10 +158,10 @@ void writeReport(std::ostream &out, const Report &report,
     }
     // Stable names follow the existing composition enums; indices refer to the stage at that time.
     static constexpr const char *stages[] = {"fuzzy", "granularity", "variant", "macro", "english_raw",
-        "command", "definition", "suppression", "deduplication", "ambiguity"};
+        "command", "definition", "suppression", "deduplication", "ambiguity", "pin"};
     static constexpr const char *reasons[] = {"initial", "fuzzy_rank", "variant_visible", "macro_position",
         "english_preferred", "english_normal", "clipboard_trigger", "suppressed", "duplicate",
-        "reading_annotation", "remainder_annotation"};
+        "reading_annotation", "remainder_annotation", "explicit_pin"};
     out << "],\"composition_moves\":[";
     for (std::size_t i = 0; i < trace.moves.size(); ++i) {
         const auto &move = trace.moves[i];

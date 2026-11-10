@@ -600,16 +600,22 @@ void testTypingSettings() {
     settings.rememberModePerApp = true;
     settings.undoCommitEnabled = false;
     settings.temporaryEnglishEnabled = false;
+    settings.candidatePins = {{modernime::core::PinyinScheme::Full, "shi", "试", "shi"},
+                              {modernime::core::PinyinScheme::Xiaohe, "ui", "是", "shi"}};
     assertTrue(modernime::core::SettingsStore::save(path, settings), "save typing settings");
     const auto loaded = modernime::core::SettingsStore::load(path);
     assertTrue(loaded.diagnostics.empty() && loaded.settings == settings, "typing settings round-trip with exact app identifiers and literal equals");
     auto edited = loaded.settings;
     edited.appInputModes.erase("code"); edited.punctuationOverrides.erase('_');
+    edited.candidatePins.erase(edited.candidatePins.begin());
     const auto saved = modernime::core::SettingsStore::saveWithResult(path, edited,
         modernime::core::SettingsExpectedBaseline::fromLoadResult(loaded), &loaded.rawLines);
     assertTrue(saved.status == modernime::core::SettingsSaveStatus::Saved &&
                    modernime::core::SettingsStore::load(path).settings == edited,
                "deleting dynamic rules removes preserved old lines");
+    auto duplicate = edited;
+    duplicate.candidatePins.push_back(duplicate.candidatePins.front());
+    assertTrue(!modernime::core::validateSettings(duplicate).valid, "duplicate pin scope rejected");
     edited.punctuationOverrides['_'] = "bad\ntext";
     assertTrue(!modernime::core::validateSettings(edited).valid, "multiline punctuation rejected");
     std::ofstream(path) << "punctuation.map.95=_\npunctuation.map.65=字\ninput.app.code=invalid\npunctuation.underscore=wrong\n";

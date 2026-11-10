@@ -899,6 +899,7 @@ public:
           englishDefinitionEnabled_(options.englishDefinitionEnabled),
           clipboardEnabled_(options.clipboardEnabled),
           clipboardTrigger_(options.clipboardTrigger),
+          candidatePins_(options.candidatePins),
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
           observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
@@ -906,6 +907,7 @@ public:
         shared_->setPinyinScheme(options.pinyinScheme);
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
         context->setUseShuangpin(shared_->usesShuangpin());
+        for (auto &pin : candidatePins_) pin.input = core::PinyinMatchPolicy::canonical(pin.input);
         refresh();
     }
 
@@ -1525,6 +1527,11 @@ public:
         const bool schemeChanged = shared_->setPinyinScheme(opts.pinyinScheme);
         bool needRefresh = fuzzyChanged || schemeChanged ||
             observedInputConfigurationGeneration_ != shared_->inputConfigurationGeneration();
+        if (candidatePins_ != opts.candidatePins) {
+            candidatePins_ = opts.candidatePins;
+            for (auto &pin : candidatePins_) pin.input = core::PinyinMatchPolicy::canonical(pin.input);
+            needRefresh = true;
+        }
         if (englishDefinitionEnabled_ != opts.englishDefinitionEnabled) {
             englishDefinitionEnabled_ = opts.englishDefinitionEnabled;
             needRefresh = true;
@@ -1970,6 +1977,13 @@ private:
         }
 
         CandidateCompositionInput compInput;
+        const auto pinInput = core::PinyinMatchPolicy::canonical(rawInput);
+        for (const auto &pin : candidatePins_) {
+            if (pin.scheme == shared_->pinyinScheme() && pin.input == pinInput) {
+                compInput.pinnedCandidate = pin;
+                break;
+            }
+        }
         compInput.shuangpin = useShuangpin;
         compInput.rawInput = rawInput;
         compInput.segmentedInput = segmentedInput;
@@ -2123,6 +2137,7 @@ private:
     bool englishDefinitionEnabled_ = false;
     bool clipboardEnabled_ = true;
     std::string clipboardTrigger_ = "V+2";
+    std::vector<core::CandidatePin> candidatePins_;
     core::CandidatePage page_;
     std::optional<PinyinDiagnostics> diagnostics_;
     std::string contextBefore_;

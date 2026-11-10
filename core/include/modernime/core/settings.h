@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/pinyin_options.h"
+#include "modernime/core/candidate_pin.h"
 
 #include <array>
 #include <filesystem>
@@ -75,6 +76,7 @@ struct ModernIMESettings final {
     std::map<std::string, InputMode> appInputModes;
     bool undoCommitEnabled = true;
     bool temporaryEnglishEnabled = true;
+    std::vector<CandidatePin> candidatePins;
 
     bool operator==(const ModernIMESettings &) const = default;
 };

@@ -1,4 +1,5 @@
 #include "modernime/core/settings.h"
+#include "modernime/core/pinyin_match.h"
 
 #include <fcntl.h>
 #include <sys/file.h>
@@ -111,8 +112,8 @@ bool punctuationKey(int key) {
         (key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9'));
 }
 
-bool validPunctuationText(std::string_view text) {
-    if (text.empty() || text.size() > 32 || trim(text) != text) return false;
+bool validPunctuationText(std::string_view text, std::size_t maxBytes = 32) {
+    if (text.empty() || text.size() > maxBytes || trim(text) != text) return false;
     for (std::size_t i = 0; i < text.size();) {
         const auto c = static_cast<unsigned char>(text[i++]);
         if (c < 0x20 || c == 0x7f) return false;
@@ -134,6 +135,20 @@ std::string_view underscoreName(UnderscoreStyle style) {
     case UnderscoreStyle::Chinese: return "chinese";
     }
     return "invalid";
+}
+
+std::string pinKey(const CandidatePin &pin) {
+    for (const auto &scheme : kPinyinSchemes)
+        if (scheme.scheme == pin.scheme) return "candidate.pin." + std::string(scheme.key) + "." + PinyinMatchPolicy::canonical(pin.input);
+    return {};
+}
+
+bool validPin(const CandidatePin &pin) {
+    return !pinKey(pin).empty() && !pin.input.empty() && pin.input.size() <= 128 &&
+        PinyinMatchPolicy::validComposition(pin.input) &&
+        pin.input == PinyinMatchPolicy::canonical(pin.input) &&
+        validPunctuationText(pin.text, 128) && pin.text.find('|') == std::string::npos &&
+        pin.fullPinyin.size() <= 128 && PinyinMatchPolicy::isValidPinyinSequence(pin.fullPinyin);
 }
 
 bool validClipboardTrigger(std::string_view value) {
@@ -171,6 +186,12 @@ ModernIMESettings defaultSettings() { return {}; }
 
 SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     SettingsValidationResult result;
+    std::unordered_set<std::string> pinKeys;
+    if (settings.candidatePins.size() > 128)
+        result.issues.push_back({"candidate.pin", "候选置顶规则最多128条"});
+    for (const auto &pin : settings.candidatePins)
+        if (!validPin(pin) || !pinKeys.insert(pinKey(pin)).second)
+            result.issues.push_back({"candidate.pin", "置顶规则需包含有效方案、输入、文本和完整拼音，同一输入只允许一条"});
     if (underscoreName(settings.underscoreStyle) == "invalid")
         result.issues.push_back({"punctuation.underscore", "请选择 smart、ascii 或 chinese"});
     for (const auto &[key, text] : settings.punctuationOverrides)
@@ -218,6 +239,8 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
 
 std::string computeSettingsHash(const ModernIMESettings &settings) {
     std::ostringstream output;
+    for (const auto &pin : settings.candidatePins)
+        output << pinKey(pin) << '=' << pin.text << '|' << pin.fullPinyin << '\n';
     output << "punctuation.auto_pair=" << settings.autoPairPunctuation << '\n'
            << "punctuation.smart=" << settings.smartPunctuation << '\n'
            << "punctuation.underscore=" << underscoreName(settings.underscoreStyle) << '\n'
@@ -486,6 +509,21 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 parsed = parseBoolean(value, result.settings.undoCommitEnabled);
             } else if (key == "input.temporary_english") {
                 parsed = parseBoolean(value, result.settings.temporaryEnglishEnabled);
+            } else if (key.starts_with("candidate.pin.")) {
+                const auto schemeEnd = key.find('.', 14);
+                const auto pinSeparator = value.find('|');
+                if (schemeEnd != std::string::npos && pinSeparator != std::string::npos) {
+                    for (const auto &scheme : kPinyinSchemes) {
+                        if (key.substr(14, schemeEnd - 14) != scheme.key) continue;
+                        CandidatePin pin{scheme.scheme, PinyinMatchPolicy::canonical(key.substr(schemeEnd + 1)), value.substr(0, pinSeparator), value.substr(pinSeparator + 1)};
+                        if (!validPin(pin)) break;
+                        auto &pins = result.settings.candidatePins;
+                        auto existing = std::find_if(pins.begin(), pins.end(), [&](const auto &p) { return pinKey(p) == pinKey(pin); });
+                        if (existing != pins.end()) { *existing = std::move(pin); parsed = true; }
+                        else if (pins.size() < 128) { pins.push_back(std::move(pin)); parsed = true; }
+                        break;
+                    }
+                }
             } else if (key == "input.remember_per_app") {
                 parsed = parseBoolean(value, result.settings.rememberModePerApp);
             } else if (key == "punctuation.underscore") {
@@ -633,6 +671,11 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["punctuation.smart"] = settings.smartPunctuation ? "true" : "false";
     knownSettings["punctuation.underscore"] = underscoreName(settings.underscoreStyle);
     std::vector<std::string> dynamicKeys;
+    for (const auto &pin : settings.candidatePins) {
+        auto key = pinKey(pin);
+        knownSettings[key] = pin.text + "|" + pin.fullPinyin;
+        dynamicKeys.push_back(std::move(key));
+    }
     for (const auto &[key, text] : settings.punctuationOverrides) {
         const auto name = "punctuation.map." + std::to_string(static_cast<unsigned char>(key));
         knownSettings[name] = text; dynamicKeys.push_back(name);
@@ -705,7 +748,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
                 output << line << '\n';
                 writtenLines.push_back(std::move(line));
                 writtenKeys.insert(key);
-            } else if (!key.starts_with("punctuation.map.") && !key.starts_with("input.app.")) {
+            } else if (!key.starts_with("punctuation.map.") && !key.starts_with("input.app.") && !key.starts_with("candidate.pin.")) {
                 output << rawLine << '\n';
                 writtenLines.push_back(rawLine);
             }

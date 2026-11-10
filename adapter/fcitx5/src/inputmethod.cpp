@@ -204,7 +204,7 @@ pinyin::PinyinProviderOptions pinyinOptions(
     return {settings.learningEnabled, settings.contextLearningEnabled,
             settings.englishDefinitionEnabled,
             settings.clipboardEnabled, settings.clipboardTrigger, settings.fuzzyPinyin,
-            settings.pinyinScheme};
+            settings.pinyinScheme, settings.candidatePins};
 }
 #endif
 
