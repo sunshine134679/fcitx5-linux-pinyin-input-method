@@ -2,6 +2,7 @@
 
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/input_rule_dialog.h"
+#include "modernime/settings/input_assist.h"
 #include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 
@@ -177,11 +178,13 @@ public:
         buildInputStatusSection();
         buildFuzzySection();
         buildShortcutSection();
+        assist = std::make_unique<InputAssist>(model, changed);
+        gtk_box_pack_start(GTK_BOX(page), assist->widget(), FALSE, FALSE, 0);
         buildPunctuationSection();
         setSettingsFocusChain(page, {inputEnabled, defaultMode, rememberPerApp, appRules, pinyinScheme, fuzzyExpander,
             fuzzyControls[0], fuzzyControls[1], fuzzyControls[2],
             fuzzyControls[3], fuzzyControls[4], fuzzyControls[5],
-            toggleKey, characterExtraction, undoCommit, punctuation, autoPair, smartPunctuation,
+            toggleKey, characterExtraction, undoCommit, assist->widget(), punctuation, autoPair, smartPunctuation,
             punctuationAdvanced, underscore, punctuationRules});
         refresh();
         pageGuard.release();
@@ -567,6 +570,7 @@ public:
     }
 
     void updateState() {
+        assist->refresh();
         const auto state = deriveInputPageState(model);
         if (!state.dependentControlsSensitive && isRecording) {
             stopRecording(false);
@@ -601,6 +605,7 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        if (assist->focusTarget(target)) return true;
         for (const auto &[control, fallback] : editingControls) {
             const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(control), "modernime-settings-target"));
             if (id && target == id) {
@@ -657,6 +662,7 @@ public:
     GtkWidget *autoPair = nullptr, *smartPunctuation = nullptr, *underscore = nullptr;
     GtkWidget *punctuationAdvanced = nullptr, *punctuationRules = nullptr, *activeRuleDialog = nullptr;
     std::vector<std::pair<GtkWidget *, GtkWidget *>> editingControls;
+    std::unique_ptr<InputAssist> assist;
     bool refreshing = false;
 };
 

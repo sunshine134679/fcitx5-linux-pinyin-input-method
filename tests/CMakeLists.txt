@@ -243,6 +243,14 @@ if(MODERNIME_BUILD_SETTINGS)
     )
 
     add_executable(modernime_input_editing_gtk_tests settings/input_editing_gtk_test.cpp)
+    add_executable(modernime_input_assist_gtk_tests settings/input_assist_gtk_test.cpp)
+    target_link_libraries(modernime_input_assist_gtk_tests PRIVATE modernime_settings_components)
+    add_test(NAME modernime_input_assist_gtk COMMAND modernime_input_assist_gtk_tests)
+    set_tests_properties(modernime_input_assist_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 30)
     target_link_libraries(modernime_input_editing_gtk_tests PRIVATE modernime_settings_components)
     add_test(NAME modernime_input_editing_gtk COMMAND modernime_input_editing_gtk_tests)
     set_tests_properties(modernime_input_editing_gtk PROPERTIES

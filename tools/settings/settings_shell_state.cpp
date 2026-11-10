@@ -15,6 +15,8 @@ SettingsFocusDestination chooseSettingsFocusDestination(
 
 std::optional<SettingsFocusRoute>
 settingsFocusRouteForIssue(std::string_view issueKey) {
+    if (issueKey == "candidate.pin" || issueKey.starts_with("candidate.pin."))
+        return SettingsFocusRoute{SettingsPageId::Candidates, "candidate.pin"};
     if (issueKey == "punctuation.underscore")
         return SettingsFocusRoute{SettingsPageId::Input, "punctuation.underscore"};
     if (issueKey.starts_with("punctuation.map."))

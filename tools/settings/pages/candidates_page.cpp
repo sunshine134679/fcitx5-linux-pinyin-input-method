@@ -1,4 +1,5 @@
 #include "modernime/settings/pages/candidates_page.h"
+#include "modernime/settings/candidate_pin_dialog.h"
 
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
@@ -201,6 +202,7 @@ public:
     }
 
     ~Impl() {
+        if (pinDialog) gtk_widget_destroy(pinDialog);
         finishPreviewTransition();
         if (candidatePreview != nullptr) {
             g_object_set_data(G_OBJECT(candidatePreview), "modernime-preview-owner", nullptr);
@@ -211,6 +213,10 @@ public:
     GtkWidget *widget() const { return page; }
 
     void refresh() {
+        if (pinRules) {
+            const auto text = "管理规则 · " + std::to_string(model.settings().candidatePins.size()) + " 条";
+            gtk_button_set_label(GTK_BUTTON(pinRules), text.c_str());
+        }
         refreshing = true;
         const auto &settings = model.settings();
         for (std::size_t i = 0; i < core::kClientThemes.size(); ++i)
@@ -248,6 +254,7 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        if (target == "candidate.pin") return focusWidgetOrFallback(pinRules, pinRulesRow);
         if (target == "client-theme") return focusWidgetOrFallback(clientTheme);
         if (target == "candidate-page-size") {
             return focusWidgetOrFallback(candidatePageSize, candidatePageSizeFallback);
@@ -281,17 +288,34 @@ public:
 private:
     void buildUi() {
         detail::GtkWidgetGuard pageGuard(
-            createPageShell("候选与外观", "调整显示与操作，不改变候选排序"));
+            createPageShell("候选与外观", "调整候选显示、操作与指定输入的置顶偏好"));
         page = pageGuard.get();
 
         buildPreviewCard();
         buildClientAppearance();
         buildSettingsCard();
+        auto *pins = createSectionCard("候选置顶", "为指定方案和输入选择首选词，其他输入继续使用现有排序。");
+        pinRules = gtk_button_new_with_label("管理规则");
+        setTarget(pinRules, "candidate.pin");
+        pinRulesRow = createSettingRow("置顶规则", "从实际完整候选中选择；取消置顶不删除词条或学习记录。", pinRules);
+        gtk_box_pack_start(GTK_BOX(pins), pinRulesRow, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(page), pins, FALSE, FALSE, 0);
+        g_signal_connect(pinRules, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) {
+            auto &o = *static_cast<Impl *>(p);
+            if (o.pinDialog) { gtk_window_present(GTK_WINDOW(o.pinDialog)); return; }
+            auto *top = gtk_widget_get_toplevel(o.page);
+            o.pinDialog = createCandidatePinDialog(GTK_IS_WINDOW(top) ? GTK_WINDOW(top) : nullptr, o.model.settings(), [&o](std::vector<core::CandidatePin> rules) {
+                auto settings = o.model.settings(); settings.candidatePins = std::move(rules); o.model.setSettings(std::move(settings));
+                o.refresh(); o.changed();
+            });
+            g_signal_connect(o.pinDialog, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer data) { static_cast<Impl *>(data)->pinDialog = nullptr; }), &o);
+            gtk_widget_show_all(o.pinDialog);
+        }), this);
 
         setSettingsFocusChain(
             page, {clientTheme, previewExample, candidateTheme, candidateShape, nativePanelSettings,
                    candidatePageSize, candidateFontFamily, candidateFontSize, candidateSpacing, numberSelection,
-                   englishDefinition, arrowNavigation, pageNavigation});
+                   englishDefinition, arrowNavigation, pageNavigation, pinRules});
         refresh();
         pageGuard.release();
     }
@@ -842,6 +866,7 @@ private:
     GtkWidget *pageNavigationFallback = nullptr;
     GtkWidget *englishDefinition = nullptr;
     GtkWidget *englishDefinitionFallback = nullptr;
+    GtkWidget *pinRules = nullptr, *pinRulesRow = nullptr, *pinDialog = nullptr;
 };
 
 CandidatesPage::CandidatesPage(SettingsWindowModel &model,

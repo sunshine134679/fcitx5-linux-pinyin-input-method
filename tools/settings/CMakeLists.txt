@@ -41,6 +41,7 @@ endif()
 add_library(modernime_settings_logic STATIC
     data_controller.cpp
     quick_phrase_store.cpp
+    candidate_pin_query.cpp
     dictionary_pronunciation.cpp
     settings_model.cpp
     runtime_controller.cpp
@@ -78,6 +79,8 @@ modernime_enable_warnings(modernime_settings_logic)
 add_library(modernime_settings_gtk STATIC
     quick_phrase_editor.cpp
     input_rule_dialog.cpp
+    input_assist.cpp
+    candidate_pin_dialog.cpp
     settings_choice.cpp
     settings_widgets.cpp
     settings_motion.cpp
