@@ -1,0 +1,33 @@
+;FFMETADATA1
+title=ModernIME — 下一句，由你开始。
+comment=40 秒产品动画；本机 v0.2.3 真实界面；原创程序合成配乐与音效。
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=6000
+title=光标与文字
+[CHAPTER]
+TIMEBASE=1/1000
+START=6000
+END=12000
+title=熟悉的输入
+[CHAPTER]
+TIMEBASE=1/1000
+START=12000
+END=22000
+title=七套界面主题
+[CHAPTER]
+TIMEBASE=1/1000
+START=22000
+END=28000
+title=九套候选配色
+[CHAPTER]
+TIMEBASE=1/1000
+START=28000
+END=34000
+title=本地学习
+[CHAPTER]
+TIMEBASE=1/1000
+START=34000
+END=40000
+title=下一句，由你开始

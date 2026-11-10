@@ -1,0 +1,38 @@
+;FFMETADATA1
+title=ModernIME — 下一句，由你开始（重制版）
+comment=5880×4320 客户端素材，功能特写与打字动画。Music: Digital Clouds by Alejandro Magaña (A. M.), via Mixkit.
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=8571
+title=从第一下按键开始
+[CHAPTER]
+TIMEBASE=1/1000
+START=8571
+END=15429
+title=走近主题按钮
+[CHAPTER]
+TIMEBASE=1/1000
+START=15429
+END=22286
+title=七套界面主题
+[CHAPTER]
+TIMEBASE=1/1000
+START=22286
+END=30857
+title=字号、配色、轮廓与间距
+[CHAPTER]
+TIMEBASE=1/1000
+START=30857
+END=34286
+title=切换输入方案
+[CHAPTER]
+TIMEBASE=1/1000
+START=34286
+END=44571
+title=把灵感写成日常
+[CHAPTER]
+TIMEBASE=1/1000
+START=44571
+END=48000
+title=下载 ModernIME

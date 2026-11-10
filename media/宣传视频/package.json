@@ -1,0 +1,18 @@
+{
+  "name": "modernime-promo-film",
+  "private": true,
+  "version": "5.0.0",
+  "description": "ModernIME 原生 4K 产品宣传动画制作工程",
+  "scripts": {
+    "render": "bash render-v5.sh",
+    "render:v1": "bash render.sh",
+    "stills": "node film-v5.cjs --at .55,1.7,2.7,4.8,30.7,32.7,35.8,37.1,39.8,59.9,63.7 --width 1920",
+    "poster": "node film-v5.cjs --poster",
+    "render:v2": "bash render-v2.sh",
+    "render:v3": "bash render-v3.sh",
+    "render:v4": "bash render-v4.sh"
+  },
+  "dependencies": {
+    "skia-canvas": "3.0.8"
+  }
+}
