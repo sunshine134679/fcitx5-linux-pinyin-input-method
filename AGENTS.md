@@ -8,6 +8,7 @@
 
 ## 客户端前端设计（用户要求，2026-11-09）
 
+- 用户于 2026-11-10 明确补充：每次客户端改动通过必要验证后，必须完成合入和本地安装，再交付；不再等待用户重复发送“安装”。安装包含本轮所需的客户端、配套引擎及离线数据，核对实际运行／加载身份，保护用户配置、词库与学习数据并保留程序回退。此默认授权仅限本机安装，不包含推送或发布；用户当次明确要求不安装时除外。
 - 后续客户端界面、显示、交互及动画工作先加载 Anthropic 官方 `frontend-design` Skill，再按项目原生 GTK3 技术栈实施。
 - 当前官方入口为 <https://github.com/anthropics/claude-plugins-official/tree/main/plugins/frontend-design>；用户最初提供的 `anthropics/claude-code/plugins/frontend-design` 路径已失效。本机安装位置为 `/home/wsl/.codex/skills/frontend-design/SKILL.md`，其他环境需从官方源获取。
 - 以用户任务和真实内容决定信息层次；主题、浮层、键盘焦点与动画保持一致。尊重系统禁用动画偏好，保持搜索定位、保存/放弃、异步生命周期和用户数据边界。按长期偏好只做受影响的必要验证。
