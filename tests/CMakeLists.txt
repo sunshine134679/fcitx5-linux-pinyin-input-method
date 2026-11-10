@@ -1032,3 +1032,7 @@ if(MODERNIME_BUILD_FCITX5)
             $<TARGET_FILE_DIR:modernime_fcitx5> ${MODERNIME_CHTTRANS_MODULE} ${MODERNIME_CHTTRANS_NATIVE_DATA})
     endif()
 endif()
+
+add_executable(modernime_symbol_catalog_tests core/symbol_catalog_test.cpp)
+target_link_libraries(modernime_symbol_catalog_tests PRIVATE modernime_core)
+add_test(NAME modernime_symbol_catalog COMMAND modernime_symbol_catalog_tests)

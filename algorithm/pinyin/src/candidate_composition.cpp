@@ -311,7 +311,7 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
 
     std::string preedit;
     if (rawInput == "v" && !input.shuangpin &&
-        (isSingleTriggerChar || input.calculatorEnabled)) {
+        (isSingleTriggerChar || input.calculatorEnabled || input.symbolSearchEnabled)) {
         mixed.clear();
         core::CandidateItem rawItem;
         rawItem.text = "v";
@@ -349,6 +349,19 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
             mixed.push_back(std::move(calculator));
             recordMove(core::CandidateSource::Command, CompositionStage::CommandPlacement,
                        mixed.size() - 1, MoveReason::CommandSingleTrigger);
+        }
+        if (input.symbolSearchEnabled) {
+            for (const auto action : {core::SelectionAction::OpenSymbols, core::SelectionAction::OpenFavoriteSymbols}) {
+                core::CandidateItem command;
+                command.text = action == core::SelectionAction::OpenSymbols ? "符号搜索 (V;)" : "收藏符号";
+                command.fullPinyin = "v";
+                command.source = core::CandidateSource::Command;
+                command.commitRole = core::CommitCandidateRole::Command;
+                command.origins = {command.source}; command.consumedInputBytes = 1; command.action = action;
+                mixed.push_back(std::move(command));
+                recordMove(core::CandidateSource::Command, CompositionStage::CommandPlacement,
+                           mixed.size() - 1, MoveReason::CommandSingleTrigger);
+            }
         }
         preedit = "v";
     } else if (!input.macroCandidates.empty() && !rawInput.empty() && rawInput.front() == 'v') {

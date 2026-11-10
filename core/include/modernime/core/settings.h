@@ -6,6 +6,7 @@
 #include <array>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,6 +80,8 @@ struct ModernIMESettings final {
     bool componentLookupEnabled = true;
     bool calculatorEnabled = true;
     std::vector<CandidatePin> candidatePins;
+    bool symbolSearchEnabled = true;
+    std::set<std::string> symbolFavorites;
 
     bool operator==(const ModernIMESettings &) const = default;
 };

@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/core/symbol_catalog.h"
 #include "modernime/pinyin/candidate_diagnostics.h"
 #include "modernime/pinyin/shuangpin_input.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
@@ -289,191 +290,10 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput,
         }
     }
 
-    static const std::unordered_map<std::string_view, std::vector<const char *>> kMacroMap = {
-        // Chinese punctuation marks & symbols
-        {"gantanhao", {"！", "!", "❗️"}},
-        {"tanhao", {"！", "!", "❗️"}},
-        {"jingtanhao", {"！", "!", "❗️"}},
-        {"wenhao", {"？", "?", "❓"}},
-        {"douhao", {"，", ","}},
-        {"juhao", {"。", "."}},
-        {"dunhao", {"、"}},
-        {"fenhao", {"；", ";"}},
-        {"maohao", {"：", ":"}},
-        {"shenglvehao", {"……", "…"}},
-        {"shengvehao", {"……", "…"}},
-        {"pozhehao", {"——", "—"}},
-        {"pozehao", {"——", "—"}},
-        {"bolangxian", {"～", "~"}},
-        {"bolanghao", {"～", "~"}},
-        {"bozhehao", {"～", "~"}},
-        {"boxian", {"～", "~"}},
-        {"shuminghao", {"《》", "《", "》"}},
-        {"zuoshuminghao", {"《", "〈"}},
-        {"youshuminghao", {"》", "〉"}},
-        {"yinhao", {"“”", "‘’", "“", "”"}},
-        {"shuangyinhao", {"“”", "“", "”"}},
-        {"danyinhao", {"‘’", "‘", "’"}},
-        {"zuoyinhao", {"“", "‘"}},
-        {"youyinhao", {"”", "’"}},
-        {"kuohao", {"（）", "()", "（", "）"}},
-        {"yuankuohao", {"（）", "()"}},
-        {"xiaokuohao", {"（）", "()"}},
-        {"fangkuohao", {"【】", "[]"}},
-        {"zhongkuohao", {"【】", "[]"}},
-        {"dakuohao", {"｛｝", "{}"}},
-        {"huakuohao", {"｛｝", "{}"}},
-        {"zuokuohao", {"（", "(", "【", "["}},
-        {"youkuohao", {"）", ")", "】", "]"}},
-        {"jiangehao", {"·", "•"}},
-        {"xiahuaxian", {"_"}},
-        {"lianjiehao", {"-", "－"}},
-        {"xiegang", {"/"}},
-        {"zhengxiegang", {"/"}},
-        {"fanxiegang", {"\\"}},
-
-        // Greek letters
-        {"pi", {"π", "Π"}},
-        {"alpha", {"α", "Α"}},
-        {"beta", {"β", "Β"}},
-        {"gamma", {"γ", "Γ"}},
-        {"delta", {"δ", "Δ"}},
-        {"theta", {"θ", "Θ"}},
-        {"lambda", {"λ", "Λ"}},
-        {"mu", {"μ"}},
-        {"sigma", {"σ", "Σ"}},
-        {"omega", {"ω", "Ω"}},
-        {"epsilon", {"ε"}},
-        {"phi", {"φ", "Φ"}},
-        {"tau", {"τ"}},
-        {"rho", {"ρ"}},
-
-        // Math & physics & units
-        {"jiahao", {"+", "＋"}},
-        {"jianhao", {"-", "－"}},
-        {"chenghao", {"×", "*"}},
-        {"chuhao", {"÷", "/"}},
-        {"denghao", {"=", "＝"}},
-        {"dengyu", {"=", "＝"}},
-        {"budeng", {"≠"}},
-        {"budenghao", {"≠"}},
-        {"yuedeng", {"≈"}},
-        {"yuedenghao", {"≈"}},
-        {"dayu", {">", "＞"}},
-        {"dayuhao", {">", "＞"}},
-        {"xiaoyu", {"<", "＜"}},
-        {"xiaoyuhao", {"<", "＜"}},
-        {"dayudeng", {"≥"}},
-        {"dayudengyu", {"≥", ">="}},
-        {"dayudengyuhao", {"≥", ">="}},
-        {"xiaoyudeng", {"≤"}},
-        {"xiaoyudengyu", {"≤", "<="}},
-        {"xiaoyudengyuhao", {"≤", "<="}},
-        {"zhengfu", {"±"}},
-        {"zhengfuhao", {"±"}},
-        {"kaifang", {"√"}},
-        {"genghao", {"√"}},
-        {"baifenhao", {"%", "％"}},
-        {"baifenbi", {"%", "％"}},
-        {"qianfenhao", {"‰"}},
-        {"qianfenbi", {"‰"}},
-        {"wuxian", {"∞"}},
-        {"wuxianhao", {"∞"}},
-        {"wuqiong", {"∞"}},
-        {"wuqionghao", {"∞"}},
-        {"sheshidu", {"℃"}},
-        {"huashidu", {"℉"}},
-        {"du", {"°"}},
-        {"jiaodu", {"°"}},
-        {"pingfang", {"²"}},
-        {"lifang", {"³"}},
-        {"suoyi", {"∴"}},
-        {"yuanyin", {"∵"}},
-        {"yinwei", {"∵"}},
-
-        // Shapes & arrows
-        {"dui", {"√", "✔"}},
-        {"duihao", {"√", "✔"}},
-        {"gou", {"√", "✔"}},
-        {"cuo", {"×", "✖"}},
-        {"cuohao", {"×", "✖"}},
-        {"cha", {"×", "✖"}},
-        {"jiantou", {"→", "←", "↑", "↓"}},
-        {"xiangyou", {"→"}},
-        {"youjiantou", {"→"}},
-        {"xiangzuo", {"←"}},
-        {"zuojiantou", {"←"}},
-        {"xiangshang", {"↑"}},
-        {"shangjiantou", {"↑"}},
-        {"xiangxia", {"↓"}},
-        {"xiajiantou", {"↓"}},
-        {"you", {"→"}},
-        {"zuo", {"←"}},
-        {"shang", {"↑"}},
-        {"xia", {"↓"}},
-        {"sanjiao", {"▲", "△"}},
-        {"sanjiaoxing", {"▲", "△"}},
-        {"wujiaoxing", {"★", "☆"}},
-        {"xingxing", {"★", "☆"}},
-        {"lingxing", {"◆", "◇"}},
-        {"yuan", {"●", "○"}},
-
-        // Currencies & stats & symbols
-        {"rmb", {"¥", "￥"}},
-        {"renminbi", {"¥", "￥"}},
-        {"dollar", {"$", "＄"}},
-        {"meiyuan", {"$", "＄"}},
-        {"ouyuan", {"€"}},
-        {"bang", {"£"}},
-        {"yingbang", {"£"}},
-        {"riyuan", {"¥", "円"}},
-        {"jinghao", {"#"}},
-        {"aite", {"@"}},
-        {"at", {"@"}},
-        {"yuhao", {"&"}},
-        {"and", {"&"}},
-
-        // Legal & Ordinals
-        {"jiefu", {"§"}},
-        {"duanluo", {"¶"}},
-        {"banquan", {"©"}},
-        {"shangbiao", {"®", "™"}},
-        {"xuhao", {"①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"}},
-        {"yuanquan", {"①", "②", "③", "④", "⑤", "○", "●"}},
-
-        // Emojis & Chat
-        {"haha", {"😄", "😂"}},
-        {"xixi", {"😆"}},
-        {"heihei", {"😁"}},
-        {"zan", {"👍"}},
-        {"dianzan", {"👍"}},
-        {"xin", {"❤️"}},
-        {"aixin", {"❤️"}},
-        {"ku", {"😭"}},
-        {"ok", {"👌"}},
-        {"bixin", {"🫰"}},
-        {"bai", {"👋"}},
-        {"zaijian", {"👋"}},
-        {"baoquan", {"🙏"}},
-        {"fennu", {"😡"}},
-        {"niu", {"🐂"}},
-        {"daniu", {"🐂"}},
-        {"niubi", {"🐂"}},
-        {"liuliuliu", {"🐂"}},
-        {"doge", {"🐶"}},
-        {"tangping", {"🛌"}},
-        {"jiayou", {"💪"}},
-    };
-
-    auto it = kMacroMap.find(lookupKey);
-    if (it == kMacroMap.end() && !rawInput.empty() && rawInput != lookupKey) {
-        it = kMacroMap.find(rawInput);
-    }
-    if (it != kMacroMap.end()) {
-        for (const auto *val : it->second) {
-            results.emplace_back(val);
-        }
-    }
+    auto symbols = modernime::core::symbolMacroValues(lookupKey);
+    if (symbols.empty() && !rawInput.empty() && rawInput != lookupKey)
+        symbols = modernime::core::symbolMacroValues(rawInput);
+    results.insert(results.end(), symbols.begin(), symbols.end());
 
     return results;
 }
@@ -900,6 +720,7 @@ public:
           clipboardEnabled_(options.clipboardEnabled),
           clipboardTrigger_(options.clipboardTrigger),
           calculatorEnabled_(options.calculatorEnabled),
+          symbolSearchEnabled_(options.symbolSearchEnabled),
           candidatePins_(options.candidatePins),
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
@@ -1546,6 +1367,9 @@ public:
             calculatorEnabled_ = opts.calculatorEnabled;
             needRefresh = true;
         }
+        if (symbolSearchEnabled_ != opts.symbolSearchEnabled) {
+            symbolSearchEnabled_ = opts.symbolSearchEnabled; needRefresh = true;
+        }
         setLearningEnabled(opts.learningEnabled);
         setContextLearningEnabled(opts.contextLearningEnabled);
         if (needRefresh) {
@@ -2001,6 +1825,7 @@ private:
         compInput.clipboardEnabled = clipboardEnabled_;
         compInput.clipboardTrigger = clipboardTrigger_;
         compInput.calculatorEnabled = calculatorEnabled_;
+        compInput.symbolSearchEnabled = symbolSearchEnabled_;
         if (englishDefinitionEnabled_ && shared_) {
             compInput.resolveEnglishDefinition = [this](std::string_view word) -> std::string {
                 if (!englishDefinitionEnabled_ || !shared_ || word.size() < 4) {
@@ -2141,6 +1966,7 @@ private:
     bool clipboardEnabled_ = true;
     std::string clipboardTrigger_ = "V+2";
     bool calculatorEnabled_ = true;
+    bool symbolSearchEnabled_ = true;
     std::vector<core::CandidatePin> candidatePins_;
     core::CandidatePage page_;
     std::optional<PinyinDiagnostics> diagnostics_;

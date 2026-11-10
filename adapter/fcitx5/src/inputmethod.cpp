@@ -145,14 +145,15 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             settings.learningEnabled, settings.contextLearningEnabled,
             settings.autoPairPunctuation, settings.smartPunctuation,
             settings.underscoreStyle, settings.punctuationOverrides, settings.undoCommitEnabled,
-            settings.temporaryEnglishEnabled, settings.componentLookupEnabled, settings.calculatorEnabled};
+            settings.temporaryEnglishEnabled, settings.componentLookupEnabled, settings.calculatorEnabled, settings.symbolSearchEnabled,
+            std::vector<std::string>(settings.symbolFavorites.begin(), settings.symbolFavorites.end())};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
     return {settings.toggleKey, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
             settings.clipboardEnabled, settings.clipboardTrigger,
-            settings.characterExtractionEnabled, settings.undoCommitEnabled, settings.temporaryEnglishEnabled, settings.componentLookupEnabled, settings.calculatorEnabled};
+            settings.characterExtractionEnabled, settings.undoCommitEnabled, settings.temporaryEnglishEnabled, settings.componentLookupEnabled, settings.calculatorEnabled, settings.symbolSearchEnabled};
 }
 
 } // namespace
@@ -204,7 +205,7 @@ pinyin::PinyinProviderOptions pinyinOptions(
     return {settings.learningEnabled, settings.contextLearningEnabled,
             settings.englishDefinitionEnabled,
             settings.clipboardEnabled, settings.clipboardTrigger, settings.fuzzyPinyin,
-            settings.pinyinScheme, settings.candidatePins, settings.calculatorEnabled};
+            settings.pinyinScheme, settings.candidatePins, settings.calculatorEnabled, settings.symbolSearchEnabled};
 }
 #endif
 
@@ -1113,6 +1114,10 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                    !contextState->controller().auxiliaryInputActive() &&
                    contextState->controller().page().rawInput == "v" && event.key().check(FcitxKey_equal)) {
             modernEvent = KeyEvent{KeyKind::OpenCalculator};
+        } else if (keyBindings_.symbolSearchEnabled && !hasNonShiftModifier(event.key()) &&
+                   !contextState->controller().auxiliaryInputActive() && contextState->controller().page().rawInput == "v" &&
+                   event.key().check(FcitxKey_semicolon)) {
+            modernEvent = KeyEvent{KeyKind::OpenSymbols};
         } else if (contextState->controller().auxiliaryInputActive() && !hasNonShiftModifier(event.key())) {
             const auto c = fcitx::Key::keySymToUnicode(event.key().sym());
             if (c > 0x20 && c <= 0x7e) modernEvent = KeyEvent{KeyKind::Character, static_cast<char>(c)};

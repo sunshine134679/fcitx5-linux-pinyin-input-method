@@ -15,6 +15,7 @@ add_library(modernime_core STATIC
     src/clipboard_observation.cpp
     src/clipboard_history.cpp
     src/persistent_clipboard_history.cpp
+    src/symbol_catalog.cpp
     src/calculator.cpp
     src/component_lookup.cpp
     src/settings.cpp

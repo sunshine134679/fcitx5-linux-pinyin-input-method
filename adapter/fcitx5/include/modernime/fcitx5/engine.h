@@ -50,9 +50,11 @@ enum class KeyKind {
     ToggleTemporaryEnglish,
     OpenComponentLookup,
     OpenCalculator,
+    OpenSymbols,
+    OpenFavoriteSymbols,
 };
 
-enum class AuxiliaryInputMode { None, TemporaryEnglish, ComponentLookup, Calculator };
+enum class AuxiliaryInputMode { None, TemporaryEnglish, ComponentLookup, Calculator, Symbols };
 
 // Empty valid text is a real document state; unavailable clients may use the
 // bounded continuous-commit fallback. Invalidated state drops that fallback.
@@ -85,6 +87,8 @@ struct ControllerOptions final {
     bool temporaryEnglishEnabled = true;
     bool componentLookupEnabled = true;
     bool calculatorEnabled = true;
+    bool symbolSearchEnabled = true;
+    std::vector<std::string> symbolFavorites;
 };
 
 struct KeyBindings final {
@@ -99,6 +103,7 @@ struct KeyBindings final {
     bool temporaryEnglishEnabled = true;
     bool componentLookupEnabled = true;
     bool calculatorEnabled = true;
+    bool symbolSearchEnabled = true;
 };
 
 struct TextEditContext final {
@@ -147,6 +152,7 @@ public:
     void setComponentLookup(std::shared_ptr<const core::ComponentLookup> lookup) { componentLookup_ = std::move(lookup); }
     void cancelAuxiliaryInput() { if (auxiliaryInputActive()) clearComposition(); }
     bool finishTemporaryEnglish(bool commitText);
+    bool setSymbolFilter(std::string category, bool favoritesOnly);
     void setActive(bool active);
     void setSensitive(bool sensitive);
     bool isSensitive() const { return sensitive_; }
@@ -306,6 +312,8 @@ private:
     std::optional<UndoCommit> undoCommit_;
     AuxiliaryInputMode auxiliaryMode_ = AuxiliaryInputMode::None;
     std::shared_ptr<const core::ComponentLookup> componentLookup_;
+    std::string symbolCategory_;
+    bool symbolsFavoritesOnly_ = false;
     std::string auxiliaryInput_;
     std::size_t auxiliaryCursor_ = 0;
     std::uint64_t sessionId_ = 0;

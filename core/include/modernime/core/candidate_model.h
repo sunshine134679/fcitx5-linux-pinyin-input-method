@@ -15,7 +15,7 @@ namespace modernime::core {
 
 enum class CandidateSource { Engine, UserDictionary, Learned, Raw, EnglishDefinition, Command, None };
 enum class CandidatePageMode { Pinyin, Clipboard };
-enum class SelectionAction { CommitText, OpenClipboard, NoCommit, OpenCalculator };
+enum class SelectionAction { CommitText, OpenClipboard, NoCommit, OpenCalculator, OpenSymbols, OpenFavoriteSymbols };
 
 struct PageBoundary final {
     std::size_t begin = 0;

@@ -272,7 +272,9 @@ void testCalculator(fcitx::Instance &instance) {
     auto &controller = engine.state(&doc)->controller();
     type("v");
     const auto menu = controller.page();
-    check(menu.items.size() == 3 && menu.items[2].text == "离线计算器 (V=)", "v menu exposes calculator after clipboard");
+    check(menu.items.size() == 5 && menu.items[2].text == "离线计算器 (V=)" &&
+          menu.items[3].action == core::SelectionAction::OpenSymbols &&
+          menu.items[4].action == core::SelectionAction::OpenFavoriteSymbols, "v menu keeps calculator after clipboard and appends symbol entries");
     core::CandidateSelectionRequest request;
     request.sessionId = menu.sessionId; request.displayGeneration = menu.displayGeneration;
     request.globalIndex = 2; request.expected = core::candidateIdentity(menu.items[2], menu);
@@ -301,6 +303,37 @@ void testCalculator(fcitx::Instance &instance) {
     check(doc.text == "200.30.5" && !controller.auxiliaryInputActive(), "escape cancels calculator");
     type("v123");
     check(!controller.auxiliaryInputActive() && controller.page().rawInput == "v123", "existing numeric macro stays available");
+    controller.reset();
+}
+
+void testSymbolSearch(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    Document doc(instance.inputContextManager());
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entries.front(), in);
+    auto send = [&](fcitx::Key stroke) { fcitx::KeyEvent event(&doc, stroke); engine.keyEvent(entries.front(), event); return event.accepted(); };
+    auto type = [&](std::string_view s) { for (char c : s) check(send(fcitx::Key(std::string(1,c))), "symbol query accepted"); };
+    type("v;jiantou");
+    auto &controller = engine.state(&doc)->controller();
+    check(controller.auxiliaryInputMode() == fcitx5::AuxiliaryInputMode::Symbols && !controller.page().items.empty(), "v; opens offline symbol query");
+    check(controller.setSymbolFilter("arrows", false), "category filtering API");
+    const auto expected = controller.page().items.front().text;
+    const auto old = controller.page();
+    core::CandidateSelectionRequest stale{old.sessionId, old.displayGeneration, 0, core::candidateIdentity(old.items[0], old)};
+    send(fcitx::Key(FcitxKey_z));
+    check(!controller.select(stale), "changed symbol query rejects old selection");
+    send(fcitx::Key(FcitxKey_BackSpace));
+    check(send(fcitx::Key(FcitxKey_1)) && doc.text == expected && !controller.auxiliaryInputActive(), "symbol number selection commits generated result");
+    type("v");
+    bool opened = false;
+    for (std::size_t n = 0; n < controller.page().items.size(); ++n)
+        if (controller.page().items[n].action == core::SelectionAction::OpenFavoriteSymbols) { opened = controller.select(n); break; }
+    check(opened && controller.auxiliaryInputMode() == fcitx5::AuxiliaryInputMode::Symbols, "v menu opens favorite symbols");
+    check(send(fcitx::Key(FcitxKey_Return)) && doc.text == expected && controller.auxiliaryInputActive(), "empty favorite hint cannot commit");
+    send(fcitx::Key(FcitxKey_Escape));
+    type("v;xyzxyz"); send(fcitx::Key(FcitxKey_space));
+    check(doc.text == expected && controller.auxiliaryInputActive(), "no-match hint cannot commit");
     controller.reset();
 }
 
@@ -363,6 +396,7 @@ int main() {
         testComponentLookup(instance);
         testUnderscoreKeepsRawEnglish(instance);
         testCalculator(instance);
+        testSymbolSearch(instance);
     }
     std::filesystem::remove_all(root);
 }

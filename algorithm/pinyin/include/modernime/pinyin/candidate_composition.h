@@ -90,6 +90,7 @@ struct CandidateCompositionInput {
     bool shuangpin = false;
     std::optional<core::CandidatePin> pinnedCandidate;
     bool calculatorEnabled = false;
+    bool symbolSearchEnabled = false;
 };
 
 struct CandidateCompositionResult {

@@ -3,6 +3,7 @@
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/punctuation.h"
 #include "modernime/core/calculator.h"
+#include "modernime/core/symbol_catalog.h"
 
 #include <algorithm>
 #include <atomic>
@@ -562,6 +563,11 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (!options_.calculatorEnabled) return false;
         return openAuxiliaryInput(AuxiliaryInputMode::Calculator, "v");
     }
+    if (event.kind == KeyKind::OpenSymbols || event.kind == KeyKind::OpenFavoriteSymbols) {
+        if (!options_.symbolSearchEnabled || !openAuxiliaryInput(AuxiliaryInputMode::Symbols, "v")) return false;
+        symbolsFavoritesOnly_ = event.kind == KeyKind::OpenFavoriteSymbols;
+        publishAuxiliaryPage(); return true;
+    }
     if (auxiliaryInputActive()) return handleAuxiliaryInput(event);
     if (event.kind == KeyKind::UndoCommit) return undoLastCommit();
     if (event.kind != KeyKind::PreviousCandidate && event.kind != KeyKind::NextCandidate &&
@@ -902,6 +908,8 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::ToggleTemporaryEnglish:
     case KeyKind::OpenComponentLookup:
     case KeyKind::OpenCalculator:
+    case KeyKind::OpenSymbols:
+    case KeyKind::OpenFavoriteSymbols:
         break;
     }
     return false;
@@ -964,6 +972,9 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
             if (!options_.calculatorEnabled) return false;
             return openAuxiliaryInput(AuxiliaryInputMode::Calculator, "v");
         }
+        if (outcome->action == core::SelectionAction::OpenSymbols || outcome->action == core::SelectionAction::OpenFavoriteSymbols) {
+            return handle({outcome->action == core::SelectionAction::OpenSymbols ? KeyKind::OpenSymbols : KeyKind::OpenFavoriteSymbols});
+        }
         if (outcome->action == core::SelectionAction::NoCommit) {
             return true;
         }
@@ -991,6 +1002,9 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
     }
 
     if (page_.items[request.globalIndex].source == core::CandidateSource::Command) {
+        const auto action = core::candidateIdentity(page_.items[request.globalIndex], page_).action;
+        if (action == core::SelectionAction::OpenSymbols || action == core::SelectionAction::OpenFavoriteSymbols)
+            return handle({action == core::SelectionAction::OpenSymbols ? KeyKind::OpenSymbols : KeyKind::OpenFavoriteSymbols});
         if (core::candidateIdentity(page_.items[request.globalIndex], page_).action ==
             core::SelectionAction::OpenCalculator) {
             if (!options_.calculatorEnabled) return false;
@@ -1274,6 +1288,7 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
 
 void ModernIMEController::clearComposition() {
     auxiliaryMode_ = AuxiliaryInputMode::None;
+    symbolCategory_.clear(); symbolsFavoritesOnly_ = false;
     auxiliaryInput_.clear(); auxiliaryCursor_ = 0;
     contextBefore_ = fallbackContextBefore_;
     contextAfter_.clear();
@@ -1356,7 +1371,8 @@ void ModernIMEController::setOptions(ControllerOptions options) {
     options_ = options;
     if (temporaryEnglishMode() && !options_.temporaryEnglishEnabled) finishTemporaryEnglish(true);
     if ((auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup && !options_.componentLookupEnabled) ||
-        (auxiliaryMode_ == AuxiliaryInputMode::Calculator && !options_.calculatorEnabled)) cancelAuxiliaryInput();
+        (auxiliaryMode_ == AuxiliaryInputMode::Calculator && !options_.calculatorEnabled) ||
+        (auxiliaryMode_ == AuxiliaryInputMode::Symbols && !options_.symbolSearchEnabled)) cancelAuxiliaryInput();
     if (!options_.learningEnabled) { recentCommit_.valid = false; }
     if (provider_ != nullptr && !sensitive_) {
         provider_->setLearningEnabled(options_.learningEnabled);
@@ -1549,6 +1565,14 @@ bool ModernIMEController::openAuxiliaryInput(AuxiliaryInputMode mode, std::strin
     return true;
 }
 
+bool ModernIMEController::setSymbolFilter(std::string category, bool favoritesOnly) {
+    if (auxiliaryMode_ != AuxiliaryInputMode::Symbols ||
+        (!category.empty() && category != "punctuation" && category != "math" && category != "units" &&
+         category != "arrows" && category != "emoji" && category != "other")) return false;
+    symbolCategory_ = std::move(category); symbolsFavoritesOnly_ = favoritesOnly;
+    publishAuxiliaryPage(); return true;
+}
+
 void ModernIMEController::publishAuxiliaryPage() {
     page_.clear();
     page_.sessionId = sessionId_;
@@ -1556,7 +1580,8 @@ void ModernIMEController::publishAuxiliaryPage() {
     page_.generation = displayGeneration_;
     page_.rawInput = auxiliaryInput_;
     const std::string_view prefix = auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup ? "拆字：" :
-        auxiliaryMode_ == AuxiliaryInputMode::Calculator ? "计算：" : "";
+        auxiliaryMode_ == AuxiliaryInputMode::Calculator ? "计算：" :
+        auxiliaryMode_ == AuxiliaryInputMode::Symbols ? (symbolsFavoritesOnly_ ? "收藏符号：" : "符号：") : "";
     page_.preedit = std::string(prefix) + auxiliaryInput_;
     if (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup) {
         if (componentLookup_) {
@@ -1576,6 +1601,19 @@ void ModernIMEController::publishAuxiliaryPage() {
                 auxiliaryInput_.empty() ? "输入部件拼音，如 mumu → 林" : "没有匹配的拆字";
             hint.source = core::CandidateSource::None;
             page_.items.push_back(std::move(hint));
+        }
+    }
+    if (auxiliaryMode_ == AuxiliaryInputMode::Symbols) {
+        for (const auto *symbol : core::SymbolCatalog::search(auxiliaryInput_, symbolCategory_, options_.symbolFavorites, symbolsFavoritesOnly_, 200)) {
+            core::CandidateItem item;
+            item.text = symbol->text; item.annotation = symbol->name;
+            item.source = core::CandidateSource::Engine; item.commitRole = core::CommitCandidateRole::Generated;
+            item.consumedInputBytes = auxiliaryInput_.size(); page_.items.push_back(std::move(item));
+        }
+        if (page_.items.empty()) {
+            core::CandidateItem hint;
+            hint.text = symbolsFavoritesOnly_ && auxiliaryInput_.empty() ? "尚无收藏符号，请在客户端添加" : "没有匹配的符号";
+            hint.source = core::CandidateSource::None; page_.items.push_back(std::move(hint));
         }
     }
     if (auxiliaryMode_ == AuxiliaryInputMode::Calculator) {
@@ -1608,7 +1646,7 @@ bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {
             (auxiliaryMode_ == AuxiliaryInputMode::Calculator && event.kind == KeyKind::Character && event.character == '=')) {
             select(page_.cursor); return true;
         }
-        if (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup && (event.kind == KeyKind::Digit ||
+        if ((auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup || auxiliaryMode_ == AuxiliaryInputMode::Symbols) && (event.kind == KeyKind::Digit ||
             (event.kind == KeyKind::Character && event.character >= '1' && event.character <= '9'))) {
             if (options_.numberSelection) {
                 const auto digit = event.kind == KeyKind::Digit ? event.digit : event.character;

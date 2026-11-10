@@ -1,5 +1,6 @@
 #include "modernime/core/settings.h"
 #include "modernime/core/pinyin_match.h"
+#include "modernime/core/symbol_catalog.h"
 
 #include <fcntl.h>
 #include <sys/file.h>
@@ -151,6 +152,24 @@ bool validPin(const CandidatePin &pin) {
         pin.fullPinyin.size() <= 128 && PinyinMatchPolicy::isValidPinyinSequence(pin.fullPinyin);
 }
 
+std::string symbolFavoriteKey(std::string_view id) {
+    constexpr char hex[] = "0123456789abcdef";
+    std::string key = "symbols.favorite.";
+    for (const unsigned char c : id) { key += hex[c >> 4]; key += hex[c & 15]; }
+    return key;
+}
+std::string decodeSymbolId(std::string_view key) {
+    const auto digit = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    if (key.empty() || key.size() > 128 || key.size() % 2) return {};
+    std::string id;
+    for (std::size_t i = 0; i < key.size(); i += 2) {
+        const int a = digit(key[i]), b = digit(key[i + 1]);
+        if (a < 0 || b < 0) return {};
+        id += static_cast<char>((a << 4) | b);
+    }
+    return id;
+}
+
 bool validClipboardTrigger(std::string_view value) {
     if (value.size() != 3) {
         return false;
@@ -186,6 +205,9 @@ ModernIMESettings defaultSettings() { return {}; }
 
 SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
     SettingsValidationResult result;
+    if (settings.symbolFavorites.size() > 128 || std::any_of(settings.symbolFavorites.begin(), settings.symbolFavorites.end(),
+            [](const auto &id) { return SymbolCatalog::find(id) == nullptr; }))
+        result.issues.push_back({"symbols.favorites", "收藏最多128项，须选择现有符号目录条目"});
     std::unordered_set<std::string> pinKeys;
     if (settings.candidatePins.size() > 128)
         result.issues.push_back({"candidate.pin", "候选置顶规则最多128条"});
@@ -246,6 +268,8 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
            << "punctuation.underscore=" << underscoreName(settings.underscoreStyle) << '\n'
            << "input.remember_per_app=" << settings.rememberModePerApp << '\n'
            << "input.undo_commit=" << settings.undoCommitEnabled << '\n';
+    output << "symbols.enabled=" << settings.symbolSearchEnabled << '\n';
+    for (const auto &id : settings.symbolFavorites) output << symbolFavoriteKey(id) << "=true\n";
     output << "input.calculator=" << settings.calculatorEnabled << '\n';
     output << "input.component_lookup=" << settings.componentLookupEnabled << '\n';
     output << "input.temporary_english=" << settings.temporaryEnglishEnabled << '\n';
@@ -509,6 +533,16 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 parsed = parseBoolean(value, result.settings.smartPunctuation);
             } else if (key == "input.undo_commit") {
                 parsed = parseBoolean(value, result.settings.undoCommitEnabled);
+            } else if (key == "symbols.enabled") {
+                parsed = parseBoolean(value, result.settings.symbolSearchEnabled);
+            } else if (key.starts_with("symbols.favorite.")) {
+                const auto id = decodeSymbolId(std::string_view(key).substr(17));
+                bool favorite = false;
+                if (SymbolCatalog::find(id) && parseBoolean(value, favorite)) {
+                    auto &favorites = result.settings.symbolFavorites;
+                    if (!favorite) { favorites.erase(id); parsed = true; }
+                    else if (favorites.size() < 128 || favorites.contains(id)) { favorites.insert(id); parsed = true; }
+                }
             } else if (key == "input.calculator") {
                 parsed = parseBoolean(value, result.settings.calculatorEnabled);
             } else if (key == "input.component_lookup") {
@@ -672,6 +706,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["input.toggle_key"] = settings.toggleKey;
     knownSettings["input.remember_per_app"] = settings.rememberModePerApp ? "true" : "false";
     knownSettings["input.undo_commit"] = settings.undoCommitEnabled ? "true" : "false";
+    knownSettings["symbols.enabled"] = settings.symbolSearchEnabled ? "true" : "false";
     knownSettings["input.calculator"] = settings.calculatorEnabled ? "true" : "false";
     knownSettings["input.component_lookup"] = settings.componentLookupEnabled ? "true" : "false";
     knownSettings["input.temporary_english"] = settings.temporaryEnglishEnabled ? "true" : "false";
@@ -679,6 +714,10 @@ SettingsSaveResult SettingsStore::saveWithResult(
     knownSettings["punctuation.smart"] = settings.smartPunctuation ? "true" : "false";
     knownSettings["punctuation.underscore"] = underscoreName(settings.underscoreStyle);
     std::vector<std::string> dynamicKeys;
+    for (const auto &id : settings.symbolFavorites) {
+        const auto key = symbolFavoriteKey(id); knownSettings[key] = "true"; dynamicKeys.push_back(key);
+    }
+
     for (const auto &pin : settings.candidatePins) {
         auto key = pinKey(pin);
         knownSettings[key] = pin.text + "|" + pin.fullPinyin;
@@ -756,7 +795,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
                 output << line << '\n';
                 writtenLines.push_back(std::move(line));
                 writtenKeys.insert(key);
-            } else if (!key.starts_with("punctuation.map.") && !key.starts_with("input.app.") && !key.starts_with("candidate.pin.")) {
+            } else if (!key.starts_with("punctuation.map.") && !key.starts_with("input.app.") && !key.starts_with("candidate.pin.") && !key.starts_with("symbols.favorite.")) {
                 output << rawLine << '\n';
                 writtenLines.push_back(rawLine);
             }
@@ -766,6 +805,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
     const std::array keyOrder{
         "input.enabled", "input.default_mode", "input.toggle_key",
         "input.remember_per_app", "input.undo_commit",
+        "symbols.enabled",
         "input.calculator",
         "input.component_lookup",
         "input.temporary_english",

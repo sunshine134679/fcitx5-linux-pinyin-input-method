@@ -602,6 +602,8 @@ void testTypingSettings() {
     settings.temporaryEnglishEnabled = false;
     settings.componentLookupEnabled = false;
     settings.calculatorEnabled = false;
+    settings.symbolSearchEnabled = false;
+    settings.symbolFavorites = {"→", "℃", "="};
     settings.candidatePins = {{modernime::core::PinyinScheme::Full, "shi", "试", "shi"},
                               {modernime::core::PinyinScheme::Xiaohe, "ui", "是", "shi"}};
     assertTrue(modernime::core::SettingsStore::save(path, settings), "save typing settings");
@@ -610,6 +612,7 @@ void testTypingSettings() {
     auto edited = loaded.settings;
     edited.appInputModes.erase("code"); edited.punctuationOverrides.erase('_');
     edited.candidatePins.erase(edited.candidatePins.begin());
+    edited.symbolFavorites.erase("→");
     const auto saved = modernime::core::SettingsStore::saveWithResult(path, edited,
         modernime::core::SettingsExpectedBaseline::fromLoadResult(loaded), &loaded.rawLines);
     assertTrue(saved.status == modernime::core::SettingsSaveStatus::Saved &&
