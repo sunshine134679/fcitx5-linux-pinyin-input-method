@@ -1,4 +1,5 @@
 find_package(PkgConfig REQUIRED)
+find_package(Fcitx5Utils REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
@@ -12,6 +13,7 @@ endif()
 
 add_library(modernime_settings_logic STATIC
     data_controller.cpp
+    quick_phrase_store.cpp
     dictionary_pronunciation.cpp
     settings_model.cpp
     runtime_controller.cpp
@@ -29,6 +31,7 @@ target_include_directories(modernime_settings_logic PUBLIC
 )
 target_link_libraries(modernime_settings_logic PUBLIC
     modernime_core
+    Fcitx5::Utils
     modernime_pinyin
     modernime_ui_layout
     PkgConfig::GTK3
@@ -37,6 +40,10 @@ target_compile_definitions(modernime_settings_logic PUBLIC
     MODERNIME_VERSION="${PROJECT_VERSION}"
     MODERNIME_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
 )
+# 5.0.16 修正了 QuickPhrase 带引号文本解析；旧环境保留原有客户端功能。
+if(Fcitx5Utils_VERSION VERSION_LESS "5.0.16")
+    target_compile_definitions(modernime_settings_logic PRIVATE MODERNIME_LEGACY_QUICK_PHRASE)
+endif()
 target_compile_features(modernime_settings_logic PUBLIC cxx_std_20)
 modernime_enable_warnings(modernime_settings_logic)
 

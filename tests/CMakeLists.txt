@@ -111,6 +111,21 @@ if(MODERNIME_BUILD_SETTINGS)
         COMMAND modernime_learning_page_contract_tests
     )
 
+    # 旧版 QuickPhrase 不支持本功能所需的可靠引号解析。
+    get_target_property(modernime_settings_definitions modernime_settings_logic COMPILE_DEFINITIONS)
+    if(NOT "MODERNIME_LEGACY_QUICK_PHRASE" IN_LIST modernime_settings_definitions)
+        if(MODERNIME_BUILD_FCITX5)
+            add_executable(modernime_quick_phrase_input_tests settings/quick_phrase_input_test.cpp)
+            target_link_libraries(modernime_quick_phrase_input_tests PRIVATE modernime_settings_logic Fcitx5::Core)
+            add_test(NAME modernime_quick_phrase_input COMMAND modernime_quick_phrase_input_tests)
+        endif()
+
+        add_executable(modernime_quick_phrase_store_tests settings/quick_phrase_store_test.cpp)
+        target_link_libraries(modernime_quick_phrase_store_tests PRIVATE modernime_settings_logic)
+        add_test(NAME modernime_quick_phrase_store COMMAND modernime_quick_phrase_store_tests)
+
+    endif()
+
     add_executable(modernime_dictionary_page_contract_tests
         settings/dictionary_page_contract_test.cpp
     )
