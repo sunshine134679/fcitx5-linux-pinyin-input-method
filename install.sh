@@ -210,6 +210,7 @@ check_native_package_collision() {
         "$prefix/bin/modernime-session-init"
         "$prefix/bin/modernime-data-guard"
         "$prefix/bin/modernime-migrate-channel"
+        "$prefix/bin/modernime-update"
         "$prefix/share/fcitx5/addon/modernime.conf"
         "$prefix/share/fcitx5/addon/modernime-ui.conf"
         "$prefix/share/fcitx5/inputmethod/modernime.conf"
@@ -394,7 +395,17 @@ else
         # restored automatically when this subshell exits.
         unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
         test_jobs="${CTEST_PARALLEL_LEVEL:-1}"
-        ctest --test-dir "$build_dir" --output-on-failure --parallel "$test_jobs"
+        report_dir="$canonical_build_dir/Testing"
+        mkdir -p -- "$report_dir"
+        # These filenames describe this run only. A failed/filtered invocation
+        # must not leave an earlier native report looking like current evidence.
+        rm -f -- "$report_dir/install-registered.json" "$report_dir/install-junit.xml" \
+            "$report_dir/install-gtest.xml"
+        unset GTEST_OUTPUT
+        ctest --test-dir "$build_dir" --show-only=json-v1 > "$report_dir/install-registered.json"
+        export GTEST_OUTPUT="xml:$report_dir/install-gtest.xml"
+        ctest --test-dir "$build_dir" --output-on-failure --parallel "$test_jobs" \
+            --output-junit "$report_dir/install-junit.xml"
     )
 fi
 
@@ -588,8 +599,13 @@ modernime_cleanup_transaction_dir "$deploy_tx_dir"
 rm -rf -- "$src_transaction_dir" 2>/dev/null || true
 
 if [[ "$is_system_prefix" != true && -x "$prefix/bin/modernime-session-init" ]]; then
-    MODERNIME_PREFIX="$prefix" MODERNIME_CONFIG_HOME="$config_home" \
-        MODERNIME_SKIP_FCITX_RESTART=1 "$prefix/bin/modernime-session-init"
+    session_status=0
+    MODERNIME_PREFIX="$prefix" MODERNIME_CONFIG_HOME="$config_home" MODERNIME_DATA_HOME="$data_home" \
+        MODERNIME_SKIP_FCITX_RESTART=1 "$prefix/bin/modernime-session-init" || session_status=$?
+    if [[ "$session_status" -ne 0 ]]; then
+        printf 'ModernIME files installed; session initialization incomplete (exit %s). Retry modernime-session-init; do not repeat installation.\n' "$session_status" >&2
+        exit "$session_status"
+    fi
 fi
 
 if [[ -n "${MODERNIME_BUILD_LOCK_FD:-}" ]]; then
@@ -611,9 +627,9 @@ run_fcitx5_remote() {
 start_fcitx5_safely() {
     "${fcitx_environment[@]}" bash -c '
         if command -v timeout >/dev/null 2>&1; then
-            timeout --kill-after=1s 3s fcitx5 -d -r -u modernime-ui || true
+            timeout --kill-after=1s 3s fcitx5 -d -r || true
         else
-            fcitx5 -d -r -u modernime-ui || true
+            fcitx5 -d -r || true
         fi
     ' modernime-fcitx5-start >/dev/null 2>&1
 }
@@ -632,12 +648,12 @@ elif ! command -v fcitx5 >/dev/null 2>&1; then
 elif ! command -v fcitx5-remote >/dev/null 2>&1; then
     printf 'fcitx5-remote executable not found; file deployment completed (runtime activation skipped due to missing fcitx5-remote)\n' >&2
 elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
-    printf 'No graphical session detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5 -u modernime-ui\n' >&2
+    printf 'No graphical session detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5\n' >&2
 elif [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-    printf 'DBus session not detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5 -u modernime-ui\n' >&2
+    printf 'DBus session not detected; Fcitx5 auto-start skipped; start it from a graphical session with: fcitx5\n' >&2
 else
     start_fcitx5_safely &
-    printf 'Fcitx5 restart requested with the ModernIME UI addon\n'
+    printf 'Fcitx5 restart requested with automatic desktop UI selection\n'
     activated=false
     for attempt in {1..20}; do
         if run_fcitx5_remote -s modernime >/dev/null &&
@@ -668,7 +684,7 @@ if [[ "$is_system_prefix" == true ]]; then
 else
     printf 'Desktop shortcut: %s\n' "$desktop_shortcut"
 fi
-printf 'Select the UI addon with: fcitx5 -u modernime-ui\n'
+printf 'Start with automatic desktop UI selection: fcitx5\n'
 printf '\n'
 printf '【会话环境变量配置提示】\n'
 printf ' 若您在 LightDM/UKUI/X11 等桌面会话中无法调出输入法，请确保以下变量已生效：\n'

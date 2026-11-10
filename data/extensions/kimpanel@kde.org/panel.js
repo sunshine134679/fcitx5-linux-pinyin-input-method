@@ -60,6 +60,7 @@ export class InputPanel extends GObject.Object {
 
         this.upperLayout.add_child(this.auxText);
         this.upperLayout.add_child(this.preeditText);
+        this.updateAppearance();
         this.hide();
         this.panel.hide();
     }
@@ -170,6 +171,23 @@ export class InputPanel extends GObject.Object {
         }
     }
     setVertical(vertical) { this.lookupTableLayout.set_vertical(vertical); }
+    updateAppearance() {
+        const themes = ['system', 'light', 'dark', 'classic', 'jade', 'amber', 'rose', 'lavender', 'midnight', 'contrast'];
+        for (const theme of themes.slice(1))
+            this.panel.remove_style_class_name(`modernime-panel-${theme}`);
+        const theme = themes[this.kimpanel.settings.get_uint('panel-theme')] ?? 'system';
+        if (theme !== 'system')
+            this.panel.add_style_class_name(`modernime-panel-${theme}`);
+        const shapes = ['rounded', 'square', 'capsule'];
+        for (const shape of shapes)
+            this.panel.remove_style_class_name(`modernime-shape-${shape}`);
+        const shape = shapes[this.kimpanel.settings.get_uint('candidate-shape')] ?? 'rounded';
+        this.panel.add_style_class_name(`modernime-shape-${shape}`);
+        for (const spacing of ['compact', 'standard', 'relaxed'])
+            this.panel.remove_style_class_name(`modernime-spacing-${spacing}`);
+        const spacing = ['compact', 'standard', 'relaxed'][this.kimpanel.settings.get_uint('candidate-spacing')];
+        this.panel.add_style_class_name(`modernime-spacing-${spacing}`);
+    }
     updateFont(textStyle) {
         this.text_style = textStyle;
         this.auxText.set_style(this.text_style);

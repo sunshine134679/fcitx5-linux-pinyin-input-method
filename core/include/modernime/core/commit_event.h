@@ -11,7 +11,8 @@ enum class CommitCandidateRole {
     UserDictionary, // 用户词典词条
     English,        // 英文单词 / 英文术语
     Raw,            // 原始输入原文回车
-    Command         // 命令项（剪贴板等）
+    Command,        // 命令项（剪贴板等）
+    Generated       // 数字、日期、符号等生成文本；可上屏，不参与学习
 };
 
 struct CommitEvent final {

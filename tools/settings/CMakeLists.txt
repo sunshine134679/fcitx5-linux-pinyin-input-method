@@ -2,7 +2,34 @@ find_package(PkgConfig REQUIRED)
 find_package(Fcitx5Utils REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(MODERNIME_TIMEOUT_EXECUTABLE timeout REQUIRED)
-pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+find_program(MODERNIME_LDD_EXECUTABLE ldd REQUIRED)
+execute_process(COMMAND "${Python3_EXECUTABLE}" -c [=[
+import pathlib
+import re
+import ssl
+
+context = ssl.create_default_context()
+paths = ssl.get_default_verify_paths()
+# OpenSSL loads hashed capath certificates lazily, so an empty list before a
+# connection does not mean the system trust store is missing. Inspect those
+# certificates in this build-only context; runtime TLS keeps its defaults.
+if not context.get_ca_certs() and paths.capath:
+    for certificate in pathlib.Path(paths.capath).iterdir():
+        if not re.fullmatch(r'[0-9a-fA-F]{8}\.[0-9]+', certificate.name):
+            continue
+        try:
+            context.load_verify_locations(cafile=str(certificate))
+        except OSError:
+            continue
+        if context.get_ca_certs():
+            break
+assert context.get_ca_certs(), f'请安装 ca-certificates 并检查证书路径：{paths}'
+]=]
+    RESULT_VARIABLE modernime_https_ready ERROR_VARIABLE modernime_https_error)
+if(NOT modernime_https_ready EQUAL 0)
+    message(FATAL_ERROR "客户端在线更新需要 Python SSL 和 ca-certificates: ${modernime_https_error}")
+endif()
+pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0>=3.24)
 pkg_check_modules(FCITX5_UTILS QUIET Fcitx5Utils)
 
 set(modernime_system_fcitx5_addon_dir "")
@@ -21,6 +48,7 @@ add_library(modernime_settings_logic STATIC
     process_runner.cpp
     package_policy.cpp
     update_controller.cpp
+    update_download.cpp
     clipboard_history_model.cpp
     overview_model.cpp
     page_registry.cpp
@@ -48,7 +76,10 @@ target_compile_features(modernime_settings_logic PUBLIC cxx_std_20)
 modernime_enable_warnings(modernime_settings_logic)
 
 add_library(modernime_settings_gtk STATIC
+    settings_choice.cpp
     settings_widgets.cpp
+    settings_motion.cpp
+    settings_disclosure.cpp
     settings_shell.cpp
     settings_window.cpp
     pages/candidates_page.cpp
@@ -91,9 +122,11 @@ install(PROGRAMS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-session-init
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-data-guard
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-migrate-channel
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-update
     DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/desktop/modernime-settings.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/install_state.sh
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/gnome_extension.py
+              ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/install_state.sh
               ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/install_lifecycle.sh
         DESTINATION ${CMAKE_INSTALL_DATADIR}/modernime)

@@ -4,6 +4,7 @@
 #include <filesystem>
 
 #include "modernime/fcitx5/fcitx_engine.h"
+#include "modernime/fcitx5/settings_shortcuts.h"
 #include "modernime/ui/cairo_render_surface.h"
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_pagination.h"
@@ -18,18 +19,26 @@
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx/event.h>
+#include <fcitx-utils/trackableobject.h>
 #include <fcitx-utils/event.h>
 
 #include <dlfcn.h>
 #include <fcitx/action.h>
 #include <fcitx/statusarea.h>
+#include <fcitx/userinterfacemanager.h>
 #include <gtk/gtk.h>
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/gdkwayland.h>
+#endif
 #include <pango/pango.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <memory>
+#include <optional>
+#include <vector>
 #include <string>
 #include <unordered_map>
 
@@ -114,20 +123,96 @@ static AppIndicatorAPI g_appIndicator;
 
 struct ModernIMEUserInterface::Impl final {
     fcitx::Instance *instance = nullptr;
-    fcitx::InputContext *currentInputContext = nullptr;
     GtkWidget *window = nullptr;
     GtkWidget *drawingArea = nullptr;
     AppIndicator *indicator = nullptr;
     GtkWidget *indicatorMenu = nullptr;
 
-    CandidateBarLayout layout;
+    struct CandidateFrame {
+        struct Binding {
+            const fcitx::CandidateWord *word;
+            // ModernIME words are immutable. Generic Fcitx words may edit their
+            // text in place, so keep their displayed text as well.
+            std::optional<std::string> mutableText;
+        };
+        CandidateBarLayout layout;
+        int scale = 1;
+        fcitx::TrackableObjectReference<fcitx::InputContext> context;
+        std::weak_ptr<fcitx::CandidateList> list;
+        std::vector<Binding> bindings;
+
+        std::shared_ptr<fcitx::CandidateList> currentList() const {
+            auto *ic = context.get();
+            if (!ic || !ic->hasFocus()) {
+                return {};
+            }
+            auto saved = list.lock();
+            if (!saved || saved != ic->inputPanel().candidateList() ||
+                saved->size() != static_cast<int>(bindings.size())) {
+                return {};
+            }
+            for (std::size_t i = 0; i < bindings.size(); ++i) {
+                const auto &word = saved->candidate(static_cast<int>(i));
+                if (&word != bindings[i].word ||
+                    (bindings[i].mutableText &&
+                     word.text().toString() != *bindings[i].mutableText)) {
+                    return {};
+                }
+            }
+            return saved;
+        }
+    };
+    // An update is not a paint. Only the last completed draw supplies hit-test
+    // geometry, together with the exact list/page and owner that produced it.
+    std::shared_ptr<const CandidateFrame> pendingFrame;
+    std::shared_ptr<const CandidateFrame> paintedFrame;
+    std::shared_ptr<const CandidateFrame> drawnFrame;
+    guint frameReadySource = 0;
+    std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>>
+        contextWatchers;
+
+    void invalidateFrame() {
+        if (frameReadySource != 0) {
+            g_source_remove(frameReadySource);
+            frameReadySource = 0;
+        }
+        pendingFrame.reset();
+        paintedFrame.reset();
+        drawnFrame.reset();
+    }
+
+    void finishDraw(std::shared_ptr<const CandidateFrame> frame) {
+        if (frame == paintedFrame || frame == drawnFrame) {
+            return;
+        }
+        // GTK pauses event delivery during paint, then resumes it afterwards.
+        // A button queued before this draw must not be interpreted on the new
+        // page. Revoke clicks now and arm only after higher-priority GDK events
+        // (GDK_PRIORITY_EVENTS) and redraw/resume phases have drained.
+        paintedFrame.reset();
+        drawnFrame = std::move(frame);
+        if (frameReadySource == 0) {
+            frameReadySource = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                [](gpointer data) -> gboolean {
+                    auto *impl = static_cast<Impl *>(data);
+                    impl->frameReadySource = 0;
+                    if (impl->drawnFrame && impl->drawnFrame->currentList()) {
+                        impl->paintedFrame = std::move(impl->drawnFrame);
+                    } else {
+                        impl->drawnFrame.reset();
+                    }
+                    return G_SOURCE_REMOVE;
+                }, this, nullptr);
+        }
+    }
     WindowAnchor windowAnchor;
-    RenderStyle style = RenderStyle::reference();
-    CandidateBarMetrics metrics = CandidateBarMetrics::reference();
+    core::ModernIMESettings appearance = core::defaultSettings();
+    RenderStyle style = RenderStyle::fromSettings(appearance);
+    CandidateBarMetrics metrics = CandidateBarMetrics::fromSettings(appearance);
+    double configuredPanelWidth = metrics.panelWidth;
     bool gtkAvailable = false;
     bool suspended = false;
     bool wayland = false;
-    bool waylandAnchorWarningLogged = false;
     std::unique_ptr<fcitx::EventSourceTime> gtkEventSource;
     // 测量缓存：textWidth 在每次按键的布局/分页路径上对全部候选反复调用，
     // 原实现每次都新建再销毁 PangoLayout 和字体描述，并重复测量相同文本。
@@ -149,8 +234,6 @@ struct ModernIMEUserInterface::Impl final {
     core::SettingsFileStamp lastSettingsStamp{};
     std::string lastContentHash;
     std::uint64_t layoutGeneration = 0;
-    int currentFontSize = 20;
-    int currentPageSize = 9;
     bool loadFailed = false;
     int retryCount = 0;
 
@@ -194,26 +277,24 @@ struct ModernIMEUserInterface::Impl final {
                     if (loadResult.contentHash != lastContentHash) {
                         lastContentHash = loadResult.contentHash;
                         const auto &loaded = loadResult.settings;
-                        if (loaded.candidateFontSize != currentFontSize ||
-                            loaded.candidatePageSize != currentPageSize) {
-                            currentFontSize = loaded.candidateFontSize;
-                            currentPageSize = loaded.candidatePageSize;
+                        if (loaded.candidateFontSize != appearance.candidateFontSize ||
+                            loaded.candidatePageSize != appearance.candidatePageSize ||
+                            loaded.candidateFontFamily != appearance.candidateFontFamily ||
+                            loaded.candidateTheme != appearance.candidateTheme ||
+                            loaded.candidateShape != appearance.candidateShape ||
+                            loaded.candidateSpacing != appearance.candidateSpacing) {
+                            appearance = loaded;
                             ++layoutGeneration;
-                            metrics = CandidateBarMetrics::reference(
-                                static_cast<double>(currentFontSize),
-                                static_cast<std::size_t>(currentPageSize));
+                            metrics = CandidateBarMetrics::fromSettings(appearance);
+                            style = RenderStyle::fromSettings(appearance);
+                            configuredPanelWidth = metrics.panelWidth;
                             metrics.layoutGeneration = layoutGeneration;
-                            metrics.maxCandidates = static_cast<std::size_t>(currentPageSize);
-                            metrics.candidateFontSize = static_cast<double>(currentFontSize);
-                            style.candidateText.size = static_cast<double>(currentFontSize);
-                            style.candidateNumberText.size =
-                                std::max(10.0, static_cast<double>(currentFontSize) - 4.0);
-                            style.preeditText.size =
-                                std::max(12.0, static_cast<double>(currentFontSize) - 2.0);
+                            for (auto &[key, font] : sharedFontCache) pango_font_description_free(font);
+                            sharedFontCache.clear();
                             sharedWidthCache.clear();
                             lastWindowWidth = -1;
                             lastWindowHeight = -1;
-                            layout = {};
+                            invalidateFrame();
                         }
                     }
                 } else if (loadResult.isIoError()) {
@@ -263,52 +344,84 @@ struct ModernIMEUserInterface::Impl final {
     // 缩放放大（绘制上下文已应用 scale），这里不能再乘 scaleFactor，
     // 否则会双重缩放导致面板尺寸和位置全面错位。
     int windowWidth() const {
+        const auto &layout = pendingFrame->layout;
         return static_cast<int>(std::ceil(
             layout.panel.x + layout.panel.width + style.shadowSpread -
             originX));
     }
 
     int windowHeight() const {
+        const auto &layout = pendingFrame->layout;
         return static_cast<int>(std::ceil(
             layout.panel.y + layout.panel.height + style.shadowSpread -
             originY + style.shadowOffsetY));
     }
 
+    GdkRectangle logicalCursor(fcitx::InputContext *inputContext) const {
+        const auto &cursor = inputContext->cursorRect();
+        const auto scale = static_cast<double>(gtk_widget_get_scale_factor(window));
+        // X11 frontends publish physical root coordinates (including clients
+        // at a different toolkit scale). Convert with this GTK UI's scale,
+        // not InputContext::scaleFactor(), which may remain 1 on X11.
+        return {static_cast<int>(std::floor(cursor.left() / scale)),
+                static_cast<int>(std::floor(cursor.top() / scale)),
+                static_cast<int>(std::ceil(cursor.width() / scale)),
+                static_cast<int>(std::ceil(cursor.height() / scale))};
+    }
+
+    std::optional<GdkRectangle> workareaFor(fcitx::InputContext *inputContext) const {
+        auto *display = gtk_widget_get_display(window);
+        if (!inputContext || !display) {
+            return std::nullopt;
+        }
+        const auto cursor = logicalCursor(inputContext);
+        auto *monitor = gdk_display_get_monitor_at_point(
+            display, cursor.x, cursorAnchorBottom(cursor.y, cursor.height));
+        if (!monitor) {
+            return std::nullopt;
+        }
+        GdkRectangle workarea{};
+        gdk_monitor_get_workarea(monitor, &workarea);
+        return workarea;
+    }
+
+    bool constrainWidth(fcitx::InputContext *inputContext) {
+        double width = configuredPanelWidth;
+        if (const auto workarea = workareaFor(inputContext)) {
+            // Workarea and GTK geometry are logical pixels. Reserve the outer
+            // panel/shadow extents before the existing page planner measures.
+            width = std::min(width, std::max(1.0,
+                workarea->width - metrics.panelX - style.shadowSpread + originX));
+        }
+        if (width == metrics.panelWidth) {
+            return false;
+        }
+        metrics.canvasWidth += width - metrics.panelWidth;
+        metrics.panelWidth = width;
+        metrics.layoutGeneration = ++layoutGeneration;
+        invalidateFrame();
+        return true;
+    }
+
     // 把候选栏锚定到输入光标下方；光标所在显示器放不下时翻到光标上方，
     // 并把窗口完全钳制在工作区内。
-    // 注意：Wayland 不支持客户端定位浮动窗口（gtk_window_move 是空操作），
-    // 位置由合成器决定；尚未接入 fcitx5 窗口系统（windowing）接口前，
-    // Wayland 会话中的候选栏定位属于平台限制。
+    // Wayland 会话由 Fcitx5 的原生桌面面板负责，本窗口仅用于 X11。
     void positionWindow(fcitx::InputContext *inputContext) {
-        if (inputContext == nullptr) {
+        if (inputContext == nullptr || !pendingFrame) {
             return;
         }
-        if (wayland) {
-            if (!waylandAnchorWarningLogged) {
-                g_warning(
-                    "ModernIME candidate bar cannot be anchored on Wayland; "
-                    "the compositor decides its position. X11 sessions anchor "
-                    "the bar to the text cursor.");
-                waylandAnchorWarningLogged = true;
-            }
-            return;
-        }
-        const auto &cursor = inputContext->cursorRect();
-        int desiredX = cursor.left();
-        int desiredY = cursorAnchorBottom(cursor.top(), cursor.height());
+        const auto cursor = logicalCursor(inputContext);
+        int desiredX = cursor.x;
+        int desiredY = cursorAnchorBottom(cursor.y, cursor.height);
         const auto panelWidth = windowWidth();
         const auto panelHeight = windowHeight();
-        if (GdkDisplay *display = gtk_widget_get_display(window);
-            display != nullptr) {
-            GdkRectangle workarea{};
-            GdkMonitor *monitor = gdk_display_get_monitor_at_point(
-                display, desiredX, desiredY);
-            gdk_monitor_get_workarea(monitor, &workarea);
+        if (const auto area = workareaFor(inputContext)) {
+            const auto &workarea = *area;
             const auto maxX = std::max(
                 workarea.x, workarea.x + workarea.width - panelWidth);
             desiredX = std::clamp(desiredX, workarea.x, maxX);
             if (desiredY + panelHeight > workarea.y + workarea.height) {
-                desiredY = cursor.top() - panelHeight;
+                desiredY = cursor.y - panelHeight;
             }
             const auto maxY = std::max(
                 workarea.y, workarea.y + workarea.height - panelHeight);
@@ -456,8 +569,19 @@ namespace {
 void toggleInputMethod(GtkMenuItem *, gpointer data) {
     if (auto *instance = static_cast<fcitx::Instance *>(data);
         instance != nullptr) {
-        instance->toggle();
+        auto *context = instance->lastFocusedInputContext();
+        auto *action = instance->userInterfaceManager().lookupAction("modernime-mode");
+        if (context && instance->inputMethod(context) == "modernime" && action) {
+            action->activate(context);
+        } else {
+            instance->toggle();
+        }
     }
+}
+
+void openSettings(GtkMenuItem *, gpointer data) {
+    static const char moduleAnchor = 0;
+    fcitx5::openSettingsPage(static_cast<const char *>(data), &moduleAnchor);
 }
 
 gboolean drawCallback(GtkWidget *, cairo_t *context, gpointer data) {
@@ -525,6 +649,7 @@ core::CandidatePage pageFromInputPanel(const fcitx::InputPanel &panel) {
         dynamic_cast<const fcitx5::FcitxCandidateList *>(candidates.get());
     if (variableCandidates != nullptr) {
         page.pageBoundaries = variableCandidates->pageBoundaries();
+        page.hasMoreCandidates = variableCandidates->hasMoreCandidates();
     }
     const auto pageBegin = variableCandidates == nullptr
                                ? std::size_t{0}
@@ -546,16 +671,21 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     if (!impl_->gtkAvailable) {
         return;
     }
+#ifdef GDK_WINDOWING_WAYLAND
+    impl_->wayland = GDK_IS_WAYLAND_DISPLAY(gdk_display_get_default());
+#endif
+    // A Wayland session may explicitly start GTK through XWayland. Its popup
+    // still cannot reliably follow native application cursors across surfaces.
+    impl_->wayland = impl_->wayland ||
+        g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0;
+    if (impl_->wayland) {
+        g_message("ModernIME: using the desktop's native candidate panel on Wayland");
+        return;
+    }
     impl_->refreshSettingsIfNeeded();
     impl_->sessionBus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
     impl_->window = gtk_window_new(GTK_WINDOW_POPUP);
     configureWindow(impl_->window);
-    if (GdkDisplay *display = gtk_widget_get_display(impl_->window);
-        display != nullptr) {
-        const auto *backendName = gdk_display_get_name(display);
-        impl_->wayland = backendName != nullptr &&
-                         std::string_view(backendName).starts_with("wayland");
-    }
     if (g_appIndicator.init()) {
         impl_->indicator = g_appIndicator.app_indicator_new(
             "modernime-fcitx5", std::string(StatusIndicator::iconName()).c_str(),
@@ -572,11 +702,17 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
         impl_->lastIndicatorTitle = std::string(StatusIndicator::title());
 
         impl_->indicatorMenu = gtk_menu_new();
-        auto *indicatorItem = gtk_menu_item_new_with_label(
-            std::string(StatusIndicator::title()).c_str());
+        auto *indicatorItem = gtk_menu_item_new_with_label("切换中英文");
         g_signal_connect(indicatorItem, "activate",
                          G_CALLBACK(toggleInputMethod), instance);
         gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), indicatorItem);
+        gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), gtk_separator_menu_item_new());
+        for (const auto &shortcut : fcitx5::settingsShortcuts) {
+            auto *item = gtk_menu_item_new_with_label(shortcut.label);
+            g_signal_connect(item, "activate", G_CALLBACK(openSettings),
+                             const_cast<char *>(shortcut.page));
+            gtk_menu_shell_append(GTK_MENU_SHELL(impl_->indicatorMenu), item);
+        }
         gtk_widget_show_all(impl_->indicatorMenu);
         g_appIndicator.app_indicator_set_menu(
             impl_->indicator, GTK_MENU(impl_->indicatorMenu));
@@ -594,10 +730,44 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
                      G_CALLBACK(buttonPressCallback), this);
     gtk_widget_set_size_request(impl_->drawingArea, 1, 1);
     gtk_widget_realize(impl_->window);
+    g_signal_connect(impl_->window, "notify::scale-factor",
+        G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {
+            static_cast<ModernIMEUserInterface *>(data)->refreshDisplayScale();
+        }), this);
     // 预热 Pango 布局与 Fontconfig 字体库缓存，消除首键测量中文字体的冷启动开销
     impl_->textWidth("你好世界");
     impl_->textWidth("1234567890");
     if (instance != nullptr) {
+        for (const auto type : {fcitx::EventType::InputContextFocusOut,
+                                fcitx::EventType::InputContextDestroyed}) {
+            impl_->contextWatchers.push_back(instance->watchEvent(
+                type, fcitx::EventWatcherPhase::PreInputMethod,
+                [this](fcitx::Event &event) {
+                    auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
+                    if ((impl_->pendingFrame && impl_->pendingFrame->context.get() == ic) ||
+                        (impl_->paintedFrame && impl_->paintedFrame->context.get() == ic) ||
+                        (impl_->drawnFrame && impl_->drawnFrame->context.get() == ic)) {
+                        impl_->invalidateFrame();
+                        gtk_widget_hide(impl_->window);
+                        impl_->windowAnchor.reset();
+                    }
+                }));
+        }
+        impl_->contextWatchers.push_back(instance->watchEvent(
+            fcitx::EventType::InputContextCursorRectChanged,
+            fcitx::EventWatcherPhase::PostInputMethod,
+            [this](fcitx::Event &event) {
+                auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
+                if (!impl_->pendingFrame || impl_->pendingFrame->context.get() != ic) {
+                    return;
+                }
+                if (impl_->constrainWidth(ic)) {
+                    update(fcitx::UserInterfaceComponent::InputPanel, ic);
+                } else {
+                    impl_->positionWindow(ic);
+                    impl_->pumpPendingGtkEvents();
+                }
+            }));
         impl_->gtkEventSource = instance->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 30000, 30000,
             [this](fcitx::EventSourceTime *source, uint64_t) {
@@ -616,6 +786,11 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
 }
 
 ModernIMEUserInterface::~ModernIMEUserInterface() {
+    if (impl_->window) {
+        g_signal_handlers_disconnect_by_data(impl_->window, this);
+    }
+    impl_->invalidateFrame();
+    impl_->contextWatchers.clear();
     impl_->gtkEventSource.reset();
     if (impl_->sharedTextLayout != nullptr) {
         g_object_unref(impl_->sharedTextLayout);
@@ -640,19 +815,43 @@ ModernIMEUserInterface::~ModernIMEUserInterface() {
 }
 
 void ModernIMEUserInterface::draw(cairo_t *context) {
-    if (impl_->suspended) {
+    const auto frame = impl_->pendingFrame;
+    if (frame && frame->scale != gtk_widget_get_scale_factor(impl_->window)) {
+        refreshDisplayScale();
+        return;
+    }
+    if (impl_->suspended || !frame || !frame->currentList()) {
         return;
     }
     cairo_save(context);
     cairo_translate(context, -Impl::originX, -Impl::originY);
     CairoRenderSurface surface(context);
-    CandidateBarRenderer::render(surface, impl_->layout, impl_->style);
+    CandidateBarRenderer::render(surface, frame->layout, impl_->style);
     cairo_restore(context);
+    if (cairo_status(context) == CAIRO_STATUS_SUCCESS) {
+        impl_->finishDraw(frame);
+    }
+}
+
+void ModernIMEUserInterface::refreshDisplayScale() {
+    const auto frame = impl_->pendingFrame;
+    impl_->invalidateFrame();
+    impl_->windowAnchor.reset();
+    impl_->sharedWidthCache.clear();
+    if (impl_->sharedTextLayout) {
+        pango_layout_context_changed(impl_->sharedTextLayout);
+    }
+    impl_->metrics.layoutGeneration = ++impl_->layoutGeneration;
+    impl_->lastWindowWidth = -1;
+    impl_->lastWindowHeight = -1;
+    if (frame && frame->currentList()) {
+        update(fcitx::UserInterfaceComponent::InputPanel, frame->context.get());
+    }
 }
 
 void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
                                     fcitx::InputContext *inputContext) {
-    if (!impl_->gtkAvailable || inputContext == nullptr) {
+    if (!available() || inputContext == nullptr) {
         return;
     }
     impl_->refreshSettingsIfNeeded();
@@ -661,13 +860,13 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
         auto &panel = inputContext->inputPanel();
         const auto list = panel.candidateList();
         if (list == nullptr || list->empty()) {
-            impl_->currentInputContext = nullptr;
+            impl_->invalidateFrame();
             gtk_widget_hide(impl_->window);
             impl_->windowAnchor.reset();
             impl_->pumpPendingGtkEvents();
             return;
         }
-        impl_->currentInputContext = inputContext;
+        impl_->constrainWidth(inputContext);
 
         const auto mode =
             list->layoutHint() == fcitx::CandidateLayoutHint::Vertical
@@ -700,8 +899,21 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
             }
         }
         const auto page = pageFromInputPanel(panel);
-        impl_->layout = CandidateBarLayout::measure(
-            page, impl_->metrics, textWidth);
+        auto frame = std::make_shared<Impl::CandidateFrame>();
+        frame->scale = gtk_widget_get_scale_factor(impl_->window);
+        frame->layout = CandidateBarLayout::measure(page, impl_->metrics, textWidth);
+        frame->context = inputContext->watch();
+        frame->list = list;
+        frame->bindings.reserve(static_cast<std::size_t>(list->size()));
+        for (int index = 0; index < list->size(); ++index) {
+            const auto &word = list->candidate(index);
+            Impl::CandidateFrame::Binding binding{&word, std::nullopt};
+            if (!dynamic_cast<const fcitx5::FcitxCandidateWord *>(&word)) {
+                binding.mutableText = word.text().toString();
+            }
+            frame->bindings.push_back(std::move(binding));
+        }
+        impl_->pendingFrame = std::move(frame);
         impl_->setWindowSize();
         impl_->positionWindow(inputContext);
         gtk_widget_queue_draw(impl_->drawingArea);
@@ -721,11 +933,11 @@ void ModernIMEUserInterface::update(fcitx::UserInterfaceComponent component,
     impl_->pumpPendingGtkEvents();
 }
 
-bool ModernIMEUserInterface::available() { return impl_->gtkAvailable; }
+bool ModernIMEUserInterface::available() { return impl_->gtkAvailable && !impl_->wayland; }
 
 void ModernIMEUserInterface::suspend() {
     impl_->suspended = true;
-    impl_->currentInputContext = nullptr;
+    impl_->invalidateFrame();
     if (impl_->window != nullptr) {
         gtk_widget_hide(impl_->window);
     }
@@ -738,25 +950,23 @@ bool ModernIMEUserInterface::handleButtonPress(double x, double y) {
         return false;
     }
     impl_->refreshSettingsIfNeeded();
-    auto *inputContext = impl_->currentInputContext;
-    if (inputContext == nullptr && impl_->instance != nullptr) {
-        inputContext =
-            impl_->instance->inputContextManager().mostRecentInputContext();
-    }
-    if (inputContext == nullptr) {
+    const auto frame = impl_->paintedFrame;
+    if (frame && frame->scale != gtk_widget_get_scale_factor(impl_->window)) {
+        refreshDisplayScale();
         return false;
     }
-    auto &panel = inputContext->inputPanel();
-    const auto list = panel.candidateList();
-    if (list == nullptr || list->empty()) {
+    const auto list = frame ? frame->currentList() : nullptr;
+    if (!list) {
         return false;
     }
-
-    const int index = hitTestCandidate(impl_->layout, impl_->metrics, x, y);
+    const int index = hitTestCandidate(frame->layout, impl_->metrics, x, y);
     if (index >= 0 && index < list->size()) {
-        list->candidate(index).select(inputContext);
-        inputContext->updateUserInterface(
-            fcitx::UserInterfaceComponent::InputPanel, true);
+        // Keep the list alive through select, but never keep its InputContext
+        // alive or fall back to another context after a focus/lifetime change.
+        list->candidate(index).select(frame->context.get());
+        if (auto *ic = frame->context.get(); ic && ic->hasFocus()) {
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel, true);
+        }
         return true;
     }
     return true;

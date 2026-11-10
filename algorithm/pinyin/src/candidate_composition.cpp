@@ -186,7 +186,7 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     // Stage 1: Fuzzy Candidates Interleaving
     auto fullItems = input.fullCandidates;
     const std::string beforeFuzzyRank1 = fullItems.size() >= 2 ? fullItems[1].text : "";
-    interleaveHigherNativeRankFuzzyCandidate(input.rawInput, fullItems);
+    if (!input.shuangpin) interleaveHigherNativeRankFuzzyCandidate(input.rawInput, fullItems);
     if (fullItems.size() >= 2 && fullItems[1].text != beforeFuzzyRank1) {
         recordMove(fullItems[1].source, CompositionStage::FuzzyInterleave, 1,
                    MoveReason::FuzzyInterleaveHigherRank);
@@ -234,7 +234,7 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
             item.text = macroText;
             item.fullPinyin = std::string(input.rawInput);
             item.source = core::CandidateSource::Engine;
-            item.commitRole = core::CommitCandidateRole::Chinese;
+            item.commitRole = core::CommitCandidateRole::Generated;
             item.origins = {item.source};
             item.sourceIndex = std::numeric_limits<std::size_t>::max();
             item.consumedInputBytes = input.rawInput.size();
@@ -254,10 +254,12 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     const bool isInitialConsonant = isInitialConsonantInput(rawInput);
     const bool isConsonantAbbreviation = isConsonantAbbreviationInput(rawInput, mixed);
     const bool isEnglish = !isInitialConsonant && !isConsonantAbbreviation && input.isEnglishWord;
-    const bool hasExactFullPinyinMatch = pinyin::hasExactFullPinyinMatch(rawInput, mixed);
+    const bool hasExactFullPinyinMatch = (input.shuangpin && !fullItems.empty()) ||
+        pinyin::hasExactFullPinyinMatch(rawInput, mixed);
     const bool hasTrustedShortAbbreviation = pinyin::hasTrustedShortAbbreviation(rawInput, mixed);
     const bool isTopChineseLexical = pinyin::isTopChineseLexical(rawInput, mixed, input.isLexicalWord);
-    const bool hasHighConfidenceChinese = pinyin::hasHighConfidenceChinese(rawInput, mixed, input.isLexicalWord);
+    const bool hasHighConfidenceChinese = (input.shuangpin && !fullItems.empty()) ||
+        pinyin::hasHighConfidenceChinese(rawInput, mixed, input.isLexicalWord);
 
     const bool isEnglishSuppressed =
         input.isSuppressed ? input.isSuppressed(rawInput, rawInput) : false;
@@ -308,7 +310,7 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         std::tolower(static_cast<unsigned char>(rawInput.front())) == triggerChar;
 
     std::string preedit;
-    if (isSingleTriggerChar && rawInput == "v") {
+    if (isSingleTriggerChar && rawInput == "v" && !input.shuangpin) {
         mixed.clear();
         core::CandidateItem rawItem;
         rawItem.text = "v";
@@ -656,6 +658,19 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         .preedit = std::move(preedit),
         .moves = std::move(moves),
     };
+}
+
+std::vector<core::CandidateItem> appendCandidateBatch(
+    std::vector<core::CandidateItem> published,
+    std::vector<core::CandidateItem> next, std::size_t inputBytes) {
+    std::unordered_set<core::CandidateIdentity> seen;
+    seen.reserve(published.size() + next.size());
+    for (const auto &item : published) seen.insert(core::candidateIdentity(item, inputBytes));
+    for (auto &item : next) {
+        if (seen.insert(core::candidateIdentity(item, inputBytes)).second)
+            published.push_back(std::move(item));
+    }
+    return published;
 }
 
 } // namespace modernime::pinyin

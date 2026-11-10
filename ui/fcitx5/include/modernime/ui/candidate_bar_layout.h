@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/settings.h"
 
 #include <cstddef>
 #include <functional>
@@ -59,6 +60,7 @@ struct CandidateBarMetrics final {
     std::size_t maxCandidates = 9;
     std::uint64_t layoutGeneration = 0;
 
+    static CandidateBarMetrics fromSettings(const core::ModernIMESettings &settings);
     static CandidateBarMetrics reference(double fontSize = 20.0,
                                          std::size_t maxCandidates = 9);
 };

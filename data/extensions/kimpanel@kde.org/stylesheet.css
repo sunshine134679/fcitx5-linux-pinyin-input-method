@@ -40,3 +40,110 @@
 .icon-disable {
   color:rgba(150,150,150,0.5);
 }
+
+/* Native panel palettes preserve Shell positioning, focus and hit testing. */
+.modernime-panel-light .kimpanel-popup-content {
+  background-color: #fafafa;
+  border-color: #d8d8d8;
+  color: #202020;
+}
+.modernime-panel-dark .kimpanel-popup-content {
+  background-color: #242424;
+  border-color: #484848;
+  color: #f2f2f2;
+}
+.modernime-panel-classic .kimpanel-popup-content {
+  background-color: #f7faff;
+  border-color: #ccd8e8;
+  color: #202020;
+}
+.modernime-panel-light .kimpanel-candidate-item:hover {
+  background-color: #eeeeee;
+  color: #202020;
+}
+.modernime-panel-light .kimpanel-candidate-item:active {
+  background-color: #dedede;
+  color: #151515;
+}
+.modernime-panel-dark .kimpanel-candidate-item:hover {
+  background-color: #383838;
+  color: #f2f2f2;
+}
+.modernime-panel-dark .kimpanel-candidate-item:active {
+  background-color: #505050;
+  color: #ffffff;
+}
+.modernime-panel-classic .kimpanel-candidate-item:hover {
+  background-color: #e6effa;
+  color: #202020;
+}
+.modernime-panel-classic .kimpanel-candidate-item:active {
+  background-color: #2467b8;
+  color: #ffffff;
+}
+.modernime-spacing-compact .kimpanel-label { padding: 0.25em; }
+.modernime-spacing-standard .kimpanel-label { padding: 0.4em; }
+.modernime-spacing-relaxed .kimpanel-label { padding: 0.6em; }
+
+/* Preset palettes match the ModernIME candidate renderer. */
+.modernime-panel-jade .kimpanel-popup-content {
+  background-color: #f2faf6; border-color: #c2ddcf; color: #163c31;
+}
+.modernime-panel-jade .kimpanel-candidate-item:hover {
+  background-color: #c2ddcf; color: #163c31;
+}
+.modernime-panel-jade .kimpanel-candidate-item:active {
+  background-color: #087f63; color: #ffffff;
+}
+.modernime-panel-amber .kimpanel-popup-content {
+  background-color: #fff8ed; border-color: #e4cdaa; color: #3c2b1b;
+}
+.modernime-panel-amber .kimpanel-candidate-item:hover {
+  background-color: #e4cdaa; color: #3c2b1b;
+}
+.modernime-panel-amber .kimpanel-candidate-item:active {
+  background-color: #a65f16; color: #ffffff;
+}
+.modernime-panel-rose .kimpanel-popup-content {
+  background-color: #fff4f7; border-color: #e7c4d0; color: #452634;
+}
+.modernime-panel-rose .kimpanel-candidate-item:hover {
+  background-color: #e7c4d0; color: #452634;
+}
+.modernime-panel-rose .kimpanel-candidate-item:active {
+  background-color: #a83d63; color: #ffffff;
+}
+.modernime-panel-lavender .kimpanel-popup-content {
+  background-color: #f7f3ff; border-color: #d9ccec; color: #33284b;
+}
+.modernime-panel-lavender .kimpanel-candidate-item:hover {
+  background-color: #d9ccec; color: #33284b;
+}
+.modernime-panel-lavender .kimpanel-candidate-item:active {
+  background-color: #7052ad; color: #ffffff;
+}
+.modernime-panel-midnight .kimpanel-popup-content {
+  background-color: #182536; border-color: #405570; color: #edf4ff;
+}
+.modernime-panel-midnight .kimpanel-candidate-item:hover {
+  background-color: #405570; color: #edf4ff;
+}
+.modernime-panel-midnight .kimpanel-candidate-item:active {
+  background-color: #89b9ff; color: #142339;
+}
+.modernime-panel-contrast .kimpanel-popup-content {
+  background-color: #090909; border-color: #eeeeee; color: #ffffff;
+}
+.modernime-panel-contrast .kimpanel-candidate-item:hover {
+  background-color: #333333; color: #ffffff;
+}
+.modernime-panel-contrast .kimpanel-candidate-item:active {
+  background-color: #ffe066; color: #111111;
+}
+.modernime-shape-rounded .kimpanel-popup-content { border-radius: 12px; }
+.modernime-shape-rounded .kimpanel-candidate-item { border-radius: 7px; }
+.modernime-shape-square .kimpanel-popup-content { border-radius: 3px; box-shadow: none; }
+.modernime-shape-square .kimpanel-candidate-item { border-radius: 2px; }
+.modernime-shape-capsule .kimpanel-popup-content { border-radius: 28px; }
+.modernime-shape-capsule .kimpanel-candidate-item { border-radius: 24px; }
+.modernime-panel-contrast .kimpanel-popup-content { border-width: 2px; box-shadow: none; }

@@ -109,11 +109,12 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
         candidate.learning_boost = request.learning->boostAt(
             candidate.text, candidate.full_pinyin, request.nowMs);
         candidate.context_bonus = request.learning->contextBoost(
-            candidate.text, candidate.full_pinyin, request.before, request.after);
+            candidate.text, candidate.full_pinyin, request.before, request.after, request.nowMs);
         candidate.last_selected_ms = request.learning->lastSelectedMs(
             candidate.text, candidate.full_pinyin);
     }
-    if (count == 1 && candidate.full_pinyin == request.input) {
+    if (count == 1 && (candidate.full_pinyin == request.input ||
+                      candidate.decoded_match_priority == 2)) {
         candidate.unigram_prominence = core::CommonCharacters::unigramProminence(
             core::CommonCharacters::firstCodepoint(candidate.text));
     } else {
@@ -124,7 +125,8 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
     if (request.recentChoices != nullptr && candidate.learning_boost >= 1.8) {
         candidate.recent_choice_bonus = request.recentChoices->bonus(
             request.input, candidate.text, candidate.full_pinyin,
-            core::PinyinMatchPolicy::priority(request.input, candidate.full_pinyin) == -1);
+            candidate.decoded_match_priority.value_or(
+                core::PinyinMatchPolicy::priority(request.input, candidate.full_pinyin)) == -1);
     }
 }
 } // namespace modernime::pinyin

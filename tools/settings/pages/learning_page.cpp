@@ -89,7 +89,34 @@ public:
         gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
         learningDataFallback = dataSection;
 
+        const auto dataLabel = [dataSection](const char *target) {
+            auto *label = gtk_label_new(nullptr);
+            gtk_label_set_xalign(GTK_LABEL(label), 0.0F);
+            gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+            gtk_label_set_line_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+            gtk_label_set_max_width_chars(GTK_LABEL(label), 1);
+            gtk_widget_set_hexpand(label, TRUE);
+            setTarget(label, target);
+            gtk_box_pack_start(GTK_BOX(dataSection), label, FALSE, FALSE, 0);
+            return label;
+        };
+        dataStatus = dataLabel("learning-status");
+        operationResult = dataLabel("learning-operation-result");
+        gtk_label_set_selectable(GTK_LABEL(operationResult), TRUE);
+        gtk_widget_set_no_show_all(operationResult, TRUE);
+
+        retryButton = gtk_button_new_with_label("重试");
+        setTarget(retryButton, "learning-retry");
+        setAccessibleWidgetText(retryButton, "重新读取学习记录", "重新读取学习数据统计，不修改记录");
+        gtk_widget_set_halign(retryButton, GTK_ALIGN_START);
+        gtk_widget_set_no_show_all(retryButton, TRUE);
+        gtk_box_pack_start(GTK_BOX(dataSection), retryButton, FALSE, FALSE, 0);
+        g_signal_connect(retryButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
+            static_cast<Impl *>(data)->refresh(false);
+        }), this);
+
         clearLearningButton = gtk_button_new_with_label("清空学习记录");
+        gtk_widget_set_sensitive(clearLearningButton, FALSE);
         setTarget(clearLearningButton, "learning-clear");
         gtk_widget_set_margin_top(clearLearningButton, 8);
         gtk_widget_set_halign(clearLearningButton, GTK_ALIGN_START);
@@ -106,7 +133,7 @@ public:
         g_signal_connect(clearLearningButton, "clicked", G_CALLBACK(onClear),
                          this);
         setSettingsFocusChain(
-            page, {learningEnabled, contextLearning, clearLearningButton});
+            page, {learningEnabled, contextLearning, retryButton, clearLearningButton});
     }
 
     struct RefreshTaskData {
@@ -126,7 +153,7 @@ public:
         g_clear_error(&err);
         if (taskData != nullptr) {
             taskData->lifetime->withOwner([taskData](Impl &owner) {
-                if (taskData->generation != owner.refreshGeneration_) {
+                if (taskData->generation != owner.refreshGeneration_ || owner.isClearing_) {
                     return;
                 }
                 if (!taskData->error.empty()) {
@@ -134,6 +161,9 @@ public:
                               taskData->backendInfo.name.c_str(), taskData->path.c_str(),
                               taskData->error.c_str());
                     gtk_widget_set_sensitive(owner.clearLearningButton, FALSE);
+                    const auto message = "读取失败：" + taskData->error;
+                    gtk_label_set_text(GTK_LABEL(owner.dataStatus), message.c_str());
+                    gtk_widget_show(owner.retryButton);
                     if (taskData->shouldNotify) {
                         owner.notifyMessage(taskData->error);
                     }
@@ -145,6 +175,10 @@ public:
                           taskData->count, taskData->path.c_str());
                 gtk_widget_set_sensitive(owner.clearLearningButton,
                                          !owner.isClearing_ && taskData->count != 0);
+                const auto message = taskData->count == 0
+                    ? std::string("暂无学习记录；选择候选词后会逐步积累。")
+                    : "已保存 " + std::to_string(taskData->count) + " 条学习记录";
+                gtk_label_set_text(GTK_LABEL(owner.dataStatus), message.c_str());
                 if (taskData->shouldNotify) {
                     owner.notifyMessage("学习记录统计已刷新");
                 }
@@ -154,6 +188,11 @@ public:
     }
 
     void refresh(bool shouldNotify) {
+        if (isClearing_) {
+            return;
+        }
+        gtk_label_set_text(GTK_LABEL(dataStatus), "正在读取学习记录…");
+        gtk_widget_hide(retryButton);
         ++refreshGeneration_;
         auto *taskData = new RefreshTaskData{lifetime, path, refreshGeneration_, shouldNotify, 0, {}, {}};
         auto *task = g_task_new(nullptr, nullptr, onRefreshFinished, nullptr);
@@ -236,12 +275,17 @@ private:
                 if (taskData->success) {
                     g_message("[ModernIME Learning] Cleared learning data, backup created at: %s",
                               taskData->backup.c_str());
-                    owner.notifyMessage("学习记录已清空，备份位于 " + taskData->backup.string());
+                    const auto message = "学习记录已清空，备份位于 " + taskData->backup.string();
+                    gtk_label_set_text(GTK_LABEL(owner.operationResult), message.c_str());
+                    owner.notifyMessage(message);
                 } else {
                     g_warning("[ModernIME Learning] Failed to clear learning data: %s",
                               taskData->error.c_str());
                     owner.notifyMessage(taskData->error);
+                    const auto message = "清空失败：" + taskData->error;
+                    gtk_label_set_text(GTK_LABEL(owner.operationResult), message.c_str());
                 }
+                gtk_widget_show(owner.operationResult);
                 owner.refresh(false);
             });
             delete taskData;
@@ -275,6 +319,9 @@ private:
         impl->isClearing_ = true;
         ++impl->refreshGeneration_;
         gtk_widget_set_sensitive(impl->clearLearningButton, FALSE);
+        gtk_label_set_text(GTK_LABEL(impl->dataStatus), "正在备份并清空学习记录…");
+        gtk_widget_hide(impl->operationResult);
+        gtk_widget_hide(impl->retryButton);
 
         const auto backup = learningBackupPath(impl->path);
         auto *taskData = new ClearTaskData{impl->lifetime, impl->path, backup, false, {}};
@@ -308,6 +355,9 @@ private:
     GtkWidget *contextLearning = nullptr;
     GtkWidget *clearLearningButton = nullptr;
     GtkWidget *learningDataFallback = nullptr;
+    GtkWidget *dataStatus = nullptr;
+    GtkWidget *operationResult = nullptr;
+    GtkWidget *retryButton = nullptr;
     bool refreshing = false;
     bool isClearing_ = false;
     uint64_t refreshGeneration_ = 0;

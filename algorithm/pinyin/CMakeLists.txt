@@ -8,6 +8,8 @@ add_library(modernime_pinyin STATIC
     src/recent_choice.cpp
     src/candidate_features.cpp
     src/candidate_pipeline.cpp
+    src/context_decoder.cpp
+    src/shuangpin_input.cpp
     src/pinyin_candidate_provider.cpp
     src/pinyin_shared_resources.cpp
     src/user_dictionary.cpp
@@ -44,9 +46,12 @@ endif()
 if(MODERNIME_BUILD_LIBIME_PINYIN)
     add_dependencies(modernime_pinyin
         modernime_pinyin_knowledge_dictionary
-        modernime_pinyin_hotwords_dictionary)
+        modernime_pinyin_hotwords_dictionary
+        modernime_pinyin_context_model)
     target_compile_definitions(modernime_pinyin
         PUBLIC
+            "MODERNIME_CONTEXT_MODEL_BUILD_BINARY=\"${CMAKE_BINARY_DIR}/data/pinyin/modernime-context.lm\""
+            "MODERNIME_CONTEXT_MODEL_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-context.lm\""
             "MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY=\"${CMAKE_BINARY_DIR}/data/pinyin/modernime-knowledge.dict\""
             "MODERNIME_PINYIN_KNOWLEDGE_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-knowledge.dict\""
             "MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY=\"${CMAKE_BINARY_DIR}/data/pinyin/modernime-hotwords.dict\""

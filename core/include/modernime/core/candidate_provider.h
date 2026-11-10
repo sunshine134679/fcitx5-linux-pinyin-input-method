@@ -48,6 +48,9 @@ public:
         return false;
     }
     virtual bool remove(std::size_t) { return false; }
+    // Extend the current composition by one bounded batch. Existing candidates
+    // retain their positions; a changed page receives a new generation.
+    virtual bool loadMoreCandidates() { return false; }
     virtual void setContext(std::string_view, std::string_view) {}
     virtual void setLearningEnabled(bool) {}
     virtual void setContextLearningEnabled(bool) {}

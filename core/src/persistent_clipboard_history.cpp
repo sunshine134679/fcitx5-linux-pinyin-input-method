@@ -39,40 +39,20 @@ PersistentClipboardHistory::currentFileState() const {
             true};
 }
 
-bool PersistentClipboardHistory::quarantineCorruptFile() const {
-    std::error_code filesystemError;
-    if (!std::filesystem::exists(path_, filesystemError) || filesystemError) {
-        return false;
-    }
-    const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
-                           std::chrono::system_clock::now().time_since_epoch())
-                           .count();
-    auto backup = path_;
-    backup += ".corrupt-";
-    backup += std::to_string(stamp);
-    std::filesystem::rename(path_, backup, filesystemError);
-    return !filesystemError;
-}
-
 bool PersistentClipboardHistory::load(std::string *error) {
     if (error != nullptr) {
         error->clear();
     }
-    const bool result = history_.load(path_, error);
-    if (!result && quarantineCorruptFile()) {
-        // 损坏或不可读的文件已改名备份；剪贴板以空历史继续运行，
-        // 而不是永久失效直到用户手动删除。
-        loaded_ = true;
-        if (error != nullptr) {
-            error->clear();
-        }
-    } else {
-        loaded_ = result;
-    }
+    const auto state = currentFileState();
+    loaded_ = history_.load(path_, error, /*recoverCorrupt=*/true);
     dirty_ = false;
     pendingObservations_.clear();
-    knownFileState_ = currentFileState();
+    knownFileState_ = loaded_ ? std::optional(state) : std::nullopt;
     return loaded_;
+}
+
+void PersistentClipboardHistory::setObservationBaseline(std::string_view text) {
+    observationTracker_.setBaseline(text);
 }
 
 bool PersistentClipboardHistory::observe(std::string_view text,
@@ -85,16 +65,20 @@ bool PersistentClipboardHistory::observe(std::string_view text,
         return false;
     }
 
-    const bool newObservation = !hasObservedText_ || text != lastObservedText_;
-    if (newObservation) {
-        lastObservedText_ = text;
-        hasObservedText_ = true;
+    ClipboardObservationBatch batch;
+    if (observationTracker_.accept(text)) batch.observe(text);
+    return observeBatch(batch, error);
+}
+
+bool PersistentClipboardHistory::observeBatch(const ClipboardObservationBatch &batch,
+                                               std::string *error) {
+    if (error != nullptr) error->clear();
+    if (!loaded_) {
+        setError(error, "clipboard history is not loaded");
+        return false;
     }
-    const bool changed = newObservation && history_.observe(text);
-    if (changed) {
-        dirty_ = true;
-        pendingObservations_.observe(text);
-    }
+    const bool changed = batch.apply(history_, pendingObservations_);
+    dirty_ = dirty_ || changed;
     if (!dirty_) {
         return changed;
     }
@@ -114,24 +98,12 @@ bool PersistentClipboardHistory::reloadIfExternallyChanged(
         return false;
     }
     const auto state = currentFileState();
-    if (!state.valid) {
+    if (loaded_ && knownFileState_ && state == *knownFileState_) {
         return false;
     }
-    if (state == knownFileState_) {
-        return false;
-    }
-    knownFileState_ = state;
-    const bool result = history_.load(path_, error);
-    if (!result && quarantineCorruptFile()) {
-        // 外部修改把文件写坏时同样隔离备份并继续运行。
-        loaded_ = true;
-        if (error != nullptr) {
-            error->clear();
-        }
-    } else {
-        loaded_ = result;
-    }
+    loaded_ = history_.load(path_, error, /*recoverCorrupt=*/true);
     dirty_ = false;
+    knownFileState_ = loaded_ ? std::optional(state) : std::nullopt;
     return loaded_;
 }
 
@@ -169,7 +141,7 @@ bool PersistentClipboardHistory::flush(std::string *error) {
     history_ = std::move(committed);
     dirty_ = false;
     pendingObservations_.clear();
-    knownFileState_ = currentFileState();
+    knownFileState_.reset();
     return true;
 }
 
@@ -199,7 +171,9 @@ bool PersistentClipboardHistory::persist(std::string *error) {
     history_ = std::move(committed);
     dirty_ = false;
     pendingObservations_.clear();
-    knownFileState_ = currentFileState();
+    // An external writer may already have replaced the just-committed file.
+    // Recheck on the next refresh; never stamp an old result with a later file.
+    knownFileState_.reset();
     return true;
 }
 

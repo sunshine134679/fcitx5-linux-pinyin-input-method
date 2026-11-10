@@ -10,6 +10,11 @@ enable_language(C)
 find_package(SQLite3 REQUIRED)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 find_program(BASH_EXECUTABLE bash REQUIRED)
+find_package(Git REQUIRED)
+add_test(NAME modernime_fresh_clone_isolation
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/fresh_clone_isolation_test.py"
+)
+set_tests_properties(modernime_fresh_clone_isolation PROPERTIES TIMEOUT 180)
 add_test(NAME modernime_required_tests_contract
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/required_tests_contract_test.py"
 )
@@ -30,6 +35,24 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
         RUN_SERIAL TRUE
     )
 endif()
+
+add_library(modernime_clipboard_io_gate SHARED support/clipboard_io_gate.cpp)
+target_link_libraries(modernime_clipboard_io_gate PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+add_executable(modernime_clipboard_file_identity_tests core/clipboard_file_identity_test.cpp)
+target_link_libraries(modernime_clipboard_file_identity_tests PRIVATE modernime_core modernime_clipboard_io_gate)
+foreach(scenario load save retry)
+    add_test(NAME modernime_clipboard_file_identity_${scenario}
+        COMMAND modernime_clipboard_file_identity_tests ${scenario})
+    set_tests_properties(modernime_clipboard_file_identity_${scenario} PROPERTIES TIMEOUT 20)
+endforeach()
+add_executable(modernime_async_clipboard_history_tests core/async_clipboard_history_test.cpp)
+target_link_libraries(modernime_async_clipboard_history_tests PRIVATE modernime_core modernime_clipboard_io_gate)
+add_test(NAME modernime_async_clipboard_history COMMAND modernime_async_clipboard_history_tests)
+set_tests_properties(modernime_async_clipboard_history PROPERTIES TIMEOUT 45)
+
+add_executable(modernime_clipboard_observation_tests core/clipboard_observation_test.cpp)
+target_link_libraries(modernime_clipboard_observation_tests PRIVATE modernime_core)
+add_test(NAME modernime_clipboard_observation COMMAND modernime_clipboard_observation_tests)
 
 add_executable(modernime_clipboard_history_tests core/clipboard_history_test.cpp)
 target_link_libraries(modernime_clipboard_history_tests PRIVATE modernime_core)
@@ -227,6 +250,20 @@ if(MODERNIME_BUILD_SETTINGS)
         SKIP_RETURN_CODE 77
     )
 
+    add_executable(modernime_updates_page_gtk_tests
+        settings/updates_page_gtk_test.cpp
+    )
+    target_link_libraries(modernime_updates_page_gtk_tests PRIVATE
+        modernime_settings_components
+    )
+    add_test(NAME modernime_updates_page_gtk COMMAND modernime_updates_page_gtk_tests)
+    set_tests_properties(modernime_updates_page_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 20
+    )
+
     add_executable(modernime_settings_shell_gtk_tests
         settings/settings_shell_gtk_test.cpp
     )
@@ -244,6 +281,16 @@ if(MODERNIME_BUILD_SETTINGS)
         RESOURCE_LOCK modernime_gtk_display
         SKIP_RETURN_CODE 77
         TIMEOUT 20
+    )
+
+    add_executable(modernime_settings_motion_gtk_tests settings/settings_motion_gtk_test.cpp)
+    target_link_libraries(modernime_settings_motion_gtk_tests PRIVATE modernime_settings_components)
+    add_test(NAME modernime_settings_motion_gtk COMMAND modernime_settings_motion_gtk_tests)
+    set_tests_properties(modernime_settings_motion_gtk PROPERTIES
+        ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+        RESOURCE_LOCK modernime_gtk_display
+        SKIP_RETURN_CODE 77
+        TIMEOUT 25
     )
 
     add_executable(modernime_settings_save_gtk_tests
@@ -291,6 +338,9 @@ if(MODERNIME_BUILD_SETTINGS)
         modernime_settings_logic
     )
     add_test(NAME modernime_update_controller COMMAND modernime_update_controller_tests)
+    add_test(NAME modernime_native_update_helper
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/settings/native_update_helper_test.py")
+    set_tests_properties(modernime_native_update_helper PROPERTIES TIMEOUT 30)
 
     add_executable(modernime_process_runner_tests
         settings/process_runner_test.cpp
@@ -482,6 +532,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     if(GTEST_INCLUDE_DIR AND GTEST_LIBRARY AND GTEST_MAIN_LIBRARY)
         add_executable(modernime_personal_engine_gtest
             core/personal_engine_gtest.cpp
+            core/clipboard_observation_gtest.cpp
             core/personalization_snapshot_regression_test.cpp
             core/personalization_storage_regression_test.cpp
             core/personalization_provider_regression_test.cpp
@@ -603,6 +654,17 @@ add_test(NAME modernime_engine_state COMMAND modernime_adapter_tests)
 if(MODERNIME_BUILD_FCITX5)
     find_package(Fcitx5Core REQUIRED)
 
+    add_executable(modernime_clipboard_capture_tests adapter/clipboard_capture_test.cpp)
+    target_link_libraries(modernime_clipboard_capture_tests PRIVATE modernime_clipboard_io_gate
+        modernime_core Fcitx5::Core Fcitx5::Utils)
+    add_dependencies(modernime_clipboard_capture_tests modernime_fcitx5)
+    add_test(NAME modernime_clipboard_capture
+        COMMAND modernime_clipboard_capture_tests $<TARGET_FILE_DIR:modernime_fcitx5>)
+    set_tests_properties(modernime_clipboard_capture PROPERTIES TIMEOUT 360)
+    add_test(NAME modernime_clipboard_async
+        COMMAND modernime_clipboard_capture_tests $<TARGET_FILE_DIR:modernime_fcitx5> --async)
+    set_tests_properties(modernime_clipboard_async PROPERTIES TIMEOUT 60)
+
     add_executable(modernime_clipboard_trigger_tests
         adapter/clipboard_trigger_test.cpp
         ../adapter/fcitx5/src/engine.cpp
@@ -612,7 +674,7 @@ if(MODERNIME_BUILD_FCITX5)
         ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
     )
     target_link_libraries(modernime_clipboard_trigger_tests
-        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils ${CMAKE_DL_LIBS}
     )
     add_test(NAME modernime_clipboard_trigger
         COMMAND modernime_clipboard_trigger_tests
@@ -650,7 +712,7 @@ if(MODERNIME_BUILD_FCITX5)
         ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
     )
     target_link_libraries(modernime_fcitx5_input_panel_tests
-        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils ${CMAKE_DL_LIBS}
     )
     if(MODERNIME_BUILD_LIBIME_PINYIN)
         target_compile_definitions(modernime_fcitx5_input_panel_tests PRIVATE
@@ -671,7 +733,7 @@ if(MODERNIME_BUILD_FCITX5)
         ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
     )
     target_link_libraries(modernime_key_translation_tests
-        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils
+        PRIVATE modernime_core Fcitx5::Core Fcitx5::Utils ${CMAKE_DL_LIBS}
     )
     add_test(NAME modernime_key_translation
         COMMAND modernime_key_translation_tests
@@ -796,6 +858,8 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
             add_executable(modernime_ui_addon_tests
                 ui/ui_addon_test.cpp
                 ../ui/fcitx5/src/ui_addon.cpp
+                ../adapter/fcitx5/src/engine.cpp
+                ../adapter/fcitx5/src/inputmethod.cpp
             )
             target_include_directories(modernime_ui_addon_tests PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/../ui/fcitx5/include
@@ -807,7 +871,7 @@ if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
                 modernime_core
                 Fcitx5::Core
                 Fcitx5::Config
-                Fcitx5::Utils
+                Fcitx5::Utils ${CMAKE_DL_LIBS}
                 PkgConfig::GTK3
                 PkgConfig::PANGOCAIRO
                 SQLite::SQLite3
@@ -848,6 +912,10 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/install_environment_test.sh
     )
+    add_test(NAME modernime_gnome_extension_lifecycle
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gnome_extension_lifecycle_test.py"
+    )
+    set_tests_properties(modernime_gnome_extension_lifecycle PROPERTIES TIMEOUT 180)
     add_test(NAME modernime_session_init
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/session_init_test.sh

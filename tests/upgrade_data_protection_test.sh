@@ -35,6 +35,7 @@ echo "modernime-settings 0.1.8"
 EOF
 cp "$project_root/scripts/modernime-session-init" "$payload_pkg/usr/bin/modernime-session-init"
 cp "$project_root/scripts/install_state.sh" "$payload_pkg/usr/share/modernime/install_state.sh"
+cp "$project_root/scripts/gnome_extension.py" "$payload_pkg/usr/share/modernime/gnome_extension.py"
 cp "$project_root/scripts/install_lifecycle.sh" "$payload_pkg/usr/share/modernime/install_lifecycle.sh"
 cp "$project_root/scripts/modernime-data-guard" "$payload_pkg/usr/bin/modernime-data-guard"
 chmod +x "$payload_pkg/usr/bin/modernime-settings" \
@@ -235,7 +236,7 @@ test "$old_so_inode" != "$new_so_inode"
 test "$(cat "$old_so_path")" = "ELF-v0.1.8-fcitx5-plugin"
 
 # Verify Fcitx5 restart was triggered
-grep -F 'fcitx5:-d -r -u modernime-ui' "$fcitx_log" >/dev/null
+grep -Fx 'fcitx5:-d -r' "$fcitx_log" >/dev/null
 grep -F 'fcitx5-remote:-s modernime' "$fcitx_log" >/dev/null
 
 # Verify schema migration upgraded user_version to 1 and added suppressed + negative_feedback columns

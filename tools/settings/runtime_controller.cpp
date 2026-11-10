@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <csignal>
 #include <fstream>
+#include <sstream>
 #include <string_view>
 #include <unistd.h>
 
@@ -240,6 +241,87 @@ bool modernimeReady(const RuntimeStatus &status) {
 
 } // namespace
 
+DesktopPanelStatus RuntimeController::probeDesktopPanel(
+    const Environment &environment, const std::filesystem::path &extensionExecutable) {
+    const auto value = [&](const char *key) {
+        for (auto it = environment.rbegin(); it != environment.rend(); ++it)
+            if (it->first == key) return it->second;
+        const auto *found = g_getenv(key);
+        return found ? std::string(found) : std::string{};
+    };
+    const auto desktop = ":" + value("XDG_CURRENT_DESKTOP") + ":";
+    if (desktop.find(":GNOME:") == std::string::npos ||
+        (value("XDG_SESSION_TYPE") != "wayland" && value("WAYLAND_DISPLAY").empty())) return {};
+    auto commandEnvironment = environment;
+    commandEnvironment.emplace_back("LC_ALL", "C");
+    const auto query = [&](std::vector<std::string> arguments) {
+        detail::CommandSpec spec;
+        spec.argv = {extensionExecutable.string()};
+        spec.argv.insert(spec.argv.end(), arguments.begin(), arguments.end());
+        spec.environment = commandEnvironment;
+        spec.timeoutMs = waitTimeoutMs;
+        return detail::runCommand(spec);
+    };
+    const auto successful = [](const detail::CommandResult &result) {
+        return result.state == detail::CommandState::Exited && result.exitStatus == 0 &&
+               !result.stdoutTruncated && !result.stderrTruncated && !result.timedOut;
+    };
+    constexpr const char *uuid = "modernime-panel@sunshine134679.github.io";
+    const auto listed = query({"list"});
+    if (!successful(listed))
+        return {DesktopPanelState::Unknown, "无法查询", "无法连接 GNOME 扩展服务；请在当前 GNOME 桌面会话中重新检查。"};
+    const auto contains = [&](std::string_view name) {
+        std::istringstream lines(listed.stdoutText);
+        std::string line;
+        while (std::getline(lines, line)) if (trim(line) == name) return true;
+        return false;
+    };
+    const auto stateOf = [&](const char *name) {
+        const auto info = query({"info", name});
+        if (!successful(info)) return std::string{};
+        std::istringstream lines(info.stdoutText);
+        std::string line;
+        while (std::getline(lines, line)) {
+            line = trim(line);
+            if (line.starts_with("State:")) return trim(line.substr(6));
+        }
+        return std::string{};
+    };
+    const auto state = contains(uuid) ? stateOf(uuid) : std::string{};
+    if (state == "ACTIVE")
+        return {DesktopPanelState::Active, "运行中", "ModernIME 原生候选面板已在当前 GNOME 会话加载。"};
+    if (contains("kimpanel@kde.org") && stateOf("kimpanel@kde.org") == "ACTIVE")
+        return {DesktopPanelState::LegacyActive, "旧面板运行中", "当前使用旧 Kimpanel。受管旧版会在会话初始化时迁移；自行安装或修改的旧版请先停用，再启用 ModernIME Input Panel。"};
+    if (contains(uuid)) {
+        if (state == "INACTIVE" || state == "DISABLED" || state == "INITIALIZED")
+            return {DesktopPanelState::Disabled, "未启用", "项目面板已安装。点击“启用候选面板”即可使用，无需重启输入法。"};
+        return {DesktopPanelState::Error, "未正常加载", "GNOME 报告面板状态：" + (state.empty() ? std::string("未知") : state) + "。更新后请重新登录，再检查扩展状态。"};
+    }
+    const auto dataHome = value("XDG_DATA_HOME");
+    const auto target = (dataHome.empty() ? std::filesystem::path(value("HOME")) / ".local/share"
+                                          : std::filesystem::path(dataHome)) / "gnome-shell/extensions" / uuid / "metadata.json";
+    std::error_code error;
+    if (std::filesystem::exists(target, error))
+        return {DesktopPanelState::Pending, "等待重新登录", "面板文件已部署，GNOME 尚未发现。请注销并重新登录，再检查状态；反复重启 Fcitx5 不会加载 Shell 扩展。"};
+    return {DesktopPanelState::Missing, "未安装", "当前会话未发现项目面板。请从“更新与安装”完成安装，再重新登录。"};
+}
+
+RuntimeResult RuntimeController::enableDesktopPanel(
+    const Environment &environment, const std::filesystem::path &extensionExecutable) {
+    const auto before = probeDesktopPanel(environment, extensionExecutable);
+    if (before.state == DesktopPanelState::Active) return {true, before.message};
+    if (before.state != DesktopPanelState::Disabled) return {false, before.message};
+    detail::CommandSpec spec;
+    spec.argv = {extensionExecutable.string(), "enable", "modernime-panel@sunshine134679.github.io"};
+    spec.environment = environment;
+    spec.timeoutMs = waitTimeoutMs;
+    const auto result = detail::runCommand(spec);
+    if (result.state != detail::CommandState::Exited || result.exitStatus != 0 || result.timedOut)
+        return {false, "启用候选面板失败：" + (result.stderrText.empty() ? std::string("请检查 GNOME 扩展服务") : trim(result.stderrText))};
+    const auto after = probeDesktopPanel(environment, extensionExecutable);
+    return {after.state == DesktopPanelState::Active, after.message};
+}
+
 RuntimeStatus RuntimeController::probe(
     const std::filesystem::path &executable, const Environment &environment) {
     return probe(executable, {}, environment);
@@ -343,6 +425,22 @@ RuntimeStatus RuntimeController::probe(
     return status;
 }
 
+RuntimeResult RuntimeController::activate(
+    const std::filesystem::path &remoteExecutable,
+    const Environment &environment) {
+    const auto select = runCommand(remoteExecutable, {"-s", "modernime"}, environment);
+    if (!select.successful) return {false, failureMessage(select, "ModernIME 选择")};
+    const auto enable = runCommand(remoteExecutable, {"-o"}, environment);
+    if (!enable.successful) return {false, failureMessage(enable, "ModernIME 启用")};
+    const auto status = probe(remoteExecutable, environment);
+    if (!modernimeReady(status)) {
+        return {false, status.message.empty() ? "ModernIME 未能启用"
+                                             : "ModernIME 未能启用：" + status.message};
+    }
+    return {true, status.modernimeActive ? "ModernIME 已启用，可以开始输入"
+                                       : "ModernIME 已就绪，点击输入框开始试用"};
+}
+
 RuntimeResult RuntimeController::reload(
     const std::filesystem::path &fcitxExecutable,
     const std::filesystem::path &remoteExecutable,
@@ -359,14 +457,14 @@ RuntimeResult RuntimeController::reload(
 
     if (current.running) {
         const auto replace = startCommand(
-            fcitxExecutable, {"-d", "--replace", "-u", "modernime-ui"},
+            fcitxExecutable, {"-d", "--replace"},
             environment);
         if (!replace.started || !replace.successful) {
             return {false, failureMessage(replace, "Fcitx5 替换")};
         }
     } else {
         const auto start =
-            startCommand(fcitxExecutable, {"-d", "-u", "modernime-ui"},
+            startCommand(fcitxExecutable, {"-d"},
                          environment);
         if (!start.started || !start.successful) {
             return {false, failureMessage(start, "Fcitx5 启动")};
@@ -375,23 +473,12 @@ RuntimeResult RuntimeController::reload(
 
     std::string lastError;
     for (int attempt = 0; attempt < reloadAttempts; ++attempt) {
-        const auto select = runCommand(
-            remoteExecutable, {"-s", "modernime"}, environment);
-        const auto enable = runCommand(remoteExecutable, {"-o"}, environment);
-        const auto status = probe(remoteExecutable, environment);
-        if (select.successful && enable.successful &&
-            modernimeReady(status)) {
+        const auto activation = activate(remoteExecutable, environment);
+        if (activation.success) {
             UpdateController::ensureDesktopShortcut(environment);
-            return {true, "ModernIME 已重新加载并激活"};
+            return {true, "已重新加载。" + activation.message};
         }
-
-        if (!select.successful) {
-            lastError = failureMessage(select, "ModernIME 激活");
-        } else if (!enable.successful) {
-            lastError = failureMessage(enable, "ModernIME 启用");
-        } else if (!status.message.empty()) {
-            lastError = status.message;
-        }
+        lastError = activation.message;
         if (attempt + 1 < reloadAttempts) {
             g_usleep(reloadIntervalUs);
         }

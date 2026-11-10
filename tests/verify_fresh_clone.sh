@@ -1,9 +1,68 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+keep=false
+install_only=false
+for argument in "$@"; do
+    case "$argument" in
+        --keep) keep=true ;;
+        --install-only) install_only=true ;;
+        *) printf '用法：%s [--keep] [--install-only]\n' "$0" >&2; exit 2 ;;
+    esac
+done
+
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-fresh-clone-test.XXXXXX")
-trap 'rm -rf -- "$test_root"' EXIT
+test_root=$(CDPATH= cd -- "$test_root" && pwd)
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if [[ "$keep" == true ]]; then
+        printf '保留验证目录：%s\n' "$test_root"
+    elif ! rm -rf -- "$test_root"; then
+        printf '无法清理验证目录：%s\n' "$test_root" >&2
+        [[ "$status" -ne 0 ]] || status=1
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+
+# Isolate before the first Git command: inherited Git paths can redirect even
+# read-looking snapshot operations to the caller's index or another repository.
+for variable in ${!MODERNIME_@} ${!GTEST_@} ${!GIT_@}; do
+    unset "$variable"
+done
+export HOME="$test_root/home"
+export XDG_CONFIG_HOME="$test_root/config"
+export XDG_DATA_HOME="$test_root/data"
+export XDG_CACHE_HOME="$test_root/cache"
+export XDG_STATE_HOME="$test_root/state"
+export XDG_RUNTIME_DIR="$test_root/runtime"
+export TMPDIR="$test_root/tmp"
+export MODERNIME_PREFIX="$test_root/prefix"
+export MODERNIME_BUILD_DIR="$test_root/build"
+export MODERNIME_CONFIG_HOME="$XDG_CONFIG_HOME"
+export MODERNIME_DATA_HOME="$XDG_DATA_HOME"
+export MODERNIME_DESKTOP_DIR="$test_root/Desktop"
+export MODERNIME_SKIP_FCITX_RESTART=1
+# A root container may install only into this verifier-owned prefix.
+if [[ "$EUID" -eq 0 ]]; then
+    export MODERNIME_ALLOW_ROOT=1
+fi
+mkdir -p -- "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" \
+    "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" "$TMPDIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+export XDG_DATA_DIRS=/usr/local/share:/usr/share
+unset XDG_DESKTOP_DIR FCITX_ADDON_DIRS DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
+unset XAUTHORITY SESSION_MANAGER DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE
+unset XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION
+unset XDG_SESSION_ID XDG_SESSION_CLASS GNOME_DESKTOP_SESSION_ID GNOME_SHELL_SESSION_MODE
+# An explicit nonexistent socket prevents D-Bus auto-discovery of a live session.
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+export GSETTINGS_BACKEND=memory
+# Native timing gates must not contend with other CTest processes. Build jobs
+# and explicit read-only CMake dependency search paths remain caller-controlled.
+export CTEST_PARALLEL_LEVEL=1
 
 printf '=== 1. 克隆代码仓库到沙箱隔离目录 ===\n'
 # Build a local snapshot first: cloning HEAD alone silently validates the old
@@ -25,19 +84,30 @@ if ! git -C "$test_root/snapshot" diff --cached --quiet; then
         -c core.hooksPath=/dev/null commit -m 'Isolated verification snapshot' >/dev/null
 fi
 git clone --no-hardlinks "$test_root/snapshot" "$test_root/repo"
-
-mkdir -p "$test_root/home"
-export HOME="$test_root/home"
-export XDG_DATA_HOME="$test_root/data"
-export XDG_CONFIG_HOME="$test_root/config"
-export XDG_CACHE_HOME="$test_root/cache"
-export MODERNIME_PREFIX="$test_root/prefix"
-export MODERNIME_CONFIG_HOME="$test_root/config"
-export MODERNIME_DESKTOP_DIR="$test_root/Desktop"
-export MODERNIME_SKIP_FCITX_RESTART=1
+git -C "$test_root/repo" rev-parse HEAD > "$test_root/source-commit.txt"
+printf '验证快照：%s\n' "$(cat "$test_root/source-commit.txt")"
 
 printf '=== 2. 在沙箱环境中执行 install.sh ===\n'
+if [[ "$install_only" == true ]]; then
+    export MODERNIME_SKIP_TESTS=1
+    printf '仅安装验收：复用已完成的功能回归，本次不重跑通用测试。\n'
+fi
 (cd "$test_root/repo" && ./install.sh)
+
+# Installer success alone does not prove the required tests actually ran.
+if [[ "$install_only" == false ]]; then
+    report_dir="$MODERNIME_BUILD_DIR/Testing"
+    for report in install-registered.json install-junit.xml install-gtest.xml; do
+        if [[ ! -s "$report_dir/$report" ]]; then
+            printf '缺少本次安装测试报告：%s\n' "$report_dir/$report" >&2
+            exit 1
+        fi
+    done
+    python3 "$test_root/repo/tests/verify_required_tests.py" \
+        --registered "$report_dir/install-registered.json" \
+        --junit "$report_dir/install-junit.xml" --gtest-xml "$report_dir" \
+        --profile full --stage final --check execution --execution headless
+fi
 
 printf '=== 3. 验证沙箱安装产物完整性 ===\n'
 test -f "$MODERNIME_PREFIX/bin/modernime-settings"
@@ -304,6 +374,12 @@ finally:
 PYEOF
 test -f "$MODERNIME_PREFIX/bin/modernime-session-init"
 test -f "$MODERNIME_PREFIX/share/modernime/install_state.sh"
+test -f "$MODERNIME_PREFIX/share/modernime/gnome_extension.py"
+python3 - "$MODERNIME_PREFIX/share/modernime/extensions/modernime-panel@sunshine134679.github.io/metadata.json" <<'PY'
+import json, pathlib, sys
+metadata = pathlib.Path(sys.argv[1])
+assert json.loads(metadata.read_text())["uuid"] == metadata.parent.name
+PY
 test -x "$MODERNIME_PREFIX/bin/modernime-session-init"
 { test -f "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so" || \
   test -f "$MODERNIME_PREFIX/lib64/fcitx5/modernime_fcitx5.so" || \
@@ -325,8 +401,10 @@ grep -Fx "Icon=$MODERNIME_PREFIX/share/icons/hicolor/512x512/apps/modernime.png"
 set -a
 source "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 set +a
-"$test_root/repo/build/install-debug/tests/modernime_install_discovery_tests" "$MODERNIME_PREFIX"
+"$MODERNIME_BUILD_DIR/tests/modernime_install_discovery_tests" "$MODERNIME_PREFIX"
 test ! -e "$HOME/.xprofile"
+
+cp -- "$MODERNIME_PREFIX/share/modernime/install-manifest.txt" "$test_root/install-manifest.txt"
 
 printf '=== 4. 在沙箱环境中执行 uninstall.sh ===\n'
 (cd "$test_root/repo" && ./uninstall.sh)
@@ -335,6 +413,7 @@ printf '=== 5. 验证沙箱卸载清理完全性 ===\n'
 test ! -e "$MODERNIME_PREFIX/bin/modernime-settings"
 test ! -e "$MODERNIME_PREFIX/bin/modernime-session-init"
 test ! -e "$MODERNIME_PREFIX/share/modernime/install_state.sh"
+test ! -e "$MODERNIME_PREFIX/share/modernime/gnome_extension.py"
 test ! -e "$MODERNIME_PREFIX/share/doc/modernime/LICENSE"
 test ! -e "$MODERNIME_PREFIX/share/doc/modernime/copyright"
 test ! -e "$MODERNIME_PREFIX/share/doc/modernime/THIRD_PARTY_NOTICES.md"
@@ -352,4 +431,9 @@ done
 test ! -e "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"
 test ! -e "$MODERNIME_CONFIG_HOME/environment.d/90-modernime.conf"
 
-printf '=== 6. 沙箱全新克隆与全生命周期安装卸载验证 100%% 通过！ ===\n'
+if [[ "$install_only" == true ]]; then
+    printf '=== 6. 源码构建与安装卸载检查通过（headless；通用测试未运行） ===\n'
+else
+    printf '=== 6. 源码构建、必需测试及既有安装卸载检查通过（headless） ===\n'
+fi
+printf '桌面会话与用户扩展生命周期需另行专项验收。\n'

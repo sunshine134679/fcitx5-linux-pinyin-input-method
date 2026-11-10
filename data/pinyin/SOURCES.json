@@ -259,5 +259,28 @@
       "included_in_main_dict": false,
       "role": "traditional Chinese reference only; excluded from simplified full-pinyin main dictionary"
     }
-  ]
+  ],
+  "context_language_model": {
+    "source": "https://download.fcitx-im.org/data/lm_sc.arpa-20260629.tar.zst",
+    "source_file": "lm_sc.arpa-20260629.tar.zst",
+    "source_sha256": "06808333b9173e5374cf2cb5afc12d08f5625bf9abb536489cac376fc05f2e7f",
+    "copyright": "2022–2026 CSSlayer <wengxt@gmail.com>",
+    "license": "LGPL-2.1-or-later",
+    "license_file": "licenses/LGPL-2.1.txt",
+    "upstream_notice": "https://github.com/fcitx/libime/blob/master/REUSE.toml",
+    "build_tool": "libime_slm_build_binary",
+    "build_arguments": [
+      "-s",
+      "-a",
+      "22",
+      "-q",
+      "8",
+      "-S",
+      "256M",
+      "trie"
+    ],
+    "output": "modernime-context.lm",
+    "arpa_modified": false,
+    "runtime_network": false
+  }
 }

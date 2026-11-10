@@ -11,6 +11,17 @@ fi
 prefix=${MODERNIME_PREFIX:-"$HOME/.local"}
 explicit_prefix=false
 [[ -n "${MODERNIME_PREFIX:-}" ]] && explicit_prefix=true
+keep_gnome_extension=false
+uninstall_args=()
+for arg in "$@"; do
+    if [[ "$arg" == --keep-gnome-extension ]]; then
+        # Channel migration commits the package before handing off ownership.
+        keep_gnome_extension=true
+    else
+        uninstall_args+=("$arg")
+    fi
+done
+set -- "${uninstall_args[@]}"
 
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
     case "$1" in
@@ -28,6 +39,7 @@ if [[ $# -ge 1 && -n "${1:-}" ]]; then
             printf 'Options:\n'
             printf '  -p, --prefix=PATH         Installation prefix to remove (default: $HOME/.local)\n'
             printf '  -h, --help                Show this help message\n'
+            printf '  --keep-gnome-extension    Preserve extension for channel migration handoff\n'
             exit 0
             ;;
         -*)
@@ -115,6 +127,15 @@ fi
 recorded_autostart=""
 if [[ -f "$managed_state_dir/autostart.path" ]]; then
     recorded_autostart=$(cat "$managed_state_dir/autostart.path")
+fi
+
+# Remove only the current user's unchanged managed extension before deleting
+# the helper or bundle. A failed settings restoration keeps a retryable install.
+gnome_record="$config_home/modernime/session-managed-files/gnome-extension.json"
+panel_record="$config_home/modernime/session-managed-files/modernime-panel.json"
+if [[ "$keep_gnome_extension" != true && ( -e "$gnome_record" || -L "$gnome_record" || -e "$panel_record" || -L "$panel_record" ) ]]; then
+    python3 "$project_root/scripts/gnome_extension.py" remove --prefix "$prefix" \
+        --config-home "$config_home" --data-home "${MODERNIME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}}"
 fi
 
 prefix_clean="${prefix%/}"

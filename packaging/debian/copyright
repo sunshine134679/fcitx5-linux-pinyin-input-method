@@ -23,6 +23,11 @@ Files: data/pinyin/modernime-hotwords.raw
 Copyright: 2026 ModernIME Contributors
 License: LGPL-2.1+
 
+Files: data/pinyin/lm_sc.arpa-20260629.tar.zst
+       usr/share/modernime/pinyin/modernime-context.lm
+Copyright: 2022-2026 CSSlayer <wengxt@gmail.com>
+License: LGPL-2.1+
+
 License: LGPL-2.1+
  This package is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public

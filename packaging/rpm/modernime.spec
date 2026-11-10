@@ -1,5 +1,5 @@
 Name:           modernime
-Version:        0.1.10
+Version:        0.2.3
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 # ModernIME engine, UI addon, and settings client are LGPL-2.1-or-later;
@@ -13,11 +13,14 @@ BuildRequires:  cmake >= 3.24
 BuildRequires:  make
 BuildRequires:  python3 >= 3.10
 BuildRequires:  coreutils
+BuildRequires:  ca-certificates
+BuildRequires:  /usr/bin/ldd
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  sqlite-devel >= 3.31.0
 BuildRequires:  lmdb-devel >= 0.9.24
 BuildRequires:  boost-devel >= 1.61
 BuildRequires:  fcitx5-devel >= 5.0.14
+BuildRequires:  libime >= 1.0.11
 BuildRequires:  libime-devel >= 1.0.11
 BuildRequires:  gtk3-devel >= 3.24.0
 BuildRequires:  pango-devel >= 1.44.0
@@ -33,11 +36,13 @@ Requires:       sqlite >= 3.31.0
 Requires:       lmdb-libs >= 0.9.24
 Requires:       python3 >= 3.10
 Requires:       coreutils
+Requires:       ca-certificates
+Requires:       /usr/bin/ldd
 
 %description
 ModernIME is a modern Pinyin input method engine for Fcitx5 on Linux desktops,
 featuring smart candidate ranking, error correction, offline dictionaries,
-Bento-designed GTK3 settings client, and comprehensive character governance.
+native GTK3 settings client, and comprehensive character governance.
 
 %prep
 %autosetup -p1
@@ -88,8 +93,10 @@ fi
 %{_bindir}/modernime-settings
 %{_bindir}/modernime-session-init
 %{_datadir}/modernime/install_state.sh
+%{_datadir}/modernime/gnome_extension.py
 %{_bindir}/modernime-data-guard
 %{_bindir}/modernime-migrate-channel
+%{_bindir}/modernime-update
 %{_libdir}/fcitx5/modernime_fcitx5.so
 %{_libdir}/fcitx5/modernime_ui.so
 %{_datadir}/fcitx5/addon/modernime.conf

@@ -5,9 +5,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <fcntl.h>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -32,12 +35,85 @@ void bumpMtime(const std::filesystem::path &path) {
 } // namespace
 
 int main() {
-    const auto directory = std::filesystem::temp_directory_path() /
-                           "modernime-persistent-clipboard-history-test";
+    char temporary[] = "/tmp/modernime-persistent-clipboard-history-XXXXXX";
+    const auto *created = ::mkdtemp(temporary);
+    assertTrue(created != nullptr, "isolated history directory is created");
+    const std::filesystem::path directory(created);
     std::error_code filesystemError;
-    std::filesystem::remove_all(directory, filesystemError);
-    std::filesystem::create_directories(directory, filesystemError);
-    assertTrue(!filesystemError, "persistent history test directory is created");
+
+    const auto batchPath = directory / "batched.bin";
+    modernime::core::ClipboardHistory batchSeed;
+    batchSeed.observe("B"); batchSeed.observe("A");
+    assertTrue(batchSeed.save(batchPath), "batch fixture saves");
+    modernime::core::PersistentClipboardHistory batched(batchPath);
+    assertTrue(batched.load(), "batch fixture loads");
+    batched.setObservationBaseline("A");
+    auto batchBlock = batchPath;
+    batchBlock += ".tmp";
+    std::filesystem::create_directory(batchBlock);
+    modernime::core::ClipboardObservationBatch batch;
+    batch.observe("B"); batch.observe("A"); batch.observe("B");
+    std::string batchError;
+    assertTrue(batched.observeBatch(batch, &batchError) && !batchError.empty(),
+               "whole batch applies before one failed persistence attempt");
+    std::filesystem::remove(batchBlock);
+    batchSeed.clear();
+    assertTrue(batchSeed.save(batchPath) && batched.flush(), "batch retries after external clear");
+    assertTrue(batchSeed.load(batchPath) && batchSeed.entries() == std::vector<std::string>{"B", "A"},
+               "compacted batch keeps both legitimate pending copies");
+    batchSeed.clear();
+    assertTrue(batchSeed.save(batchPath) && batched.reloadIfExternallyChanged(), "second external clear reloads");
+    modernime::core::ClipboardObservationBatch recopy;
+    recopy.observe("A");
+    assertTrue(batched.observeBatch(recopy) && batchSeed.load(batchPath) &&
+                   batchSeed.entries() == std::vector<std::string>{"A"},
+               "prequalified recopy is not filtered by old synchronous baseline");
+
+    const auto deletedPath = directory / "externally-deleted.bin";
+    modernime::core::ClipboardHistory deletedSeed;
+    deletedSeed.observe("removed externally");
+    assertTrue(deletedSeed.save(deletedPath), "deletion fixture saves");
+    modernime::core::PersistentClipboardHistory deleted(deletedPath);
+    assertTrue(deleted.load(), "deletion fixture loads");
+    assertTrue(std::filesystem::remove(deletedPath), "external unlink succeeds");
+    assertTrue(deleted.reloadIfExternallyChanged() && deleted.entries().empty(),
+               "external file deletion clears a clean in-memory history");
+    assertTrue(deleted.flush() && !std::filesystem::exists(deletedPath),
+               "clean flush does not resurrect an externally deleted file");
+
+    // A resume baseline is an observation, not a new copy. It must never
+    // enter visible history or become a pending write, even after flush.
+    const auto baselinePath = directory / "baseline.bin";
+    modernime::core::PersistentClipboardHistory baseline(baselinePath);
+    std::string baselineError;
+    assertTrue(baseline.load(&baselineError), "baseline history loads");
+    baseline.setObservationBaseline("synthetic-excluded");
+    assertTrue(baseline.entries().empty() && baseline.flush(&baselineError) &&
+                   !std::filesystem::exists(baselinePath),
+               "baseline does not create a history file");
+    assertTrue(!baseline.observe("synthetic-excluded", &baselineError) &&
+                   baseline.entries().empty(),
+               "unchanged baseline is never recorded");
+    assertTrue(baseline.observe("allowed copy", &baselineError),
+               "changed allowed content is recorded");
+    auto baselineBlocked = baselinePath;
+    baselineBlocked += ".tmp";
+    std::filesystem::create_directory(baselineBlocked);
+    assertTrue(baseline.observe("allowed pending", &baselineError) &&
+                   !baselineError.empty(), "allowed copy has a failed save");
+    baseline.setObservationBaseline("synthetic-resume");
+    std::filesystem::remove(baselineBlocked);
+    modernime::core::ClipboardHistory clearedBaseline;
+    assertTrue(clearedBaseline.save(baselinePath, &baselineError),
+               "external clear replaces history during failed save");
+    assertTrue(!baseline.observe("synthetic-resume", &baselineError) &&
+                   baselineError.empty(), "same baseline retries only allowed pending copy");
+    assertTrue(clearedBaseline.load(baselinePath, &baselineError) &&
+                   clearedBaseline.entries() == std::vector<std::string>{"allowed pending"},
+               "baseline preserves pending copy but cannot resurrect cleared base");
+    assertTrue(!baseline.observe("", &baselineError) &&
+                   baseline.observe("synthetic-resume", &baselineError),
+               "explicit content change permits a later recopy of baseline text");
 
     const auto path = directory / "clipboard-history.bin";
     modernime::core::ClipboardHistory legacy;
@@ -122,6 +198,43 @@ int main() {
                "same-timestamp clear is reloaded");
     assertTrue(!collision.observe("original", &error) && collision.entries().empty(),
                "same clipboard does not resurrect a same-timestamp clear");
+
+    // Permission failures must keep the real file and the last visible history.
+    const auto unreadablePath = directory / "unreadable.bin";
+    modernime::core::PersistentClipboardHistory unreadable(unreadablePath);
+    assertTrue(unreadable.load() && unreadable.observe("preserve me"), "unreadable fixture saves");
+    assertTrue(::chmod(unreadablePath.c_str(), 0000) == 0, "remove read permission");
+    assertTrue(!unreadable.reloadIfExternallyChanged(&error) && !error.empty() &&
+                   std::filesystem::exists(unreadablePath) &&
+                   unreadable.entries() == std::vector<std::string>{"preserve me"},
+               "failed read retains original file and previous history");
+    assertTrue(::chmod(unreadablePath.c_str(), 0600) == 0, "restore read permission");
+    assertTrue(unreadable.reloadIfExternallyChanged(&error) && error.empty() &&
+                   unreadable.entries() == std::vector<std::string>{"preserve me"},
+               "history recovers when access returns");
+
+    // Recovery must obey the same lock as an editor replacing failed data.
+    const auto replacementPath = directory / "replacement.bin";
+    { std::ofstream output(replacementPath); output << "broken"; }
+    const auto lockPath = directory / ".replacement.bin.lock";
+    const int lockFd = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    assertTrue(lockFd >= 0 && ::flock(lockFd, LOCK_EX) == 0, "editor owns the history lock");
+    modernime::core::PersistentClipboardHistory replacement(replacementPath);
+    assertTrue(!replacement.load(&error) && std::filesystem::exists(replacementPath),
+               "recovery leaves failed file alone while editor owns the lock");
+    modernime::core::ClipboardHistory validReplacement;
+    validReplacement.observe("valid external replacement");
+    assertTrue(validReplacement.save(replacementPath), "editor replaces failed data while holding lock");
+    ::close(lockFd);
+    assertTrue(replacement.reloadIfExternallyChanged(&error) && error.empty() &&
+                   replacement.entries() == validReplacement.entries(),
+               "recovery reads valid external replacement without quarantining it");
+    for (const auto &entry : std::filesystem::directory_iterator(directory)) {
+        const auto name = entry.path().filename().string();
+        assertTrue(name.rfind("replacement.bin.corrupt-", 0) != 0 &&
+                       name.rfind("unreadable.bin.corrupt-", 0) != 0,
+                   "valid and unreadable histories have no corrupt backups");
+    }
 
     // A corrupt history file must be quarantined and rebuilt instead of
     // permanently disabling the clipboard feature.
@@ -402,5 +515,7 @@ int main() {
                    "copy vs clear concurrency does not resurrect cleared history");
     }
 
+    std::filesystem::remove_all(directory, filesystemError);
+    assertTrue(!filesystemError, "isolated history directory is removed");
     return EXIT_SUCCESS;
 }

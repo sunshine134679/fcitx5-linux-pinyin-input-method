@@ -3,10 +3,13 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -18,6 +21,28 @@ void assertTrue(bool condition, std::string_view message) {
         std::exit(EXIT_FAILURE);
     }
 }
+
+class TempDirectory {
+public:
+    TempDirectory() {
+        auto pattern = (std::filesystem::temp_directory_path() /
+                        "modernime-pinyin-engine-XXXXXX").string();
+        if (mkdtemp(pattern.data()) == nullptr) {
+            throw std::runtime_error("cannot create pinyin engine test directory");
+        }
+        path_ = pattern;
+    }
+
+    ~TempDirectory() {
+        std::error_code ec;
+        std::filesystem::remove_all(path_, ec);
+    }
+
+    const std::filesystem::path &path() const noexcept { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
 
 struct RecordingHost final : modernime::fcitx5::EngineHost {
     std::vector<modernime::core::CandidatePage> pages;
@@ -42,11 +67,275 @@ std::size_t indexOf(const modernime::core::CandidatePage &page,
 
 } // namespace
 
-int main() {
-    const auto mainLearningDbPath = "/tmp/integration_main_learn.sqlite3";
-    std::filesystem::remove(mainLearningDbPath);
-    std::filesystem::remove(std::string(mainLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(mainLearningDbPath) + "-shm");
+void testShuangpinController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "shuangpin.sqlite3";
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.pinyinScheme = modernime::core::PinyinScheme::Xiaohe;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    RecordingHost host;
+    modernime::fcitx5::ControllerOptions controllerOptions;
+    controllerOptions.learningEnabled = false;
+    modernime::fcitx5::ModernIMEController controller(host, &provider, controllerOptions);
+    const auto type = [&](std::string_view input) {
+        for (char c : input)
+            assertTrue(controller.handle({modernime::fcitx5::KeyKind::Character, c, 0}), "double pinyin key handled");
+    };
+    type("nihcma");
+    const auto index = indexOf(controller.page(), "你好");
+    assertTrue(index < controller.page().items.size() && controller.select(index), "select double pinyin prefix");
+    assertTrue(host.commits.back() == "你好" && controller.page().rawInput == "ma", "controller preserves double pinyin suffix");
+    controller.reset();
+    type("vi");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Digit, 0, '1'}), "v initial supports number selection");
+    assertTrue(host.commits.back() == "之" && controller.page().rawInput.empty(), "v initial is not a numeric macro");
+    type("v123");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) &&
+               host.commits.back() == "壹佰贰拾叁元整", "explicit numeric macro remains usable");
+    type("nihc");
+    options.pinyinScheme = modernime::core::PinyinScheme::Ziranma;
+    provider.applyOptions(options);
+    controller.setOptions(controllerOptions);
+    assertTrue(controller.page().rawInput == "nihc", "controller preserves scheme-switch composition");
+    controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+    type("k");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) &&
+               host.commits.back() == "你好", "editing after switch uses new scheme");
+}
+
+void testColdPagingController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "cold-paging.sqlite3";
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    for (const char c : std::string_view("zh"))
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    const auto count = controller.page().items.size();
+    assertTrue(controller.page().hasMoreCandidates, "controller receives continuation availability");
+    for (std::size_t i = 1, pages = controller.page().pageBoundaries.size(); i < pages; ++i)
+        assertTrue(controller.movePage(1), "browse existing pages");
+    assertTrue(controller.movePage(1), "next page requests native tail");
+    assertTrue(controller.page().items.size() > count && controller.page().cursor == count,
+               "first newly exposed candidate is focused");
+    const auto selected = controller.page().items[count];
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}), "space commits cold selection");
+    assertTrue(host.commits.back() == selected.text, "cold page commits exactly the displayed candidate");
+    assertTrue(controller.page().rawInput == std::string("zh").substr(selected.consumedInputBytes),
+               "cold page preserves unconsumed abbreviation");
+    std::cout << "[PASS] controller cold page=" << selected.text << '\n';
+}
+
+void testLearnedSentenceController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "learned-sentence.sqlite3";
+    modernime::pinyin::PinyinProviderOptions options;
+    options.pinyinScheme = modernime::core::PinyinScheme::Xiaohe;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    modernime::core::CommitEvent term;
+    term.text = "云汐引擎";
+    term.fullPinyin = "yun'xi'yin'qing";
+    term.rawKeystrokes = "yyxiybqk";
+    term.consumedInputBytes = term.rawKeystrokes.size();
+    term.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (int i = 0; i < 5; ++i) provider.onCommitEvent(term);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    const auto type = [&] {
+        for (const char c : std::string_view("yyxiybqkhfhcys"))
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    };
+    type();
+    const auto index = indexOf(controller.page(), "云汐引擎很好用");
+    assertTrue(index < std::min<std::size_t>(5, controller.page().items.size()) && controller.select(index),
+               "learned word participates in shuangpin sentence decoding and selection");
+    assertTrue(host.commits.back() == "云汐引擎很好用" && controller.page().rawInput.empty(),
+               "learned sentence commits with raw code consumption");
+    controller.setSensitive(true);
+    type();
+    assertTrue(indexOf(controller.page(), "云汐引擎很好用") == controller.page().items.size(),
+               "sensitive input excludes learned sentence vocabulary");
+    std::cout << "[PASS] learned sentence controller, shuangpin and sensitive input\n";
+}
+
+void testKnownWordSentenceController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "known-word-sentence.sqlite3";
+    const std::string input = "qingbangwochongqi";
+    const auto type = [](auto &controller, std::string_view text) {
+        for (const char c : text)
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    };
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths);
+        RecordingHost host;
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+        type(controller, input);
+        std::cout << "known-word sentence before: " << controller.page().items.front().text << std::endl;
+        controller.reset();
+        for (int i = 0; i < 5; ++i) {
+            type(controller, "chongqi");
+            const auto index = indexOf(controller.page(), "充气");
+            assertTrue(index < controller.page().items.size() && controller.select(index),
+                       "ordinary dictionary word is learned through actual selection");
+        }
+        assertTrue(provider.flush(), "word preference persists");
+    }
+    modernime::pinyin::PinyinCandidateProvider reopened(paths);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &reopened);
+    type(controller, input);
+    const auto index = indexOf(controller.page(), "请帮我充气");
+    std::cout << "known-word sentence after: " << controller.page().items.front().text
+              << ", expected_index=" << index << std::endl;
+    assertTrue(index == 0 && controller.currentPageIndex() == 0,
+               "a known word preference promotes an unseen sentence to the first physical page after reopen");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) &&
+                   host.commits.back() == "请帮我充气" && controller.page().rawInput.empty(),
+               "space commits the personalized sentence and consumes the complete input");
+}
+
+void testContextModelController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "context-model.sqlite3";
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &provider);
+    for (const auto &[before, input, expected] : {
+             std::tuple{"气球", "chongqi", "充气"},
+             std::tuple{"他的", "shenqing", "神情"},
+             std::tuple{"今天天气很好我们去公", "yuan", "园"}}) {
+        controller.setContext(before, "");
+        for (const char c : std::string_view(input))
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+        assertTrue(controller.page().items.front().text == expected && controller.currentPageIndex() == 0,
+                   "untrained context word is the selectable first candidate");
+        controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+        assertTrue(host.commits.back() == expected && controller.page().rawInput.empty(),
+                   "space commits contextual word and consumes all input");
+        controller.reset();
+    }
+    controller.setContext("今天天气很好", "");
+    for (const char c : std::string_view("womenqugongyuan"))
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+    assertTrue(host.commits.back() == "我们去公园", "commit the word before editing its last character");
+    controller.setContext("今天天气很好我们去公园", "");
+    assertTrue(!controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0}),
+               "backspace is passed to the editor after committing");
+    controller.setContext("今天天气很好我们去公", "");
+    for (const char c : std::string_view("yuan")) {
+        controller.setContext("今天天气很好我们去公", "");
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    }
+    assertTrue(controller.page().items.front().text == "园" && controller.currentPageIndex() == 0,
+               "finalizing deletion feedback preserves the host's current context");
+    controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+    assertTrue(host.commits.back() == "园" && controller.page().rawInput.empty(),
+               "space restores the deleted character with full consumption");
+    controller.reset();
+    const auto type = [&] {
+        for (const char c : std::string_view("beijinghenmei"))
+            controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    };
+    controller.setContext("故事的", "");
+    type();
+    assertTrue(controller.page().items.front().text == "背景很美", "host context reaches conditional decoding");
+    controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+    assertTrue(host.commits.back() == "背景很美", "contextual sentence is committed through the controller");
+    controller.setSensitive(true);
+    controller.setContext("故事的", "");
+    type();
+    assertTrue(controller.page().items.front().text == "北京很美", "sensitive input does not inherit model or learned context");
+    controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0});
+    assertTrue(host.commits.back() == "北京很美", "sensitive input keeps ordinary conversion usable");
+    std::cout << "[PASS] contextual controller and sensitive boundary\n";
+}
+
+void testGeneratedTextLearning(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "generated.sqlite3";
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths);
+        RecordingHost host;
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+        for (int repeat = 0; repeat < 3; ++repeat) {
+            for (const auto input : {"v123", "rq", "sj", "xq", "gantanhao"}) {
+                for (const char c : std::string_view(input))
+                    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Character, c, 0}),
+                               "generated input key handled");
+                const auto &page = controller.page();
+                std::size_t index = 0;
+                while (index < page.items.size() &&
+                       page.items[index].commitRole != modernime::core::CommitCandidateRole::Generated) ++index;
+                assertTrue(index < page.items.size(), "generated candidate has its own learning role");
+                const auto text = page.items[index].text;
+                assertTrue(!provider.remove(index) && !provider.extractCharacter(index, true),
+                           "generated text cannot suppress a dictionary word or form an extracted word");
+                assertTrue(controller.select(index) && host.commits.back() == text &&
+                               controller.page().rawInput.empty(), "generated text commits and consumes input");
+                for (const unsigned char c : text) {
+                    if ((c & 0xc0) != 0x80)
+                        controller.handle({modernime::fcitx5::KeyKind::Backspace, 0, 0});
+                }
+            }
+        }
+        controller.reset();
+    }
+    modernime::core::LearningStore reopened(paths.learningStore);
+    assertTrue(reopened.open() && reopened.snapshot()->entries().empty(),
+               "generated selections, repeated phrase formation and deletion leave no persisted learning");
+    std::cout << "[PASS] generated text commits without learning pollution\n";
+}
+
+void testAmbiguousSyllableController(const std::filesystem::path &directory) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = directory / "ambiguous.sqlite3";
+    {
+        modernime::pinyin::PinyinCandidateProvider provider(paths);
+        RecordingHost host;
+        modernime::fcitx5::ModernIMEController controller(host, &provider);
+        for (int repeat = 0; repeat < 5; ++repeat) {
+            for (const char c : std::string_view("xian"))
+                controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+            const auto index = indexOf(controller.page(), "西安");
+            assertTrue(index < 3 && controller.select(index) && host.commits.back() == "西安" &&
+                           controller.page().rawInput.empty(), "ambiguous word commits through controller");
+        }
+    }
+    modernime::pinyin::PinyinCandidateProvider reopened(paths);
+    RecordingHost host;
+    modernime::fcitx5::ModernIMEController controller(host, &reopened);
+    for (const char c : std::string_view("xian"))
+        controller.handle({modernime::fcitx5::KeyKind::Character, c, 0});
+    assertTrue(controller.page().items.front().text == "西安" &&
+                   controller.page().items.front().consumedInputBytes == 4 &&
+                   controller.page().preedit == "xi'an", "reopened learned word becomes first with matching preedit");
+    assertTrue(controller.handle({modernime::fcitx5::KeyKind::Space, 0, 0}) && host.commits.back() == "西安",
+               "space selects the learned first-page word");
+}
+
+int main(int argc, char **argv) {
+    // 先构造目录，最后清理；所有Provider/Writer须先完成析构。
+    TempDirectory tempDirectory;
+    testAmbiguousSyllableController(tempDirectory.path());
+    testGeneratedTextLearning(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--generated-text") return 0;
+    testLearnedSentenceController(tempDirectory.path());
+    testKnownWordSentenceController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--learned-sentence") return 0;
+    testContextModelController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--context-model") return 0;
+    testColdPagingController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--cold-recall") return 0;
+    testShuangpinController(tempDirectory.path());
+    if (argc == 2 && std::string_view(argv[1]) == "--shuangpin") return 0;
+    std::cout << "Test directory: " << tempDirectory.path() << std::endl;
+    const auto mainLearningDbPath = tempDirectory.path() / "integration_main_learn.sqlite3";
     modernime::pinyin::PinyinDataPaths mainPaths;
     mainPaths.learningStore = mainLearningDbPath;
     modernime::pinyin::PinyinCandidateProvider provider(mainPaths);
@@ -226,13 +515,10 @@ int main() {
 
 
     // Test repeated selection habit: selecting deep candidate elevates it to rank 0
-    const auto repeatLearningDbPath = "/tmp/integration_repeat_learn.sqlite3";
+    const auto repeatLearningDbPath = tempDirectory.path() / "integration_repeat_learn.sqlite3";
 
     // Test dual-attribute word like adaptive elevation in controller
-    const auto dualLearningDbPath = "/tmp/integration_dual_learn.sqlite3";
-    std::filesystem::remove(dualLearningDbPath);
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-shm");
+    const auto dualLearningDbPath = tempDirectory.path() / "integration_dual_learn.sqlite3";
     {
         modernime::pinyin::PinyinDataPaths dualPaths;
         dualPaths.learningStore = dualLearningDbPath;
@@ -290,13 +576,7 @@ int main() {
                    "space commits 那么");
         assertTrue(dualHost.commits.back() == "那么", "那么 is committed directly by space");
     }
-    std::filesystem::remove(dualLearningDbPath);
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(dualLearningDbPath) + "-shm");
 
-    std::filesystem::remove(repeatLearningDbPath);
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");
     {
         modernime::pinyin::PinyinDataPaths repeatPaths;
         repeatPaths.learningStore = repeatLearningDbPath;
@@ -329,9 +609,6 @@ int main() {
         assertTrue(repeatHost.commits.back() == "中断",
                    "中断 is committed directly by space");
     }
-    std::filesystem::remove(repeatLearningDbPath);
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-wal");
-    std::filesystem::remove(std::string(repeatLearningDbPath) + "-shm");
 
     // Test typo transposition yuedign -> 约定 space commit
     {
@@ -355,9 +632,8 @@ int main() {
     
     // Settings clears in WAL must reset ranking in shared, already-active providers.
     {
-        const auto path = std::filesystem::temp_directory_path() /
+        const auto path = tempDirectory.path() /
                           "modernime-ranking-wal-clear.sqlite3";
-        std::filesystem::remove(path);
         modernime::pinyin::PinyinDataPaths paths;
         paths.learningStore = path;
         auto shared = modernime::pinyin::PinyinCandidateProvider::createSharedResources(paths, {});
@@ -399,7 +675,6 @@ int main() {
                    "first post-clear provider selection persists without old learned frequency");
         settings.close();
         active.reset();
-        std::filesystem::remove(path);
     }
 
     // Stress test: rapid typing and short/incomplete syllables
@@ -426,9 +701,7 @@ int main() {
     // Test context association in controller without SurroundingText:
     {
         modernime::pinyin::PinyinDataPaths ctxPaths;
-        const auto ctxLearningPath = std::filesystem::temp_directory_path() / "modernime-engine-ctx.sqlite3";
-        std::error_code ec;
-        std::filesystem::remove(ctxLearningPath, ec);
+        const auto ctxLearningPath = tempDirectory.path() / "modernime-engine-ctx.sqlite3";
         ctxPaths.learningStore = ctxLearningPath.string();
         modernime::pinyin::PinyinProviderOptions ctxOptions;
         ctxOptions.learningEnabled = true;
@@ -507,18 +780,12 @@ int main() {
                    ctxController.page().items.front().text != "绍",
                    "punctuation resets fallback context so 绍 is not rank 0");
         ctxController.reset();
-
-        std::filesystem::remove(ctxLearningPath, ec);
-        std::filesystem::remove(ctxLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(ctxLearningPath.string() + "-shm", ec);
     }
 
     // Test custom English term learning via Enter and prefix completion:
     {
         modernime::pinyin::PinyinDataPaths engPaths;
-        const auto engLearningPath = std::filesystem::temp_directory_path() / "modernime-engine-eng.sqlite3";
-        std::error_code ec;
-        std::filesystem::remove(engLearningPath, ec);
+        const auto engLearningPath = tempDirectory.path() / "modernime-engine-eng.sqlite3";
         engPaths.learningStore = engLearningPath.string();
         modernime::pinyin::PinyinProviderOptions engOptions;
         engOptions.learningEnabled = true;
@@ -579,20 +846,12 @@ int main() {
         assertTrue(indexOf(engController.page(), "notlearned") == engController.page().items.size(),
                    "cancelled term is not learned");
         engController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
-
-        std::filesystem::remove(engLearningPath, ec);
-        std::filesystem::remove(engLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(engLearningPath.string() + "-shm", ec);
     }
 
     // 显式取首/末字及标点回退集成测试
     {
-        std::error_code ec;
         const auto extractLearningPath =
-            std::filesystem::temp_directory_path() / "modernime-engine-extract.sqlite3";
-        std::filesystem::remove(extractLearningPath, ec);
-        std::filesystem::remove(extractLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(extractLearningPath.string() + "-shm", ec);
+            tempDirectory.path() / "modernime-engine-extract.sqlite3";
 
         modernime::pinyin::PinyinDataPaths extractPaths;
         extractPaths.learningStore = extractLearningPath.string();
@@ -679,22 +938,14 @@ int main() {
                        {modernime::fcitx5::KeyKind::CommitLastCharacter, ']', 0}),
                    "] commits Chinese punctuation when idle");
         assertTrue(extractHost.commits.back() == "】", "committed Chinese punctuation 】");
-
-        std::filesystem::remove(extractLearningPath, ec);
-        std::filesystem::remove(extractLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(extractLearningPath.string() + "-shm", ec);
     }
 
     // -------------------------------------------------------------------------
     // Task 9 (P2): 经真实周边文本确认的后续删除反馈（键盘删除盘后学键）
     // -------------------------------------------------------------------------
     {
-        std::error_code ec;
         const auto delLearningPath =
-            std::filesystem::temp_directory_path() / "modernime-engine-del-feedback.sqlite3";
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+            tempDirectory.path() / "modernime-engine-del-feedback.sqlite3";
 
         modernime::pinyin::PinyinDataPaths delPaths;
         delPaths.learningStore = delLearningPath.string();
@@ -819,22 +1070,14 @@ int main() {
                        "ce does not learn 测 after explicit reset");
         }
         delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
-
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
     }
 
     // -------------------------------------------------------------------------
     // Task 10: 成语/词语输入后删词留字（后缀与内部单字提取）即时提权至首位
     // -------------------------------------------------------------------------
     {
-        std::error_code ec;
         const auto delLearningPath =
-            std::filesystem::temp_directory_path() / "modernime-engine-del-feedback-idiom.sqlite3";
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
+            tempDirectory.path() / "modernime-engine-del-feedback-idiom.sqlite3";
 
         modernime::pinyin::PinyinDataPaths delPaths;
         delPaths.learningStore = delLearningPath.string();
@@ -895,10 +1138,6 @@ int main() {
         assertTrue(delController.page().items.front().text == "龙",
                    "龙 is immediately promoted to top candidate after idiom internal character extraction");
         delController.handle({modernime::fcitx5::KeyKind::Escape, 0, 0});
-
-        std::filesystem::remove(delLearningPath, ec);
-        std::filesystem::remove(delLearningPath.string() + "-wal", ec);
-        std::filesystem::remove(delLearningPath.string() + "-shm", ec);
     }
 
     return EXIT_SUCCESS;

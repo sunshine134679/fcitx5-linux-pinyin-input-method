@@ -1,5 +1,8 @@
 #pragma once
 
+#include "modernime/core/pinyin_options.h"
+
+#include <array>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -9,12 +12,45 @@ namespace modernime::core {
 
 enum class InputMode { Chinese, English };
 
+enum class CandidateTheme { Light, Dark, ClassicBlue, Jade, Amber, Rose, Lavender, Midnight, HighContrast };
+enum class CandidateShape { Rounded, Square, Capsule };
+enum class CandidateSpacing { Compact, Standard, Spacious };
+struct ClientThemeOption { std::string_view key; std::string_view label; };
+inline constexpr std::array<ClientThemeOption, 7> kClientThemes{{
+    ClientThemeOption{"blue", "晴空蓝"}, {"jade", "青竹绿"}, {"night", "深海夜"},
+    {"amber", "暖砂橙"}, {"rose", "玫瑰粉"}, {"lavender", "雾紫"}, {"contrast", "高对比"}}};
+struct CandidateThemeOption { CandidateTheme value; std::string_view key; std::string_view label; };
+struct CandidateShapeOption { CandidateShape value; std::string_view key; std::string_view label; };
+struct CandidateSpacingOption { CandidateSpacing value; std::string_view key; std::string_view label; };
+inline constexpr std::array kCandidateThemes{
+    CandidateThemeOption{CandidateTheme::Light, "light", "浅色"},
+    CandidateThemeOption{CandidateTheme::Dark, "dark", "深色"},
+    CandidateThemeOption{CandidateTheme::ClassicBlue, "classic-blue", "经典蓝"},
+    CandidateThemeOption{CandidateTheme::Jade, "jade", "青竹绿"},
+    CandidateThemeOption{CandidateTheme::Amber, "amber", "暖砂橙"},
+    CandidateThemeOption{CandidateTheme::Rose, "rose", "玫瑰粉"},
+    CandidateThemeOption{CandidateTheme::Lavender, "lavender", "雾紫"},
+    CandidateThemeOption{CandidateTheme::Midnight, "midnight", "深海夜"},
+    CandidateThemeOption{CandidateTheme::HighContrast, "high-contrast", "高对比"}};
+inline constexpr std::array kCandidateShapes{
+    CandidateShapeOption{CandidateShape::Rounded, "rounded", "圆润"},
+    CandidateShapeOption{CandidateShape::Square, "square", "方正"},
+    CandidateShapeOption{CandidateShape::Capsule, "capsule", "胶囊"}};
+inline constexpr std::array kCandidateSpacings{
+    CandidateSpacingOption{CandidateSpacing::Compact, "compact", "紧凑"},
+    CandidateSpacingOption{CandidateSpacing::Standard, "standard", "标准"},
+    CandidateSpacingOption{CandidateSpacing::Spacious, "spacious", "宽松"}};
+
 struct ModernIMESettings final {
     bool inputEnabled = true;
     InputMode defaultMode = InputMode::Chinese;
     std::string toggleKey = "Ctrl+Shift+Space";
     int candidatePageSize = 9;
     int candidateFontSize = 20;
+    std::string candidateFontFamily = "Noto Sans CJK SC";
+    CandidateTheme candidateTheme = CandidateTheme::Light;
+    CandidateShape candidateShape = CandidateShape::Rounded;
+    CandidateSpacing candidateSpacing = CandidateSpacing::Standard;
     bool numberSelection = true;
     bool arrowNavigation = true;
     bool pageNavigation = true;
@@ -25,6 +61,9 @@ struct ModernIMESettings final {
     std::string clipboardTrigger = "V+2";
     bool englishDefinitionEnabled = false;
     bool characterExtractionEnabled = true;
+    std::string clientTheme = "blue";
+    FuzzyPinyinOptions fuzzyPinyin;
+    PinyinScheme pinyinScheme = PinyinScheme::Full;
 
     bool operator==(const ModernIMESettings &) const = default;
 };

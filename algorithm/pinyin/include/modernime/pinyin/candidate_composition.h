@@ -12,6 +12,11 @@
 
 namespace modernime::pinyin {
 
+// Continued browsing appends new identities without moving published choices.
+std::vector<core::CandidateItem> appendCandidateBatch(
+    std::vector<core::CandidateItem> published,
+    std::vector<core::CandidateItem> next, std::size_t inputBytes);
+
 enum class CompositionStage {
     FuzzyInterleave,
     ChineseMultiGranularity,
@@ -79,6 +84,7 @@ struct CandidateCompositionInput {
     std::function<bool(std::string_view text, std::string_view pinyin)> isLexicalWord;
 
     bool recordMoves = false;
+    bool shuangpin = false;
 };
 
 struct CandidateCompositionResult {

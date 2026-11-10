@@ -17,7 +17,8 @@ using modernime::core::LearningSnapshot;
 
 struct Host final : modernime::fcitx5::EngineHost {
     void publishPage(const modernime::core::CandidatePage &) override {}
-    void commit(std::string_view) override {}
+    void commit(std::string_view text) override { committed = text; }
+    std::string committed;
 };
 
 class PersonalizationControllerRegression : public testing::Test {
@@ -61,6 +62,33 @@ protected:
     std::unique_ptr<modernime::pinyin::PinyinCandidateProvider> provider;
     std::unique_ptr<modernime::fcitx5::ModernIMEController> controller;
 };
+
+TEST_F(PersonalizationControllerRegression, LongRawEnterPreservesTextWithoutEnglishLearning) {
+    const std::string longPinyin = "qingbangwojianchayixiazhegedaimayoumeiyouwentiranhougaosuwo";
+    const std::string shortPinyin = "nihaonihaonihaonihaonihaonihaonihaonihaonihao";
+    ASSERT_EQ(shortPinyin.size(), 45U);
+    ASSERT_EQ(longPinyin.size(), 59U);
+    for (const auto &input : {shortPinyin, longPinyin, std::string("gnueabihf"), std::string("can")}) {
+        controller->reset();
+        type(input);
+        ASSERT_TRUE(controller->handle({KeyKind::Enter, 0, 0}));
+        EXPECT_EQ(host.committed, input);
+        EXPECT_TRUE(controller->page().items.empty());
+        EXPECT_TRUE(controller->page().rawInput.empty());
+    }
+    ASSERT_TRUE(provider->flush());
+    controller.reset();
+    provider.reset();
+    modernime::core::LearningStore reopened(root / "learning.sqlite3");
+    ASSERT_TRUE(reopened.openReadOnly());
+    const auto state = reopened.snapshot();
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->entry(shortPinyin, shortPinyin, "", ""), nullptr);
+    EXPECT_EQ(state->entry(longPinyin, longPinyin, "", ""), nullptr);
+    EXPECT_TRUE(state->recallEnglishWords("qin").empty());
+    EXPECT_TRUE(state->hasPositiveFrequency("gnueabihf", "gnueabihf"));
+    EXPECT_TRUE(state->hasPositiveFrequency("can", "can"));
+}
 
 TEST_F(PersonalizationControllerRegression, CursorMovementNeverLearnsDeletion) {
     commit("nihao", "你好");
@@ -118,6 +146,28 @@ TEST_F(PersonalizationControllerRegression, LearnedFuzzyInitialVariantCanReachTo
     }
     type("zongwen");
     EXPECT_EQ(controller->page().items.front().text, "中文");
+}
+
+TEST_F(PersonalizationControllerRegression, NormalWordLearningDoesNotPromoteAnotherSpelling) {
+    for (int n = 0; n < 7; ++n) {
+        commit("shezhi", "设置");
+        controller->setContext("", "");
+    }
+    controller->reset();
+    type("shuzi");
+    ASSERT_EQ(controller->page().items.front().text, "数字");
+    ASSERT_TRUE(controller->handle({KeyKind::Space, 0, 0}));
+    EXPECT_EQ(host.committed, "数字");
+    EXPECT_TRUE(controller->page().rawInput.empty());
+
+    // Deliberate repeated correction under this spelling still learns.
+    controller->setContext("", "");
+    for (int n = 0; n < 3; ++n) {
+        commit("shuzi", "设置");
+        controller->setContext("", "");
+    }
+    type("shuzi");
+    EXPECT_EQ(controller->page().items.front().text, "设置");
 }
 
 TEST_F(PersonalizationControllerRegression, ValidEmptyContextReplacesFallbackAfterDeletion) {

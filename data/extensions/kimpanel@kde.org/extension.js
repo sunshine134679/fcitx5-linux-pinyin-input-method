@@ -4,7 +4,8 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {InputPanel} from './panel.js';
 import {KimIndicator} from './indicator.js';
@@ -106,6 +107,8 @@ class Kimpanel extends GObject.Object {
         this.fontSignal = this.settings.connect(
             'changed::font',
             () => this.inputpanel.updateFont(this.getTextStyle()));
+        this.appearanceSignals = ['panel-theme', 'candidate-spacing', 'candidate-shape'].map(key =>
+            this.settings.connect(`changed::${key}`, () => this.inputpanel.updateAppearance()));
 
         this.addToShell();
         this.dbusSignal = this.conn.signal_subscribe(
@@ -269,6 +272,8 @@ class Kimpanel extends GObject.Object {
         }
         this.settings.disconnect(this.verticalSignal);
         this.settings.disconnect(this.fontSignal);
+        for (const id of this.appearanceSignals)
+            this.settings.disconnect(id);
         this.settings = null;
         this.conn.signal_unsubscribe(this.dbusSignal);
         this.conn = null;
@@ -347,343 +352,54 @@ class Kimpanel extends GObject.Object {
     LockXkbGroup(idx) { Meta.get_backend().lock_layout_group(idx); }
 }
 
-class OverviewSearchBridge {
+// GNOME 46 creates a replacement IBus context asynchronously but does not
+// forward an existing Wayland focus to it. Keep this workaround version-bound;
+// other Shell versions must be checked against their own InputMethod lifecycle.
+class NativeInputContextRecovery {
     constructor() {
-        this._bus = Gio.DBus.session;
-        this._icPath = null;
-        this._subId = 0;
+        this._injections = new InjectionManager();
         this._nameWatchId = 0;
-        this._keyPressId = 0;
-        this._keyReleaseId = 0;
-        this._focusInId = 0;
-        this._focusOutId = 0;
-        this._showingId = 0;
-        this._hidingId = 0;
-        this._searchEntry = null;
-        this._clutterText = null;
+        this._hasFcitx = false;
+        if (Config.PACKAGE_VERSION.split('.')[0] !== '46')
+            return;
 
-        this._watchFcitx();
-        this._initFcitxContext();
-        this._hookOverviewSearch();
-    }
-
-    _watchFcitx() {
+        const inputMethod = Main.inputMethod;
+        let previousContext = inputMethod._context;
         this._nameWatchId = Gio.bus_watch_name(
-            Gio.BusType.SESSION,
-            'org.fcitx.Fcitx5',
+            Gio.BusType.SESSION, 'org.fcitx.Fcitx5',
             Gio.BusNameWatcherFlags.NONE,
-            () => {
-                this._initFcitxContext();
-            },
-            () => {
-                this._cleanupContext();
-            }
-        );
-    }
+            () => { this._hasFcitx = true; },
+            () => { this._hasFcitx = false; });
 
-    _initFcitxContext() {
-        this._cleanupContext();
-        try {
-            let res = this._bus.call_sync(
-                'org.fcitx.Fcitx5',
-                '/org/freedesktop/portal/inputmethod',
-                'org.fcitx.Fcitx.InputMethod1',
-                'CreateInputContext',
-                new GLib.Variant('(a(ss))', [[['program', 'gnome-shell']]]),
-                null,
-                Gio.DBusCallFlags.NONE,
-                1000,
-                null
-            );
-            [this._icPath] = res.deepUnpack();
+        // _onConnected calls this after wiring the new context's signals. The
+        // context identity check also prevents recursion through focus_in/update.
+        const recovery = this;
+        this._injections.overrideMethod(inputMethod, '_updateCapabilities', original => function (...args) {
+            const result = original.apply(this, args);
+            const context = this._context;
+            if (context === previousContext)
+                return result;
+            previousContext = context;
+            if (!context || !recovery._hasFcitx || !this.currentFocus)
+                return result;
 
-            this._subId = this._bus.signal_subscribe(
-                'org.fcitx.Fcitx5',
-                'org.fcitx.Fcitx.InputContext1',
-                'CommitString',
-                this._icPath,
-                null,
-                Gio.DBusSignalFlags.NONE,
-                this._onCommitString.bind(this)
-            );
-        } catch (e) {
-            console.error('ModernIME OverviewSearchBridge init failed: ' + e.message);
-        }
-    }
-
-    _cleanupContext() {
-        if (this._subId) {
-            this._bus.signal_unsubscribe(this._subId);
-            this._subId = 0;
-        }
-        if (this._icPath) {
-            try {
-                this._bus.call_sync(
-                    'org.fcitx.Fcitx5',
-                    this._icPath,
-                    'org.fcitx.Fcitx.InputContext1',
-                    'DestroyIC',
-                    null,
-                    null,
-                    Gio.DBusCallFlags.NONE,
-                    200,
-                    null
-                );
-            } catch (e) {
-                // ignore
-            }
-            this._icPath = null;
-        }
-    }
-
-    _onCommitString(conn, sender, path, iface, signal, params) {
-        try {
-            let [text] = params.deepUnpack();
-            if (!text)
-                return;
-
-            let clutterText = this._clutterText;
-            if (!clutterText && Main.overview.searchEntry)
-                clutterText = Main.overview.searchEntry.clutter_text;
-            if (!clutterText)
-                return;
-
-            clutterText.delete_selection();
-            let pos = clutterText.get_cursor_position();
-            let currentText = clutterText.get_text() || '';
-            if (pos < 0 || pos > currentText.length)
-                pos = currentText.length;
-
-            let newText = currentText.slice(0, pos) + text + currentText.slice(pos);
-            clutterText.set_text(newText);
-            clutterText.set_cursor_position(pos + text.length);
-        } catch (e) {
-            console.error('ModernIME CommitString error: ' + e.message);
-        }
-    }
-
-    _hookOverviewSearch() {
-        let entry = Main.overview.searchEntry;
-        if (!entry) {
-            if (!this._showingId) {
-                this._showingId = Main.overview.connect('showing', () => {
-                    if (!this._clutterText)
-                        this._hookOverviewSearch();
-                    this._onShowing();
-                });
-            }
-            return;
-        }
-
-        this._searchEntry = entry;
-        this._clutterText = entry.clutter_text;
-
-        this._keyPressId = this._clutterText.connect('key-press-event', (actor, event) => {
-            return this._handleKeyEvent(event, false);
+            // _clear resets Shell's IBus hints/purpose. Clutter still owns the
+            // current field's actual properties, including password/privacy.
+            this.vfunc_update_content_purpose(this.content_purpose);
+            this.vfunc_update_content_hints(this.content_hints);
+            this.vfunc_focus_in(this.currentFocus);
+            return result;
         });
-
-        this._keyReleaseId = this._clutterText.connect('key-release-event', (actor, event) => {
-            return this._handleKeyEvent(event, true);
-        });
-
-        this._focusInId = this._clutterText.connect('key-focus-in', () => {
-            this._focusIn();
-        });
-
-        this._focusOutId = this._clutterText.connect('key-focus-out', () => {
-            this._focusOut();
-        });
-
-        if (!this._showingId) {
-            this._showingId = Main.overview.connect('showing', () => {
-                this._onShowing();
-            });
-        }
-
-        this._hidingId = Main.overview.connect('hiding', () => {
-            this._reset();
-        });
-    }
-
-    _onShowing() {
-        this._updateCursorRect();
-        this._focusIn();
-    }
-
-    _focusIn() {
-        if (!this._icPath)
-            this._initFcitxContext();
-        if (!this._icPath)
-            return;
-        try {
-            this._bus.call_sync(
-                'org.fcitx.Fcitx5',
-                this._icPath,
-                'org.fcitx.Fcitx.InputContext1',
-                'FocusIn',
-                null,
-                null,
-                Gio.DBusCallFlags.NONE,
-                200,
-                null
-            );
-        } catch (e) {
-            // ignore
-        }
-    }
-
-    _focusOut() {
-        if (!this._icPath)
-            return;
-        try {
-            this._bus.call_sync(
-                'org.fcitx.Fcitx5',
-                this._icPath,
-                'org.fcitx.Fcitx.InputContext1',
-                'FocusOut',
-                null,
-                null,
-                Gio.DBusCallFlags.NONE,
-                200,
-                null
-            );
-        } catch (e) {
-            // ignore
-        }
-    }
-
-    _updateCursorRect() {
-        if (!this._icPath)
-            return;
-        let entry = this._searchEntry || Main.overview.searchEntry;
-        if (!entry)
-            return;
-        try {
-            let [x, y] = entry.get_transformed_position();
-            let [w, h] = entry.get_transformed_size();
-            this._bus.call_sync(
-                'org.fcitx.Fcitx5',
-                this._icPath,
-                'org.fcitx.Fcitx.InputContext1',
-                'SetCursorRect',
-                new GLib.Variant('(iiii)', [Math.round(x), Math.round(y), Math.round(w), Math.round(h)]),
-                null,
-                Gio.DBusCallFlags.NONE,
-                200,
-                null
-            );
-        } catch (e) {
-            // ignore
-        }
-    }
-
-    _handleKeyEvent(event, isRelease) {
-        if (!this._icPath) {
-            this._initFcitxContext();
-            if (!this._icPath)
-                return Clutter.EVENT_PROPAGATE;
-        }
-
-        let symbol = event.get_key_symbol();
-        let code = event.get_key_code();
-        let state = event.get_state();
-        let time = event.get_time();
-
-        if (!isRelease)
-            this._updateCursorRect();
-
-        try {
-            let res = this._bus.call_sync(
-                'org.fcitx.Fcitx5',
-                this._icPath,
-                'org.fcitx.Fcitx.InputContext1',
-                'ProcessKeyEvent',
-                new GLib.Variant('(uuubu)', [symbol, code, state, isRelease, time || 0]),
-                null,
-                Gio.DBusCallFlags.NONE,
-                500,
-                null
-            );
-            let [handled] = res.deepUnpack();
-            if (handled) {
-                return Clutter.EVENT_STOP;
-            }
-        } catch (e) {
-            console.error('ModernIME ProcessKeyEvent error: ' + e.message);
-        }
-        return Clutter.EVENT_PROPAGATE;
-    }
-
-    _reset() {
-        if (!this._icPath)
-            return;
-        try {
-            this._bus.call_sync(
-                'org.fcitx.Fcitx5',
-                this._icPath,
-                'org.fcitx.Fcitx.InputContext1',
-                'Reset',
-                null,
-                null,
-                Gio.DBusCallFlags.NONE,
-                200,
-                null
-            );
-            this._bus.call_sync(
-                'org.fcitx.Fcitx5',
-                this._icPath,
-                'org.fcitx.Fcitx.InputContext1',
-                'FocusOut',
-                null,
-                null,
-                Gio.DBusCallFlags.NONE,
-                200,
-                null
-            );
-        } catch (e) {
-            // ignore
-        }
     }
 
     destroy() {
-        if (this._nameWatchId) {
+        this._injections.clear();
+        if (this._nameWatchId)
             Gio.bus_unwatch_name(this._nameWatchId);
-            this._nameWatchId = 0;
-        }
-        if (this._clutterText) {
-            if (this._keyPressId) {
-                this._clutterText.disconnect(this._keyPressId);
-                this._keyPressId = 0;
-            }
-            if (this._keyReleaseId) {
-                this._clutterText.disconnect(this._keyReleaseId);
-                this._keyReleaseId = 0;
-            }
-            if (this._focusInId) {
-                this._clutterText.disconnect(this._focusInId);
-                this._focusInId = 0;
-            }
-            if (this._focusOutId) {
-                this._clutterText.disconnect(this._focusOutId);
-                this._focusOutId = 0;
-            }
-        }
-        if (this._showingId) {
-            Main.overview.disconnect(this._showingId);
-            this._showingId = 0;
-        }
-        if (this._hidingId) {
-            Main.overview.disconnect(this._hidingId);
-            this._hidingId = 0;
-        }
-        this._cleanupContext();
-        this._searchEntry = null;
-        this._clutterText = null;
+        this._nameWatchId = 0;
+        this._hasFcitx = false;
     }
 }
-
-var kimpanel = null;
-var searchBridge = null;
 
 export default class KimpanelExtension extends Extension {
     constructor(...args) {
@@ -692,22 +408,18 @@ export default class KimpanelExtension extends Extension {
     }
 
     enable() {
+        this._contextRecovery = new NativeInputContextRecovery();
         if (!kimpanel) {
             kimpanel = new Kimpanel(this._settings);
-        }
-        if (!searchBridge) {
-            searchBridge = new OverviewSearchBridge();
         }
     }
 
     disable() {
+        this._contextRecovery?.destroy();
+        this._contextRecovery = null;
         if (kimpanel) {
             kimpanel.destroy();
             kimpanel = null;
-        }
-        if (searchBridge) {
-            searchBridge.destroy();
-            searchBridge = null;
         }
     }
 }

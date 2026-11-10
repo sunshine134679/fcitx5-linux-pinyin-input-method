@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modernime/core/candidate_provider.h"
+#include "modernime/core/pinyin_options.h"
 
 #include <cstdint>
 #include <functional>
@@ -9,6 +10,7 @@
 #include <string_view>
 
 namespace modernime::pinyin {
+struct PinyinDiagnostics;
 
 // 返回当前系统探测到的默认拼音词典路径（支持多发行版探测与环境变量覆盖）
 std::string defaultDictionaryPath();
@@ -25,6 +27,8 @@ struct PinyinDataPaths final {
     std::string userDictionary;
     std::string learningStore;
     std::string englishDefinitionDictionary;
+    // Empty: discover the bundled, read-only contextual model.
+    std::string contextLanguageModel;
 };
 
 struct PinyinProviderOptions final {
@@ -33,6 +37,8 @@ struct PinyinProviderOptions final {
     bool englishDefinitionEnabled = false;
     bool clipboardEnabled = true;
     std::string clipboardTrigger = "V+2";
+    core::FuzzyPinyinOptions fuzzyPinyin;
+    core::PinyinScheme pinyinScheme = core::PinyinScheme::Full;
 };
 
 struct ResourceChange final {
@@ -95,6 +101,7 @@ public:
     bool extractCharacter(std::size_t index, bool firstChar,
                           std::string *outText = nullptr) override;
     bool remove(std::size_t index) override;
+    bool loadMoreCandidates() override;
     void onCommitEvent(const core::CommitEvent &event) override;
     void onNegativeFeedback(std::string_view phrase,
                             std::string_view pinyin) override;
@@ -103,6 +110,10 @@ public:
     const core::CandidatePage &page() const override;
 
     bool flush();
+
+    // Disabled by default. Same input-thread ownership as page().
+    void setDiagnosticsEnabled(bool enabled);
+    const PinyinDiagnostics *diagnostics() const;
 
     void setContext(std::string_view before, std::string_view after);
     void applyOptions(const PinyinProviderOptions &options);

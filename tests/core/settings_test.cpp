@@ -66,6 +66,9 @@ void testDefaultsAndRoundTrip() {
     expected.toggleKey = "Alt+Space";
     expected.candidatePageSize = 5;
     expected.candidateFontSize = 24;
+    expected.candidateFontFamily = "DejaVu Sans";
+    expected.candidateTheme = modernime::core::CandidateTheme::Dark;
+    expected.candidateSpacing = modernime::core::CandidateSpacing::Compact;
     expected.numberSelection = false;
     expected.arrowNavigation = false;
     expected.pageNavigation = false;
@@ -89,6 +92,10 @@ void testDefaultsAndRoundTrip() {
                "candidate page size round-trips");
     assertTrue(loaded.settings.candidateFontSize == expected.candidateFontSize,
                "candidate font size round-trips");
+    assertTrue(loaded.settings.candidateFontFamily == expected.candidateFontFamily &&
+                   loaded.settings.candidateTheme == expected.candidateTheme &&
+                   loaded.settings.candidateSpacing == expected.candidateSpacing,
+               "candidate font, theme and spacing round-trip");
     assertTrue(loaded.settings.numberSelection == expected.numberSelection &&
                    loaded.settings.arrowNavigation == expected.arrowNavigation &&
                    loaded.settings.pageNavigation == expected.pageNavigation,
@@ -104,6 +111,39 @@ void testDefaultsAndRoundTrip() {
     assertTrue(loaded.settings.characterExtractionEnabled ==
                    expected.characterExtractionEnabled,
                "character extraction round-trips");
+}
+
+void testClientThemeRoundTrip() {
+    const auto path = testDirectory() / "settings.conf";
+    {
+        std::ofstream input(path);
+        input << "appearance.client_theme=jade\n";
+    }
+    const auto loaded = modernime::core::SettingsStore::load(path);
+    assertTrue(loaded.diagnostics.empty(), "client theme is a supported setting");
+    assertTrue(loaded.settings.clientTheme == "jade", "client theme loads the selected palette");
+    std::string error;
+    assertTrue(modernime::core::SettingsStore::save(path, loaded.settings, &error),
+               "client theme saves through the settings store");
+    std::ifstream output(path);
+    const std::string saved((std::istreambuf_iterator<char>(output)), {});
+    assertTrue(saved.find("appearance.client_theme=jade") != std::string::npos,
+               "client theme survives save and reload");
+    for (std::size_t i = 0; i < modernime::core::kCandidateThemes.size(); ++i) {
+        auto settings = modernime::core::defaultSettings();
+        settings.clientTheme = modernime::core::kClientThemes[i % modernime::core::kClientThemes.size()].key;
+        settings.candidateTheme = modernime::core::kCandidateThemes[i].value;
+        settings.candidateShape = modernime::core::kCandidateShapes[i % modernime::core::kCandidateShapes.size()].value;
+        assertTrue(modernime::core::SettingsStore::save(path, settings, &error), "appearance preset saves");
+        const auto reloaded = modernime::core::SettingsStore::load(path);
+        assertTrue(reloaded.diagnostics.empty() && reloaded.settings == settings,
+                   "every preset and shape survives real settings serialization");
+    }
+    auto shaped = modernime::core::defaultSettings();
+    const auto originalHash = modernime::core::computeSettingsHash(shaped);
+    shaped.candidateShape = modernime::core::CandidateShape::Capsule;
+    assertTrue(originalHash != modernime::core::computeSettingsHash(shaped),
+               "shape participates in save and runtime application identity");
 }
 
 void testDiagnosticsAndPerKeyFallback() {
@@ -517,10 +557,42 @@ void testSettingsStoreSaveWithResultTruthReceipt() {
 
 } // namespace
 
+void testFuzzyPinyinRoundTrip() {
+    const auto directory = testDirectory();
+    const auto file = directory / "settings.conf";
+    auto defaults = modernime::core::defaultSettings();
+    for (const auto &scheme : modernime::core::kPinyinSchemes) {
+        auto edited = defaults;
+        edited.pinyinScheme = scheme.scheme;
+        assertTrue(modernime::core::SettingsStore::save(file, edited), "save pinyin scheme");
+        assertTrue(modernime::core::SettingsStore::load(file).settings == edited, "pinyin scheme roundtrip");
+    }
+    std::ofstream(file) << "input.enabled=true\n";
+    assertTrue(modernime::core::SettingsStore::load(file).settings.fuzzyPinyin == defaults.fuzzyPinyin,
+               "old settings retain all six fuzzy groups");
+    for (const auto &option : modernime::core::kFuzzyPinyinOptions) {
+        auto edited = defaults;
+        edited.fuzzyPinyin.*option.member = false;
+        assertTrue(modernime::core::computeSettingsHash(edited) != modernime::core::computeSettingsHash(defaults),
+                   "each fuzzy option participates in settings identity");
+        assertTrue(modernime::core::SettingsStore::save(file, edited), "save fuzzy option");
+        assertTrue(modernime::core::SettingsStore::load(file).settings == edited,
+                   "each fuzzy option survives save and reopen independently");
+    }
+    std::ofstream(file) << "pinyin.fuzzy_z_zh=invalid\npinyin.fuzzy_l_n=false\n";
+    const auto invalid = modernime::core::SettingsStore::load(file);
+    assertTrue(!invalid.diagnostics.empty() && invalid.settings.fuzzyPinyin.zZh &&
+                   !invalid.settings.fuzzyPinyin.lN,
+               "invalid fuzzy value falls back per key without losing valid settings");
+    std::filesystem::remove_all(directory);
+}
+
 int main() {
+    testFuzzyPinyinRoundTrip();
     testOversizedIntegersAreRejectedWithoutWrapping();
     testPaths();
     testDefaultsAndRoundTrip();
+    testClientThemeRoundTrip();
     testDiagnosticsAndPerKeyFallback();
     testFailedSavePreservesExistingTarget();
     testSharedValidationAcceptsOnlyRuntimeToggleKeys();

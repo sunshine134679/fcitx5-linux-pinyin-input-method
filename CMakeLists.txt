@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ModernIME VERSION 0.1.25 LANGUAGES CXX)
+project(ModernIME VERSION 0.2.3 LANGUAGES CXX)
 
 option(MODERNIME_BUILD_FCITX5 "Build the Fcitx5 addon targets" OFF)
 option(MODERNIME_BUILD_LIBIME_PINYIN "Build the LibIME-backed pinyin provider" OFF)
@@ -96,7 +96,7 @@ set(MODERNIME_KIMPANEL_ROOT_FILES
 )
 foreach(file IN LISTS MODERNIME_KIMPANEL_ROOT_FILES)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org/${file}"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org")
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/modernime-panel@sunshine134679.github.io")
 endforeach()
 
 set(MODERNIME_KIMPANEL_SCHEMAS_FILES
@@ -105,7 +105,7 @@ set(MODERNIME_KIMPANEL_SCHEMAS_FILES
 )
 foreach(file IN LISTS MODERNIME_KIMPANEL_SCHEMAS_FILES)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org/schemas/${file}"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org/schemas")
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/modernime-panel@sunshine134679.github.io/schemas")
 endforeach()
 
 set(MODERNIME_KIMPANEL_LOCALES
@@ -113,7 +113,7 @@ set(MODERNIME_KIMPANEL_LOCALES
 )
 foreach(loc IN LISTS MODERNIME_KIMPANEL_LOCALES)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/extensions/kimpanel@kde.org/locale/${loc}/LC_MESSAGES/gnome-shell-extensions-kimpanel.mo"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org/locale/${loc}/LC_MESSAGES")
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/modernime-panel@sunshine134679.github.io/locale/${loc}/LC_MESSAGES")
 endforeach()
 
 if(MODERNIME_PACKAGE_CHANNEL)

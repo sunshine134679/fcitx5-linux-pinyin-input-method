@@ -379,4 +379,31 @@ test -x "$mig_target_prefix/bin/modernime-settings"
 grep -F '迁移词条' "$mig_data_home/modernime/user-dictionary.txt" >/dev/null
 grep -F 'input.toggle_key=Ctrl+Space' "$mig_cfg_home/modernime/settings.conf" >/dev/null
 
+# A package migration is already committed before user-session initialization.
+# Its failure must remain visible and must not roll back the verified package.
+if [[ "$EUID" -ne 0 ]]; then
+    partial_src="$test_root/partial-src"
+    partial_target="$test_root/partial-target"
+    env HOME="$test_root/partial-home" MODERNIME_CONFIG_HOME="$mig_cfg_home" \
+        MODERNIME_DATA_HOME="$mig_data_home" MODERNIME_DESKTOP_DIR="$test_root/partial-desktop" \
+        MODERNIME_PREFIX="$partial_src" MODERNIME_BUILD_DIR="$test_root/partial-build" \
+        FAKE_PREFIX="$partial_src" FAKE_LIBDIR="lib/x86_64-linux-gnu" \
+        PATH="$fake_bin:/usr/bin:/bin" bash "$project_root/install.sh" "$partial_src" >/dev/null
+    partial_package_cmd="${populate_deb_cmd//"$mig_target_prefix"/"$partial_target"} && \
+printf '#!/bin/sh\necho session-failed >&2\nexit 37\n' > '$partial_target/bin/modernime-session-init' && \
+chmod +x '$partial_target/bin/modernime-session-init'"
+    set +e
+    env MODERNIME_CONFIG_HOME="$mig_cfg_home" MODERNIME_DATA_HOME="$mig_data_home" \
+        "$project_root/scripts/modernime-migrate-channel" --from-prefix "$partial_src" \
+        --target-prefix "$partial_target" --to-channel deb --package-cmd "$partial_package_cmd" \
+        > "$test_root/partial-migration.log" 2>&1
+    partial_status=$?
+    set -e
+    [[ "$partial_status" -eq 37 ]]
+    grep -F 'session-failed' "$test_root/partial-migration.log" >/dev/null
+    grep -F 'Package migration completed; session initialization incomplete' "$test_root/partial-migration.log" >/dev/null
+    test -x "$partial_target/bin/modernime-settings"
+    test ! -e "$partial_src/bin/modernime-settings"
+fi
+
 printf 'All channel collision and legacy migration tests passed!\n'

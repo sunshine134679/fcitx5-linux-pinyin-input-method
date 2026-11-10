@@ -54,8 +54,9 @@ jobs:
         if: steps.current_ownership.outputs.deploy == 'true'
         run: |
           python3 tests/website/website_test.py
-          node tests/website/app_test.js
-          node tests/website/motion_test.js
+          node --check website/app.js
+          node --check website/studio.js
+          node --check website/interactions.js
 
       - name: Checkout existing signed repositories
         if: steps.current_ownership.outputs.deploy == 'true'
@@ -92,8 +93,8 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html styles.css app.js motion.js gallery.js install.js sitemap.xml robots.txt assets .nojekyll
+          git add index.html styles.css app.js studio.js interactions.js sitemap.xml robots.txt assets .nojekyll
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish ModernIME official website'
+            git commit -m '发布：更新 ModernIME 官网并保留签名软件源'
             git push origin HEAD:gh-pages
           fi

@@ -1,0 +1,21 @@
+id	category	input	expected	pinyin	before	scheme	learn	max_rank
+daily-greeting	日常	nihao	你好	ni'hao		full	0	1
+daily-weather	整句	jintiantianqihenhao	今天天气很好	jin'tian'tian'qi'hen'hao		full	0	1
+daily-request	整句	qingbangwodakaiwenjian	请帮我打开文件	qing'bang'wo'da'kai'wen'jian		full	0	1
+abbr-greeting	简拼	nh	你好	ni'hao		full	0	1
+abbr-city	简拼	bj	北京	bei'jing		full	0	1
+ambiguous-city	歧义	xian	西安	xi'an		full	0	3
+typo-swap	纠错	shagnhai	上海	shang'hai		full	0	3
+typo-inversion	纠错	zhognwen	中文	zhong'wen		full	0	3
+daily-input	日常	shuru	输入	shu'ru		full	0	1
+context-story	上下文	beijing	背景	bei'jing	故事的	full	0	1
+context-travel	上下文	beijing	北京	bei'jing	明天去	full	0	1
+context-balloon	上下文	chongqi	充气	chong'qi	气球	full	0	1
+context-expression	上下文	shenqing	神情	shen'qing	他的	full	0	1
+learn-homophone	学习	chongqi	充气	chong'qi		full	5	1
+shuangpin-xiaohe	双拼	nihc	你好	ni'hao		xiaohe	0	1
+shuangpin-ziranma	双拼	nihk	你好	ni'hao		ziranma	0	1
+long-greeting	整句	nihaoshijie	你好世界	ni'hao'shi'jie		full	0	1
+macro-money	金额	v123	壹佰贰拾叁元整			full	0	1
+symbol-exclamation	符号	tanhao	！			full	0	2
+english-code	英文	python	python			full	0	1

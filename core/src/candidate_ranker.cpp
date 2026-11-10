@@ -18,7 +18,8 @@ CandidateRanker::rank(std::string_view userInput,
     std::iota(order.begin(), order.end(), 0);
     for (auto &candidate : candidates) {
         candidate.match_priority =
-            PinyinMatchPolicy::priority(userInput, candidate.full_pinyin);
+            candidate.decoded_match_priority.value_or(
+                PinyinMatchPolicy::priority(userInput, candidate.full_pinyin));
         candidate.stability_bonus = 0.0;
         candidate.decoder_bonus = 0.0;
     }
@@ -59,24 +60,24 @@ CandidateRanker::rank(std::string_view userInput,
     float minimumDecoderScore = std::numeric_limits<float>::max();
     float maximumDecoderScore = std::numeric_limits<float>::lowest();
     for (const auto &candidate : candidates) {
-        if (!std::isfinite(candidate.decoder_score)) {
+        if (!candidate.decoder_score || !std::isfinite(*candidate.decoder_score)) {
             continue;
         }
         minimumDecoderScore =
-            std::min(minimumDecoderScore, candidate.decoder_score);
+            std::min(minimumDecoderScore, *candidate.decoder_score);
         maximumDecoderScore =
-            std::max(maximumDecoderScore, candidate.decoder_score);
+            std::max(maximumDecoderScore, *candidate.decoder_score);
     }
     if (minimumDecoderScore < maximumDecoderScore) {
         const auto range = static_cast<double>(maximumDecoderScore) -
                            static_cast<double>(minimumDecoderScore);
         for (auto &candidate : candidates) {
-            if (!std::isfinite(candidate.decoder_score)) {
+            if (!candidate.decoder_score || !std::isfinite(*candidate.decoder_score)) {
                 continue;
             }
             candidate.decoder_bonus =
-                (static_cast<double>(maximumDecoderScore) -
-                 static_cast<double>(candidate.decoder_score)) /
+                (static_cast<double>(*candidate.decoder_score) -
+                 static_cast<double>(minimumDecoderScore)) /
                 range;
         }
     }
@@ -150,8 +151,8 @@ CandidateRanker::rank(std::string_view userInput,
     // F1（2026-10-24 容错专项）：LibIME 模糊解码把击键形读音候选（如
     // zongwen 输入下的 zong'wen）判为 prio=2、规范读音候选（zhong'wen）判为
     // prio=0，组间排序不受学习影响，成熟偏好永远无法越过一次声母误差。
-    // 与简拼晋升同构：prio=0（全覆盖模糊变体）候选在学习增益达到既有
-    // 成熟学习者阈值 1.8 后，可与 prio=2 直接匹配组按最终分数竞争。
+    // prio=0 标准模糊音在成熟学习阈值 1.8 后仍可与 prio=2 竞争；
+    // 额外近音纠错则须有当前原始输入的明确重复选择证据。
     // 门槛收紧：候选读音必须与输入音节数一致（模糊变体天然保持音节结构），
     // 排除"王绍龙王"类分段造词产生的音节数不符学习词条越组晋升。
     std::size_t inputSyllables = 0;
@@ -181,7 +182,8 @@ CandidateRanker::rank(std::string_view userInput,
             }
         }
     }
-    const auto effectivePriority = [&candidates, inputSyllables,
+    const auto fuzzyInputKey = PinyinMatchPolicy::phoneticFuzzyKey(userInput);
+    const auto effectivePriority = [&candidates, inputSyllables, &fuzzyInputKey,
                                     inputIsFullPinyin](std::size_t index) {
         const auto &candidate = candidates[index];
         if (candidate.match_priority != 0 || !std::isfinite(candidate.learning_boost) ||
@@ -196,24 +198,27 @@ CandidateRanker::rank(std::string_view userInput,
         if (candidateSyllables != inputSyllables) {
             return candidate.match_priority;
         }
-        // Single-syllable fuzzy candidates (match_priority == 0) must not be elevated to
-        // exact match priority (2) purely by generic unigram learning boost from their normal
-        // pronunciation (e.g. typing "le -> 了" must not hijack "ne -> 呢", "long -> 龙" must
-        // not hijack "nong -> 弄", "shi -> 是" must not hijack "si -> 四").
-        // Promotion across exact match group requires explicit correction evidence under the
-        // current raw input (recent_choice_bonus > 0.0).
-        if (inputSyllables <= 1 && candidate.recent_choice_bonus <= 0.0) {
+        // 保留多音节标准模糊音的持久偏好。单字及额外近音替换不能
+        // 仅凭普通词频跨组夺首，须有当前原始输入的明确纠正证据。
+        const bool standardFuzzy = inputSyllables > 1 && !fuzzyInputKey.empty() &&
+            PinyinMatchPolicy::phoneticFuzzyKey(candidate.full_pinyin) == fuzzyInputKey;
+        if (!standardFuzzy && candidate.recent_choice_bonus <= 0.0) {
             return candidate.match_priority;
         }
         return 2;
     };
+    std::vector<int> effectivePriorities;
+    effectivePriorities.reserve(candidates.size());
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        effectivePriorities.push_back(effectivePriority(i));
+    }
     std::stable_sort(order.begin(), order.end(),
                      [&candidates, &abbreviationPromoted, &preferenceCosts,
-                      &effectivePriority](std::size_t left, std::size_t right) -> bool {
+                      &effectivePriorities](std::size_t left, std::size_t right) -> bool {
         const auto &a = candidates[left];
         const auto &b = candidates[right];
-        const auto aPriority = effectivePriority(left);
-        const auto bPriority = effectivePriority(right);
+        const auto aPriority = effectivePriorities[left];
+        const auto bPriority = effectivePriorities[right];
         if (aPriority != bPriority) {
             return aPriority > bPriority;
         }

@@ -9,6 +9,7 @@
 - `POLYPHONIC_REVIEW.tsv`：第三批无注音词表（如 `rime-ice/tencent`、`jieba`）离线分流时隔离出的强多音字冲突或待整词注音复核清单（10 列）。
 - `modernime-hotwords.raw`：网络热词与常用口语片段表（词语、完整拼音、cost=5），构建为独立的 `modernime-hotwords.dict` 并作为 libime 第三层词典加载；正 cost 让简拼（如 yyds）命中的热词排在系统词典组合之前。新增热词直接在此文件追加一行（保持 cost 为 5），并避免与 `modernime-knowledge.raw` 或系统词典 `sc.dict` 收录的词条重复。
 - `SOURCES.json`：源项目、固定提交号、SHA-256 校验值、跨源词频映射与分批过滤规则。
+- `lm_sc.arpa-20260629.tar.zst`：LibIME 上游的固定语境模型源数据（LGPL-2.1-or-later）。CMake 校验 SHA-256 后离线构建 8 位量化的 `modernime-context.lm`，保留原始训练分数的区分度；源归档约74 MiB，生成模型约39 MiB，构建后删除展开的临时 ARPA。它独立于发行版提供的主拼音模型，不覆盖系统文件。
 - `THIRD_PARTY_NOTICES.md` 与 `licenses/`：随派生数据发布的各来源独立许可证（`CC-BY-4.0`、`GPL-3.0-only`、`CC-BY-SA-4.0`、`MIT`、`LGPL-3.0`）和归属说明。
 
 这些数据文件是有意提交的离线运行时输入，不是临时下载物。CMake 构建生成的 `modernime-knowledge.dict` 位于 build 目录，属于构建产物，不提交 Git。
@@ -39,7 +40,7 @@ bash tests/pinyin_knowledge_data_test.sh \
   data/pinyin/modernime-hotwords.raw
 ```
 
-不要把上游完整仓库、压缩包、诗词全集、繁体大表、释义/例句、Python 虚拟环境或 build 目录复制到本项目。
+除上述已登记、构建必需的模型源归档外，不要把上游完整仓库、调研压缩包、诗词全集、繁体大表、释义/例句、Python 虚拟环境或 build 目录复制到本项目。
 
 2026-11-02：将“那你”从中性知识库迁入既有口语热词层，并补充“你继续、说吧”，均沿用 cost=5；用于改善“那你继续说吧”等未单独收录长句的组合，不屏蔽“纳尼”等合法候选。
 

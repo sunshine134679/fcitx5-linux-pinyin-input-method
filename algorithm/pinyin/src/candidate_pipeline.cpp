@@ -1,5 +1,7 @@
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/candidate_features.h"
+#include "modernime/pinyin/shuangpin_input.h"
+#include "modernime/pinyin/context_decoder.h"
 
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/common_characters.h"
@@ -76,30 +78,32 @@ CandidatePipelineResult buildCandidatePipeline(
     std::string_view contextBefore, std::string_view contextAfter,
     const std::vector<std::string> &previousOrder,
     const libime::PinyinContext *typoContext, const RecentChoices *recentChoices,
-    const libime::PinyinContext *variantContext) {
+    const libime::PinyinContext *variantContext, const ShuangpinInput *shuangpin,
+    std::size_t nativeOffset, const ContextDecoder *contextDecoder) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
-    // libime 的候选已按解码代价升序排列。简拼输入（如 yyds）会展开出
+    // libime 保留 N-best 整句在前，后续候选按解码分数降序排列；高分更优。
+    // 简拼输入（如 yyds）会展开出
     // 数千个候选，全部进入学习 boost + 词典加分评分循环会让单键耗时
-    // 超过 100ms；用户翻页永远看不到 128 名以外的候选，这里按 libime
-    // 原生顺序截断头部再评分，保证评分管线只在有限集合上工作。
+    // 超过 100ms；每批只处理128项，后续批次由翻页按需请求。
     constexpr std::size_t kMaxScoredCandidates = 128;
-    const std::size_t scoreLimit =
-        nativeCandidates.size() < kMaxScoredCandidates
-            ? nativeCandidates.size()
-            : kMaxScoredCandidates;
+    const auto begin = std::min(nativeOffset, nativeCandidates.size());
+    const auto scoreLimit = std::min(kMaxScoredCandidates, nativeCandidates.size() - begin);
+    result.nextNativeCandidate = begin + scoreLimit;
+    result.hasMoreCandidates = result.nextNativeCandidate < nativeCandidates.size();
 
     struct NativeCandidateEntry {
         std::string text;
         std::string full_pinyin;
         float decoder_score = 0.0F;
+        double language_context_bonus = 0.0;
         int match_priority = 0;
         std::size_t consumed = 0;
         std::size_t source_index = 0;
     };
     std::vector<NativeCandidateEntry> nativeEntries;
     nativeEntries.reserve(scoreLimit);
-    for (std::size_t index = 0; index < scoreLimit; ++index) {
+    for (std::size_t index = begin; index < result.nextNativeCandidate; ++index) {
         NativeCandidateEntry entry;
         entry.source_index = index;
         entry.text = nativeCandidates[index].toString();
@@ -112,8 +116,14 @@ CandidatePipelineResult buildCandidatePipeline(
         if (!consumed) continue;
         entry.consumed = *consumed;
         entry.decoder_score = nativeCandidates[index].score();
-        entry.match_priority =
-            core::PinyinMatchPolicy::priority(context.userInput(), entry.full_pinyin);
+        if (contextDecoder) entry.language_context_bonus = contextDecoder->gain(nativeCandidates[index]);
+        if (shuangpin != nullptr) {
+            const auto match = shuangpin->match(entry.full_pinyin);
+            if (!match || match->consumed != entry.consumed) continue;
+            entry.match_priority = match->priority;
+        } else {
+            entry.match_priority = core::PinyinMatchPolicy::priority(context.userInput(), entry.full_pinyin);
+        }
         nativeEntries.push_back(std::move(entry));
     }
 
@@ -153,14 +163,16 @@ CandidatePipelineResult buildCandidatePipeline(
         candidate.text = std::move(entry.text);
         candidate.full_pinyin = std::move(entry.full_pinyin);
         candidate.decoder_score = entry.decoder_score;
+        candidate.language_context_bonus = entry.language_context_bonus;
         if (entry.source_index == 0) candidate.unigram_anchor = 7.0;
         candidate.consumed_input_bytes = entry.consumed;
+        if (shuangpin != nullptr) candidate.decoded_match_priority = entry.match_priority;
         seenKeys.insert(spanKey(candidate.text, candidate.full_pinyin, entry.consumed));
         seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
     }
 
-    if (typoContext != nullptr) {
+    if (nativeOffset == 0 && typoContext != nullptr) {
         const auto &typoCandidates = typoContext->candidates();
         const std::size_t typoLimit =
             std::min<std::size_t>(typoCandidates.size(), 16);
@@ -177,14 +189,19 @@ CandidatePipelineResult buildCandidatePipeline(
             }
             const auto consumed = inputBoundary(*typoContext, typoCandidates[index], context.userInput());
             if (!consumed) continue;
+            const float adjustedScore = typoCandidates[index].score() - 0.8F;
             const auto key = spanKey(text, fullPinyin, *consumed);
             if (seenKeys.contains(key)) {
                 for (auto &existing : result.scored) {
                     if (existing.text == text && existing.full_pinyin == fullPinyin &&
                         existing.consumed_input_bytes == consumed) {
-                        if (index < existing.source_index) {
-                            existing.source_index = index;
-                            existing.decoder_score = typoCandidates[index].score();
+                        existing.source_index = std::min(index, existing.source_index);
+                        // Source position and decoder confidence are separate
+                        // evidence. A duplicate must not erase a stronger score.
+                        if (std::isfinite(adjustedScore) &&
+                            (!existing.decoder_score || !std::isfinite(*existing.decoder_score) ||
+                             adjustedScore > *existing.decoder_score)) {
+                            existing.decoder_score = adjustedScore;
                         }
                         break;
                     }
@@ -198,13 +215,14 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = fullPinyin;
             candidate.consumed_input_bytes = *consumed;
             seenWords.insert(core::candidateOrderKey(text, fullPinyin));
-            // 容错补充候选稍加惩罚（+0.8F 解码代价），避免在原词完全合法时过度喧宾夺主
-            candidate.decoder_score = typoCandidates[index].score() + 0.8F;
+            // 分数越高越优，容错补充扣除 0.8，避免把纠错惩罚变成奖励。
+            candidate.decoder_score = adjustedScore;
+            if (contextDecoder) candidate.language_context_bonus = contextDecoder->gain(typoCandidates[index]);
             result.scored.push_back(std::move(candidate));
         }
     }
 
-    if (variantContext != nullptr) {
+    if (nativeOffset == 0 && variantContext != nullptr) {
         const auto &variantCandidates = variantContext->candidates();
         const std::size_t variantLimit =
             std::min<std::size_t>(variantCandidates.size(), 16);
@@ -232,16 +250,41 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.full_pinyin = fullPinyin;
             candidate.consumed_input_bytes = *consumed;
             seenWords.insert(core::candidateOrderKey(text, fullPinyin));
-            // 近音变体是最低位的补充召回来源：惩罚显著高于纠错候选（+0.8），
+            // 近音变体是最低位的补充召回来源：扣分幅度高于纠错候选（0.8），
             // 且只依赖 F1 的成熟学习提升或既有混排插位获得可见性。
-            candidate.decoder_score = variantCandidates[index].score() + 2.0F;
+            candidate.decoder_score = variantCandidates[index].score() - 2.0F;
+            if (contextDecoder) candidate.language_context_bonus = contextDecoder->gain(variantCandidates[index]);
             result.scored.push_back(std::move(candidate));
         }
     }
 
-    if (learning != nullptr) {
+    if (nativeOffset == 0 && contextDecoder) {
+        for (auto candidate : contextDecoder->candidates()) {
+            if (shuangpin) {
+                const auto match = shuangpin->match(candidate.full_pinyin);
+                if (!match || match->consumed != candidate.consumed_input_bytes) continue;
+                candidate.decoded_match_priority = match->priority;
+            }
+            const auto key = spanKey(candidate.text, candidate.full_pinyin, *candidate.consumed_input_bytes);
+            if (!seenKeys.insert(key).second) {
+                for (auto &existing : result.scored)
+                    if (spanKey(existing.text, existing.full_pinyin, existing.consumed_input_bytes.value_or(0)) == key) {
+                        existing.language_context_bonus = std::max(existing.language_context_bonus, candidate.language_context_bonus);
+                        existing.learned_word_bonus = std::max(existing.learned_word_bonus, candidate.learned_word_bonus);
+                        existing.learned_rare_coverage |= candidate.learned_rare_coverage;
+                    }
+                continue;
+            }
+            seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
+            result.scored.push_back(std::move(candidate));
+        }
+    }
+    const auto recallInputs = shuangpin != nullptr ? shuangpin->recallInputs()
+        : std::vector<std::string>{context.userInput()};
+    if (nativeOffset == 0 && learning != nullptr) {
+      for (const auto &recallInput : recallInputs) {
         const auto recalled = learning->recallCandidates(
-            context.userInput(), nowMs, contextBefore, contextAfter);
+            recallInput, nowMs, contextBefore, contextAfter);
         for (const auto &item : recalled) {
             const auto cp = core::CommonCharacters::firstCodepoint(item.phrase);
             if (!((cp >= 0x4E00 && cp <= 0x9FFF) ||
@@ -251,6 +294,9 @@ CandidatePipelineResult buildCandidatePipeline(
             }
             const std::string segmentedPinyin =
                 core::PinyinMatchPolicy::segmentPinyin(item.pinyin);
+            const auto decodedMatch = shuangpin != nullptr
+                ? shuangpin->match(segmentedPinyin) : std::optional<ShuangpinInput::Match>{};
+            if (shuangpin != nullptr && !decodedMatch) continue;
             const auto key = core::candidateOrderKey(item.phrase, segmentedPinyin);
             if (!seenWords.insert(key).second) continue;
             core::CandidateScore candidate;
@@ -259,8 +305,13 @@ CandidatePipelineResult buildCandidatePipeline(
             candidate.source_index = 0;
             candidate.text = item.phrase;
             candidate.full_pinyin = segmentedPinyin;
+            if (decodedMatch) {
+                candidate.consumed_input_bytes = decodedMatch->consumed;
+                candidate.decoded_match_priority = decodedMatch->priority;
+            }
             result.scored.push_back(std::move(candidate));
         }
+      }
     }
 
     const CandidateFeatureContext request{context.userInput(), learning, recentChoices,
@@ -268,8 +319,54 @@ CandidatePipelineResult buildCandidatePipeline(
     for (auto &candidate : result.scored) {
         populateCandidateFeatures(candidate, dictionary, request);
     }
+    // A valid multi-syllable word competes with single characters for the same
+    // complete keystrokes. Global character frequency is not word-frequency
+    // evidence: center that prior on the most prominent matching character,
+    // preserving the frequency differences between characters. Both kinds use
+    // dense native-rank spacing; anchors and personal evidence remain intact.
+    const auto completeMatch = [&](const auto &candidate) {
+        return candidate.consumed_input_bytes == context.userInput().size() &&
+            core::PinyinMatchPolicy::exactInputMatch(context.userInput(), candidate.full_pinyin);
+    };
+    // The native first-character anchor encodes a context-free preference.
+    // With strong conditional evidence in this exact, fully consumed group,
+    // let the bounded LM gain and each character's own frequency compete.
+    // Suppressed or rare candidates cannot withdraw that protection.
+    const bool contextualCharacter = std::any_of(result.scored.begin(), result.scored.end(),
+        [&](const auto &candidate) {
+            return candidate.phrase_length == 1 && !candidate.is_rare &&
+                completeMatch(candidate) && candidate.language_context_bonus >= 1.0 &&
+                (learning == nullptr || !learning->isSuppressed(candidate.text, candidate.full_pinyin));
+        });
+    if (contextualCharacter) {
+        for (auto &candidate : result.scored) {
+            if (candidate.phrase_length == 1 && completeMatch(candidate)) candidate.unigram_anchor = 0.0;
+        }
+    }
+    if (shuangpin == nullptr && core::PinyinMatchPolicy::isStandardSyllable(context.userInput()) &&
+        std::any_of(result.scored.begin(), result.scored.end(), [&](const auto &candidate) {
+            return candidate.is_lexical && candidate.phrase_length >= 2 &&
+                completeMatch(candidate);
+        })) {
+        double prominenceBaseline = 0.0;
+        for (const auto &candidate : result.scored) {
+            if (candidate.phrase_length == 1 && completeMatch(candidate)) {
+                prominenceBaseline = std::max(prominenceBaseline, candidate.unigram_prominence);
+            }
+        }
+        for (auto &candidate : result.scored) {
+            if (completeMatch(candidate)) {
+                const bool character = candidate.phrase_length == 1;
+                // base_prior already uses dense spacing for prominent chars.
+                candidate.native_rank_scale = character && candidate.unigram_prominence > 0.0
+                    ? 1.0 : core::DenseNativeRankStep;
+                candidate.unigram_comparison_offset = character ? prominenceBaseline : 0.0;
+            }
+        }
+    }
     result.order = core::CandidateRanker::rank(
-        context.userInput(), result.scored, previousOrder);
+        shuangpin != nullptr && !recallInputs.empty() ? recallInputs.front() : context.userInput(),
+        result.scored, previousOrder);
     return result;
 }
 

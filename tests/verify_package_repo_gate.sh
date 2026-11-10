@@ -61,12 +61,16 @@ for required_path in \
     "modernime_fcitx5.so" \
     "modernime_ui.so" \
     "./usr/bin/modernime-settings" \
+    "./usr/bin/modernime-update" \
     "./usr/bin/modernime-session-init" \
     "./usr/share/modernime/install_state.sh" \
+    "./usr/share/modernime/gnome_extension.py" \
     "./usr/bin/modernime-data-guard" \
     "./usr/bin/modernime-migrate-channel" \
     "./usr/share/modernime/pinyin/modernime-knowledge.dict" \
     "./usr/share/modernime/pinyin/modernime-hotwords.dict" \
+    "./usr/share/modernime/pinyin/modernime-context.lm" \
+    "./usr/share/doc/modernime/licenses/LGPL-2.1.txt" \
     "./usr/share/doc/modernime/SOURCES.json" \
     "./usr/share/doc/modernime/THIRD_PARTY_NOTICES.md" \
     "./usr/share/applications/modernime-settings.desktop" \
@@ -76,7 +80,7 @@ for required_path in \
     "./usr/share/doc/modernime/LICENSE" \
     "./usr/share/doc/modernime/copyright" \
     "./usr/share/modernime/install-channel.txt" \
-    "./usr/share/modernime/extensions/kimpanel@kde.org/metadata.json"; do
+    "./usr/share/modernime/extensions/modernime-panel@sunshine134679.github.io/metadata.json"; do
     printf '%s\n' "${deb_contents}" | grep -Fq "${required_path}" ||
         fail "DEB missing required file: ${required_path}"
 done
@@ -279,12 +283,18 @@ icon_paths = [rootfs / f"usr/share/icons/hicolor/{size}x{size}/apps/modernime.pn
 for icon in icon_paths:
     assert icon.is_file(), f"RPM missing application icon: {icon}"
     assert icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), f"Invalid PNG icon: {icon}"
-ext_paths = sorted(p for p in (rootfs / "usr/share/modernime/extensions/kimpanel@kde.org").rglob("*") if p.is_file() and not p.is_symlink())
-assert (rootfs / "usr/share/modernime/extensions/kimpanel@kde.org/metadata.json").is_file(), "RPM missing kimpanel metadata.json"
+ext_paths = sorted(p for p in (rootfs / "usr/share/modernime/extensions/modernime-panel@sunshine134679.github.io").rglob("*") if p.is_file() and not p.is_symlink())
+assert (rootfs / "usr/share/modernime/extensions/modernime-panel@sunshine134679.github.io/metadata.json").is_file(), "RPM missing kimpanel metadata.json"
 assert len(ext_paths) == 20, f"Expected exactly 20 kimpanel extension files in RPM, got {len(ext_paths)}: {[p.name for p in ext_paths]}"
 for p in ext_paths:
     assert ".mimosa" not in p.parts and ".v2c" not in p.parts, f"RPM payload contains dirty files: {p}"
-expected_regular_files = 20 + len(icon_paths) + len(ext_paths)
+assert (rootfs / "usr/share/modernime/gnome_extension.py").is_file(), "RPM missing GNOME lifecycle module"
+context_assets = [rootfs / "usr/share/modernime/pinyin/modernime-context.lm",
+                  rootfs / "usr/share/doc/modernime/licenses/LGPL-2.1.txt"]
+for asset in context_assets:
+    assert asset.is_file() and asset.stat().st_size > 0, f"RPM missing context model asset: {asset}"
+assert (rootfs / "usr/bin/modernime-update").is_file(), "RPM missing native update helper"
+expected_regular_files = 22 + len(context_assets) + len(icon_paths) + len(ext_paths)
 assert len(payload_reg_files) == expected_regular_files, (
     f"Expected {expected_regular_files} regular files in RPM payload, got {len(payload_reg_files)}"
 )
@@ -318,13 +328,17 @@ if command -v rpm >/dev/null 2>&1; then
     fi
     for req_rpm_path in \
         "/usr/bin/modernime-settings" \
+        "/usr/bin/modernime-update" \
         "/usr/bin/modernime-session-init" \
         "/usr/share/modernime/install_state.sh" \
+        "/usr/share/modernime/gnome_extension.py" \
         "/usr/bin/modernime-data-guard" \
         "/usr/bin/modernime-migrate-channel" \
         "/usr/share/modernime/install-channel.txt" \
         "/usr/share/modernime/pinyin/modernime-knowledge.dict" \
         "/usr/share/modernime/pinyin/modernime-hotwords.dict" \
+        "/usr/share/modernime/pinyin/modernime-context.lm" \
+        "/usr/share/doc/modernime/licenses/LGPL-2.1.txt" \
         "/usr/share/modernime/pinyin/modernime-english-dict.bin" \
         "/usr/share/applications/modernime-settings.desktop"; do
         printf '%s\n' "${rpm_qpl_out}" | grep -Fxq "${req_rpm_path}" ||
@@ -337,12 +351,16 @@ fi
 
 for rpm_req_file in \
     "usr/bin/modernime-settings" \
+    "usr/bin/modernime-update" \
     "usr/bin/modernime-session-init" \
     "usr/share/modernime/install_state.sh" \
+    "usr/share/modernime/gnome_extension.py" \
     "usr/bin/modernime-data-guard" \
     "usr/bin/modernime-migrate-channel" \
     "usr/share/modernime/pinyin/modernime-knowledge.dict" \
     "usr/share/modernime/pinyin/modernime-hotwords.dict" \
+    "usr/share/modernime/pinyin/modernime-context.lm" \
+    "usr/share/doc/modernime/licenses/LGPL-2.1.txt" \
     "usr/share/doc/modernime/SOURCES.json" \
     "usr/share/doc/modernime/THIRD_PARTY_NOTICES.md" \
     "usr/share/applications/modernime-settings.desktop" \

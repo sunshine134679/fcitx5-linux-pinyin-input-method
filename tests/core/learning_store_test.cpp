@@ -223,6 +223,11 @@ void testWriterDetectsWalClearAndSerializesOwnWrites() {
         assertTrue(!writer.reloadIfChanged(), "unchanged reset marker does not reload twice");
         assertTrue(oldSnapshot->entry("旧词", "jiuci", {}, {}) != nullptr,
                    "published snapshots remain immutable across external clear");
+        // Exercise concurrent writes in Ready state. Reloading deliberately
+        // retains only the latest 100 events until its snapshot is available.
+        assertTrue(writer.flush() &&
+                       writer.epochViewState() == modernime::core::EpochViewState::Ready,
+                   "clear reload completes before the normal concurrent-write burst");
         auto selections = std::async(std::launch::async, [&writer] {
             for (int index = 0; index < 300; ++index) {
                 assertTrue(writer.enqueueSelection("新词", "xinci", {}, {}, 2000 + index),
@@ -308,12 +313,12 @@ void testCandidateOrderKeyIsSharedByRankingLayers() {
 }
 
 void testDecoderScoreIsNormalizedAsASecondarySignal() {
-    modernime::core::CandidateScore weaker{0, "甲", "a", 4.0F};
-    modernime::core::CandidateScore stronger{1, "乙", "a", 1.0F};
+    modernime::core::CandidateScore weaker{0, "甲", "a", -4.0F};
+    modernime::core::CandidateScore stronger{1, "乙", "a", -1.0F};
     std::vector candidates{weaker, stronger};
     modernime::core::CandidateRanker::rank("a", candidates);
     assertTrue(candidates[1].decoder_bonus > candidates[0].decoder_bonus,
-               "lower decoder score receives a larger normalized bonus");
+               "higher decoder score receives a larger normalized bonus");
     assertTrue(candidates[1].final_score() <
                    static_cast<double>(candidates[1].source_index),
                "decoder bonus participates in the final score");

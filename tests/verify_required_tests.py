@@ -47,6 +47,13 @@ FULL_BASELINE_REQUIRED = [
 ]
 
 FULL_FINAL_ADDITIONAL = [
+    "modernime_native_update_helper",
+    "modernime_settings_motion_gtk",
+    "modernime_clipboard_capture",
+    "modernime_clipboard_async",
+    "modernime_updates_page_gtk",
+    "modernime_gnome_extension_lifecycle",
+    "modernime_fresh_clone_isolation",
     "modernime_required_tests_contract",
     "modernime_cleanse_guard",
     "modernime_configuration_contract",
@@ -65,6 +72,11 @@ STORAGE_TSAN_REQUIRED = [
 
 CORE_ONLY_BASELINE_REQUIRED = [
     "modernime_settings",
+    "modernime_clipboard_observation",
+    "modernime_async_clipboard_history",
+    "modernime_clipboard_file_identity_load",
+    "modernime_clipboard_file_identity_save",
+    "modernime_clipboard_file_identity_retry",
     "modernime_clipboard_history",
     "modernime_persistent_clipboard_history",
     "modernime_dictionary_prior",
@@ -79,10 +91,13 @@ CORE_ONLY_BASELINE_REQUIRED = [
 ]
 
 CORE_ONLY_FINAL_ADDITIONAL = [
+    "modernime_fresh_clone_isolation",
     "modernime_required_tests_contract",
 ]
 
 HEADLESS_SKIP_WHITELIST = {
+    "modernime_settings_motion_gtk",
+    "modernime_updates_page_gtk",
     "modernime_settings_focus_gtk",
     "modernime_settings_shell_gtk",
     "modernime_settings_save_gtk",

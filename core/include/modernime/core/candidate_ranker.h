@@ -22,6 +22,8 @@ inline constexpr double ContextPriorWeight = 14.0;
 // front page / rank 0, overcoming system dictionary and native rank.
 inline constexpr double LearningPriorCap = 180.0;
 inline constexpr double DecoderPriorWeight = 0.25;
+inline constexpr double LanguageContextPriorWeight = 4.0;
+inline constexpr double DenseNativeRankStep = 0.08;
 
 inline double computeAdaptiveLearning(double learning_boost, double dormant_factor = 1.0) {
     if (!std::isfinite(learning_boost)) {
@@ -48,15 +50,27 @@ struct CandidateScore final {
     std::size_t source_index = 0;
     std::string text;
     std::string full_pinyin;
-    float decoder_score = 0.0F;
+    // LibIME score: higher is better. Recall-only candidates have no decoder
+    // evidence; a known zero must remain distinct from a missing score.
+    std::optional<float> decoder_score = std::nullopt;
     double decoder_bonus = 0.0;
     int match_priority = 0;
     double learning_boost = 0.0;
     double stability_bonus = 0.0;
     double dictionary_bonus = 0.0;
     double context_bonus = 0.0;
+    // Conditional LM gain is independent of learned context similarity.
+    double language_context_bonus = 0.0;
+    // Evidence of learned subwords, never the whole sentence's own frequency.
+    double learned_word_bonus = 0.0;
+    bool learned_rare_coverage = false;
     double unigram_anchor = 0.0;
     double unigram_prominence = 0.0;
+    // Remove the shared absolute character-frequency advantage when comparing
+    // characters with split-syllable words, preserving differences among chars.
+    double unigram_comparison_offset = 0.0;
+    // Comparable native-rank spacing when one raw syllable also spells a word.
+    double native_rank_scale = 1.0;
     std::int64_t last_selected_ms = 0;
     double dormant_factor = 1.0;
     bool is_rare = false;
@@ -67,13 +81,19 @@ struct CandidateScore final {
     // 原生格点跨度，已映射到本次原始输入。缺省仅用于无格点的个人召回。
     // 必须随排序携带值；source_index 不是重排后反查格点的下标。
     std::optional<std::size_t> consumed_input_bytes = std::nullopt;
+    // Native code-based parsers supply match evidence in their own alphabet.
+    // Full-pinyin callers continue to derive priority from userInput.
+    std::optional<int> decoded_match_priority = std::nullopt;
 
 
     double base_prior() const {
-        const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? 0.08 : 1.0;
-        double score = sourceStep * static_cast<double>(source_index) -
+        const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? DenseNativeRankStep : 1.0;
+        double score = native_rank_scale * sourceStep * static_cast<double>(source_index) +
+               unigram_comparison_offset -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
+               LanguageContextPriorWeight * language_context_bonus -
+               LearningPriorWeight * learned_word_bonus -
                DecoderPriorWeight * decoder_bonus - unigram_anchor - unigram_prominence;
         if (!is_rare && is_level1) {
             score -= 2.0;
@@ -89,7 +109,7 @@ struct CandidateScore final {
         return score;
     }
 
-    double rare_penalty() const { return is_rare && learning_boost < 1.8 ? 100.0 : 0.0; }
+    double rare_penalty() const { return is_rare && learning_boost < 1.8 && !learned_rare_coverage ? 100.0 : 0.0; }
 
     // Keep the established trusted-abbreviation admission boundary separate
     // from the bounded preference cost used within an admitted group.

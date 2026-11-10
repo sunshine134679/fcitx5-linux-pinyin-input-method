@@ -473,28 +473,28 @@ set(MODERNIME_KIMPANEL_ROOT_FILES
 )
 foreach(file IN LISTS MODERNIME_KIMPANEL_ROOT_FILES)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ext/${file}"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org")
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/modernime-panel@sunshine134679.github.io")
 endforeach()
 set(MODERNIME_KIMPANEL_SCHEMAS_FILES
     gschemas.compiled org.gnome.shell.extensions.kimpanel.gschema.xml
 )
 foreach(file IN LISTS MODERNIME_KIMPANEL_SCHEMAS_FILES)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ext/schemas/${file}"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org/schemas")
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/modernime-panel@sunshine134679.github.io/schemas")
 endforeach()
 set(MODERNIME_KIMPANEL_LOCALES
     de es fr he ja ko nl ru zh_CN zh_TW
 )
 foreach(loc IN LISTS MODERNIME_KIMPANEL_LOCALES)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ext/locale/${loc}/LC_MESSAGES/gnome-shell-extensions-kimpanel.mo"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/kimpanel@kde.org/locale/${loc}/LC_MESSAGES")
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/extensions/modernime-panel@sunshine134679.github.io/locale/${loc}/LC_MESSAGES")
 endforeach()
 EOF
 
 cmake -S "$iso_src" -B "$iso_build" >/dev/null
 cmake --install "$iso_build" --prefix "$iso_stage" >/dev/null
 
-installed_ext="$iso_stage/share/modernime/extensions/kimpanel@kde.org"
+installed_ext="$iso_stage/share/modernime/extensions/modernime-panel@sunshine134679.github.io"
 assert_true "Extension metadata exists in staging" test -f "$installed_ext/metadata.json"
 assert_true "Extension schemas exist in staging" test -f "$installed_ext/schemas/gschemas.compiled"
 assert_true "Extension locales exist in staging" test -f "$installed_ext/locale/zh_CN/LC_MESSAGES/gnome-shell-extensions-kimpanel.mo"

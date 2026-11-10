@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_shared_resources.h"
+#include <libime/pinyin/shuangpinprofile.h>
 #include "modernime/pinyin/user_dictionary.h"
 
 #include "modernime/core/pinyin_match.h"
@@ -19,15 +20,17 @@
 
 namespace {
 
-inline libime::PinyinFuzzyFlags getDefaultFuzzyFlags() {
-    libime::PinyinFuzzyFlags flags{
-        libime::PinyinFuzzyFlag::Z_ZH,
-        libime::PinyinFuzzyFlag::C_CH,
-        libime::PinyinFuzzyFlag::S_SH,
-        libime::PinyinFuzzyFlag::L_N,
-        libime::PinyinFuzzyFlag::EN_ENG,
-        libime::PinyinFuzzyFlag::IN_ING,
-    };
+libime::PinyinFuzzyFlags fuzzyFlags(const modernime::core::FuzzyPinyinOptions &options) {
+    // Keep valid internal syllable boundaries (xian -> xi'an, jie -> ji'e)
+    // in the native graph. These are exact alternative readings, not fuzzy sounds.
+    libime::PinyinFuzzyFlags flags{libime::PinyinFuzzyFlag::Inner};
+    flags |= libime::PinyinFuzzyFlag::InnerShort;
+    if (options.zZh) flags |= libime::PinyinFuzzyFlag::Z_ZH;
+    if (options.cCh) flags |= libime::PinyinFuzzyFlag::C_CH;
+    if (options.sSh) flags |= libime::PinyinFuzzyFlag::S_SH;
+    if (options.lN) flags |= libime::PinyinFuzzyFlag::L_N;
+    if (options.enEng) flags |= libime::PinyinFuzzyFlag::EN_ENG;
+    if (options.inIng) flags |= libime::PinyinFuzzyFlag::IN_ING;
 #ifdef MODERNIME_HAS_PINYIN_COMMON_TYPO
     flags |= libime::PinyinFuzzyFlag::CommonTypo;
 #endif
@@ -76,6 +79,27 @@ std::filesystem::path defaultLearningPath() {
                home == nullptr ? std::string_view{}
                                : std::string_view(home))
         .learningStore;
+}
+
+std::filesystem::path resolveContextLanguageModelPath(std::string_view configuredPath) {
+    // An explicit path also allows diagnostics to exercise the old-model fallback.
+    if (!configuredPath.empty()) return std::filesystem::path(configuredPath);
+    std::vector<std::filesystem::path> candidates;
+    if (const auto *dataHome = std::getenv("XDG_DATA_HOME"); dataHome && *dataHome) {
+        candidates.emplace_back(std::filesystem::path(dataHome) / "modernime/pinyin/modernime-context.lm");
+    } else if (const auto *home = std::getenv("HOME"); home && *home) {
+        candidates.emplace_back(std::filesystem::path(home) / ".local/share/modernime/pinyin/modernime-context.lm");
+    }
+    appendDataDirectoryCandidates(candidates, "modernime-context.lm");
+#ifdef MODERNIME_CONTEXT_MODEL_INSTALL_BINARY
+    candidates.emplace_back(MODERNIME_CONTEXT_MODEL_INSTALL_BINARY);
+#endif
+#ifdef MODERNIME_CONTEXT_MODEL_BUILD_BINARY
+    candidates.emplace_back(MODERNIME_CONTEXT_MODEL_BUILD_BINARY);
+#endif
+    for (const auto &candidate : candidates)
+        if (isRegularFile(candidate)) return candidate;
+    return {};
 }
 
 std::filesystem::path defaultUserDictionaryPath() {
@@ -377,7 +401,19 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
 
     resources->ime = std::make_unique<libime::PinyinIME>(std::move(dictionary),
                                                          std::move(model));
-    resources->ime->setFuzzyFlags(getDefaultFuzzyFlags());
+    const auto contextPath = resolveContextLanguageModelPath(paths.contextLanguageModel);
+    if (!contextPath.empty()) {
+        try {
+            resources->contextLanguageModel =
+                std::make_shared<const libime::StaticLanguageModelFile>(contextPath.c_str());
+            resources->contextLanguageModelPath = contextPath;
+        } catch (const std::exception &error) {
+            std::cerr << "ModernIME 警告: 语境模型加载失败，沿用系统模型: "
+                      << contextPath << ": " << error.what() << '\n';
+        }
+    }
+    resources->setFuzzyOptions(options.fuzzyPinyin);
+    resources->setPinyinScheme(options.pinyinScheme);
     resources->ime->setNBest(32);
     // 在后台预热线程中一体化加载学习写入器，首键打字时直接读取内存快照，
     // 避免首键触发数十毫秒的 SQLite 磁盘打开与全表反序列化。
@@ -393,6 +429,26 @@ std::shared_ptr<PinyinSharedResources> PinyinSharedResources::create(
         std::memory_order_release);
 
     return resources;
+}
+
+bool PinyinSharedResources::setPinyinScheme(core::PinyinScheme scheme) {
+    if (pinyinScheme_ == scheme) return false;
+    pinyinScheme_ = scheme;
+    ++inputConfigurationGeneration_;
+    if (usesShuangpin()) {
+        const auto profile = scheme == core::PinyinScheme::Xiaohe
+            ? libime::ShuangpinBuiltinProfile::Xiaohe : libime::ShuangpinBuiltinProfile::Ziranma;
+        ime->setShuangpinProfile(std::make_shared<libime::ShuangpinProfile>(profile));
+    }
+    return true;
+}
+
+bool PinyinSharedResources::setFuzzyOptions(const core::FuzzyPinyinOptions &options) {
+    const auto flags = fuzzyFlags(options);
+    if (ime->fuzzyFlags() == flags) return false;
+    ++inputConfigurationGeneration_;
+    ime->setFuzzyFlags(flags);
+    return true;
 }
 
 ResourceChange PinyinSharedResources::reloadUserDictionary() {

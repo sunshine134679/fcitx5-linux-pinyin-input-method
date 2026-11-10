@@ -19,6 +19,19 @@ inline std::filesystem::path installationPrefix(
     return fallback;
 }
 
+inline std::filesystem::path currentInstallationPrefix(
+    const Environment &environment, const std::filesystem::path &fallback) {
+    for (const auto &[key, value] : environment) {
+        if (key == "MODERNIME_PREFIX" && !value.empty()) return value;
+    }
+    if (const auto *prefix = std::getenv("MODERNIME_PREFIX"); prefix && *prefix) return prefix;
+    std::error_code error;
+    auto executable = std::filesystem::read_symlink("/proc/self/exe", error).string();
+    // 原子替换已运行的客户端后，Linux 会在旧可执行文件路径后标记 deleted。
+    if (executable.ends_with(" (deleted)")) executable.resize(executable.size() - 10);
+    return installationPrefix(executable, fallback);
+}
+
 inline std::string prependSearchPath(const std::filesystem::path &directory,
                                      const char *existing,
                                      std::string_view defaults = {}) {

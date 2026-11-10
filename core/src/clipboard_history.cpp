@@ -73,6 +73,112 @@ bool readUint64(std::istream &input, std::uint64_t &value) {
     return true;
 }
 
+bool withHistoryLock(const std::filesystem::path &path, std::string *error,
+                     bool nonBlocking, int timeoutMs,
+                     const std::function<bool()> &operation) {
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (path.empty()) {
+        setError(error, "clipboard history path is empty");
+        return false;
+    }
+
+    std::error_code ec;
+    const auto parentDir = path.parent_path().empty() ? std::filesystem::current_path() : path.parent_path();
+    std::filesystem::create_directories(parentDir, ec);
+    if (ec) {
+        setError(error, "unable to create clipboard history directory: " + ec.message());
+        return false;
+    }
+
+    const auto canonicalParent = std::filesystem::weakly_canonical(parentDir, ec);
+    const auto lockPath = (ec ? parentDir : canonicalParent) / ("." + path.filename().string() + ".lock");
+
+    const int effectiveTimeoutMs = nonBlocking ? 0 : (timeoutMs > 0 ? timeoutMs : 200);
+
+    // 1. Process-internal concurrency protection for the same lock path
+    std::shared_ptr<std::timed_mutex> pathMutex;
+    {
+        std::lock_guard<std::mutex> mapLock(s_lockMapMutex);
+        auto &entry = s_pathMutexes[lockPath];
+        if (!entry) {
+            entry = std::make_shared<std::timed_mutex>();
+        }
+        pathMutex = entry;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(effectiveTimeoutMs);
+    std::unique_lock<std::timed_mutex> inProcLock(*pathMutex, std::defer_lock);
+    if (nonBlocking) {
+        if (!inProcLock.try_lock()) {
+            setError(error, "clipboard lock is busy");
+            return false;
+        }
+    } else {
+        if (!inProcLock.try_lock_until(deadline)) {
+            setError(error, "clipboard lock is busy");
+            return false;
+        }
+    }
+
+    // 2. Cross-process file lock via flock on stable lock file (never unlinked)
+    int lockFd = ::open(lockPath.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    if (lockFd < 0) {
+        setError(error, "unable to open clipboard lock file: " + std::string(std::strerror(errno)));
+        return false;
+    }
+    struct LockGuard {
+        int fd;
+        ~LockGuard() {
+            if (fd >= 0) {
+                ::close(fd);
+            }
+        }
+    } fileLockGuard{lockFd};
+
+    bool lockAcquired = false;
+    if (nonBlocking) {
+        if (::flock(lockFd, LOCK_EX | LOCK_NB) == 0) {
+            lockAcquired = true;
+        } else if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            setError(error, "clipboard lock is busy");
+            return false;
+        } else {
+            setError(error, "unable to acquire clipboard lock: " + std::string(std::strerror(errno)));
+            return false;
+        }
+    } else {
+        while (true) {
+            if (::flock(lockFd, LOCK_EX | LOCK_NB) == 0) {
+                lockAcquired = true;
+                break;
+            }
+            if (errno != EWOULDBLOCK && errno != EAGAIN) {
+                setError(error, "unable to acquire clipboard lock: " + std::string(std::strerror(errno)));
+                return false;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                break;
+            }
+            const auto remainingUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                deadline - std::chrono::steady_clock::now()).count();
+            if (remainingUs <= 0) {
+                break;
+            }
+            ::usleep(static_cast<useconds_t>(std::min<int64_t>(remainingUs, 10000)));
+        }
+    }
+
+    if (!lockAcquired) {
+        setError(error, "clipboard lock is busy");
+        return false;
+    }
+
+    return operation();
+}
+
 } // namespace
 
 bool ClipboardHistory::observe(std::string_view text) {
@@ -98,15 +204,14 @@ bool ClipboardHistory::observe(std::string_view text) {
     return true;
 }
 
-bool ClipboardHistory::load(const std::filesystem::path &path,
-                            std::string *error) {
-    entries_.clear();
+ClipboardHistory::LoadResult ClipboardHistory::readFile(
+    const std::filesystem::path &path, std::string *error) {
     if (error != nullptr) {
         error->clear();
     }
     if (path.empty()) {
         setError(error, "clipboard history path is empty");
-        return false;
+        return LoadResult::Unavailable;
     }
 
     std::ifstream input(path, std::ios::binary);
@@ -114,23 +219,27 @@ bool ClipboardHistory::load(const std::filesystem::path &path,
         std::error_code filesystemError;
         if (!std::filesystem::exists(path, filesystemError) &&
             !filesystemError) {
-            return true;
+            entries_.clear();
+            return LoadResult::Ready;
         }
         setError(error, "unable to open clipboard history");
-        return false;
+        return LoadResult::Unavailable;
     }
+
+    const auto invalid = [&](const char *message) {
+        setError(error, input.bad() ? "unable to read clipboard history" : message);
+        return input.bad() ? LoadResult::Unavailable : LoadResult::Corrupt;
+    };
 
     std::array<char, fileMagic.size()> magic{};
     input.read(magic.data(), static_cast<std::streamsize>(magic.size()));
     if (!input || !std::equal(magic.begin(), magic.end(), fileMagic.begin())) {
-        setError(error, "invalid clipboard history header");
-        return false;
+        return invalid("invalid clipboard history header");
     }
 
     std::uint64_t count = 0;
     if (!readUint64(input, count) || count > kMaxEntries) {
-        setError(error, "invalid clipboard history entry count");
-        return false;
+        return invalid("invalid clipboard history entry count");
     }
 
     std::vector<std::string> loaded;
@@ -140,25 +249,50 @@ bool ClipboardHistory::load(const std::filesystem::path &path,
         if (!readUint64(input, length) || length == 0 ||
             length > kMaxEntryBytes ||
             length > std::numeric_limits<std::size_t>::max()) {
-            setError(error, "invalid clipboard history entry size");
-            return false;
+            return invalid("invalid clipboard history entry size");
         }
         std::string value(static_cast<std::size_t>(length), '\0');
         input.read(value.data(), static_cast<std::streamsize>(value.size()));
         if (!input) {
-            setError(error, "truncated clipboard history entry");
-            return false;
+            return invalid("truncated clipboard history entry");
         }
         loaded.push_back(std::move(value));
     }
 
     input.peek();
-    if (!input.eof()) {
-        setError(error, "unexpected clipboard history data");
-        return false;
+    if (input.bad() || !input.eof()) {
+        return invalid("unexpected clipboard history data");
     }
     entries_ = std::move(loaded);
-    return true;
+    return LoadResult::Ready;
+}
+
+bool ClipboardHistory::load(const std::filesystem::path &path,
+                            std::string *error, bool recoverCorrupt) {
+    const auto result = readFile(path, error);
+    if (result == LoadResult::Ready) return true;
+    if (result != LoadResult::Corrupt || !recoverCorrupt) return false;
+
+    return withHistoryLock(path, error, false, 200, [&] {
+        // An editor may have replaced the failed read while we waited.
+        const auto current = readFile(path, error);
+        if (current == LoadResult::Ready) return true;
+        if (current != LoadResult::Corrupt) return false;
+        const auto stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        auto backup = path;
+        backup += ".corrupt-" + std::to_string(stamp) + "-" +
+                  std::to_string(::getpid()) + "-" + std::to_string(++s_tempCounter);
+        std::error_code ec;
+        std::filesystem::rename(path, backup, ec);
+        if (ec) {
+            setError(error, "unable to preserve corrupt clipboard history: " + ec.message());
+            return false;
+        }
+        entries_.clear();
+        if (error != nullptr) error->clear();
+        return true;
+    });
 }
 
 bool ClipboardHistory::save(const std::filesystem::path &path,
@@ -277,127 +411,30 @@ bool ClipboardHistory::updateFile(
     std::string *error,
     bool nonBlocking,
     int timeoutMs) {
-    if (error != nullptr) {
-        error->clear();
-    }
-    if (path.empty()) {
-        setError(error, "clipboard history path is empty");
-        return false;
-    }
-
-    std::error_code ec;
-    const auto parentDir = path.parent_path().empty() ? std::filesystem::current_path() : path.parent_path();
-    std::filesystem::create_directories(parentDir, ec);
-    if (ec) {
-        setError(error, "unable to create clipboard history directory: " + ec.message());
-        return false;
-    }
-
-    const auto canonicalParent = std::filesystem::weakly_canonical(parentDir, ec);
-    const auto lockPath = (ec ? parentDir : canonicalParent) / ("." + path.filename().string() + ".lock");
-
-    const int effectiveTimeoutMs = nonBlocking ? 0 : (timeoutMs > 0 ? timeoutMs : 200);
-
-    // 1. Process-internal concurrency protection for the same lock path
-    std::shared_ptr<std::timed_mutex> pathMutex;
-    {
-        std::lock_guard<std::mutex> mapLock(s_lockMapMutex);
-        auto &entry = s_pathMutexes[lockPath];
-        if (!entry) {
-            entry = std::make_shared<std::timed_mutex>();
-        }
-        pathMutex = entry;
-    }
-
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(effectiveTimeoutMs);
-    std::unique_lock<std::timed_mutex> inProcLock(*pathMutex, std::defer_lock);
-    if (nonBlocking) {
-        if (!inProcLock.try_lock()) {
-            setError(error, "clipboard lock is busy");
+    return withHistoryLock(path, error, nonBlocking, timeoutMs, [&] {
+        // 3. Inside the lock: read latest state, apply mutation, and write back
+        ClipboardHistory current;
+        std::string loadError;
+        if (!current.load(path, &loadError)) {
+            setError(error, "unable to load latest clipboard history: " + loadError);
             return false;
         }
-    } else {
-        if (!inProcLock.try_lock_until(deadline)) {
-            setError(error, "clipboard lock is busy");
+
+        if (!mutation(current)) {
             return false;
         }
-    }
 
-    // 2. Cross-process file lock via flock on stable lock file (never unlinked)
-    int lockFd = ::open(lockPath.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
-    if (lockFd < 0) {
-        setError(error, "unable to open clipboard lock file: " + std::string(std::strerror(errno)));
-        return false;
-    }
-    struct LockGuard {
-        int fd;
-        ~LockGuard() {
-            if (fd >= 0) {
-                ::close(fd);
-            }
-        }
-    } fileLockGuard{lockFd};
-
-    bool lockAcquired = false;
-    if (nonBlocking) {
-        if (::flock(lockFd, LOCK_EX | LOCK_NB) == 0) {
-            lockAcquired = true;
-        } else if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            setError(error, "clipboard lock is busy");
-            return false;
-        } else {
-            setError(error, "unable to acquire clipboard lock: " + std::string(std::strerror(errno)));
+        if (!current.save(path, error)) {
             return false;
         }
-    } else {
-        while (true) {
-            if (::flock(lockFd, LOCK_EX | LOCK_NB) == 0) {
-                lockAcquired = true;
-                break;
-            }
-            if (errno != EWOULDBLOCK && errno != EAGAIN) {
-                setError(error, "unable to acquire clipboard lock: " + std::string(std::strerror(errno)));
-                return false;
-            }
-            if (std::chrono::steady_clock::now() >= deadline) {
-                break;
-            }
-            const auto remainingUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                deadline - std::chrono::steady_clock::now()).count();
-            if (remainingUs <= 0) {
-                break;
-            }
-            ::usleep(static_cast<useconds_t>(std::min<int64_t>(remainingUs, 10000)));
+
+        if (committedHistory != nullptr) {
+            *committedHistory = std::move(current);
         }
-    }
-
-    if (!lockAcquired) {
-        setError(error, "clipboard lock is busy");
-        return false;
-    }
-
-    // 3. Inside the lock: read latest state, apply mutation, and write back
-    ClipboardHistory current;
-    std::string loadError;
-    if (!current.load(path, &loadError)) {
-        setError(error, "unable to load latest clipboard history: " + loadError);
-        return false;
-    }
-
-    if (!mutation(current)) {
-        return false;
-    }
-
-    if (!current.save(path, error)) {
-        return false;
-    }
-
-    if (committedHistory != nullptr) {
-        *committedHistory = std::move(current);
-    }
-    return true;
+        return true;
+    });
 }
+
 
 bool ClipboardHistory::remove(std::size_t index) {
     if (index >= entries_.size()) {

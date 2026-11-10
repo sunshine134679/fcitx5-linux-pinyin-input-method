@@ -18,13 +18,14 @@
 | 改动范围 | 应覆盖的现有入口和实际行为 |
 |---|---|
 | 匹配、排序、中英、前缀、混排或学习策略 | CTest 的 `modernime_pinyin_match`、`modernime_dictionary_prior`、`modernime_pinyin_quality`、`modernime_pinyin_provider`、`modernime_english_arbitration`、`modernime_pinyin_daily_simulation`、`modernime_pinyin_engine`；GTest 的候选身份/学习顺序回归；按现有算法规范执行完整 CTest/GTest/Benchmark |
-| 选择、分页、上下文、取字或反馈 | `modernime_engine_state`、`modernime_fcitx5_input_panel`、`modernime_fcitx5_candidate_list`、`modernime_candidate_bar_layout`、`modernime_candidate_bar_renderer`，以及 GTest `ArchitectureSelectionRegression`；覆盖真实键鼠/消费范围/旧页失效 |
+| 选择、分页、上下文、取字或反馈 | `modernime_engine_state`、`modernime_fcitx5_input_panel`、`modernime_fcitx5_candidate_list`、`modernime_candidate_bar_layout`、`modernime_candidate_bar_renderer`、`modernime_ui_addon`，以及 GTest `ArchitectureSelectionRegression`；覆盖真实键鼠/消费范围/旧页失效、GTK before-paint 排队点击及选择回调销毁上下文 |
 | Writer、快照、清空及异步启学 | `modernime_personal_engine_gtest` 的 `ArchitectureWriterRegression`、`ArchitectureResourceCoordinationTest`、`PersonalizationSnapshotRegression`；真实二次 clear、失败恢复、首提交、首键、快照释放与相应 Release 基准 |
 | LMDB 事务、锁、扩容及环境所有权 | GTest `ArchitectureLmdbRegression`、`modernime_learning_store`，包含换库、RO/RW、close/reopen、真实 MAP_FULL、最后持有者；相关 TSAN/ASAN，不能只测单线程成功路径 |
 | 外部导入、本地恢复及容量 | `ArchitecturePersonalFileRegression`、`modernime_learning_store` 及现有导入/学习用例；两后端实际查询、频次/屏蔽/世代、容量边界与重开 |
-| 子进程、包更新及采集器 | `modernime_process_runner`、`modernime_update_controller`、`modernime_updates_page_contract`；fork 反例、输出预算、启动不明、等待超时、队列、旧 ID、页面关闭及安装后内部模式 |
+| 子进程、包更新及采集器 | `modernime_process_runner`、`modernime_update_controller`、`modernime_updates_page_contract`、`modernime_updates_page_gtk`；fork 反例、输出预算、启动不明、等待超时、队列、旧 ID、页面关闭及安装后内部模式；更新页真实缓存/失败/在途/搜索焦点与命令复制 |
 | 设置文件、路径、运行时诊断 | `modernime_settings`、`modernime_settings_model`、`modernime_runtime_controller`、`modernime_runtime_controller_concurrency`、`modernime_configuration_contract`、`modernime_ui_addon`、`modernime_adapter_recovery`；同 stamp 故障解除、原子替换与真实消费者 |
 | GTK 数据页与导航 | `modernime_data_controller`、`modernime_settings_data_async_gtk`、`modernime_settings_focus_gtk`、`modernime_settings_shell_gtk`、`modernime_settings_save_gtk`、`modernime_page_registry`、`modernime_settings_navigation_dbus`；真实在途打断/读后挂起、主循环心跳及实际控件状态 |
+| 剪贴板采集、去重及历史持久化 | `modernime_clipboard_capture`、`modernime_clipboard_async`、`modernime_clipboard_observation`、`modernime_async_clipboard_history`、`modernime_clipboard_file_identity_load/save/retry`、`modernime_persistent_clipboard_history`、`modernime_clipboard_trigger`、`modernime_clipboard_history_model`；真实共享插件的采集区间、恢复基线、慢读写期间输入、加载页与选择代次、外部清空/删除、文件身份竞争、失败待写及退出；有界批次组合对照与30×1MiB完整生命周期 |
 | 依赖或 CMake/CI | full 与 core-only 配置，`modernime_required_tests_contract`、`tests/required_tests_contract_test.py`；注册和执行双检查，失败/缺报告/非法 skip 负向保护 |
 | 安装、卸载、迁移或数据备份 | `modernime_install_transaction`、`modernime_install_runtime`、`modernime_install_environment`、`modernime_install_channel_collision`、`modernime_upgrade_data_protection`、`modernime_install_rollback_concurrent_writes` 等；按 AGENTS 执行 `tests/verify_fresh_clone.sh` 与相关真实包门禁 |
 | 正式发布或更新协议 | 软件源/安装门禁、网站 Python/Node 测试、生产签名、不可变 tag→源码→资产身份；真实旧客户端/旧渠道升级，不能只跑 `tests/previous_release_upgrade_test.sh` 就宣称 APT/DNF 旧 GUI 直升 |

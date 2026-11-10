@@ -53,6 +53,10 @@ std::string readFile(const std::filesystem::path &path) {
 } // namespace
 
 int main(int argc, char **argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--probe-install-channel") {
+        std::cout << modernime::settings::UpdateController::detectInstallChannel({}) << '\n';
+        return 0;
+    }
     if (argc == 4 && std::string_view(argv[1]) == "--subtest-client-exit") {
         using namespace modernime::settings;
         UpdateStatus status;
@@ -89,6 +93,26 @@ int main(int argc, char **argv) {
     assert(UpdateController::compareVersions("1:0.1.0", "0.9.9") > 0);
 
     const auto tempRoot = makeTempDir();
+    // 桌面启动不传 MODERNIME_PREFIX；从真实可执行文件所在目录识别可重定位安装。
+    const auto relocatedPrefix = tempRoot / "user installation";
+    std::filesystem::create_directories(relocatedPrefix / "bin");
+    std::filesystem::create_directories(relocatedPrefix / "share/modernime");
+    const auto relocatedClient = relocatedPrefix / "bin/modernime-settings";
+    std::filesystem::copy_file("/proc/self/exe", relocatedClient);
+    writeTextFile(relocatedPrefix / "share/modernime/install-channel.txt", "channel=script\n");
+    gchar **desktopEnvironment = g_get_environ();
+    desktopEnvironment = g_environ_unsetenv(desktopEnvironment, "MODERNIME_PREFIX");
+    desktopEnvironment = g_environ_unsetenv(desktopEnvironment, "MODERNIME_INSTALL_CHANNEL_FILE");
+    std::string relocatedPath = relocatedClient.string();
+    gchar *probeArgs[] = {relocatedPath.data(), const_cast<gchar *>("--probe-install-channel"), nullptr};
+    gchar *probeOutput = nullptr;
+    gint probeStatus = 0;
+    assert(g_spawn_sync(nullptr, probeArgs, desktopEnvironment, G_SPAWN_DEFAULT, nullptr, nullptr,
+                        &probeOutput, nullptr, &probeStatus, nullptr));
+    assert(probeStatus == 0);
+    assert(std::string_view(probeOutput) == "script\n");
+    g_free(probeOutput);
+    g_strfreev(desktopEnvironment);
     // Package-success paths also maintain launchers; keep all HOME/XDG writes isolated.
     assert(::setenv("HOME", (tempRoot / "home").c_str(), 1) == 0);
     assert(::setenv("XDG_DATA_HOME", (tempRoot / "data").c_str(), 1) == 0);
@@ -196,7 +220,8 @@ int main(int argc, char **argv) {
     assert(dnfStatus.privilegedCommand == "pkexec dnf upgrade --refresh -y modernime");
     assert((modernime::settings::detail::buildRefreshCacheArgv(
         PackageManagerKind::Dnf, "pkexec", "dnf") ==
-        std::vector<std::string>{"pkexec", "dnf", "makecache", "--refresh"}));
+        std::vector<std::string>{"pkexec", "dnf", "makecache", "--refresh",
+                                 "--setopt=*.skip_if_unavailable=False"}));
     assert((modernime::settings::detail::buildUpgradeArgv(
         PackageManagerKind::Dnf, "pkexec", "dnf") ==
         std::vector<std::string>{"pkexec", "dnf", "upgrade", "--refresh", "-y", "modernime"}));
@@ -387,7 +412,11 @@ int main(int argc, char **argv) {
     assert(offlineStatus.offlineOrUnreachable);
     assert(!offlineStatus.cacheMayBeStale);
     assert(!offlineStatus.updateAvailable);
-    assert(offlineStatus.statusMessage.find("未发现软件损坏") != std::string::npos);
+    // A failed package query neither diagnoses corruption nor certifies health.
+    assert(offlineStatus.statusMessage.find("运行正常") == std::string::npos);
+    assert(offlineStatus.statusMessage.find("未发现软件损坏") == std::string::npos);
+    assert(offlineStatus.statusMessage.find("软件源") != std::string::npos);
+    assert(offlineStatus.statusMessage.find("sudo apt update") != std::string::npos);
 
     // 5b. Locally installed via dpkg -i ONLY (100 /var/lib/dpkg/status, no remote APT repo index)
     // Must report offlineOrUnreachable=true instead of falsely claiming "已是最新版本"
@@ -466,7 +495,7 @@ int main(int argc, char **argv) {
         std::ifstream refreshLogIn(pkexecLog);
         std::string refreshLoggedArgs;
         std::getline(refreshLogIn, refreshLoggedArgs);
-        assert(refreshLoggedArgs.find("apt-get update") != std::string::npos);
+        assert(refreshLoggedArgs.find("apt-get update --error-on=any") != std::string::npos);
     }
 
     // Preserve the actual authorization failure instead of guessing network loss.

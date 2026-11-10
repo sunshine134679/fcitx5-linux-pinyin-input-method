@@ -153,6 +153,22 @@ CandidateBarLayout measureClipboard(
 
 } // namespace
 
+CandidateBarMetrics CandidateBarMetrics::fromSettings(const core::ModernIMESettings &settings) {
+    auto metrics = reference(settings.candidateFontSize, settings.candidatePageSize);
+    metrics.fontFamily = settings.candidateFontFamily;
+    const double factor = settings.candidateSpacing == core::CandidateSpacing::Compact ? 0.65
+        : settings.candidateSpacing == core::CandidateSpacing::Spacious ? 1.35 : 1.0;
+    const double gap = std::round(metrics.candidateGap * factor);
+    const double delta = (gap - metrics.candidateGap) * static_cast<double>(metrics.maxCandidates - 1);
+    metrics.candidateGap = gap;
+    metrics.panelWidth += delta;
+    metrics.canvasWidth += delta;
+    const double scale = settings.candidateFontSize / 20.0;
+    metrics.clipboardRowHeight *= scale;
+    metrics.clipboardSelectedHeight *= scale;
+    return metrics;
+}
+
 CandidateBarMetrics CandidateBarMetrics::reference(double fontSize,
                                                    std::size_t maxCandidates) {
     CandidateBarMetrics metrics;

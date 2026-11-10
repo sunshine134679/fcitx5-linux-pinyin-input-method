@@ -68,7 +68,7 @@ fi
 if [[ -n "$binary_dir" && -f "$binary_dir/cmake_install.cmake" ]]; then
     stage_check=$(mktemp -d "${TMPDIR:-/tmp}/modernime-contract-stage.XXXXXX")
     cmake --install "$binary_dir" --prefix "$stage_check" >/dev/null
-    ext_dir="$stage_check/share/modernime/extensions/kimpanel@kde.org"
+    ext_dir="$stage_check/share/modernime/extensions/modernime-panel@sunshine134679.github.io"
     test -f "$ext_dir/metadata.json"
     test -f "$ext_dir/extension.js"
     test -f "$ext_dir/schemas/gschemas.compiled"

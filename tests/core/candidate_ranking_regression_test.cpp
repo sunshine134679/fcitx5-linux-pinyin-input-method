@@ -4,6 +4,8 @@
 #include "modernime/core/pinyin_match.h"
 #include "modernime/fcitx5/engine.h"
 #include "modernime/pinyin/candidate_mixer.h"
+#include "modernime/pinyin/candidate_features.h"
+#include <libime/pinyin/pinyindictionary.h>
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
 #include <libime/pinyin/pinyincontext.h>
@@ -16,7 +18,11 @@
 
 #include <gtest/gtest.h>
 #include <chrono>
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <limits>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -86,6 +92,360 @@ protected:
     std::filesystem::path root;
     pinyin::PinyinDataPaths paths;
 };
+
+TEST_F(CandidateRankingRegression, DecoderHigherScoreWinsAtEqualPriorForEveryPermutation) {
+    // LibIME scores are higher-is-better. Hold all other priors equal so the
+    // native source position cannot hide an inverted decoder signal.
+    const std::vector<core::CandidateScore> source{
+        {0, "你好", "ni'hao", -10.0F},
+        {0, "拟好", "ni'hao", -15.0F},
+        {0, "你号", "ni'hao", -20.0F}};
+    std::vector<std::size_t> permutation{0, 1, 2};
+    do {
+        std::vector<core::CandidateScore> candidates;
+        for (const auto i : permutation) candidates.push_back(source[i]);
+        const auto order = core::CandidateRanker::rank("nihao", candidates);
+        ASSERT_EQ(order.size(), 3u);
+        EXPECT_EQ(candidates[order[0]].text, "你好");
+        EXPECT_EQ(candidates[order[1]].text, "拟好");
+        EXPECT_EQ(candidates[order[2]].text, "你号");
+        EXPECT_DOUBLE_EQ(candidates[order[0]].decoder_bonus, 1.0);
+        EXPECT_DOUBLE_EQ(candidates[order[1]].decoder_bonus, 0.5);
+        EXPECT_DOUBLE_EQ(candidates[order[2]].decoder_bonus, 0.0);
+    } while (std::next_permutation(permutation.begin(), permutation.end()));
+}
+
+TEST_F(CandidateRankingRegression, DecoderMissingEvidenceDoesNotChangeKnownBonuses) {
+    std::vector<core::CandidateScore> candidates{
+        {0, "你好", "ni'hao", -10.0F}, {0, "拟好", "ni'hao", -20.0F}};
+    core::CandidateRanker::rank("nihao", candidates);
+    const auto before = candidates;
+    core::CandidateScore recalled;
+    recalled.text = "你号";
+    recalled.full_pinyin = "ni'hao";
+    candidates.push_back(recalled);
+    core::CandidateRanker::rank("nihao", candidates);
+    EXPECT_DOUBLE_EQ(candidates[0].decoder_bonus, before[0].decoder_bonus);
+    EXPECT_DOUBLE_EQ(candidates[1].decoder_bonus, before[1].decoder_bonus);
+    EXPECT_DOUBLE_EQ(candidates[2].decoder_bonus, 0.0);
+    EXPECT_FALSE(std::optional<float>(candidates[2].decoder_score).has_value());
+}
+
+TEST_F(CandidateRankingRegression, DecoderKnownZeroRemainsEvidence) {
+    std::vector<core::CandidateScore> candidates{
+        {0, "你好", "ni'hao", 0.0F}, {0, "拟好", "ni'hao", -10.0F}};
+    const auto order = core::CandidateRanker::rank("nihao", candidates);
+    EXPECT_EQ(order.front(), 0u);
+    EXPECT_DOUBLE_EQ(candidates[0].decoder_bonus, 1.0);
+    EXPECT_DOUBLE_EQ(candidates[1].decoder_bonus, 0.0);
+}
+
+TEST_F(CandidateRankingRegression, DecoderNonFiniteAndDegeneratePoolsStayFinite) {
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto inf = std::numeric_limits<float>::infinity();
+    for (const auto &scores : {std::vector<float>{}, {nan}, {inf, -inf},
+                              {-10.0F}, {-10.0F, -10.0F, nan}}) {
+        std::vector<core::CandidateScore> candidates;
+        for (const auto score : scores) candidates.push_back({0, "词", "ci", score});
+        const auto order = core::CandidateRanker::rank("ci", candidates);
+        EXPECT_EQ(order.size(), scores.size());
+        for (const auto &candidate : candidates) {
+            EXPECT_DOUBLE_EQ(candidate.decoder_bonus, 0.0);
+            EXPECT_TRUE(std::isfinite(candidate.final_score()));
+        }
+    }
+    const auto maximum = std::numeric_limits<float>::max();
+    std::vector<core::CandidateScore> extremes{
+        {0, "强", "qiang", maximum}, {0, "弱", "qiang", -maximum},
+        {0, "缺失", "qiang", nan}, {0, "无穷", "qiang", inf}};
+    const auto order = core::CandidateRanker::rank("qiang", extremes);
+    EXPECT_EQ(order.front(), 0u);
+    EXPECT_DOUBLE_EQ(extremes[0].decoder_bonus, 1.0);
+    for (std::size_t i=1; i<extremes.size(); ++i) EXPECT_DOUBLE_EQ(extremes[i].decoder_bonus, 0.0);
+}
+
+TEST_F(CandidateRankingRegression, DecoderNativePreferenceReachesPipeline) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    libime::PinyinContext context(shared->ime.get());
+    ASSERT_TRUE(context.type("nihao"));
+    const auto result = pinyin::buildCandidatePipeline(context, *shared->ime->dict());
+    std::size_t comparisons = 0;
+    for (const auto &a : result.scored) {
+        for (const auto &b : result.scored) {
+            if (a.match_priority != b.match_priority ||
+                a.consumed_input_bytes != b.consumed_input_bytes) continue;
+            const auto first = std::optional<float>(a.decoder_score);
+            const auto second = std::optional<float>(b.decoder_score);
+            ASSERT_TRUE(first.has_value());
+            ASSERT_TRUE(second.has_value());
+            if (*first <= *second) continue;
+            ++comparisons;
+            EXPECT_GT(a.decoder_bonus, b.decoder_bonus) << a.text << " / " << b.text;
+        }
+    }
+    EXPECT_GT(comparisons, 0u);
+}
+
+TEST_F(CandidateRankingRegression, DecoderRecallOnlyCandidateHasNoInventedScore) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    libime::PinyinContext context(shared->ime.get());
+    ASSERT_TRUE(context.type("zidaili"));
+    const core::LearningSnapshot snapshot({{"紫袋狸", "zi'dai'li", "", "", 3, 1000}});
+    const auto result = pinyin::buildCandidatePipeline(context, *shared->ime->dict(), &snapshot, 1000);
+    const auto found = std::find_if(result.scored.begin(), result.scored.end(),
+        [](const auto &candidate) { return candidate.text == "紫袋狸"; });
+    ASSERT_NE(found, result.scored.end());
+    EXPECT_FALSE(std::optional<float>(found->decoder_score).has_value());
+    EXPECT_DOUBLE_EQ(found->decoder_bonus, 0.0);
+    EXPECT_GT(found->learning_boost, 0.0);
+}
+
+TEST_F(CandidateRankingRegression, DecoderSupplementalPenaltyReducesEvidence) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    libime::PinyinContext original(shared->ime.get()), corrected(shared->ime.get());
+    ASSERT_TRUE(original.type("baoyan"));
+    ASSERT_TRUE(corrected.type("biaoyan"));
+    const auto native = pinyin::buildCandidatePipeline(original, *shared->ime->dict());
+    for (const bool typo : {true, false}) {
+        SCOPED_TRACE(typo ? "typo" : "variant");
+        const auto result = pinyin::buildCandidatePipeline(original, *shared->ime->dict(),
+            nullptr, 0, {}, {}, {}, typo ? &corrected : nullptr, nullptr,
+            typo ? nullptr : &corrected);
+        std::size_t checked = 0;
+        for (const auto &candidate : result.scored) {
+            if (candidate.consumed_input_bytes != original.size()) continue;
+            const auto preexisting = std::find_if(native.scored.begin(), native.scored.end(),
+                [&](const auto &item) { return item.text == candidate.text &&
+                    item.full_pinyin == candidate.full_pinyin &&
+                    item.consumed_input_bytes == candidate.consumed_input_bytes; });
+            if (preexisting != native.scored.end()) continue;
+            ASSERT_LT(candidate.source_index, corrected.candidates().size());
+            const auto nativeScore = corrected.candidates()[candidate.source_index].score();
+            const auto score = std::optional<float>(candidate.decoder_score);
+            ASSERT_TRUE(score.has_value());
+            EXPECT_LT(*score, nativeScore) << candidate.text;
+            EXPECT_FLOAT_EQ(*score, nativeScore - (typo ? 0.8F : 2.0F));
+            EXPECT_DOUBLE_EQ(candidate.unigram_anchor, 0.0);
+            ++checked;
+        }
+        EXPECT_GT(checked, 0u);
+    }
+}
+
+TEST_F(CandidateRankingRegression, DecoderDuplicateTypoKeepsStrongerPenalizedEvidence) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    std::size_t smallerIndex = 0, otherIndex = 0;
+    for (const auto &[raw, fixed] : std::vector<std::pair<std::string, std::string>>{
+             {"jaili", "jiali"}, {"jiali", "jaili"}, {"qign", "qing"},
+             {"qing", "qign"}, {"zongwen", "zhongwen"}, {"zhongwen", "zongwen"},
+             {"baoyan", "biaoyan"}, {"nihao", "nihao"}}) {
+        SCOPED_TRACE(raw + " / " + fixed);
+        libime::PinyinContext original(shared->ime.get()), corrected(shared->ime.get());
+        ASSERT_TRUE(original.type(raw));
+        ASSERT_TRUE(corrected.type(fixed));
+        const auto before = pinyin::buildCandidatePipeline(original, *shared->ime->dict());
+        const auto after = pinyin::buildCandidatePipeline(original, *shared->ime->dict(),
+            nullptr, 0, {}, {}, {}, &corrected);
+        for (std::size_t i=0; i<std::min<std::size_t>(16,corrected.candidates().size()); ++i) {
+            const auto &sentence = corrected.candidates()[i].sentence();
+            if (sentence.empty() || sentence.back()->to()->index() != fixed.size()) continue;
+            const auto text = corrected.candidates()[i].toString();
+            const auto full = corrected.candidateFullPinyin(i);
+            const auto same = [&](const auto &item) { return item.text == text &&
+                item.full_pinyin == full && item.consumed_input_bytes == raw.size(); };
+            const auto old = std::find_if(before.scored.begin(), before.scored.end(), same);
+            if (old == before.scored.end()) continue;
+            const auto merged = std::find_if(after.scored.begin(), after.scored.end(), same);
+            ASSERT_NE(merged, after.scored.end());
+            const auto oldScore = std::optional<float>(old->decoder_score);
+            const auto newScore = std::optional<float>(merged->decoder_score);
+            ASSERT_TRUE(oldScore.has_value());
+            ASSERT_TRUE(newScore.has_value());
+            EXPECT_FLOAT_EQ(*newScore, std::max(*oldScore, corrected.candidates()[i].score()-0.8F)) << text;
+            EXPECT_EQ(merged->source_index, std::min(i,old->source_index));
+            EXPECT_EQ(merged->consumed_input_bytes, raw.size());
+            EXPECT_EQ(merged->unigram_anchor, old->unigram_anchor);
+            if (i < old->source_index) ++smallerIndex; else ++otherIndex;
+        }
+    }
+    EXPECT_GT(smallerIndex, 0u);
+    EXPECT_GT(otherIndex, 0u);
+}
+
+TEST_F(CandidateRankingRegression, ContextFeaturesUseRequestTimeWithoutChangingDecayPolicy) {
+    constexpr std::int64_t day = 24LL * 60 * 60 * 1000;
+    constexpr std::int64_t selectedAt = 1000;
+    const core::LearningSnapshot snapshot({{"试", "shi", "前文", "", 1, selectedAt}});
+    libime::PinyinDictionary dictionary;
+    double previous = 2.0;
+    for (const auto age : {0, 30, 300}) {
+        core::CandidateScore score;
+        score.text = "试";
+        score.full_pinyin = "shi";
+        const auto clock = selectedAt + age * day;
+        pinyin::populateCandidateFeatures(score, dictionary,
+            {"shi", &snapshot, nullptr, clock, "前文", ""});
+        EXPECT_DOUBLE_EQ(score.context_bonus, snapshot.contextBoost("试", "shi", "前文", "", clock));
+        EXPECT_LT(score.context_bonus, previous);
+        previous = score.context_bonus;
+        EXPECT_DOUBLE_EQ(score.learning_boost, snapshot.boostAt("试", "shi", clock));
+    }
+    for (const std::int64_t clock : {0LL, 500LL}) {
+        core::CandidateScore score;
+        score.text = "试";
+        score.full_pinyin = "shi";
+        pinyin::populateCandidateFeatures(score, dictionary,
+            {"shi", &snapshot, nullptr, clock, "前文", ""});
+        EXPECT_DOUBLE_EQ(score.context_bonus, snapshot.contextBoost("试", "shi", "前文", "", clock));
+    }
+    core::CandidateScore noContext;
+    noContext.text = "试";
+    noContext.full_pinyin = "shi";
+    pinyin::populateCandidateFeatures(noContext, dictionary,
+        {"shi", &snapshot, nullptr, selectedAt + 300 * day, "", ""});
+    EXPECT_EQ(noContext.context_bonus, 0.0);
+    EXPECT_EQ(snapshot.entry("试", "shi", "前文", "")->lastSelectedMs, selectedAt);
+}
+
+TEST_F(CandidateRankingRegression, ContextDecayReachesNativePipelineAndController) {
+    constexpr std::int64_t day = 24LL * 60 * 60 * 1000;
+    const auto clock = nowMs();
+    const auto selectedAt = clock - 300 * day;
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.open());
+        ASSERT_TRUE(store.recordSelection("试", "shi", "前文", "", selectedAt));
+    }
+    auto resources = pinyin::PinyinSharedResources::create(paths, {});
+    const auto snapshot = resources->visibleLearning();
+    ASSERT_NE(snapshot, nullptr);
+    libime::PinyinContext context(resources->ime.get());
+    ASSERT_TRUE(context.type("shi"));
+    for (const auto age : {0, 30, 300}) {
+        const auto requestTime = selectedAt + age * day;
+        const auto result = pinyin::buildCandidatePipeline(context, *resources->ime->dict(),
+            snapshot.get(), requestTime, "前文", "");
+        const auto found = std::find_if(result.scored.begin(), result.scored.end(),
+            [](const auto &candidate) { return candidate.text == "试" && candidate.full_pinyin == "shi"; });
+        ASSERT_NE(found, result.scored.end());
+        EXPECT_DOUBLE_EQ(found->context_bonus,
+            snapshot->contextBoost("试", "shi", "前文", "", requestTime));
+        EXPECT_EQ(found->consumed_input_bytes, 3U);
+        EXPECT_NE(std::find(result.order.begin(), result.order.end(),
+            static_cast<std::size_t>(found - result.scored.begin())), result.order.end());
+    }
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    controller.setContext("前文", "");
+    feedKeys(controller, "shi");
+    const auto index = rank(controller.page(), "试");
+    ASSERT_LT(index, controller.page().items.size());
+    EXPECT_EQ(controller.page().items[index].fullPinyin, "shi");
+    EXPECT_EQ(controller.page().items[index].consumedInputBytes, 3U);
+    ASSERT_TRUE(controller.select(index));
+    EXPECT_EQ(host.committed, "试");
+    EXPECT_TRUE(controller.page().rawInput.empty());
+    ASSERT_TRUE(provider.flush());
+    // 选择后的新事实不能改写仍在读的旧不可变快照。
+    EXPECT_EQ(snapshot->entry("试", "shi", "前文", "")->frequency, 1);
+    EXPECT_EQ(snapshot->entry("试", "shi", "前文", "")->lastSelectedMs, selectedAt);
+}
+
+TEST_F(CandidateRankingRegression, NumericMacrosPreserveValueAtRepresentationLimits) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    struct Case { std::string input; std::vector<std::string> macros; };
+    const std::vector<Case> cases = {
+        {"v10000000000000000", {"10000000000000000"}},
+        {"v1.001", {"一点零零一", "1.001"}},
+        {"v0.001", {"零点零零一", "0.001"}},
+        {"v.", {}},
+        {"v9999999999999999", {"玖仟玖佰玖拾玖兆玖仟玖佰玖拾玖亿玖仟玖佰玖拾玖万玖仟玖佰玖拾玖元整", "九千九百九十九兆九千九百九十九亿九千九百九十九万九千九百九十九", "9999999999999999"}},
+        {"v00000000000000000000000000001.01", {"壹元零壹分", "一点零一", "00000000000000000000000000001.01"}},
+        {"v0.00", {"零元整", "零点零零", "0.00"}},
+        {"v0.01", {"零元零壹分", "零点零一", "0.01"}},
+        {"v.5", {"零元伍角整", "零点五", ".5"}},
+        {"v1.", {"壹元整", "一", "1."}},
+        {"v1.000", {"一点零零零", "1.000"}},
+    };
+    for (const auto &test : cases) {
+        SCOPED_TRACE(test.input);
+        provider.reset();
+        ASSERT_TRUE(provider.append(test.input));
+        std::vector<std::string> actual;
+        for (const auto &item : provider.page().items) {
+            if (item.source == core::CandidateSource::Engine &&
+                item.sourceIndex == std::numeric_limits<std::size_t>::max()) {
+                actual.push_back(item.text);
+                EXPECT_EQ(item.fullPinyin, test.input);
+                EXPECT_EQ(item.consumedInputBytes, test.input.size());
+                EXPECT_EQ(item.commitRole, core::CommitCandidateRole::Generated);
+            }
+        }
+        EXPECT_EQ(actual, test.macros);
+    }
+    provider.reset();
+    EXPECT_FALSE(provider.append("v1..2"));
+    EXPECT_FALSE(provider.append("v-1"));
+}
+
+TEST_F(CandidateRankingRegression, NumericMacroKeyboardCommitPreservesExactValue) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    Host host;
+    fcitx5::ModernIMEController c(host, &provider);
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"v10000000000000000", "10000000000000000"},
+        {"v1.001", "一点零零一"},
+        {"v12345", "壹万贰仟叁佰肆拾伍元整"},
+        {"v88.5", "捌拾捌元伍角整"},
+    };
+    for (const auto &[input, expected] : cases) {
+        SCOPED_TRACE(input);
+        c.reset();
+        for (const char ch : input) {
+            ASSERT_TRUE(c.handle(ch >= '0' && ch <= '9'
+                ? fcitx5::KeyEvent{fcitx5::KeyKind::Digit, 0, ch}
+                : fcitx5::KeyEvent{fcitx5::KeyKind::Character, ch}));
+        }
+        EXPECT_EQ(c.page().rawInput, input);
+        ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+        EXPECT_EQ(host.committed, expected);
+        EXPECT_TRUE(c.page().rawInput.empty());
+        type(c, input);
+        ASSERT_TRUE(c.handle({fcitx5::KeyKind::Enter}));
+        EXPECT_EQ(host.committed, input);
+        EXPECT_TRUE(c.page().rawInput.empty());
+    }
+    type(c, "v1.001");
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::NextCandidate}));
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Space}));
+    EXPECT_EQ(host.committed, "1.001");
+    EXPECT_TRUE(c.page().rawInput.empty());
+    type(c, "v1.001");
+    ASSERT_TRUE(c.select(1));
+    EXPECT_EQ(host.committed, "1.001");
+    EXPECT_TRUE(c.page().rawInput.empty());
+    type(c, "v1.001");
+    ASSERT_TRUE(c.handle({fcitx5::KeyKind::Escape}));
+    EXPECT_TRUE(c.page().rawInput.empty());
+    ASSERT_TRUE(provider.flush());
+    // 本夹具禁学；取消及查询不能创建学习库。
+    EXPECT_FALSE(std::filesystem::exists(paths.learningStore));
+}
 
 TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Shi) {
     pinyin::PinyinCandidateProvider provider(paths);

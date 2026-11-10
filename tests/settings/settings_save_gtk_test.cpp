@@ -1,4 +1,5 @@
 #include "modernime/settings/settings_shell.h"
+#include "modernime/settings/settings_widgets.h"
 #include "modernime/core/settings.h"
 
 #include <gtk/gtk.h>
@@ -116,24 +117,85 @@ int main(int argc, char **argv) {
             return name != nullptr && std::string_view(name) == "保存设置";
         });
         assert(enabled != nullptr && save != nullptr);
-        assert(waitUntil([window] { return hasLabel(window, "● ModernIME 正在运行"); }));
+        assert(waitUntil([window] { return hasLabel(window, "ModernIME 正在运行"); }));
         std::ofstream(slowRemote) << "delay\n";
-        const bool initial = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(enabled));
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), !initial);
+        const bool initial = gtk_switch_get_active(GTK_SWITCH(enabled));
+        gtk_switch_set_active(GTK_SWITCH(enabled), !initial);
         saveWithoutBlocking(save);
         const auto firstHash = modernime::core::computeFileContentHash(paths.settingsFile);
         std::ofstream(paths.runtimeState) << "applied_content_hash=" << firstHash << "\npid=" << getpid() << '\n';
 
         // A second save while the first probe runs must report the second hash.
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), initial);
+        gtk_switch_set_active(GTK_SWITCH(enabled), initial);
         saveWithoutBlocking(save);
         assert(modernime::core::computeFileContentHash(paths.settingsFile) != firstHash);
         assert(waitUntil([window] { return hasLabel(window, "已保存，等待输入法读取"); }));
 
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), !initial);
+        gtk_switch_set_active(GTK_SWITCH(enabled), !initial);
         saveWithoutBlocking(save);
         assert(modernime::core::computeFileContentHash(paths.settingsFile) == firstHash);
         assert(waitUntil([window] { return hasLabel(window, "已保存并应用"); }));
+        gtk_switch_set_active(GTK_SWITCH(enabled), true);
+        auto *scheme = findWidget(window, [](GtkWidget *widget) {
+            const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
+            return target && std::string_view(target) == "pinyin.scheme";
+        });
+        assert(scheme && GTK_IS_MENU_BUTTON(scheme));
+        modernime::settings::setSettingsChoiceActive(scheme, 1);
+        for (const auto &option : modernime::core::kFuzzyPinyinOptions) {
+            auto *control = findWidget(window, [&](GtkWidget *widget) {
+                const auto *target = static_cast<const char *>(g_object_get_data(
+                    G_OBJECT(widget), "modernime-settings-target"));
+                return target && std::string_view(target) == option.key;
+            });
+            assert(control && GTK_IS_SWITCH(control) && gtk_widget_get_sensitive(control));
+            assert(gtk_switch_get_active(GTK_SWITCH(control)));
+            gtk_switch_set_active(GTK_SWITCH(control), false);
+        }
+        const auto targetWidget = [&](std::string_view name) {
+            return findWidget(window, [&](GtkWidget *widget) {
+                const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
+                return target && name == target;
+            });
+        };
+        auto *font = targetWidget("candidate-font-family");
+        auto *theme = targetWidget("candidate-theme");
+        auto *spacing = targetWidget("candidate-spacing");
+        auto *clientTheme = targetWidget("client-theme");
+        auto *shape = targetWidget("candidate-shape");
+        assert(font && theme && spacing && clientTheme && shape);
+        auto *description = pango_font_description_from_string("DejaVu Sans 20");
+        gtk_font_chooser_set_font_desc(GTK_FONT_CHOOSER(font), description);
+        pango_font_description_free(description);
+        g_signal_emit_by_name(font, "font-set");
+        modernime::settings::setSettingsChoiceActive(theme, 1);
+        modernime::settings::setSettingsChoiceActive(spacing, 0);
+        modernime::settings::setSettingsChoiceActive(clientTheme, 2);
+        saveWithoutBlocking(save);
+        const auto saved = modernime::core::SettingsStore::load(paths.settingsFile);
+        assert(saved.isSuccess());
+        assert(saved.settings.clientTheme == "night");
+        assert(saved.settings.candidateFontFamily == "DejaVu Sans");
+        assert(saved.settings.candidateTheme == modernime::core::CandidateTheme::Dark);
+        assert(saved.settings.candidateSpacing == modernime::core::CandidateSpacing::Compact);
+        assert(saved.settings.pinyinScheme == modernime::core::PinyinScheme::Xiaohe);
+        for (const auto &option : modernime::core::kFuzzyPinyinOptions)
+            assert(!(saved.settings.fuzzyPinyin.*option.member));
+        // Select a swatch through the actual palette row, not only its public setter.
+        auto *paletteRow = findWidget(GTK_WIDGET(gtk_menu_button_get_popover(GTK_MENU_BUTTON(theme))),
+            [](GtkWidget *widget) {
+                return GTK_IS_RADIO_BUTTON(widget) && GPOINTER_TO_INT(
+                    g_object_get_data(G_OBJECT(widget), "modernime-choice-index")) == 5;
+            });
+        assert(paletteRow);
+        gtk_button_clicked(GTK_BUTTON(paletteRow));
+        modernime::settings::setSettingsChoiceActive(shape, 2);
+        modernime::settings::setSettingsChoiceActive(clientTheme, 4);
+        saveWithoutBlocking(save);
+        const auto preset = modernime::core::SettingsStore::load(paths.settingsFile);
+        assert(preset.isSuccess() && preset.settings.clientTheme == "rose");
+        assert(preset.settings.candidateTheme == modernime::core::CandidateTheme::Rose);
+        assert(preset.settings.candidateShape == modernime::core::CandidateShape::Capsule);
     }
     g_object_unref(application);
     std::filesystem::remove_all(root);

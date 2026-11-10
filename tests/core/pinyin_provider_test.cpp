@@ -1,4 +1,5 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/candidate_diagnostics.h"
 #include "modernime/pinyin/candidate_mixer.h"
 
 #include "modernime/core/learning_store.h"
@@ -6,7 +7,9 @@
 #include "native_pinyin_test_baseline.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1276,7 +1279,285 @@ void testKeystrokeVariantRecallAndReadingAnnotation();
 void testLearnedPartialPrefixDoesNotUsurpAbbreviationSentence();
 void testSpecialCandidateSelectionActionAndLifetime();
 
-int main() {
+void testFuzzyPinyinOptions() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("fuzzy-options.sqlite3").string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = modernime::pinyin::PinyinCandidateProvider::createSharedResources(paths, options);
+    modernime::pinyin::PinyinCandidateProvider provider(shared, options);
+    modernime::pinyin::PinyinCandidateProvider other(shared, options);
+    const std::array<std::pair<const char *, const char *>, 6> examples{{
+        {"zongwen", "中文"}, {"cifan", "吃饭"}, {"suofa", "说法"},
+        {"lali", "哪里"}, {"zhen", "正"}, {"jin", "京"}}};
+    for (std::size_t i = 0; i < examples.size(); ++i) {
+        const auto &[input, expected] = examples[i];
+        const auto &option = modernime::core::kFuzzyPinyinOptions[i];
+        provider.reset();
+        other.reset();
+        assertTrue(provider.append(input) && other.append(input), "fuzzy input accepted");
+        const auto oldPage = other.page();
+        const auto oldIndex = indexOf(oldPage, expected);
+        assertTrue(oldIndex < oldPage.items.size(), "enabled fuzzy group recalls expected word");
+        const modernime::core::CandidateSelectionRequest request{
+            .globalIndex = oldIndex,
+            .expected = modernime::core::candidateIdentity(oldPage.items[oldIndex], oldPage)};
+        options.fuzzyPinyin.*option.member = false;
+        provider.applyOptions(options);
+        assertTrue(provider.page().rawInput == input, "hot update preserves raw composition");
+        assertTrue(!hasText(provider.page(), expected), "disabled fuzzy group stops matching");
+        assertTrue(!other.selectConfirmed(request, oldPage.generation),
+                   "shared configuration change rejects stale candidate request");
+        assertTrue(other.page().rawInput == input && !hasText(other.page(), expected),
+                   "inactive shared context uses the same parsing configuration");
+        options.fuzzyPinyin.*option.member = true;
+        provider.applyOptions(options);
+        assertTrue(hasText(provider.page(), expected), "reenabling restores fuzzy matching");
+        assertTrue(other.append("a") && other.page().rawInput == std::string(input) + "a",
+                   "first edit in another context preserves pre-update composition");
+        std::cout << "[PASS] " << option.key << '\n';
+    }
+}
+
+void testShuangpinSchemes() {
+    using modernime::core::PinyinScheme;
+    for (const auto &[scheme, code] : std::array{
+             std::pair{PinyinScheme::Xiaohe, "nihc"},
+             std::pair{PinyinScheme::Ziranma, "nihk"}}) {
+        const auto path = testPath(scheme == PinyinScheme::Xiaohe ? "xiaohe.sqlite3" : "ziranma.sqlite3");
+        {
+            modernime::core::LearningStore store(path);
+            assertTrue(store.open() && store.recordSelection("妮好", "nihao", "", "", 0),
+                       "prepare a learned word using its full pinyin identity");
+        }
+        modernime::pinyin::PinyinDataPaths paths;
+        paths.learningStore = path.string();
+        modernime::pinyin::PinyinProviderOptions options;
+        options.pinyinScheme = scheme;
+        modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+        assertTrue(provider.append(code), "double pinyin accepted");
+        assertTrue(provider.page().items.front().text == "你好", "double pinyin decodes greeting first");
+        const auto learnedIndex = indexOf(provider.page(), "妮好");
+        assertTrue(learnedIndex < provider.page().items.size(), "double pinyin recalls existing learned full-pinyin word");
+        assertTrue(provider.select(learnedIndex) && provider.flush(), "learned word selection persists");
+        {
+            modernime::core::LearningStore store(path);
+            assertTrue(store.open(), "reopen learning");
+            assertTrue(store.snapshot()->hasPositiveFrequency("妮好", "nihao") &&
+                       !store.snapshot()->hasPositiveFrequency("妮好", code),
+                       "double pinyin does not become the learning identity");
+        }
+        provider.reset();
+        assertTrue(provider.append(std::string(code) + "ma"), "double pinyin sentence accepted");
+        const auto index = indexOf(provider.page(), "你好");
+        assertTrue(index < provider.page().items.size() && provider.page().items[index].consumedInputBytes == 4,
+                   "phrase consumes four original double-pinyin bytes");
+        assertTrue(provider.select(index) && provider.page().rawInput == "ma", "partial double pinyin preserves suffix");
+        provider.reset();
+        provider.append(code);
+        const auto oldPage = provider.page();
+        const modernime::core::CandidateSelectionRequest oldRequest{.globalIndex = 0,
+            .expected = modernime::core::candidateIdentity(oldPage.items.front(), oldPage)};
+        options.pinyinScheme = PinyinScheme::Full;
+        provider.applyOptions(options);
+        assertTrue(provider.page().rawInput == code && !provider.selectConfirmed(oldRequest, oldPage.generation),
+                   "scheme change preserves keys and rejects previous selection");
+        provider.reset();
+        assertTrue(provider.append("nihao") && hasText(provider.page(), "妮好"), "full pinyin shares learned identity");
+        std::cout << "[PASS] shuangpin " << code << '\n';
+    }
+}
+
+void testColdCandidatePaging() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("cold-paging.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    assertTrue(provider.append("yi"), "cold input accepted");
+    const auto initial = provider.page();
+    assertTrue(initial.hasMoreCandidates, "native candidates beyond initial budget remain discoverable");
+    const modernime::core::CandidateSelectionRequest oldRequest{
+        .globalIndex = 0,
+        .expected = modernime::core::candidateIdentity(initial.items.front(), initial)};
+    assertTrue(provider.loadMoreCandidates(), "next bounded batch loads");
+    const auto extended = provider.page();
+    assertTrue(extended.items.size() > initial.items.size(), "cold batch adds selectable candidates");
+    for (std::size_t i = 0; i < initial.items.size(); ++i)
+        assertTrue(modernime::core::candidateIdentity(initial.items[i], initial) ==
+                   modernime::core::candidateIdentity(extended.items[i], extended), "published positions stay stable");
+    assertTrue(!provider.selectConfirmed(oldRequest, initial.generation), "old selection generation is revoked");
+    const auto coldIndex = initial.items.size();
+    const auto cold = extended.items[coldIndex];
+    assertTrue(cold.source == modernime::core::CandidateSource::Engine, "new candidate comes from native tail");
+    assertTrue(provider.select(coldIndex) && provider.flush(), "cold candidate selects and persists");
+    assertTrue(provider.page().rawInput == std::string("yi").substr(cold.consumedInputBytes), "cold choice consumes declared input");
+    modernime::pinyin::PinyinCandidateProvider reopened(paths);
+    assertTrue(reopened.append("yi"), "reopened input accepted");
+    assertTrue(hasText(reopened.page(), cold.text), "learned cold choice is recalled in the first batch after reopen");
+    std::cout << "[PASS] cold paging " << initial.items.size() << " -> " << extended.items.size()
+              << ", learned=" << cold.text << ", reopened_index=" << indexOf(reopened.page(), cold.text) << '\n';
+}
+
+void testLearnedWordSentenceDecoding() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("learned-sentence.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    // A confirmed newly formed term goes through the ordinary learning policy.
+    modernime::core::CommitEvent term;
+    term.text = "云汐引擎";
+    term.fullPinyin = "yun'xi'yin'qing";
+    term.rawKeystrokes = "yunxiyinqing";
+    term.consumedInputBytes = term.rawKeystrokes.size();
+    term.role = modernime::core::CommitCandidateRole::Chinese;
+    term.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (int i = 0; i < 5; ++i) provider.onCommitEvent(term);
+    provider.append("yunxiyinqinghenhaoyong");
+    auto index = indexOf(provider.page(), "云汐引擎很好用");
+    assertTrue(index < std::min<std::size_t>(5, provider.page().items.size()),
+               "a learned term combines with an unseen suffix on the first page");
+    const auto &item = provider.page().items[index];
+    assertTrue(item.fullPinyin == "yun'xi'yin'qing'hen'hao'yong" &&
+                   item.consumedInputBytes == provider.page().rawInput.size(),
+               "learned sentence carries the complete reading and raw span");
+    provider.reset();
+    provider.append("wozaishiyongyunxiyinqing");
+    index = indexOf(provider.page(), "我在使用云汐引擎");
+    assertTrue(index < std::min<std::size_t>(5, provider.page().items.size()),
+               "the same learned term works inside a previously unseen sentence");
+    provider.setLearningEnabled(false);
+    assertTrue(!hasText(provider.page(), "我在使用云汐引擎"),
+               "disabled learning excludes learned decoder vocabulary");
+    provider.setLearningEnabled(true);
+    index = indexOf(provider.page(), "我在使用云汐引擎");
+    assertTrue(index < provider.page().items.size() && provider.select(index) && provider.page().rawInput.empty(),
+               "a learned sentence commits and consumes the full composition");
+    assertTrue(provider.flush(), "learned sentence flushes normally");
+    modernime::core::LearningStore store(paths.learningStore);
+    assertTrue(store.open() && store.clear(), "clear the learning store");
+    auto resources = provider.sharedResources();
+    modernime::pinyin::PinyinCandidateProvider::reloadLearningStore(resources);
+    assertTrue(provider.flush(), "wait for the cleared learning epoch");
+    provider.append("yunxiyinqinghenhaoyong");
+    assertTrue(!hasText(provider.page(), "云汐引擎很好用"),
+               "clearing learning removes the request-local decoder vocabulary");
+    std::cout << "[PASS] learned term sentence decoding and clearing\n";
+}
+
+void testContextualLanguageModel() {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = testPath("context-decoder.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider provider(paths);
+    provider.setContext("气球", "");
+    provider.append("chongqi");
+    assertTrue(provider.page().items.front().text == "充气",
+               "cold context selects inflation without prior learning");
+    provider.reset();
+    provider.setContext("他的", "");
+    provider.append("shenqing");
+    assertTrue(provider.page().items.front().text == "神情",
+               "context segmentation preserves the model's expression preference");
+    provider.reset();
+    provider.setContext("今天天气很好我们去公", "");
+    provider.append("yuan");
+    assertTrue(provider.page().items.front().text == "园" &&
+                   provider.page().items.front().fullPinyin == "yuan" &&
+                   provider.page().items.front().consumedInputBytes == 4,
+               "cold context ranks the missing character of a word first");
+    provider.setContextLearningEnabled(false);
+    assertTrue(provider.page().items.front().text == "原",
+               "disabling context restores the native character anchor");
+    provider.setContextLearningEnabled(true);
+    // Disabling context deliberately discards the old surrounding text.
+    provider.setContext("今天天气很好我们去公", "");
+    assertTrue(provider.page().items.front().text == "园",
+               "fresh authorized context updates the existing composition");
+    provider.setContext("", "");
+    assertTrue(provider.page().items.front().text == "原",
+               "leaving context retains ordinary single-character order");
+    provider.reset();
+    provider.setContext("", "");
+    provider.append("beijinghenmei");
+    const auto original = provider.page();
+    const modernime::core::CandidateSelectionRequest oldRequest{
+        .globalIndex = 0,
+        .expected = modernime::core::candidateIdentity(original.items.front(), original)};
+    provider.setContext("故事的", "");
+    assertTrue(!provider.selectConfirmed(oldRequest, original.generation), "changed context invalidates old selection before republishing");
+    assertTrue(provider.page().items.front().text == "背景很美", "untrained context disambiguates a complete sentence");
+    const auto prefix = indexOf(provider.page(), "背景");
+    assertTrue(prefix < provider.page().items.size() && provider.select(prefix), "contextual word prefix selects");
+    assertTrue(provider.page().rawInput == "henmei", "contextual prefix preserves the raw suffix");
+    provider.reset();
+    provider.setContext("故事的", "");
+    provider.append("beijing");
+    assertTrue(provider.page().items.front().text == "背景", "context changes a homophone without training");
+    provider.setContext("明天去", "");
+    assertTrue(provider.page().items.front().text == "北京", "a different current context restores the city");
+    provider.setContext("故事的", "");
+    provider.setContextLearningEnabled(false);
+    assertTrue(provider.page().items.front().text == "北京", "context switch disables model evidence immediately");
+    provider.setContextLearningEnabled(true);
+    provider.setContext("故事的", "");
+    provider.setLearningEnabled(false);
+    assertTrue(provider.page().items.front().text == "北京", "disabled learning also excludes contextual model evidence");
+    paths.contextLanguageModel = testPath("absent-context-model.lm");
+    paths.learningStore = testPath("context-model-fallback.sqlite3");
+    modernime::pinyin::PinyinCandidateProvider fallback(paths);
+    fallback.setContext("故事的", "");
+    fallback.append("beijinghenmei");
+    assertTrue(fallback.page().items.front().text == "背景很美",
+               "missing optional context model retains existing contextual decoding");
+    std::cout << "[PASS] contextual word, sentence, partial consumption and disabled context\n";
+}
+
+int main(int argc, char **argv) {
+    {
+        modernime::pinyin::PinyinProviderOptions options;
+        options.learningEnabled = false;
+        modernime::pinyin::PinyinCandidateProvider provider(modernime::pinyin::PinyinDataPaths{}, options);
+        assertTrue(provider.append("xian"), "ambiguous syllable input is accepted");
+        const auto index = indexOf(provider.page(), "西安");
+        assertTrue(provider.page().items.front().text == "先" && provider.page().preedit == "xian" && index < 3,
+                   "native character stays first while the alternate word is reachable in top three");
+        assertTrue(provider.page().items[index].fullPinyin == "xi'an" &&
+                       provider.page().items[index].consumedInputBytes == 4,
+                   "internal split keeps complete reading and raw consumption");
+        provider.reset();
+        provider.append("xianren");
+        assertTrue(provider.select(indexOf(provider.page(), "西安")) && provider.page().rawInput == "ren",
+                   "alternate-word prefix leaves the unconsumed syllable");
+    }
+    {
+        modernime::pinyin::PinyinProviderOptions options;
+        options.learningEnabled = false;
+        modernime::pinyin::PinyinCandidateProvider provider(modernime::pinyin::PinyinDataPaths{}, options);
+        assertTrue(provider.append("nihao") && provider.diagnostics() == nullptr,
+                   "ordinary input collects no diagnostics");
+        const auto before = provider.page();
+        provider.setDiagnosticsEnabled(true);
+        const auto &after = provider.page();
+        assertTrue(before.items.size() == after.items.size(), "diagnostics preserve candidate count");
+        for (std::size_t i = 0; i < before.items.size(); ++i)
+            assertTrue(modernime::core::candidateIdentity(before.items[i], before) ==
+                           modernime::core::candidateIdentity(after.items[i], after),
+                       "diagnostics preserve order, identity and consumption");
+        assertTrue(provider.diagnostics()->generation == after.generation &&
+                       !provider.diagnostics()->scored.empty(), "trace describes published generation");
+        provider.reset();
+        assertTrue(provider.diagnostics()->scored.empty(), "clearing input clears captured evidence");
+        provider.setDiagnosticsEnabled(false);
+        assertTrue(provider.diagnostics() == nullptr, "diagnostics can be disabled");
+    }
+    testLearnedWordSentenceDecoding();
+    if (argc == 2 && std::string_view(argv[1]) == "--learned-sentence") return 0;
+    testContextualLanguageModel();
+    if (argc == 2 && std::string_view(argv[1]) == "--context-model") return 0;
+    testColdCandidatePaging();
+    if (argc == 2 && std::string_view(argv[1]) == "--cold-recall") return 0;
+    testShuangpinSchemes();
+    if (argc == 2 && std::string_view(argv[1]) == "--shuangpin") return 0;
+    testFuzzyPinyinOptions();
+    if (argc == 2 && std::string_view(argv[1]) == "--fuzzy-options") return 0;
     testSpecialCandidateSelectionActionAndLifetime();
     testPinyinDataPathsDetectionAndDiagnostics();
     testEnglishDefinitionCandidates();

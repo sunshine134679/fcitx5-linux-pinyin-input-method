@@ -11,6 +11,8 @@ add_library(modernime_core STATIC
     src/personal_engine.cpp
     src/lmdb_environment.cpp
     src/personal_engine_state.cpp
+    src/async_clipboard_history.cpp
+    src/clipboard_observation.cpp
     src/clipboard_history.cpp
     src/persistent_clipboard_history.cpp
     src/settings.cpp
@@ -19,6 +21,7 @@ add_library(modernime_core STATIC
     src/learning_policy.cpp
 )
 find_package(SQLite3 REQUIRED)
+find_package(Threads REQUIRED)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(LMDB QUIET lmdb)
@@ -55,5 +58,5 @@ target_include_directories(modernime_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 set_target_properties(modernime_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(modernime_core PUBLIC SQLite::SQLite3 LMDB::LMDB)
+target_link_libraries(modernime_core PUBLIC SQLite::SQLite3 LMDB::LMDB Threads::Threads)
 modernime_enable_warnings(modernime_core)

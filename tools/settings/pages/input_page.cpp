@@ -1,6 +1,7 @@
 #include "modernime/settings/pages/input_page.h"
 
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include <gtk/gtk.h>
@@ -173,11 +174,13 @@ public:
             "输入与按键", "调整默认输入状态、中英文切换键与以词定字。"));
         page = pageGuard.get();
         buildInputStatusSection();
+        buildFuzzySection();
         buildShortcutSection();
         buildPunctuationSection();
-        setSettingsFocusChain(
-            page, {inputEnabled, defaultMode, toggleKey, characterExtraction,
-                   punctuation});
+        setSettingsFocusChain(page, {inputEnabled, defaultMode, pinyinScheme, fuzzyExpander,
+            fuzzyControls[0], fuzzyControls[1], fuzzyControls[2],
+            fuzzyControls[3], fuzzyControls[4], fuzzyControls[5],
+            toggleKey, characterExtraction, punctuation});
         refresh();
         pageGuard.release();
     }
@@ -187,7 +190,7 @@ public:
             "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
-        inputEnabled = gtk_check_button_new();
+        inputEnabled = gtk_switch_new();
         setTarget(inputEnabled, "input-enabled");
         gtk_box_pack_start(GTK_BOX(section),
                             createSettingRow("启用 ModernIME",
@@ -195,9 +198,9 @@ public:
                                              inputEnabled),
                             FALSE, FALSE, 0);
 
-        defaultMode = gtk_combo_box_text_new();
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(defaultMode), "中文");
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(defaultMode), "英文");
+        defaultMode = createSettingsChoice();
+        appendSettingsChoice(defaultMode, "中文");
+        appendSettingsChoice(defaultMode, "英文");
         gtk_widget_set_hexpand(defaultMode, FALSE);
         setTarget(defaultMode, "default-mode");
         defaultModeFallback = createSettingRow(
@@ -207,6 +210,40 @@ public:
 
         g_signal_connect(inputEnabled, "notify::active", G_CALLBACK(onSwitchChanged), this);
         g_signal_connect(defaultMode, "changed", G_CALLBACK(onChanged), this);
+    }
+
+    void buildFuzzySection() {
+        auto *schemeSection = createSectionCard("拼音方案", "选择熟悉的输入方式。保存后生效，保留正在输入的按键。");
+        gtk_box_pack_start(GTK_BOX(page), schemeSection, FALSE, FALSE, 0);
+        pinyinScheme = createSettingsChoice();
+        for (const auto &scheme : core::kPinyinSchemes)
+            appendSettingsChoice(pinyinScheme, scheme.label);
+        setTarget(pinyinScheme, "pinyin.scheme");
+        gtk_box_pack_start(GTK_BOX(schemeSection), createSettingRow(
+            "输入方案", "全拼兼容简拼；双拼支持小鹤、自然码。个人词典与学习记录共用。", pinyinScheme), FALSE, FALSE, 0);
+        g_signal_connect(pinyinScheme, "changed", G_CALLBACK(onChanged), this);
+        fuzzyExpander = gtk_expander_new("模糊音");
+        addStyleClass(fuzzyExpander, "modernime-fuzzy-expander");
+        setAccessibleWidgetText(fuzzyExpander, "模糊音设置",
+            "展开后按发音习惯选择需要混用的音，保存后生效。");
+        auto *disclosure = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        auto *revealer = gtk_revealer_new();
+        auto *section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_container_add(GTK_CONTAINER(revealer), section);
+        gtk_box_pack_start(GTK_BOX(disclosure), fuzzyExpander, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(disclosure), revealer, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(schemeSection), disclosure, FALSE, FALSE, 0);
+        bindSettingsDisclosure(fuzzyExpander, revealer);
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            const auto &option = core::kFuzzyPinyinOptions[i];
+            auto *control = gtk_switch_new();
+            fuzzyControls[i] = control;
+            setTarget(control, option.key);
+            gtk_box_pack_start(GTK_BOX(section),
+                createSettingRow(option.label, "开启后，这两种发音可以互相匹配。", control),
+                FALSE, FALSE, 0);
+            g_signal_connect(control, "notify::active", G_CALLBACK(onSwitchChanged), this);
+        }
     }
 
     void buildShortcutSection() {
@@ -371,10 +408,9 @@ public:
             return;
         }
         auto settings = impl->model.settings();
-        settings.inputEnabled = gtk_toggle_button_get_active(
-            GTK_TOGGLE_BUTTON(impl->inputEnabled));
-        settings.defaultMode = gtk_combo_box_get_active(
-            GTK_COMBO_BOX(impl->defaultMode)) == 1
+        settings.inputEnabled = gtk_switch_get_active(
+            GTK_SWITCH(impl->inputEnabled));
+        settings.defaultMode = settingsChoiceActive(impl->defaultMode) == 1
                                    ? core::InputMode::English
                                    : core::InputMode::Chinese;
         settings.toggleKey = impl->toggleKeyValue;
@@ -382,6 +418,13 @@ public:
             GTK_SWITCH(impl->punctuation));
         settings.characterExtractionEnabled = gtk_switch_get_active(
             GTK_SWITCH(impl->characterExtraction));
+        const auto schemeIndex = settingsChoiceActive(impl->pinyinScheme);
+        if (schemeIndex >= 0 && static_cast<std::size_t>(schemeIndex) < core::kPinyinSchemes.size())
+            settings.pinyinScheme = core::kPinyinSchemes[schemeIndex].scheme;
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            settings.fuzzyPinyin.*core::kFuzzyPinyinOptions[i].member =
+                gtk_switch_get_active(GTK_SWITCH(impl->fuzzyControls[i]));
+        }
         impl->model.setSettings(std::move(settings));
         impl->updateState();
         impl->changed();
@@ -390,9 +433,8 @@ public:
     void refresh() {
         refreshing = true;
         const auto &settings = model.settings();
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inputEnabled),
-                                     settings.inputEnabled);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(defaultMode),
+        gtk_switch_set_active(GTK_SWITCH(inputEnabled), settings.inputEnabled);
+        setSettingsChoiceActive(defaultMode,
                                  settings.defaultMode == core::InputMode::English
                                      ? 1
                                      : 0);
@@ -408,6 +450,14 @@ public:
                               settings.characterExtractionEnabled);
         gtk_switch_set_active(GTK_SWITCH(punctuation),
                               settings.punctuationEnabled);
+        for (std::size_t i = 0; i < core::kPinyinSchemes.size(); ++i) {
+            if (core::kPinyinSchemes[i].scheme == settings.pinyinScheme)
+                setSettingsChoiceActive(pinyinScheme, static_cast<int>(i));
+        }
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            gtk_switch_set_active(GTK_SWITCH(fuzzyControls[i]),
+                settings.fuzzyPinyin.*core::kFuzzyPinyinOptions[i].member);
+        }
         refreshing = false;
         updateState();
     }
@@ -417,9 +467,19 @@ public:
         if (!state.dependentControlsSensitive && isRecording) {
             stopRecording(false);
         }
-        for (auto *control : {defaultMode, toggleKey, characterExtraction, punctuation}) {
+        for (auto *control : {defaultMode, pinyinScheme, toggleKey, characterExtraction, punctuation}) {
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         }
+        for (auto *control : fuzzyControls) {
+            gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
+        }
+        const auto &fuzzy = model.settings().fuzzyPinyin;
+        const auto enabled = std::count_if(core::kFuzzyPinyinOptions.begin(),
+            core::kFuzzyPinyinOptions.end(), [&fuzzy](const auto &option) {
+                return fuzzy.*option.member;
+            });
+        const auto fuzzyLabel = "模糊音 · 已开启 " + std::to_string(enabled) + " 组";
+        gtk_expander_set_label(GTK_EXPANDER(fuzzyExpander), fuzzyLabel.c_str());
         setWidgetError(toggleKey, !state.toggleKeyValid,
                        state.toggleKeyMessage);
         if (state.toggleKeyValid && !isRecording) {
@@ -429,6 +489,13 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        if (target == "pinyin.scheme") return focusWidgetOrFallback(pinyinScheme, nullptr);
+        for (std::size_t i = 0; i < core::kFuzzyPinyinOptions.size(); ++i) {
+            if (target == core::kFuzzyPinyinOptions[i].key) {
+                setSettingsDisclosureExpanded(fuzzyExpander, true, false);
+                return focusWidgetOrFallback(fuzzyControls[i], fuzzyExpander);
+            }
+        }
         if (target == "toggle-key-shift") {
             return focusWidgetOrFallback(toggleKey, toggleKeyFallback);
         }
@@ -454,7 +521,10 @@ public:
     GtkWidget *page = nullptr;
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
+    GtkWidget *pinyinScheme = nullptr;
+    GtkWidget *fuzzyExpander = nullptr;
     GtkWidget *defaultModeFallback = nullptr;
+    std::array<GtkWidget *, core::kFuzzyPinyinOptions.size()> fuzzyControls{};
     GtkWidget *toggleKey = nullptr;
     GtkWidget *toggleKeyFallback = nullptr;
     std::string toggleKeyValue;

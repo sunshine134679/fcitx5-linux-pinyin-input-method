@@ -412,13 +412,36 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     gtk_widget_show_all(window);
     drainEvents();
 
+    // 隔开构造器初次加载与下面显式触发的慢读取。
+    GtkTreeView *view = nullptr;
+    std::function<void(GtkWidget*)> scanView = [&](GtkWidget *w) {
+        if (GTK_IS_TREE_VIEW(w)) { view = GTK_TREE_VIEW(w); return; }
+        if (GTK_IS_CONTAINER(w)) {
+            gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
+                (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);
+            }, &scanView);
+        }
+    };
+    scanView(page->widget());
+    assert(view != nullptr);
+
+    GtkTreeModel *model = gtk_tree_view_get_model(view);
+    auto *addBtn = findTarget(page->widget(), "dictionary-add");
+    assert(addBtn != nullptr);
+    const auto currentLoadReady = [&] {
+        return gtk_widget_get_sensitive(addBtn) &&
+               gtk_tree_model_iter_n_children(model, nullptr) == 500;
+    };
+    pumpEventsUntil(currentLoadReady, std::chrono::seconds(5));
+    assert(currentLoadReady());
+
     std::atomic<bool> slowLoadEntered{false};
-    std::atomic<bool> slowLoadFinished{false};
+    std::atomic<bool> slowLoadHookFinished{false};
     modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
         if (op == "loadDictionary") {
             slowLoadEntered = true;
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-            slowLoadFinished = true;
+            slowLoadHookFinished = true;
         }
     });
 
@@ -426,11 +449,15 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     heartbeat.start();
 
     page->refresh();
+    assert(!gtk_widget_get_sensitive(addBtn));
+    std::cout << "  Pending refresh retains "
+              << gtk_tree_model_iter_n_children(model, nullptr)
+              << " old rows; current load is not ready" << std::endl;
 
     // Pump events during the 2-second real production loadDictionary worker
-    pumpEventsUntil([&] { return slowLoadFinished.load(); }, std::chrono::seconds(5));
+    pumpEventsUntil([&] { return slowLoadHookFinished.load(); }, std::chrono::seconds(5));
     assert(slowLoadEntered.load());
-    assert(slowLoadFinished.load());
+    assert(slowLoadHookFinished.load());
 
     heartbeat.stop();
     std::cout << "  Max heartbeat latency during 2s production loadDictionary: "
@@ -476,21 +503,10 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
         scanBtn(page->widget());
     }
 
-    // Wait until entries are populated in treeview
-    GtkTreeView *view = nullptr;
-    std::function<void(GtkWidget*)> scanView = [&](GtkWidget *w) {
-        if (GTK_IS_TREE_VIEW(w)) { view = GTK_TREE_VIEW(w); return; }
-        if (GTK_IS_CONTAINER(w)) {
-            gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
-                (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);
-            }, &scanView);
-        }
-    };
-    scanView(page->widget());
-    assert(view != nullptr);
-
-    GtkTreeModel *model = gtk_tree_view_get_model(view);
-    pumpEventsUntil([&] { return gtk_tree_model_iter_n_children(model, nullptr) >= 500; }, std::chrono::seconds(5));
+    // IoHook结束不等于读取/界面回调完成；旧500行仍可能可见。
+    // 添加按钮由当前加载代次的完成回调启用，再等该代次渲染齐全。
+    pumpEventsUntil(currentLoadReady, std::chrono::seconds(5));
+    assert(currentLoadReady());
 
     // Select row 0
     auto *rowPath = gtk_tree_path_new_from_indices(0, -1);
@@ -791,6 +807,97 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
 }
 
 // 8. Test LearningPage stale refresh and clear reentrancy (R1 Solidification)
+void testLearningPageFeedback(const std::filesystem::path &tempDir) {
+    const auto dir = tempDir / "learning_feedback";
+    std::filesystem::create_directories(dir);
+    const auto db = dir / "learning.sqlite3";
+    { std::ofstream out(db); out << "invalid SQLite fixture"; }
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "learningEntryCount") {
+            entered = true;
+            while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    });
+    modernime::settings::SettingsWindowModel model(dir / "settings.conf");
+    auto page = std::make_unique<modernime::settings::LearningPage>(model, db, [] {}, [](std::string) {});
+    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_container_add(GTK_CONTAINER(window), page->widget());
+    gtk_widget_show_all(window);
+    pumpEventsUntil([&] { return entered.load(); }, std::chrono::seconds(5));
+    assert(entered.load());
+    auto *status = findTarget(page->widget(), "learning-status");
+    auto *retry = findTarget(page->widget(), "learning-retry");
+    auto *clear = findTarget(page->widget(), "learning-clear");
+    auto *operation = findTarget(page->widget(), "learning-operation-result");
+    assert(status && retry && clear && operation);
+    const auto text = [](GtkWidget *label) { return std::string(gtk_label_get_text(GTK_LABEL(label))); };
+    assert(text(status).find("读取") != std::string::npos);
+    assert(!gtk_widget_get_sensitive(clear));
+    assert(!gtk_widget_get_visible(retry));
+    release = true;
+    pumpEventsUntil([&] { return gtk_widget_get_visible(retry); }, std::chrono::seconds(5));
+    assert(gtk_widget_get_visible(retry));
+    assert(text(status).find("无法读取学习数据库条目数") != std::string::npos);
+    assert(text(status).find("暂无") == std::string::npos);
+    assert(!gtk_widget_get_sensitive(clear));
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+
+    // Repair the real file, then use the visible retry action.
+    std::filesystem::remove(db);
+    {
+        modernime::core::LearningStore store(db);
+        assert(store.open());
+        assert(store.recordSelection("保留词条", "bao'liu", "", "", 1000));
+    }
+    gtk_button_clicked(GTK_BUTTON(retry));
+    pumpEventsUntil([&] { return gtk_widget_get_sensitive(clear); }, std::chrono::seconds(5));
+    assert(gtk_widget_get_sensitive(clear));
+    assert(text(status).find("1 条") != std::string::npos);
+    assert(!gtk_widget_get_visible(retry));
+
+    // Corrupt only the freshly created backup at the real after-backup boundary.
+    // Failed self-verification must preserve data and remain visible after stats reload.
+    std::atomic<bool> corrupted{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op == "backupAndClearLearning:afterBackup") {
+            for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+                if (entry.path().filename().string().starts_with("learning.sqlite3.backup-")) {
+                    std::ofstream out(entry.path(), std::ios::trunc);
+                    out << "corrupt backup";
+                    corrupted = true;
+                }
+            }
+        }
+    });
+    clickWithConfirmation(clear);
+    pumpEventsUntil([&] {
+        return text(operation).find("失败") != std::string::npos && gtk_widget_get_sensitive(clear);
+    }, std::chrono::seconds(5));
+    assert(text(operation).find("失败") != std::string::npos);
+    assert(text(operation).find("verified") != std::string::npos);
+    assert(gtk_widget_get_visible(operation));
+    assert(corrupted);
+    assert(text(status).find("1 条") != std::string::npos);
+    {
+        modernime::core::LearningStore store(db);
+        assert(store.openReadOnly());
+        assert(store.entryCount().value_or(0) == 1);
+    }
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+    clickWithConfirmation(clear);
+    pumpEventsUntil([&] { return text(status).find("暂无") != std::string::npos; }, std::chrono::seconds(5));
+    assert(text(status).find("暂无") != std::string::npos);
+    assert(!gtk_widget_get_sensitive(clear));
+    assert(text(operation).find("已清空") != std::string::npos);
+    assert(text(operation).find(".backup-") != std::string::npos);
+    assert(text(operation).find("失败") == std::string::npos);
+    page.reset();
+    gtk_widget_destroy(window);
+    drainEvents();
+}
+
 void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &tempDir) {
     std::cout << "[Test] Running testLearningPageStaleRefreshAndClearReentry..." << std::endl;
 
@@ -830,6 +937,8 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
 
     auto *clearBtnA = findTarget(pageA->widget(), "learning-clear");
     assert(clearBtnA != nullptr);
+    auto *statusA = findTarget(pageA->widget(), "learning-status");
+    assert(statusA != nullptr);
 
     // Initial load: button becomes sensitive because count == 1
     pumpEventsUntil([&] { return gtk_widget_get_sensitive(clearBtnA); }, std::chrono::seconds(5));
@@ -873,6 +982,7 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
     // Refresh #1 has older generation: must be discarded and MUST NOT re-enable the button!
     assert(!gtk_widget_get_sensitive(clearBtnA));
 
+    assert(std::string_view(gtk_label_get_text(GTK_LABEL(statusA))).find("暂无") != std::string_view::npos);
     pageA.reset();
     gtk_widget_destroy(winA);
     drainEvents();
@@ -924,6 +1034,8 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
 
     auto *clearBtnB = findTarget(pageB->widget(), "learning-clear");
     assert(clearBtnB != nullptr);
+    auto *statusB = findTarget(pageB->widget(), "learning-status");
+    assert(statusB != nullptr);
     pumpEventsUntil([&] { return gtk_widget_get_sensitive(clearBtnB); }, std::chrono::seconds(5));
     assert(gtk_widget_get_sensitive(clearBtnB));
 
@@ -950,6 +1062,8 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
 
     // Clear is in progress: button must be insensitive
     assert(!gtk_widget_get_sensitive(clearBtnB));
+    assert(std::string_view(gtk_label_get_text(GTK_LABEL(statusB))).find("正在备份并清空") != std::string_view::npos);
+    pageB->refresh(false);
 
     // Now release the pending refresh
     releaseCountHook = true;
@@ -959,6 +1073,7 @@ void testLearningPageStaleRefreshAndClearReentry(const std::filesystem::path &te
 
     // Refresh completing during clear MUST NOT re-enable the clear button!
     assert(!gtk_widget_get_sensitive(clearBtnB));
+    assert(std::string_view(gtk_label_get_text(GTK_LABEL(statusB))).find("正在备份并清空") != std::string_view::npos);
 
     // Attempt second clear click / call - must be ignored / reentrancy refused
     gtk_button_clicked(GTK_BUTTON(clearBtnB));
@@ -1140,6 +1255,7 @@ int main(int argc, char **argv) {
 
     try {
         testLearningStoreEntryCount(tempDir);
+        testLearningPageFeedback(tempDir);
         testFilterDictionaryPureFunction();
         testDictionaryPageAsyncAndBatch(tempDir);
         testDictionaryPageAsyncIoAndSlowIoSafety(tempDir);

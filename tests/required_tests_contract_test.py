@@ -394,6 +394,30 @@ class VerifyRequiredTestsContractTest(unittest.TestCase):
             any("Illegal test SKIP for modernime_runtime_controller_concurrency" in e for e in errors)
         )
 
+    def test_fresh_clone_isolation_is_required_in_each_final_profile(self):
+        target = "modernime_fresh_clone_isolation"
+        profiles = (
+            ("full", FULL_BASELINE_REQUIRED + FULL_FINAL_ADDITIONAL),
+            ("core-only", CORE_ONLY_BASELINE_REQUIRED + CORE_ONLY_FINAL_ADDITIONAL),
+        )
+        for profile, complete in profiles:
+            for defect in ("unregistered", "unexecuted", "failed", "skipped"):
+                with self.subTest(profile=profile, defect=defect):
+                    names = set(complete) | {target}
+                    self.create_registered_json(names - {target} if defect == "unregistered" else names)
+                    results = {name: "passed" for name in names}
+                    if defect == "unexecuted":
+                        del results[target]
+                    elif defect in ("failed", "skipped"):
+                        results[target] = defect
+                    self.create_junit_xml(results)
+                    ok, errors = verify(
+                        registered_path=self.registered_json, profile=profile, stage="final",
+                        junit_paths=[self.junit_xml], execution="headless",
+                    )
+                    self.assertFalse(ok, f"{profile} accepted {defect} isolation test")
+                    self.assertTrue(any(target in error for error in errors), errors)
+
     def test_nonexistent_junit_path_fails(self):
         all_final = list(FULL_BASELINE_REQUIRED) + list(FULL_FINAL_ADDITIONAL)
         self.create_registered_json(all_final)

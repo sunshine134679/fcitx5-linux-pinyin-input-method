@@ -387,6 +387,13 @@ void ModernIMEController::finalizeRecentCommitDeletion() {
             provider_->onCommitEvent(event);
         }
         provider_->resetCommitHistory();
+        // Learning sequence cleanup also clears the provider's context. The
+        // host has already reported the edited document, and unchanged later
+        // updates are deduplicated by setContext(), so restore that valid fact
+        // before the next composition starts.
+        if (contextAvailability_ == ContextAvailability::Valid) {
+            provider_->setContext(contextBefore_, contextAfter_);
+        }
     }
     recentCommit_.valid = false;
 }
@@ -861,9 +868,8 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
         }
 
         if (!sensitive_ && options_.learningEnabled &&
-            outcome->selected.role != core::CommitCandidateRole::Command &&
-            outcome->selected.role != core::CommitCandidateRole::English &&
-            outcome->selected.role != core::CommitCandidateRole::Raw &&
+            (outcome->selected.role == core::CommitCandidateRole::Chinese ||
+             outcome->selected.role == core::CommitCandidateRole::UserDictionary) &&
             !outcome->selected.text.empty()) {
             initRecentCommit(page_.items[request.globalIndex], basePrefix, contextAfter_);
         } else {
@@ -1033,7 +1039,7 @@ void ModernIMEController::clearComposition() {
     contextBefore_ = fallbackContextBefore_;
     contextAfter_.clear();
     clipboardMode_ = false;
-    clipboardEntries_.clear();
+    clipboardEntries_.reset();
     compositionInput_.clear();
     compositionCursor_ = 0;
     if (provider_ != nullptr) {
@@ -1132,9 +1138,21 @@ void ModernIMEController::setActive(bool active) {
     }
 }
 
-void ModernIMEController::setClipboardEntries(
-    std::vector<std::string> entries) {
+void ModernIMEController::setClipboardEntries(std::vector<std::string> entries) {
+    setClipboardSnapshot(std::make_shared<const std::vector<std::string>>(std::move(entries)),
+                         core::ClipboardAvailability::Ready);
+}
+
+void ModernIMEController::setClipboardSnapshot(
+    std::shared_ptr<const std::vector<std::string>> entries,
+    core::ClipboardAvailability availability) {
+    const bool refreshPlaceholder = clipboardMode_ && !sensitive_ &&
+        clipboardPageAvailability_ != core::ClipboardAvailability::Ready &&
+        clipboardPageAvailability_ != availability;
+    if (entries == clipboardEntries_ && availability == clipboardAvailability_ && !refreshPlaceholder) return;
     clipboardEntries_ = std::move(entries);
+    clipboardAvailability_ = availability;
+    if (refreshPlaceholder) openClipboard();
 }
 
 std::size_t ModernIMEController::pageSize() const {
@@ -1203,12 +1221,29 @@ void ModernIMEController::setPageBoundaries(std::vector<core::PageBoundary> boun
     setPageBoundaries(displayGeneration_, layoutGeneration_, std::move(boundaries));
 }
 
-void ModernIMEController::publishProviderPage(bool adoptRemainingComposition) {
+bool ModernIMEController::loadMoreCandidates() {
+    if (clipboardMode_ || !provider_ || !provider_->loadMoreCandidates()) return false;
+    const auto &extended = provider_->page();
+    const auto oldSize = page_.items.size();
+    const bool samePrefix = page_.rawInput == extended.rawInput && extended.items.size() >= oldSize &&
+        std::equal(page_.items.begin(), page_.items.end(), extended.items.begin(),
+            [&](const auto &a, const auto &b) {
+                return core::candidateIdentity(a, page_) == core::candidateIdentity(b, extended);
+            });
+    const auto cursor = samePrefix
+        ? (extended.items.size() > oldSize ? oldSize : page_.cursor) : std::size_t{0};
+    publishProviderPage(false, cursor);
+    return true;
+}
+
+void ModernIMEController::publishProviderPage(bool adoptRemainingComposition,
+                                             std::optional<std::size_t> cursor) {
     displayGeneration_++;
     page_ = provider_->page();
     page_.sessionId = sessionId_;
     page_.displayGeneration = displayGeneration_;
     providerGeneration_ = page_.generation;
+    if (cursor && !page_.items.empty()) page_.cursor = std::min(*cursor, page_.items.size() - 1);
     if (adoptRemainingComposition && !page_.rawInput.empty()) {
         compositionInput_ = page_.rawInput;
         compositionCursor_ = compositionInput_.size();
@@ -1288,17 +1323,22 @@ bool ModernIMEController::openClipboard() {
     compositionInput_.clear();
     compositionCursor_ = 0;
     clipboardMode_ = true;
-    page_.items.reserve(clipboardEntries_.size());
-    if (clipboardEntries_.empty()) {
+    clipboardPageAvailability_ = clipboardAvailability_;
+    const auto count = clipboardEntries_ ? clipboardEntries_->size() : 0;
+    page_.items.reserve(count);
+    if (clipboardAvailability_ != core::ClipboardAvailability::Ready || count == 0) {
         core::CandidateItem emptyItem;
-        emptyItem.text = "(剪贴板为空)";
+        emptyItem.text = clipboardAvailability_ == core::ClipboardAvailability::Loading
+            ? "(正在读取剪贴板…)"
+            : clipboardAvailability_ == core::ClipboardAvailability::Unavailable
+                ? "(剪贴板暂不可用)" : "(剪贴板为空)";
         emptyItem.source = core::CandidateSource::Command;
         emptyItem.commitRole = core::CommitCandidateRole::Command;
         page_.items.push_back(std::move(emptyItem));
     } else {
-        for (std::size_t index = 0; index < clipboardEntries_.size(); ++index) {
+        for (std::size_t index = 0; index < count; ++index) {
             core::CandidateItem item;
-            item.text = clipboardEntries_[index];
+            item.text = (*clipboardEntries_)[index];
             item.consumedInputBytes = index;
             item.commitRole = core::CommitCandidateRole::Chinese;
             page_.items.push_back(std::move(item));

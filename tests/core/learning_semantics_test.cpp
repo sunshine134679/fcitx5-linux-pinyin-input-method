@@ -10,8 +10,10 @@
 #include "modernime/core/pinyin_match.h"
 
 #include <sqlite3.h>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -21,14 +23,12 @@ namespace {
 class TempDirectoryFixture {
 public:
     TempDirectoryFixture() {
-        char tempPath[] = "/tmp/modernime_learning_semantics_test_XXXXXX";
-        const char *created = mkdtemp(tempPath);
-        if (created != nullptr) {
-            path_ = created;
-        } else {
-            path_ = "/tmp/modernime_learning_semantics_fallback";
-            std::filesystem::create_directories(path_);
+        auto pattern = (std::filesystem::temp_directory_path() /
+                        "modernime_learning_semantics_test_XXXXXX").string();
+        if (mkdtemp(pattern.data()) == nullptr) {
+            throw std::runtime_error("cannot create isolated test directory");
         }
+        path_ = pattern;
     }
 
     ~TempDirectoryFixture() {
@@ -129,6 +129,60 @@ TEST(ArchitectureLearningSemanticsRegression, DecideCommitLearningPolicy) {
     EXPECT_FALSE(isProtectedCoreDefault(regularEvent.text, regularEvent.fullPinyin));
     EXPECT_EQ(decideCommitLearning(regularEvent, false), CommitLearningDecision::Record);
     EXPECT_EQ(decideCommitLearning(regularEvent, true), CommitLearningDecision::Record);
+}
+
+TEST(ArchitectureLearningSemanticsRegression, LongRawPinyinClassification) {
+    // 由完整音节构成边界字符串，长度不应改变 Raw 学习资格。
+    for (const std::size_t length : {47, 48, 49, 50, 59, 10000}) {
+        std::string input;
+        while (input.size() + 5 <= length) { input += "nihao"; }
+        input.append(length - input.size(), 'a');
+        ASSERT_EQ(input.size(), length);
+        EXPECT_TRUE(PinyinMatchPolicy::isValidPinyinSequence(input)) << length;
+        CommitEvent event;
+        event.text = input;
+        event.role = CommitCandidateRole::Raw;
+        EXPECT_EQ(decideCommitLearning(event, false), CommitLearningDecision::IgnoreRawPinyin);
+        EXPECT_EQ(decideCommitLearning(event, true), CommitLearningDecision::IgnoreRawPinyin);
+        input += 'x';
+        EXPECT_FALSE(PinyinMatchPolicy::isValidPinyinSequence(input)) << length;
+    }
+    EXPECT_TRUE(PinyinMatchPolicy::isValidPinyinSequence("QingBangWoJianChaYiXiaZheGeDaiMaYouMeiYouWenTiRanHouGaoSuWo"));
+    // 包含有歧义的音节边界时仍允许完整切分。
+    EXPECT_TRUE(PinyinMatchPolicy::isValidPinyinSequence("xianai"));
+    for (const auto text : {"", "ni'hao", "ni hao", "ni1hao", "ni_hao", "nǐhǎo", "hello"}) {
+        EXPECT_FALSE(PinyinMatchPolicy::isValidPinyinSequence(text)) << text;
+    }
+    EXPECT_TRUE(PinyinMatchPolicy::isValidPinyinSequence("can"));
+    CommitEvent english;
+    english.text = "can";
+    english.role = CommitCandidateRole::Raw;
+    EXPECT_EQ(decideCommitLearning(english, false), CommitLearningDecision::Record);
+}
+
+TEST(ArchitectureLearningSemanticsRegression, OldLongPinyinRemainsStoredButLeavesEnglishIndex) {
+    TempDirectoryFixture fixture;
+    const std::string pinyin = "qingbangwojianchayixiazhegedaimayoumeiyouwentiranhougaosuwo";
+    for (const auto suffix : {".sqlite3", ".lmdb"}) {
+        const auto path = fixture.path() / (std::string("old") + suffix);
+        {
+            LearningStore store(path);
+            ASSERT_TRUE(store.open());
+            // 模拟旧版本已经留下的事实，不走新版提交资格。
+            ASSERT_TRUE(store.recordSelection(pinyin, pinyin, "", "", 1000));
+            ASSERT_TRUE(store.recordSelection("gnueabihf", "gnueabihf", "", "", 1000));
+        }
+        LearningStore reopened(path);
+        ASSERT_TRUE(reopened.openReadOnly());
+        const auto snap = reopened.snapshot();
+        ASSERT_NE(snap, nullptr);
+        ASSERT_EQ(snap->entries().size(), 2U);
+        EXPECT_NE(snap->entry(pinyin, pinyin, "", ""), nullptr);
+        EXPECT_TRUE(snap->recallEnglishWords("qin", 1000).empty());
+        const auto english = snap->recallEnglishWords("gnu", 1000);
+        ASSERT_EQ(english.size(), 1U);
+        EXPECT_EQ(english.front().text, "gnueabihf");
+    }
 }
 
 TEST(ArchitectureLearningSemanticsRegression, CanonicalEnglishSelectionWord) {

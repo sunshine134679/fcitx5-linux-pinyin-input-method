@@ -1,6 +1,6 @@
 #pragma once
 
-#include "modernime/core/persistent_clipboard_history.h"
+#include "modernime/core/async_clipboard_history.h"
 #include "modernime/fcitx5/engine.h"
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -10,6 +10,7 @@
 #include <fcitx/action.h>
 #include <fcitx/candidatelist.h>
 #include <fcitx/inputpanel.h>
+#include <fcitx/menu.h>
 #include <fcitx-utils/event.h>
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/handlertable.h>
@@ -26,6 +27,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace fcitx {
 class AddonInstance;
@@ -119,15 +121,19 @@ class FcitxCandidateList final : public fcitx::CommonCandidateList {
 public:
     FcitxCandidateList(std::weak_ptr<core::SelectionEndpoint> endpoint,
                        std::uint64_t displayGeneration = 0,
-                       std::uint64_t layoutGeneration = 0)
+                       std::uint64_t layoutGeneration = 0,
+                       bool hasMoreCandidates = false)
         : endpoint_(std::move(endpoint)),
           displayGeneration_(displayGeneration),
-          layoutGeneration_(layoutGeneration) {}
+          layoutGeneration_(layoutGeneration), hasMoreCandidates_(hasMoreCandidates) {}
 
     explicit FcitxCandidateList(ModernIMEController *controller)
         : endpoint_(controller ? controller->endpoint() : std::weak_ptr<core::SelectionEndpoint>{}),
           displayGeneration_(controller ? controller->displayGeneration() : 0),
-          layoutGeneration_(controller ? controller->layoutGeneration() : 0) {}
+          layoutGeneration_(controller ? controller->layoutGeneration() : 0),
+          hasMoreCandidates_(controller && controller->page().hasMoreCandidates) {}
+
+    bool hasMoreCandidates() const { return hasMoreCandidates_; }
 
     void setPageBoundaries(std::vector<core::PageBoundary> boundaries,
                            bool notifyController = true) {
@@ -191,7 +197,8 @@ public:
 
     bool hasPrev() const override { return currentPage() > 0; }
     bool hasNext() const override {
-        return currentPage() + 1 < totalPages();
+        return currentPage() + 1 < totalPages() ||
+               (hasMoreCandidates_ && !endpoint_.expired());
     }
     void prev() override {
         if (hasPrev()) {
@@ -261,7 +268,8 @@ public:
     }
     void nextCandidate() override {
         const auto global = globalCursorIndex();
-        if (global >= 0 && global + 1 < totalSize()) {
+        if (global >= 0 && (global + 1 < totalSize() ||
+                           (hasMoreCandidates_ && !endpoint_.expired()))) {
             if (auto ep = endpoint_.lock()) {
                 ep->moveCursor(1);
                 return;
@@ -297,6 +305,7 @@ private:
     std::weak_ptr<core::SelectionEndpoint> endpoint_;
     std::uint64_t displayGeneration_ = 0;
     std::uint64_t layoutGeneration_ = 0;
+    bool hasMoreCandidates_ = false;
     std::vector<core::PageBoundary> boundaries_;
     bool usedNextBefore_ = false;
 };
@@ -341,6 +350,9 @@ public:
     ModernIMEController &controller() { return controller_; }
     void setClipboardEntries(std::vector<std::string> entries) {
         controller_.setClipboardEntries(std::move(entries));
+    }
+    void setClipboardSnapshot(const core::ClipboardSnapshot &snapshot) {
+        controller_.setClipboardSnapshot(snapshot.entries, snapshot.availability);
     }
 
 private:
@@ -452,6 +464,8 @@ private:
     ModernIMEInputMethod(fcitx::AddonManager *manager,
                          const core::SettingsLoadResult &initResult);
     void pollClipboard();
+    void consumeClipboardSnapshot();
+    FcitxInputContextState *focusedActiveState() const;
     void pollFileChanges();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // 阻塞等待后台词典预热完成并落地 resources_.pinyin；fcitx5 事件循环
@@ -464,9 +478,14 @@ private:
     fcitx::Instance *instance_ = nullptr;
     fcitx::AddonInstance *clipboardAddon_ = nullptr;
     bool clipboardAddonLookupAttempted_ = false;
-    core::PersistentClipboardHistory clipboardHistory_;
+    // Owned by the host event loop; excluded intervals and failed reads
+    // invalidate the baseline even when they occur between timer ticks.
+    bool clipboardNeedsBaseline_ = true;
+    std::unique_ptr<core::AsyncClipboardHistory> clipboardHistory_;
+    core::ClipboardSnapshot clipboardSnapshot_;
     std::string lastHistoryError_;
     std::unique_ptr<fcitx::HandlerTableEntryBase> surroundingWatcher_;
+    std::unique_ptr<fcitx::HandlerTableEntryBase> clipboardCapabilityWatcher_;
     std::unique_ptr<fcitx::EventSourceTime> clipboardTimer_;
     std::unique_ptr<fcitx::EventSourceTime> fileTimer_;
     core::SettingsFileStamp settingsStamp_{};
@@ -481,6 +500,7 @@ private:
     KeyBindings keyBindings_;
     fcitx::EventDispatcher dispatcher_;
     std::shared_ptr<ReadyNotificationEndpoint> readyEndpoint_;
+    std::shared_ptr<ReadyNotificationEndpoint> clipboardEndpoint_;
     FcitxEngineResources resources_;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::future<
@@ -490,6 +510,9 @@ private:
 #endif
     fcitx::FactoryFor<FcitxInputContextState> stateFactory_;
     fcitx::SimpleAction subModeAction_;
+    fcitx::SimpleAction settingsAction_;
+    fcitx::Menu settingsMenu_;
+    std::vector<std::unique_ptr<fcitx::SimpleAction>> settingsShortcuts_;
 };
 
 } // namespace modernime::fcitx5

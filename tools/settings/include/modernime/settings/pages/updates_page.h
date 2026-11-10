@@ -20,7 +20,9 @@ public:
     static constexpr SettingsPageId pageId = SettingsPageId::Updates;
 
     UpdatesPage(Environment environment,
-                std::function<void(std::string)> notify);
+                std::function<void(std::string)> notify,
+                std::function<bool()> prepareRestart = {},
+                std::function<void()> closeForRestart = {});
     ~UpdatesPage();
 
     UpdatesPage(const UpdatesPage &) = delete;

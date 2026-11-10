@@ -80,6 +80,27 @@ void testCollectsOverviewFromPersistedData() {
                "learning entry count is collected");
     assertTrue(snapshot.notices.empty(),
                "healthy persisted data produces no notices");
+    assertTrue(snapshot.setupAction == modernime::settings::OverviewSetupAction::None,
+               "active method needs no setup action");
+    runtime.desktopPanel = {modernime::settings::DesktopPanelState::Pending, "等待重新登录", "重新登录后检查候选面板"};
+    const auto pendingPanel = modernime::settings::collectOverviewSnapshot(paths, modernime::core::defaultSettings(), runtime);
+    assertTrue(pendingPanel.setupAction == modernime::settings::OverviewSetupAction::DesktopPanel &&
+                   pendingPanel.setupDescription == runtime.desktopPanel.message,
+               "active engine does not hide a missing desktop candidate panel");
+    runtime.desktopPanel = {};
+    runtime.modernimeActive = false;
+    auto settings = modernime::core::defaultSettings();
+    settings.pinyinScheme = modernime::core::PinyinScheme::Xiaohe;
+    settings.clipboardTrigger = "V+3";
+    const auto ready = modernime::settings::collectOverviewSnapshot(paths, settings, runtime);
+    assertTrue(ready.setupAction == modernime::settings::OverviewSetupAction::Activate &&
+                   ready.trialInstructions.find("nihc") != std::string::npos &&
+                   ready.clipboardShortcut.find("V+3") != std::string::npos,
+               "setup uses activation and current input preferences");
+    settings.inputEnabled = false;
+    assertTrue(modernime::settings::collectOverviewSnapshot(paths, settings, runtime).setupAction ==
+                   modernime::settings::OverviewSetupAction::Configure,
+               "disabled input links to its setting instead of claiming readiness");
 }
 
 void testUnreadablePathsProduceDiagnosticsNotice() {

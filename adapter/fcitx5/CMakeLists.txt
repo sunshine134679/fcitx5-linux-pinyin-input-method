@@ -22,6 +22,7 @@ target_link_libraries(modernime_fcitx5
         modernime_core
         Fcitx5::Core
         Fcitx5::Utils
+        ${CMAKE_DL_LIBS}
 )
 if(MODERNIME_BUILD_LIBIME_PINYIN)
     target_link_libraries(modernime_fcitx5 PRIVATE modernime_pinyin)

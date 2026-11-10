@@ -1,6 +1,7 @@
 #include "modernime/settings/update_controller.h"
 #include "modernime/settings/detail/package_policy.h"
 #include "modernime/settings/detail/process_runner.h"
+#include "modernime/settings/runtime_environment.h"
 
 #include <glib.h>
 
@@ -12,6 +13,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <sys/stat.h>
@@ -353,7 +355,7 @@ void startBackgroundPackageTracking(std::uint64_t operationId,
                 finalRes.message =
                     exitedZero
                         ? "后台软件源缓存刷新已完成，可点击“检查更新”同步最新候选版本。"
-                        : ("后台软件源缓存刷新未成功完成，请在终端手动执行：" + fallbackCmd);
+                        : detail::formatFailureMessage(out, "刷新软件源缓存", fallbackCmd);
             }
             finishPackageOperation(operationId, finalRes, out.stdoutText, out.stderrText, true);
         } else {
@@ -367,32 +369,16 @@ void startBackgroundPackageTracking(std::uint64_t operationId,
 } // namespace
 
 std::string UpdateController::detectInstallChannel(const Environment &environment) {
-    std::vector<std::filesystem::path> candidates;
     const auto explicitChannelFile = lookupEnv(environment, "MODERNIME_INSTALL_CHANNEL_FILE");
-    if (!explicitChannelFile.empty()) {
-        candidates.emplace_back(explicitChannelFile);
-    }
-    const auto prefixEnv = lookupEnv(environment, "MODERNIME_PREFIX");
-    if (!prefixEnv.empty()) {
-        candidates.push_back(std::filesystem::path(prefixEnv) / "share/modernime/install-channel.txt");
-    }
-    candidates.push_back(std::filesystem::path(MODERNIME_INSTALL_PREFIX) / "share/modernime/install-channel.txt");
-    candidates.emplace_back("/usr/share/modernime/install-channel.txt");
-
-    for (const auto &path : candidates) {
-        std::ifstream in(path);
-        if (!in) {
-            continue;
-        }
-        std::stringstream buffer;
-        buffer << in.rdbuf();
-        const std::string content = buffer.str();
-        const std::string channel = detail::detectInstallChannelFromContent(content);
-        if (channel != "unknown") {
-            return channel;
-        }
-    }
-    return "unknown";
+    // 只读取这份客户端所属安装的记录，不能借用另一份系统安装的渠道。
+    const auto path = explicitChannelFile.empty()
+        ? currentInstallationPrefix(environment, MODERNIME_INSTALL_PREFIX) / "share/modernime/install-channel.txt"
+        : std::filesystem::path(explicitChannelFile);
+    std::ifstream in(path);
+    if (!in) return "unknown";
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    return detail::detectInstallChannelFromContent(buffer.str());
 }
 
 int UpdateController::compareVersions(std::string_view lhsRaw, std::string_view rhsRaw) {
@@ -610,8 +596,100 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
     return status;
 }
 
+UpdateStatus UpdateController::checkOnlineRelease(const Environment &environment) {
+    // 保留本机安装渠道及其升级命令；在线发布信息不代表软件包已安装。
+    UpdateStatus status = checkForUpdates(environment);
+    status.updateAvailable = false;
+    status.cacheMayBeStale = false;
+    status.candidateVersion.clear();
+    status.changelogSummary.clear();
+    const auto fail = [&status](const std::string &reason) {
+        status.offlineOrUnreachable = true;
+        status.statusMessage = "未能连接官方发布服务，请稍后重新检查。" + reason;
+        return status;
+    };
+    const auto python = findExecutableInPath("python3", environment);
+    if (python.empty()) {
+        return fail("缺少运行依赖 python3。");
+    }
+    // Python 是客户端已有运行依赖。HTTPS 校验证书，网络和输出均有界；
+    // 仅查询公开元数据，不执行发布正文或使用系统包管理器的事务槽位。
+    constexpr const char *query = R"py(
+import json, re, sys, urllib.error, urllib.request
+try:
+    base = 'https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method'
+    request = urllib.request.Request(
+        'https://api.github.com/repos/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest',
+        headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'ModernIME-update-check'})
+    try:
+        with urllib.request.urlopen(request, timeout=6) as response:
+            raw = response.read(1048577)
+        if len(raw) > 1048576:
+            raise ValueError('发布信息过大')
+        release = json.loads(raw)
+    except urllib.error.HTTPError as error:
+        if error.code not in (403, 429):
+            raise
+        # 公共 API 限流时，官方 latest 页仍会跳转到最新正式版本。
+        request = urllib.request.Request(base + '/releases/latest', method='HEAD',
+                                         headers={'User-Agent': 'ModernIME-update-check'})
+        with urllib.request.urlopen(request, timeout=6) as response:
+            url = response.geturl()
+        prefix = base + '/releases/tag/'
+        if not url.startswith(prefix):
+            raise ValueError('官方发布页未返回有效版本')
+        release = {'tag_name': url[len(prefix):], 'draft': False, 'prerelease': False,
+                   'body': '完整更新说明可在官方下载页查看。'}
+    tag = release.get('tag_name', '')
+    if release.get('draft') is not False or release.get('prerelease') is not False:
+        raise ValueError('未获得正式版本')
+    if not isinstance(tag, str) or not re.fullmatch(r'v?[0-9]+(?:\.[0-9]+){1,3}', tag):
+        raise ValueError('发布版本格式无效')
+    body = release.get('body') or ''
+    if not isinstance(body, str):
+        raise ValueError('发布说明格式无效')
+    print(tag.removeprefix('v'))
+    print(base + '/releases/tag/' + tag)
+    print(body[:12000].replace('\x00', '') or '暂无更新说明')
+except Exception as error:
+    print(str(error), file=sys.stderr)
+    sys.exit(1)
+)py";
+    detail::CommandSpec spec;
+    spec.mode = detail::CommandMode::Query;
+    spec.timeoutMs = 15000;
+    spec.argv = {python.string(), "-c", query};
+    spec.environment = environment;
+    spec.limits.perStreamBufferBytes = 65536;
+    spec.limits.perStreamResultBytes = 65536;
+    spec.limits.perStreamFileBytes = 65536;
+    const auto result = detail::runCommand(spec);
+    if (result.state != detail::CommandState::Exited || result.exitStatus != 0 ||
+        result.stdoutTruncated || !g_utf8_validate(result.stdoutText.c_str(), -1, nullptr)) {
+        return fail(result.stderrText.empty() ? "网络请求未完成。" : result.stderrText);
+    }
+    std::istringstream response(result.stdoutText);
+    std::getline(response, status.candidateVersion);
+    std::getline(response, status.downloadUrl);
+    if (status.candidateVersion.empty() || !status.downloadUrl.starts_with(
+            "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/tag/")) {
+        status.candidateVersion.clear();
+        status.downloadUrl.clear();
+        return fail("发布信息不完整。");
+    }
+    status.changelogSummary.assign(std::istreambuf_iterator<char>(response), {});
+    status.checkedOnline = true;
+    status.offlineOrUnreachable = false;
+    status.updateAvailable = compareVersions(status.candidateVersion, status.currentVersion) > 0;
+    status.statusMessage = status.updateAvailable
+        ? "官方已发布 " + status.candidateVersion + "，点击“下载更新”即可下载，完成后可重启安装。"
+        : "已查询官方最新正式版本，目前没有比当前版本更新的正式发布。";
+    return status;
+}
+
 RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
-                                                    const Environment &environment) {
+                                                    const Environment &environment,
+                                                    bool waitForCompletion) {
     auto opId = tryBeginPackageOperation(PackageOperationKind::RefreshCache);
     if (!opId.has_value()) {
         if (hasActivePackageOperation()) {
@@ -702,6 +780,22 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
     if (out.state == detail::CommandState::Continuing) {
         advancePackageOperation(*opId, PackageOperationPhase::Running, PackageOperationPhase::Continuing);
         startBackgroundPackageTracking(*opId, PackageOperationKind::RefreshCache, fallbackCmd);
+        if (waitForCompletion) {
+            while (!g_packageTrackingShuttingDown.load()) {
+                // Read ownership before taking the result: completion may happen
+                // between these calls, but only this operation's result is consumed.
+                const auto activeId = currentPackageOperationId();
+                const auto phase = currentPackageOperationPhase();
+                if (auto completed = takeCompletedPackageOperationResult(*opId)) {
+                    return *completed;
+                }
+                if (activeId != opId || phase == PackageOperationPhase::Uncertain) {
+                    return {false, "无法确认软件源刷新结果。请在检查详情中核对系统包管理器状态后重试；状态不明的事务不会自动重复执行。"};
+                }
+                waitForActivePackageOperation(200);
+            }
+            return {false, "设置客户端正在退出，软件源刷新由系统包管理器继续处理。"};
+        }
         const std::string procHint = (manager == PackageManagerKind::Dnf) ? "ps aux | grep -E 'dnf|rpm'"
                                                                          : "ps aux | grep -E 'apt|dpkg'";
         return {false,

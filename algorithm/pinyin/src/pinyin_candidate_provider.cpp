@@ -1,9 +1,12 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/candidate_diagnostics.h"
+#include "modernime/pinyin/shuangpin_input.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
 
 #include "modernime/pinyin/candidate_composition.h"
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/candidate_pipeline.h"
+#include "modernime/pinyin/context_decoder.h"
 #include "modernime/pinyin/candidate_prefixes.h"
 #include "modernime/pinyin/recent_choice.h"
 #include "modernime/pinyin/user_dictionary.h"
@@ -28,20 +31,6 @@
 
 namespace {
 
-inline libime::PinyinFuzzyFlags getDefaultFuzzyFlags() {
-    libime::PinyinFuzzyFlags flags{
-        libime::PinyinFuzzyFlag::Z_ZH,
-        libime::PinyinFuzzyFlag::C_CH,
-        libime::PinyinFuzzyFlag::S_SH,
-        libime::PinyinFuzzyFlag::L_N,
-        libime::PinyinFuzzyFlag::EN_ENG,
-        libime::PinyinFuzzyFlag::IN_ING,
-    };
-#ifdef MODERNIME_HAS_PINYIN_COMMON_TYPO
-    flags |= libime::PinyinFuzzyFlag::CommonTypo;
-#endif
-    return flags;
-}
 
 std::string toChineseFinancial(std::string_view numStr) {
     if (numStr.empty()) {
@@ -56,6 +45,12 @@ std::string toChineseFinancial(std::string_view numStr) {
         intPart = intPart.substr(firstNonZero);
     } else {
         intPart = "";
+    }
+
+    // 最大单位“兆”只覆盖四个四位分组；金融大写精确到分。
+    // 不可表示时留给标准数字/原文候选，禁止截断或隐式舍入。
+    if (intPart.size() > 16 || decPart.size() > 2) {
+        return {};
     }
 
     static const char *const kDigits[] = {
@@ -156,6 +151,10 @@ std::string toChineseStandardNumber(std::string_view numStr) {
         intPart = "";
     }
 
+    if (intPart.size() > 16) {
+        return {};
+    }
+
     static const char *const kDigits[] = {
         "零", "一", "二", "三", "四", "五", "六", "七", "八", "九"
     };
@@ -245,14 +244,15 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput,
     if (rawInput.size() > 1 && rawInput.front() == 'v') {
         std::string_view numPart = rawInput.substr(1);
         bool validNum = true;
+        bool hasDigit = false;
         bool hasDot = false;
         for (char c : numPart) {
-            if (c >= '0' && c <= '9') continue;
+            if (c >= '0' && c <= '9') { hasDigit = true; continue; }
             if (c == '.' && !hasDot) { hasDot = true; continue; }
             validNum = false;
             break;
         }
-        if (validNum) {
+        if (validNum && hasDigit) {
             const auto fin = toChineseFinancial(numPart);
             if (!fin.empty()) results.push_back(fin);
             const auto stdNum = toChineseStandardNumber(numPart);
@@ -822,6 +822,12 @@ std::string automaticallySegmentedPreedit(
             continue;
         }
         const auto &candidate = result.scored[sourceIndex];
+        // A leading single character can coexist with an inner-syllable word.
+        // Do not display the lower candidate's split above that single character.
+        if (candidate.full_pinyin.find('\'') == std::string::npos &&
+            core::PinyinMatchPolicy::exactInputMatch(rawInput, candidate.full_pinyin)) {
+            return std::string(rawInput);
+        }
         const auto alignment =
             alignPreeditToCandidate(rawInput, candidate.full_pinyin);
         if (alignment.has_value()) {
@@ -896,11 +902,15 @@ public:
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
           observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
+        shared_->setFuzzyOptions(options.fuzzyPinyin);
+        shared_->setPinyinScheme(options.pinyinScheme);
         context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
+        context->setUseShuangpin(shared_->usesShuangpin());
         refresh();
     }
 
     bool append(std::string_view input) {
+        checkResourceChanges();
         std::string nextInput = context->userInput();
         nextInput.append(input);
         if (!core::PinyinMatchPolicy::validComposition(nextInput)) {
@@ -914,6 +924,7 @@ public:
     }
 
     bool eraseLast() {
+        checkResourceChanges();
         if (!context->backspace()) {
             return false;
         }
@@ -925,6 +936,7 @@ public:
     }
 
     bool replaceInput(std::string_view input) {
+        checkResourceChanges();
         if (!input.empty() &&
             !core::PinyinMatchPolicy::validComposition(input)) {
             return false;
@@ -947,12 +959,18 @@ public:
     }
 
     void onCommitEvent(const core::CommitEvent &event) {
+        if (shared_->usesShuangpin() && event.role == core::CommitCandidateRole::Raw) {
+            phraseTracker_.cancelComposition();
+            phraseTracker_.resetCommitHistory();
+            return;
+        }
         if (!learningEnabled_) {
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
             return;
         }
-        if (event.role == core::CommitCandidateRole::Command) {
+        if (event.role == core::CommitCandidateRole::Command ||
+            event.role == core::CommitCandidateRole::Generated) {
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
             return;
@@ -982,6 +1000,19 @@ public:
             return false;
         }
         bool changed = false;
+        const auto inputGeneration = shared_->inputConfigurationGeneration();
+        if (inputGeneration != observedInputConfigurationGeneration_) {
+            observedInputConfigurationGeneration_ = inputGeneration;
+            // LibIME clears every PinyinContext on optionChanged. Restore this
+            // session's last published raw composition before edits or reads;
+            // no new raw-input owner or per-session engine copy is needed.
+            context->clear();
+            context->setUseShuangpin(shared_->usesShuangpin());
+            if (!page_.rawInput.empty()) context->type(page_.rawInput);
+            recentChoices_.clear();
+            phraseTracker_.cancelComposition();
+            changed = true;
+        }
         const auto curDictGen = shared_->dictionaryGeneration();
         if (curDictGen != observedDictionaryGeneration_) {
             observedDictionaryGeneration_ = curDictGen;
@@ -1010,6 +1041,10 @@ public:
         pageAuthorized_ = false;
         ++generation;
         page_.generation = generation;
+        if (diagnostics_) {
+            *diagnostics_ = {};
+            diagnostics_->generation = generation;
+        }
         page_.items.clear();
     }
 
@@ -1068,13 +1103,18 @@ public:
         outcome.selected = expectedId;
 
         if (candidate.source == core::CandidateSource::EnglishDefinition ||
-            candidate.source == core::CandidateSource::Command) {
+            candidate.source == core::CandidateSource::Command ||
+            expectedId.role == core::CommitCandidateRole::Generated) {
             const auto source = candidate.source;
             outcome.action = (source == core::CandidateSource::Command)
                 ? core::SelectionAction::OpenClipboard
                 : core::SelectionAction::CommitText;
             phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
+            if (expectedId.role == core::CommitCandidateRole::Generated) {
+                fallbackContextBefore_.clear();
+                contextBefore_.clear();
+            }
             context->clear();
             refresh();
             outcome.remainingInput = context->userInput();
@@ -1203,7 +1243,8 @@ public:
             return false;
         }
         const auto &candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::None ||
+        if (candidate.commitRole == core::CommitCandidateRole::Generated ||
+            candidate.source == core::CandidateSource::None ||
             candidate.source == core::CandidateSource::Command ||
             candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Raw) {
@@ -1313,7 +1354,8 @@ public:
             return false;
         }
         const auto candidate = page_.items[index];
-        if (candidate.source == core::CandidateSource::None ||
+        if (candidate.commitRole == core::CommitCandidateRole::Generated ||
+            candidate.source == core::CandidateSource::None ||
             candidate.source == core::CandidateSource::EnglishDefinition ||
             candidate.source == core::CandidateSource::Command) {
             return false;
@@ -1390,6 +1432,7 @@ public:
     }
 
     void reset() {
+        checkResourceChanges();
         phraseTracker_.cancelComposition();
         contextBefore_ = fallbackContextBefore_;
         contextAfter_.clear();
@@ -1407,6 +1450,7 @@ public:
     }
 
     void resetCommitHistory() {
+        if (!contextBefore_.empty()) pageAuthorized_ = false;
         recentChoices_.clear();
         phraseTracker_.resetCommitHistory();
         fallbackContextBefore_.clear();
@@ -1416,17 +1460,20 @@ public:
 
     void setContext(std::string_view before, std::string_view after) {
         if (!contextLearningEnabled_ || !learningEnabled_) {
+            if (!contextBefore_.empty()) pageAuthorized_ = false;
             contextBefore_.clear();
             contextAfter_.clear();
             fallbackContextBefore_.clear();
             return;
         }
+        if (contextBefore_ != before || contextAfter_ != after) pageAuthorized_ = false;
         contextBefore_ = before;
         contextAfter_ = after;
         fallbackContextBefore_ = before;
     }
 
     void setLearningEnabled(bool enabled) {
+        if (learningEnabled_ != enabled) pageAuthorized_ = false;
         learningEnabled_ = enabled;
         if (!enabled) {
             recentChoices_.clear();
@@ -1443,6 +1490,7 @@ public:
     }
 
     void setContextLearningEnabled(bool enabled) {
+        if (contextLearningEnabled_ != enabled) pageAuthorized_ = false;
         contextLearningEnabled_ = enabled;
         if (!enabled) {
             contextBefore_.clear();
@@ -1473,7 +1521,10 @@ public:
     }
 
     void applyOptions(const PinyinProviderOptions &opts) {
-        bool needRefresh = false;
+        const bool fuzzyChanged = shared_->setFuzzyOptions(opts.fuzzyPinyin);
+        const bool schemeChanged = shared_->setPinyinScheme(opts.pinyinScheme);
+        bool needRefresh = fuzzyChanged || schemeChanged ||
+            observedInputConfigurationGeneration_ != shared_->inputConfigurationGeneration();
         if (englishDefinitionEnabled_ != opts.englishDefinitionEnabled) {
             englishDefinitionEnabled_ = opts.englishDefinitionEnabled;
             needRefresh = true;
@@ -1501,7 +1552,27 @@ public:
         return page_;
     }
 
+    bool loadMoreCandidates() {
+        if (!page().hasMoreCandidates || !pageAuthorized_) return false;
+        refresh(true);
+        return true;
+    }
+
     std::shared_ptr<SharedResources> sharedResources() const { return shared_; }
+
+    void setDiagnosticsEnabled(bool enabled) {
+        if (enabled) {
+            diagnostics_.emplace();
+            refresh();
+        } else {
+            diagnostics_.reset();
+        }
+    }
+
+    const PinyinDiagnostics *diagnostics() const {
+        (void)page();
+        return diagnostics_ ? &*diagnostics_ : nullptr;
+    }
 
     void setOnReadyCallback(std::function<void()> callback) {
         if (shared_) {
@@ -1530,17 +1601,23 @@ private:
         refresh();
     }
 
-    void refresh() {
+    void refresh(bool extend = false) {
         if (checkResourceChanges()) {
+            extend = false;
             const auto currentInput = context->userInput();
             if (!currentInput.empty()) {
                 context->clear();
                 context->type(currentInput);
             }
         }
+        core::CandidatePage published;
+        if (extend) published = std::move(page_);
+        else nextNativeCandidate_ = 0;
+        const auto nativeOffset = nextNativeCandidate_;
+        const auto &previousItems = extend ? published.items : page_.items;
         std::vector<std::string> previousOrder;
-        previousOrder.reserve(page_.items.size());
-        for (const auto &item : page_.items) {
+        previousOrder.reserve(previousItems.size());
+        for (const auto &item : previousItems) {
             previousOrder.push_back(
                 core::candidateOrderKey(item.text, item.fullPinyin));
         }
@@ -1550,6 +1627,11 @@ private:
         page_.preedit = rawInput;
         ++generation;
         page_.generation = generation;
+        if (diagnostics_) {
+            *diagnostics_ = {};
+            diagnostics_->generation = generation;
+            diagnostics_->nativeOffset = nativeOffset;
+        }
         if (rawInput.empty()) {
             pageAuthorized_ = false;
             return;
@@ -1580,8 +1662,11 @@ private:
                        : suppressedLearned_.contains(candidateKey(pinyin, text));
         };
         std::unique_ptr<libime::PinyinContext> typoContext;
+        const bool useShuangpin = context->useShuangpin();
+        std::optional<ShuangpinInput> shuangpin;
+        if (useShuangpin) shuangpin.emplace(rawInput, *ime().shuangpinProfile(), ime().fuzzyFlags());
         const auto correctedInput = correctTypoInput(rawInput);
-        if (correctedInput != rawInput) {
+        if (!extend && !useShuangpin && correctedInput != rawInput) {
             try {
                 typoContext =
                     std::make_unique<libime::PinyinContext>(shared_->ime.get());
@@ -1595,7 +1680,7 @@ private:
         // （de/qu/zhang 等单音节不做变体，避免高频输入的噪声与额外解码）。
         std::unique_ptr<libime::PinyinContext> variantContext;
         std::string variantInput;
-        if (rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
+        if (!extend && !useShuangpin && rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
             !core::PinyinMatchPolicy::isStandardSyllable(rawInput)) {
             variantInput = core::PinyinMatchPolicy::rhymeVariantInput(rawInput);
             if (variantInput != rawInput) {
@@ -1610,13 +1695,27 @@ private:
             }
         }
         const auto requestNowMs = nowMilliseconds();
+        std::optional<ContextDecoder> contextual;
+        if (learning)
+            contextual.emplace(*context, contextLearningEnabled_ ? contextBefore_ : std::string_view{},
+                               learning.get(), requestNowMs, shared_->contextLanguageModel);
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
-            variantContext.get());
+            variantContext.get(), shuangpin ? &*shuangpin : nullptr, nativeOffset,
+            contextual ? &*contextual : nullptr);
+        nextNativeCandidate_ = result.nextNativeCandidate;
+        page_.hasMoreCandidates = result.hasMoreCandidates;
         const auto segmentedInput =
-            automaticallySegmentedPreedit(rawInput, result);
-        const auto prefixEnds = syllablePrefixEnds(rawInput, segmentedInput);
+            shuangpin ? shuangpin->preedit() : automaticallySegmentedPreedit(rawInput, result);
+        if (diagnostics_) {
+            diagnostics_->timestampMs = requestNowMs;
+            diagnostics_->segmentedInput = segmentedInput;
+            diagnostics_->scored = result.scored;
+            diagnostics_->order = result.order;
+        }
+        const auto prefixEnds = shuangpin ? shuangpin->prefixEnds()
+            : syllablePrefixEnds(rawInput, segmentedInput);
         std::vector<std::pair<std::size_t, std::string>> canonicalPrefixes;
         canonicalPrefixes.reserve(prefixEnds.size());
         for (const auto prefixEnd : prefixEnds) {
@@ -1778,7 +1877,7 @@ private:
         const bool isConsonantAbbreviation =
             isConsonantAbbreviationInput(rawInput, fullItems);
         const bool isEnglish =
-            !isInitialConsonant && !isConsonantAbbreviation &&
+            !(useShuangpin && !fullItems.empty()) && !isInitialConsonant && !isConsonantAbbreviation &&
             core::EnglishDictionary::isEnglishWord(rawInput);
 
         const bool hasExactFullPinyin =
@@ -1798,12 +1897,11 @@ private:
         // 英文沉底契约）。已学英文召回与纯声母缩写（pyt→python）不受此限制。
         const bool singleSyllableChineseProtected =
             rawInput.find('\'') == std::string::npos &&
-            core::PinyinMatchPolicy::isValidPinyinSequence(rawInput) &&
-            core::PinyinMatchPolicy::segmentPinyin(rawInput).find('\'') ==
-                std::string::npos &&
+            core::PinyinMatchPolicy::isStandardSyllable(rawInput) &&
             hasExactFullPinyin && topChineseLexical;
 
         const bool shouldPredictEnglish =
+            !(useShuangpin && !fullItems.empty()) &&
             (rawInput.empty() || rawInput.front() != 'v') &&
             !hasTrustedShortAbbr &&
             rawInput.size() >= 3 &&
@@ -1816,6 +1914,7 @@ private:
         std::vector<std::string> predictedWords;
         std::size_t learnedEnglishCount = 0;
         const bool canPredictEnglish =
+            !(useShuangpin && !fullItems.empty()) &&
             (rawInput.empty() || rawInput.front() != 'v') &&
             !hasTrustedShortAbbr &&
             rawInput.size() >= 2;
@@ -1871,6 +1970,7 @@ private:
         }
 
         CandidateCompositionInput compInput;
+        compInput.shuangpin = useShuangpin;
         compInput.rawInput = rawInput;
         compInput.segmentedInput = segmentedInput;
         compInput.fullCandidates = std::move(fullItems);
@@ -1910,8 +2010,10 @@ private:
                        : 0.0);
         compInput.isSuppressed = isSuppressed;
         compInput.isLexicalWord = lexicalWordCheck;
+        compInput.recordMoves = diagnostics_.has_value();
 
         auto compResult = composeCandidates(compInput);
+        if (diagnostics_) diagnostics_->moves = std::move(compResult.moves);
         page_.items = std::move(compResult.items);
         page_.preedit = std::move(compResult.preedit);
         // 内联读音提示（2026-10-25 调研后重做，规则同主流输入法"读音有误
@@ -1936,7 +2038,7 @@ private:
                     start = sep + 1;
                 }
             }
-            bool rawIsFullPinyin = !rawSyllables.empty();
+            bool rawIsFullPinyin = !useShuangpin && !rawSyllables.empty();
             for (const auto &syllable : rawSyllables) {
                 if (!core::PinyinMatchPolicy::isStandardSyllable(syllable)) {
                     rawIsFullPinyin = false;
@@ -2003,6 +2105,12 @@ private:
                 ++hinted;
             }
         }
+        if (extend) {
+            page_.items = appendCandidateBatch(std::move(published.items),
+                std::move(page_.items), rawInput.size());
+            page_.preedit = std::move(published.preedit);
+            page_.cursor = published.cursor;
+        }
         pageAuthorized_ = !page_.items.empty();
     }
 
@@ -2016,13 +2124,16 @@ private:
     bool clipboardEnabled_ = true;
     std::string clipboardTrigger_ = "V+2";
     core::CandidatePage page_;
+    std::optional<PinyinDiagnostics> diagnostics_;
     std::string contextBefore_;
     std::string contextAfter_;
     std::string fallbackContextBefore_;
     std::unordered_set<std::string> suppressedLearned_;
     std::uint64_t generation = 0;
     bool pageAuthorized_ = false;
+    std::size_t nextNativeCandidate_ = 0;
     std::uint64_t observedDictionaryGeneration_ = 0;
+    std::uint64_t observedInputConfigurationGeneration_ = 0;
     std::int64_t observedLearningRevision_ = 0;
     core::EpochViewState observedEpochViewState_ = core::EpochViewState::Ready;
 };
@@ -2037,11 +2148,21 @@ PinyinCandidateProvider::PinyinCandidateProvider(
 
 PinyinCandidateProvider::~PinyinCandidateProvider() = default;
 
+void PinyinCandidateProvider::setDiagnosticsEnabled(bool enabled) {
+    impl_->setDiagnosticsEnabled(enabled);
+}
+
+const PinyinDiagnostics *PinyinCandidateProvider::diagnostics() const {
+    return impl_->diagnostics();
+}
+
 bool PinyinCandidateProvider::append(std::string_view input) {
     return impl_->append(input);
 }
 
 bool PinyinCandidateProvider::eraseLast() { return impl_->eraseLast(); }
+
+bool PinyinCandidateProvider::loadMoreCandidates() { return impl_->loadMoreCandidates(); }
 
 bool PinyinCandidateProvider::replaceInput(std::string_view input) {
     return impl_->replaceInput(input);

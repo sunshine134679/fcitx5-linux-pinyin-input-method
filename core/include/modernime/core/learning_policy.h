@@ -10,6 +10,7 @@ namespace modernime::core {
 
 enum class CommitLearningDecision {
     IgnoreCommand,
+    IgnoreGenerated,
     IgnoreRawPinyin,
     IgnoreCoreDefault,
     Record

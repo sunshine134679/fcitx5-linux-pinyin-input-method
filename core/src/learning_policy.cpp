@@ -34,6 +34,9 @@ CommitLearningDecision decideCommitLearning(const CommitEvent &event,
     if (event.role == CommitCandidateRole::Command) {
         return CommitLearningDecision::IgnoreCommand;
     }
+    if (event.role == CommitCandidateRole::Generated) {
+        return CommitLearningDecision::IgnoreGenerated;
+    }
 
     if (event.role == CommitCandidateRole::Raw) {
         if (PinyinMatchPolicy::isValidPinyinSequence(event.text) &&
