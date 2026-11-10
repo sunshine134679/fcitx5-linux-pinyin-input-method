@@ -74,6 +74,9 @@ int main(int argc, char **argv) {
     gtk_stack_add_named(GTK_STACK(stack), createScrollablePage(candidates.widget()), "candidates");
     gtk_widget_show_all(window); gtk_window_present(GTK_WINDOW(window)); drain();
     wait([&] { return gtk_window_is_active(GTK_WINDOW(window)); });
+    const auto switchHeight = gtk_widget_get_allocated_height(find(window, "input.temporary_english"));
+    for (const auto *name : {"input.component_lookup", "input.calculator"})
+        assert(gtk_widget_get_allocated_height(find(window, name)) == switchHeight);
     for (const auto *name : {"input.temporary_english", "input.component_lookup", "input.calculator"}) {
         auto *control = find(window, name); assert(control && gtk_switch_get_active(GTK_SWITCH(control)));
         assert(input.focusTarget(name)); gtk_switch_set_active(GTK_SWITCH(control), false);

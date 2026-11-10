@@ -174,6 +174,7 @@ public:
         root = createSectionCard("输入辅助", "在中文状态下临时输入英文、查找汉字或计算，完成后继续中文输入。");
         const auto row = [&](const char *title, const char *description, const char *id, GtkWidget *&control, GtkWidget **trial) {
             control = gtk_switch_new(); target(control, id);
+            gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
             auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
             if (trial) { *trial = gtk_button_new_with_label("试用"); gtk_box_pack_start(GTK_BOX(actions), *trial, FALSE, FALSE, 0); }
             gtk_box_pack_start(GTK_BOX(actions), control, FALSE, FALSE, 0);
