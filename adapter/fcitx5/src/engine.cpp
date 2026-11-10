@@ -501,7 +501,7 @@ void ModernIMEController::setContext(std::string before, std::string after,
     if (provider_ != nullptr) {
         provider_->setContext(contextBefore_, contextAfter_);
     }
-    if (temporaryEnglish_) return;
+    if (auxiliaryInputActive()) return;
     if (!page_.items.empty()) {
         if (clipboardMode_) {
             displayGeneration_++;
@@ -550,17 +550,14 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     }
     if (event.kind == KeyKind::ToggleTemporaryEnglish) {
         if (!options_.temporaryEnglishEnabled) return false;
-        if (temporaryEnglish_) return finishTemporaryEnglish(true);
-        if (!compositionInput_.empty() || clipboardMode_) return false;
-        finalizeRecentCommitDeletion();
-        invalidateTextActions();
-        if (provider_) provider_->resetCommitHistory();
-        temporaryEnglish_ = true;
-        auxiliaryInput_.clear(); auxiliaryCursor_ = 0;
-        publishAuxiliaryPage();
-        return true;
+        if (temporaryEnglishMode()) return finishTemporaryEnglish(true);
+        return openAuxiliaryInput(AuxiliaryInputMode::TemporaryEnglish, "");
     }
-    if (temporaryEnglish_) return handleTemporaryEnglish(event);
+    if (event.kind == KeyKind::OpenComponentLookup) {
+        if (!options_.componentLookupEnabled) return false;
+        return openAuxiliaryInput(AuxiliaryInputMode::ComponentLookup, "u");
+    }
+    if (auxiliaryInputActive()) return handleAuxiliaryInput(event);
     if (event.kind == KeyKind::UndoCommit) return undoLastCommit();
     if (event.kind != KeyKind::PreviousCandidate && event.kind != KeyKind::NextCandidate &&
         event.kind != KeyKind::PreviousPage && event.kind != KeyKind::NextPage &&
@@ -883,6 +880,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::Toggle:
     case KeyKind::UndoCommit:
     case KeyKind::ToggleTemporaryEnglish:
+    case KeyKind::OpenComponentLookup:
         break;
     }
     return false;
@@ -905,6 +903,14 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
     const auto currentId = core::candidateIdentity(page_.items[request.globalIndex], page_);
     if (!(currentId == request.expected)) {
         return false;
+    }
+
+    if (auxiliaryInputActive()) {
+        const auto text = page_.items[request.globalIndex].text;
+        host_.commit(text);
+        appendFallbackContext(text);
+        clearComposition();
+        return true;
     }
 
     if (clipboardMode_) {
@@ -1237,7 +1243,7 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
 }
 
 void ModernIMEController::clearComposition() {
-    temporaryEnglish_ = false;
+    auxiliaryMode_ = AuxiliaryInputMode::None;
     auxiliaryInput_.clear(); auxiliaryCursor_ = 0;
     contextBefore_ = fallbackContextBefore_;
     contextAfter_.clear();
@@ -1281,7 +1287,7 @@ void ModernIMEController::setSensitive(bool sensitive) {
     }
     sensitive_ = sensitive;
     if (sensitive_) {
-        if (temporaryEnglish_) finishTemporaryEnglish(false);
+        if (auxiliaryInputActive()) cancelAuxiliaryInput();
         invalidateTextActions();
         recentCommit_.valid = false;
         contextAvailability_ = ContextAvailability::Invalidated;
@@ -1318,7 +1324,8 @@ void ModernIMEController::setOptions(ControllerOptions options) {
         options.punctuationOverrides != options_.punctuationOverrides ||
         options.undoCommitEnabled != options_.undoCommitEnabled) invalidateTextActions();
     options_ = options;
-    if (temporaryEnglish_ && !options_.temporaryEnglishEnabled) finishTemporaryEnglish(true);
+    if (temporaryEnglishMode() && !options_.temporaryEnglishEnabled) finishTemporaryEnglish(true);
+    if (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup && !options_.componentLookupEnabled) cancelAuxiliaryInput();
     if (!options_.learningEnabled) { recentCommit_.valid = false; }
     if (provider_ != nullptr && !sensitive_) {
         provider_->setLearningEnabled(options_.learningEnabled);
@@ -1326,7 +1333,7 @@ void ModernIMEController::setOptions(ControllerOptions options) {
     }
     if (!options_.inputEnabled) {
         reset();
-    } else if (temporaryEnglish_) {
+    } else if (auxiliaryInputActive()) {
         publishAuxiliaryPage();
     } else if (!page_.items.empty()) {
         if (clipboardMode_) {
@@ -1467,7 +1474,7 @@ void ModernIMEController::publishProviderPage(bool adoptRemainingComposition,
 }
 
 void ModernIMEController::refreshPage() {
-    if (temporaryEnglish_) { publishAuxiliaryPage(); return; }
+    if (auxiliaryInputActive()) { publishAuxiliaryPage(); return; }
     if (clipboardMode_) {
         return;
     }
@@ -1498,19 +1505,53 @@ void ModernIMEController::refreshPage() {
     host_.publishPage(page_);
 }
 
+bool ModernIMEController::openAuxiliaryInput(AuxiliaryInputMode mode, std::string_view seed) {
+    if (sensitive_ || auxiliaryInputActive() || clipboardMode_ ||
+        (!compositionInput_.empty() && compositionInput_ != seed)) return false;
+    finalizeRecentCommitDeletion();
+    invalidateTextActions();
+    if (provider_) { provider_->resetCommitHistory(); provider_->reset(); }
+    input_.clear(); compositionInput_.clear(); compositionCursor_ = 0;
+    auxiliaryMode_ = mode;
+    auxiliaryInput_.clear(); auxiliaryCursor_ = 0;
+    publishAuxiliaryPage();
+    return true;
+}
+
 void ModernIMEController::publishAuxiliaryPage() {
     page_.clear();
     page_.sessionId = sessionId_;
     page_.displayGeneration = ++displayGeneration_;
     page_.generation = displayGeneration_;
     page_.rawInput = auxiliaryInput_;
-    page_.preedit = auxiliaryInput_;
-    page_.preeditCursor = auxiliaryCursor_;
+    page_.preedit = auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup ? "拆字：" + auxiliaryInput_ : auxiliaryInput_;
+    if (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup) {
+        if (componentLookup_) {
+            for (const auto &match : componentLookup_->lookup(auxiliaryInput_)) {
+                core::CandidateItem item;
+                item.text = match.text;
+                item.annotation = match.components;
+                item.source = core::CandidateSource::Engine;
+                item.commitRole = core::CommitCandidateRole::Generated;
+                item.consumedInputBytes = auxiliaryInput_.size();
+                page_.items.push_back(std::move(item));
+            }
+        }
+        if (page_.items.empty()) {
+            core::CandidateItem hint;
+            hint.text = !componentLookup_ || !componentLookup_->available() ? "拆字数据不可用" :
+                auxiliaryInput_.empty() ? "输入部件拼音，如 mumu → 林" : "没有匹配的拆字";
+            hint.source = core::CandidateSource::None;
+            page_.items.push_back(std::move(hint));
+        }
+    }
+    page_.preeditCursor = auxiliaryCursor_ + (auxiliaryMode_ == AuxiliaryInputMode::ComponentLookup ? std::string("拆字：").size() : 0);
+    ensurePageBoundaries();
     host_.publishPage(page_);
 }
 
 bool ModernIMEController::finishTemporaryEnglish(bool commitText) {
-    if (!temporaryEnglish_) return false;
+    if (!temporaryEnglishMode()) return false;
     const auto text = auxiliaryInput_;
     fallbackContextBefore_.clear();
     clearComposition();
@@ -1518,14 +1559,33 @@ bool ModernIMEController::finishTemporaryEnglish(bool commitText) {
     return true;
 }
 
-bool ModernIMEController::handleTemporaryEnglish(const KeyEvent &event) {
+bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {
+    if (!temporaryEnglishMode()) {
+        if (event.kind == KeyKind::Space || event.kind == KeyKind::Enter) {
+            select(page_.cursor); return true;
+        }
+        if (event.kind == KeyKind::Digit ||
+            (event.kind == KeyKind::Character && event.character >= '1' && event.character <= '9')) {
+            if (options_.numberSelection) {
+                const auto digit = event.kind == KeyKind::Digit ? event.digit : event.character;
+                const auto boundary = currentPageBoundary();
+                const auto index = boundary.begin + static_cast<std::size_t>(digit - '1');
+                if (index < boundary.end) select(index);
+            }
+            return true;
+        }
+        if (event.kind == KeyKind::PreviousCandidate) return moveCursor(-1);
+        if (event.kind == KeyKind::NextCandidate) return moveCursor(1);
+        if (event.kind == KeyKind::PreviousPage) return movePage(-1);
+        if (event.kind == KeyKind::NextPage) return movePage(1);
+    }
     switch (event.kind) {
     case KeyKind::Character:
         if (event.character < 0x21 || event.character > 0x7e) return false;
         if (auxiliaryInput_.size() < 128) auxiliaryInput_.insert(auxiliaryCursor_++, 1, event.character);
         break;
     case KeyKind::Backspace:
-        if (auxiliaryInput_.empty()) return finishTemporaryEnglish(false);
+        if (auxiliaryInput_.empty()) { cancelAuxiliaryInput(); return true; }
         if (auxiliaryCursor_) auxiliaryInput_.erase(--auxiliaryCursor_, 1);
         break;
     case KeyKind::DeleteForward:
@@ -1540,7 +1600,7 @@ bool ModernIMEController::handleTemporaryEnglish(const KeyEvent &event) {
     case KeyKind::Enter: return finishTemporaryEnglish(true);
     case KeyKind::Space:
         finishTemporaryEnglish(true); host_.commit(" "); return true;
-    case KeyKind::Escape: return finishTemporaryEnglish(false);
+    case KeyKind::Escape: cancelAuxiliaryInput(); return true;
     default: return false;
     }
     publishAuxiliaryPage();

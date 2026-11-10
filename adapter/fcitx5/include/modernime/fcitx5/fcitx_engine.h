@@ -313,6 +313,7 @@ private:
 // Heavyweight resources created once per input method engine and shared by
 // every input context.
 struct FcitxEngineResources final {
+    std::shared_ptr<const core::ComponentLookup> componentLookup;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::shared_ptr<pinyin::PinyinCandidateProvider::SharedResources> pinyin;
 #endif

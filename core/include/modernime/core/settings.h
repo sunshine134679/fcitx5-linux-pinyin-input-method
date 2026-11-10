@@ -76,6 +76,7 @@ struct ModernIMESettings final {
     std::map<std::string, InputMode> appInputModes;
     bool undoCommitEnabled = true;
     bool temporaryEnglishEnabled = true;
+    bool componentLookupEnabled = true;
     std::vector<CandidatePin> candidatePins;
 
     bool operator==(const ModernIMESettings &) const = default;

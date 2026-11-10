@@ -15,6 +15,7 @@ add_library(modernime_core STATIC
     src/clipboard_observation.cpp
     src/clipboard_history.cpp
     src/persistent_clipboard_history.cpp
+    src/component_lookup.cpp
     src/settings.cpp
     src/english_definition_dictionary.cpp
     src/phrase_formation.cpp
@@ -60,3 +61,16 @@ target_include_directories(modernime_core PUBLIC
 set_target_properties(modernime_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(modernime_core PUBLIC SQLite::SQLite3 LMDB::LMDB Threads::Threads)
 modernime_enable_warnings(modernime_core)
+
+# Pre-generated and vendored: ordinary builds and runtime stay offline.
+target_compile_definitions(modernime_core PRIVATE
+    MODERNIME_COMPONENT_LOOKUP_PATH="${CMAKE_INSTALL_FULL_DATADIR}/modernime/components/component_lookup.tsv"
+    MODERNIME_COMPONENT_LOOKUP_SOURCE_PATH="${PROJECT_SOURCE_DIR}/data/components/component_lookup.tsv")
+install(FILES
+    "${PROJECT_SOURCE_DIR}/data/components/component_lookup.tsv"
+    "${PROJECT_SOURCE_DIR}/data/components/数据来源与许可.md"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/components")
+install(FILES
+    "${PROJECT_SOURCE_DIR}/data/components/upstream/chaizi.LICENSE"
+    "${PROJECT_SOURCE_DIR}/data/components/upstream/pinyin.LICENSE"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/components/upstream")

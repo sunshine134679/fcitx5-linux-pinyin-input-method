@@ -233,6 +233,42 @@ void testTemporaryEnglish(fcitx::Instance &instance) {
     send(fcitx::Key(FcitxKey_Return));
     check(doc.text.ends_with("aX"), "temporary fragment supports cursor insertion and forward deletion");
 }
+void testComponentLookup(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    const auto &entry = entries.front();
+    Document doc(instance.inputContextManager());
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entry, in);
+    auto send = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key); engine.keyEvent(entry, event); return event.accepted();
+    };
+    auto type = [&](std::string_view s) { for (char c : s) check(send(fcitx::Key(std::string(1,c))), "component input accepted"); };
+    type("u+mumu");
+    auto &controller = engine.state(&doc)->controller();
+    check(controller.auxiliaryInputMode() == fcitx5::AuxiliaryInputMode::ComponentLookup, "u+ explicitly opens lookup");
+    check(controller.page().items.front().text == "林", "component pinyin recalls character");
+    const auto oldPage = controller.page();
+    core::CandidateSelectionRequest stale{oldPage.sessionId, oldPage.displayGeneration, 0,
+        core::candidateIdentity(oldPage.items.front(), oldPage)};
+    send(fcitx::Key(FcitxKey_m));
+    check(!controller.select(stale) && doc.text.empty(), "edited query rejects stale selection");
+    send(fcitx::Key(FcitxKey_BackSpace));
+    check(send(fcitx::Key(FcitxKey_1)) && doc.text == "林" && !controller.auxiliaryInputActive(), "digit commits lookup without passing through provider");
+    type("u+xyz");
+    check(send(fcitx::Key(FcitxKey_Return)) && doc.text == "林" && controller.auxiliaryInputActive(), "missing query does not commit hint or raw input");
+    send(fcitx::Key(FcitxKey_Escape));
+    type("u+mumumu");
+    check(controller.select(0) && doc.text == "林森", "candidate click shares validated selection path");
+    type("u+riyue");
+    controller.setSensitive(true);
+    check(!controller.auxiliaryInputActive() && doc.text == "林森", "sensitive transition cancels lookup");
+    controller.setSensitive(false);
+    type("ni");
+    check(!controller.handle({fcitx5::KeyKind::OpenComponentLookup}) && controller.page().rawInput == "ni", "lookup preserves unrelated Chinese composition");
+    controller.reset();
+}
+
 }
 
 int main() {
@@ -253,6 +289,7 @@ int main() {
         testUndo(instance);
 #endif
         testTemporaryEnglish(instance);
+        testComponentLookup(instance);
     }
     std::filesystem::remove_all(root);
 }

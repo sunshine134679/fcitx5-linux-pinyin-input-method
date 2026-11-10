@@ -145,14 +145,14 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             settings.learningEnabled, settings.contextLearningEnabled,
             settings.autoPairPunctuation, settings.smartPunctuation,
             settings.underscoreStyle, settings.punctuationOverrides, settings.undoCommitEnabled,
-            settings.temporaryEnglishEnabled};
+            settings.temporaryEnglishEnabled, settings.componentLookupEnabled};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
     return {settings.toggleKey, settings.numberSelection,
             settings.arrowNavigation, settings.pageNavigation,
             settings.clipboardEnabled, settings.clipboardTrigger,
-            settings.characterExtractionEnabled, settings.undoCommitEnabled, settings.temporaryEnglishEnabled};
+            settings.characterExtractionEnabled, settings.undoCommitEnabled, settings.temporaryEnglishEnabled, settings.componentLookupEnabled};
 }
 
 } // namespace
@@ -427,6 +427,7 @@ FcitxInputContextState::FcitxInputContextState(
       , settingsGeneration_(settingsGeneration) {
         (void)resources;
 #endif
+    controller_.setComponentLookup(resources.componentLookup);
     host_.setController(controller_);
     controller_.setActive(settings.defaultMode == core::InputMode::Chinese);
 }
@@ -474,6 +475,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
           return new FcitxInputContextState(inputContext, settings_,
                                             resources_, settingsGeneration_);
       }) {
+    resources_.componentLookup = std::make_shared<const core::ComponentLookup>();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // One dictionary/language-model/learning-writer set for the whole engine;
     // every input context only adds its own composition state. The load
@@ -1100,12 +1102,16 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             (event.rawKey().check(FcitxKey_e, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})) ||
              event.rawKey().check(FcitxKey_E, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})))) {
             modernEvent = KeyEvent{KeyKind::ToggleTemporaryEnglish};
-        } else if (contextState->controller().temporaryEnglishMode() && !hasNonShiftModifier(event.key())) {
+        } else if (keyBindings_.componentLookupEnabled && !hasNonShiftModifier(event.key()) &&
+                   !contextState->controller().auxiliaryInputActive() &&
+                   contextState->controller().page().rawInput == "u" && event.key().check(FcitxKey_plus)) {
+            modernEvent = KeyEvent{KeyKind::OpenComponentLookup};
+        } else if (contextState->controller().auxiliaryInputActive() && !hasNonShiftModifier(event.key())) {
             const auto c = fcitx::Key::keySymToUnicode(event.key().sym());
             if (c > 0x20 && c <= 0x7e) modernEvent = KeyEvent{KeyKind::Character, static_cast<char>(c)};
         }
         if (modernEvent && modernEvent->kind == KeyKind::Character && modernEvent->character == '\'' &&
-            !contextState->controller().temporaryEnglishMode() &&
+            !contextState->controller().auxiliaryInputActive() &&
             contextState->controller().page().preedit.empty()) modernEvent->kind = KeyKind::Punctuation;
         if (modernEvent && contextState->controller().page().preedit.empty() &&
             !contextState->controller().clipboardMode() && !hasNonShiftModifier(event.key()) &&
@@ -1120,7 +1126,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             modernEvent = KeyEvent{KeyKind::UndoCommit};
         const bool clipboardActive = keyBindings_.clipboardEnabled &&
                                       contextState->controller().active() &&
-                                      !contextState->controller().temporaryEnglishMode();
+                                      !contextState->controller().auxiliaryInputActive();
         if (clipboardActive) {
             contextState->setClipboardSnapshot(clipboardSnapshot_);
         }
@@ -1137,8 +1143,10 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             return;
         }
         if (!modernEvent.has_value()) {
-            if (contextState->controller().temporaryEnglishMode() && hasNonShiftModifier(event.key()))
-                contextState->controller().finishTemporaryEnglish(true);
+            if (contextState->controller().auxiliaryInputActive() && hasNonShiftModifier(event.key())) {
+                if (contextState->controller().temporaryEnglishMode()) contextState->controller().finishTemporaryEnglish(true);
+                else contextState->controller().cancelAuxiliaryInput();
+            }
             if (hasNonShiftModifier(event.key())) contextState->controller().invalidateTextActions();
             if (contextState->controller().page().preedit.empty() &&
                 !event.inputContext()->surroundingText().isValid()) {

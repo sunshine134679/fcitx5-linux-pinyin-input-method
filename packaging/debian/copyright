@@ -28,6 +28,18 @@ Files: data/pinyin/lm_sc.arpa-20260629.tar.zst
 Copyright: 2022-2026 CSSlayer <wengxt@gmail.com>
 License: LGPL-2.1+
 
+Files: data/components/component_lookup.tsv
+       data/components/upstream/chaizi-jt.txt
+Copyright: 2015 開放詞典
+           2026 ModernIME Contributors
+License: CC-BY-3.0
+ See /usr/share/modernime/components/upstream/chaizi.LICENSE.
+ Source and transformations: /usr/share/modernime/components/数据来源与许可.md
+
+Files: data/components/upstream/pinyin.txt
+Copyright: 2016 mozillazg
+License: MIT
+
 License: LGPL-2.1+
  This package is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public

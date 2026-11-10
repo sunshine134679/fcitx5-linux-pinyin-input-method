@@ -5,6 +5,7 @@
 #include "modernime/core/candidate_provider.h"
 #include "modernime/core/input_state.h"
 #include "modernime/core/settings.h"
+#include "modernime/core/component_lookup.h"
 
 #include <algorithm>
 #include <chrono>
@@ -47,10 +48,14 @@ enum class KeyKind {
     CommitLastCharacter,
     UndoCommit,
     ToggleTemporaryEnglish,
+    OpenComponentLookup,
 };
+
+enum class AuxiliaryInputMode { None, TemporaryEnglish, ComponentLookup };
 
 // Empty valid text is a real document state; unavailable clients may use the
 // bounded continuous-commit fallback. Invalidated state drops that fallback.
+
 enum class ContextAvailability { Valid, Unavailable, Invalidated };
 
 struct KeyEvent final {
@@ -77,6 +82,7 @@ struct ControllerOptions final {
     std::map<char, std::string> punctuationOverrides;
     bool undoCommitEnabled = true;
     bool temporaryEnglishEnabled = true;
+    bool componentLookupEnabled = true;
 };
 
 struct KeyBindings final {
@@ -89,6 +95,7 @@ struct KeyBindings final {
     bool characterExtractionEnabled = true;
     bool undoCommitEnabled = true;
     bool temporaryEnglishEnabled = true;
+    bool componentLookupEnabled = true;
 };
 
 struct TextEditContext final {
@@ -131,7 +138,11 @@ public:
     void invalidateTextActions();
     void invalidateUndo() { undoCommit_.reset(); }
     bool undoLastCommit();
-    bool temporaryEnglishMode() const { return temporaryEnglish_; }
+    AuxiliaryInputMode auxiliaryInputMode() const { return auxiliaryMode_; }
+    bool auxiliaryInputActive() const { return auxiliaryMode_ != AuxiliaryInputMode::None; }
+    bool temporaryEnglishMode() const { return auxiliaryMode_ == AuxiliaryInputMode::TemporaryEnglish; }
+    void setComponentLookup(std::shared_ptr<const core::ComponentLookup> lookup) { componentLookup_ = std::move(lookup); }
+    void cancelAuxiliaryInput() { if (auxiliaryInputActive()) clearComposition(); }
     bool finishTemporaryEnglish(bool commitText);
     void setActive(bool active);
     void setSensitive(bool sensitive);
@@ -219,7 +230,8 @@ private:
     bool commitPunctuation(char ascii);
     bool editPairedPunctuation(char ascii);
     bool eraseEmptyPair();
-    bool handleTemporaryEnglish(const KeyEvent &event);
+    bool handleAuxiliaryInput(const KeyEvent &event);
+    bool openAuxiliaryInput(AuxiliaryInputMode mode, std::string_view seed);
     void publishAuxiliaryPage();
     void rememberUndo(const std::optional<TextEditContext> &before,
                       const core::CandidateIdentity &candidate,
@@ -289,7 +301,8 @@ private:
         std::chrono::steady_clock::time_point timestamp;
     };
     std::optional<UndoCommit> undoCommit_;
-    bool temporaryEnglish_ = false;
+    AuxiliaryInputMode auxiliaryMode_ = AuxiliaryInputMode::None;
+    std::shared_ptr<const core::ComponentLookup> componentLookup_;
     std::string auxiliaryInput_;
     std::size_t auxiliaryCursor_ = 0;
     std::uint64_t sessionId_ = 0;

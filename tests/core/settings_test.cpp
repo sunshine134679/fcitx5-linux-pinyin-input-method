@@ -600,6 +600,7 @@ void testTypingSettings() {
     settings.rememberModePerApp = true;
     settings.undoCommitEnabled = false;
     settings.temporaryEnglishEnabled = false;
+    settings.componentLookupEnabled = false;
     settings.candidatePins = {{modernime::core::PinyinScheme::Full, "shi", "试", "shi"},
                               {modernime::core::PinyinScheme::Xiaohe, "ui", "是", "shi"}};
     assertTrue(modernime::core::SettingsStore::save(path, settings), "save typing settings");
