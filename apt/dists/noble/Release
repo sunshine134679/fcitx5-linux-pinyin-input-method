@@ -1,29 +1,29 @@
 Architectures: amd64
 Codename: noble
 Components: main
-Date: Mon, 09 Nov 2026 12:15:53 +0000
+Date: Tue, 10 Nov 2026 00:44:14 +0000
 Description: ModernIME APT Repository for Ubuntu 24.04 LTS (Noble Numbat)
 Label: ModernIME APT Repository
 Origin: ModernIME
 Suite: noble
 Version: 24.04
 MD5Sum:
- 30c74755a711437b04658bf0bcee10aa              244 Release
- 03f20e5a7275ac56e908fc7ef7774f30            13598 main/binary-amd64/Packages
- a816a23ca9dfb658278dca076dc44d62             1826 main/binary-amd64/Packages.gz
+ e5330b7381356866f75d183d24ed28eb              244 Release
+ fb0602ba700cf2357b8df70ef58e0331            14998 main/binary-amd64/Packages
+ 95079d18f511bf0e8cafe5c54eb4eea2             1960 main/binary-amd64/Packages.gz
  c7a9cf9c409ac62692e9be4ca405baa8              116 main/binary-amd64/Release
 SHA1:
- eadb72cd4e8f5465bf923440b0ef43dfbebc28d9              244 Release
- 05f44bf3a1654dd91c4895f3e159d851b0ae5aab            13598 main/binary-amd64/Packages
- efdb992a4a36d66394f2a8c3b4d9ba4578b968a6             1826 main/binary-amd64/Packages.gz
+ 303552088b473ae7a149c1816e1db8d6de828081              244 Release
+ f4da91fccdcd6970bf40178f423bc32017821df2            14998 main/binary-amd64/Packages
+ 88420b88c4c26c5dac9f71841761cc376dec965c             1960 main/binary-amd64/Packages.gz
  7c199c1055208c8761ea2b98901a1609e30c967d              116 main/binary-amd64/Release
 SHA256:
- f8efe16f5f9c5a849350084b78847b8b2d70e245f402291c72bed9d60e67205d              244 Release
- e8667c4d74aabd375f8de0a16b29f01487011087ca0e632b7991f1a198cf9fa7            13598 main/binary-amd64/Packages
- 377e451dbe0bcdaa12a8080f1e68a68787daa738a550483355c594c947007128             1826 main/binary-amd64/Packages.gz
+ 113e7dc46255f73eb3d6f36466c563a64e23c8c2c1354e787e9d58d94d39fe71              244 Release
+ 6bd411d60bb9d878c5ad39d78913144ec551e9e34b2668687e0429673d46fa29            14998 main/binary-amd64/Packages
+ e21b2f473a5f1ed69ea038428ac26cb1a091310556a0337ef105b9c8a1da4491             1960 main/binary-amd64/Packages.gz
  955c6146daf0dee685e5c5f1ecfbcca82c2d9fbdf0e747017d20ea7176785f76              116 main/binary-amd64/Release
 SHA512:
- a4a7f23f2081997a91bc00bcdee8d4c18cc6e2dbda719effbd8798c76ff0e8f02ba76df7ab2ac84ac444da8044b99f45dad25397abd98741b8569c47b78ccf19              244 Release
- 17f190895421d13af13a9116114f634398658e7f85dbc6ff51dd4dc1c7a90e71ad4966cb0ed7f846e0159645c5eab4d66e4b441a187017afa2ec5699a700821d            13598 main/binary-amd64/Packages
- 8cff37e8e8ec2782f5f5e92ddd9364aa697aa3b6ad82e3c6ad70a3a9693ead4b05a0ac15906d111450f08b016a9ea4e049f73f2aa408466602716e5f8c9c27ba             1826 main/binary-amd64/Packages.gz
+ f261be8ef35876d2b7316bd1c08ef17cd3d0e7ad8ba0cc31e5fca01edf3aca1f0e941ff81e7c00d6c2547ccddf811a90edcc078d0ac996fe8854f0135c458a1c              244 Release
+ 8248f6a39bc1d02ce78936d41db173bdb40704684144bff087e3ee57640a9add4a4bc8522dc81bdeb55b58298d3e67c0a0b4108f771c729eab6fde48e40bccc1            14998 main/binary-amd64/Packages
+ ead2ebb35084b4c180acd10be2b3f33e9357d143d624fe578ad24ecc87894536e6ae74eff15b18b717841ff5256747f3a2b3d8691ea4a78b92c1be7393157704             1960 main/binary-amd64/Packages.gz
  15f6cc6175fb3ecd1f383f5c5daf6569a0ac723f9b7ef7e5d4bec4f80f23f428db3c09fa23d99f9d19b62805ef030819557e98c22d2b6bea4fb1b325b2220163              116 main/binary-amd64/Release
