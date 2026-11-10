@@ -1,0 +1,146 @@
+{
+  "采集日期": "2026-11-10",
+  "客户端": "/home/wsl/.local/bin/modernime-settings",
+  "版本": "0.2.3",
+  "方式": "独立 Xephyr 与 D-Bus 会话，GDK_SCALE=6，临时 XDG 配置/数据/缓存，不读取个人词库",
+  "素材": [
+    {
+      "file": "candidates-amber.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "c640fd42333ce253a092360213628dd2a7368ad17beeffe6129d4aa1cbd34873"
+    },
+    {
+      "file": "candidates-blue.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "33827a6705b452ad8bab87e6f4233512097d4fba3c3eaa0b13c1e5cf42f39ea3"
+    },
+    {
+      "file": "candidates-capsule24.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "3362a15fef8235ace5fc8747a94a6e39f71c545645297f9b0ebb872cc920b67a"
+    },
+    {
+      "file": "candidates-contrast.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "fbbdd5071b3b56fc281074bc7dc70947479728f4b7c3c0e9236bfa74272f6617"
+    },
+    {
+      "file": "candidates-font24.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "78f06735bab89d3ef05194f67e294f02c565f36a6dea56fad41748624865a76d"
+    },
+    {
+      "file": "candidates-jade.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "3281fa82a327594db1417c0179e87961ec42845d603bc5f2ef051a5baa3fab6d"
+    },
+    {
+      "file": "candidates-jade24.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "c0feb9a83d16e57dc4002771acc6386eafcad720b4fdd4ddf99daf61a15f92f1"
+    },
+    {
+      "file": "candidates-lavender.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "160b89b3a8bfcfba2f5f8ee194f6f880eb89b2ee67159611aeb5b749a5b66f65"
+    },
+    {
+      "file": "candidates-night.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "edca08accca7c9ee14972fcd79327a80d0c7ab497c6487a767647e28886c808b"
+    },
+    {
+      "file": "candidates-rose.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "65f14fe82ad0d9f7a7b8b890c22758a2b96b3d8412dd76d15ca2fbdc247080b9"
+    },
+    {
+      "file": "candidates-spacious24.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "e19cb593f528e252b0fc27195a55ea0062dd60b2cc8cb43be05619d772324ac6"
+    },
+    {
+      "file": "input-lavender.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "b7ba2ee6acbb83800ce6f1616158f59be0642f054b3aed1c99fb328aea1656bb"
+    },
+    {
+      "file": "input-xiaohe.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "5da886f51d389fa5e5f85196a761524940e93778e57ea5fc61c5f4c46d0a4fa4"
+    },
+    {
+      "file": "input-ziranma.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "09783702bd503c98441fa38dad02b39cafd647e524bf433ea048f320834a9e2a"
+    },
+    {
+      "file": "learning-lavender.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "f2cd36a616d98664b29b6324090ba4bea8bf3a6f4e0760539153c38cd0eb9235"
+    },
+    {
+      "file": "dictionary-demo.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "2f5f43716941737b88916eeeef3d7ba5f51b01136b589992c596336a60087d35",
+      "说明": "隔离临时环境；个人词典为人工演示词条，不使用真实个人数据"
+    },
+    {
+      "file": "learning-private.png",
+      "pixels": [
+        5880,
+        4320
+      ],
+      "sha256": "0ab048ebc8d6be1545a0fa66009f30e9387ddc62b6e0f42795deef65cbd60033",
+      "说明": "隔离临时环境；个人词典为人工演示词条，不使用真实个人数据"
+    }
+  ]
+}

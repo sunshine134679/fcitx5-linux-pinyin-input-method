@@ -1,0 +1,18 @@
+{
+  "captured_at": "2026-11-10",
+  "client_version": "ModernIME settings 0.2.3",
+  "binary_sha256": "746f5783ea0da50b3e18bd38cecc5310b6c973ae8c519910170cb9cc80ab7e98",
+  "capture": "Xephyr isolated XDG, GDK_SCALE=3, native 2940x2160",
+  "assets": {
+    "candidates-amber.png": "bf6164c2474f6cf59d5a1e6f5ba03ac2d6f1f65b63e1ed139f2327948be974bf",
+    "candidates-blue.png": "bfefad24b4e874521c96dff3c9f658353d1bc646b951a9b1d4d4e8ab018b5655",
+    "candidates-contrast.png": "797fe1ec8e87f21ef94846e99dbb66d83dc3a10ec87d6a774b10da5a5e89821a",
+    "candidates-jade.png": "2ffda814e4f99b93de650533d155ec67ad9e0d216512878fdf49388532d1b6e4",
+    "candidates-lavender.png": "a599150dc887cd22b5de34d8efc6f8ede0025a7bbb8fe042e8d2f3172252ea5d",
+    "candidates-night.png": "6d776eb93bfe4fcbd6128b11177fff2959359dceef4bfe005d4d9398753c994a",
+    "candidates-rose.png": "f6d23cb4c9b260e9d4cd04cc23980dbb2bd34758ea20f86a8abe0b94724bdd8e",
+    "input-lavender.png": "0ed3b86b8af408231e27667618ad35145e81d4e46754655df723a851ab53ebfb",
+    "learning-lavender.png": "68b5a657349f1766190f1271b6a16fa9c9433459635ceb03ef7e4e2766abc62e",
+    "官网二维码.png": "9fe01e3368287462a80c6af4ed2e9ee979b102e34c8280705cfa1d86b77ecad9"
+  }
+}

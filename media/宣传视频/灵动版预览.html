@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>下一句，更像你。— ModernIME 灵动版宣传片</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#17141e;color:#f5f1fc;font:16px/1.6 system-ui,"Noto Sans CJK SC",sans-serif}main{max-width:1440px;margin:auto;padding:32px 32px 60px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{font-size:24px;margin:0;font-weight:600}p{color:#afa3bd;margin:6px 0}video{display:block;width:100%;aspect-ratio:16/9;background:#09080c;box-shadow:0 20px 70px #0005;border-radius:8px}a,button{color:#dfcbff}a{text-underline-offset:4px}button{font:inherit;cursor:pointer;border:1px solid #51445e;background:#251f2f;border-radius:8px;padding:8px 15px}button[aria-pressed=true]{background:#d8bfff;color:#21142e;border-color:#d8bfff}button:focus-visible,a:focus-visible{outline:3px solid #bc93ee;outline-offset:4px}.quality{display:flex;gap:10px}.chapters{display:flex;flex-wrap:wrap;gap:9px;margin:22px 0}.chapters button{font-size:14px;background:transparent}.bottom{display:flex;justify-content:space-between;gap:24px}.links{display:flex;gap:22px;flex-wrap:wrap}.hint{font-size:13px} @media(max-width:640px){main{padding:20px 14px}header,.bottom{align-items:flex-start;flex-direction:column}h1{font-size:21px}.quality button{font-size:14px}.chapters{gap:6px}.chapters button{padding:6px 9px}}
+</style>
+<main>
+  <header><div><h1>下一句，更像你。</h1><p>ModernIME 灵动版 · 65 秒 · 60 帧</p></div><div class="quality" aria-label="播放画质"><button data-quality="1080p" aria-pressed="true">1080p 流畅播放</button><button data-quality="4K" aria-pressed="false">4K 原画</button></div></header>
+  <video id="film" controls playsinline preload="metadata" poster="output/v5/灵动版封面.png" src="output/v5/ModernIME-灵动版-1080p-60fps.mp4"></video>
+  <nav class="chapters" aria-label="视频章节"><button data-time="0.000000">文字落下</button><button data-time="6.850000">走近界面</button><button data-time="13.716667">七套主题</button><button data-time="20.566667">外观细节</button><button data-time="29.150000">记住主动选择</button><button data-time="33.450000">上下文：公园</button><button data-time="37.750000">上下文：充气</button><button data-time="41.150000">个人词典</button><button data-time="44.583333">学习自己定</button><button data-time="48.000000">英文与金额</button><button data-time="54.866667">全拼与双拼</button><button data-time="58.283333">下一句，更像你</button></nav>
+  <div class="bottom"><div><p class="hint">建议开启声音观看。4K 播放流畅度取决于播放器与设备的解码能力。</p><p class="hint">客户端画面来自本机 v0.2.3，6 倍分辨率采集；输入、学习原理和运镜为动画演示。</p></div><div class="links"><a href="output/v5/ModernIME-灵动版-4K-60fps.mp4" download>下载 4K 成片</a><a href="output/v5/ModernIME-灵动版-1080p-60fps.mp4" download>下载分享版</a><a href="output/v5/灵动版封面.png" download>下载封面</a></div></div>
+  <p class="hint">获取 ModernIME：<a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method">GitHub · 下载与源码</a></p>
+  <p class="hint">Music: Digital Clouds — Alejandro Magaña (A. M.), via <a href="https://mixkit.co/free-stock-music/tag/technology/">Mixkit</a> · <a href="https://mixkit.co/license/modal/musicFree/">音乐许可</a></p>
+</main>
+<script>
+const film=document.getElementById('film');
+document.querySelectorAll('[data-quality]').forEach(button=>button.addEventListener('click',()=>{
+  const time=film.currentTime,playing=!film.paused;
+  film.src=`output/v5/ModernIME-灵动版-${button.dataset.quality}-60fps.mp4`;
+  film.addEventListener('loadedmetadata',()=>{film.currentTime=Math.min(time,film.duration);if(playing)film.play().catch(()=>{});},{once:true});
+  document.querySelectorAll('[data-quality]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+}));
+document.querySelectorAll('[data-time]').forEach(button=>button.addEventListener('click',()=>{film.currentTime=Number(button.dataset.time);film.play().catch(()=>{});}));
+</script>
+</html>

@@ -1,0 +1,13 @@
+{
+  "duration": 48,
+  "bpm": 140,
+  "starts": [0, 8.5714285714, 15.4285714286, 22.2857142857, 30.8571428571, 34.2857142857, 44.5714285714],
+  "typing": [
+    {"scene": 0, "start": 1.0, "interval": 0.18, "pinyin": "nihao", "commit": 2.3, "word": "你好", "after": "，", "afterAt": 2.72},
+    {"scene": 0, "start": 3.2, "interval": 0.17, "pinyin": "shijie", "commit": 4.7, "word": "世界", "after": "。", "afterAt": 5.1},
+    {"scene": 5, "start": 0.7, "interval": 0.16, "pinyin": "ba", "commit": 1.25, "word": "把"},
+    {"scene": 5, "start": 1.55, "interval": 0.135, "pinyin": "linggan", "commit": 2.75, "word": "灵感", "after": "，", "afterAt": 3.0},
+    {"scene": 5, "start": 3.45, "interval": 0.12, "pinyin": "xiecheng", "commit": 4.75, "word": "写成"},
+    {"scene": 5, "start": 5.1, "interval": 0.135, "pinyin": "richang", "commit": 6.3, "word": "日常", "after": "。", "afterAt": 6.6}
+  ]
+}
