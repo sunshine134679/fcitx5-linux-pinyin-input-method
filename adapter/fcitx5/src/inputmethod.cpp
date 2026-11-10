@@ -477,9 +477,8 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
           return new FcitxInputContextState(inputContext, settings_,
                                             resources_, settingsGeneration_);
       }) {
-    // chttrans owns conversion/configuration and provides its native action.
-    // Missing/disabled addons leave normal simplified input available.
-    if (manager_) manager_->addon("chttrans", true);
+    // Load the optional converter on activation. Starting another addon here
+    // re-enters AddonManager's loader and prevents engine startup.
     resources_.componentLookup = std::make_shared<const core::ComponentLookup>();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // One dictionary/language-model/learning-writer set for the whole engine;
@@ -1210,6 +1209,9 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 
 void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
                                     fcitx::InputContextEvent &event) {
+    // Activation runs after engine construction; lazy addon loading is safe
+    // here and keeps an optional missing converter from blocking input.
+    if (manager_) manager_->addon("chttrans", true);
     clipboardNeedsBaseline_ = true;
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         if (contextState->settingsGeneration() != settingsGeneration_) {

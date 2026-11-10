@@ -53,11 +53,13 @@ int main(int argc, char **argv) {
     require(mkdtemp(rootName), "isolated directory");
     const std::filesystem::path root(rootName);
     std::filesystem::create_directories(root / "metadata/addon");
+    std::filesystem::create_directories(root / "metadata/inputmethod");
+    std::ofstream(root / "metadata/inputmethod/modernime.conf") << "[InputMethod]\nName=ModernIME\nLangCode=zh_CN\nAddon=modernime\nConfigurable=False\n";
     std::filesystem::create_directories(root / "metadata/chttrans");
     std::filesystem::copy_file(argv[3], root / "metadata/chttrans/gbks2t.tab");
     std::ofstream(root / "metadata/addon/keyboard.conf") << "[Addon]\nName=Keyboard\nType=StaticLibrary\nLibrary=testkeyboard\nCategory=InputMethod\nVersion=1.0\nOnDemand=False\n";
-    std::ofstream(root / "metadata/addon/modernime.conf") << "[Addon]\nName=ModernIME\nType=SharedLibrary\nLibrary=modernime_fcitx5\nCategory=InputMethod\nVersion=1.0\nOnDemand=False\n";
-    std::ofstream(root / "metadata/addon/chttrans.conf") << "[Addon]\nName=Chinese conversion\nType=SharedLibrary\nLibrary=libchttrans\nCategory=Module\nVersion=1.0\nOnDemand=False\nConfigurable=True\n";
+    std::ofstream(root / "metadata/addon/modernime.conf") << "[Addon]\nName=ModernIME\nType=SharedLibrary\nLibrary=modernime_fcitx5\nCategory=InputMethod\nVersion=1.0\nOnDemand=True\n\n[Addon/OptionalDependencies]\n0=chttrans\n";
+    std::ofstream(root / "metadata/addon/chttrans.conf") << "[Addon]\nName=Chinese conversion\nType=SharedLibrary\nLibrary=libchttrans\nCategory=Module\nVersion=1.0\nOnDemand=True\nConfigurable=True\n";
     fcitx::setupTestingEnvironment(root.string(), {argv[1], std::filesystem::path(argv[2]).parent_path().string()}, {"metadata"});
     for (const auto *name : {"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"}) setenv(name, rootName, 1);
     unsetenv("DISPLAY"); unsetenv("WAYLAND_DISPLAY"); unsetenv("DBUS_SESSION_BUS_ADDRESS");
@@ -73,6 +75,7 @@ int main(int argc, char **argv) {
         char *args[]={arg0,arg1,arg2,nullptr};
         fcitx::Instance instance(3,args);
         instance.addonManager().registerDefaultLoader(&registry); instance.initialize();
+        require(instance.addonManager().addon("modernime", true), "production dependency metadata loads the real engine");
         auto *conversion = instance.addonManager().addon("chttrans", true);
         require(conversion, "real chttrans addon loaded");
         auto &ims = instance.inputMethodManager(); fcitx::InputMethodGroup group("Test");
