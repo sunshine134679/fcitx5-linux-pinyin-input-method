@@ -1282,7 +1282,12 @@ void ModernIMEInputMethod::reset(const fcitx::InputMethodEntry &,
         ++readyEndpoint_->notificationGeneration;
     }
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
-        contextState->controller().reset();
+        if (event.type() == fcitx::EventType::InputContextReset &&
+            event.inputContext()->hasFocus()) {
+            contextState->controller().resetPreedit();
+        } else {
+            contextState->controller().reset();
+        }
     }
 }
 

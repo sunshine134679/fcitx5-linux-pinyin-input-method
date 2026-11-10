@@ -233,6 +233,34 @@ void testTemporaryEnglish(fcitx::Instance &instance) {
     send(fcitx::Key(FcitxKey_Return));
     check(doc.text.ends_with("aX"), "temporary fragment supports cursor insertion and forward deletion");
 }
+void testPairSurvivesClientReset(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    const auto &entry = entries.front();
+    Document doc(instance.inputContextManager());
+    // GTK's legacy cursor fallback sends Reset after processing forwarded Left.
+    doc.setCapabilityFlags(fcitx::CapabilityFlag::SurroundingText);
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entry, in);
+    auto send = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key); engine.keyEvent(entry, event);
+    };
+    send(fcitx::Key(FcitxKey_parenleft));
+    check(doc.text == "（）" && doc.cursor == 1, "legacy pair positions caret inside");
+    fcitx::InputContextEvent reset(&doc, fcitx::EventType::InputContextReset);
+    engine.reset(entry, reset);
+    for (const char c : std::string("nihao")) send(fcitx::Key(std::string(1, c)));
+    send(fcitx::Key(FcitxKey_space));
+    check(doc.text == "（你好）" && doc.cursor == 3, "candidate commits inside the owned pair");
+    send(fcitx::Key(FcitxKey_parenright));
+    check(doc.text == "（你好）" && doc.cursor == 4, "client preedit reset preserves generated closer ownership");
+    doc.text.clear(); doc.cursor = 0; doc.sync();
+    send(fcitx::Key(FcitxKey_parenleft));
+    fcitx::InputContextEvent out(&doc, fcitx::EventType::InputContextFocusOut);
+    engine.reset(entry, out);
+    send(fcitx::Key(FcitxKey_parenright));
+    check(doc.text == "（））", "focus reset still drops generated pair ownership");
+}
 void testUnderscoreKeepsRawEnglish(fcitx::Instance &instance) {
     fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
     const auto entries = engine.listInputMethods();
@@ -255,8 +283,23 @@ void testUnderscoreKeepsRawEnglish(fcitx::Instance &instance) {
     type("name"); send(fcitx::Key(FcitxKey_underscore));
     check(doc.text == "inter_name_", "identifier continuation keeps raw spelling");
     doc.text.clear(); doc.cursor = 0; doc.sync(); controller.reset();
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    type("foo");
+    const auto chinese = std::find_if(controller.page().items.begin(), controller.page().items.end(),
+        [](const auto &item) { return item.text == "佛"; });
+    check(chinese != controller.page().items.end(), "foo recalls its competing Chinese candidate");
+    controller.moveCursor(static_cast<int>(std::distance(controller.page().items.begin(), chinese)) -
+                          static_cast<int>(controller.page().cursor));
+    send(fcitx::Key(FcitxKey_underscore, fcitx::KeyState::Shift));
+    type("bar"); send(fcitx::Key(FcitxKey_Return));
+    check(doc.text == "foo_bar", "underscore keeps raw identifier even with a Chinese candidate selected");
+    doc.text.clear(); doc.cursor = 0; doc.sync(); controller.reset();
+#endif
     type("nihao"); send(fcitx::Key(FcitxKey_underscore));
-    check(doc.text == "你好——", "Chinese candidate keeps standalone dash behavior");
+    check(doc.text == "nihao_", "explicit identifier separator preserves spelling independent of pinyin validity");
+    doc.text.clear(); doc.cursor = 0; doc.sync(); controller.reset();
+    type("nihao"); send(fcitx::Key(FcitxKey_space)); send(fcitx::Key(FcitxKey_underscore));
+    check(doc.text == "你好——", "underscore after confirmed Chinese still produces a dash");
 }
 
 void testCalculator(fcitx::Instance &instance) {
@@ -395,6 +438,7 @@ int main() {
         testTemporaryEnglish(instance);
         testComponentLookup(instance);
         testUnderscoreKeepsRawEnglish(instance);
+        testPairSurvivesClientReset(instance);
         testCalculator(instance);
         testSymbolSearch(instance);
     }

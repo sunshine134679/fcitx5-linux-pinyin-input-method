@@ -146,6 +146,8 @@ public:
     void setContext(std::string before, std::string after,
                     ContextAvailability availability = ContextAvailability::Valid);
     void reset();
+    // Focused client Reset cancels preedit without abandoning owned pairs.
+    void resetPreedit();
     void invalidateTextActions();
     void invalidateUndo() { undoCommit_.reset(); }
     bool undoLastCommit();

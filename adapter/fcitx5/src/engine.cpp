@@ -726,14 +726,9 @@ bool ModernIMEController::handle(const KeyEvent &event) {
                 (mapping != options_.punctuationOverrides.end() ? mapping->second == "_" :
                  options_.underscoreStyle == core::UnderscoreStyle::Ascii ||
                  (options_.underscoreStyle == core::UnderscoreStyle::Smart && options_.smartPunctuation));
-            const bool englishPending = !page_.items.empty() &&
-                page_.items[page_.cursor].source != core::CandidateSource::None &&
-                isAsciiText(page_.items[page_.cursor].text);
-            // '_' continues an identifier. Completing a word here changes the
-            // user's spelling (inter -> interface_) before their separator.
-            if (literal && (englishPending ||
-                    (options_.smartPunctuation && inAsciiToken(contextBefore_, contextAfter_))))
-                return commitRawPreedit("_");
+            // '_' explicitly continues the typed identifier. Chinese ranking
+            // and English completion must not rewrite its spelling.
+            if (literal) return commitRawPreedit("_");
         }
         if (!compositionInput_.empty() && compositionInput_.front() == 'v' &&
             event.character == '.' && compositionInput_.find('.') == std::string::npos) {
@@ -1326,6 +1321,14 @@ void ModernIMEController::clearComposition() {
 
 void ModernIMEController::reset() {
     invalidateTextActions();
+    resetPreedit();
+}
+
+void ModernIMEController::resetPreedit() {
+    // GTK may reset its IM context when processing our forwarded cursor key.
+    // Keep owned pairs until the next edit validates current surrounding text;
+    // focus/mode changes still use reset() to discard all text actions.
+    undoCommit_.reset();
     displayGeneration_++;
     recentCommit_.valid = false;
     contextAvailability_ = ContextAvailability::Unavailable;
