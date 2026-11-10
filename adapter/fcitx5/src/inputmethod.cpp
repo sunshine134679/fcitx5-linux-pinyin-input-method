@@ -475,6 +475,9 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
           return new FcitxInputContextState(inputContext, settings_,
                                             resources_, settingsGeneration_);
       }) {
+    // chttrans owns conversion/configuration and provides its native action.
+    // Missing/disabled addons leave normal simplified input available.
+    if (manager_) manager_->addon("chttrans", true);
     resources_.componentLookup = std::make_shared<const core::ComponentLookup>();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // One dictionary/language-model/learning-writer set for the whole engine;
@@ -1205,6 +1208,10 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
         if (auto *ic = event.inputContext()) {
             ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, &subModeAction_);
             ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, &settingsAction_);
+            if (instance_) {
+                if (auto *scriptAction = instance_->userInterfaceManager().lookupAction("chttrans"))
+                    ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, scriptAction);
+            }
             subModeAction_.update(ic);
             ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
         }

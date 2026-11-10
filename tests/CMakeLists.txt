@@ -1020,3 +1020,15 @@ add_test(NAME modernime_component_lookup COMMAND modernime_component_lookup_test
 add_executable(modernime_calculator_tests core/calculator_test.cpp)
 target_link_libraries(modernime_calculator_tests PRIVATE modernime_core)
 add_test(NAME modernime_calculator COMMAND modernime_calculator_tests)
+
+if(MODERNIME_BUILD_FCITX5)
+    find_library(MODERNIME_CHTTRANS_MODULE NAMES chttrans PATH_SUFFIXES fcitx5)
+    find_file(MODERNIME_CHTTRANS_NATIVE_DATA gbks2t.tab PATHS /usr/share/fcitx5/chttrans /usr/local/share/fcitx5/chttrans)
+    if(MODERNIME_CHTTRANS_MODULE AND MODERNIME_CHTTRANS_NATIVE_DATA)
+        add_executable(modernime_script_conversion_tests adapter/script_conversion_test.cpp)
+        target_include_directories(modernime_script_conversion_tests PRIVATE ${PROJECT_SOURCE_DIR}/adapter/fcitx5/include)
+        target_link_libraries(modernime_script_conversion_tests PRIVATE modernime_core Fcitx5::Core Fcitx5::Config Fcitx5::Utils)
+        add_test(NAME modernime_script_conversion COMMAND modernime_script_conversion_tests
+            $<TARGET_FILE_DIR:modernime_fcitx5> ${MODERNIME_CHTTRANS_MODULE} ${MODERNIME_CHTTRANS_NATIVE_DATA})
+    endif()
+endif()
