@@ -147,6 +147,13 @@ if(MODERNIME_BUILD_SETTINGS)
         target_link_libraries(modernime_quick_phrase_store_tests PRIVATE modernime_settings_logic)
         add_test(NAME modernime_quick_phrase_store COMMAND modernime_quick_phrase_store_tests)
 
+        add_executable(modernime_quick_phrase_editor_gtk_tests settings/quick_phrase_editor_gtk_test.cpp)
+        target_link_libraries(modernime_quick_phrase_editor_gtk_tests PRIVATE modernime_settings_components)
+        add_test(NAME modernime_quick_phrase_editor_gtk COMMAND modernime_quick_phrase_editor_gtk_tests)
+        set_tests_properties(modernime_quick_phrase_editor_gtk PROPERTIES
+            ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+            RESOURCE_LOCK modernime_gtk_display SKIP_RETURN_CODE 77 TIMEOUT 25)
+
     endif()
 
     add_executable(modernime_dictionary_page_contract_tests

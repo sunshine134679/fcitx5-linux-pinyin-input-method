@@ -966,6 +966,7 @@ private:
     }
 
     bool prepareUpdateRestart() {
+        if (!dictionaryPage->confirmLeave()) return false;
         if (!model.dirty()) return true;
         auto *dialog = gtk_message_dialog_new(GTK_WINDOW(windowOwner.get()), GTK_DIALOG_MODAL,
             GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "更新前如何处理未保存的设置？");
@@ -992,6 +993,7 @@ private:
     }
 
     void requestClose() {
+        if (!dictionaryPage->confirmLeave()) return;
         if (!model.dirty()) {
             hideWindow();
             return;

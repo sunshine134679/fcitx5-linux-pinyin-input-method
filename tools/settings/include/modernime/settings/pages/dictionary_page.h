@@ -28,6 +28,7 @@ public:
     GtkWidget *widget() const;
     void refresh();
     bool focusTarget(std::string_view target);
+    bool confirmLeave();
 
 private:
     class Impl;

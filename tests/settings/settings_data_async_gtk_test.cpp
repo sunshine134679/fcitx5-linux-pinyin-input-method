@@ -19,6 +19,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -319,7 +320,8 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
 
     GtkTreeView *view = nullptr;
     std::function<void(GtkWidget*)> scanContainer = [&](GtkWidget *w) {
-        if (GTK_IS_TREE_VIEW(w)) {
+        const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(w), "modernime-settings-target"));
+        if (GTK_IS_TREE_VIEW(w) && target && std::string_view(target) == "dictionary-list") {
             view = GTK_TREE_VIEW(w);
             return;
         }
@@ -358,7 +360,8 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     // Now trigger search in the search entry
     GtkSearchEntry *searchEntry = nullptr;
     std::function<void(GtkWidget*)> scanSearch = [&](GtkWidget *w) {
-        if (GTK_IS_SEARCH_ENTRY(w)) {
+        const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(w), "modernime-settings-target"));
+        if (GTK_IS_SEARCH_ENTRY(w) && target && std::string_view(target) == "dictionary-search") {
             searchEntry = GTK_SEARCH_ENTRY(w);
             return;
         }
@@ -415,7 +418,8 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     // 隔开构造器初次加载与下面显式触发的慢读取。
     GtkTreeView *view = nullptr;
     std::function<void(GtkWidget*)> scanView = [&](GtkWidget *w) {
-        if (GTK_IS_TREE_VIEW(w)) { view = GTK_TREE_VIEW(w); return; }
+        const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(w), "modernime-settings-target"));
+        if (GTK_IS_TREE_VIEW(w) && target && std::string_view(target) == "dictionary-list") { view = GTK_TREE_VIEW(w); return; }
         if (GTK_IS_CONTAINER(w)) {
             gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
                 (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);
@@ -644,8 +648,9 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     GtkTreeView *view = nullptr;
     GtkSearchEntry *searchEntry = nullptr;
     std::function<void(GtkWidget*)> scan = [&](GtkWidget *w) {
-        if (GTK_IS_TREE_VIEW(w)) view = GTK_TREE_VIEW(w);
-        if (GTK_IS_SEARCH_ENTRY(w)) searchEntry = GTK_SEARCH_ENTRY(w);
+        const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(w), "modernime-settings-target"));
+        if (GTK_IS_TREE_VIEW(w) && target && std::string_view(target) == "dictionary-list") view = GTK_TREE_VIEW(w);
+        if (GTK_IS_SEARCH_ENTRY(w) && target && std::string_view(target) == "dictionary-search") searchEntry = GTK_SEARCH_ENTRY(w);
         if (GTK_IS_CONTAINER(w)) {
             gtk_container_forall(GTK_CONTAINER(w), [](GtkWidget *c, gpointer d) {
                 (*static_cast<std::function<void(GtkWidget*)>*>(d))(c);

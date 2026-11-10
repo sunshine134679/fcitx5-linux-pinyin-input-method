@@ -76,6 +76,7 @@ target_compile_features(modernime_settings_logic PUBLIC cxx_std_20)
 modernime_enable_warnings(modernime_settings_logic)
 
 add_library(modernime_settings_gtk STATIC
+    quick_phrase_editor.cpp
     settings_choice.cpp
     settings_widgets.cpp
     settings_motion.cpp

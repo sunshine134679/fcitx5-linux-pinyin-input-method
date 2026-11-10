@@ -448,6 +448,17 @@ std::string_view settingsStyles() {
             font-size: 12.5px;
         }
 
+        .modernime-settings .modernime-dictionary-switcher button {
+            background-color: @modernime_control_surface;
+            padding: 7px 16px;
+        }
+        .modernime-settings .modernime-dictionary-switcher button:checked {
+            background-color: @modernime_accent_surface;
+            border-color: @modernime_nav_border_color;
+            color: @modernime_nav_fg_color;
+            font-weight: 600;
+        }
+
         .modernime-settings .modernime-details-button,
         .modernime-settings .modernime-details-button:hover,
         .modernime-settings .modernime-details-button:checked {
