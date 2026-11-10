@@ -170,6 +170,37 @@ TEST_F(PersonalizationControllerRegression, NormalWordLearningDoesNotPromoteAnot
     EXPECT_EQ(controller->page().items.front().text, "设置");
 }
 
+TEST_F(PersonalizationControllerRegression, OrdinaryFuzzyWordFrequencyRespectsStrongExactContext) {
+    for (int n = 0; n < 20; ++n) {
+        controller->setContext("", "");
+        commit("nide", "你的");
+    }
+    ASSERT_TRUE(provider->flush());
+    for (const auto &context : {"镜子", "杯子", "盒子", "抽屉"}) {
+        for (const auto &input : {"lide", "li'de"}) {
+            controller->reset();
+            controller->setContext(context, "");
+            type(input);
+            ASSERT_FALSE(controller->page().items.empty());
+            EXPECT_EQ(controller->page().items.front().text, "里的") << context << '/' << input;
+        }
+    }
+    ASSERT_TRUE(controller->handle({KeyKind::Space}));
+    EXPECT_EQ(host.committed, "里的");
+    EXPECT_TRUE(controller->page().rawInput.empty());
+
+    // Deliberately choosing the fuzzy reading in this context still learns,
+    // including after the short-lived correction window is reset.
+    for (int n = 0; n < 4; ++n) {
+        controller->setContext("镜子", "");
+        commit("lide", "你的");
+    }
+    controller->reset();
+    controller->setContext("镜子", "");
+    type("lide");
+    EXPECT_EQ(controller->page().items.front().text, "你的");
+}
+
 TEST_F(PersonalizationControllerRegression, ValidEmptyContextReplacesFallbackAfterDeletion) {
     commit("nihao", "你好");
     controller->setContext("你好", "");

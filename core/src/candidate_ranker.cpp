@@ -183,8 +183,24 @@ CandidateRanker::rank(std::string_view userInput,
         }
     }
     const auto fuzzyInputKey = PinyinMatchPolicy::phoneticFuzzyKey(userInput);
+    // A mature word frequency is not evidence of a fuzzy spelling preference
+    // in every context. Keep a clearly supported exact reading eligible ahead
+    // of an unrelated fuzzy habit; explicit choices and matching personal
+    // context can still establish that habit here.
+    double strongestExactContext = 0.0;
+    if (inputIsFullPinyin && inputSyllables > 1) {
+        for (const auto &candidate : candidates) {
+            const auto syllables = static_cast<std::size_t>(
+                std::count(candidate.full_pinyin.begin(), candidate.full_pinyin.end(), '\'')) + 1;
+            if (candidate.match_priority == 2 && !candidate.is_rare &&
+                syllables == inputSyllables &&
+                candidate.consumed_input_bytes.value_or(userInput.size()) == userInput.size() &&
+                std::isfinite(candidate.language_context_bonus))
+                strongestExactContext = std::max(strongestExactContext, candidate.language_context_bonus);
+        }
+    }
     const auto effectivePriority = [&candidates, inputSyllables, &fuzzyInputKey,
-                                    inputIsFullPinyin](std::size_t index) {
+                                    inputIsFullPinyin, strongestExactContext](std::size_t index) {
         const auto &candidate = candidates[index];
         if (candidate.match_priority != 0 || !std::isfinite(candidate.learning_boost) ||
             candidate.learning_boost < 1.8 || inputSyllables == 0 ||
@@ -205,6 +221,10 @@ CandidateRanker::rank(std::string_view userInput,
         if (!standardFuzzy && candidate.recent_choice_bonus <= 0.0) {
             return candidate.match_priority;
         }
+        if (standardFuzzy && candidate.recent_choice_bonus <= 0.0 &&
+            candidate.context_bonus <= 0.0 && strongestExactContext >= 1.0 &&
+            strongestExactContext - candidate.language_context_bonus >= 1.0)
+            return candidate.match_priority;
         return 2;
     };
     std::vector<int> effectivePriorities;
