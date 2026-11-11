@@ -34,6 +34,39 @@ void setTarget(GtkWidget *widget, std::string_view target) {
                            g_strdup(std::string(target).c_str()), g_free);
 }
 
+struct ModernimeReleaseNotesScroll { GtkScrolledWindow parent; };
+struct ModernimeReleaseNotesScrollClass { GtkScrolledWindowClass parent; };
+G_DEFINE_TYPE(ModernimeReleaseNotesScroll, modernime_release_notes_scroll, GTK_TYPE_SCROLLED_WINDOW)
+
+void modernime_release_notes_scroll_class_init(ModernimeReleaseNotesScrollClass *klass) {
+    auto *widgetClass = GTK_WIDGET_CLASS(klass);
+    widgetClass->get_request_mode = +[](GtkWidget *) { return GTK_SIZE_REQUEST_HEIGHT_FOR_WIDTH; };
+    // GtkRevealer lays out its child at natural height, then clips it to its
+    // allocation. Reserve the bounded document height so a short outer page
+    // scrolls instead of cropping the beginning of the expanded document.
+    widgetClass->get_preferred_height = +[](GtkWidget *widget, gint *minimum, gint *natural) {
+        GTK_WIDGET_CLASS(modernime_release_notes_scroll_parent_class)->get_preferred_height(
+            widget, minimum, natural);
+        *minimum = *natural;
+    };
+    widgetClass->get_preferred_height_for_width = +[](GtkWidget *widget, gint width,
+                                                    gint *minimum, gint *natural) {
+        auto *scroll = GTK_SCROLLED_WINDOW(widget);
+        auto *viewport = gtk_bin_get_child(GTK_BIN(widget));
+        int scrollbarWidth = 0;
+        gtk_widget_get_preferred_width(gtk_scrolled_window_get_vscrollbar(scroll), nullptr, &scrollbarWidth);
+        // Measure wrapping at the available width. The base scroller measures
+        // at the label's tiny natural width, leaving blank space for short notes.
+        gtk_widget_get_preferred_height_for_width(viewport, std::max(1, width - scrollbarWidth),
+                                                 minimum, natural);
+        *minimum = *natural = std::clamp(*natural,
+            gtk_scrolled_window_get_min_content_height(scroll),
+            gtk_scrolled_window_get_max_content_height(scroll));
+    };
+}
+
+void modernime_release_notes_scroll_init(ModernimeReleaseNotesScroll *) {}
+
 std::string_view upgradeCommand(const UpdateStatus &status) {
     if (!status.checked || (status.installChannel != "deb" &&
                             status.installChannel != "rpm" &&
@@ -527,7 +560,7 @@ private:
         gtk_label_set_attributes(GTK_LABEL(changelogLabel), attributes);
         pango_attr_list_unref(attributes);
 #endif
-        notesScroll = gtk_scrolled_window_new(nullptr, nullptr);
+        notesScroll = GTK_WIDGET(g_object_new(modernime_release_notes_scroll_get_type(), nullptr));
         setTarget(notesScroll, "updates-release-scroll");
         addStyleClass(notesScroll, "modernime-release-notes-scroll");
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(notesScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);

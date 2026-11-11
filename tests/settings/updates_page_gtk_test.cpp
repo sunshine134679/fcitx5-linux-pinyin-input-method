@@ -1,4 +1,5 @@
 #include "modernime/settings/pages/updates_page.h"
+#include "modernime/settings/settings_widgets.h"
 #include "modernime/settings/update_controller.h"
 
 #include <gtk/gtk.h>
@@ -92,6 +93,7 @@ std::string visibleDetailsMessage(GtkWidget *page) {
 int main(int argc, char **argv) {
     if (!gtk_init_check(&argc, &argv)) return 77;
     using namespace modernime::settings;
+    installSettingsStyles();
     std::string pattern = "/tmp/modernime-updates-page-XXXXXX";
     const auto *created = ::mkdtemp(pattern.data());
     assert(created);
@@ -144,6 +146,8 @@ esac
         writeFile(root / "show", "Description: Fixture package description\n");
     };
     auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(window), "modernime-settings");
+    gtk_window_set_default_size(GTK_WINDOW(window), 560, 600);
     {
         std::string notification;
         bool allowRestart = false;
@@ -151,7 +155,8 @@ esac
         UpdatesPage page(environment, [&notification](std::string text) { notification = text; },
                          [&allowRestart] { return allowRestart; },
                          [&restartRequested] { restartRequested = true; });
-        gtk_container_add(GTK_CONTAINER(window), page.widget());
+        auto *pageScroll = createScrollablePage(page.widget());
+        gtk_container_add(GTK_CONTAINER(window), pageScroll);
         gtk_widget_show_all(window);
         auto *status = findTarget(page.widget(), "updates-status");
         auto *hint = findTarget(page.widget(), "updates-status-hint");
@@ -353,6 +358,11 @@ exec(sys.argv[2])
               "online release notes must reach the page");
         check(notesState && !gtk_widget_get_mapped(notesState) && gtk_widget_get_mapped(loadingScroll),
               "loaded notes must replace the loading state with the visible document");
+        check(waitUntil([&] {
+                  const auto height = gtk_widget_get_allocated_height(loadingScroll);
+                  return height > 1 && height < 120;
+              }),
+              "a short release note must fit its content without an empty fixed-height panel");
         writeFile(root / "online-fail", "fail");
         gtk_button_clicked(GTK_BUTTON(recheck));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
@@ -424,6 +434,21 @@ exec(sys.argv[2])
                   "long release notes must overflow inside the bounded area");
             check(gtk_widget_get_allocated_height(notesScroll) <= 340,
                   "expanding long notes must not make the page grow to the full document height");
+            auto *revealer = gtk_widget_get_ancestor(notesScroll, GTK_TYPE_REVEALER);
+            check(revealer && waitUntil([&] {
+                      int x = 0, y = 0;
+                      return gtk_widget_translate_coordinates(notesScroll, revealer, 0, 0, &x, &y) &&
+                          y >= 0 && y + gtk_widget_get_allocated_height(notesScroll) <=
+                              gtk_widget_get_allocated_height(revealer);
+                  }),
+                  "the outer page must scroll instead of letting the disclosure crop the document's beginning");
+            auto *horizontal = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(notesScroll));
+            check(gtk_adjustment_get_upper(horizontal) <= gtk_adjustment_get_page_size(horizontal) &&
+                      pango_layout_get_width(gtk_label_get_layout(GTK_LABEL(notes))) / PANGO_SCALE <=
+                          gtk_adjustment_get_page_size(horizontal),
+                  "release notes must wrap inside the reading area in a narrow window");
+            check(gtk_adjustment_get_value(adjustment) == gtk_adjustment_get_lower(adjustment),
+                  "a newly loaded release must start at the complete heading, not a retained scroll offset");
             gboolean scrolled = FALSE;
             g_signal_emit_by_name(notesScroll, "scroll-child", GTK_SCROLL_PAGE_FORWARD, FALSE, &scrolled);
             check(scrolled && waitUntil([&] { return gtk_adjustment_get_value(adjustment) > 0; }),
