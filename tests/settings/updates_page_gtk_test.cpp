@@ -287,6 +287,13 @@ if sys.argv[1] != '-c':
     os.execv('/usr/bin/python3', ['/usr/bin/python3', *sys.argv[1:]])
 root = pathlib.Path(os.environ['UPDATE_TEST_ROOT'])
 def urlopen(request, timeout):
+    if request.full_url.startswith('https://raw.githubusercontent.com/sunshine134679/fcitx5-linux-pinyin-input-method/'):
+        assert timeout <= 6
+        with (root / 'notes-queries').open('a') as log:
+            log.write(request.full_url + '\n')
+        if (root / 'notes-fail').exists():
+            raise urllib.error.URLError('fixture notes unavailable')
+        return io.BytesIO((root / 'release-notes.md').read_bytes())
     if request.full_url == 'https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest':
         assert request.get_method() == 'HEAD'
         response = io.BytesIO()
@@ -390,13 +397,43 @@ exec(sys.argv[2])
 
         writeFile(root / "channel", "channel=rpm\n");
         release("0.1.26");
+        std::string longNotes = "# ModernIME v0.1.26\n\n";
+        for (int line = 0; line < 500; ++line)
+            longNotes += "- 更新说明第 " + std::to_string(line) + " 项：完整正文在区域内滚动查看。\n";
+        writeFile(root / "release-notes.md", longNotes);
         writeFile(root / "rate-limited", "403");
         gtk_button_clicked(GTK_BUTTON(button));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
         check(message() == "可更新至 0.1.26" && containsLabel(page.widget(), "Fedora / openEuler 软件包"),
               "online checks must preserve the RPM installation channel");
-        check(containsLabel(page.widget(), "完整更新说明可在官方下载页查看。"),
-              "API rate limit must fall back to the official latest release redirect");
+        const std::string longText = gtk_label_get_text(GTK_LABEL(notes));
+        check(longText.find("第 499 项") != std::string::npos && longText.size() > 12000,
+              "API rate limit must load the complete tagged Markdown instead of a placeholder or truncated text");
+        auto *notesScroll = findTarget(page.widget(), "updates-release-scroll");
+        check(GTK_IS_SCROLLED_WINDOW(notesScroll), "long release notes must have an internal scroll area");
+        if (GTK_IS_SCROLLED_WINDOW(notesScroll)) {
+            auto *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(notesScroll));
+            check(waitUntil([&] { return gtk_adjustment_get_upper(adjustment) > gtk_adjustment_get_page_size(adjustment); }),
+                  "long release notes must overflow inside the bounded area");
+            check(gtk_widget_get_allocated_height(notesScroll) <= 340,
+                  "expanding long notes must not make the page grow to the full document height");
+            gboolean scrolled = FALSE;
+            g_signal_emit_by_name(notesScroll, "scroll-child", GTK_SCROLL_PAGE_FORWARD, FALSE, &scrolled);
+            check(scrolled && waitUntil([&] { return gtk_adjustment_get_value(adjustment) > 0; }),
+                  "native page scrolling must move within the release notes");
+        }
+        writeFile(root / "notes-fail", "fail");
+        gtk_button_clicked(GTK_BUTTON(recheck));
+        assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
+        check(message() == "可更新至 0.1.26" &&
+                  std::string_view(gtk_label_get_text(GTK_LABEL(notes))) == longText &&
+                  gtk_widget_get_mapped(notesRetry),
+              "failed Markdown fallback must retain loaded notes and offer retry while preserving the checked version");
+        auto *notesLink = findTarget(page.widget(), "updates-release-link");
+        gtk_button_clicked(GTK_BUTTON(notesLink));
+        check(openedUri == "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/tag/v0.1.26",
+              "the browser action must open this exact release when the notes request fails");
+        openedUri.clear();
         check(!std::filesystem::exists(root / "authorization-forbidden"),
               "repeated online checks must never invoke pkexec or request a password");
 

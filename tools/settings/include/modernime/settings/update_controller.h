@@ -29,6 +29,8 @@ struct UpdateStatus final {
     std::string candidateVersion;
     std::string packageSource;
     std::string changelogSummary;
+    // Version discovery can succeed even when the release body is unavailable.
+    std::string changelogError;
     std::string installChannel;
     std::string refreshCacheCommand;
     std::string upgradeCommand;

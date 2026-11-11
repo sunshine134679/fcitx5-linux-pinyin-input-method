@@ -615,17 +615,26 @@ UpdateStatus UpdateController::checkOnlineRelease(const Environment &environment
     // Python 是客户端已有运行依赖。HTTPS 校验证书，网络和输出均有界；
     // 仅查询公开元数据，不执行发布正文或使用系统包管理器的事务槽位。
     constexpr const char *query = R"py(
-import json, re, sys, urllib.error, urllib.request
+import json, re, sys, time, urllib.error, urllib.parse, urllib.request
 try:
     base = 'https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method'
+    deadline = time.monotonic() + 12
+    def timeout():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('查询超时')
+        return min(4, remaining)
+    def read(request, limit):
+        with urllib.request.urlopen(request, timeout=timeout()) as response:
+            raw = response.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError('发布信息过大')
+        return raw
     request = urllib.request.Request(
         'https://api.github.com/repos/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest',
         headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'ModernIME-update-check'})
     try:
-        with urllib.request.urlopen(request, timeout=6) as response:
-            raw = response.read(1048577)
-        if len(raw) > 1048576:
-            raise ValueError('发布信息过大')
+        raw = read(request, 1048576)
         release = json.loads(raw)
     except urllib.error.HTTPError as error:
         if error.code not in (403, 429):
@@ -633,13 +642,13 @@ try:
         # 公共 API 限流时，官方 latest 页仍会跳转到最新正式版本。
         request = urllib.request.Request(base + '/releases/latest', method='HEAD',
                                          headers={'User-Agent': 'ModernIME-update-check'})
-        with urllib.request.urlopen(request, timeout=6) as response:
+        with urllib.request.urlopen(request, timeout=timeout()) as response:
             url = response.geturl()
         prefix = base + '/releases/tag/'
         if not url.startswith(prefix):
             raise ValueError('官方发布页未返回有效版本')
         release = {'tag_name': url[len(prefix):], 'draft': False, 'prerelease': False,
-                   'body': '完整更新说明可在官方下载页查看。'}
+                   'body': ''}
     tag = release.get('tag_name', '')
     if release.get('draft') is not False or release.get('prerelease') is not False:
         raise ValueError('未获得正式版本')
@@ -648,9 +657,33 @@ try:
     body = release.get('body') or ''
     if not isinstance(body, str):
         raise ValueError('发布说明格式无效')
+    notes_error = ''
+    if not body.strip():
+        # Read the body belonging to this exact release, never the main branch.
+        # Both current Chinese filenames and older release files are supported.
+        version = tag.removeprefix('v')
+        for filename in (f'v{version}-发布说明.md', f'v{version}.md'):
+            path = urllib.parse.quote(tag + '/docs/releases/' + filename, safe='/')
+            request = urllib.request.Request(
+                'https://raw.githubusercontent.com/sunshine134679/fcitx5-linux-pinyin-input-method/' + path,
+                headers={'User-Agent': 'ModernIME-update-check'})
+            try:
+                body = read(request, 262144).decode('utf-8-sig')
+                if not body.strip():
+                    raise ValueError('发布说明为空')
+                notes_error = ''
+                break
+            except Exception as error:
+                notes_error = ('暂未能读取此版本的更新说明：' + str(error)).replace('\n', ' ')[:400]
+                if not isinstance(error, urllib.error.HTTPError) or error.code != 404:
+                    break
+    if len(body.encode('utf-8')) > 262144:
+        body = ''
+        notes_error = '更新说明过长，请在浏览器中查看完整内容。'
     print(tag.removeprefix('v'))
     print(base + '/releases/tag/' + tag)
-    print(body[:12000].replace('\x00', '') or '暂无更新说明')
+    print(notes_error)
+    print(body.replace('\x00', ''))
 except Exception as error:
     print(str(error), file=sys.stderr)
     sys.exit(1)
@@ -660,9 +693,9 @@ except Exception as error:
     spec.timeoutMs = 15000;
     spec.argv = {python.string(), "-c", query};
     spec.environment = environment;
-    spec.limits.perStreamBufferBytes = 65536;
-    spec.limits.perStreamResultBytes = 65536;
-    spec.limits.perStreamFileBytes = 65536;
+    spec.limits.perStreamBufferBytes = 524288;
+    spec.limits.perStreamResultBytes = 524288;
+    spec.limits.perStreamFileBytes = 524288;
     const auto result = detail::runCommand(spec);
     if (result.state != detail::CommandState::Exited || result.exitStatus != 0 ||
         result.stdoutTruncated || !g_utf8_validate(result.stdoutText.c_str(), -1, nullptr)) {
@@ -671,6 +704,7 @@ except Exception as error:
     std::istringstream response(result.stdoutText);
     std::getline(response, status.candidateVersion);
     std::getline(response, status.downloadUrl);
+    std::getline(response, status.changelogError);
     if (status.candidateVersion.empty() || !status.downloadUrl.starts_with(
             "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/tag/")) {
         status.candidateVersion.clear();

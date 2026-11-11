@@ -249,6 +249,21 @@ private:
         });
     }
 
+    static void onNotesLinkClicked(GtkButton *, gpointer data) {
+        auto *shared = static_cast<SharedLifetime *>(data);
+        (*shared)->withOwner([](Impl &owner) {
+            if (owner.notesReleaseUrl.empty()) return;
+            auto *window = gtk_widget_get_toplevel(owner.page);
+            GError *error = nullptr;
+            if (!gtk_show_uri_on_window(GTK_IS_WINDOW(window) ? GTK_WINDOW(window) : nullptr,
+                                         owner.notesReleaseUrl.c_str(), GDK_CURRENT_TIME, &error)) {
+                g_warning("[ModernIME Updates] Open release notes: %s", error ? error->message : "unknown error");
+                g_clear_error(&error);
+                if (owner.notify) owner.notify("无法打开更新说明，请检查默认浏览器后重试。");
+            }
+        });
+    }
+
     static void onJumpSourceClicked(GtkButton *, gpointer data) {
         auto *shared = static_cast<SharedLifetime *>(data);
         (*shared)->withOwner([](Impl &owner) {
@@ -299,7 +314,7 @@ private:
 
         setSettingsFocusChain(
             page, {checkButton, versionDetails, recheckButton, sourceJumpButton,
-                   releaseDetails, changelogLabel, notesRetryButton,
+                   releaseDetails, notesScroll, changelogLabel, notesRetryButton, notesExternalLink,
                    upgradeDetails, copyCommandButton});
         applyStatus(lastStatus);
     }
@@ -484,10 +499,33 @@ private:
     void buildReleaseNotesSection(GtkWidget *parent) {
         auto *section = detailsSection(parent, "更新说明",
                                        "updates-release-details", &releaseDetails);
+        addStyleClass(section, "modernime-release-content");
         changelogLabel = wrappedLabel("展开后加载官方更新说明。", true);
         setTarget(changelogLabel, "updates-release-notes");
         addStyleClass(changelogLabel, "modernime-release-notes");
-        gtk_box_pack_start(GTK_BOX(section), changelogLabel, FALSE, FALSE, 0);
+#if PANGO_VERSION_CHECK(1, 50, 0)
+        auto *attributes = pango_attr_list_new();
+        pango_attr_list_insert(attributes, pango_attr_line_height_new(1.25));
+        gtk_label_set_attributes(GTK_LABEL(changelogLabel), attributes);
+        pango_attr_list_unref(attributes);
+#endif
+        notesScroll = gtk_scrolled_window_new(nullptr, nullptr);
+        setTarget(notesScroll, "updates-release-scroll");
+        addStyleClass(notesScroll, "modernime-release-notes-scroll");
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(notesScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(notesScroll), GTK_SHADOW_NONE);
+        gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(notesScroll), FALSE);
+        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(notesScroll), 48);
+        gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(notesScroll), 320);
+        gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(notesScroll), TRUE);
+        gtk_widget_set_can_focus(notesScroll, TRUE);
+        gtk_widget_set_margin_top(notesScroll, 8);
+        setAccessibleWidgetText(notesScroll, "更新说明阅读区域", "长正文可在此区域滚动查看");
+        auto *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        addStyleClass(body, "modernime-release-notes-body");
+        gtk_box_pack_start(GTK_BOX(body), changelogLabel, FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(notesScroll), body);
+        gtk_box_pack_start(GTK_BOX(section), notesScroll, FALSE, FALSE, 0);
         notesHintLabel = wrappedLabel("");
         addStyleClass(notesHintLabel, "modernime-description");
         gtk_widget_set_no_show_all(notesHintLabel, TRUE);
@@ -497,11 +535,20 @@ private:
         gtk_widget_set_no_show_all(notesRetryButton, TRUE);
         setTarget(notesRetryButton, "updates-release-retry");
         setAccessibleWidgetText(notesRetryButton, "重新加载更新说明", "重新查询官方发布信息，保留已显示的说明");
-        gtk_box_pack_start(GTK_BOX(section), notesRetryButton, FALSE, FALSE, 0);
+        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_box_pack_start(GTK_BOX(actions), notesRetryButton, FALSE, FALSE, 0);
+        notesExternalLink = gtk_button_new_with_label("浏览器查看");
+        gtk_widget_set_no_show_all(notesExternalLink, TRUE);
+        setTarget(notesExternalLink, "updates-release-link");
+        gtk_box_pack_start(GTK_BOX(actions), notesExternalLink, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(section), actions, FALSE, FALSE, 0);
         g_signal_connect_data(releaseDetails, "toggled", G_CALLBACK(onReleaseToggled),
                               new SharedLifetime(state), destroySignalState,
                               static_cast<GConnectFlags>(0));
         g_signal_connect_data(notesRetryButton, "clicked", G_CALLBACK(onNotesRetryClicked),
+                              new SharedLifetime(state), destroySignalState,
+                              static_cast<GConnectFlags>(0));
+        g_signal_connect_data(notesExternalLink, "clicked", G_CALLBACK(onNotesLinkClicked),
                               new SharedLifetime(state), destroySignalState,
                               static_cast<GConnectFlags>(0));
     }
@@ -515,10 +562,21 @@ private:
 
     void finishReleaseNotes(const UpdateStatus *status) {
         if (status && status->checkedOnline) {
+            notesReleaseUrl = status->downloadUrl;
+            const auto description = "在默认浏览器中查看 v" + status->candidateVersion + " 的完整更新说明";
+            gtk_widget_set_tooltip_text(notesExternalLink, description.c_str());
+            setAccessibleWidgetText(notesExternalLink, "浏览器查看更新说明", description);
+            gtk_widget_show(notesExternalLink);
+        }
+        if (status && status->checkedOnline && status->changelogError.empty()) {
             const auto notes = detail::releaseNotesMarkup(
                 status->changelogSummary.empty() ? "此版本暂无更新说明。" : status->changelogSummary,
                 status->candidateVersion);
             gtk_label_set_markup(GTK_LABEL(changelogLabel), notes.c_str());
+            if (notesVersion != status->candidateVersion) {
+                auto *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(notesScroll));
+                gtk_adjustment_set_value(adjustment, gtk_adjustment_get_lower(adjustment));
+            }
             notesVersion = status->candidateVersion;
             gtk_widget_hide(notesHintLabel);
             gtk_widget_hide(notesRetryButton);
@@ -526,12 +584,15 @@ private:
         }
         if (notesVersion.empty()) {
             gtk_label_set_text(GTK_LABEL(changelogLabel), "未能加载官方更新说明。");
-            gtk_label_set_text(GTK_LABEL(notesHintLabel), "请检查网络连接后重试。");
+            gtk_label_set_text(GTK_LABEL(notesHintLabel), gtk_widget_get_visible(notesExternalLink)
+                ? "请重新加载，或在浏览器中查看。" : "请检查网络连接后重试。");
         } else {
             const auto hint = "刷新失败，仍显示 v" + notesVersion + " 的更新说明。";
             gtk_label_set_text(GTK_LABEL(notesHintLabel), hint.c_str());
         }
         gtk_widget_show(notesHintLabel);
+        gtk_widget_set_tooltip_text(notesHintLabel,
+            status && !status->changelogError.empty() ? status->changelogError.c_str() : nullptr);
         gtk_widget_show(notesRetryButton);
     }
 
@@ -937,6 +998,7 @@ private:
     bool focusCopyWhenReady = false;
     // Only an official online release can replace the displayed release body.
     std::string notesVersion;
+    std::string notesReleaseUrl;
 
     GtkWidget *page = nullptr;
     GtkWidget *summaryCard = nullptr;
@@ -950,6 +1012,8 @@ private:
     GtkWidget *sourceJumpButton = nullptr;
     GtkWidget *candidateVersionLabel = nullptr;
     GtkWidget *changelogLabel = nullptr;
+    GtkWidget *notesScroll = nullptr;
+    GtkWidget *notesExternalLink = nullptr;
     GtkWidget *notesHintLabel = nullptr;
     GtkWidget *notesRetryButton = nullptr;
     GtkWidget *statusMessageLabel = nullptr;
