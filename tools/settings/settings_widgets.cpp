@@ -474,6 +474,11 @@ std::string_view settingsStyles() {
         }
         .modernime-details:last-child { border-bottom: none; }
         .modernime-details-content { padding: 4px 10px 18px; }
+        .modernime-update-details .modernime-details { border: none; }
+        .modernime-update-details .modernime-details-content { padding: 14px 12px 18px; }
+        .modernime-settings .modernime-update-details .modernime-details-button {
+            padding: 12px 10px;
+        }
         .modernime-update-summary { padding: 20px 22px; }
         .modernime-update-progress trough { min-height: 6px; border-radius: 6px; background: @modernime_accent_surface; border: none; }
         .modernime-update-progress progress { min-height: 6px; border-radius: 6px; background: @theme_selected_bg_color; border: none; }
@@ -1305,6 +1310,13 @@ std::string_view settingsStyles() {
         }
         .modernime-settings button.modernime-source-link label,
         .modernime-settings button.modernime-source-link drawingarea { color: inherit; }
+        .modernime-settings .modernime-update-details button.modernime-source-link {
+            background-color: transparent;
+            padding: 8px 10px;
+        }
+        .modernime-settings .modernime-update-details button.modernime-source-link:hover {
+            background-color: @modernime_hover_color;
+        }
         .modernime-settings button.modernime-check-button image { margin-right: 6px; }
 
         /* Application prompts and FontButton windows are separate toplevels. */

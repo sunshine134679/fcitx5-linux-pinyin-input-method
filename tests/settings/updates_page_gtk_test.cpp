@@ -327,7 +327,7 @@ exec(sys.argv[2])
         check(message() == "可更新至 0.1.25" &&
                   std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "下载更新",
               "online release must replace cached version and enable download");
-        check(containsLabel(page.widget(), "正式发布说明\n"),
+        check(containsLabel(page.widget(), "正式发布说明"),
               "online release notes must reach the page");
         writeFile(root / "online-fail", "fail");
         gtk_button_clicked(GTK_BUTTON(recheck));
@@ -338,21 +338,49 @@ exec(sys.argv[2])
               "network failure must clear the previous download action and preserve its cause");
         std::filesystem::remove(root / "online-fail");
         release("0.1.23");
+        writeFile(root / "release.json", R"json({"tag_name":"v0.1.23","draft":false,"prerelease":false,"body":"# ModernIME v0.1.23\n\n## 输入辅助\n\n- **快捷短语**：输入 `foo_bar`，保留 <原文> & 符号。\n- 访问[官方说明](https://example.invalid/notes)。\n\n```text\n<code> & data\n```"})json");
         gtk_button_clicked(GTK_BUTTON(button));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
         check(message() == "未发现新版本" && nextStep().find("官方") != std::string::npos,
               "online no-update result must not ask users to refresh repositories");
         check(detailsMessage().find("sudo apt update") == std::string::npos,
               "online result must remove obsolete privileged-refresh instructions");
+        auto *notesToggle = findTarget(page.widget(), "updates-release-details");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(notesToggle), TRUE);
+        check(containsLabel(page.widget(),
+                  "ModernIME v0.1.23\n\n输入辅助\n\n• 快捷短语：输入 foo_bar，保留 <原文> & 符号。\n• 访问官方说明。\n\n<code> & data"),
+              "release notes must render Markdown headings, lists, emphasis, code and links as readable text");
+        auto *notes = findTarget(page.widget(), "updates-release-notes");
+        const std::string markup = gtk_label_get_label(GTK_LABEL(notes));
+        check(gtk_label_get_use_markup(GTK_LABEL(notes)) &&
+                  markup.find("size=\"x-large\"") != std::string::npos &&
+                  markup.find("<b>快捷短语</b>") != std::string::npos &&
+                  markup.find("<tt>foo_bar</tt>") != std::string::npos &&
+                  markup.find("<a href=\"https://example.invalid/notes\"") != std::string::npos,
+              "native release notes must retain heading, emphasis, code and clickable link formatting");
+        gtk_widget_grab_focus(notes);
+        check(gtk_window_get_focus(GTK_WINDOW(window)) == notes,
+              "release notes must allow keyboard focus and text selection");
+        auto *accessibleNotes = gtk_widget_get_accessible(notes);
+        check(ATK_IS_HYPERTEXT(accessibleNotes) &&
+                  atk_hypertext_get_n_links(ATK_HYPERTEXT(accessibleNotes)) == 1,
+              "release notes must expose a real native hyperlink to keyboard and accessibility users");
+        if (ATK_IS_HYPERTEXT(accessibleNotes)) {
+            auto *link = atk_hypertext_get_link(ATK_HYPERTEXT(accessibleNotes), 0);
+            auto *uri = link ? atk_hyperlink_get_uri(link, 0) : nullptr;
+            check(uri && std::string_view(uri) == "https://example.invalid/notes",
+                  "native release note hyperlinks must retain their destination");
+            g_free(uri);
+        }
 
         writeFile(root / "channel", "channel=rpm\n");
         release("0.1.26");
         writeFile(root / "rate-limited", "403");
         gtk_button_clicked(GTK_BUTTON(button));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
-        check(message() == "可更新至 0.1.26" && containsLabel(page.widget(), "rpm (Fedora/openEuler 软件源)"),
+        check(message() == "可更新至 0.1.26" && containsLabel(page.widget(), "Fedora / openEuler 软件包"),
               "online checks must preserve the RPM installation channel");
-        check(containsLabel(page.widget(), "完整更新说明可在官方下载页查看。\n"),
+        check(containsLabel(page.widget(), "完整更新说明可在官方下载页查看。"),
               "API rate limit must fall back to the official latest release redirect");
         check(!std::filesystem::exists(root / "authorization-forbidden"),
               "repeated online checks must never invoke pkexec or request a password");

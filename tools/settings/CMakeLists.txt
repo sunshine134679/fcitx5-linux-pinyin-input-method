@@ -87,6 +87,7 @@ add_library(modernime_settings_gtk STATIC
     settings_widgets.cpp
     settings_motion.cpp
     settings_disclosure.cpp
+    release_notes.cpp
     settings_shell.cpp
     settings_window.cpp
     pages/candidates_page.cpp
