@@ -63,3 +63,7 @@ __pycache__/
 # Local scratch and user data
 modern_ime_personalization/
 
+# Local completed-task records
+.coordination/
+.superpowers/
+.task-archives/
