@@ -2,7 +2,7 @@
 
 **官方网站：[了解 ModernIME 与下载安装](https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/)** · [GitHub Releases](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest)
 
-ModernIME 是一个面向 Linux 桌面的 Fcitx5 中文输入法，提供全拼/简拼、小鹤与自然码双拼、可配置模糊音、本地用户学习、个人词典、剪贴板、数字金额与符号输入，以及独立 GTK3 设置客户端。X11 使用自绘候选栏，Wayland 通过 Fcitx5 连接应用或桌面候选面板。功能和兼容性的实际验证范围见下文及项目验收记录。
+ModernIME 是一个面向 Linux 桌面的 Fcitx5 中文输入法，提供全拼/简拼、小鹤与自然码双拼、可配置模糊音、本地用户学习、个人词典与快捷短语、临时英文、候选置顶、拆字查字、离线计算器、符号搜索与收藏、剪贴板历史与收藏，以及独立 GTK3 设置客户端。X11 使用自绘候选栏，Wayland 通过 Fcitx5 连接应用或桌面候选面板。功能和兼容性的实际验证范围见下文及项目验收记录。
 
 ## 官网本地预览
 
@@ -26,9 +26,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.1_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.2.1-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.1-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.4_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.2.4-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.4-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -739,6 +739,14 @@ modernime-session-init --remove-gnome-extension
 此命令只处理扩展，不重启 Fcitx5、不改其他会话配置。包已移除时可从源码运行 `MODERNIME_PREFIX=/usr ./scripts/modernime-session-init --remove-gnome-extension`，并沿用安装时的配置/数据路径。旧版遗留的无记录副本仍由用户自行备份或移除；回退到尚无此保护的旧版时，须先备份扩展并避免运行旧版初始化脚本，旧程序不会遵守新记录。
 
 ## 版本更新记录
+
+### v0.2.4（2026-11-11）
+
+- 在八个设置模块内加入快捷短语管理、临时英文、按输入置顶候选、离线拆字查字和计算器；新增成对标点、智能下划线、按应用输入模式及撤销重选。
+- 复用 Fcitx 简繁转换；符号支持离线搜索、分类和收藏，剪贴板支持搜索及独立收藏，清空历史保留收藏。
+- 修复中文候选抢占 `foo_bar`、括号内选词后重复闭合、实体撤销快捷键被修饰键提前取消，以及失焦把格式化拼音意外写入正文的问题。
+- 修复简繁模块加载时的引擎启动错误；明确语境下保留正音候选竞争力，同时保留标准模糊音的明确选择学习。
+- 升级沿用原渠道并保留用户数据；功能入口、兼容边界与验证范围见 [v0.2.4 发布说明](docs/releases/v0.2.4-发布说明.md)。
 
 ### v0.2.3（2026-11-10）
 

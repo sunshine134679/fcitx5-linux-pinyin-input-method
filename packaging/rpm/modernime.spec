@@ -1,10 +1,11 @@
 Name:           modernime
-Version:        0.2.3
+Version:        0.2.4
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 # ModernIME engine, UI addon, and settings client are LGPL-2.1-or-later;
 # bundled derived pinyin knowledge and English definition dictionaries are MIT.
-License:        LGPL-2.1-or-later AND MIT
+# The derived component lookup table retains its upstream CC-BY-3.0 license.
+License:        LGPL-2.1-or-later AND MIT AND CC-BY-3.0
 URL:            https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
 Source0:        %{name}-%{version}.tar.gz
 

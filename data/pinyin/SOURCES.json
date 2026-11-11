@@ -2,9 +2,9 @@
   "format_version": 2,
   "generated_by": "tools/import_lexicon_bundle.py",
   "generated_on": "2026-10-12",
-  "updated_on": "2026-11-02",
+  "updated_on": "2026-11-11",
   "runtime_network": false,
-  "package_spdx_license": "LGPL-2.1-or-later AND MIT",
+  "package_spdx_license": "LGPL-2.1-or-later AND MIT AND CC-BY-3.0",
   "code_license": "LGPL-2.1-or-later",
   "data_license": "LGPL-2.1-or-later AND MIT",
   "generated_counts": {

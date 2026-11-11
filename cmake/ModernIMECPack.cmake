@@ -41,9 +41,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postinst")
 endif()
 
 # RPM generator configuration (openEuler / Fedora / RHEL)
-# Code is LGPL-2.1-or-later; bundled derived dictionary data is MIT (see THIRD_PARTY_NOTICES.md).
+# Code is LGPL-2.1-or-later; dictionary data is MIT and component data CC-BY-3.0.
 set(CPACK_RPM_PACKAGE_NAME "modernime")
-set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later AND MIT")
+set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later AND MIT AND CC-BY-3.0")
 set(CPACK_RPM_PACKAGE_RELEASE "1.oe2409")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
 set(CPACK_RPM_PACKAGE_URL "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method")

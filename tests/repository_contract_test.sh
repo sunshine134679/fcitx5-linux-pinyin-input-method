@@ -17,7 +17,7 @@ test -f "$cpack_file"
 grep -F 'set(CPACK_RPM_PRE_INSTALL_SCRIPT_FILE' "$cpack_file" >/dev/null
 grep -F 'set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE' "$cpack_file" >/dev/null
 grep -F 'set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE' "$cpack_file" >/dev/null
-grep -F 'set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later AND MIT")' "$cpack_file" >/dev/null
+grep -F 'set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later AND MIT AND CC-BY-3.0")' "$cpack_file" >/dev/null
 grep -F 'fcitx5 (>= 5.0.14)' "$cpack_file" >/dev/null
 grep -F 'libime-bin (>= 1.0.11) | libimecore0 (>= 1.0.11)' "$cpack_file" >/dev/null
 grep -F 'libgtk-3-0 (>= 3.24.0) | libgtk-3-0t64 (>= 3.24.0)' "$cpack_file" >/dev/null
@@ -46,8 +46,8 @@ test -f "$deb_copyright" && test -s "$deb_copyright"
 grep -F 'License: LGPL-2.1+' "$deb_copyright" >/dev/null
 grep -F 'License: MIT' "$deb_copyright" >/dev/null
 grep -F 'LGPL-2.1-or-later AND MIT' "$project_root/data/pinyin/THIRD_PARTY_NOTICES.md" >/dev/null
-grep -F '"package_spdx_license": "LGPL-2.1-or-later AND MIT"' "$project_root/data/pinyin/SOURCES.json" >/dev/null
-grep -F 'License:        LGPL-2.1-or-later AND MIT' "$rpm_spec" >/dev/null
+grep -F '"package_spdx_license": "LGPL-2.1-or-later AND MIT AND CC-BY-3.0"' "$project_root/data/pinyin/SOURCES.json" >/dev/null
+grep -Fx 'License:        LGPL-2.1-or-later AND MIT AND CC-BY-3.0' "$rpm_spec" >/dev/null
 grep -F 'Requires:       fcitx5 >= 5.0.14' "$rpm_spec" >/dev/null
 grep -F 'Requires:       sqlite >= 3.31.0' "$rpm_spec" >/dev/null
 grep -F 'Requires:       lmdb-libs >= 0.9.24' "$rpm_spec" >/dev/null

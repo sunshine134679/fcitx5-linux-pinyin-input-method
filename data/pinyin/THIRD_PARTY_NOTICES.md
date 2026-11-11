@@ -2,6 +2,8 @@
 
 ModernIME 自身源码、插件、设置客户端与自建热词表采用 `LGPL-2.1-or-later` 许可证；离线拼音与词典数据由以下固定版本的开源词库和工具经离线清洗、多音字交叉校准与分批筛选生成。各上游来源保留其各自的许可证与版权归属，**并未将不同许可证的数据合并声称为单一 MIT 许可的新词库**，亦不改变 ModernIME 项目自身代码的许可证。随包分发的离线派生词典与二进制资产整体采用复合 SPDX 许可证标识 **`LGPL-2.1-or-later AND MIT`**（及 `data/pinyin/licenses/` 所附各上游许可证文本）。
 
+自 v0.2.4 起，发行包另含 `CC-BY-3.0` 拆字派生索引，因此整包 SPDX 为 `LGPL-2.1-or-later AND MIT AND CC-BY-3.0`；本页拼音数据的原许可证不变。拆字来源、加工与署名见 [数据来源与许可](../components/数据来源与许可.md)，安装后位于 `share/modernime/components/`。
+
 ## ModernIME 自有代码与热词表
 
 - 路径：`core/`、`algorithm/`、`adapter/`、`ui/`、`tools/`、`scripts/`、`data/pinyin/modernime-hotwords.raw`

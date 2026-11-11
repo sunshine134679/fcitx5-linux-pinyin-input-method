@@ -773,6 +773,9 @@ void testVCommandMenuAndDeduplication() {
     std::filesystem::remove(vLearningPath, error);
     vPaths.learningStore = vLearningPath.string();
     modernime::pinyin::PinyinProviderOptions options;
+    // Keep the original clipboard/calculator contract with symbols disabled,
+    // then verify the independent symbol menu and confirmed actions below.
+    options.symbolSearchEnabled = false;
     modernime::pinyin::PinyinCandidateProvider provider(vPaths, options);
     assertTrue(provider.append("v"), "v input accepted");
     auto page = provider.page();
@@ -841,6 +844,31 @@ void testVCommandMenuAndDeduplication() {
     assertTrue(provider.page().items.size() == 2 &&
                provider.page().items[1].text == "离线计算器 (V=)",
                "calculator menu does not depend on the clipboard trigger");
+
+    options.symbolSearchEnabled = true;
+    provider.applyOptions(options);
+    page = provider.page();
+    assertTrue(page.items.size() == 4 && page.items[0].text == "v" &&
+               page.items[1].action == modernime::core::SelectionAction::OpenCalculator &&
+               page.items[2].action == modernime::core::SelectionAction::OpenSymbols &&
+               page.items[3].action == modernime::core::SelectionAction::OpenFavoriteSymbols,
+               "symbols append both commands without displacing calculator or raw input");
+    for (std::size_t index : {2u, 3u}) {
+        page = provider.page();
+        const auto expectedAction = index == 2
+            ? modernime::core::SelectionAction::OpenSymbols
+            : modernime::core::SelectionAction::OpenFavoriteSymbols;
+        modernime::core::CandidateSelectionRequest symbolRequest;
+        symbolRequest.globalIndex = index;
+        symbolRequest.expected = modernime::core::candidateIdentity(page.items[index], page);
+        const auto selected = provider.selectConfirmed(symbolRequest, page.generation);
+        assertTrue(selected && selected->action == expectedAction &&
+                   selected->selected.role == modernime::core::CommitCandidateRole::Command &&
+                   selected->selected.consumedInputBytes == 1 &&
+                   selected->remainingInput.empty() && provider.page().items.empty(),
+                   "symbol selection preserves action identity and consumes only its trigger");
+        assertTrue(provider.append("v"), "reopen v after symbol command selection");
+    }
 }
 
 void testIndependentRecallInCandidateProvider() {

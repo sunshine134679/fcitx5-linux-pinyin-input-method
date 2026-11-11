@@ -256,6 +256,8 @@ rmdir --ignore-fail-on-non-empty "$prefix/lib/aarch64-linux-gnu" 2>/dev/null || 
 rmdir --ignore-fail-on-non-empty "$prefix/lib64/fcitx5" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/lib/fcitx5" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/pinyin" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/components/upstream" 2>/dev/null || true
+rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/components" 2>/dev/null || true
 if [[ -d "$prefix/share/modernime/extensions" ]]; then
     find "$prefix/share/modernime/extensions" -depth -type d -exec rmdir {} + 2>/dev/null || true
     rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/extensions" 2>/dev/null || true

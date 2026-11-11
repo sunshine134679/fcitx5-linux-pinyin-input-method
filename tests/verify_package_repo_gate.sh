@@ -70,6 +70,10 @@ for required_path in \
     "./usr/share/modernime/pinyin/modernime-knowledge.dict" \
     "./usr/share/modernime/pinyin/modernime-hotwords.dict" \
     "./usr/share/modernime/pinyin/modernime-context.lm" \
+    "./usr/share/modernime/components/component_lookup.tsv" \
+    "./usr/share/modernime/components/数据来源与许可.md" \
+    "./usr/share/modernime/components/upstream/chaizi.LICENSE" \
+    "./usr/share/modernime/components/upstream/pinyin.LICENSE" \
     "./usr/share/doc/modernime/licenses/LGPL-2.1.txt" \
     "./usr/share/doc/modernime/SOURCES.json" \
     "./usr/share/doc/modernime/THIRD_PARTY_NOTICES.md" \
@@ -180,11 +184,8 @@ tags, dtypes, payload_off = parse_hdr(raw, hdr_off)
 
 assert tags.get(1000) == "modernime", f"Unexpected RPM name: {tags.get(1000)}"
 assert tags.get(1001) == expected_ver, f"Unexpected RPM version: {tags.get(1001)}"
-valid_licenses = (
-    "LGPL-2.1-or-later AND MIT",
-    "Apache-2.0 AND LGPL-2.1-or-later AND CC-BY-SA-3.0 AND BSD-3-Clause AND MIT",
-)
-assert tags.get(1014) in valid_licenses, f"Unexpected RPM license: {tags.get(1014)}"
+expected_license = "LGPL-2.1-or-later AND MIT AND CC-BY-3.0"
+assert tags.get(1014) == expected_license, f"Unexpected RPM license: {tags.get(1014)}"
 
 req_names = tags.get(1049, [])
 req_vers = tags.get(1050, [])
@@ -294,7 +295,11 @@ context_assets = [rootfs / "usr/share/modernime/pinyin/modernime-context.lm",
 for asset in context_assets:
     assert asset.is_file() and asset.stat().st_size > 0, f"RPM missing context model asset: {asset}"
 assert (rootfs / "usr/bin/modernime-update").is_file(), "RPM missing native update helper"
-expected_regular_files = 22 + len(context_assets) + len(icon_paths) + len(ext_paths)
+component_assets = [rootfs / ("usr/share/modernime/components/" + path) for path in (
+    "component_lookup.tsv", "数据来源与许可.md", "upstream/chaizi.LICENSE", "upstream/pinyin.LICENSE")]
+for asset in component_assets:
+    assert asset.is_file() and asset.stat().st_size > 0, f"RPM missing component data/license: {asset}"
+expected_regular_files = 22 + len(context_assets) + len(icon_paths) + len(ext_paths) + len(component_assets)
 assert len(payload_reg_files) == expected_regular_files, (
     f"Expected {expected_regular_files} regular files in RPM payload, got {len(payload_reg_files)}"
 )

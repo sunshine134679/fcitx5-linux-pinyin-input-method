@@ -1,7 +1,7 @@
 ModernIME Licensing & Third-Party Notices
 =========================================
 
-SPDX-License-Identifier: LGPL-2.1-or-later AND MIT
+SPDX-License-Identifier: LGPL-2.1-or-later AND MIT AND CC-BY-3.0
 
 ModernIME is distributed under a composite license because the repository and
 binary packages combine ModernIME's own source code with derived offline lexical
@@ -26,6 +26,15 @@ datasets from permissive open-source projects:
      * ECDICT (https://github.com/skywind3000/ECDICT) — Copyright (c) Lin Wei / Skywind (MIT)
    - Full third-party copyright notices and exact upstream commit hashes are
      preserved in `data/pinyin/THIRD_PARTY_NOTICES.md` and `data/pinyin/SOURCES.json`.
+
+3. Offline Component Lookup Data
+   - Paths: data/components/component_lookup.tsv and share/modernime/components/
+   - The derived decomposition table retains CC-BY-3.0 attribution to
+     Copyright (c) 2015 開放詞典 (kfcd/chaizi).
+   - Component pinyin data is MIT, Copyright (c) 2016 mozillazg.
+   - Fixed sources, modifications, and original license texts are documented in
+     `data/components/数据来源与许可.md` and `data/components/upstream/*.LICENSE`;
+     binary packages include them under share/modernime/components/.
 
 -------------------------------------------------------------------------------
 GNU LESSER GENERAL PUBLIC LICENSE

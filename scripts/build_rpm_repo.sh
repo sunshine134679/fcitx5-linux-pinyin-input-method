@@ -652,7 +652,7 @@ def inspect_rpm(rpm_path: Path):
         "description": tags.get(RPMTAG_DESCRIPTION, "ModernIME Fcitx5 Pinyin Input Method"),
         "buildtime": int(tags.get(RPMTAG_BUILDTIME, int(time.time()))),
         "installed_size": int(tags.get(RPMTAG_SIZE, 0)),
-        "license": tags.get(RPMTAG_LICENSE, "LGPL-2.1-or-later AND MIT"),
+        "license": tags.get(RPMTAG_LICENSE, "LGPL-2.1-or-later AND MIT AND CC-BY-3.0"),
         "group": tags.get(RPMTAG_GROUP, "Applications/System"),
         "url": tags.get(RPMTAG_URL, ""),
         "os": tags.get(RPMTAG_OS, "linux"),
