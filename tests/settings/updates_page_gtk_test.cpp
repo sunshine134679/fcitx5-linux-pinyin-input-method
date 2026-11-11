@@ -158,6 +158,8 @@ esac
         auto *button = findTarget(page.widget(), "updates-check");
         auto *copy = findTarget(page.widget(), "updates-copy-command");
         auto *recheck = findTarget(page.widget(), "updates-recheck");
+        auto *notesToggle = findTarget(page.widget(), "updates-release-details");
+        auto *notes = findTarget(page.widget(), "updates-release-notes");
         assert(status && hint && button && copy);
         // Window activation is asynchronous. Search focus must be exercised
         // after the fixture owns keyboard focus, as in the real client.
@@ -201,7 +203,8 @@ esac
               "newer candidate must reach both summary and version details");
         check(std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "下载更新",
               "available update must turn the primary action into download");
-        check(containsLabel(page.widget(), "Fixture package description"), "real package description must be retained");
+        check(!containsLabel(page.widget(), "Fixture package description"),
+              "package descriptions must never be presented as release notes");
         check(gtk_widget_get_sensitive(copy), "completed query must restore copy action");
         gtk_button_clicked(GTK_BUTTON(copy));
         gchar *copied = gtk_clipboard_wait_for_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD));
@@ -225,7 +228,8 @@ esac
 
         writeFile(root / "show", "");
         query();
-        check(containsLabel(page.widget(), "暂无更新说明"), "missing release metadata must not invent features");
+        check(containsLabel(page.widget(), "展开后加载官方更新说明。"),
+              "local package metadata must leave official release notes explicitly unloaded");
 
         writeFile(root / "fail", "fail");
         query();
@@ -312,11 +316,17 @@ exec(sys.argv[2])
                 "\",\"draft\":false,\"prerelease\":false,\"body\":\"正式发布说明\"}");
         };
         policy("0.1.22");
-        query();
         release("0.1.25");
         writeFile(root / "online-hold", "hold");
-        gtk_button_clicked(GTK_BUTTON(button));
+        std::filesystem::remove(root / "started");
+        writeFile(root / "hold", "hold");
+        page.refresh();
+        assert(waitUntil([&root] { return std::filesystem::exists(root / "started"); }));
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(notesToggle), TRUE);
+        std::filesystem::remove(root / "hold");
         assert(waitUntil([&root] { return std::filesystem::exists(root / "online-started"); }));
+        check(std::string_view(gtk_label_get_text(GTK_LABEL(notes))).find("正在加载") != std::string_view::npos,
+              "opening release notes must load the official body and expose progress");
         check(message().find("查询官方") != std::string::npos &&
                   !gtk_widget_get_sensitive(button) && !gtk_widget_get_sensitive(recheck),
               "online check must expose progress and disable duplicate actions");
@@ -336,21 +346,23 @@ exec(sys.argv[2])
                   detailsMessage().find("fixture network unavailable") != std::string::npos &&
                   std::string_view(gtk_button_get_label(GTK_BUTTON(button))) == "重新检查",
               "network failure must clear the previous download action and preserve its cause");
+        auto *notesRetry = findTarget(page.widget(), "updates-release-retry");
+        check(containsLabel(page.widget(), "正式发布说明") && notesRetry &&
+                  gtk_widget_get_mapped(notesRetry),
+              "failed refresh must retain loaded release notes and provide a retry action");
         std::filesystem::remove(root / "online-fail");
         release("0.1.23");
         writeFile(root / "release.json", R"json({"tag_name":"v0.1.23","draft":false,"prerelease":false,"body":"# ModernIME v0.1.23\n\n## 输入辅助\n\n- **快捷短语**：输入 `foo_bar`，保留 <原文> & 符号。\n- 访问[官方说明](https://example.invalid/notes)。\n\n```text\n<code> & data\n```"})json");
-        gtk_button_clicked(GTK_BUTTON(button));
+        gtk_button_clicked(GTK_BUTTON(notesRetry));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
         check(message() == "未发现新版本" && nextStep().find("官方") != std::string::npos,
               "online no-update result must not ask users to refresh repositories");
         check(detailsMessage().find("sudo apt update") == std::string::npos,
               "online result must remove obsolete privileged-refresh instructions");
-        auto *notesToggle = findTarget(page.widget(), "updates-release-details");
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(notesToggle), TRUE);
         check(containsLabel(page.widget(),
                   "ModernIME v0.1.23\n\n输入辅助\n\n• 快捷短语：输入 foo_bar，保留 <原文> & 符号。\n• 访问官方说明。\n\n<code> & data"),
               "release notes must render Markdown headings, lists, emphasis, code and links as readable text");
-        auto *notes = findTarget(page.widget(), "updates-release-notes");
         const std::string markup = gtk_label_get_label(GTK_LABEL(notes));
         check(gtk_label_get_use_markup(GTK_LABEL(notes)) &&
                   markup.find("size=\"x-large\"") != std::string::npos &&
@@ -372,6 +384,9 @@ exec(sys.argv[2])
                   "native release note hyperlinks must retain their destination");
             g_free(uri);
         }
+        query();
+        check(std::string_view(gtk_label_get_label(GTK_LABEL(notes))) == markup,
+              "returning to the page must not replace loaded official notes with package metadata");
 
         writeFile(root / "channel", "channel=rpm\n");
         release("0.1.26");

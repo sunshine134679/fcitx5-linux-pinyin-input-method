@@ -236,6 +236,19 @@ private:
         (*shared)->withOwner([](Impl &owner) { owner.startCheck(true); });
     }
 
+    static void onReleaseToggled(GtkToggleButton *, gpointer data) {
+        auto *shared = static_cast<SharedLifetime *>(data);
+        (*shared)->withOwner([](Impl &owner) { owner.ensureReleaseNotes(); });
+    }
+
+    static void onNotesRetryClicked(GtkButton *, gpointer data) {
+        auto *shared = static_cast<SharedLifetime *>(data);
+        (*shared)->withOwner([](Impl &owner) {
+            focusWidgetOrFallback(owner.changelogLabel, owner.releaseDetails);
+            owner.startCheck(true);
+        });
+    }
+
     static void onJumpSourceClicked(GtkButton *, gpointer data) {
         auto *shared = static_cast<SharedLifetime *>(data);
         (*shared)->withOwner([](Impl &owner) {
@@ -262,9 +275,12 @@ private:
             g_object_get_data(source, kStateKey));
         auto *status = static_cast<UpdateCheckResult *>(
             g_task_propagate_pointer(G_TASK(result), &error));
+        const auto *request = static_cast<const UpdateCheckTask *>(
+            g_task_get_task_data(G_TASK(result)));
+        const bool online = request && request->online;
         if (statePtr != nullptr) {
-            (*statePtr)->withOwner([status, error](Impl &owner) {
-                owner.finishCheck(status, error);
+            (*statePtr)->withOwner([status, error, online](Impl &owner) {
+                owner.finishCheck(status, error, online);
             });
         }
         delete status;
@@ -283,7 +299,8 @@ private:
 
         setSettingsFocusChain(
             page, {checkButton, versionDetails, recheckButton, sourceJumpButton,
-                   releaseDetails, changelogLabel, upgradeDetails, copyCommandButton});
+                   releaseDetails, changelogLabel, notesRetryButton,
+                   upgradeDetails, copyCommandButton});
         applyStatus(lastStatus);
     }
 
@@ -467,10 +484,55 @@ private:
     void buildReleaseNotesSection(GtkWidget *parent) {
         auto *section = detailsSection(parent, "更新说明",
                                        "updates-release-details", &releaseDetails);
-        changelogLabel = wrappedLabel("暂无", true);
+        changelogLabel = wrappedLabel("展开后加载官方更新说明。", true);
         setTarget(changelogLabel, "updates-release-notes");
         addStyleClass(changelogLabel, "modernime-release-notes");
         gtk_box_pack_start(GTK_BOX(section), changelogLabel, FALSE, FALSE, 0);
+        notesHintLabel = wrappedLabel("");
+        addStyleClass(notesHintLabel, "modernime-description");
+        gtk_widget_set_no_show_all(notesHintLabel, TRUE);
+        gtk_box_pack_start(GTK_BOX(section), notesHintLabel, FALSE, FALSE, 0);
+        notesRetryButton = gtk_button_new_with_label("重新加载");
+        gtk_widget_set_halign(notesRetryButton, GTK_ALIGN_START);
+        gtk_widget_set_no_show_all(notesRetryButton, TRUE);
+        setTarget(notesRetryButton, "updates-release-retry");
+        setAccessibleWidgetText(notesRetryButton, "重新加载更新说明", "重新查询官方发布信息，保留已显示的说明");
+        gtk_box_pack_start(GTK_BOX(section), notesRetryButton, FALSE, FALSE, 0);
+        g_signal_connect_data(releaseDetails, "toggled", G_CALLBACK(onReleaseToggled),
+                              new SharedLifetime(state), destroySignalState,
+                              static_cast<GConnectFlags>(0));
+        g_signal_connect_data(notesRetryButton, "clicked", G_CALLBACK(onNotesRetryClicked),
+                              new SharedLifetime(state), destroySignalState,
+                              static_cast<GConnectFlags>(0));
+    }
+
+    void ensureReleaseNotes() {
+        if (notesVersion.empty() && !busy &&
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(releaseDetails))) {
+            startCheck(true);
+        }
+    }
+
+    void finishReleaseNotes(const UpdateStatus *status) {
+        if (status && status->checkedOnline) {
+            const auto notes = detail::releaseNotesMarkup(
+                status->changelogSummary.empty() ? "此版本暂无更新说明。" : status->changelogSummary,
+                status->candidateVersion);
+            gtk_label_set_markup(GTK_LABEL(changelogLabel), notes.c_str());
+            notesVersion = status->candidateVersion;
+            gtk_widget_hide(notesHintLabel);
+            gtk_widget_hide(notesRetryButton);
+            return;
+        }
+        if (notesVersion.empty()) {
+            gtk_label_set_text(GTK_LABEL(changelogLabel), "未能加载官方更新说明。");
+            gtk_label_set_text(GTK_LABEL(notesHintLabel), "请检查网络连接后重试。");
+        } else {
+            const auto hint = "刷新失败，仍显示 v" + notesVersion + " 的更新说明。";
+            gtk_label_set_text(GTK_LABEL(notesHintLabel), hint.c_str());
+        }
+        gtk_widget_show(notesHintLabel);
+        gtk_widget_show(notesRetryButton);
     }
 
     void buildUpgradeGuideSection(GtkWidget *parent) {
@@ -570,6 +632,7 @@ private:
         ++actionGeneration;
         gtk_widget_set_sensitive(checkButton, FALSE);
         gtk_widget_set_sensitive(recheckButton, FALSE);
+        gtk_widget_set_sensitive(notesRetryButton, FALSE);
         gtk_widget_set_sensitive(copyCommandButton, FALSE);
         gtk_widget_show(downloadProgress);
         gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(downloadProgress), 0);
@@ -625,6 +688,7 @@ private:
             setPrimaryAction(wasInstalling ? "重试安装" : "重试下载", "view-refresh-symbolic",
                              wasInstalling ? "使用已下载的安装包重试安装" : "重新下载并校验安装包");
             gtk_widget_set_sensitive(recheckButton, !wasInstalling);
+            gtk_widget_set_sensitive(notesRetryButton, !wasInstalling);
             if (notify) notify(wasInstalling ? "安装未完成，原因已显示在更新页面。" : "下载未完成，原因已显示在更新页面。");
             return;
         }
@@ -671,6 +735,7 @@ private:
         busy = true;
         gtk_widget_hide(errorSummaryLabel);
         gtk_widget_set_sensitive(recheckButton, FALSE);
+        gtk_widget_set_sensitive(notesRetryButton, FALSE);
         gtk_widget_set_sensitive(checkButton, FALSE);
         gtk_widget_set_sensitive(copyCommandButton, FALSE);
         setPrimaryAction("检查中…", "view-refresh-symbolic", "正在查询版本信息");
@@ -685,7 +750,13 @@ private:
         }
         gtk_label_set_text(GTK_LABEL(candidateVersionLabel), "检查中…");
         gtk_label_set_text(GTK_LABEL(channelLabel), "检测中…");
-        gtk_label_set_text(GTK_LABEL(changelogLabel), "正在查询更新信息…");
+        if (online) {
+            if (notesVersion.empty()) {
+                gtk_label_set_text(GTK_LABEL(changelogLabel), "正在加载官方更新说明…");
+            }
+            gtk_widget_hide(notesHintLabel);
+            gtk_widget_hide(notesRetryButton);
+        }
         gtk_label_set_text(GTK_LABEL(commandLabel), "");
         gtk_widget_hide(commandLabel);
         gtk_label_set_text(GTK_LABEL(checkDetailsLabel), "正在读取完整检查结果…");
@@ -708,12 +779,14 @@ private:
         g_object_unref(task);
     }
 
-    void finishCheck(const UpdateCheckResult *result, const GError *error) {
+    void finishCheck(const UpdateCheckResult *result, const GError *error, bool online) {
         busy = false;
         gtk_spinner_stop(GTK_SPINNER(progressSpinner));
         gtk_widget_hide(progressSpinner);
         gtk_widget_set_sensitive(checkButton, TRUE);
         gtk_widget_set_sensitive(recheckButton, TRUE);
+        gtk_widget_set_sensitive(notesRetryButton, TRUE);
+        if (online) finishReleaseNotes(error || !result ? nullptr : &result->status);
         setPrimaryAction("重新检查", "view-refresh-symbolic", "在线查询官方最新版本，无需管理员授权");
         if (error != nullptr || result == nullptr) {
             lastStatus.updateAvailable = false;
@@ -729,7 +802,6 @@ private:
             gtk_label_set_text(GTK_LABEL(guideDescLabel), "本次检查未完成，请重新检查后获取升级命令。");
             gtk_label_set_text(GTK_LABEL(candidateVersionLabel), "暂不可用");
             gtk_label_set_text(GTK_LABEL(channelLabel), "未检测");
-            gtk_label_set_text(GTK_LABEL(changelogLabel), "未能获取更新说明");
             focusCopyWhenReady = false;
             return;
         }
@@ -742,6 +814,9 @@ private:
             gtk_widget_has_focus(upgradeDetails)) {
             focusWidgetOrFallback(copyCommandButton, upgradeDetails);
         }
+        // The user may expand notes while the initial local query is in flight.
+        // Reuse the same worker/lifetime path, without concurrent check results.
+        if (!online) ensureReleaseNotes();
     }
 
     void setSummary(const std::string &message, const char *hint,
@@ -792,11 +867,6 @@ private:
             gtk_label_set_text(GTK_LABEL(checkDetailsLabel),
                 "当前显示的是本地软件源缓存。点击“检查更新”在线查询官方版本，无需刷新系统软件源。");
         }
-
-        const auto notes = detail::releaseNotesMarkup(
-            status.changelogSummary.empty() ? "暂无更新说明" : status.changelogSummary,
-            status.candidateVersion);
-        gtk_label_set_markup(GTK_LABEL(changelogLabel), notes.c_str());
 
         const bool downloadable = status.updateAvailable &&
             (!status.packageManagerLocked || status.checkedOnline);
@@ -865,6 +935,8 @@ private:
     UpdateStatus lastStatus;
     bool busy = false;
     bool focusCopyWhenReady = false;
+    // Only an official online release can replace the displayed release body.
+    std::string notesVersion;
 
     GtkWidget *page = nullptr;
     GtkWidget *summaryCard = nullptr;
@@ -878,6 +950,8 @@ private:
     GtkWidget *sourceJumpButton = nullptr;
     GtkWidget *candidateVersionLabel = nullptr;
     GtkWidget *changelogLabel = nullptr;
+    GtkWidget *notesHintLabel = nullptr;
+    GtkWidget *notesRetryButton = nullptr;
     GtkWidget *statusMessageLabel = nullptr;
     GtkWidget *statusHintLabel = nullptr;
     GtkWidget *progressSpinner = nullptr;
