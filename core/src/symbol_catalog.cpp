@@ -18,7 +18,9 @@ struct MacroGroup {
 
 // The existing provider's 160 exact macro keys and ordered value lists live
 // here once. Identical lists share a group; aliases also feed catalog search.
-constexpr MacroGroup kGroups[] = {
+// GCC 11 rejects constexpr initializer_list<string_view> backing arrays.
+// The catalog only reads these static, immutable groups at runtime.
+const MacroGroup kGroups[] = {
     {"gantanhao tanhao jingtanhao", "感叹号", "punctuation", "exclamation mark;bang", {"！", "!", "❗️"}},
     {"wenhao", "问号", "punctuation", "question mark", {"？", "?", "❓"}},
     {"douhao", "逗号", "punctuation", "comma", {"，", ","}},
