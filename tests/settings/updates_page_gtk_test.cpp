@@ -332,8 +332,13 @@ exec(sys.argv[2])
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(notesToggle), TRUE);
         std::filesystem::remove(root / "hold");
         assert(waitUntil([&root] { return std::filesystem::exists(root / "online-started"); }));
-        check(std::string_view(gtk_label_get_text(GTK_LABEL(notes))).find("正在加载") != std::string_view::npos,
-              "opening release notes must load the official body and expose progress");
+        auto *notesState = findTarget(page.widget(), "updates-release-state");
+        auto *loadingScroll = findTarget(page.widget(), "updates-release-scroll");
+        check(GTK_IS_LABEL(notesState) && waitUntil([&] { return gtk_widget_get_mapped(notesState); }) &&
+                  std::string_view(gtk_label_get_text(GTK_LABEL(notesState))).find("正在加载") != std::string_view::npos,
+              "opening release notes must expose a visible loading state outside the document viewport");
+        check(!gtk_widget_get_visible(loadingScroll),
+              "the empty document viewport must remain hidden until release notes are available");
         check(message().find("查询官方") != std::string::npos &&
                   !gtk_widget_get_sensitive(button) && !gtk_widget_get_sensitive(recheck),
               "online check must expose progress and disable duplicate actions");
@@ -346,6 +351,8 @@ exec(sys.argv[2])
               "online release must replace cached version and enable download");
         check(containsLabel(page.widget(), "正式发布说明"),
               "online release notes must reach the page");
+        check(notesState && !gtk_widget_get_mapped(notesState) && gtk_widget_get_mapped(loadingScroll),
+              "loaded notes must replace the loading state with the visible document");
         writeFile(root / "online-fail", "fail");
         gtk_button_clicked(GTK_BUTTON(recheck));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));

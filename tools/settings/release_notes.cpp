@@ -132,8 +132,12 @@ std::string releaseNotesMarkup(std::string_view markdown, std::string_view versi
     bool previousList = false;
     bool previousParagraph = false;
     const auto append = [&](const std::string &block, bool list) {
-        if (!result.empty())
-            result.append(pendingBreaks == 0 && list && previousList ? 1 : 2, '\n');
+        if (!result.empty()) {
+            // Keep paragraph breaks selectable while making the empty line
+            // smaller than body text in the compact native reading pane.
+            result += pendingBreaks == 0 && list && previousList
+                ? "\n" : "\n<span size=\"xx-small\">\n</span>";
+        }
         result += block;
         pendingBreaks = 0;
         previousList = list;

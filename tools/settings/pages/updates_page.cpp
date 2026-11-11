@@ -244,7 +244,7 @@ private:
     static void onNotesRetryClicked(GtkButton *, gpointer data) {
         auto *shared = static_cast<SharedLifetime *>(data);
         (*shared)->withOwner([](Impl &owner) {
-            focusWidgetOrFallback(owner.changelogLabel, owner.releaseDetails);
+            gtk_widget_grab_focus(owner.releaseDetails);
             owner.startCheck(true);
         });
     }
@@ -500,12 +500,30 @@ private:
         auto *section = detailsSection(parent, "更新说明",
                                        "updates-release-details", &releaseDetails);
         addStyleClass(section, "modernime-release-content");
+        gtk_box_set_spacing(GTK_BOX(section), 0);
+        gtk_box_pack_start(GTK_BOX(section), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
+
+        notesStateBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        gtk_widget_set_margin_start(notesStateBox, 12);
+        gtk_widget_set_margin_end(notesStateBox, 12);
+        gtk_widget_set_margin_top(notesStateBox, 14);
+        gtk_widget_set_margin_bottom(notesStateBox, 14);
+        gtk_widget_set_no_show_all(notesStateBox, TRUE);
+        notesStateSpinner = gtk_spinner_new();
+        gtk_widget_set_size_request(notesStateSpinner, 16, 16);
+        gtk_box_pack_start(GTK_BOX(notesStateBox), notesStateSpinner, FALSE, FALSE, 0);
+        notesStateIcon = gtk_image_new_from_icon_name("view-refresh-symbolic", GTK_ICON_SIZE_MENU);
+        gtk_box_pack_start(GTK_BOX(notesStateBox), notesStateIcon, FALSE, FALSE, 0);
+        notesStateLabel = wrappedLabel("正在加载更新说明…");
+        setTarget(notesStateLabel, "updates-release-state");
+        gtk_box_pack_start(GTK_BOX(notesStateBox), notesStateLabel, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(section), notesStateBox, FALSE, FALSE, 0);
         changelogLabel = wrappedLabel("展开后加载官方更新说明。", true);
         setTarget(changelogLabel, "updates-release-notes");
         addStyleClass(changelogLabel, "modernime-release-notes");
 #if PANGO_VERSION_CHECK(1, 50, 0)
         auto *attributes = pango_attr_list_new();
-        pango_attr_list_insert(attributes, pango_attr_line_height_new(1.25));
+        pango_attr_list_insert(attributes, pango_attr_line_height_new(1.15));
         gtk_label_set_attributes(GTK_LABEL(changelogLabel), attributes);
         pango_attr_list_unref(attributes);
 #endif
@@ -519,29 +537,50 @@ private:
         gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(notesScroll), 320);
         gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(notesScroll), TRUE);
         gtk_widget_set_can_focus(notesScroll, TRUE);
-        gtk_widget_set_margin_top(notesScroll, 8);
         setAccessibleWidgetText(notesScroll, "更新说明阅读区域", "长正文可在此区域滚动查看");
         auto *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         addStyleClass(body, "modernime-release-notes-body");
+        gtk_widget_set_margin_start(body, 12);
+        gtk_widget_set_margin_end(body, 12);
+        gtk_widget_set_margin_top(body, 14);
+        gtk_widget_set_margin_bottom(body, 14);
         gtk_box_pack_start(GTK_BOX(body), changelogLabel, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(notesScroll), body);
+        auto *viewport = gtk_bin_get_child(GTK_BIN(notesScroll));
+        gtk_viewport_set_shadow_type(GTK_VIEWPORT(viewport), GTK_SHADOW_NONE);
+        gtk_widget_show_all(notesScroll);
+        gtk_widget_set_no_show_all(notesScroll, TRUE);
+        gtk_widget_hide(notesScroll);
         gtk_box_pack_start(GTK_BOX(section), notesScroll, FALSE, FALSE, 0);
+
+        notesFooter = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_widget_set_no_show_all(notesFooter, TRUE);
+        auto *footerLine = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+        gtk_box_pack_start(GTK_BOX(notesFooter), footerLine, FALSE, FALSE, 0);
+        gtk_widget_show(footerLine);
+        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_widget_set_margin_start(actions, 12);
+        gtk_widget_set_margin_end(actions, 12);
+        gtk_widget_set_margin_top(actions, 8);
+        gtk_widget_set_margin_bottom(actions, 8);
+        gtk_box_pack_start(GTK_BOX(notesFooter), actions, FALSE, FALSE, 0);
+        gtk_widget_show(actions);
         notesHintLabel = wrappedLabel("");
         addStyleClass(notesHintLabel, "modernime-description");
         gtk_widget_set_no_show_all(notesHintLabel, TRUE);
-        gtk_box_pack_start(GTK_BOX(section), notesHintLabel, FALSE, FALSE, 0);
+        gtk_widget_set_valign(notesHintLabel, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(actions), notesHintLabel, TRUE, TRUE, 0);
         notesRetryButton = gtk_button_new_with_label("重新加载");
         gtk_widget_set_halign(notesRetryButton, GTK_ALIGN_START);
         gtk_widget_set_no_show_all(notesRetryButton, TRUE);
         setTarget(notesRetryButton, "updates-release-retry");
         setAccessibleWidgetText(notesRetryButton, "重新加载更新说明", "重新查询官方发布信息，保留已显示的说明");
-        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        gtk_box_pack_start(GTK_BOX(actions), notesRetryButton, FALSE, FALSE, 0);
         notesExternalLink = gtk_button_new_with_label("浏览器查看");
         gtk_widget_set_no_show_all(notesExternalLink, TRUE);
         setTarget(notesExternalLink, "updates-release-link");
-        gtk_box_pack_start(GTK_BOX(actions), notesExternalLink, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(section), actions, FALSE, FALSE, 0);
+        gtk_box_pack_end(GTK_BOX(actions), notesExternalLink, FALSE, FALSE, 0);
+        gtk_box_pack_end(GTK_BOX(actions), notesRetryButton, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(section), notesFooter, FALSE, FALSE, 0);
         g_signal_connect_data(releaseDetails, "toggled", G_CALLBACK(onReleaseToggled),
                               new SharedLifetime(state), destroySignalState,
                               static_cast<GConnectFlags>(0));
@@ -553,10 +592,26 @@ private:
                               static_cast<GConnectFlags>(0));
     }
 
+    void showNotesState(const char *message, bool loading) {
+        gtk_label_set_text(GTK_LABEL(notesStateLabel), message);
+        gtk_widget_show(notesStateLabel);
+        gboolean animations = TRUE;
+        g_object_get(gtk_widget_get_settings(page), "gtk-enable-animations", &animations, nullptr);
+        gtk_spinner_stop(GTK_SPINNER(notesStateSpinner));
+        gtk_widget_set_visible(notesStateSpinner, loading && animations);
+        gtk_widget_set_visible(notesStateIcon, !loading || !animations);
+        gtk_image_set_from_icon_name(GTK_IMAGE(notesStateIcon),
+            loading ? "view-refresh-symbolic" : "dialog-warning-symbolic", GTK_ICON_SIZE_MENU);
+        if (loading && animations) gtk_spinner_start(GTK_SPINNER(notesStateSpinner));
+        gtk_widget_show(notesStateBox);
+        gtk_widget_set_visible(notesScroll, !notesVersion.empty());
+    }
+
     void ensureReleaseNotes() {
-        if (notesVersion.empty() && !busy &&
+        if (notesVersion.empty() && nativePhase == NativePhase::None &&
             gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(releaseDetails))) {
-            startCheck(true);
+            showNotesState("正在加载更新说明…", true);
+            if (!busy) startCheck(true);
         }
     }
 
@@ -578,22 +633,28 @@ private:
                 gtk_adjustment_set_value(adjustment, gtk_adjustment_get_lower(adjustment));
             }
             notesVersion = status->candidateVersion;
+            gtk_spinner_stop(GTK_SPINNER(notesStateSpinner));
+            gtk_widget_hide(notesStateBox);
+            gtk_widget_show(notesScroll);
+            gtk_widget_show(notesFooter);
             gtk_widget_hide(notesHintLabel);
             gtk_widget_hide(notesRetryButton);
             return;
         }
         if (notesVersion.empty()) {
             gtk_label_set_text(GTK_LABEL(changelogLabel), "未能加载官方更新说明。");
-            gtk_label_set_text(GTK_LABEL(notesHintLabel), gtk_widget_get_visible(notesExternalLink)
-                ? "请重新加载，或在浏览器中查看。" : "请检查网络连接后重试。");
+            showNotesState("暂时无法加载更新说明，请重试。", false);
+            gtk_widget_hide(notesHintLabel);
         } else {
-            const auto hint = "刷新失败，仍显示 v" + notesVersion + " 的更新说明。";
+            showNotesState("未能刷新更新说明，可以重新加载。", false);
+            const auto hint = "当前显示 v" + notesVersion + " 的说明";
             gtk_label_set_text(GTK_LABEL(notesHintLabel), hint.c_str());
+            gtk_widget_show(notesHintLabel);
         }
-        gtk_widget_show(notesHintLabel);
-        gtk_widget_set_tooltip_text(notesHintLabel,
+        gtk_widget_set_tooltip_text(notesStateLabel,
             status && !status->changelogError.empty() ? status->changelogError.c_str() : nullptr);
         gtk_widget_show(notesRetryButton);
+        gtk_widget_show(notesFooter);
     }
 
     void buildUpgradeGuideSection(GtkWidget *parent) {
@@ -815,8 +876,10 @@ private:
             if (notesVersion.empty()) {
                 gtk_label_set_text(GTK_LABEL(changelogLabel), "正在加载官方更新说明…");
             }
+            showNotesState(notesVersion.empty() ? "正在加载更新说明…" : "正在刷新更新说明…", true);
             gtk_widget_hide(notesHintLabel);
             gtk_widget_hide(notesRetryButton);
+            gtk_widget_set_visible(notesFooter, gtk_widget_get_visible(notesExternalLink));
         }
         gtk_label_set_text(GTK_LABEL(commandLabel), "");
         gtk_widget_hide(commandLabel);
@@ -1013,6 +1076,11 @@ private:
     GtkWidget *candidateVersionLabel = nullptr;
     GtkWidget *changelogLabel = nullptr;
     GtkWidget *notesScroll = nullptr;
+    GtkWidget *notesStateBox = nullptr;
+    GtkWidget *notesStateLabel = nullptr;
+    GtkWidget *notesStateSpinner = nullptr;
+    GtkWidget *notesStateIcon = nullptr;
+    GtkWidget *notesFooter = nullptr;
     GtkWidget *notesExternalLink = nullptr;
     GtkWidget *notesHintLabel = nullptr;
     GtkWidget *notesRetryButton = nullptr;

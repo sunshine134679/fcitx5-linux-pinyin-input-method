@@ -562,20 +562,31 @@ std::string_view settingsStyles() {
         .modernime-details-content { padding: 4px 10px 18px; }
         .modernime-update-details .modernime-details { border: none; }
         .modernime-update-details .modernime-details-content { padding: 14px 12px 18px; }
-        .modernime-update-details .modernime-release-content { padding-bottom: 8px; }
+        .modernime-update-details .modernime-details-content.modernime-release-content { padding: 0; }
         .modernime-release-notes-scroll {
-            border: 1px solid @borders;
-            border-radius: 8px;
-            background-color: @theme_base_color;
+            border: none;
+            border-radius: 0;
+            background-color: transparent;
         }
         .modernime-release-notes-scroll:focus {
-            border-color: transparent;
             outline: 2px solid alpha(@theme_selected_bg_color, 0.6);
             outline-offset: -2px;
         }
-        .modernime-release-notes-body { padding: 14px; }
+        .modernime-release-notes-scroll viewport { background-color: transparent; }
+        .modernime-release-notes-scroll undershoot { background: none; box-shadow: none; }
+        .modernime-release-notes-body { padding: 0; }
         .modernime-settings .modernime-update-details .modernime-details-button {
-            padding: 12px 10px;
+            padding: 12px;
+        }
+        .modernime-settings .modernime-update-details .modernime-details-button:checked {
+            background-color: transparent;
+        }
+        .modernime-settings .modernime-update-details .modernime-details-button:hover {
+            background-color: transparent;
+            color: @modernime_nav_fg_color;
+        }
+        .modernime-settings .modernime-update-details .modernime-details-button:active {
+            background-color: @modernime_pressed_color;
         }
         .modernime-update-summary { padding: 20px 22px; }
         .modernime-update-progress trough { min-height: 6px; border-radius: 6px; background: @modernime_accent_surface; border: none; }
