@@ -1,5 +1,5 @@
 Name:           modernime
-Version:        0.2.5
+Version:        0.2.6
 Release:        1%{?dist}
 Summary:        Modern Fcitx5 Pinyin Input Method for Linux Desktops
 # ModernIME engine, UI addon, and settings client are LGPL-2.1-or-later;
