@@ -161,14 +161,18 @@ void testUndo(fcitx::Instance &instance) {
     Document doc(instance.inputContextManager());
     fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
     engine.activate(entry, in);
-    auto send = [&](fcitx::Key key) {
-        fcitx::KeyEvent event(&doc, key); engine.keyEvent(entry, event); return event.accepted();
+    auto send = [&](fcitx::Key key, bool release = false) {
+        fcitx::KeyEvent event(&doc, key, release); engine.keyEvent(entry, event); return event.accepted();
     };
     for (const char c : std::string("nihao")) check(send(fcitx::Key(std::string(1, c))), "pinyin accepted");
     check(send(fcitx::Key(FcitxKey_space)) && doc.text == "你好", "candidate commits to document");
     const auto undo = fcitx::Key(FcitxKey_BackSpace,
         fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift}));
-    check(send(undo), "undo shortcut handled");
+    send(fcitx::Key(FcitxKey_Control_L));
+    send(fcitx::Key(FcitxKey_Shift_L, fcitx::KeyState::Ctrl));
+    check(send(undo), "physical Ctrl then Shift preserves the undo shortcut");
+    send(fcitx::Key(FcitxKey_Shift_L, fcitx::KeyState::Ctrl), true);
+    send(fcitx::Key(FcitxKey_Control_L), true);
     check(doc.text.empty() && engine.state(&doc)->controller().page().rawInput == "nihao",
           "undo restores original keystrokes and candidates");
     check(!send(undo), "repeated undo cannot delete again");

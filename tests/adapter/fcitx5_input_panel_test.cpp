@@ -436,6 +436,8 @@ int main() {
                "preedit is published to the client input area");
     assertTrue(inputContext.inputPanel().clientPreedit().cursor() == 1,
                "client preedit cursor follows the controller insertion point");
+    assertTrue(inputContext.inputPanel().clientPreedit().toStringForCommit().empty(),
+               "focus-out commit projection excludes unconfirmed displayed pinyin");
     assertTrue(inputContext.preeditUpdates == 1,
                "client preedit update is sent");
     inputContext.inputPanel().candidateList()->candidate(0).select(
@@ -446,6 +448,8 @@ int main() {
     host.publishPage(page);
     assertTrue(inputContext.inputPanel().clientPreedit().toString() == "xyz",
                "raw preedit remains visible without candidates");
+    assertTrue(inputContext.inputPanel().clientPreedit().toStringForCommit().empty(),
+               "candidate-free preedit also requires explicit submission");
     assertTrue(inputContext.inputPanel().clientPreedit().cursor() == 3,
                "raw preedit cursor follows the end without candidates");
 

@@ -305,7 +305,9 @@ FcitxEngineHost::FcitxEngineHost(fcitx::InputContext &inputContext)
     : inputContext_(&inputContext) {}
 
 void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
-    fcitx::Text preedit(page.preedit);
+    // This is a display projection, not confirmed input. Fcitx may otherwise
+    // commit formatted pinyin automatically when the context loses focus.
+    fcitx::Text preedit(page.preedit, fcitx::TextFormatFlag::DontCommit);
     const auto requestedCursor =
         page.preeditCursor == core::CandidatePage::kCursorAtEnd
             ? preedit.textLength()
@@ -1167,7 +1169,10 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                 if (contextState->controller().temporaryEnglishMode()) contextState->controller().finishTemporaryEnglish(true);
                 else contextState->controller().cancelAuxiliaryInput();
             }
-            if (hasNonShiftModifier(event.key())) contextState->controller().invalidateTextActions();
+            // Physical shortcuts arrive as modifier presses before the final
+            // key. Keep undo/pair ownership until the actual command arrives.
+            if (hasNonShiftModifier(event.key()) && !event.key().isModifier())
+                contextState->controller().invalidateTextActions();
             if (contextState->controller().page().preedit.empty() &&
                 !event.inputContext()->surroundingText().isValid()) {
                 contextState->controller().setContext(
