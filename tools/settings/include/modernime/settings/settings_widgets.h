@@ -8,6 +8,8 @@
 
 namespace modernime::settings {
 
+enum class SettingsPageId;
+
 inline constexpr std::string_view kSettingsWindowClass = "modernime-settings";
 inline constexpr std::string_view kSettingsSidebarClass = "modernime-sidebar";
 inline constexpr std::string_view kSettingsSectionClass = "modernime-section";
@@ -31,6 +33,7 @@ int settingsChoiceActive(GtkWidget *choice);
 void setSettingsChoiceActive(GtkWidget *choice, int index);
 enum class SettingsStatusArt { Release, Input };
 GtkWidget *createSettingsStatusArt(SettingsStatusArt kind);
+GtkWidget *createSettingsPageIcon(SettingsPageId page, int size = 16);
 std::string_view settingsStyles();
 void setAccessibleWidgetText(GtkWidget *widget, std::string_view name,
                              std::string_view description);

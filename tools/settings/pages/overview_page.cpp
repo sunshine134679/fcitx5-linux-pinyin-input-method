@@ -131,26 +131,26 @@ public:
         gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(shortcuts), 10);
         addStyleClass(shortcuts, "modernime-overview-shortcuts");
         gtk_flow_box_insert(GTK_FLOW_BOX(shortcuts), createShortcut(
-            "候选与外观", "配色、字体与候选栏", "preferences-color-symbolic",
+            "候选与外观", "配色、字体与候选栏",
             SettingsPageId::Candidates), -1);
         gtk_flow_box_insert(GTK_FLOW_BOX(shortcuts), createShortcut(
             "输入与按键", "默认" + snapshot.defaultMode + "，" + snapshot.toggleKey + " 切换中英",
-            "input-keyboard-symbolic", SettingsPageId::Input), -1);
+            SettingsPageId::Input), -1);
         gtk_box_pack_start(GTK_BOX(content), shortcuts, FALSE, FALSE, 0);
 
-        auto *library = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        auto *library = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
         addStyleClass(library, "modernime-overview-library");
         auto *libraryTitle = label("本地内容", "modernime-overview-library-title");
         gtk_box_pack_start(GTK_BOX(library), libraryTitle, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(library), createContentRow(
             "个人词典", snapshot.dictionaryEntries == 0 ? "添加常用词与专用短语" : "管理常用词与专用短语",
-            "accessories-dictionary-symbolic", snapshot.dictionaryEntries, "词条", SettingsPageId::Dictionary),
+            snapshot.dictionaryEntries, "词条", SettingsPageId::Dictionary),
             FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(library), createContentRow(
-            "剪贴板", snapshot.clipboardShortcut, "edit-paste-symbolic",
+            "剪贴板", snapshot.clipboardShortcut,
             snapshot.clipboardEntries, "记录", SettingsPageId::Clipboard), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(library), createContentRow(
-            "智能学习", "查看与管理输入习惯", "starred-symbolic",
+            "智能学习", "查看与管理输入习惯",
             snapshot.learningEntries, "记录", SettingsPageId::Learning), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(content), library, FALSE, FALSE, 0);
         gtk_widget_show_all(summary);
@@ -158,15 +158,16 @@ public:
     }
 
     GtkWidget *createShortcut(std::string_view title, std::string_view description,
-                              const char *iconName, SettingsPageId destination) {
+                              SettingsPageId destination) {
         auto *button = createDestinationButton(title, destination, navigate, description);
         gtk_widget_destroy(gtk_bin_get_child(GTK_BIN(button)));
         addStyleClass(button, "modernime-overview-shortcut");
         gtk_widget_set_size_request(button, 250, -1);
         auto *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-        auto *icon = gtk_image_new_from_icon_name(iconName, GTK_ICON_SIZE_LARGE_TOOLBAR);
+        auto *icon = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         addStyleClass(icon, "modernime-overview-shortcut-icon");
         gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(icon), createSettingsPageIcon(destination, 24), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(row), icon, FALSE, FALSE, 0);
         auto *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
         gtk_box_pack_start(GTK_BOX(text), label(title, "modernime-setting-title"), FALSE, FALSE, 0);
@@ -179,25 +180,34 @@ public:
     }
 
     GtkWidget *createContentRow(std::string_view title, std::string_view description,
-                               const char *iconName, std::size_t count,
+                               std::size_t count,
                                std::string_view unit, SettingsPageId destination) {
         auto *button = createDestinationButton(title, destination, navigate, description);
         gtk_widget_destroy(gtk_bin_get_child(GTK_BIN(button)));
+        // Pointer activation navigates immediately; keyboard traversal retains
+        // its own visible focus instead of leaving a selected-looking row.
+        gtk_widget_set_focus_on_click(button, FALSE);
         addStyleClass(button, "modernime-overview-content-row");
         auto *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-        auto *icon = gtk_image_new_from_icon_name(iconName, GTK_ICON_SIZE_BUTTON);
+        auto *icon = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         addStyleClass(icon, "modernime-overview-content-icon");
+        gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(icon), createSettingsPageIcon(destination, 20), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(row), icon, FALSE, FALSE, 0);
         auto *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
-        gtk_box_pack_start(GTK_BOX(text), label(title, "modernime-setting-title"), FALSE, FALSE, 0);
+        auto *titleLabel = label(title, "modernime-setting-title");
+        addStyleClass(titleLabel, "modernime-overview-content-title");
+        gtk_box_pack_start(GTK_BOX(text), titleLabel, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(text), label(description, "modernime-setting-desc"), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(row), text, TRUE, TRUE, 0);
         auto *value = label(std::to_string(count) + " " + std::string(unit), "modernime-overview-count");
         gtk_label_set_line_wrap(GTK_LABEL(value), FALSE);
         gtk_widget_set_valign(value, GTK_ALIGN_CENTER);
         gtk_box_pack_start(GTK_BOX(row), value, FALSE, FALSE, 0);
-        gtk_box_pack_end(GTK_BOX(row), gtk_image_new_from_icon_name(
-            "go-next-symbolic", GTK_ICON_SIZE_MENU), FALSE, FALSE, 0);
+        auto *arrow = gtk_image_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_MENU);
+        addStyleClass(arrow, "modernime-overview-content-arrow");
+        gtk_widget_set_valign(arrow, GTK_ALIGN_CENTER);
+        gtk_box_pack_end(GTK_BOX(row), arrow, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(button), row);
         return button;
     }

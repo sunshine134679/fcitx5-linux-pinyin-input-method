@@ -1,6 +1,7 @@
 #include "modernime/settings/settings_widgets.h"
 
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/page_registry.h"
 #include "modernime/settings/settings_shell_state.h"
 
 #include <algorithm>
@@ -193,6 +194,91 @@ void setDialogResponseAccessibility(GtkDialog *dialog, int response,
         gtk_button_set_label(GTK_BUTTON(button), std::string(name).c_str());
     }
     setAccessibleWidgetText(button, name, description);
+}
+
+GtkWidget *createSettingsPageIcon(SettingsPageId page, int size) {
+    const char *name = nullptr;
+    switch (page) {
+    case SettingsPageId::Overview: name = "go-home-symbolic"; break;
+    case SettingsPageId::Input: name = "input-keyboard-symbolic"; break;
+    case SettingsPageId::Dictionary: name = "accessories-dictionary-symbolic"; break;
+    case SettingsPageId::Clipboard: name = "edit-paste-symbolic"; break;
+    case SettingsPageId::Updates: name = "software-update-available-symbolic"; break;
+    case SettingsPageId::Diagnostics: name = "utilities-system-monitor-symbolic"; break;
+    case SettingsPageId::Candidates:
+    case SettingsPageId::Learning: break;
+    }
+    if (name) {
+        auto *icon = gtk_image_new_from_icon_name(name, GTK_ICON_SIZE_BUTTON);
+        gtk_image_set_pixel_size(GTK_IMAGE(icon), size);
+        return icon;
+    }
+
+    auto *icon = gtk_drawing_area_new();
+    gtk_widget_set_size_request(icon, size, size);
+    gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+    gtk_widget_set_has_window(icon, FALSE);
+    gtk_widget_set_can_focus(icon, FALSE);
+    atk_object_set_role(gtk_widget_get_accessible(icon), ATK_ROLE_REDUNDANT_OBJECT);
+    g_signal_connect(icon, "draw", G_CALLBACK(+[](GtkWidget *widget, cairo_t *cr, gpointer data) -> gboolean {
+        GdkRGBA ink{};
+        gtk_style_context_get_color(gtk_widget_get_style_context(widget),
+                                    gtk_widget_get_state_flags(widget), &ink);
+        int pixels = 16;
+        gtk_widget_get_size_request(widget, &pixels, nullptr);
+        cairo_save(cr);
+        cairo_translate(cr, (gtk_widget_get_allocated_width(widget) - pixels) / 2.0,
+                        (gtk_widget_get_allocated_height(widget) - pixels) / 2.0);
+        gdk_cairo_set_source_rgba(cr, &ink);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        if (static_cast<SettingsPageId>(GPOINTER_TO_INT(data)) == SettingsPageId::Candidates) {
+            cairo_scale(cr, pixels / 24.0, pixels / 24.0);
+            cairo_set_line_width(cr, 1.4);
+            // A selected candidate and two alternatives, above three palette dots.
+            cairo_new_sub_path(cr);
+            cairo_arc(cr, 19, 6, 2, -G_PI / 2, 0);
+            cairo_arc(cr, 19, 12, 2, 0, G_PI / 2);
+            cairo_arc(cr, 5, 12, 2, G_PI / 2, G_PI);
+            cairo_arc(cr, 5, 6, 2, G_PI, 3 * G_PI / 2);
+            cairo_close_path(cr);
+            cairo_stroke(cr);
+            cairo_rectangle(cr, 5.5, 6.5, 4.5, 5);
+            cairo_fill(cr);
+            cairo_move_to(cr, 12.5, 9); cairo_line_to(cr, 14, 9);
+            cairo_move_to(cr, 17, 9); cairo_line_to(cr, 18.5, 9);
+            cairo_stroke(cr);
+            cairo_arc(cr, 7, 19, 1.4, 0, 2 * G_PI); cairo_fill(cr);
+            cairo_arc(cr, 12, 19, 1.4, 0, 2 * G_PI); cairo_stroke(cr);
+            cairo_arc(cr, 17, 19, 1.4, 0, 2 * G_PI); cairo_stroke(cr);
+            cairo_move_to(cr, 17, 17.6); cairo_line_to(cr, 17, 20.4); cairo_stroke(cr);
+        } else {
+            cairo_scale(cr, pixels / 16.0, pixels / 16.0);
+            cairo_set_line_width(cr, 1.2);
+            // Reuse the same compact brain in the sidebar and overview.
+            cairo_move_to(cr, 8, 3.2);
+            cairo_curve_to(cr, 7.5, 1.1, 4.5, 1.1, 4, 3.1);
+            cairo_curve_to(cr, 1.6, 3.1, 1, 5.9, 2.5, 7.3);
+            cairo_curve_to(cr, .9, 9.3, 2, 11.9, 4.1, 12);
+            cairo_curve_to(cr, 4.5, 14.4, 7.4, 14.5, 8, 12.5);
+            cairo_curve_to(cr, 8.6, 14.5, 11.5, 14.4, 11.9, 12);
+            cairo_curve_to(cr, 14, 11.9, 15.1, 9.3, 13.5, 7.3);
+            cairo_curve_to(cr, 15, 5.9, 14.4, 3.1, 12, 3.1);
+            cairo_curve_to(cr, 11.5, 1.1, 8.5, 1.1, 8, 3.2);
+            cairo_line_to(cr, 8, 12.5);
+            cairo_move_to(cr, 4.2, 5.1);
+            cairo_curve_to(cr, 5.9, 5.2, 6.2, 6.4, 5.6, 7.5);
+            cairo_move_to(cr, 11.8, 5.1);
+            cairo_curve_to(cr, 10.1, 5.2, 9.8, 6.4, 10.4, 7.5);
+            cairo_move_to(cr, 4.6, 10.4);
+            cairo_curve_to(cr, 5.8, 9.4, 7.3, 9.8, 8, 11);
+            cairo_curve_to(cr, 8.7, 9.8, 10.2, 9.4, 11.4, 10.4);
+            cairo_stroke(cr);
+        }
+        cairo_restore(cr);
+        return FALSE;
+    }), GINT_TO_POINTER(static_cast<int>(page)));
+    return icon;
 }
 
 GtkWidget *createSettingsStatusArt(SettingsStatusArt kind) {
@@ -616,26 +702,47 @@ std::string_view settingsStyles() {
             border: 1px solid @borders;
             border-radius: 12px;
             background-color: @theme_base_color;
-            padding: 12px 14px 4px;
+            padding: 12px 6px 6px;
         }
         .modernime-overview-library-title {
             font-size: 13px;
             font-weight: 600;
             color: @insensitive_fg_color;
-            margin: 0 2px 6px;
+            margin: 0 10px 2px;
         }
         .modernime-settings button.modernime-overview-content-row {
-            padding: 10px 2px;
-            border: none;
-            border-top: 1px solid @borders;
-            border-radius: 0;
+            padding: 10px;
+            border: 1px solid transparent;
+            border-radius: 9px;
             box-shadow: none;
             background-color: transparent;
+            transition: none;
         }
         .modernime-settings button.modernime-overview-content-row:hover {
-            background-color: @modernime_hover_color;
+            background-color: transparent;
+            border-color: transparent;
         }
-        .modernime-overview-content-icon { color: @insensitive_fg_color; }
+        .modernime-settings button.modernime-overview-content-row:active {
+            background-color: @modernime_pressed_color;
+        }
+        .modernime-overview-content-icon {
+            color: @insensitive_fg_color;
+            padding: 6px;
+            border-radius: 8px;
+        }
+        .modernime-overview-content-arrow {
+            color: @insensitive_fg_color;
+            padding: 5px;
+            border-radius: 7px;
+        }
+        .modernime-overview-content-row:hover .modernime-overview-content-icon,
+        .modernime-overview-content-row:hover .modernime-overview-content-arrow {
+            color: @modernime_nav_fg_color;
+            background-color: @modernime_accent_surface;
+        }
+        .modernime-overview-content-row:hover .modernime-overview-content-title {
+            color: @modernime_nav_fg_color;
+        }
         .modernime-overview-count {
             font-size: 13px;
             color: @theme_fg_color;

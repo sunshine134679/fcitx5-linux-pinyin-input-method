@@ -163,73 +163,6 @@ void overviewTaskFunction(GTask *task, gpointer, gpointer data,
         [](gpointer value) { delete static_cast<OverviewResult *>(value); });
 }
 
-const char *iconForPage(SettingsPageId page) {
-    switch (page) {
-    case SettingsPageId::Overview:
-        return "go-home-symbolic";
-    case SettingsPageId::Input:
-        return "input-keyboard-symbolic";
-    case SettingsPageId::Candidates:
-        return "video-display-symbolic";
-    case SettingsPageId::Dictionary:
-        return "accessories-dictionary-symbolic";
-    case SettingsPageId::Clipboard:
-        return "edit-paste-symbolic";
-    case SettingsPageId::Learning:
-        return nullptr;
-    case SettingsPageId::Updates:
-        return "software-update-available-symbolic";
-    case SettingsPageId::Diagnostics:
-        return "utilities-system-monitor-symbolic";
-    }
-    return "emblem-default-symbolic";
-}
-
-GtkWidget *createNavigationIcon(SettingsPageId page) {
-    if (const auto *name = iconForPage(page))
-        return gtk_image_new_from_icon_name(name, GTK_ICON_SIZE_BUTTON);
-
-    auto *icon = gtk_drawing_area_new();
-    gtk_widget_set_size_request(icon, 16, 16);
-    gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
-    gtk_widget_set_has_window(icon, FALSE);
-    gtk_widget_set_can_focus(icon, FALSE);
-    atk_object_set_role(gtk_widget_get_accessible(icon), ATK_ROLE_REDUNDANT_OBJECT);
-    g_signal_connect(icon, "draw", G_CALLBACK(+[](GtkWidget *widget, cairo_t *cr, gpointer) -> gboolean {
-        GdkRGBA ink{};
-        gtk_style_context_get_color(gtk_widget_get_style_context(widget),
-                                    gtk_widget_get_state_flags(widget), &ink);
-        cairo_save(cr);
-        cairo_translate(cr, (gtk_widget_get_allocated_width(widget) - 16) / 2.0,
-                        (gtk_widget_get_allocated_height(widget) - 16) / 2.0);
-        gdk_cairo_set_source_rgba(cr, &ink);
-        cairo_set_line_width(cr, 1.2);
-        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
-        // Two compact hemispheres, with room around the inner memory folds.
-        cairo_move_to(cr, 8, 3.2);
-        cairo_curve_to(cr, 7.5, 1.1, 4.5, 1.1, 4, 3.1);
-        cairo_curve_to(cr, 1.6, 3.1, 1, 5.9, 2.5, 7.3);
-        cairo_curve_to(cr, .9, 9.3, 2, 11.9, 4.1, 12);
-        cairo_curve_to(cr, 4.5, 14.4, 7.4, 14.5, 8, 12.5);
-        cairo_curve_to(cr, 8.6, 14.5, 11.5, 14.4, 11.9, 12);
-        cairo_curve_to(cr, 14, 11.9, 15.1, 9.3, 13.5, 7.3);
-        cairo_curve_to(cr, 15, 5.9, 14.4, 3.1, 12, 3.1);
-        cairo_curve_to(cr, 11.5, 1.1, 8.5, 1.1, 8, 3.2);
-        cairo_line_to(cr, 8, 12.5);
-        cairo_move_to(cr, 4.2, 5.1);
-        cairo_curve_to(cr, 5.9, 5.2, 6.2, 6.4, 5.6, 7.5);
-        cairo_move_to(cr, 11.8, 5.1);
-        cairo_curve_to(cr, 10.1, 5.2, 9.8, 6.4, 10.4, 7.5);
-        cairo_move_to(cr, 4.6, 10.4);
-        cairo_curve_to(cr, 5.8, 9.4, 7.3, 9.8, 8, 11);
-        cairo_curve_to(cr, 8.7, 9.8, 10.2, 9.4, 11.4, 10.4);
-        cairo_stroke(cr);
-        cairo_restore(cr);
-        return FALSE;
-    }), nullptr);
-    return icon;
-}
 
 } // namespace
 
@@ -565,7 +498,7 @@ private:
             gtk_widget_set_margin_top(btnBox, 3);
             gtk_widget_set_margin_bottom(btnBox, 3);
 
-            auto *icon = createNavigationIcon(definition.id);
+            auto *icon = createSettingsPageIcon(definition.id);
             addStyleClass(icon, "modernime-nav-icon");
             gtk_box_pack_start(GTK_BOX(btnBox), icon, FALSE, FALSE, 0);
 
