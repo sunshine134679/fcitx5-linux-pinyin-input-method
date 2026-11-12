@@ -26,9 +26,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.6_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.2.6-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.6-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.7_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.2.7-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.7-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -742,7 +742,13 @@ modernime-session-init --remove-gnome-extension
 
 ## 版本更新记录
 
-### v0.2.6（2026-11-12）
+### v0.2.7（2026-11-12）
+
+- 正式分发本轮更新说明阅读修复与概览交互改进；详细内容见 [v0.2.7 发布说明](docs/releases/v0.2.7-发布说明.md)。
+- 修正进程回收回归测试与后台清理的时序，保留最终零残留、零僵尸断言，并缩减模拟大输出的调试日志。
+- `v0.2.6` 的发行回归被上述测试时序问题阻断，未完成发行；保留原标签，改用新标签 `v0.2.7`。
+
+### v0.2.6（2026-11-12，未完成发行）
 
 - 更新说明按标题、列表、代码和链接格式显示；展开时读取正式发布正文，公共 API 限流时可从对应发行标签读取后备说明。
 - 修复更新说明展开后裁掉正文开头的问题，加入限高滚动阅读区；加载失败可重试，后续检查保留已加载正文。

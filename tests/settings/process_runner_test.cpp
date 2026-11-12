@@ -77,7 +77,8 @@ void test_T13_A01_QueryDualStreamTruncation() {
     };
 
     const auto res = runCommand(spec);
-    std::cout << "DEBUG A01 exitStatus=" << res.exitStatus << " err=" << res.stderrText << "\n";
+    std::cout << "A01 exitStatus=" << res.exitStatus
+              << " stderrBytes=" << res.stderrText.size() << "\n";
     TEST_ASSERT(res.state == CommandState::Exited);
     TEST_ASSERT(res.exitStatus == 0);
     TEST_ASSERT(res.stdoutTruncated == true);
@@ -816,22 +817,31 @@ void test_T13_R06_ResourceBoundedRetentionAndZeroZombies() {
         TEST_ASSERT(r.success == true);
     }
 
-    // Check no zombies created by these operations
+    // Exited reports the package result before collector teardown. Wait for
+    // the background reaper, as A04 does, before inspecting its resources.
+    std::error_code ec;
+    int retainedDirs = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    do {
+        retainedDirs = 0;
+        for (const auto &entry : std::filesystem::directory_iterator(r06Tmp, ec)) {
+            if (entry.is_directory(ec) && entry.path().filename().string().starts_with("modernime-op-")) {
+                ++retainedDirs;
+            }
+        }
+        if (retainedDirs == 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    } while (std::chrono::steady_clock::now() < deadline);
+    TEST_ASSERT(!ec);
+    TEST_ASSERT(retainedDirs == 0);
+
+    // Inspect zombies only after the owning reaper has finished, without
+    // stealing its children while directory cleanup is still in progress.
     int unreaped = 0;
     while (::waitpid(-1, &st, WNOHANG) > 0) {
         ++unreaped;
     }
     TEST_ASSERT(unreaped == 0);
-
-    // Check no lingering completed directories in isolated test dir
-    std::error_code ec;
-    int retainedDirs = 0;
-    for (const auto &entry : std::filesystem::directory_iterator(r06Tmp, ec)) {
-        if (entry.is_directory(ec) && entry.path().filename().string().starts_with("modernime-op-")) {
-            ++retainedDirs;
-        }
-    }
-    TEST_ASSERT(retainedDirs == 0);
 
     ::setenv("TMPDIR", origTmp.c_str(), 1);
     std::filesystem::remove_all(r06Tmp);
