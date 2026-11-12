@@ -67,9 +67,26 @@ void CairoRenderSurface::roundedRect(const Rect &bounds, double radius,
     }
 }
 
+void CairoRenderSurface::gradientRoundedRect(const Rect &bounds, double radius,
+                                             const Color &top, const Color &bottom, bool fill) {
+    if (top == bottom) {
+        roundedRect(bounds, radius, top, fill);
+        return;
+    }
+    addRoundedRectPath(context_, bounds, radius);
+    auto *gradient = cairo_pattern_create_linear(bounds.x, bounds.y, bounds.x, bounds.y + bounds.height);
+    cairo_pattern_add_color_stop_rgba(gradient, 0, top.red, top.green, top.blue, top.alpha);
+    cairo_pattern_add_color_stop_rgba(gradient, 1, bottom.red, bottom.green, bottom.blue, bottom.alpha);
+    cairo_set_source(context_, gradient);
+    if (fill) cairo_fill(context_);
+    else { cairo_set_line_width(context_, 1.0); cairo_stroke(context_); }
+    cairo_pattern_destroy(gradient);
+}
+
 void CairoRenderSurface::shadowRoundedRect(const Rect &bounds, double radius,
                                            const Color &color,
                                            double blurRadius) {
+    if (color.alpha <= 0) return;
     const int layerCount = std::max(4, static_cast<int>(blurRadius * 2.0));
     for (int layer = layerCount; layer >= 1; --layer) {
         const double t = static_cast<double>(layer) / layerCount;

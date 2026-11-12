@@ -115,6 +115,11 @@ void testDefaultsAndRoundTrip() {
 
 void testClientThemeRoundTrip() {
     const auto path = testDirectory() / "settings.conf";
+    for (const auto *style : {"minimal", "standard", "textured"}) {
+        std::ofstream(path) << "candidate.style=" << style << '\n';
+        const auto preset = modernime::core::SettingsStore::load(path);
+        assertTrue(preset.diagnostics.empty(), "candidate style is a supported appearance setting");
+    }
     {
         std::ofstream input(path);
         input << "appearance.client_theme=jade\n";
@@ -122,6 +127,8 @@ void testClientThemeRoundTrip() {
     const auto loaded = modernime::core::SettingsStore::load(path);
     assertTrue(loaded.diagnostics.empty(), "client theme is a supported setting");
     assertTrue(loaded.settings.clientTheme == "jade", "client theme loads the selected palette");
+    assertTrue(loaded.settings.candidateStyle == modernime::core::CandidateStyle::Standard,
+               "old configuration retains the standard candidate style");
     std::string error;
     assertTrue(modernime::core::SettingsStore::save(path, loaded.settings, &error),
                "client theme saves through the settings store");
@@ -134,6 +141,7 @@ void testClientThemeRoundTrip() {
         settings.clientTheme = modernime::core::kClientThemes[i % modernime::core::kClientThemes.size()].key;
         settings.candidateTheme = modernime::core::kCandidateThemes[i].value;
         settings.candidateShape = modernime::core::kCandidateShapes[i % modernime::core::kCandidateShapes.size()].value;
+        settings.candidateStyle = modernime::core::kCandidateStyles[i % modernime::core::kCandidateStyles.size()].value;
         assertTrue(modernime::core::SettingsStore::save(path, settings, &error), "appearance preset saves");
         const auto reloaded = modernime::core::SettingsStore::load(path);
         assertTrue(reloaded.diagnostics.empty() && reloaded.settings == settings,
@@ -144,6 +152,12 @@ void testClientThemeRoundTrip() {
     shaped.candidateShape = modernime::core::CandidateShape::Capsule;
     assertTrue(originalHash != modernime::core::computeSettingsHash(shaped),
                "shape participates in save and runtime application identity");
+    shaped = modernime::core::defaultSettings();
+    shaped.candidateStyle = modernime::core::CandidateStyle::Textured;
+    assertTrue(originalHash != modernime::core::computeSettingsHash(shaped),
+               "candidate style participates in runtime application identity");
+    shaped.candidateStyle = static_cast<modernime::core::CandidateStyle>(99);
+    assertTrue(!modernime::core::validateSettings(shaped).valid, "unknown candidate style cannot be saved");
 }
 
 void testDiagnosticsAndPerKeyFallback() {

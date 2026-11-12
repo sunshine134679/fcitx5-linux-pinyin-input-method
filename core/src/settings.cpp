@@ -249,6 +249,8 @@ SettingsValidationResult validateSettings(const ModernIMESettings &settings) {
         result.issues.push_back({"candidate.theme", "请选择支持的候选配色"});
     if (std::none_of(kCandidateShapes.begin(), kCandidateShapes.end(), [&](const auto &option) { return option.value == settings.candidateShape; }))
         result.issues.push_back({"candidate.shape", "请选择圆润、方正或胶囊轮廓"});
+    if (std::none_of(kCandidateStyles.begin(), kCandidateStyles.end(), [&](const auto &option) { return option.value == settings.candidateStyle; }))
+        result.issues.push_back({"candidate.style", "请选择简约、标准或质感风格"});
     if (std::none_of(kCandidateSpacings.begin(), kCandidateSpacings.end(), [&](const auto &option) { return option.value == settings.candidateSpacing; }))
         result.issues.push_back({"candidate.spacing", "请选择紧凑、标准或宽松间距"});
     if (!validClipboardTrigger(settings.clipboardTrigger)) {
@@ -311,6 +313,8 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
         if (option.value == settings.candidateTheme) output << "candidate.theme=" << option.key << '\n';
     for (const auto &option : kCandidateShapes)
         if (option.value == settings.candidateShape) output << "candidate.shape=" << option.key << '\n';
+    for (const auto &option : kCandidateStyles)
+        if (option.value == settings.candidateStyle) output << "candidate.style=" << option.key << '\n';
     for (const auto &option : kCandidateSpacings)
         if (option.value == settings.candidateSpacing) output << "candidate.spacing=" << option.key << '\n';
     for (const auto &option : kFuzzyPinyinOptions) {
@@ -513,6 +517,11 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
             } else if (key == "candidate.shape") {
                 for (const auto &option : kCandidateShapes) if (option.key == value) {
                     result.settings.candidateShape = option.value;
+                    parsed = true;
+                }
+            } else if (key == "candidate.style") {
+                for (const auto &option : kCandidateStyles) if (option.key == value) {
+                    result.settings.candidateStyle = option.value;
                     parsed = true;
                 }
             } else if (key == "candidate.spacing") {
@@ -743,6 +752,8 @@ SettingsSaveResult SettingsStore::saveWithResult(
         if (option.value == settings.candidateTheme) knownSettings["candidate.theme"] = option.key;
     for (const auto &option : kCandidateShapes)
         if (option.value == settings.candidateShape) knownSettings["candidate.shape"] = option.key;
+    for (const auto &option : kCandidateStyles)
+        if (option.value == settings.candidateStyle) knownSettings["candidate.style"] = option.key;
     for (const auto &option : kCandidateSpacings)
         if (option.value == settings.candidateSpacing) knownSettings["candidate.spacing"] = option.key;
     knownSettings["candidate.number_selection"] =
@@ -815,7 +826,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
         "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",
         "pinyin.fuzzy_l_n", "pinyin.fuzzy_en_eng", "pinyin.fuzzy_in_ing",
         "appearance.client_theme", "candidate.page_size", "candidate.font_size",
-        "candidate.font_family", "candidate.theme", "candidate.shape", "candidate.spacing",
+        "candidate.font_family", "candidate.theme", "candidate.shape", "candidate.style", "candidate.spacing",
         "candidate.number_selection", "candidate.arrow_navigation",
         "candidate.page_navigation", "punctuation.enabled",
         "learning.enabled", "learning.context_enabled",

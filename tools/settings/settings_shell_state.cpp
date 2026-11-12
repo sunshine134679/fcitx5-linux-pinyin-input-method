@@ -38,6 +38,8 @@ settingsFocusRouteForIssue(std::string_view issueKey) {
         return SettingsFocusRoute{SettingsPageId::Candidates, "candidate-font-family"};
     if (issueKey == "candidate.theme")
         return SettingsFocusRoute{SettingsPageId::Candidates, "candidate-theme"};
+    if (issueKey == "candidate.style")
+        return SettingsFocusRoute{SettingsPageId::Candidates, "candidate-style"};
     if (issueKey == "candidate.spacing")
         return SettingsFocusRoute{SettingsPageId::Candidates, "candidate-spacing"};
     if (issueKey == "clipboard.trigger") {

@@ -134,6 +134,21 @@ int main() {
         modernime::ui::CandidateBarRenderer::render(themed, layout, palette);
         assertTrue(themed.operations == surface.operations,
                    "palette changes preserve rendered candidate content and order");
+        for (const auto &preset : modernime::core::kCandidateStyles) {
+            auto materialSettings = settings;
+            materialSettings.candidateStyle = preset.value;
+            const auto material = modernime::ui::RenderStyle::fromSettings(materialSettings);
+            assertTrue(contrast(material.panelTop, material.text) >= 4.5 &&
+                           contrast(material.panelBottom, material.text) >= 4.5 &&
+                           contrast(material.selectedTop, material.selectedText) >= 4.5 &&
+                           contrast(material.selectedBottom, material.selectedText) >= 4.5 &&
+                           contrast(material.clipboardSubmitBackground, material.selectedText) >= 4.5,
+                       "every material retains text contrast at both ends of its lighting");
+            RecordingSurface rendered;
+            modernime::ui::CandidateBarRenderer::render(rendered, layout, material);
+            assertTrue(rendered.textX == themed.textX && rendered.textBaseline == themed.textBaseline,
+                       "material changes preserve candidate positions and selection geometry");
+        }
     }
     settings.candidateShape = modernime::core::CandidateShape::Square;
     const auto square = modernime::ui::RenderStyle::fromSettings(settings);

@@ -6,28 +6,51 @@
 namespace modernime::ui {
 namespace {
 
+Color mix(const Color &from, const Color &to, double amount) {
+    return {from.red + (to.red - from.red) * amount,
+            from.green + (to.green - from.green) * amount,
+            from.blue + (to.blue - from.blue) * amount,
+            from.alpha + (to.alpha - from.alpha) * amount};
+}
+
+void renderPanel(RenderSurface &surface, const CandidateBarLayout &layout,
+                 const RenderStyle &style, double radius) {
+    const Rect shadowBounds{layout.panel.x - style.shadowSpread,
+        layout.panel.y + style.shadowOffsetY,
+        layout.panel.width + 2.0 * style.shadowSpread, layout.panel.height + style.shadowSpread};
+    surface.shadowRoundedRect(shadowBounds, radius + style.shadowSpread,
+                              style.shadow, style.shadowRadius);
+    surface.gradientRoundedRect(layout.panel, radius, style.panelTop, style.panelBottom, true);
+    surface.gradientRoundedRect(layout.panel, radius, style.borderTop, style.borderBottom, false);
+}
+
+void renderSelection(RenderSurface &surface, const Rect &bounds, const RenderStyle &style,
+                     double radius, bool vertical) {
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    if (style.selectedShadow.alpha > 0) {
+        auto shadow = bounds;
+        shadow.y += 1.0;
+        surface.shadowRoundedRect(shadow, radius, style.selectedShadow, 2.0);
+    }
+    surface.gradientRoundedRect(bounds, radius, style.selectedTop, style.selectedBottom, true);
+    if (style.selectedEdgeTop.alpha > 0 || style.selectedEdgeBottom.alpha > 0)
+        surface.gradientRoundedRect(bounds, radius, style.selectedEdgeTop, style.selectedEdgeBottom, false);
+    if (style.selectionMarker.alpha > 0) {
+        const Rect marker = vertical
+            ? Rect{bounds.x + 3, bounds.y + 6, 2, std::max(0.0, bounds.height - 12)}
+            : Rect{bounds.x + 10, bounds.y + bounds.height - 4, std::max(0.0, bounds.width - 20), 2};
+        surface.roundedRect(marker, 1, style.selectionMarker, true);
+    }
+}
+
 void renderClipboard(RenderSurface &surface, const CandidateBarLayout &layout,
                      const RenderStyle &style) {
-    const Rect shadowBounds{
-        layout.panel.x - style.shadowSpread,
-        layout.panel.y + style.shadowOffsetY,
-        layout.panel.width + 2.0 * style.shadowSpread,
-        layout.panel.height + style.shadowSpread};
-    surface.shadowRoundedRect(shadowBounds,
-                              style.clipboardPanelRadius + style.shadowSpread,
-                              style.shadow, style.shadowRadius);
-    surface.roundedRect(layout.panel, style.clipboardPanelRadius, style.panel,
-                        true);
-    surface.roundedRect(layout.panel, style.clipboardPanelRadius, style.border,
-                        false);
+    renderPanel(surface, layout, style, style.clipboardPanelRadius);
 
     for (const auto &separator : layout.separators) {
         surface.roundedRect(separator, 0.0, style.clipboardSeparator, true);
     }
-    if (layout.selectedPill.width > 0.0 && layout.selectedPill.height > 0.0) {
-        surface.roundedRect(layout.selectedPill, style.clipboardSelectedRadius,
-                            style.selected, true);
-    }
+    renderSelection(surface, layout.selectedPill, style, style.clipboardSelectedRadius, true);
 
     for (const auto &candidate : layout.candidates) {
         const auto &bounds = candidate.bounds;
@@ -92,6 +115,9 @@ RenderStyle RenderStyle::reference() {
     style.clipboardPanelRadius = 14.0;
     style.clipboardSelectedRadius = 8.0;
     style.clipboardSubmitRadius = 7.0;
+    style.panelTop = style.panelBottom = style.panel;
+    style.borderTop = style.borderBottom = style.border;
+    style.selectedTop = style.selectedBottom = style.selected;
     return style;
 }
 
@@ -163,6 +189,39 @@ RenderStyle RenderStyle::fromSettings(const core::ModernIMESettings &settings) {
         style.clipboardSelectedRadius = style.clipboardSubmitRadius = 16.0;
     }
     if (settings.candidateTheme == core::CandidateTheme::HighContrast) style.shadow.alpha = 0.0;
+    style.panelTop = style.panelBottom = style.panel;
+    style.borderTop = style.borderBottom = style.border;
+    style.selectedTop = style.selectedBottom = style.selected;
+    // High contrast keeps solid, unambiguous surfaces for every saved style.
+    if (settings.candidateTheme == core::CandidateTheme::HighContrast) return style;
+    const bool dark = style.panel.red + style.panel.green + style.panel.blue < 1.5;
+    const Color white{1, 1, 1, 1}, black{0, 0, 0, 1};
+    if (settings.candidateStyle == core::CandidateStyle::Minimal) {
+        style.shadow.alpha = 0;
+        style.selectionMarker = style.selected;
+        style.selected = mix(style.panel, style.selected, dark ? 0.18 : 0.10);
+        style.selected.alpha = 1;
+        style.selectedText = style.text;
+        style.selectedAnnotation = style.annotation;
+        style.clipboardSubmitBackground = mix(style.panel, style.selectionMarker, dark ? 0.24 : 0.16);
+        style.panel.alpha = 1;
+        style.border = mix(style.panel, style.text, dark ? 0.25 : 0.16);
+        style.panelTop = style.panelBottom = style.panel;
+        style.borderTop = style.borderBottom = style.border;
+        style.selectedTop = style.selectedBottom = style.selected;
+    } else if (settings.candidateStyle == core::CandidateStyle::Textured) {
+        style.shadow.alpha = settings.candidateShape == core::CandidateShape::Square ? 0 : (dark ? 0.24 : 0.17);
+        style.panelTop = mix(style.panel, white, dark ? 0.065 : 0.24);
+        style.panelBottom = mix(style.panel, style.selected, dark ? 0.025 : 0.035);
+        style.borderTop = mix(style.panel, white, dark ? 0.23 : 0.82);
+        style.borderBottom = style.border;
+        style.selectedTop = mix(style.selected, white, 0.04);
+        style.selectedBottom = mix(style.selected, black, 0.07);
+        style.selectedShadow = mix(style.selected, black, 0.35);
+        style.selectedShadow.alpha = 0.18;
+        style.selectedEdgeTop = {1, 1, 1, dark ? 0.14 : 0.24};
+        style.selectedEdgeBottom = {1, 1, 1, 0};
+    }
     return style;
 }
 
@@ -174,21 +233,8 @@ void CandidateBarRenderer::render(RenderSurface &surface,
         return;
     }
 
-    const Rect shadowBounds{
-        layout.panel.x - style.shadowSpread,
-        layout.panel.y + style.shadowOffsetY,
-        layout.panel.width + 2.0 * style.shadowSpread,
-        layout.panel.height + style.shadowSpread};
-    surface.shadowRoundedRect(shadowBounds,
-                              style.panelRadius + style.shadowSpread,
-                              style.shadow, style.shadowRadius);
-    surface.roundedRect(layout.panel, style.panelRadius, style.panel, true);
-    surface.roundedRect(layout.panel, style.panelRadius, style.border, false);
-
-    if (layout.selectedPill.width > 0.0 && layout.selectedPill.height > 0.0) {
-        surface.roundedRect(layout.selectedPill, style.selectedRadius,
-                            style.selected, true);
-    }
+    renderPanel(surface, layout, style, style.panelRadius);
+    renderSelection(surface, layout.selectedPill, style, style.selectedRadius, false);
 
     for (const auto &candidate : layout.candidates) {
         const Rect textBounds = candidate.selected ? layout.selectedPill

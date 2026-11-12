@@ -127,6 +127,8 @@ int main(int argc, char **argv) {
             g_object_unref(pixbuf);
         };
         record("blue");
+        pointerClick(find(window, "candidate-style-textured"));
+        assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(window, "candidate-style-textured"))));
         const int originalCandidate = settings::settingsChoiceActive(candidate);
         // Exercise the actual menu selection boundary, including popover cleanup.
         pointerClick(theme);
@@ -146,6 +148,7 @@ int main(int argc, char **argv) {
         assert(settings::settingsChoiceActive(candidate) == originalCandidate);
         pointerClick(restore);
         assert(settings::settingsChoiceActive(theme) == 0 && revealing());
+        assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(window, "candidate-style-standard"))));
         assert(wait([&] { return !revealing(); }));
         for (std::size_t i = 1; i < core::kClientThemes.size(); ++i) {
             settings::setSettingsChoiceActive(theme, static_cast<int>(i));
@@ -205,10 +208,12 @@ int main(int argc, char **argv) {
         }));
         frames(270);
         record("搜索定位");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(find(window, "candidate-style-textured")), TRUE);
         pointerClick(save);
         const auto saved = core::SettingsStore::load(paths.settingsFile);
         assert(saved.isSuccess() && saved.settings.clientTheme == "lavender");
         assert(saved.settings.candidateTheme == core::CandidateTheme::Light);
+        assert(saved.settings.candidateStyle == core::CandidateStyle::Textured);
         assert(!gtk_widget_get_sensitive(save) && find(window, "✓ 所有设置已保存"));
         shell.show(settings::SettingsPageId::Updates, "updates-copy-command");
         frames(250);

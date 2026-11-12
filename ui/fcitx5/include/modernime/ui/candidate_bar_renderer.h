@@ -12,6 +12,7 @@ struct Color final {
     double green = 0.0;
     double blue = 0.0;
     double alpha = 1.0;
+    bool operator==(const Color &) const = default;
 };
 
 struct TextStyle final {
@@ -53,6 +54,10 @@ struct RenderStyle final {
     double clipboardPanelRadius = 0.0;
     double clipboardSelectedRadius = 0.0;
     double clipboardSubmitRadius = 0.0;
+    Color panelTop, panelBottom, borderTop, borderBottom;
+    Color selectedTop, selectedBottom;
+    Color selectedEdgeTop{0, 0, 0, 0}, selectedEdgeBottom{0, 0, 0, 0};
+    Color selectedShadow{0, 0, 0, 0}, selectionMarker{0, 0, 0, 0};
 
     static RenderStyle reference();
     static RenderStyle fromSettings(const core::ModernIMESettings &settings);
@@ -64,6 +69,11 @@ public:
 
     virtual void roundedRect(const Rect &bounds, double radius,
                              const Color &color, bool fill) = 0;
+    virtual void gradientRoundedRect(const Rect &bounds, double radius,
+                                     const Color &top, const Color &bottom, bool fill) {
+        (void)bottom;
+        roundedRect(bounds, radius, top, fill);
+    }
     virtual void shadowRoundedRect(const Rect &bounds, double radius,
                                    const Color &color, double blurRadius) {
         (void)blurRadius;

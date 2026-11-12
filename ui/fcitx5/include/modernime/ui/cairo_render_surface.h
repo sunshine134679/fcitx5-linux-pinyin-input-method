@@ -22,6 +22,8 @@ public:
 
     void roundedRect(const Rect &bounds, double radius, const Color &color,
                      bool fill) override;
+    void gradientRoundedRect(const Rect &bounds, double radius, const Color &top,
+                             const Color &bottom, bool fill) override;
     void shadowRoundedRect(const Rect &bounds, double radius, const Color &color,
                            double blurRadius) override;
     double textWidth(std::string_view value,

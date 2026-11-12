@@ -18,6 +18,7 @@ enum class UnderscoreStyle { Smart, Ascii, Chinese };
 
 enum class CandidateTheme { Light, Dark, ClassicBlue, Jade, Amber, Rose, Lavender, Midnight, HighContrast };
 enum class CandidateShape { Rounded, Square, Capsule };
+enum class CandidateStyle { Minimal, Standard, Textured };
 enum class CandidateSpacing { Compact, Standard, Spacious };
 struct ClientThemeOption { std::string_view key; std::string_view label; };
 inline constexpr std::array<ClientThemeOption, 7> kClientThemes{{
@@ -25,6 +26,7 @@ inline constexpr std::array<ClientThemeOption, 7> kClientThemes{{
     {"amber", "暖砂橙"}, {"rose", "玫瑰粉"}, {"lavender", "雾紫"}, {"contrast", "高对比"}}};
 struct CandidateThemeOption { CandidateTheme value; std::string_view key; std::string_view label; };
 struct CandidateShapeOption { CandidateShape value; std::string_view key; std::string_view label; };
+struct CandidateStyleOption { CandidateStyle value; std::string_view key; std::string_view label; };
 struct CandidateSpacingOption { CandidateSpacing value; std::string_view key; std::string_view label; };
 inline constexpr std::array kCandidateThemes{
     CandidateThemeOption{CandidateTheme::Light, "light", "浅色"},
@@ -40,6 +42,10 @@ inline constexpr std::array kCandidateShapes{
     CandidateShapeOption{CandidateShape::Rounded, "rounded", "圆润"},
     CandidateShapeOption{CandidateShape::Square, "square", "方正"},
     CandidateShapeOption{CandidateShape::Capsule, "capsule", "胶囊"}};
+inline constexpr std::array kCandidateStyles{
+    CandidateStyleOption{CandidateStyle::Minimal, "minimal", "简约"},
+    CandidateStyleOption{CandidateStyle::Standard, "standard", "标准"},
+    CandidateStyleOption{CandidateStyle::Textured, "textured", "质感"}};
 inline constexpr std::array kCandidateSpacings{
     CandidateSpacingOption{CandidateSpacing::Compact, "compact", "紧凑"},
     CandidateSpacingOption{CandidateSpacing::Standard, "standard", "标准"},
@@ -54,6 +60,7 @@ struct ModernIMESettings final {
     std::string candidateFontFamily = "Noto Sans CJK SC";
     CandidateTheme candidateTheme = CandidateTheme::Light;
     CandidateShape candidateShape = CandidateShape::Rounded;
+    CandidateStyle candidateStyle = CandidateStyle::Standard;
     CandidateSpacing candidateSpacing = CandidateSpacing::Standard;
     bool numberSelection = true;
     bool arrowNavigation = true;

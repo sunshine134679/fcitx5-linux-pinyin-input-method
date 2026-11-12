@@ -113,6 +113,8 @@ constexpr std::array kSearchEntries{
                         "九套候选栏配色，选中即可预览", "candidate theme color 候选配色 配色 主题 深色 黑白 青竹 暖砂 玫瑰 雾紫 深海 高对比"},
     SettingsSearchEntry{SettingsPageId::Candidates, "candidate-shape", "候选轮廓",
                         "圆润、方正或胶囊形状", "candidate shape radius 轮廓 形状 圆角 胶囊 方正"},
+    SettingsSearchEntry{SettingsPageId::Candidates, "candidate-style", "候选风格",
+                        "简约、标准或质感，可独立搭配候选配色", "candidate style material 简约 标准 质感 材质 光影"},
     SettingsSearchEntry{SettingsPageId::Candidates, "candidate-spacing", "候选间距",
                         "紧凑、标准或宽松", "candidate spacing compact 间距 紧凑 密度"},
     SettingsSearchEntry{SettingsPageId::Candidates, "number-selection", "数字键选择候选",

@@ -306,6 +306,7 @@ struct ModernIMEUserInterface::Impl final {
                             loaded.candidateFontFamily != appearance.candidateFontFamily ||
                             loaded.candidateTheme != appearance.candidateTheme ||
                             loaded.candidateShape != appearance.candidateShape ||
+                            loaded.candidateStyle != appearance.candidateStyle ||
                             loaded.candidateSpacing != appearance.candidateSpacing) {
                             appearance = loaded;
                             ++layoutGeneration;

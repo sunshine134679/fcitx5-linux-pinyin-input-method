@@ -649,6 +649,28 @@ std::string_view settingsStyles() {
             color: @theme_fg_color;
             background-color: @modernime_hover_color;
         }
+        .modernime-style-selector {
+            background-color: @modernime_inset_color;
+            border-radius: 9px;
+            padding: 3px;
+        }
+        .modernime-settings .modernime-style-option {
+            background-color: transparent;
+            border-color: transparent;
+            border-radius: 7px;
+            min-width: 38px;
+            padding: 6px 12px;
+        }
+        .modernime-settings .modernime-style-option:checked {
+            background-color: @modernime_control_surface;
+            border-color: @borders;
+            color: @modernime_nav_fg_color;
+            font-weight: 600;
+            box-shadow: 0 1px 3px alpha(@modernime_shadow, 0.05);
+        }
+        .modernime-settings .modernime-style-option:hover:not(:checked) {
+            background-color: @modernime_hover_color;
+        }
         .modernime-settings treeview header button,
         .modernime-settings treeview header button:hover,
         .modernime-settings treeview header button:active {

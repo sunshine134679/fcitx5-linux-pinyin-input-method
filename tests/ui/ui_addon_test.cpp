@@ -691,6 +691,19 @@ int main(int argc, char *argv[]) {
     uiAddon.handleButtonPress(30.0, 20.0);
     assertTrue(selectedIndex == 0 && context.commits.back() == "你好", "new appearance preserves the displayed selection");
 
+    // A material-only change must invalidate the old painted frame too.
+    newSettings.candidateStyle = modernime::core::CandidateStyle::Textured;
+    g_usleep(1600000);
+    assertTrue(modernime::core::SettingsStore::save(settingsFile, newSettings), "save candidate material only");
+    selectedIndex = -1;
+    uiAddon.handleButtonPress(30.0, 20.0);
+    assertTrue(selectedIndex == -1, "candidate material reload invalidates old painted selection");
+    uiAddon.update(fcitx::UserInterfaceComponent::InputPanel, &context);
+    paint(uiAddon);
+    uiAddon.handleButtonPress(30.0, 20.0);
+    assertTrue(selectedIndex == 0 && context.commits.back() == "你好",
+               "textured candidate keeps the same displayed selection after repaint");
+
     context.focusOut();
     }
     for (const auto *scenario : {"replacement", "page", "unpainted", "focus", "destroy",

@@ -171,6 +171,10 @@ public:
                      bool fill) override {
         surface_.roundedRect(bounds, radius, color, fill);
     }
+    void gradientRoundedRect(const ui::Rect &bounds, double radius, const ui::Color &top,
+                             const ui::Color &bottom, bool fill) override {
+        surface_.gradientRoundedRect(bounds, radius, top, bottom, fill);
+    }
     void shadowRoundedRect(const ui::Rect &bounds, double radius, const ui::Color &color,
                            double blurRadius) override {
         surface_.shadowRoundedRect(bounds, radius, color, blurRadius);
@@ -242,6 +246,9 @@ public:
         for (std::size_t i = 0; i < core::kCandidateShapes.size(); ++i)
             if (core::kCandidateShapes[i].value == settings.candidateShape)
                 setSettingsChoiceActive(candidateShape, static_cast<int>(i));
+        for (std::size_t i = 0; i < core::kCandidateStyles.size(); ++i)
+            if (core::kCandidateStyles[i].value == settings.candidateStyle)
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(candidateStyles[i]), TRUE);
         gtk_switch_set_active(GTK_SWITCH(numberSelection),
                               settings.numberSelection);
         gtk_switch_set_active(GTK_SWITCH(arrowNavigation),
@@ -271,6 +278,11 @@ public:
             return focusWidgetOrFallback(candidateSpacing, candidateSpacingFallback);
         if (target == "candidate-shape")
             return focusWidgetOrFallback(candidateShape, candidateShapeFallback);
+        if (target == "candidate-style") {
+            for (auto *button : candidateStyles)
+                if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button)))
+                    return focusWidgetOrFallback(button, previewCard);
+        }
         if (target == "number-selection") {
             return focusWidgetOrFallback(numberSelection, numberSelectionFallback);
         }
@@ -314,7 +326,8 @@ private:
         }), this);
 
         setSettingsFocusChain(
-            page, {clientTheme, previewExample, candidateTheme, candidateShape, nativePanelSettings,
+            page, {clientTheme, previewExample, candidateStyles[0], candidateStyles[1], candidateStyles[2],
+                   candidateTheme, candidateShape, nativePanelSettings,
                    candidatePageSize, candidateFontFamily, candidateFontSize, candidateSpacing, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation, pinRules});
         refresh();
@@ -403,6 +416,7 @@ private:
         gtk_box_pack_end(GTK_BOX(previewMeta), previewScaleHint, TRUE, TRUE, 0);
         appearanceActions = gtk_grid_new();
         gtk_grid_set_column_spacing(GTK_GRID(appearanceActions), 12);
+        gtk_grid_set_row_spacing(GTK_GRID(appearanceActions), 8);
         gtk_widget_set_margin_top(appearanceActions, 4);
         gtk_box_pack_start(GTK_BOX(previewCard), appearanceActions, FALSE, FALSE, 0);
         if (g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0 ||
@@ -492,16 +506,47 @@ private:
         candidateThemeFallback = previewCard;
         auto *paletteLabel = gtk_label_new("候选栏配色");
         gtk_label_set_mnemonic_widget(GTK_LABEL(paletteLabel), candidateTheme);
-        gtk_grid_attach(GTK_GRID(appearanceActions), paletteLabel, 0, 0, 1, 1);
-        gtk_grid_attach(GTK_GRID(appearanceActions), candidateTheme, 1, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(appearanceActions), paletteLabel, 0, 1, 1, 1);
+        gtk_grid_attach(GTK_GRID(appearanceActions), candidateTheme, 1, 1, 1, 1);
         candidateShape = createSettingsChoice();
         for (const auto &option : core::kCandidateShapes)
             appendSettingsChoice(candidateShape, option.label);
         setTarget(candidateShape, "candidate-shape");
         setAccessibleWidgetText(candidateShape, "候选轮廓", "选择圆润、方正或胶囊形状，立即预览");
         candidateShapeFallback = previewCard;
-        gtk_grid_attach(GTK_GRID(appearanceActions), gtk_label_new("轮廓"), 2, 0, 1, 1);
-        gtk_grid_attach(GTK_GRID(appearanceActions), candidateShape, 3, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(appearanceActions), gtk_label_new("轮廓"), 2, 1, 1, 1);
+        gtk_grid_attach(GTK_GRID(appearanceActions), candidateShape, 3, 1, 1, 1);
+
+        auto *styleLabel = gtk_label_new("候选风格");
+        gtk_label_set_xalign(GTK_LABEL(styleLabel), 0);
+        gtk_grid_attach(GTK_GRID(appearanceActions), styleLabel, 0, 0, 1, 1);
+        auto *selector = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+        addStyleClass(selector, "modernime-style-selector");
+        setTarget(selector, "candidate-style");
+        gtk_widget_set_halign(selector, GTK_ALIGN_START);
+        for (std::size_t i = 0; i < core::kCandidateStyles.size(); ++i) {
+            const auto &option = core::kCandidateStyles[i];
+            auto *button = gtk_radio_button_new_with_label_from_widget(
+                i ? GTK_RADIO_BUTTON(candidateStyles[0]) : nullptr, std::string(option.label).c_str());
+            candidateStyles[i] = button;
+            gtk_toggle_button_set_mode(GTK_TOGGLE_BUTTON(button), FALSE);
+            addStyleClass(button, "modernime-style-option");
+            setTarget(button, "candidate-style-" + std::string(option.key));
+            setAccessibleWidgetText(button, "候选风格：" + std::string(option.label), "即时预览，保存设置后应用到实际候选栏");
+            gtk_widget_set_tooltip_text(button, styleDescription(i));
+            gtk_box_pack_start(GTK_BOX(selector), button, FALSE, FALSE, 0);
+            g_signal_connect(button, "toggled", G_CALLBACK(+[](GtkToggleButton *control, gpointer data) {
+                if (gtk_toggle_button_get_active(control)) onSpinChanged(GTK_WIDGET(control), data);
+            }), this);
+        }
+        gtk_grid_attach(GTK_GRID(appearanceActions), selector, 1, 0, 3, 1);
+        styleHint = gtk_label_new("");
+        addStyleClass(styleHint, "modernime-description");
+        gtk_label_set_xalign(GTK_LABEL(styleHint), 0);
+        gtk_label_set_line_wrap(GTK_LABEL(styleHint), TRUE);
+        gtk_label_set_line_wrap_mode(GTK_LABEL(styleHint), PANGO_WRAP_WORD_CHAR);
+        gtk_label_set_max_width_chars(GTK_LABEL(styleHint), 1);
+        gtk_grid_attach(GTK_GRID(appearanceActions), styleHint, 0, 2, 4, 1);
 
         // Row 3: 数字键选词
         numberSelection = gtk_switch_new();
@@ -588,11 +633,19 @@ private:
         const int example = settingsChoiceActive(previewExample);
         const auto &samples = example == 0 ? single : example == 1 ? doubleWords : mixed;
         const auto settings = controlSettings();
+        for (std::size_t i = 0; i < core::kCandidateStyles.size(); ++i)
+            if (core::kCandidateStyles[i].value == settings.candidateStyle) {
+                std::string hint = styleDescription(i);
+                if (settings.candidateTheme == core::CandidateTheme::HighContrast)
+                    hint += " · 高对比配色保留清晰的实色边界";
+                gtk_label_set_text(GTK_LABEL(styleHint), hint.c_str());
+            }
         gtk_widget_set_visible(definitionPreview, settings.englishDefinitionEnabled);
         const bool fontChanged = previewSettings.candidateFontSize != settings.candidateFontSize ||
             previewSettings.candidateFontFamily != settings.candidateFontFamily;
         const bool shapeChanged = previewSettings.candidateShape != settings.candidateShape;
         const bool appearanceChanged = !previewInitialized || fontChanged || shapeChanged ||
+            previewSettings.candidateStyle != settings.candidateStyle ||
             previewSettings.candidateTheme != settings.candidateTheme ||
             previewSettings.candidateSpacing != settings.candidateSpacing ||
             previewSettings.candidatePageSize != settings.candidatePageSize || previewSample != example;
@@ -708,7 +761,12 @@ private:
                                  &ui::RenderStyle::border, &ui::RenderStyle::selected,
                                  &ui::RenderStyle::text, &ui::RenderStyle::selectedText,
                                  &ui::RenderStyle::preedit, &ui::RenderStyle::annotation,
-                                 &ui::RenderStyle::selectedAnnotation}) {
+                                 &ui::RenderStyle::selectedAnnotation,
+                                 &ui::RenderStyle::panelTop, &ui::RenderStyle::panelBottom,
+                                 &ui::RenderStyle::borderTop, &ui::RenderStyle::borderBottom,
+                                 &ui::RenderStyle::selectedTop, &ui::RenderStyle::selectedBottom,
+                                 &ui::RenderStyle::selectedEdgeTop, &ui::RenderStyle::selectedEdgeBottom,
+                                 &ui::RenderStyle::selectedShadow, &ui::RenderStyle::selectionMarker}) {
             displayedStyle.*color = previewMix(previewFromStyle.*color, renderStyle.*color, progress);
         }
         displayedStyle.panelRadius = previewMix(previewFromStyle.panelRadius,
@@ -820,6 +878,9 @@ private:
         const int shape = settingsChoiceActive(candidateShape);
         if (shape >= 0 && static_cast<std::size_t>(shape) < core::kCandidateShapes.size())
             settings.candidateShape = core::kCandidateShapes[shape].value;
+        for (std::size_t i = 0; i < core::kCandidateStyles.size(); ++i)
+            if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(candidateStyles[i])))
+                settings.candidateStyle = core::kCandidateStyles[i].value;
         const int spacing = settingsChoiceActive(candidateSpacing);
         if (spacing >= 0 && static_cast<std::size_t>(spacing) < core::kCandidateSpacings.size())
             settings.candidateSpacing = core::kCandidateSpacings[spacing].value;
@@ -835,6 +896,12 @@ private:
         if (changed) {
             changed();
         }
+    }
+
+    static const char *styleDescription(std::size_t index) {
+        static constexpr std::array descriptions{
+            "纯净底色与轻量选中标记", "清晰边界与柔和阴影", "柔和光影、微光边缘与悬浮选中效果"};
+        return descriptions[index];
     }
 
     SettingsWindowModel &model;
@@ -881,6 +948,8 @@ private:
     GtkWidget *candidateThemeFallback = nullptr;
     GtkWidget *candidateShape = nullptr;
     GtkWidget *candidateShapeFallback = nullptr;
+    std::array<GtkWidget *, 3> candidateStyles{};
+    GtkWidget *styleHint = nullptr;
     GtkWidget *candidateSpacing = nullptr;
     GtkWidget *candidateSpacingFallback = nullptr;
     GtkWidget *numberSelection = nullptr;
