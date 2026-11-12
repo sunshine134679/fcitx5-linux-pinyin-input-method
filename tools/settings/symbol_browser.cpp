@@ -127,6 +127,8 @@ GtkWidget *openSymbolBrowser(GtkWindow *parent, SettingsWindowModel &model,
     gtk_window_set_default_size(GTK_WINDOW(dialog), 690, 680);
     setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL, "取消", "放弃弹窗内的收藏修改");
     setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "使用这些收藏", "将收藏写回设置草稿，仍需在主窗口保存设置");
+    gtk_style_context_add_class(gtk_widget_get_style_context(
+        gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT)), "suggested-action");
     auto *body = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     gtk_container_set_border_width(GTK_CONTAINER(body), 20);
     gtk_box_set_spacing(GTK_BOX(body), 10);
@@ -163,7 +165,7 @@ GtkWidget *openSymbolBrowser(GtkWindow *parent, SettingsWindowModel &model,
         g_object_set(renderer, "ellipsize", PANGO_ELLIPSIZE_END, "ypad", 5, nullptr);
         auto *column = gtk_tree_view_column_new_with_attributes(titles[i], renderer, "text", i + 1, nullptr);
         gtk_tree_view_column_set_expand(column, i == 1);
-        gtk_tree_view_column_set_min_width(column, i == 0 ? 80 : i == 1 ? 180 : 75);
+        gtk_tree_view_column_set_min_width(column, i == 0 ? 60 : i == 1 ? 180 : i == 2 ? 104 : 64);
         gtk_tree_view_append_column(GTK_TREE_VIEW(owner->results), column);
     }
     auto *scroll = gtk_scrolled_window_new(nullptr, nullptr);

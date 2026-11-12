@@ -17,7 +17,7 @@ public:
     SettingsMotion &operator=(const SettingsMotion &) = delete;
 
     void changeTheme(std::string_view previous, std::string_view next,
-                     GtkWidget *origin, unsigned duration = 440);
+                     GtkWidget *origin, unsigned duration = 360);
     void finishTheme();
     void selectNavigation(GtkWidget *button);
     void hintFocus(GtkWidget *target);

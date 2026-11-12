@@ -22,6 +22,10 @@ GtkWidget *description(const char *text) {
 }
 void styleDialog(GtkWidget *dialog) {
     gtk_style_context_add_class(gtk_widget_get_style_context(dialog), "modernime-settings");
+    setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL, "取消", "放弃本次弹窗修改");
+    setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, {}, "确认本次规则草稿");
+    gtk_style_context_add_class(gtk_widget_get_style_context(
+        gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT)), "suggested-action");
     auto *body = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     gtk_container_set_border_width(GTK_CONTAINER(body), 20);
     gtk_box_set_spacing(GTK_BOX(body), 12);

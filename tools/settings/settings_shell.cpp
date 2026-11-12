@@ -201,6 +201,7 @@ public:
 
     void show(SettingsPageId page, std::string_view target) {
         if (motion) { motion->finishTheme(); motion->cancelHint(); }
+        if (searchPopover) gtk_popover_popdown(GTK_POPOVER(searchPopover));
         const auto &definition = pageDefinition(page);
         gtk_stack_set_visible_child_name(GTK_STACK(stack),
                                          std::string(definition.name).c_str());
@@ -293,6 +294,13 @@ private:
 
     static void onNavigate(GtkButton *, gpointer data) {
         const auto *action = static_cast<const NavigationAction *>(data);
+        // Re-selecting the current module keeps its selection and read state.
+        // Pages expose explicit refresh actions for reloading their data.
+        if (g_strcmp0(gtk_stack_get_visible_child_name(GTK_STACK(action->owner->stack)),
+                      pageDefinition(action->page).name.data()) == 0) {
+            gtk_popover_popdown(GTK_POPOVER(action->owner->searchPopover));
+            return;
+        }
         action->owner->show(action->page, {});
     }
 
@@ -429,16 +437,19 @@ private:
         gtk_widget_set_size_request(sidebar, 220, -1);
         gtk_widget_set_hexpand(sidebar, FALSE);
 
-        // The wordmark follows the chosen client accent.
-        auto *brandBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        auto *brandBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
         gtk_widget_set_margin_start(brandBox, 16);
-        gtk_widget_set_margin_top(brandBox, 16);
+        gtk_widget_set_margin_top(brandBox, 12);
         gtk_widget_set_margin_bottom(brandBox, 14);
         auto *brandLabel = gtk_label_new(nullptr);
         addStyleClass(brandLabel, "modernime-brand");
         gtk_label_set_text(GTK_LABEL(brandLabel), "ModernIME");
         gtk_widget_set_halign(brandLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(brandBox), brandLabel, FALSE, FALSE, 0);
+        auto *caption = gtk_label_new("输入法设置");
+        addStyleClass(caption, "modernime-brand-caption");
+        gtk_widget_set_halign(caption, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(brandBox), caption, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(sidebar), brandBox, FALSE, FALSE, 0);
 
         searchEntry = gtk_search_entry_new();
@@ -491,6 +502,8 @@ private:
             gtk_widget_set_margin_end(button, 6);
             gtk_widget_set_margin_top(button, 1);
             gtk_widget_set_margin_bottom(button, 1);
+            if (definition.id == SettingsPageId::Dictionary || definition.id == SettingsPageId::Updates)
+                gtk_widget_set_margin_top(button, 8);
 
             auto *btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
             gtk_widget_set_margin_start(btnBox, 8);
@@ -557,7 +570,7 @@ private:
         addStyleClass(stack, "modernime-page-stack");
         gtk_stack_set_transition_type(GTK_STACK(stack),
                                       GTK_STACK_TRANSITION_TYPE_CROSSFADE);
-        gtk_stack_set_transition_duration(GTK_STACK(stack), 160);
+        gtk_stack_set_transition_duration(GTK_STACK(stack), 150);
 
         const auto notify = [this](std::string message) {
             onPageMessage(std::move(message));

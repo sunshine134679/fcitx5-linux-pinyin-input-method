@@ -156,25 +156,27 @@ public:
     }
 
     void buildPage() {
-        auto *settingsDisclosure = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        auto *settingsDisclosure = createSectionCard("", "");
+        addStyleClass(settingsDisclosure, "modernime-compact-disclosure");
         gtk_box_pack_start(GTK_BOX(page), settingsDisclosure, FALSE, FALSE, 0);
-        settingsToggle = gtk_toggle_button_new_with_label("剪贴板设置");
+        settingsToggle = gtk_toggle_button_new();
         addStyleClass(settingsToggle, "modernime-details-button");
-        gtk_widget_set_halign(settingsToggle, GTK_ALIGN_START);
-        gtk_widget_set_focus_on_click(settingsToggle, FALSE);
-        gtk_button_set_image(GTK_BUTTON(settingsToggle),
-                             gtk_image_new_from_icon_name("pan-down-symbolic", GTK_ICON_SIZE_MENU));
-        gtk_button_set_image_position(GTK_BUTTON(settingsToggle), GTK_POS_RIGHT);
-        gtk_button_set_always_show_image(GTK_BUTTON(settingsToggle), TRUE);
+        auto *settingsHeader = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+        auto *settingsTitle = gtk_label_new("剪贴板设置");
+        gtk_label_set_xalign(GTK_LABEL(settingsTitle), 0.0F);
+        auto *settingsArrow = gtk_image_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_MENU);
+        gtk_box_pack_start(GTK_BOX(settingsHeader), settingsTitle, TRUE, TRUE, 0);
+        gtk_box_pack_end(GTK_BOX(settingsHeader), settingsArrow, FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(settingsToggle), settingsHeader);
         setAccessibleWidgetText(settingsToggle, "剪贴板设置",
                                 "展开或收起剪贴板开关与触发键设置");
         gtk_box_pack_start(GTK_BOX(settingsDisclosure), settingsToggle, FALSE, FALSE, 0);
         settingsRevealer = gtk_revealer_new();
-        auto *settingsSection = createSectionCard("", "");
+        auto *settingsSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        addStyleClass(settingsSection, "modernime-details-content");
         gtk_container_add(GTK_CONTAINER(settingsRevealer), settingsSection);
         gtk_box_pack_start(GTK_BOX(settingsDisclosure), settingsRevealer, FALSE, FALSE, 0);
-        bindSettingsDisclosure(settingsToggle, settingsRevealer,
-            gtk_button_get_image(GTK_BUTTON(settingsToggle)), true);
+        bindSettingsDisclosure(settingsToggle, settingsRevealer, settingsArrow);
 
         clipboardEnabled = gtk_switch_new();
         setAccessibleWidgetText(clipboardEnabled, "启用剪贴板",
@@ -280,8 +282,22 @@ public:
         gtk_widget_set_no_show_all(errorDetails, TRUE);
         gtk_box_pack_start(GTK_BOX(historySection), errorDetails, FALSE, FALSE, 0);
 
-        auto *historyActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        auto *historyActions = gtk_flow_box_new();
         addStyleClass(historyActions, "modernime-clipboard-toolbar");
+        addStyleClass(historyActions, "modernime-action-flow");
+        gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(historyActions), GTK_SELECTION_NONE);
+        gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(historyActions), 1);
+        gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(historyActions), 2);
+        gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(historyActions), 12);
+        gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(historyActions), 8);
+        auto *selectionActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        auto *clearActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_widget_set_halign(selectionActions, GTK_ALIGN_START);
+        gtk_widget_set_halign(clearActions, GTK_ALIGN_END);
+        for (auto *group : {selectionActions, clearActions}) {
+            gtk_flow_box_insert(GTK_FLOW_BOX(historyActions), group, -1);
+            gtk_widget_set_can_focus(gtk_widget_get_parent(group), FALSE);
+        }
         const auto actionLabels = settingsClipboardActionLabels();
         copyButton = gtk_button_new_with_label(actionLabels[0].data());
         deleteButton = gtk_button_new_with_label(actionLabels[1].data());
@@ -307,10 +323,10 @@ public:
         setAccessibleWidgetText(clearButton, actionLabels[2],
                                 "确认后清空全部本地剪贴板历史，保留收藏");
         for (auto *button : {copyButton, deleteButton, favoriteButton}) {
-            gtk_box_pack_start(GTK_BOX(historyActions), button, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(selectionActions), button, FALSE, FALSE, 0);
         }
-        gtk_box_pack_end(GTK_BOX(historyActions), clearFavoritesButton, FALSE, FALSE, 0);
-        gtk_box_pack_end(GTK_BOX(historyActions), clearButton, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(clearActions), clearButton, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(clearActions), clearFavoritesButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(historySection), historyActions, FALSE, FALSE,
                            0);
         g_signal_connect(refreshButton, "clicked", G_CALLBACK(onRefresh), this);

@@ -206,6 +206,10 @@ int main(int argc, char **argv) {
         assert(!gtk_widget_get_sensitive(save) && find(window, "✓ 所有设置已保存"));
         shell.show(settings::SettingsPageId::Updates, "updates-copy-command");
         frames(250);
+        auto *checkUpdate = find(window, "updates-check");
+        assert(checkUpdate && wait([&] { return gtk_widget_get_sensitive(checkUpdate); }));
+        gtk_button_clicked(GTK_BUTTON(find(window, "更新与安装")));
+        assert(gtk_widget_get_sensitive(checkUpdate));
         shell.show(settings::SettingsPageId::Diagnostics);
         frames(250);
         shell.show(settings::SettingsPageId::Candidates);

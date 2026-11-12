@@ -388,14 +388,18 @@ private:
         addStyleClass(previewSummary, "modernime-description");
         gtk_label_set_xalign(GTK_LABEL(previewSummary), 0.0F);
         gtk_label_set_line_wrap(GTK_LABEL(previewSummary), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(previewSummary), 1);
         setTarget(previewSummary, "candidate-preview-summary");
-        gtk_box_pack_start(GTK_BOX(previewCard), previewSummary, FALSE, FALSE, 0);
+        auto *previewMeta = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+        gtk_box_pack_start(GTK_BOX(previewCard), previewMeta, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(previewMeta), previewSummary, TRUE, TRUE, 0);
         previewScaleHint = gtk_label_new("预览随窗口宽度适配");
         addStyleClass(previewScaleHint, "modernime-description");
-        gtk_label_set_xalign(GTK_LABEL(previewScaleHint), 0.0F);
+        gtk_label_set_xalign(GTK_LABEL(previewScaleHint), 1.0F);
         gtk_label_set_line_wrap(GTK_LABEL(previewScaleHint), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(previewScaleHint), 1);
         setTarget(previewScaleHint, "candidate-preview-scale");
-        gtk_box_pack_start(GTK_BOX(previewCard), previewScaleHint, FALSE, FALSE, 0);
+        gtk_box_pack_end(GTK_BOX(previewMeta), previewScaleHint, TRUE, TRUE, 0);
         appearanceActions = gtk_grid_new();
         gtk_grid_set_column_spacing(GTK_GRID(appearanceActions), 12);
         gtk_widget_set_margin_top(appearanceActions, 4);
@@ -426,7 +430,7 @@ private:
     }
 
     void buildSettingsCard() {
-        auto *card = createSectionCard("", "");
+        auto *card = createSectionCard("候选显示", "");
         gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
 
         // Compact native controls keep all supported values keyboard-accessible.
@@ -735,9 +739,9 @@ private:
             return;
         }
         const double scale = previewScale();
-        const auto text = scale >= 1.0 ? std::string("按实际大小预览（100%）")
-            : "预览约为 " + std::to_string(static_cast<int>(std::lround(scale * 100.0))) +
-                "% · 设置字号不变";
+        const auto text = scale >= 1.0 ? std::string("实际大小 · 100%")
+            : "缩放 " + std::to_string(static_cast<int>(std::lround(scale * 100.0))) +
+                "% · 字号不变";
         gtk_label_set_text(GTK_LABEL(previewScaleHint), text.c_str());
     }
 

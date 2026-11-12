@@ -196,6 +196,10 @@ public:
         if (!enabled() || !allocated || plate.height == 0) {
             plate = target; moving = false;
         } else {
+            // Distant modules fade into their own row instead of sweeping a
+            // selection plate across unrelated navigation items.
+            navFading = std::abs(target.y - from.y) > target.height * 1.5;
+            if (navFading) { plate = target; from = target; navOpacity = 0.45; }
             navStart = now(); moving = true;
         }
         ensureTick(); gtk_widget_queue_draw(navigation);
@@ -206,7 +210,7 @@ public:
         if (plate.width <= 1 || plate.height <= 1) return;
         Rect r{plate.x + .5, plate.y + .5, plate.width - 1, plate.height - 1};
         cairo_save(cr);
-        rounded(cr, r, 10);
+        rounded(cr, r, 9);
         color(cr, navigation, "modernime_accent_surface", navOpacity); cairo_fill_preserve(cr);
         color(cr, navigation, "modernime_nav_border_color", navOpacity);
         cairo_set_line_width(cr, 1); cairo_stroke(cr);
@@ -283,6 +287,7 @@ public:
     }
     void advance(gint64 time) {
         if (!enabled()) { finish(); return; }
+        const bool hadOverlay = oldTheme || oldStatus || hintAlpha > 0;
         if (oldTheme) {
             themeProgress = ease(elapsed(time, themeStart, themeDuration));
             if (themeProgress >= 1) finishTheme();
@@ -290,11 +295,11 @@ public:
         if (moving) {
             Rect target;
             if (bounds(selected, navigation, target)) {
-                const double t = elapsed(time, navStart, 180), p = ease(t);
+                const double t = elapsed(time, navStart, 160), p = ease(t);
                 plate = {from.x + (target.x - from.x) * p, from.y + (target.y - from.y) * p,
                          from.width + (target.width - from.width) * p,
                          from.height + (target.height - from.height) * p};
-                navOpacity = 1 - .65 * std::sin(pi * t) * std::min(1.0, std::abs(target.y - from.y) / 280);
+                navOpacity = navFading ? 0.45 + 0.55 * p : 1;
                 if (t >= 1) { moving = false; navOpacity = 1; }
             } else moving = false;
             gtk_widget_queue_draw(navigation);
@@ -330,7 +335,9 @@ public:
             gtk_widget_set_opacity(message, messageFrom + (messageTo - messageFrom) * p);
             if (p >= 1) finishMessage();
         }
-        gtk_widget_queue_draw(layer);
+        // Navigation and label opacity already invalidate their own bounds.
+        // Do not repaint the full window for those small transitions.
+        if (hadOverlay || oldTheme || oldStatus || hintAlpha > 0) gtk_widget_queue_draw(layer);
     }
     void drawTheme(cairo_t *cr) {
         if (!oldTheme) return;
@@ -367,10 +374,10 @@ public:
     Surface oldTheme{nullptr, cairo_surface_destroy}, oldStatus{nullptr, cairo_surface_destroy};
     double originX = 0, originY = 0, radius = 0, themeProgress = 0;
     gint64 themeStart = 0, navStart = 0, hintStart = 0, hintRequested = 0, statusStart = 0, messageStart = 0;
-    unsigned themeDuration = 440, statusDuration = 150;
+    unsigned themeDuration = 360, statusDuration = 150;
     GtkWidget *selected = nullptr;
     Rect plate, from, statusRect;
-    bool moving = false, hintPending = false, messageMoving = false, directThemeFrame = false;
+    bool moving = false, navFading = false, hintPending = false, messageMoving = false, directThemeFrame = false;
     double navOpacity = 1, hintAlpha = 0, messageFrom = 0, messageTo = 1;
     GWeakRef hintTarget;
 };

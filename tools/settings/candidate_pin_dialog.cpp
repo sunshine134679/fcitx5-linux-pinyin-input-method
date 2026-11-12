@@ -173,6 +173,10 @@ GtkWidget *createCandidatePinDialog(GtkWindow *parent, const core::ModernIMESett
     o->dialog = gtk_dialog_new_with_buttons("候选置顶规则", parent, static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
         "取消", GTK_RESPONSE_CANCEL, "使用这些规则", GTK_RESPONSE_ACCEPT, nullptr);
     auto *dialog = o->dialog; gtk_style_context_add_class(gtk_widget_get_style_context(dialog), "modernime-settings");
+    setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL, "取消", "保留原来的置顶规则");
+    setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "使用这些规则", "写入设置草稿，仍需在主窗口保存");
+    gtk_style_context_add_class(gtk_widget_get_style_context(
+        gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT)), "suggested-action");
     gtk_window_set_default_size(GTK_WINDOW(dialog), 720, 560);
     auto *body = gtk_dialog_get_content_area(GTK_DIALOG(dialog)); gtk_container_set_border_width(GTK_CONTAINER(body), 20); gtk_box_set_spacing(GTK_BOX(body), 12);
     gtk_box_pack_start(GTK_BOX(body), description("规则只提升已召回且未屏蔽的完整候选，不生成新词。取消规则后恢复原排序。"), FALSE, FALSE, 0);

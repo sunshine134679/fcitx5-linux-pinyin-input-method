@@ -44,9 +44,18 @@ public:
     Impl(std::filesystem::path file, std::function<void(std::string)> notifyCallback,
          std::function<QuickPhraseReloadResult()> reloadCallback)
         : path(std::move(file)), notify(std::move(notifyCallback)), reload(std::move(reloadCallback)) {
-        detail::GtkWidgetGuard guard(createSectionCard("快捷短语", "把常用的固定文本保存为缩写，在快速输入中调用。"));
+        detail::GtkWidgetGuard guard(createSectionCard("", "把常用的固定文本保存为缩写，在快速输入中调用。"));
         root = guard.get();
         target(root, "quick-phrases");
+        setAccessibleWidgetText(root, "快捷短语", "把常用的固定文本保存为缩写，在快速输入中调用");
+        auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+        gtk_style_context_add_class(gtk_widget_get_style_context(header), "modernime-editor-header");
+        auto *title = gtk_label_new("快捷短语");
+        gtk_style_context_add_class(gtk_widget_get_style_context(title), "modernime-section-title");
+        gtk_label_set_xalign(GTK_LABEL(title), 0.0F);
+        gtk_widget_set_valign(title, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(header), title, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 0);
         auto *help = description("默认按 Super+;，输入缩写后按空格或数字选词，Esc 取消。\n需要启用 Fcitx5“快速输入 / Quick Phrase”插件；自定义快捷键以系统设置为准。");
         gtk_box_pack_start(GTK_BOX(root), help, FALSE, FALSE, 0);
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -102,6 +111,7 @@ public:
         state = description("");
         target(state, "quick-phrase-state");
         gtk_box_pack_start(GTK_BOX(root), state, FALSE, FALSE, 6);
+        gtk_box_reorder_child(GTK_BOX(root), state, 4);
         details = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         auto *expander = gtk_expander_new("查看详情");
         auto *revealer = gtk_revealer_new();
@@ -126,10 +136,11 @@ public:
         gtk_widget_set_tooltip_text(save, "保存并应用快捷短语（Ctrl+S）");
         gtk_style_context_add_class(gtk_widget_get_style_context(save), "suggested-action");
         discard = button(actions, "放弃短语修改", "quick-phrase-discard", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->discardDraft(); });
+        gtk_widget_set_tooltip_text(discard, "放弃尚未保存的快捷短语草稿");
         merge = button(actions, "检查并合并", "quick-phrase-merge", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->reviewMerge(); });
         apply = button(actions, "重试应用", "quick-phrase-apply", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->start(Operation::Apply); });
         for (auto *control : {merge, apply}) gtk_widget_set_no_show_all(control, TRUE);
-        gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 6);
+        gtk_box_pack_end(GTK_BOX(header), actions, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(root), description("短语在此单独保存并应用。放弃设置不会删除已保存的短语。"), FALSE, FALSE, 0);
         g_signal_connect(search, "search-changed", G_CALLBACK(+[](GtkSearchEntry *, gpointer p) { static_cast<Impl *>(p)->render(); }), this);
         g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(list)), "changed", G_CALLBACK(+[](GtkTreeSelection *, gpointer p) { static_cast<Impl *>(p)->update(); }), this);
@@ -148,7 +159,7 @@ public:
             return FALSE;
         }), this);
         g_signal_connect(root, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer p) { static_cast<Impl *>(p)->deactivate(); }), this);
-        setSettingsFocusChain(root, {search, add, editButton, remove, refreshButton, list, save, discard, merge, apply});
+        setSettingsFocusChain(root, {save, discard, merge, apply, search, add, editButton, remove, refreshButton, list});
         update();
         guard.release();
     }
@@ -371,6 +382,9 @@ public:
         gtk_dialog_set_default_response(GTK_DIALOG(popup), GTK_RESPONSE_ACCEPT);
         setDialogResponseAccessibility(GTK_DIALOG(popup), GTK_RESPONSE_CANCEL, "取消", "保留当前草稿并关闭对话框");
         setDialogResponseAccessibility(GTK_DIALOG(popup), GTK_RESPONSE_ACCEPT, accept, accept);
+        gtk_style_context_add_class(gtk_widget_get_style_context(
+            gtk_dialog_get_widget_for_response(GTK_DIALOG(popup), GTK_RESPONSE_ACCEPT)),
+            kind == DialogKind::Delete ? "destructive-action" : "suggested-action");
         auto *area = gtk_dialog_get_content_area(GTK_DIALOG(popup));
         gtk_container_set_border_width(GTK_CONTAINER(area), 18);
         gtk_box_set_spacing(GTK_BOX(area), 12);

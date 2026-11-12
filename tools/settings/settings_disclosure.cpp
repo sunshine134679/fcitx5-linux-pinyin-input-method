@@ -1,5 +1,7 @@
 #include "modernime/settings/settings_disclosure.h"
 
+#include <algorithm>
+
 namespace modernime::settings {
 namespace {
 
@@ -10,6 +12,7 @@ struct Disclosure {
     GtkWidget *revealer;
     GtkWidget *arrow;
     bool animate = true;
+    bool followReveal = false;
 
     ~Disclosure() {
         if (revealer != nullptr) {
@@ -36,6 +39,28 @@ bool isExpanded(GtkWidget *controller) {
         : gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(controller));
 }
 
+void keepDisclosureVisible(Disclosure *state) {
+    if (!state || !state->revealer || !state->followReveal ||
+        !gtk_widget_has_focus(state->controller) || !isExpanded(state->controller)) return;
+    auto *scroll = gtk_widget_get_ancestor(state->controller, GTK_TYPE_SCROLLED_WINDOW);
+    if (!scroll) return;
+    auto *viewport = gtk_bin_get_child(GTK_BIN(scroll));
+    auto *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+    const double page = gtk_adjustment_get_page_size(adjustment);
+    int x = 0, y = 0;
+    if (page <= 0 || !gtk_widget_translate_coordinates(state->controller, viewport, 0, 0, &x, &y)) return;
+    const double value = gtk_adjustment_get_value(adjustment);
+    const double top = value + y - 8;
+    const double bottom = top + gtk_widget_get_allocated_height(state->controller) +
+        gtk_widget_get_allocated_height(state->revealer) + 16;
+    double next = value;
+    if (bottom - top > page || top < value) next = top;
+    else if (bottom > value + page) next = bottom - page;
+    gtk_adjustment_set_value(adjustment, std::clamp(next,
+        gtk_adjustment_get_lower(adjustment),
+        std::max(gtk_adjustment_get_lower(adjustment), gtk_adjustment_get_upper(adjustment) - page)));
+}
+
 void setClass(GtkWidget *widget, const char *name, bool present) {
     auto *context = gtk_widget_get_style_context(widget);
     if (present) gtk_style_context_add_class(context, name);
@@ -47,20 +72,20 @@ void installArrowStyle(GtkWidget *widget) {
     gtk_css_provider_load_from_data(provider, R"CSS(
         .modernime-disclosure-arrow {
             -gtk-icon-transform: rotate(0deg);
-            transition: -gtk-icon-transform 170ms ease-out;
+            transition: -gtk-icon-transform 140ms ease-out;
         }
         .modernime-disclosure-arrow.expanded {
             -gtk-icon-transform: rotate(90deg);
-            transition-duration: 220ms;
+            transition-duration: 180ms;
         }
         .modernime-disclosure-arrow.half-turn.expanded {
             -gtk-icon-transform: rotate(180deg);
         }
         .modernime-disclosure-expander > title > arrow {
-            transition: -gtk-icon-transform 170ms ease-out;
+            transition: -gtk-icon-transform 140ms ease-out;
         }
         .modernime-disclosure-expander > title > arrow:checked {
-            transition-duration: 220ms;
+            transition-duration: 180ms;
         }
         .modernime-disclosure-arrow.immediate,
         .modernime-disclosure-expander.immediate > title > arrow {
@@ -77,6 +102,9 @@ void updateDisclosure(Disclosure *state) {
     const bool expanded = isExpanded(state->controller);
     const bool animate = state->animate && animationsEnabled(state->controller) &&
                          gtk_widget_get_mapped(state->controller);
+    // Follow a focused disclosure while its native reveal grows. Search opens
+    // synchronously and keeps owning its target/focus positioning.
+    state->followReveal = expanded && state->animate && gtk_widget_get_mapped(state->controller);
     if (!expanded) {
         auto *window = gtk_widget_get_toplevel(state->controller);
         auto *focus = GTK_IS_WINDOW(window) ? gtk_window_get_focus(GTK_WINDOW(window)) : nullptr;
@@ -98,7 +126,7 @@ void setSettingsRevealed(GtkWidget *widget, bool expanded, bool animate) {
     auto *revealer = GTK_REVEALER(widget);
     animate = animate && animationsEnabled(widget) && gtk_widget_get_mapped(widget);
     gtk_revealer_set_transition_type(revealer, GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    gtk_revealer_set_transition_duration(revealer, animate ? (expanded ? 220 : 170) : 0);
+    gtk_revealer_set_transition_duration(revealer, animate ? (expanded ? 180 : 140) : 0);
     auto *child = gtk_bin_get_child(GTK_BIN(revealer));
     const bool settled = expanded ? gtk_revealer_get_child_revealed(revealer)
         : child == nullptr || !gtk_widget_get_child_visible(child);
@@ -127,6 +155,17 @@ void bindSettingsDisclosure(GtkWidget *controller, GtkWidget *revealer,
     }
     g_object_set_data_full(G_OBJECT(controller), kDisclosure, state,
         +[](gpointer data) { delete static_cast<Disclosure *>(data); });
+    if (GTK_IS_BUTTON(controller)) gtk_widget_set_focus_on_click(controller, TRUE);
+    g_signal_connect_object(revealer, "size-allocate", G_CALLBACK(+[](GtkWidget *, GtkAllocation *, gpointer data) {
+        keepDisclosureVisible(static_cast<Disclosure *>(g_object_get_data(G_OBJECT(data), kDisclosure)));
+    }), controller, G_CONNECT_AFTER);
+    g_signal_connect_object(revealer, "notify::child-revealed", G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {
+        keepDisclosureVisible(static_cast<Disclosure *>(g_object_get_data(G_OBJECT(data), kDisclosure)));
+    }), controller, GConnectFlags(0));
+    g_signal_connect(controller, "focus-out-event", G_CALLBACK(+[](GtkWidget *, GdkEventFocus *, gpointer data) -> gboolean {
+        static_cast<Disclosure *>(data)->followReveal = false;
+        return FALSE;
+    }), state);
     if (GTK_IS_EXPANDER(controller)) {
         g_signal_connect(controller, "notify::expanded",
             G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {

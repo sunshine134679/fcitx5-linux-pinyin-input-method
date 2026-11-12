@@ -100,6 +100,7 @@ struct Preview {
 GtkWidget *preview(GtkWindow *parent, bool component) {
     auto *dialog = gtk_dialog_new_with_buttons(component ? "试用拆字查字" : "试用离线计算器", parent,
         static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT), "关闭", GTK_RESPONSE_CLOSE, nullptr);
+    setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CLOSE, "关闭", "关闭试用窗口，不修改设置");
     gtk_style_context_add_class(gtk_widget_get_style_context(dialog), "modernime-settings");
     gtk_window_set_default_size(GTK_WINDOW(dialog), 590, component ? 440 : 270);
     auto *body = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
@@ -108,7 +109,7 @@ GtkWidget *preview(GtkWindow *parent, bool component) {
         component ? gtk_tree_view_new() : gtk_label_new(""), gtk_button_new_with_label("复制结果"),
         component ? gtk_button_new_with_label("重新加载") : nullptr, gtk_expander_new("技术详情"), {}, {}, {}, 0};
     owner->lifetime = std::make_shared<Preview::Lifetime>(owner);
-    gtk_box_pack_start(GTK_BOX(body), label(component ? "这里填写部件或部件拼音，无需 u+；例如 木木、mumu、ri+yue。" : "这里直接填写表达式，无需 v=。支持 + − * / % 和括号；% 表示余数，结果为近似值。"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(body), label(component ? "填写部件或部件拼音，无需 u+；例如 木木、mumu、ri+yue。" : "直接填写表达式，无需 v=。支持四则运算、括号与取余（%），结果为近似值。"), FALSE, FALSE, 0);
     target(owner->entry, "assist-preview-input"); target(owner->status, "assist-preview-state");
     target(owner->results, "assist-preview-results"); target(owner->copy, "assist-preview-copy");
     gtk_entry_set_placeholder_text(GTK_ENTRY(owner->entry), component ? "木木 / mumu" : "(2+3)*4");
@@ -134,14 +135,22 @@ GtkWidget *preview(GtkWindow *parent, bool component) {
         }), owner);
     } else {
         gtk_label_set_selectable(GTK_LABEL(owner->results), TRUE);
+        gtk_label_set_xalign(GTK_LABEL(owner->results), 0.0F);
         gtk_label_set_line_wrap(GTK_LABEL(owner->results), TRUE);
-        gtk_label_set_max_width_chars(GTK_LABEL(owner->results), 55);
-        gtk_box_pack_start(GTK_BOX(body), owner->results, TRUE, TRUE, 0);
+        gtk_label_set_max_width_chars(GTK_LABEL(owner->results), 1);
+        gtk_style_context_add_class(gtk_widget_get_style_context(owner->results), "modernime-calculator-result");
+        auto *resultCard = createSectionCard("计算结果", "");
+        auto *resultRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+        gtk_box_pack_start(GTK_BOX(resultRow), owner->results, TRUE, TRUE, 0);
+        gtk_widget_set_valign(owner->copy, GTK_ALIGN_CENTER);
+        gtk_box_pack_end(GTK_BOX(resultRow), owner->copy, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(resultCard), resultRow, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(body), resultCard, FALSE, FALSE, 0);
     }
-    auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_box_pack_start(GTK_BOX(body), actions, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(actions), owner->copy, FALSE, FALSE, 0);
     if (component) {
+        auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_box_pack_start(GTK_BOX(body), actions, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(actions), owner->copy, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(actions), owner->retry, FALSE, FALSE, 0);
         gtk_widget_set_no_show_all(owner->retry, TRUE);
     }

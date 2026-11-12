@@ -76,12 +76,12 @@ public:
                                 "启用或关闭本地上下文候选排序");
         gtk_box_pack_start(GTK_BOX(learningSection),
                            createSettingRow("记忆用户候选选择",
-                                            "记录您主动选择的高频候选词，自适应学习并调频置顶。",
+                                            "记住你主动选择的候选词，让常用表达更靠前。",
                                             learningEnabled),
                            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(learningSection),
                            createSettingRow("根据前后文调整候选排序",
-                                            "根据输入光标前后的上下文语境动态推荐候选词。",
+                                            "结合光标前后的文字，推荐适合当前语境的候选词。",
                                             contextLearning),
                            FALSE, FALSE, 0);
         auto *dataSection = createSectionCard(
@@ -101,6 +101,10 @@ public:
             return label;
         };
         dataStatus = dataLabel("learning-status");
+        gtk_style_context_add_class(gtk_widget_get_style_context(dataStatus), "modernime-data-summary");
+        auto *dataHint = dataLabel("learning-data-hint");
+        gtk_label_set_text(GTK_LABEL(dataHint), "记录仅保存在本机。清空前会自动备份，可恢复。");
+        gtk_style_context_add_class(gtk_widget_get_style_context(dataHint), "modernime-description");
         operationResult = dataLabel("learning-operation-result");
         gtk_label_set_selectable(GTK_LABEL(operationResult), TRUE);
         gtk_widget_set_no_show_all(operationResult, TRUE);
@@ -116,6 +120,7 @@ public:
         }), this);
 
         clearLearningButton = gtk_button_new_with_label("清空学习记录");
+        gtk_style_context_add_class(gtk_widget_get_style_context(clearLearningButton), "destructive-action");
         gtk_widget_set_sensitive(clearLearningButton, FALSE);
         setTarget(clearLearningButton, "learning-clear");
         gtk_widget_set_margin_top(clearLearningButton, 8);
@@ -300,12 +305,30 @@ private:
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
-            "清空前会自动创建可恢复的备份，是否确认清空所有学习记录？");
+            "清空学习记录？");
+        setAccessibleWidgetText(dialog, "清空学习记录", "确认是否备份并清空本地学习记录");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+            "将重置已记录的输入习惯。清空前会自动创建可恢复的备份。");
+        auto *messageArea = gtk_message_dialog_get_message_area(GTK_MESSAGE_DIALOG(dialog));
+        gtk_box_set_spacing(GTK_BOX(messageArea), 8);
+        auto *labels = gtk_container_get_children(GTK_CONTAINER(messageArea));
+        for (auto *item = labels; item; item = item->next) {
+            if (!GTK_IS_LABEL(item->data)) continue;
+            auto *label = GTK_LABEL(item->data);
+            gtk_widget_set_halign(GTK_WIDGET(label), GTK_ALIGN_FILL);
+            gtk_label_set_xalign(label, 0.0F);
+            gtk_label_set_line_wrap_mode(label, PANGO_WRAP_WORD_CHAR);
+            gtk_label_set_max_width_chars(label, 30);
+        }
+        g_list_free(labels);
         setDialogResponseAccessibility(
             GTK_DIALOG(dialog), GTK_RESPONSE_YES, "备份并清空",
             "创建备份并清空本地学习记录");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
                                        "取消", "保留当前学习记录");
+        gtk_style_context_add_class(gtk_widget_get_style_context(
+            gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_YES)), "destructive-action");
+        gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_NO);
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         if (response != GTK_RESPONSE_YES) {
