@@ -26,9 +26,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.8_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.2.8-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.8-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.9_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.2.9-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.9-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -745,6 +745,13 @@ modernime-session-init --remove-gnome-extension
 已完成任务的过程报告与旧计划通过[历史资料索引](docs/历史资料索引.md)追溯；现行规范、接口和版本说明继续保留在 `docs/`。
 
 ## 版本更新记录
+
+### v0.2.9（2026-11-12）
+
+- 精修七套客户端主题的明暗层次、文字对齐、焦点与弹窗外观，统一页面切换、菜单展开和操作反馈。
+- 修复鼠标操作后焦点框残留、弹窗标题栏下方缝隙，以及外观菜单展开不流畅的问题；保留键盘焦点和系统禁用动画偏好。
+- 自绘候选栏新增简约、标准、质感三档风格，独立搭配九套配色与三种轮廓；简约使用细腻哑光与淡彩选中，质感使用柔光磨砂与悬浮层次。
+- 隐藏运行详情中重复的正常状态提示。入口、材质边界与升级方式见 [v0.2.9 发布说明](docs/releases/v0.2.9-发布说明.md)。
 
 ### v0.2.8（2026-11-12）
 

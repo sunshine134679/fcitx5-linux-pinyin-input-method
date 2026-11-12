@@ -94,16 +94,16 @@ const clientPages = {
 };
 const screenshot = document.querySelector('#client-screenshot');
 const screenshotDialog = document.querySelector('#screenshot-dialog');
-// Native captures use the client palettes from commit 35682c2. Candidate colors
-// remain independent: all appearance-page captures keep the lavender candidate bar.
+// Theme swatches follow the current native ClientPalette. Screenshots retain
+// their documented capture baseline; candidate palettes remain independent.
 const clientThemes = {
-  lavender: { name: '雾紫', canvas: '#ece9f3', accent: '#7052ad', ink: '#6c6577', border: '#c7c0d5' },
-  blue: { name: '晴空蓝', canvas: '#eaf0f7', accent: '#1262ff', ink: '#5d697a', border: '#bac6d6' },
-  jade: { name: '青竹绿', canvas: '#e9f0ec', accent: '#087f73', ink: '#606d68', border: '#bdccc5' },
-  amber: { name: '暖砂橙', canvas: '#f0ece5', accent: '#a65f16', ink: '#70665d', border: '#c9c0b3' },
-  rose: { name: '玫瑰粉', canvas: '#f1eaee', accent: '#a83d63', ink: '#71636b', border: '#cdbfc5' },
-  night: { name: '深海夜', canvas: '#1d2c3e', accent: '#296ad8', ink: '#b5c3d5', border: '#43556c' },
-  contrast: { name: '高对比', canvas: '#101010', accent: '#ffe066', ink: '#ffffff', border: '#ededed' }
+  lavender: { name: '雾紫', canvas: '#ece8f3', accent: '#765b9f', ink: '#6d627c', border: '#c9bfd9' },
+  blue: { name: '晴空蓝', canvas: '#eaf0f6', accent: '#3569b8', ink: '#5e6d82', border: '#becbdc' },
+  jade: { name: '青竹绿', canvas: '#e7efe9', accent: '#347b65', ink: '#5d7064', border: '#bdcfc3' },
+  amber: { name: '暖砂橙', canvas: '#efe9df', accent: '#966033', ink: '#746556', border: '#cfc1ad' },
+  rose: { name: '玫瑰粉', canvas: '#f0e7eb', accent: '#a04d70', ink: '#75616d', border: '#d3c1cb' },
+  night: { name: '深海夜', canvas: '#192635', accent: '#8bb5ed', ink: '#abbcd0', border: '#394b60' },
+  contrast: { name: '高对比', canvas: '#0c1013', accent: '#ffdf70', ink: '#ffffff', border: '#d0dbe5' }
 };
 const clientSection = document.querySelector('#client');
 let clientPage = 'candidates';
