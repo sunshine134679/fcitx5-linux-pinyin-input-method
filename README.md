@@ -358,7 +358,7 @@ export FCITX_ADDON_DIRS="$HOME/.local/lib64/fcitx5:/usr/lib64/fcitx5"
 
 左侧搜索框按名称与说明查找设置并定位控件，无匹配时提示更换关键词；结果出现后可继续输入，按 `Tab` 或下方向键进入结果，`Esc` 收起结果。`Ctrl+F` 聚焦搜索，`Ctrl+Enter` 保存。修改先保留在草稿中，点击「保存设置」后写入配置；候选外观配置由输入法自动监听应用，无需重启 Fcitx5。
 
-自绘候选栏提供“简约／标准／质感”三档风格：简约采用纯净表面与轻量选中标记，标准保持现有观感，质感增加柔和光影、微光边缘和选中层次；可独立搭配九套配色、三种轮廓及间距。高对比配色优先保留实色与清晰边界。风格通过 `candidate.style=minimal|standard|textured` 保存，旧配置默认标准。
+自绘候选栏提供“简约／标准／质感”三档风格：简约采用细腻哑光、轻薄边缘与淡彩选中，标准采用清晰边界、实色选中与柔和阴影，质感采用柔光磨砂、微光内缘与悬浮选中。三档可独立搭配九套配色、三种轮廓及间距；浅色与深色分别调整光照，高对比配色保留实色与清晰边界。风格通过 `candidate.style=minimal|standard|textured` 保存，旧配置默认标准。设计依据与材质边界见 [候选框材质设计](docs/候选框材质设计.md)。
 
 候选配色通过 `candidate.theme=light|dark|classic-blue|jade|amber|rose|lavender|midnight|high-contrast` 保存，轮廓通过 `candidate.shape=rounded|square|capsule` 保存，旧配置默认圆润。风格、配色与轮廓位于实际候选预览下方，选择时立即看到效果，保存后自绘候选栏及剪贴板菜单热更新；放弃修改会恢复已保存外观。GNOME 原生面板的外观继续由“打开 GNOME 面板设置”管理；扩展更新需重新登录桌面加载。
 

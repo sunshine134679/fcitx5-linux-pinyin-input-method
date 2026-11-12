@@ -175,6 +175,10 @@ public:
                              const ui::Color &bottom, bool fill) override {
         surface_.gradientRoundedRect(bounds, radius, top, bottom, fill);
     }
+    void illuminatedRoundedRect(const ui::Rect &bounds, double radius, const ui::Color &top,
+                                const ui::Color &bottom, const ui::Color &light) override {
+        surface_.illuminatedRoundedRect(bounds, radius, top, bottom, light);
+    }
     void shadowRoundedRect(const ui::Rect &bounds, double radius, const ui::Color &color,
                            double blurRadius) override {
         surface_.shadowRoundedRect(bounds, radius, color, blurRadius);
@@ -766,7 +770,8 @@ private:
                                  &ui::RenderStyle::borderTop, &ui::RenderStyle::borderBottom,
                                  &ui::RenderStyle::selectedTop, &ui::RenderStyle::selectedBottom,
                                  &ui::RenderStyle::selectedEdgeTop, &ui::RenderStyle::selectedEdgeBottom,
-                                 &ui::RenderStyle::selectedShadow, &ui::RenderStyle::selectionMarker}) {
+                                 &ui::RenderStyle::selectedShadow,
+                                 &ui::RenderStyle::panelLight, &ui::RenderStyle::selectedLight}) {
             displayedStyle.*color = previewMix(previewFromStyle.*color, renderStyle.*color, progress);
         }
         displayedStyle.panelRadius = previewMix(previewFromStyle.panelRadius,
@@ -900,7 +905,7 @@ private:
 
     static const char *styleDescription(std::size_t index) {
         static constexpr std::array descriptions{
-            "纯净底色与轻量选中标记", "清晰边界与柔和阴影", "柔和光影、微光边缘与悬浮选中效果"};
+            "细腻哑光、轻薄边缘与淡彩选中", "清晰边界、实色选中与柔和阴影", "柔光磨砂、微光内缘与悬浮选中"};
         return descriptions[index];
     }
 

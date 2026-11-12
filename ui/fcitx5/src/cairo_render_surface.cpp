@@ -3,6 +3,7 @@
 #include <pango/pangocairo.h>
 
 #include <algorithm>
+#include <array>
 
 namespace modernime::ui {
 namespace {
@@ -83,23 +84,79 @@ void CairoRenderSurface::gradientRoundedRect(const Rect &bounds, double radius,
     cairo_pattern_destroy(gradient);
 }
 
+void CairoRenderSurface::illuminatedRoundedRect(const Rect &bounds, double radius,
+                                                const Color &top, const Color &bottom,
+                                                const Color &light) {
+    gradientRoundedRect(bounds, radius, top, bottom, true);
+    if (light.alpha <= 0 || bounds.width <= 0 || bounds.height <= 0) return;
+    cairo_save(context_);
+    addRoundedRectPath(context_, bounds, radius);
+    cairo_clip(context_);
+    // A broad, elliptical light source gives the surface one coherent light
+    // direction. Its highlight stays behind the text and inside the shape.
+    cairo_translate(context_, bounds.x + bounds.width * 0.16,
+                    bounds.y - bounds.height * 0.4);
+    cairo_scale(context_, bounds.width * 0.9, bounds.height * 1.7);
+    auto *glow = cairo_pattern_create_radial(0, 0, 0, 0, 0, 1);
+    cairo_pattern_add_color_stop_rgba(glow, 0, light.red, light.green, light.blue, light.alpha);
+    cairo_pattern_add_color_stop_rgba(glow, 0.55, light.red, light.green, light.blue, light.alpha * 0.35);
+    cairo_pattern_add_color_stop_rgba(glow, 1, light.red, light.green, light.blue, 0);
+    cairo_set_source(context_, glow);
+    cairo_paint(context_);
+    cairo_pattern_destroy(glow);
+    cairo_restore(context_);
+}
+
 void CairoRenderSurface::shadowRoundedRect(const Rect &bounds, double radius,
                                            const Color &color,
                                            double blurRadius) {
-    if (color.alpha <= 0) return;
-    const int layerCount = std::max(4, static_cast<int>(blurRadius * 2.0));
-    for (int layer = layerCount; layer >= 1; --layer) {
-        const double t = static_cast<double>(layer) / layerCount;
-        const double inset = (1.0 - t) * blurRadius / 4.0;
-        const Rect layerBounds{bounds.x + inset, bounds.y + inset,
-                               bounds.width - 2.0 * inset,
-                               bounds.height - 2.0 * inset};
-        const Color layerColor{color.red, color.green, color.blue,
-                               color.alpha * 0.06 * t};
-        addRoundedRectPath(context_, layerBounds, radius - inset);
-        setSource(context_, layerColor);
+    if (color.alpha <= 0 || bounds.width <= 0 || bounds.height <= 0) return;
+    const double feather = std::clamp(blurRadius, 0.0, std::min(bounds.width, bounds.height) / 2.0);
+    if (feather == 0) { roundedRect(bounds, radius, color, true); return; }
+    const double corner = std::clamp(std::max(radius, feather), feather,
+                                     std::min(bounds.width, bounds.height) / 2.0);
+    const double left = bounds.x + corner, right = bounds.x + bounds.width - corner;
+    const double top = bounds.y + corner, bottom = bounds.y + bounds.height - corner;
+    // Nine bounded gradient patches form a continuous soft shadow, without a
+    // per-pixel blur/allocation on every keystroke or overlapping alpha bands.
+    const auto stops = [&](cairo_pattern_t *pattern, bool radial) {
+        constexpr std::array ramp{0.0, 0.0625, 0.125, 0.25, 0.5, 0.75, 0.875, 0.9375, 1.0};
+        for (const double t : ramp) {
+            const double opacity = t * t * (3.0 - 2.0 * t);
+            const double position = radial ? 1.0 - t * feather / corner : t;
+            cairo_pattern_add_color_stop_rgba(pattern, position, color.red, color.green,
+                                              color.blue, color.alpha * opacity);
+        }
+    };
+    const auto patch = [&](const Rect &rect, cairo_pattern_t *pattern) {
+        cairo_set_source(context_, pattern);
+        cairo_rectangle(context_, rect.x, rect.y, rect.width, rect.height);
         cairo_fill(context_);
+        cairo_pattern_destroy(pattern);
+    };
+    const auto edge = [&](const Rect &rect, double x1, double y1, double x2, double y2) {
+        auto *pattern = cairo_pattern_create_linear(x1, y1, x2, y2);
+        stops(pattern, false);
+        patch(rect, pattern);
+    };
+    cairo_save(context_);
+    cairo_set_antialias(context_, CAIRO_ANTIALIAS_NONE);
+    setSource(context_, color);
+    cairo_rectangle(context_, left, top, right - left, bottom - top);
+    cairo_fill(context_);
+    edge({left, bounds.y, right - left, corner}, 0, bounds.y, 0, bounds.y + feather);
+    edge({left, bottom, right - left, corner}, 0, bounds.y + bounds.height, 0, bounds.y + bounds.height - feather);
+    edge({bounds.x, top, corner, bottom - top}, bounds.x, 0, bounds.x + feather, 0);
+    edge({right, top, corner, bottom - top}, bounds.x + bounds.width, 0, bounds.x + bounds.width - feather, 0);
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 2; ++x) {
+            const double cx = x ? right : left, cy = y ? bottom : top;
+            auto *pattern = cairo_pattern_create_radial(cx, cy, 0, cx, cy, corner);
+            stops(pattern, true);
+            patch({x ? right : bounds.x, y ? bottom : bounds.y, corner, corner}, pattern);
+        }
     }
+    cairo_restore(context_);
 }
 
 PangoLayout *CairoRenderSurface::prepareLayout(std::string_view value,

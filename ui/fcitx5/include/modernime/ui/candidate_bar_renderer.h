@@ -57,7 +57,8 @@ struct RenderStyle final {
     Color panelTop, panelBottom, borderTop, borderBottom;
     Color selectedTop, selectedBottom;
     Color selectedEdgeTop{0, 0, 0, 0}, selectedEdgeBottom{0, 0, 0, 0};
-    Color selectedShadow{0, 0, 0, 0}, selectionMarker{0, 0, 0, 0};
+    Color selectedShadow{0, 0, 0, 0};
+    Color panelLight{0, 0, 0, 0}, selectedLight{0, 0, 0, 0};
 
     static RenderStyle reference();
     static RenderStyle fromSettings(const core::ModernIMESettings &settings);
@@ -73,6 +74,12 @@ public:
                                      const Color &top, const Color &bottom, bool fill) {
         (void)bottom;
         roundedRect(bounds, radius, top, fill);
+    }
+    virtual void illuminatedRoundedRect(const Rect &bounds, double radius,
+                                        const Color &top, const Color &bottom,
+                                        const Color &light) {
+        (void)light;
+        gradientRoundedRect(bounds, radius, top, bottom, true);
     }
     virtual void shadowRoundedRect(const Rect &bounds, double radius,
                                    const Color &color, double blurRadius) {

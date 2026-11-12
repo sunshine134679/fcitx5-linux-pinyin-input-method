@@ -20,26 +20,25 @@ void renderPanel(RenderSurface &surface, const CandidateBarLayout &layout,
         layout.panel.width + 2.0 * style.shadowSpread, layout.panel.height + style.shadowSpread};
     surface.shadowRoundedRect(shadowBounds, radius + style.shadowSpread,
                               style.shadow, style.shadowRadius);
-    surface.gradientRoundedRect(layout.panel, radius, style.panelTop, style.panelBottom, true);
-    surface.gradientRoundedRect(layout.panel, radius, style.borderTop, style.borderBottom, false);
+    surface.illuminatedRoundedRect(layout.panel, radius, style.panelTop, style.panelBottom, style.panelLight);
+    const Rect edge{layout.panel.x + 0.5, layout.panel.y + 0.5,
+                    std::max(0.0, layout.panel.width - 1), std::max(0.0, layout.panel.height - 1)};
+    surface.gradientRoundedRect(edge, std::max(0.0, radius - 0.5), style.borderTop, style.borderBottom, false);
 }
 
 void renderSelection(RenderSurface &surface, const Rect &bounds, const RenderStyle &style,
-                     double radius, bool vertical) {
+                     double radius) {
     if (bounds.width <= 0 || bounds.height <= 0) return;
     if (style.selectedShadow.alpha > 0) {
-        auto shadow = bounds;
-        shadow.y += 1.0;
-        surface.shadowRoundedRect(shadow, radius, style.selectedShadow, 2.0);
+        const Rect shadow{bounds.x - 2, bounds.y, bounds.width + 4, bounds.height + 4};
+        surface.shadowRoundedRect(shadow, radius + 2, style.selectedShadow, 4.0);
     }
-    surface.gradientRoundedRect(bounds, radius, style.selectedTop, style.selectedBottom, true);
-    if (style.selectedEdgeTop.alpha > 0 || style.selectedEdgeBottom.alpha > 0)
-        surface.gradientRoundedRect(bounds, radius, style.selectedEdgeTop, style.selectedEdgeBottom, false);
-    if (style.selectionMarker.alpha > 0) {
-        const Rect marker = vertical
-            ? Rect{bounds.x + 3, bounds.y + 6, 2, std::max(0.0, bounds.height - 12)}
-            : Rect{bounds.x + 10, bounds.y + bounds.height - 4, std::max(0.0, bounds.width - 20), 2};
-        surface.roundedRect(marker, 1, style.selectionMarker, true);
+    surface.illuminatedRoundedRect(bounds, radius, style.selectedTop, style.selectedBottom, style.selectedLight);
+    if (style.selectedEdgeTop.alpha > 0 || style.selectedEdgeBottom.alpha > 0) {
+        const Rect edge{bounds.x + 0.5, bounds.y + 0.5,
+                        std::max(0.0, bounds.width - 1), std::max(0.0, bounds.height - 1)};
+        surface.gradientRoundedRect(edge, std::max(0.0, radius - 0.5),
+                                    style.selectedEdgeTop, style.selectedEdgeBottom, false);
     }
 }
 
@@ -50,7 +49,7 @@ void renderClipboard(RenderSurface &surface, const CandidateBarLayout &layout,
     for (const auto &separator : layout.separators) {
         surface.roundedRect(separator, 0.0, style.clipboardSeparator, true);
     }
-    renderSelection(surface, layout.selectedPill, style, style.clipboardSelectedRadius, true);
+    renderSelection(surface, layout.selectedPill, style, style.clipboardSelectedRadius);
 
     for (const auto &candidate : layout.candidates) {
         const auto &bounds = candidate.bounds;
@@ -197,30 +196,44 @@ RenderStyle RenderStyle::fromSettings(const core::ModernIMESettings &settings) {
     const bool dark = style.panel.red + style.panel.green + style.panel.blue < 1.5;
     const Color white{1, 1, 1, 1}, black{0, 0, 0, 1};
     if (settings.candidateStyle == core::CandidateStyle::Minimal) {
-        style.shadow.alpha = 0;
-        style.selectionMarker = style.selected;
-        style.selected = mix(style.panel, style.selected, dark ? 0.18 : 0.10);
+        const auto accent = style.selected;
+        // Matte finish: one low-relief tonal selection, a precise edge, and a
+        // restrained contact shadow. Simplicity retains the same craft as the
+        // other materials instead of removing all surface definition.
+        style.shadow.alpha = settings.candidateShape == core::CandidateShape::Square ? 0 : (dark ? 0.16 : 0.08);
+        style.selected = mix(style.panel, accent, dark ? 0.14 : 0.08);
         style.selected.alpha = 1;
-        style.selectedText = style.text;
-        style.selectedAnnotation = style.annotation;
-        style.clipboardSubmitBackground = mix(style.panel, style.selectionMarker, dark ? 0.24 : 0.16);
+        style.selectedText = mix(accent, style.text, 0.30);
+        style.selectedAnnotation = style.selectedText;
+        style.clipboardSubmitBackground = mix(style.panel, accent, dark ? 0.18 : 0.10);
         style.panel.alpha = 1;
-        style.border = mix(style.panel, style.text, dark ? 0.25 : 0.16);
-        style.panelTop = style.panelBottom = style.panel;
-        style.borderTop = style.borderBottom = style.border;
-        style.selectedTop = style.selectedBottom = style.selected;
-    } else if (settings.candidateStyle == core::CandidateStyle::Textured) {
-        style.shadow.alpha = settings.candidateShape == core::CandidateShape::Square ? 0 : (dark ? 0.24 : 0.17);
-        style.panelTop = mix(style.panel, white, dark ? 0.065 : 0.24);
-        style.panelBottom = mix(style.panel, style.selected, dark ? 0.025 : 0.035);
-        style.borderTop = mix(style.panel, white, dark ? 0.23 : 0.82);
+        style.border = mix(style.panel, style.text, dark ? 0.20 : 0.12);
+        style.panelTop = style.panel;
+        style.panelBottom = mix(style.panel, accent, dark ? 0.012 : 0.008);
+        style.borderTop = mix(style.panel, style.text, dark ? 0.26 : 0.10);
         style.borderBottom = style.border;
-        style.selectedTop = mix(style.selected, white, 0.04);
-        style.selectedBottom = mix(style.selected, black, 0.07);
-        style.selectedShadow = mix(style.selected, black, 0.35);
-        style.selectedShadow.alpha = 0.18;
-        style.selectedEdgeTop = {1, 1, 1, dark ? 0.14 : 0.24};
-        style.selectedEdgeBottom = {1, 1, 1, 0};
+        style.selectedTop = style.selectedBottom = style.selected;
+        style.selectedEdgeTop = mix(style.panel, accent, dark ? 0.25 : 0.16);
+        style.selectedEdgeBottom = mix(style.panel, accent, dark ? 0.20 : 0.12);
+    } else if (settings.candidateStyle == core::CandidateStyle::Textured) {
+        // Frosted ceramic rather than see-through glass: the dense surface
+        // protects small text, while a broad light and inset rim express depth.
+        style.shadow = mix(style.panel, black, dark ? 0.80 : 0.88);
+        style.shadow.alpha = settings.candidateShape == core::CandidateShape::Square ? 0 : (dark ? 0.32 : 0.22);
+        style.panelTop = mix(style.panel, white, dark ? 0.035 : 0.12);
+        style.panelBottom = mix(style.panel, style.selected, dark ? 0.025 : 0.045);
+        style.panelLight = {1, 1, 1, dark ? 0.055 : 0.55};
+        style.borderTop = mix(style.panel, white, dark ? 0.30 : 0.75);
+        style.borderBottom = mix(style.border, style.text, dark ? 0.12 : 0.08);
+        // Dark palettes have pale selections. Reverse the relief's lightness
+        // range to keep their dark foreground ink as crisp as light palettes.
+        style.selectedTop = mix(style.selected, dark ? white : black, dark ? 0.10 : 0.025);
+        style.selectedBottom = mix(style.selected, dark ? white : black, dark ? 0.025 : 0.15);
+        style.selectedLight = {1, 1, 1, dark ? 0.18 : 0.06};
+        style.selectedShadow = mix(style.selected, black, dark ? 0.75 : 0.70);
+        style.selectedShadow.alpha = dark ? 0.28 : 0.22;
+        style.selectedEdgeTop = {1, 1, 1, dark ? 0.70 : 0.40};
+        style.selectedEdgeBottom = {1, 1, 1, dark ? 0.08 : 0.04};
     }
     return style;
 }
@@ -234,7 +247,7 @@ void CandidateBarRenderer::render(RenderSurface &surface,
     }
 
     renderPanel(surface, layout, style, style.panelRadius);
-    renderSelection(surface, layout.selectedPill, style, style.selectedRadius, false);
+    renderSelection(surface, layout.selectedPill, style, style.selectedRadius);
 
     for (const auto &candidate : layout.candidates) {
         const Rect textBounds = candidate.selected ? layout.selectedPill

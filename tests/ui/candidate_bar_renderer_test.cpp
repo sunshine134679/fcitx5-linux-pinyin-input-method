@@ -138,12 +138,23 @@ int main() {
             auto materialSettings = settings;
             materialSettings.candidateStyle = preset.value;
             const auto material = modernime::ui::RenderStyle::fromSettings(materialSettings);
+            const auto illuminated = [](modernime::ui::Color base, const modernime::ui::Color &light) {
+                base.red += (light.red - base.red) * light.alpha;
+                base.green += (light.green - base.green) * light.alpha;
+                base.blue += (light.blue - base.blue) * light.alpha;
+                return base;
+            };
             assertTrue(contrast(material.panelTop, material.text) >= 4.5 &&
                            contrast(material.panelBottom, material.text) >= 4.5 &&
                            contrast(material.selectedTop, material.selectedText) >= 4.5 &&
                            contrast(material.selectedBottom, material.selectedText) >= 4.5 &&
                            contrast(material.clipboardSubmitBackground, material.selectedText) >= 4.5,
                        "every material retains text contrast at both ends of its lighting");
+            assertTrue(contrast(illuminated(material.panelTop, material.panelLight), material.text) >= 4.5 &&
+                           contrast(illuminated(material.panelBottom, material.panelLight), material.text) >= 4.5 &&
+                           contrast(illuminated(material.selectedTop, material.selectedLight), material.selectedText) >= 4.5 &&
+                           contrast(illuminated(material.selectedBottom, material.selectedLight), material.selectedText) >= 4.5,
+                       "material highlights retain readable contrast at their maximum intensity");
             RecordingSurface rendered;
             modernime::ui::CandidateBarRenderer::render(rendered, layout, material);
             assertTrue(rendered.textX == themed.textX && rendered.textBaseline == themed.textBaseline,
