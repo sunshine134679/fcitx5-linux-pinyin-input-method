@@ -300,7 +300,8 @@ component_assets = [rootfs / ("usr/share/modernime/components/" + path) for path
     "component_lookup.tsv", "数据来源与许可.md", "upstream/chaizi.LICENSE", "upstream/pinyin.LICENSE")]
 for asset in component_assets:
     assert asset.is_file() and asset.stat().st_size > 0, f"RPM missing component data/license: {asset}"
-expected_regular_files = 22 + len(context_assets) + len(icon_paths) + len(ext_paths) + len(component_assets)
+# The fixed payload now also includes /usr/bin/modernime-session-runner.
+expected_regular_files = 23 + len(context_assets) + len(icon_paths) + len(ext_paths) + len(component_assets)
 assert len(payload_reg_files) == expected_regular_files, (
     f"Expected {expected_regular_files} regular files in RPM payload, got {len(payload_reg_files)}"
 )

@@ -26,9 +26,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.7_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.2.7-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.7-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.8_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.2.8-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.8-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -744,11 +744,11 @@ modernime-session-init --remove-gnome-extension
 
 ## 版本更新记录
 
-### 未发布（2026-11-12）
+### v0.2.8（2026-11-12）
 
 - 为会话自启和初始化启动增加异常退出后的有限重启，修复 openEuler 初始化查询经 D-Bus 抢先启动非受管进程的问题。
 - 恢复最近采样的 Fcitx 输入法及激活状态，避免进程恢复后仍只能直接输入英文；正常退出不自动重启。
-- 已在 openEuler 24.03 LTS-SP4、UKUI/X11 的真实 GTK3 输入框验证中文输入、强杀后继续输入、英文模式保留及正常退出；这不等同于其他应用和桌面环境的完整验收。该机已部署会话脚本修复，RPM 基础包仍为 v0.2.7。
+- 已在 openEuler 24.03 LTS-SP4、UKUI/X11 的真实 GTK3 输入框验证中文输入、强杀后继续输入、英文模式保留及正常退出；这不等同于其他应用和桌面环境的完整验收。升级后的启用步骤与边界见 [v0.2.8 发布说明](docs/releases/v0.2.8-发布说明.md)。
 
 ### v0.2.7（2026-11-12）
 

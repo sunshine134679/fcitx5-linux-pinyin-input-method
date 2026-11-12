@@ -94,6 +94,7 @@ fi
 test -f "$prefix/bin/modernime-settings"
 test -f "$prefix/bin/modernime-session-init"
 test -x "$prefix/bin/modernime-session-init"
+test -x "$prefix/bin/modernime-session-runner"
 test -f "$current_addon_dir/modernime_fcitx5.so"
 test -f "$current_addon_dir/modernime_ui.so"
 test "$(tr -d '\0' < "$current_addon_dir/modernime_fcitx5.so" | head -n 1)" != "v0.1.6-fcitx5-plugin"
@@ -143,6 +144,7 @@ printf '=== 6. 验证卸载彻底性与用户数据安全 ===\n'
 # 软件程序与配置必须彻底移除
 test ! -e "$prefix/bin/modernime-settings"
 test ! -e "$prefix/bin/modernime-session-init"
+test ! -e "$prefix/bin/modernime-session-runner"
 test ! -e "$prefix/share/modernime"
 test ! -e "$prefix/share/fcitx5/addon/modernime.conf"
 test ! -e "$desktop_dir/modernime-settings.desktop"
