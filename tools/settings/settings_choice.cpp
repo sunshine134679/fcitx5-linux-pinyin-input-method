@@ -53,7 +53,7 @@ void modernime_choice_init(ModernimeChoice *self) {
     gtk_box_pack_end(GTK_BOX(content),
         gtk_image_new_from_icon_name("pan-down-symbolic", GTK_ICON_SIZE_MENU), FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(self), content);
-    state.popover = gtk_popover_new(widget);
+    state.popover = modernime::settings::createSettingsPopover(widget);
     gtk_style_context_add_class(gtk_widget_get_style_context(state.popover), "modernime-choice-popover");
     gtk_popover_set_position(GTK_POPOVER(state.popover), GTK_POS_BOTTOM);
     state.items = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);

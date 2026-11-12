@@ -191,6 +191,29 @@ int main(int argc, char **argv) {
                                 "确认并执行当前操作");
     assertResponseAccessibility(GTK_RESPONSE_NO, "取消",
                                 "关闭对话框且不执行操作");
+    installSettingsStyles();
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, nullptr);
+    gtk_widget_show_all(dialog);
+    gtk_window_present(GTK_WINDOW(dialog));
+    auto *response = gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_NO);
+    gtk_widget_grab_focus(response);
+    assert(waitUntil([&] { return gtk_widget_has_focus(response); }));
+    const auto outlineWidth = [&] {
+        drainEvents();
+        int width = 0;
+        gtk_style_context_get(gtk_widget_get_style_context(response),
+                              gtk_widget_get_state_flags(response),
+                              "outline-width", &width, nullptr);
+        return width;
+    };
+    // Mouse interaction retains the logical focus without a persistent ring.
+    // Returning to keyboard navigation must reveal that same focus immediately.
+    gtk_window_set_focus_visible(GTK_WINDOW(dialog), FALSE);
+    assert(outlineWidth() == 0 && gtk_widget_has_focus(response));
+    gtk_window_set_focus_visible(GTK_WINDOW(dialog), TRUE);
+    assert(outlineWidth() >= 2 && gtk_widget_has_focus(response));
+    gtk_window_set_focus_visible(GTK_WINDOW(dialog), FALSE);
+    assert(outlineWidth() == 0 && gtk_widget_has_focus(response));
     gtk_widget_destroy(dialog);
 
     auto *chooser = gtk_file_chooser_dialog_new(

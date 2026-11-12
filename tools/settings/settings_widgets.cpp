@@ -5,6 +5,7 @@
 #include "modernime/settings/settings_shell_state.h"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -74,7 +75,66 @@ void ensureFocusFallbackCleanup(GtkWidget *widget) {
                      nullptr);
 }
 
+struct PopoverFade {
+    guint tick = 0;
+    gint64 started = 0;
+};
+
+bool animationsEnabled(GtkWidget *widget) {
+    gboolean enabled = TRUE;
+    g_object_get(gtk_widget_get_settings(widget), "gtk-enable-animations", &enabled, nullptr);
+    return enabled;
+}
+
+void finishPopoverFade(GtkWidget *widget, PopoverFade *fade) {
+    if (fade->tick) gtk_widget_remove_tick_callback(widget, fade->tick);
+    fade->tick = 0;
+    gtk_widget_set_opacity(widget, 1.0);
+}
+
 } // namespace
+
+GtkWidget *createSettingsPopover(GtkWidget *relativeTo) {
+    auto *popover = gtk_popover_new(relativeTo);
+    // GTK3's translated transition repositions and allocates the window on
+    // every frame. Keep native modality/focus and fade at its final position.
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    gtk_popover_set_transitions_enabled(GTK_POPOVER(popover), FALSE);
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    auto *fade = new PopoverFade;
+    g_object_set_data_full(G_OBJECT(popover), "modernime-popover-fade", fade,
+        +[](gpointer data) { delete static_cast<PopoverFade *>(data); });
+    g_signal_connect_after(popover, "map", G_CALLBACK(+[](GtkWidget *widget, gpointer data) {
+        auto *state = static_cast<PopoverFade *>(data);
+        finishPopoverFade(widget, state);
+        if (!animationsEnabled(widget)) return;
+        state->started = g_get_monotonic_time();
+        gtk_widget_set_opacity(widget, 0.0);
+        state->tick = gtk_widget_add_tick_callback(widget,
+            +[](GtkWidget *view, GdkFrameClock *clock, gpointer value) -> gboolean {
+                auto *current = static_cast<PopoverFade *>(value);
+                const double progress = std::clamp(
+                    static_cast<double>(gdk_frame_clock_get_frame_time(clock) - current->started) / 150000.0, 0.0, 1.0);
+                if (!animationsEnabled(view) || progress >= 1.0) {
+                    current->tick = 0;
+                    gtk_widget_set_opacity(view, 1.0);
+                    return G_SOURCE_REMOVE;
+                }
+                gtk_widget_set_opacity(view, 1.0 - std::pow(1.0 - progress, 3.0));
+                return G_SOURCE_CONTINUE;
+            }, state, nullptr);
+    }), fade);
+    g_signal_connect(popover, "unmap", G_CALLBACK(+[](GtkWidget *widget, gpointer data) {
+        finishPopoverFade(widget, static_cast<PopoverFade *>(data));
+    }), fade);
+    g_signal_connect_object(gtk_widget_get_settings(popover), "notify::gtk-enable-animations",
+        G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {
+            auto *widget = GTK_WIDGET(data);
+            if (!animationsEnabled(widget)) finishPopoverFade(widget, static_cast<PopoverFade *>(
+                g_object_get_data(G_OBJECT(widget), "modernime-popover-fade")));
+        }), popover, GConnectFlags(0));
+    return popover;
+}
 
 void setAccessibleWidgetText(GtkWidget *widget, std::string_view name,
                              std::string_view description) {
@@ -177,6 +237,24 @@ void prependSettingsFocusChainChild(GtkWidget *container, GtkWidget *child) {
     }
 }
 
+void bindSettingsFocusVisibility(GtkWindow *window) {
+    constexpr const char *boundKey = "modernime-focus-visibility-bound";
+    if (!window || g_object_get_data(G_OBJECT(window), boundKey)) return;
+    g_object_set_data(G_OBJECT(window), boundKey, GINT_TO_POINTER(1));
+    const auto update = +[](GObject *object, GParamSpec *, gpointer) {
+        auto *widget = GTK_WIDGET(object);
+        auto *context = gtk_widget_get_style_context(widget);
+        if (gtk_window_get_focus_visible(GTK_WINDOW(widget)))
+            gtk_style_context_add_class(context, "modernime-keyboard-focus");
+        else
+            gtk_style_context_remove_class(context, "modernime-keyboard-focus");
+    };
+    // GTK owns the input modality. Mirror it for CSS instead of clearing the
+    // actual focus, which would break keyboard activation and focus return.
+    g_signal_connect(window, "notify::focus-visible", G_CALLBACK(update), nullptr);
+    update(G_OBJECT(window), nullptr, nullptr);
+}
+
 void setDialogResponseAccessibility(GtkDialog *dialog, int response,
                                     std::string_view name,
                                     std::string_view description) {
@@ -188,6 +266,7 @@ void setDialogResponseAccessibility(GtkDialog *dialog, int response,
     if (!GTK_IS_FILE_CHOOSER(dialog)) {
         addStyleClass(GTK_WIDGET(dialog), kSettingsWindowClass);
         addStyleClass(GTK_WIDGET(dialog), "modernime-dialog");
+        bindSettingsFocusVisibility(GTK_WINDOW(dialog));
     }
     auto *button = gtk_dialog_get_widget_for_response(dialog, response);
     auto *actions = button ? gtk_widget_get_parent(button) : nullptr;
@@ -961,6 +1040,9 @@ std::string_view settingsStyles() {
             border-radius: 8px;
             box-shadow: inset 0 0 0 2px @theme_selected_bg_color;
         }
+        .modernime-settings:not(.modernime-keyboard-focus) .modernime-focus-fallback {
+            box-shadow: none;
+        }
 
         entry.error,
         .modernime-settings button.modernime-shortcut-btn.error {
@@ -1056,7 +1138,8 @@ std::string_view settingsStyles() {
             background-color: @modernime_accent_surface;
             border-color: @modernime_control_border;
         }
-        .modernime-toggle-btn:focus, .modernime-card-btn:focus {
+        .modernime-keyboard-focus .modernime-toggle-btn:focus,
+        .modernime-keyboard-focus .modernime-card-btn:focus {
             border-color: @theme_selected_bg_color;
         }
         .modernime-toggle-btn label, .modernime-card-btn label { color: @theme_selected_bg_color; }
@@ -1208,7 +1291,13 @@ std::string_view settingsStyles() {
             box-shadow: none;
             transition-duration: 0ms;
         }
-        .modernime-settings button:focus {
+        .modernime-settings button:focus,
+        .modernime-settings switch:focus,
+        .modernime-settings checkbutton:focus check,
+        .modernime-settings radiobutton:focus radio {
+            outline-width: 0;
+        }
+        .modernime-settings.modernime-keyboard-focus button:focus {
             outline: 2px solid alpha(@theme_selected_bg_color, 0.6);
             /* Keep the focus stroke inside the control's paint/allocation box.
                An outset ring doubles its border and can survive partial redraws. */
@@ -1291,9 +1380,9 @@ std::string_view settingsStyles() {
             background-color: @modernime_disabled_fg;
             box-shadow: none;
         }
-        .modernime-settings switch:focus,
-        .modernime-settings checkbutton:focus check,
-        .modernime-settings radiobutton:focus radio {
+        .modernime-settings.modernime-keyboard-focus switch:focus,
+        .modernime-settings.modernime-keyboard-focus checkbutton:focus check,
+        .modernime-settings.modernime-keyboard-focus radiobutton:focus radio {
             outline: 2px solid @theme_selected_bg_color;
             outline-offset: -2px;
         }
@@ -1319,7 +1408,7 @@ std::string_view settingsStyles() {
             color: @theme_fg_color;
             border: 1px solid @borders;
             border-radius: 12px;
-            box-shadow: 0 8px 24px alpha(@modernime_shadow, 0.18);
+            box-shadow: 0 4px 12px alpha(@modernime_shadow, 0.14);
         }
         popover label, popover modelbutton, menu menuitem { color: @theme_fg_color; }
         popover modelbutton, menu menuitem {
@@ -1327,14 +1416,15 @@ std::string_view settingsStyles() {
             min-height: 24px;
             padding: 7px 12px;
         }
-        popover modelbutton:hover, popover modelbutton:focus,
+        popover modelbutton:hover, .modernime-keyboard-focus popover modelbutton:focus,
         menu menuitem:hover {
             background-color: @modernime_accent_surface;
             color: @modernime_nav_fg_color;
         }
-        popover modelbutton:hover label, popover modelbutton:focus label,
+        popover modelbutton:hover label, .modernime-keyboard-focus popover modelbutton:focus label,
         menu menuitem:hover label { color: @modernime_nav_fg_color; }
-        popover button:focus, popover modelbutton:focus {
+        .modernime-keyboard-focus popover button:focus,
+        .modernime-keyboard-focus popover modelbutton:focus {
             outline: 2px solid @theme_selected_bg_color;
             outline-offset: -2px;
         }
@@ -1374,7 +1464,7 @@ std::string_view settingsStyles() {
             min-width: 180px;
         }
         .modernime-choice-popover .modernime-palette-option:hover,
-        .modernime-choice-popover .modernime-palette-option:focus {
+        .modernime-keyboard-focus .modernime-choice-popover .modernime-palette-option:focus {
             background-color: @modernime_hover_color;
         }
         .modernime-choice-popover .modernime-palette-option:checked {
@@ -1537,7 +1627,7 @@ std::string_view settingsStyles() {
         .modernime-settings button.modernime-check-button image { margin-right: 6px; }
 
         /* Application prompts and FontButton windows are separate toplevels. */
-        messagedialog.modernime-dialog {
+        .modernime-dialog {
             border-top-left-radius: 0;
             border-top-right-radius: 0;
         }
@@ -1575,7 +1665,6 @@ std::string_view settingsStyles() {
             box-shadow: none;
         }
         tooltip label { color: @theme_fg_color; }
-        .modernime-font-dialog { border-radius: 12px; }
         .modernime-font-dialog headerbar {
             background-image: none;
             background-color: @theme_base_color;
@@ -1759,8 +1848,9 @@ void applySettingsTheme(std::string_view theme) {
             .modernime-settings .modernime-section,
             .modernime-settings .modernime-preview-card,
             popover, popover.background, menu { box-shadow: none; border-color: @borders; }
-            .modernime-settings button:focus,
-            popover button:focus, popover modelbutton:focus { outline: 2px solid @theme_selected_bg_color; }
+            .modernime-settings.modernime-keyboard-focus button:focus,
+            .modernime-keyboard-focus popover button:focus,
+            .modernime-keyboard-focus popover modelbutton:focus { outline: 2px solid @theme_selected_bg_color; }
             .modernime-settings entry:focus, .modernime-settings spinbutton:focus {
                 box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
             }

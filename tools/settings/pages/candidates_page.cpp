@@ -11,6 +11,7 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -669,6 +670,7 @@ private:
         displayedLayout = previewLayout;
         displayedStyle = renderStyle;
         displayedCanvasWidth = metrics.canvasWidth;
+        previewFrame.reset();
         if (candidatePreview != nullptr) gtk_widget_queue_draw(candidatePreview);
     }
 
@@ -750,16 +752,34 @@ private:
         const double scale = std::min(1.0, gtk_widget_get_allocated_width(impl->candidatePreview) /
                                              std::max(1.0, impl->displayedCanvasWidth));
         cairo_save(context);
-        cairo_scale(context, scale, scale);
         if (impl->previewTick != 0) {
+            cairo_scale(context, scale, scale);
             auto clip = impl->displayedLayout.panel;
             clip.x += impl->metrics.horizontalPadding;
             clip.width = std::max(0.0, clip.width - 2.0 * impl->metrics.horizontalPadding);
             PreviewRenderSurface surface(context, clip);
             ui::CandidateBarRenderer::render(surface, impl->displayedLayout, impl->displayedStyle);
         } else {
-            ui::CairoRenderSurface surface(context);
-            ui::CandidateBarRenderer::render(surface, impl->previewLayout, impl->renderStyle);
+            // Popover movement exposes this preview on every frame. Reuse its
+            // settled pixels instead of laying out text and painting shadows
+            // again while an unrelated menu is animating above it.
+            const int deviceScale = gtk_widget_get_scale_factor(impl->candidatePreview);
+            const int width = gtk_widget_get_allocated_width(impl->candidatePreview) * deviceScale;
+            const int height = gtk_widget_get_allocated_height(impl->candidatePreview) * deviceScale;
+            if (!impl->previewFrame || cairo_image_surface_get_width(impl->previewFrame.get()) != width ||
+                cairo_image_surface_get_height(impl->previewFrame.get()) != height) {
+                impl->previewFrame.reset(cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height));
+                cairo_surface_set_device_scale(impl->previewFrame.get(), deviceScale, deviceScale);
+                auto *frame = cairo_create(impl->previewFrame.get());
+                cairo_scale(frame, scale, scale);
+                {
+                    ui::CairoRenderSurface surface(frame);
+                    ui::CandidateBarRenderer::render(surface, impl->previewLayout, impl->renderStyle);
+                }
+                cairo_destroy(frame);
+            }
+            cairo_set_source_surface(context, impl->previewFrame.get(), 0, 0);
+            cairo_paint(context);
         }
         cairo_restore(context);
         return FALSE;
@@ -844,6 +864,7 @@ private:
     gint64 previewStarted = 0;
     gint64 previewDuration = 0;
     guint previewTick = 0;
+    std::unique_ptr<cairo_surface_t, decltype(&cairo_surface_destroy)> previewFrame{nullptr, cairo_surface_destroy};
     int previewSample = -1;
     int previewAllocatedWidth = 0;
     bool previewInitialized = false;

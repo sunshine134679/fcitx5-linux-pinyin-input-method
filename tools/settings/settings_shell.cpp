@@ -399,6 +399,7 @@ private:
         gtk_widget_set_size_request(windowOwner.get(), minimumSize.width,
                                     minimumSize.height);
         addStyleClass(windowOwner.get(), kSettingsWindowClass);
+        bindSettingsFocusVisibility(GTK_WINDOW(windowOwner.get()));
         installSettingsStyles();
         applySettingsTheme(model.settings().clientTheme);
         appliedTheme = model.settings().clientTheme;
@@ -466,7 +467,7 @@ private:
         gtk_widget_set_margin_bottom(searchEntry, 10);
         gtk_box_pack_start(GTK_BOX(sidebar), searchEntry, FALSE, FALSE, 0);
 
-        searchPopover = gtk_popover_new(searchEntry);
+        searchPopover = createSettingsPopover(searchEntry);
         g_object_set_data_full(G_OBJECT(searchPopover), "modernime-settings-target",
                                g_strdup("settings-search-popover"), g_free);
         // Search suggestions must leave the entry usable for continuous typing.
@@ -644,7 +645,7 @@ private:
     }
 
     void addInputPageMenu() {
-        detail::GtkWidgetGuard menuGuard(gtk_popover_new(nullptr));
+        detail::GtkWidgetGuard menuGuard(createSettingsPopover(nullptr));
         auto *menu = menuGuard.get();
         auto *defaults = gtk_model_button_new();
         g_object_set(defaults, "text", "恢复默认", nullptr);

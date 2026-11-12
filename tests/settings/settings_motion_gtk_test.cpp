@@ -179,8 +179,14 @@ int main(int argc, char **argv) {
         frames(250);
         settings::setSettingsChoiceActive(theme, 1);
         assert(revealing());
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(theme), TRUE);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(theme), FALSE);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(theme), TRUE);
+        assert(gtk_widget_get_opacity(popover) < 1.0);
         g_object_set(gtkSettings, "gtk-enable-animations", FALSE, nullptr);
         assert(!revealing());
+        assert(gtk_widget_get_opacity(popover) == 1.0);
+        gtk_popover_popdown(GTK_POPOVER(popover));
         settings::setSettingsChoiceActive(theme, 6);
         assert(!revealing());
         settings::setSettingsChoiceActive(theme, 5);

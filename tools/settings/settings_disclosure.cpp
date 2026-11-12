@@ -76,7 +76,7 @@ void installArrowStyle(GtkWidget *widget) {
         }
         .modernime-disclosure-arrow.expanded {
             -gtk-icon-transform: rotate(90deg);
-            transition-duration: 180ms;
+            transition-duration: 150ms;
         }
         .modernime-disclosure-arrow.half-turn.expanded {
             -gtk-icon-transform: rotate(180deg);
@@ -85,7 +85,7 @@ void installArrowStyle(GtkWidget *widget) {
             transition: -gtk-icon-transform 140ms ease-out;
         }
         .modernime-disclosure-expander > title > arrow:checked {
-            transition-duration: 180ms;
+            transition-duration: 150ms;
         }
         .modernime-disclosure-arrow.immediate,
         .modernime-disclosure-expander.immediate > title > arrow {
@@ -126,7 +126,7 @@ void setSettingsRevealed(GtkWidget *widget, bool expanded, bool animate) {
     auto *revealer = GTK_REVEALER(widget);
     animate = animate && animationsEnabled(widget) && gtk_widget_get_mapped(widget);
     gtk_revealer_set_transition_type(revealer, GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    gtk_revealer_set_transition_duration(revealer, animate ? (expanded ? 180 : 140) : 0);
+    gtk_revealer_set_transition_duration(revealer, animate ? (expanded ? 150 : 140) : 0);
     auto *child = gtk_bin_get_child(GTK_BIN(revealer));
     const bool settled = expanded ? gtk_revealer_get_child_revealed(revealer)
         : child == nullptr || !gtk_widget_get_child_visible(child);

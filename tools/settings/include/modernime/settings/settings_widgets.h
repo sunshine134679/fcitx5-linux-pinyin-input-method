@@ -23,6 +23,8 @@ inline constexpr std::string_view kSettingsShortcutButtonClass =
     "modernime-shortcut-btn";
 
 void installSettingsStyles();
+void bindSettingsFocusVisibility(GtkWindow *window);
+GtkWidget *createSettingsPopover(GtkWidget *relativeTo);
 void applySettingsTheme(std::string_view theme);
 GtkWidget *createSettingsChoice();
 void appendSettingsChoice(GtkWidget *choice, std::string_view text);
