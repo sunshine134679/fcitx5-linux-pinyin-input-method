@@ -4,6 +4,9 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/modernime-session-test.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT
 mkdir -p "$test_root/bin" "$test_root/prefix/lib/fcitx5" "$test_root/home"
+mkdir -p "$test_root/prefix/bin" "$test_root/runtime"
+install -m 755 "$project_root/scripts/modernime-session-runner" "$test_root/prefix/bin/"
+: > "$test_root/bus"
 : > "$test_root/prefix/lib/fcitx5/modernime_fcitx5.so"
 cat > "$test_root/bin/fcitx5" <<'EOF'
 #!/usr/bin/env bash
@@ -12,6 +15,12 @@ printf 'start|%s|%s|%s|%s\n' "$*" "${FCITX_ADDON_DIRS-}" "${XDG_DATA_DIRS-}" "${
 EOF
 cat > "$test_root/bin/fcitx5-remote" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1-}" == --help ]]; then printf '%s\n' '--check'; exit 0; fi
+if [[ "${1-}" != --check ]]; then
+    printf 'unguarded remote call could bypass the session runner\n' >&2
+    exit 1
+fi
+shift
 printf 'remote:%s|%s\n' "$*" "${XDG_CONFIG_HOME-}" >> "$FAKE_LOG"
 if [[ "${FAKE_HANG:-0}" == 1 ]]; then exec sleep 10; fi
 [[ -f "$FAKE_RUNNING" ]] || exit 1
@@ -24,7 +33,7 @@ EOF
 chmod +x "$test_root/bin/"*
 export HOME="$test_root/home" MODERNIME_PREFIX="$test_root/prefix"
 export MODERNIME_CONFIG_HOME="$test_root/config" XDG_CONFIG_HOME="$test_root/wrong-config"
-export PATH="$test_root/bin:/usr/bin:/bin" DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/fake/bus
+export PATH="$test_root/bin:/usr/bin:/bin" DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS="unix:path=$test_root/bus" XDG_RUNTIME_DIR="$test_root/runtime"
 export XDG_DATA_DIRS=/usr/local/share:/usr/share FAKE_LOG="$test_root/calls" FAKE_RUNNING="$test_root/running"
 unset MODERNIME_SKIP_FCITX_RESTART
 bash "$project_root/scripts/modernime-session-init" > "$test_root/result"
@@ -69,6 +78,8 @@ grep -F 'could not' "$test_root/hanging" >/dev/null
 export MODERNIME_PREFIX="$test_root/prefix with space"
 export MODERNIME_CONFIG_HOME="$test_root/config with space"
 mkdir -p "$MODERNIME_PREFIX/lib/fcitx5"
+mkdir -p "$MODERNIME_PREFIX/bin"
+install -m 755 "$project_root/scripts/modernime-session-runner" "$MODERNIME_PREFIX/bin/"
 : > "$MODERNIME_PREFIX/lib/fcitx5/modernime_fcitx5.so"
 MODERNIME_SKIP_FCITX_RESTART=1 bash "$project_root/scripts/modernime-session-init" >/dev/null
 ! grep -F -- "-u modernime-ui" "$MODERNIME_CONFIG_HOME/autostart/modernime-fcitx5-session.desktop"

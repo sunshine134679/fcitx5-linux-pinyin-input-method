@@ -39,6 +39,7 @@ FULL_BASELINE_REQUIRED = [
     "modernime_install_environment",
     "modernime_settings_install",
     "modernime_session_init",
+    "modernime_session_runner",
     "modernime_install_transaction",
     "modernime_install_channel_collision",
     "modernime_verify_release_install_upgrade",

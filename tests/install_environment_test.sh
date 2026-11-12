@@ -117,6 +117,7 @@ grep -F "remote:|DISPLAY=:0|DBUS=$DBUS_SESSION_BUS_ADDRESS|RUNTIME=$XDG_RUNTIME_
 grep -F "|DATA=$test_root/prefix/share:/usr/local/share:/usr/share" "$log_file" >/dev/null
 grep -F 'XDG_DATA_DIRS=' "$test_root/config/environment.d/90-modernime.conf" >/dev/null
 grep -F 'XDG_DATA_DIRS=' "$test_root/config/autostart/modernime-fcitx5-session.desktop" >/dev/null
+grep -F '/bin/modernime-session-runner' "$test_root/config/autostart/modernime-fcitx5-session.desktop" >/dev/null
 
 # Verify modernime-session-init works for independent user session initialization
 session_config="$test_root/session-config"

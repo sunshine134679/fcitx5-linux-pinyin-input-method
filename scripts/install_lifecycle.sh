@@ -622,7 +622,7 @@ modernime_integrate() {
         local autostart_dir="$config_home/autostart"
         local autostart_file="$autostart_dir/modernime-fcitx5-session.desktop"
         mkdir -p -- "$autostart_dir" || return 1
-        local autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d"
+        local autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") $(modernime_desktop_argument "$prefix/bin/modernime-session-runner")"
         {
             printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
             printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
@@ -714,6 +714,7 @@ EOF
             printf '%s\n' "$prefix/share/fcitx5/inputmethod/modernime.conf"
             printf '%s\n' "$prefix/bin/modernime-settings"
             printf '%s\n' "$prefix/bin/modernime-session-init"
+            printf '%s\n' "$prefix/bin/modernime-session-runner"
             printf '%s\n' "$prefix/share/modernime/install_state.sh"
             printf '%s\n' "$prefix/share/modernime/gnome_extension.py"
             printf '%s\n' "$prefix/share/modernime/install_lifecycle.sh"

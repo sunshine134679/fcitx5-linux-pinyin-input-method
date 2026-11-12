@@ -128,6 +128,7 @@ modernime_enable_warnings(modernime-settings)
 install(TARGETS modernime-settings RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(PROGRAMS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-session-init
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-session-runner
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-data-guard
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-migrate-channel
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/modernime-update

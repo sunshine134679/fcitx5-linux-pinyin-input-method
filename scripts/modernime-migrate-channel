@@ -430,6 +430,7 @@ record_target_dir_metadata() {
 for pre_file in \
     "$target_prefix/bin/modernime-settings" \
     "$target_prefix/bin/modernime-session-init" \
+    "$target_prefix/bin/modernime-session-runner" \
     "$target_prefix/bin/modernime-data-guard" \
     "$target_prefix/bin/modernime-migrate-channel" \
     "$target_prefix/bin/modernime-update" \
@@ -590,6 +591,7 @@ cleanup_target_prefix_files() {
     for file in \
         "$pfx/bin/modernime-settings" \
         "$pfx/bin/modernime-session-init" \
+        "$pfx/bin/modernime-session-runner" \
         "$pfx/bin/modernime-data-guard" \
         "$pfx/bin/modernime-migrate-channel" \
         "$pfx/bin/modernime-update" \

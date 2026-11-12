@@ -977,6 +977,10 @@ if(BASH_EXECUTABLE)
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/session_init_test.sh
     )
+    add_test(NAME modernime_session_runner
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/session_runner_test.py"
+    )
+    set_tests_properties(modernime_session_runner PROPERTIES TIMEOUT 20)
     add_test(NAME modernime_settings_install
         COMMAND ${BASH_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/settings/settings_install_test.sh

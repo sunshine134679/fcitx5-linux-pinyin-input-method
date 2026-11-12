@@ -93,6 +93,7 @@ fi
 %license LICENSE
 %{_bindir}/modernime-settings
 %{_bindir}/modernime-session-init
+%{_bindir}/modernime-session-runner
 %{_datadir}/modernime/install_state.sh
 %{_datadir}/modernime/gnome_extension.py
 %{_bindir}/modernime-data-guard

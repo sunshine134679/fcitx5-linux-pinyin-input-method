@@ -104,7 +104,7 @@ env_tmp=$(mktemp "$environment_dir/.modernime-env.XXXXXX")
 # 4. Write autostart entry
 mkdir -p "$autostart_dir"
 auto_tmp=$(mktemp "$autostart_dir/.modernime-auto.XXXXXX")
-autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") fcitx5 -d"
+autostart_exec="env $(modernime_desktop_argument "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir") $(modernime_desktop_argument "XDG_DATA_DIRS=$data_directories") $(modernime_desktop_argument "XDG_CONFIG_HOME=$config_home") $(modernime_desktop_argument "XDG_DATA_HOME=$data_home") $(modernime_desktop_argument "$prefix/bin/modernime-session-runner")"
 {
     printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=ModernIME Fcitx5'
     printf '%s\n' 'Comment=Start Fcitx5 with the ModernIME candidate bar'
@@ -307,8 +307,15 @@ else
     fcitx_environment=(env "FCITX_ADDON_DIRS=$prefix_addon_dir:$system_addon_dir"
                        "XDG_DATA_DIRS=$data_directories" "XDG_CONFIG_HOME=$config_home"
                        "XDG_DATA_HOME=$data_home")
+    remote_check=()
+    if command -v timeout >/dev/null 2>&1 &&
+       "${fcitx_environment[@]}" timeout --kill-after=0.5s 1s fcitx5-remote --help 2>/dev/null | grep -q -- '--check'; then
+        remote_check=(--check)
+    fi
     run_remote() {
-        "${fcitx_environment[@]}" timeout --kill-after=0.5s 1s fcitx5-remote "$@" 2>/dev/null
+        # --check resolves an existing owner and never D-Bus-activates an unowned daemon.
+        # Keep activation compatible with older Fcitx5 versions without this option.
+        "${fcitx_environment[@]}" timeout --kill-after=0.5s 1s fcitx5-remote "${remote_check[@]}" "$@" 2>/dev/null
     }
     if ! command -v fcitx5-remote >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
         printf 'Notice: fcitx5-remote or timeout not found; runtime activation skipped.\n'
@@ -321,7 +328,7 @@ else
         else
             case "$current_state" in
                 0|1|2) run_remote -r >/dev/null || true ;;
-                *) "${fcitx_environment[@]}" timeout --kill-after=1s 3s fcitx5 -d >/dev/null 2>&1 || true ;;
+                *) nohup "${fcitx_environment[@]}" "$prefix/bin/modernime-session-runner" </dev/null >/dev/null 2>&1 & ;;
             esac
             activated=false
             for attempt in {1..10}; do

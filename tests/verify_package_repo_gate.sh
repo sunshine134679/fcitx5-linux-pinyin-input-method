@@ -63,6 +63,7 @@ for required_path in \
     "./usr/bin/modernime-settings" \
     "./usr/bin/modernime-update" \
     "./usr/bin/modernime-session-init" \
+    "./usr/bin/modernime-session-runner" \
     "./usr/share/modernime/install_state.sh" \
     "./usr/share/modernime/gnome_extension.py" \
     "./usr/bin/modernime-data-guard" \
@@ -335,6 +336,7 @@ if command -v rpm >/dev/null 2>&1; then
         "/usr/bin/modernime-settings" \
         "/usr/bin/modernime-update" \
         "/usr/bin/modernime-session-init" \
+        "/usr/bin/modernime-session-runner" \
         "/usr/share/modernime/install_state.sh" \
         "/usr/share/modernime/gnome_extension.py" \
         "/usr/bin/modernime-data-guard" \
@@ -358,6 +360,7 @@ for rpm_req_file in \
     "usr/bin/modernime-settings" \
     "usr/bin/modernime-update" \
     "usr/bin/modernime-session-init" \
+    "usr/bin/modernime-session-runner" \
     "usr/share/modernime/install_state.sh" \
     "usr/share/modernime/gnome_extension.py" \
     "usr/bin/modernime-data-guard" \

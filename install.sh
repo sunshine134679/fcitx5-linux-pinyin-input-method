@@ -208,6 +208,7 @@ check_native_package_collision() {
     local candidate_files=(
         "$prefix/bin/modernime-settings"
         "$prefix/bin/modernime-session-init"
+        "$prefix/bin/modernime-session-runner"
         "$prefix/bin/modernime-data-guard"
         "$prefix/bin/modernime-migrate-channel"
         "$prefix/bin/modernime-update"
