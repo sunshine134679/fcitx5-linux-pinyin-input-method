@@ -314,7 +314,8 @@ private:
         addStatusRow(labels[2], &inputMethod);
         addStatusRow(labels[3], &modernime);
         gtk_box_pack_start(GTK_BOX(content), statusRows, FALSE, FALSE, 0);
-        technicalMessage = wrappedLabel("正在读取详细结果…");
+        technicalMessage = wrappedLabel("");
+        gtk_widget_set_no_show_all(technicalMessage, TRUE);
         gtk_label_set_selectable(GTK_LABEL(technicalMessage), TRUE);
         addStyleClass(technicalMessage, "modernime-check-details-message");
         gtk_box_pack_start(GTK_BOX(content), technicalMessage, FALSE, FALSE, 0);
@@ -420,6 +421,7 @@ private:
                  runtimeStatus.message.empty()
                      ? "无法读取 Fcitx5 状态"
                      : runtimeStatus.message.c_str());
+        gtk_widget_set_visible(technicalMessage, !runtimeStatus.available || !runtimeStatus.running);
 
         if (!runtimeStatus.available) {
             setSummary("Fcitx5 检查工具不可用",
@@ -473,6 +475,7 @@ private:
                  message == nullptr || *message == '\0'
                      ? "无法读取 Fcitx5 状态"
                      : message);
+        gtk_widget_show(technicalMessage);
         setSummary("未能读取运行状态", "请刷新重试，或展开运行详情查看原因。",
                    "warning");
     }
