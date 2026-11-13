@@ -94,6 +94,24 @@ TEST(EnglishLearningAdmission, BuiltinFirstUseAndConfirmedWordKeepSuppressionAnd
     EXPECT_TRUE(contains(snapshot.recallEnglishWords("gnue", 3, kNow), "gnueabihf"));
 }
 
+TEST(EnglishLearningAdmission, BuiltinConsonantTermsRecallAfterFirstUseWithoutChangingArbitration) {
+    for (const auto &[word, prefix] : std::vector<std::pair<std::string, std::string>>{
+             {"http", "ht"}, {"html", "htm"}, {"sql", "sq"}, {"HTTP", "HT"}}) {
+        SCOPED_TRACE(word);
+        // These entries exist in the built-in short-word table, but the
+        // arbitration heuristic intentionally rejects vowel-less spellings.
+        ASSERT_GT(core::EnglishDictionary::wordPopularityWeight(word == "HTTP" ? "http" : word), 0.0);
+        EXPECT_FALSE(core::EnglishDictionary::isEnglishWord(word));
+        core::LearningSnapshot observed;
+        observed.recordSelection(word, word, {}, {}, kNow);
+        EXPECT_TRUE(contains(observed.recallEnglishWords(prefix, 3, kNow), word));
+        const core::LearningSnapshot loaded(observed.entries());
+        EXPECT_TRUE(contains(loaded.recallEnglishWords(prefix, 3, kNow), word));
+        ASSERT_NE(loaded.entry(word, word, {}, {}), nullptr);
+        EXPECT_EQ(loaded.entry(word, word, {}, {})->frequency, 1);
+    }
+}
+
 class EnglishLearningAdmissionPersistence : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -147,6 +165,63 @@ std::size_t rank(const core::CandidatePage &page, std::string_view text) {
     for (std::size_t i = 0; i < page.items.size(); ++i)
         if (page.items[i].text == text) return i;
     return page.items.size();
+}
+
+TEST_F(EnglishLearningAdmissionPersistence, BuiltinConsonantCompletionRemainsSelectableAfterOneUseAndReopen) {
+    for (const bool lmdb : {false, true}) {
+        for (const auto &[word, prefix] : std::vector<std::pair<std::string, std::string>>{
+                 {"http", "ht"}, {"html", "htm"}}) {
+            SCOPED_TRACE(word + (lmdb ? " LMDB" : " SQLite"));
+            const auto directory = root / (word + (lmdb ? "-lmdb" : "-sqlite"));
+            std::filesystem::create_directories(directory);
+            pinyin::PinyinDataPaths paths;
+            paths.learningStore = (directory / (lmdb ? "learning.lmdb" : "learning.sqlite3")).string();
+            paths.userDictionary = (directory / "empty-user.dict").string();
+            paths.dictionaryPacks = (directory / "empty-packs").string();
+            paths.bundledDictionaryPacks = (directory / "empty-bundled-packs").string();
+            paths.extensionDictionary = MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY;
+            paths.hotwordDictionary = MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY;
+            {
+                pinyin::PinyinCandidateProvider provider(paths);
+                AdmissionHost host;
+                fcitx5::ModernIMEController controller(host, &provider);
+                controller.setContext("", "");
+                for (const char key : word)
+                    ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Character, key}));
+                ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Enter}));
+                ASSERT_EQ(host.committed, word);
+                ASSERT_TRUE(provider.flush());
+                const auto snapshot = provider.sharedResources()->learning->snapshot();
+                ASSERT_NE(snapshot->entry(word, word, {}, {}), nullptr);
+                ASSERT_EQ(snapshot->entry(word, word, {}, {})->frequency, 1);
+                controller.setContext("", "");
+                for (const char key : prefix)
+                    ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Character, key}));
+                const auto index = rank(controller.page(), word);
+                ASSERT_LT(index, controller.page().items.size());
+                EXPECT_EQ(index, 2u);
+                EXPECT_EQ(controller.page().items[index].consumedInputBytes, prefix.size());
+                ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Escape}));
+            }
+            pinyin::PinyinCandidateProvider reopened(paths);
+            AdmissionHost host;
+            fcitx5::ModernIMEController controller(host, &reopened);
+            controller.setContext("", "");
+            for (const char key : prefix)
+                ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Character, key}));
+            const auto index = rank(controller.page(), word);
+            ASSERT_EQ(index, 2u);
+            EXPECT_EQ(controller.page().items[index].fullPinyin, word);
+            EXPECT_EQ(controller.page().items[index].consumedInputBytes, prefix.size());
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Digit, 0, '3'}));
+            EXPECT_EQ(host.committed, word);
+            EXPECT_TRUE(controller.page().rawInput.empty());
+            ASSERT_TRUE(reopened.flush());
+            const auto snapshot = reopened.sharedResources()->learning->snapshot();
+            ASSERT_NE(snapshot->entry(word, word, {}, {}), nullptr);
+            EXPECT_EQ(snapshot->entry(word, word, {}, {})->frequency, 2);
+        }
+    }
 }
 
 TEST_F(EnglishLearningAdmissionPersistence, FullRawCommitsAccumulateBeforePrefixCompletion) {

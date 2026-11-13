@@ -1133,7 +1133,7 @@ std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
         // automatic suggestion. Keep its stored facts and require repeated
         // use before it consumes any recall/ranking budget. Built-in English
         // words already have lexical evidence and retain immediate learning.
-        if (totalFreq < 2 && !EnglishDictionary::isEnglishWord(phrase)) {
+        if (totalFreq < 2 && !EnglishDictionary::containsWord(phrase)) {
             continue;
         }
         const double baseBoost = boostAt(phrase, phrase, nowMs);

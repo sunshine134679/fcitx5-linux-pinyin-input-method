@@ -161,6 +161,8 @@ def main():
         ('cancel-restart', [('type', 'nihao'), ('key', 'Escape'), ('type', 'zhongwen'), ('key', '1')], '中文'),
         ('initials', [('type', 'nh'), ('key', 'space')], '你好'),
         ('technical-prefix-boundary', [('type', 'syst'), ('key', 'space')], 'system'),
+        ('builtin-http-first-use', [('type', 'http'), ('key', 'Return'), ('type', 'ht'), ('key', '3')], 'httphttp'),
+        ('builtin-html-first-use', [('type', 'html'), ('key', 'Return'), ('type', 'htm'), ('key', '3')], 'htmlhtml'),
     ]
     if args.case:
         assert set(args.case) <= {case[0] for case in cases}, '未知场景名'
@@ -195,7 +197,7 @@ def main():
                                         run('xdotool', 'type', '--clearmodifiers', '--delay', '25', value)
                                         if kind != 'terminal':
                                             wait(lambda: read(state).get('preedit'), kind + ' 组合文本')
-                                        if index < 2:
+                                        if index < 2 or name.startswith('builtin-'):
                                             capture(kind + '-' + name + '.png')
                                     else:
                                         keys(value)

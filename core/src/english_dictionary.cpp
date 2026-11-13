@@ -74162,6 +74162,20 @@ bool isAllowedShortEnglishWord(std::string_view lowerWord) noexcept {
 
 } // namespace
 
+bool EnglishDictionary::containsWord(std::string_view word) noexcept {
+    if (word.empty() || word.size() > 64) {
+        return false;
+    }
+    char buffer[64];
+    for (std::size_t i = 0; i < word.size(); ++i) {
+        const char c = word[i];
+        buffer[i] = c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
+    }
+    const std::string_view lowerWord(buffer, word.size());
+    return isAllowedShortEnglishWord(lowerWord) ||
+           std::binary_search(std::begin(kEnglishWords), std::end(kEnglishWords), lowerWord);
+}
+
 bool EnglishDictionary::isEnglishWord(std::string_view word) noexcept {
     if (word.size() < 3 || word.size() > 20) {
         return false;

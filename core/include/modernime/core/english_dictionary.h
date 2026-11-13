@@ -7,6 +7,9 @@ namespace modernime::core {
 
 class EnglishDictionary final {
 public:
+    // Case-insensitive built-in lexicon membership, without the vowel and
+    // short-code restrictions used for Chinese/English arbitration.
+    static bool containsWord(std::string_view word) noexcept;
     static bool isEnglishWord(std::string_view word) noexcept;
     static bool isCommonWord(std::string_view word) noexcept;
     static std::vector<std::string_view> predictWords(std::string_view prefix,
