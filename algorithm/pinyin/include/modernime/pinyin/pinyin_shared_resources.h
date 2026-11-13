@@ -73,7 +73,9 @@ public:
     }
 
     std::shared_ptr<const core::LearningSnapshot> visibleLearning() const;
-    std::uint64_t learningForgetGeneration() const;
+    // Input-thread boundary: reconcile shared formation counts once, before a
+    // Provider records new commits. No storage I/O or per-Provider state here.
+    std::uint64_t refreshLearningForgetState();
     core::ForgottenPreferences forgottenSince(std::uint64_t generation) const;
     core::LearningWriter *ensureLearningWriter(bool synchronousInitialLoad = true);
     core::EnglishDefinitionDictionary *ensureEnglishDefinitionDictionary();
@@ -111,6 +113,7 @@ private:
     core::PinyinScheme pinyinScheme_ = core::PinyinScheme::Full;
     std::atomic<std::uint64_t> dictionaryGeneration_{1};
     std::atomic<std::int64_t> learningRevision_{0};
+    std::uint64_t phraseStatsForgetGeneration_ = 0;
     std::function<void()> onReadyCallback_;
     mutable std::recursive_mutex resourceMutex_;
     bool preparingWriter_ = false;

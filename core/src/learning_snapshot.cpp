@@ -270,6 +270,30 @@ public:
                            std::string_view pinyin);
 
 private:
+    void refreshWeakestEntry();
+    template<typename Visitor>
+    void visitCurrentEntries(Visitor &&visit) const {
+        std::unordered_set<std::string_view> unapplied;
+        unapplied.reserve(delta_.size());
+        for (const auto &[key, entry] : delta_) {
+            (void)entry;
+            unapplied.insert(key);
+        }
+        if (baseEntries_) for (const auto &base : *baseEntries_) {
+            if (!unapplied.empty()) {
+                const auto key = variantKey(base.phrase, base.pinyin,
+                                             base.contextBefore, base.contextAfter);
+                const auto found = delta_.find(key);
+                if (found != delta_.end()) {
+                    visit(found->second);
+                    unapplied.erase(key);
+                    continue;
+                }
+            }
+            visit(base);
+        }
+        for (const auto &key : unapplied) visit(delta_.find(std::string(key))->second);
+    }
     std::vector<const LearningEntry *> collectVariants(
         std::string_view phrase, std::string_view normalizedPinyin) const;
     std::vector<const LearningEntry *> collectExactVariants(
@@ -289,11 +313,10 @@ private:
     std::size_t totalEntryLimit_ = kMaxLearningEntries;
     std::size_t deltaNewCount_ = 0;
     std::uint32_t selectionsSincePrune_ = 0;
+    std::optional<LearningEntry> weakestEntry_;
     struct MaterializedCache final {
         std::once_flag initialized;
         std::vector<LearningEntry> entries;
-        std::size_t weakestIndex = 0;
-        bool hasWeakest = false;
     };
     std::shared_ptr<MaterializedCache> materializedCache_;
 };
@@ -407,6 +430,7 @@ LearningSnapshotShard::LearningSnapshotShard(std::vector<LearningEntry> entries,
     // assignment racing a copy-on-write enqueue.
     baseRecallIndex_ = std::make_shared<RecallIndexCache>();
     ensureRecallIndex();
+    refreshWeakestEntry();
 }
 
 LearningSnapshotShard::LearningSnapshotShard(const LearningSnapshotShard &other)
@@ -418,6 +442,7 @@ LearningSnapshotShard::LearningSnapshotShard(const LearningSnapshotShard &other)
       totalEntryLimit_(other.totalEntryLimit_),
       deltaNewCount_(other.deltaNewCount_),
       selectionsSincePrune_(other.selectionsSincePrune_),
+      weakestEntry_(other.weakestEntry_),
       materializedCache_(other.materializedCache_) {}
 
 LearningSnapshotShard &LearningSnapshotShard::operator=(const LearningSnapshotShard &other) {
@@ -430,6 +455,7 @@ LearningSnapshotShard &LearningSnapshotShard::operator=(const LearningSnapshotSh
         totalEntryLimit_ = other.totalEntryLimit_;
         deltaNewCount_ = other.deltaNewCount_;
         selectionsSincePrune_ = other.selectionsSincePrune_;
+        weakestEntry_ = other.weakestEntry_;
         materializedCache_ = other.materializedCache_;
     }
     return *this;
@@ -731,7 +757,7 @@ void LearningSnapshotShard::recordSelection(
     ++selectionsSincePrune_;
     if (isNewEntry || delta_.size() >= 32) {
         consolidate();
-    }
+    } else refreshWeakestEntry();
 }
 
 void LearningSnapshotShard::recordNegativeFeedback(std::string_view phrase,
@@ -776,7 +802,7 @@ void LearningSnapshotShard::recordNegativeFeedback(std::string_view phrase,
     materializedCache_ = std::make_shared<MaterializedCache>();
     if (isNewEntry || delta_.size() >= 32) {
         consolidate();
-    }
+    } else refreshWeakestEntry();
 }
 
 void LearningSnapshotShard::recordSuppression(std::string_view phrase,
@@ -823,7 +849,7 @@ void LearningSnapshotShard::recordSuppression(std::string_view phrase,
     materializedCache_ = std::make_shared<MaterializedCache>();
     if (isNewEntry || delta_.size() >= 32) {
         consolidate();
-    }
+    } else refreshWeakestEntry();
 }
 
 void LearningSnapshotShard::consolidate() {
@@ -831,29 +857,8 @@ void LearningSnapshotShard::consolidate() {
         return;
     }
     std::vector<LearningEntry> combined;
-    std::unordered_set<std::string_view> unapplied;
-    unapplied.reserve(delta_.size());
-    for (const auto &[k, _] : delta_) {
-        unapplied.insert(k);
-    }
-    if (baseEntries_) {
-        combined.reserve(baseEntries_->size() + delta_.size());
-        for (const auto &b : *baseEntries_) {
-            if (!unapplied.empty()) {
-                const auto vKey = variantKey(b.phrase, b.pinyin, b.contextBefore, b.contextAfter);
-                const auto it = delta_.find(vKey);
-                if (it != delta_.end()) {
-                    combined.push_back(it->second);
-                    unapplied.erase(vKey);
-                    continue;
-                }
-            }
-            combined.push_back(b);
-        }
-    }
-    for (const auto &vKey : unapplied) {
-        combined.push_back(delta_.find(std::string(vKey))->second);
-    }
+    combined.reserve((baseEntries_ ? baseEntries_->size() : 0) + delta_.size());
+    visitCurrentEntries([&](const LearningEntry &entry) { combined.push_back(entry); });
 
     pruneContextVariants(combined);
     pruneTotalEntries(combined, totalEntryLimit_);
@@ -873,6 +878,7 @@ void LearningSnapshotShard::consolidate() {
     deltaNewCount_ = 0;
     selectionsSincePrune_ = 0;
     materializedCache_ = std::make_shared<MaterializedCache>();
+    refreshWeakestEntry();
 }
 
 const std::vector<LearningEntry> &LearningSnapshotShard::entries() const {
@@ -881,55 +887,32 @@ const std::vector<LearningEntry> &LearningSnapshotShard::entries() const {
     }
     const auto cache = materializedCache_;
     std::call_once(cache->initialized, [this, cache] {
-        cache->entries.clear();
-        std::unordered_set<std::string_view> unapplied;
-        unapplied.reserve(delta_.size());
-        for (const auto &[k, _] : delta_) {
-            unapplied.insert(k);
-        }
-        if (baseEntries_) {
-            cache->entries.reserve(baseEntries_->size() + delta_.size());
-            for (const auto &b : *baseEntries_) {
-                if (!unapplied.empty()) {
-                    const auto vKey = variantKey(b.phrase, b.pinyin, b.contextBefore, b.contextAfter);
-                    const auto it = delta_.find(vKey);
-                    if (it != delta_.end()) {
-                        cache->entries.push_back(it->second);
-                        unapplied.erase(vKey);
-                        continue;
-                    }
-                }
-                cache->entries.push_back(b);
-            }
-        }
-        for (const auto &vKey : unapplied) {
-            cache->entries.push_back(delta_.find(std::string(vKey))->second);
-        }
-        if (!cache->entries.empty()) {
-            cache->weakestIndex = 0;
-            for (std::size_t i = 1; i < cache->entries.size(); ++i) {
-                const auto &a = cache->entries[i];
-                const auto &b = cache->entries[cache->weakestIndex];
-                if (a.suppressed != b.suppressed ? a.suppressed :
-                    a.lastSelectedMs != b.lastSelectedMs ? a.lastSelectedMs < b.lastSelectedMs :
-                    a.frequency != b.frequency ? a.frequency < b.frequency : true) {
-                    cache->weakestIndex = i;
-                }
-            }
-            cache->hasWeakest = true;
-        }
+        cache->entries.reserve((baseEntries_ ? baseEntries_->size() : 0) + delta_.size());
+        visitCurrentEntries([&](const LearningEntry &entry) { cache->entries.push_back(entry); });
     });
     return cache->entries;
 }
 
 const LearningEntry *LearningSnapshotShard::weakestEntry() const {
-    const auto &all = entries();
-    if (all.empty()) return nullptr;
-    const auto cache = materializedCache_;
-    if (cache && cache->hasWeakest) {
-        return &cache->entries[cache->weakestIndex];
-    }
-    return &all[0];
+    return weakestEntry_ ? &*weakestEntry_ : nullptr;
+}
+
+void LearningSnapshotShard::refreshWeakestEntry() {
+    const auto weaker = [](const LearningEntry &a, const LearningEntry &b) {
+        if (a.suppressed != b.suppressed) return a.suppressed;
+        if (a.lastSelectedMs != b.lastSelectedMs) return a.lastSelectedMs < b.lastSelectedMs;
+        return a.frequency <= b.frequency;
+    };
+    const LearningEntry *weakest = nullptr;
+    // Resolve overrides in exactly the export/consolidation order, including
+    // their established last-row tie break, without copying the whole shard.
+    visitCurrentEntries([&](const LearningEntry &entry) {
+        if (!weakest || weaker(entry, *weakest)) weakest = &entry;
+    });
+    // Derived eviction evidence only. Never materialize all rows merely to
+    // prepare a shard's minimum; published copies keep their own cached value.
+    if (weakest) weakestEntry_ = *weakest;
+    else weakestEntry_.reset();
 }
 
 void LearningSnapshotShard::pruneContextVariants(std::vector<LearningEntry> &entries) {
@@ -1108,9 +1091,10 @@ void LearningSnapshot::finishMutation(std::size_t previousCount, std::string_vie
                 }
             }
             const auto &original = shards_[victimShard]->entries();
-            const auto victim = static_cast<std::size_t>(weakest - original.data());
             auto retained = original;
-            retained.erase(retained.begin() + static_cast<std::ptrdiff_t>(victim));
+            // The cached value may originate in the base or bounded delta.
+            // Locate that exact row in the one materialized victim shard.
+            retained.erase(std::find(retained.begin(), retained.end(), *weakest));
             shards_[victimShard] = std::make_shared<LearningSnapshotShard>(std::move(retained), totalEntryLimit_);
             shards_[victimShard]->weakestEntry();
             --entryCount_;

@@ -741,7 +741,7 @@ public:
           candidatePins_(options.candidatePins),
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
-          observedLearningForgetGeneration_(shared_ ? shared_->learningForgetGeneration() : 0),
+          observedLearningForgetGeneration_(shared_ ? shared_->refreshLearningForgetState() : 0),
           observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
         shared_->setFuzzyOptions(options.fuzzyPinyin);
         shared_->setPinyinScheme(options.pinyinScheme);
@@ -882,7 +882,7 @@ public:
             changed = true;
         }
         const auto curViewState = shared_->epochViewState();
-        const auto curForgetGeneration = shared_->learningForgetGeneration();
+        const auto curForgetGeneration = shared_->refreshLearningForgetState();
         if (curForgetGeneration != observedLearningForgetGeneration_) {
             const auto changes = shared_->forgottenSince(observedLearningForgetGeneration_);
             observedLearningForgetGeneration_ = changes.generation;

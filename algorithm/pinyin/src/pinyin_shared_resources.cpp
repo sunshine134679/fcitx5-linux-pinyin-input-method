@@ -743,9 +743,18 @@ std::shared_ptr<const core::LearningSnapshot> PinyinSharedResources::visibleLear
     return learning != nullptr ? learning->snapshot() : visibilitySnapshot;
 }
 
-std::uint64_t PinyinSharedResources::learningForgetGeneration() const {
+std::uint64_t PinyinSharedResources::refreshLearningForgetState() {
     std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
-    return learning != nullptr ? learning->forgetGeneration() : 0;
+    if (!learning) return 0;
+    const auto generation = learning->forgetGeneration();
+    if (generation == phraseStatsForgetGeneration_) return generation;
+    const auto changes = learning->forgottenSince(phraseStatsForgetGeneration_);
+    if (phraseStats) {
+        if (!changes.complete) phraseStats->clear();
+        else for (const auto &[text, pinyin] : changes.identities) phraseStats->forget(text, pinyin);
+    }
+    phraseStatsForgetGeneration_ = changes.generation;
+    return changes.generation;
 }
 
 core::ForgottenPreferences PinyinSharedResources::forgottenSince(std::uint64_t generation) const {

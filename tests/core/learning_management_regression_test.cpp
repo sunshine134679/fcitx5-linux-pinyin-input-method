@@ -9,6 +9,8 @@
 #include <thread>
 #include <filesystem>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace {
 using namespace modernime::core;
@@ -172,6 +174,62 @@ TEST_P(LearningManagementRegression, TrustedRestoreAdvancesRevisionAndPreservesA
     LearningEvent stale{LearningEvent::Kind::Selection, "旧词", "jiuci", {}, {}, 2000, revision};
     ASSERT_TRUE(independent.recordBatch({stale}));
     EXPECT_FALSE(independent.snapshot()->hasPositiveFrequency("旧词", "jiuci"));
+}
+
+TEST_P(LearningManagementRegression, ForgetRestartsSharedPhraseFormationWithoutResettingOtherIdentities) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = path().string();
+    paths.userDictionary = (root / "empty-user.dict").string();
+    paths.dictionaryPacks = (root / "empty-packs").string();
+    paths.bundledDictionaryPacks = (root / "empty-bundled").string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider first(paths, options);
+    modernime::pinyin::PinyinCandidateProvider second(first.sharedResources(), options);
+    const auto nameRound = [](auto &provider) {
+        for (const auto &[input, text] : std::vector<std::pair<std::string, std::string>>{
+                 {"wang", "王"}, {"shao", "绍"}, {"long", "龙"}}) {
+            ASSERT_TRUE(provider.replaceInput(input));
+            const auto &items = provider.page().items;
+            std::size_t index = 0;
+            while (index < items.size() && items[index].text != text) ++index;
+            ASSERT_LT(index, items.size());
+            EXPECT_EQ(items[index].consumedInputBytes, input.size());
+            ASSERT_TRUE(provider.select(index));
+        }
+        provider.resetCommitHistory();
+    };
+    for (int i = 0; i < 3; ++i) ASSERT_NO_FATAL_FAILURE(nameRound(first));
+    ASSERT_TRUE(first.flush());
+    auto *writer = first.sharedResources()->learning.get();
+    ASSERT_TRUE(writer->snapshot()->hasPositiveFrequency("王绍龙", "wangshaolong"));
+    ASSERT_TRUE(writer->enqueueForget("王绍龙", "WANG'SHAO'LONG"));
+    ASSERT_TRUE(writer->flush());
+    ASSERT_FALSE(writer->snapshot()->hasPositiveFrequency("王绍龙", "wangshaolong"));
+    ASSERT_NO_FATAL_FAILURE(nameRound(first));
+    ASSERT_TRUE(first.flush());
+    EXPECT_FALSE(writer->snapshot()->hasPositiveFrequency("王绍龙", "wangshaolong"));
+    // A second stale Provider must not clear the shared cache a second time.
+    ASSERT_NO_FATAL_FAILURE(nameRound(second));
+    ASSERT_TRUE(second.flush());
+    EXPECT_FALSE(writer->snapshot()->hasPositiveFrequency("王绍龙", "wangshaolong"));
+    ASSERT_NO_FATAL_FAILURE(nameRound(first));
+    ASSERT_TRUE(first.flush());
+    const auto learned = writer->snapshot();
+    const auto *entry = learned->entry("王绍龙", "wangshaolong", {}, {});
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 3);
+    // A separate identity can be forgotten without losing this formation.
+    ASSERT_TRUE(writer->enqueueSelection("其他", "qita", {}, {}, 1000));
+    ASSERT_TRUE(writer->enqueueForget("其他", "qita"));
+    ASSERT_TRUE(writer->flush());
+    ASSERT_NO_FATAL_FAILURE(nameRound(second));
+    ASSERT_TRUE(second.flush());
+    EXPECT_EQ(writer->snapshot()->entry("王绍龙", "wangshaolong", {}, {})->frequency, 4);
+    ASSERT_TRUE(first.replaceInput("wsl"));
+    ASSERT_FALSE(first.page().items.empty());
+    EXPECT_EQ(first.page().items.front().text, "王绍龙");
+    EXPECT_EQ(first.page().items.front().consumedInputBytes, 3u);
 }
 TEST_P(LearningManagementRegression, ExpectedRestoreRejectsBothQueuedAndExternalChanges) {
     LearningWriter writer(path());

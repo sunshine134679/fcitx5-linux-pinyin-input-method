@@ -67,7 +67,7 @@ TEST(PersonalizationSnapshotRegression, FullCapacityInsertionEvictsLocallyAndKee
     (defined(__has_feature) && (__has_feature(thread_sanitizer) || __has_feature(address_sanitizer)))
     EXPECT_LT(slowestMs, 150.0) << "capacity eviction must not rebuild 200k entries (sanitizer)";
 #else
-    EXPECT_LT(slowestMs, 80.0) << "capacity eviction must not rebuild 200k entries";
+    EXPECT_LT(slowestMs, 30.0) << "capacity eviction must not rebuild 200k entries";
 #endif
     EXPECT_EQ(current->entries().size(), kMaxLearningEntries);
     EXPECT_EQ(original->entries().size(), kMaxLearningEntries);
@@ -89,6 +89,35 @@ TEST(PersonalizationSnapshotRegression, PrefixScanUsesGlobalLexicalOrderAcrossSh
     const auto recalled = snapshot.recallCandidates("wang", 1000);
     EXPECT_TRUE(std::any_of(recalled.begin(), recalled.end(), [&](const auto &item) { return item.phrase == target; }));
     EXPECT_LE(recalled.size(), 16u);
+}
+
+TEST(PersonalizationSnapshotRegression, CapacityEvictsTheWeakestVariantInsteadOfTheFirstInAShard) {
+    for (const bool suppressed : {false, true}) {
+        SCOPED_TRACE(suppressed);
+        // One phrase forces every variant into the same shard, independently
+        // of the platform's string hash. The first row must survive two evictions.
+        const LearningSnapshot original({
+            {"常用词", "changyongci", {}, {}, 100, 3000, 0, false},
+            {"常用词", "changyongci", "中间", {}, 10, 2000, 0, false},
+            {"常用词", "changyongci", "最弱", {}, 1, suppressed ? 6000 : 1000, 0, suppressed}
+        }, 3);
+        auto current = original;
+        for (int i = 0; i < 2; ++i) {
+            current.recordSelection("新词" + std::to_string(i), "xinci", {}, {}, 4000 + i);
+            ASSERT_EQ(current.entries().size(), 3u);
+            const auto *favorite = current.entry("常用词", "changyongci", {}, {});
+            ASSERT_NE(favorite, nullptr);
+            EXPECT_EQ(favorite->frequency, 100);
+            EXPECT_TRUE(current.hasPositiveFrequency("新词" + std::to_string(i), "xinci"));
+        }
+        const auto &remaining = current.entries();
+        EXPECT_TRUE(std::none_of(remaining.begin(), remaining.end(), [](const auto &entry) {
+            return entry.phrase == "常用词" && !entry.contextBefore.empty();
+        }));
+        EXPECT_EQ(original.entries().size(), 3u);
+        EXPECT_EQ(original.entry("常用词", "changyongci", {}, {})->frequency, 100);
+        EXPECT_EQ(original.entry("常用词", "changyongci", "最弱", {})->suppressed, suppressed);
+    }
 }
 TEST(PersonalizationSnapshotRegression, DigraphInitialsRemainIndexedAfterPublication) {
     LearningSnapshot snapshot;

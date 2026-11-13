@@ -33,6 +33,8 @@ struct PhraseFormationStats final {
     std::unordered_map<std::string, SequenceStats> sequenceStats;
     mutable std::mutex mutex;
 
+    void forget(std::string_view text, std::string_view fullPinyin);
+
     void clear() {
         std::lock_guard lock(mutex);
         sequenceStats.clear();

@@ -1,4 +1,5 @@
 #include "modernime/core/phrase_formation.h"
+#include "modernime/core/learning_snapshot.h"
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +18,17 @@ std::size_t countUtf8CodePoints(std::string_view text) {
 }
 
 } // namespace
+
+void PhraseFormationStats::forget(std::string_view text, std::string_view fullPinyin) {
+    const auto normalized = normalizePinyin(fullPinyin);
+    std::lock_guard lock(mutex);
+    std::erase_if(sequenceStats, [&](const auto &item) {
+        const std::string_view key(item.first);
+        const auto split = key.rfind('\x1f');
+        return split != std::string_view::npos && key.substr(0, split) == text &&
+               normalizePinyin(key.substr(split + 1)) == normalized;
+    });
+}
 
 PhraseFormationTracker::PhraseFormationTracker(
     int repetitionThreshold,
