@@ -210,7 +210,7 @@ int main(int argc, char **argv) {
     ready(window);
     assert(service.count("pack.disable") == 1 && !service.enabled);
     assert(service.lastArgs.empty()); // Final request is the state-refresh query.
-    assert(notices.size() == 1 && notices.back().find("后台加载") != std::string::npos);
+    assert(notices.size() == 1 && notices.back().find("稍等片刻") != std::string::npos);
     assert(std::string_view(gtk_button_get_label(GTK_BUTTON(find(window, "pack-toggle")))) == "启用");
     click(window, "pack-toggle");
     gtk_dialog_response(GTK_DIALOG(dialog()), GTK_RESPONSE_ACCEPT);

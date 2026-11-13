@@ -74,7 +74,7 @@ public:
 
     explicit Impl(std::function<void(std::string)> callback) : notify(std::move(callback)) {
         detail::GtkWidgetGuard guard(createSectionCard(
-            "学习记录", "按词语和读音管理。以下操作立即生效，无需保存设置。"));
+            "学习记录", "这里的操作立即生效。"));
         root = guard.get();
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -248,8 +248,8 @@ public:
         std::string details = "选择一条记录查看详情。";
         if (selected) {
             details = selected->identity.phrase + "\n拼音：" + selected->identity.pinyin +
-                "\n上下文记录：" + std::to_string(selected->contextCount) +
-                "　负反馈：" + std::to_string(selected->negativeFeedback) +
+                "\n使用场景：" + std::to_string(selected->contextCount) +
+                "　降低推荐次数：" + std::to_string(selected->negativeFeedback) +
                 "\n最近选用：" + selectedTime(selected->lastSelectedMs);
         }
         gtk_label_set_text(GTK_LABEL(detailLabel), details.c_str());
@@ -363,7 +363,7 @@ public:
             static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
             GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "忘记所选词的学习记录？");
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
-            "词语：%s\n拼音：%s\n\n将删除这个词和读音的全部上下文偏好及屏蔽记录。系统词库、词库包和个人词典中的词仍会保留，因此它仍可能出现。",
+            "%s（%s）\n\n清除这个词的学习记录和屏蔽设置，不改动词库。这个词以后仍可能出现。",
             selected->identity.phrase.c_str(), selected->identity.pinyin.c_str());
         gtk_dialog_add_buttons(GTK_DIALOG(dialog), "取消", GTK_RESPONSE_CANCEL, "忘记", GTK_RESPONSE_ACCEPT, nullptr);
         gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);

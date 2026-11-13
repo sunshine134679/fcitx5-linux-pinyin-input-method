@@ -72,7 +72,7 @@ int main(int argc,char **argv) {
     click(find(window,"learning-forget"));auto *windows=gtk_window_list_toplevels();GtkWidget *confirmation=nullptr;for(auto *p=windows;p;p=p->next)if(GTK_IS_MESSAGE_DIALOG(p->data))confirmation=GTK_WIDGET(p->data);g_list_free(windows);assert(confirmation);
     gtk_dialog_response(GTK_DIALOG(confirmation),GTK_RESPONSE_ACCEPT);wait([&]{return fake.writes==2 && text(find(window,"learning-record-status")).find("暂无")!=std::string::npos;});
     bool allow=false,restored=false;DataBundleManager bundles([&]{return allow;},[&]{restored=true;});gtk_box_pack_start(GTK_BOX(box),bundles.widget(),FALSE,FALSE,0);gtk_widget_show_all(window);
-    click(find(window,"bundle-restore"));assert(!dialog("bundle-restore-directory"));assert(text(find(window,"bundle-status")).find("草稿")!=std::string::npos);allow=true;
+    click(find(window,"bundle-restore"));assert(!dialog("bundle-restore-directory"));assert(text(find(window,"bundle-status")).find("未保存")!=std::string::npos);allow=true;
     char pattern[]="/tmp/modernime-bundle-client-XXXXXX";auto *temporary=mkdtemp(pattern);assert(temporary);const std::filesystem::path folder=temporary;
     click(find(window,"bundle-export"));auto *chooser=dialog("bundle-export-directory");assert(chooser);gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser),temporary);gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser),"backup");
     wait([&]{auto *path=gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));const bool ready=path!=nullptr;g_free(path);return ready;});gtk_dialog_response(GTK_DIALOG(chooser),GTK_RESPONSE_ACCEPT);

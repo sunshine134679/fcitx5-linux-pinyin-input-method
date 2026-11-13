@@ -78,7 +78,7 @@ public:
         detail::GtkWidgetGuard guard(createSectionCard("应用兼容性诊断", ""));
         root = guard.get();
         target(root, "application-diagnostics");
-        setAccessibleWidgetText(root, "应用兼容性诊断", "读取实际观察到的应用输入上下文，不修改应用配置");
+        setAccessibleWidgetText(root, "应用兼容性诊断", "查看应用的输入状态");
         g_signal_connect_data(root, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer data) {
             (*static_cast<SharedLifetime *>(data))->withOwner([](Impl &owner) {
                 owner.root = nullptr;
@@ -88,7 +88,7 @@ public:
             });
         }), new SharedLifetime(lifetime), destroySignalState, GConnectFlags(0));
 
-        auto *intro = wrappedLabel("只显示 Fcitx 实际观察到的应用状态，不记录输入正文。切换到目标应用试输入后，可回来刷新。");
+        auto *intro = wrappedLabel("先在要检查的应用里打几个字，再回来点“刷新”。");
         style(intro, "modernime-setting-desc");
         gtk_widget_set_margin_bottom(intro, 14);
         gtk_box_pack_start(GTK_BOX(root), intro, FALSE, FALSE, 0);
@@ -140,7 +140,7 @@ public:
             gtk_grid_attach(GTK_GRID(facts), value, 1, row, 1, 1);
         };
         addFact(0, "连接方式", "application-transport", transport);
-        addFact(1, "输入焦点", "application-focused", focused);
+        addFact(1, "输入框状态", "application-focused", focused);
         addFact(2, "敏感输入", "application-sensitive", sensitive);
         addFact(3, "ModernIME", "application-selected", selected);
         gtk_box_pack_start(GTK_BOX(root), facts, FALSE, FALSE, 0);
@@ -182,7 +182,7 @@ public:
     void refresh() {
         if (!root || busy) return;
         const auto request = ++generation;
-        startLoading("正在读取应用状态…", "正在查询本次进程观察到的应用。", true);
+        startLoading("正在读取应用状态…", "正在读取应用列表…", true);
         auto weak = std::weak_ptr<Lifetime>(lifetime);
         backend.execute("applications", {}, [weak, request](BackendReply reply) {
             if (const auto state = weak.lock()) state->withOwner([&](Impl &owner) {
@@ -244,7 +244,7 @@ private:
         if (!active) application.clear();
         selector = createSettingsChoice();
         target(selector, "application-selector");
-        setAccessibleWidgetText(selector, "查看应用", "选择最近应用或本次进程实际观察到的应用身份");
+        setAccessibleWidgetText(selector, "查看应用", "选择最近应用或最近使用过的应用");
         gtk_widget_set_halign(selector, GTK_ALIGN_START);
         appendSettingsChoice(selector, "最近应用");
         for (const auto &identity : applications) appendSettingsChoice(selector, identity);
@@ -284,7 +284,7 @@ private:
 
     void readReport(std::uint64_t request) {
         if (!isCurrent(request)) return;
-        startLoading("正在读取应用诊断…", "正在读取所选应用最近一次输入上下文的状态。", false);
+        startLoading("正在读取应用诊断…", "正在读取这个应用的输入状态…", false);
         const auto identity = application;
         auto weak = std::weak_ptr<Lifetime>(lifetime);
         backend.execute("diagnostics", identity.empty() ? std::vector<std::string>{} : std::vector<std::string>{identity},
@@ -293,7 +293,7 @@ private:
                     if (!owner.isCurrent(request) || identity != owner.application) return;
                     if (!reply.ok) { owner.showError(reply); return; }
                     if (reply.data.get("observed").kind != BackendValue::Kind::Boolean) {
-                        owner.showInvalidReply("诊断结果缺少有效的观察状态，请刷新重试。");
+                        owner.showInvalidReply("暂时无法查看结果，请刷新重试。");
                         return;
                     }
                     owner.showReport(reply.data);
@@ -334,13 +334,13 @@ private:
         const bool observed = data.boolean("observed");
         const auto name = data.text("application");
         setLabel(summary, observed ? (name.empty() ? "未知应用" : name)
-            : (application.empty() ? "尚未观察到应用" : "尚未观察到此应用"));
-        setLabel(status, observed ? "以下为此应用最近一次输入上下文的状态。"
-            : "请在目标应用聚焦输入框并实际输入，再回来刷新。尚未观察到不能说明配置是否成功。");
+            : (application.empty() ? "还没有检测到应用" : "还没有检测到这个应用"));
+        setLabel(status, observed ? "最近一次使用输入法时的状态。"
+            : "先在这个应用里打几个字，再回来点“刷新”。");
         const auto protocol = data.text("transport");
         setLabel(transport, observed && protocol == "x11" ? "X11"
             : observed && protocol == "wayland" ? "Wayland" : "未知");
-        setLabel(focused, booleanText(data, "focused", observed, "有输入焦点", "无输入焦点"));
+        setLabel(focused, booleanText(data, "focused", observed, "已激活", "未激活"));
         setLabel(sensitive, booleanText(data, "sensitive", observed, "是（隐私保护中）", "否"));
         setLabel(selected, booleanText(data, "modernimeSelected", observed, "已选用", "未选用"));
         gtk_widget_show(facts);
@@ -351,7 +351,6 @@ private:
             if (!advice.empty()) advice += '\n';
             advice += "• " + item.text();
         }
-        if (advice.empty() && !observed) advice = "请在目标应用实际试输入后刷新。";
         setLabel(suggestions, advice);
         gtk_widget_set_visible(suggestions, !advice.empty());
 

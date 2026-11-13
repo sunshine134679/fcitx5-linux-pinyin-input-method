@@ -52,7 +52,7 @@ public:
     using Lifetime = detail::DiagnosticsLifetime<Impl>;
 
     explicit Impl(std::function<void(std::string)> callback) : notify(std::move(callback)) {
-        detail::GtkWidgetGuard guard(createSectionCard("词库包", "离线扩充专业词和中英混合词。内置领域包为小型示例。"));
+        detail::GtkWidgetGuard guard(createSectionCard("词库包", "添加更多专业词和中英混合词。内置包仅供示例。"));
         root = guard.get();
         target(root, "dictionary-packs");
         g_signal_connect(root, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer data) {
@@ -301,7 +301,7 @@ private:
                 if (request != owner.generation) return;
                 owner.busy = false;
                 if (reply.ok) {
-                    const std::string message = "词库包变更已保存；输入法将在后台加载，重新输入可核对候选。";
+                    const std::string message = "已保存，稍等片刻后重新输入即可使用。";
                     owner.showStatus(message);
                     if (owner.notify) owner.notify(message);
                     owner.refresh(true);
@@ -330,9 +330,9 @@ private:
         auto *confirm = gtk_message_dialog_new(parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
                                                GTK_BUTTONS_NONE, "%s", title.c_str());
         gtk_dialog_add_buttons(GTK_DIALOG(confirm), "取消", GTK_RESPONSE_CANCEL, verb, GTK_RESPONSE_ACCEPT, nullptr);
-        const auto detail = removing ? "若有同名内置包，将回退到内置包。已有个人学习会保留。" :
-                            pack.enabled ? "该包将停止提供词条；已有个人学习会保留，其他词库仍可能提供相同词条。" :
-                            "保存后输入法将在后台加载词条。";
+        const auto detail = removing ? "移除后，随软件提供的词库仍会保留。不会删除学习记录。" :
+                            pack.enabled ? "停用后不再使用这个包里的词。不会删除学习记录，相同词仍可能来自其他词库。" :
+                            "启用后，稍等片刻即可使用。";
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(confirm), "%s", detail);
         gtk_dialog_set_default_response(GTK_DIALOG(confirm), GTK_RESPONSE_CANCEL);
         showDialog(confirm, [action = std::string(action), id = pack.id](Impl &owner, GtkWidget *, int response) {
@@ -390,7 +390,7 @@ private:
         gtk_style_context_add_class(gtk_widget_get_style_context(name), "modernime-section-title");
         gtk_box_pack_start(GTK_BOX(body), name, FALSE, FALSE, 0);
         const auto summary = "版本 " + pack.version + "，共 " + std::to_string(pack.entries) + " 条\n" +
-                             metadata(pack) + "\n\n" + (exists ? "将替换相同标识的词库包，保留本地启停状态。" : "将导入为独立词库包。");
+                             metadata(pack) + "\n\n" + (exists ? "将更新已有词库，保留启用或停用状态。" : "将添加这个词库包。");
         auto *text = description(summary);
         gtk_label_set_selectable(GTK_LABEL(text), TRUE);
         gtk_box_pack_start(GTK_BOX(body), text, FALSE, FALSE, 0);

@@ -262,15 +262,11 @@ private:
             gtk_widget_show_all(o.pinDialog);
         }), this);
 
-        auto *filterCard = createSectionCard("筛选同音候选", "输入拼音后按反引号键 `，按笔画或部件缩小候选范围。");
-        filterGuide = gtk_expander_new("查看操作方法");
+        auto *filterCard = createSectionCard("按笔画找字", "同音字太多时，可以按笔画缩小范围。");
+        filterGuide = gtk_expander_new("看个例子");
         setTarget(filterGuide, "candidate-filter");
-        auto *guide = gtk_label_new("输入拼音（如 shi）→ 按 ` → 输入筛选串 → 选词\n\n"
-            "笔画：h 横 · s 竖 · p 撇 · n 点捺 · z 折\n"
-            "例如输入 nzhh，可筛选出“试”。\n\n"
-            "部件：输入 c: 加部件拼音，如 c:mumu。\n"
-            "Esc 退出筛选并保留拼音；退格删除筛选串。\n"
-            "空格、回车和数字键照常选词，暂不支持的字不会匹配。");
+        auto *guide = gtk_label_new("找“试”：输入 shi 后按 ` 键，再按 N（点）、Z（折）、H（横）、H（横）。\n"
+            "按 Esc 返回正常选词。");
         gtk_label_set_xalign(GTK_LABEL(guide), 0);
         gtk_label_set_line_wrap(GTK_LABEL(guide), TRUE);
         gtk_label_set_selectable(GTK_LABEL(guide), TRUE);

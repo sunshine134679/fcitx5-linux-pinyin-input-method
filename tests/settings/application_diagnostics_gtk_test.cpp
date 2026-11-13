@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
     gtk_widget_show_all(window);
     auto *refresh = find(window, "application-refresh");
     wait([&] { return gtk_widget_get_sensitive(refresh); });
-    assert(text(window, "application-summary").find("尚未观察") != std::string::npos);
+    assert(text(window, "application-summary").find("还没有检测") != std::string::npos);
     assert(text(window, "application-transport") == "未知");
 
     fake.observed = true;

@@ -56,7 +56,7 @@ public:
     }
     void choose(bool restore) {
         if(busy || dialog || !client)return;
-        if(restore && canRestore && !canRestore()){state(false,"请先保存或放弃设置和短语草稿，等待数据操作完成后再恢复。");return;}
+        if(restore && canRestore && !canRestore()){state(false,"请先保存或放弃未保存的修改，并等待当前操作完成。");return;}
         restoreMode=restore;
         auto *chooser=gtk_file_chooser_dialog_new(restore?"选择备份文件夹":"保存备份文件夹",parent(),
             restore?GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER:GTK_FILE_CHOOSER_ACTION_SAVE,
@@ -120,7 +120,7 @@ public:
             supportedComponents.clear();for(const auto &v:caps.data.array("selectionComponents"))supportedComponents.push_back(v.text());
         client->execute("bundle.preview",{directory},[this,run](BackendReply reply){if(!root || run!=generation)return;
             state(false,reply.ok?"请选择要恢复的数据。":reply.message);if(!reply.ok)return;
-            token=reply.data.text("token");if(token.empty()){state(false,"未获得有效预览，请重新选择备份。");return;}
+            token=reply.data.text("token");if(token.empty()){state(false,"暂时无法查看备份，请重新选择。");return;}
             makeChoicesDialog("查看差异并恢复","恢复所选数据");
             for(std::size_t n=0;n<ids.size();++n){
                 const auto &diffs=reply.data.array("differences");const auto found=std::find_if(diffs.begin(),diffs.end(),[n](const auto &v){return v.text("component")==ids[n];});
@@ -133,7 +133,7 @@ public:
                 else text+=" · 当前 "+std::to_string(found->number("currentEntries"))+" → 备份 "+std::to_string(found->number("bundleEntries"));
                 gtk_button_set_label(GTK_BUTTON(choices[n]),text.c_str());gtk_widget_set_sensitive(choices[n],available);gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(choices[n]),FALSE);
             }
-            gtk_label_set_text(GTK_LABEL(dialogStatus),"恢复会替换所选数据。仅恢复你信任的本地备份；未选项目保持原状。");updateAccept();
+            gtk_label_set_text(GTK_LABEL(dialogStatus),"所选数据会被备份中的内容替换。请确认这是你自己的备份。");updateAccept();
         });
         });
     }

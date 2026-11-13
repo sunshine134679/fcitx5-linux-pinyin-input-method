@@ -16,7 +16,7 @@ public:
         auto value = parse(0); space(); if (at_ != input_.size()) fail(); return value;
     }
 private:
-    [[noreturn]] static void fail() { throw std::runtime_error("后端返回的数据格式无效，请更新或重启输入法后重试。"); }
+    [[noreturn]] static void fail() { throw std::runtime_error("暂时无法读取结果，请重启输入法后重试。"); }
     void space() { while (at_ < input_.size() && (input_[at_]==' ' || input_[at_]=='\n' || input_[at_]=='\r' || input_[at_]=='\t')) ++at_; }
     bool take(char ch) { space(); if (at_ < input_.size() && input_[at_]==ch) { ++at_; return true; } return false; }
     unsigned hex() {
@@ -139,7 +139,7 @@ BackendReply parseBackendReply(std::string_view json) {
     BackendReply reply;
     try {
         reply.data=Reader(json).read();
-        if(reply.data.kind!=BackendValue::Kind::Object || reply.data.get("ok").kind!=BackendValue::Kind::Boolean) throw std::runtime_error("后端返回的数据格式无效，请重试。");
+        if(reply.data.kind!=BackendValue::Kind::Object || reply.data.get("ok").kind!=BackendValue::Kind::Boolean) throw std::runtime_error("暂时无法读取结果，请重试。");
         reply.ok=reply.data.boolean("ok"); reply.error=reply.data.text("error"); reply.message=reply.data.text("message");
         if(!reply.ok && reply.message.empty()) reply.message="操作未完成，请刷新状态后重试。";
     } catch(const std::exception &e) { reply.ok=false;reply.error="invalid_reply";reply.message=e.what(); }
@@ -165,7 +165,7 @@ void BackendClient::execute(std::string action,std::vector<std::string> args,Cal
         Variant owner(bus ? g_dbus_connection_call_sync(bus.get(),"org.freedesktop.DBus","/org/freedesktop/DBus","org.freedesktop.DBus","GetNameOwner",
             g_variant_new("(s)",destination),G_VARIANT_TYPE("(s)"),G_DBUS_CALL_FLAGS_NO_AUTO_START,2000,cancel,&error) : nullptr,g_variant_unref);
         if (!owner) {
-            g_clear_error(&error);work.reply.error="unavailable";work.reply.message="管理服务尚未就绪，请切换到 ModernIME 后重试。";
+            g_clear_error(&error);work.reply.error="unavailable";work.reply.message="请先切换到 ModernIME，再点“刷新”。";
         } else {
             const char *unique=nullptr;g_variant_get(owner.get(),"(&s)",&unique);
             auto capabilities=invoke(bus.get(),unique,"capabilities",{},cancel);
