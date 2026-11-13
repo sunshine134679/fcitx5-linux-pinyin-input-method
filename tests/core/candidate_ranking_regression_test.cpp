@@ -465,6 +465,115 @@ TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Jian) {
     EXPECT_LT(jianRank, 5u);
 }
 
+TEST_F(CandidateRankingRegression, ColdSingleChoiceKeepsCoreDefaultAndRepeatedChoicesStillPromote) {
+    {
+        pinyin::PinyinCandidateProvider provider(paths);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        type(controller, "shi");
+        ASSERT_EQ(controller.page().items.front().text, "是");
+        const auto before = rank(controller.page(), "试");
+        ASSERT_GT(before, 0u);
+        ASSERT_LT(before, 5u);
+        ASSERT_TRUE(controller.handle(
+            {fcitx5::KeyKind::Digit, 0, static_cast<char>('1' + before)}));
+        EXPECT_EQ(host.committed, "试");
+        EXPECT_TRUE(controller.page().rawInput.empty());
+        type(controller, "shi");
+        EXPECT_EQ(controller.page().items.front().text, "是");
+        const auto after = rank(controller.page(), "试");
+        ASSERT_LT(after, controller.page().items.size());
+        EXPECT_GT(after, 0u);
+        EXPECT_LE(after, before);
+        EXPECT_GT(controller.page().items[after].learningBoost, 0.0);
+        EXPECT_EQ(controller.page().items[after].consumedInputBytes, 3u);
+#if defined(MODERNIME_HAS_FCITX5)
+        EXPECT_EQ(physicalPosition(controller.page(), after).first, 0u);
+#endif
+        ASSERT_TRUE(provider.flush());
+    }
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.openReadOnly());
+        const auto snapshot = store.snapshot();
+        const auto *entry = snapshot->entry("试", "shi", "", "");
+        ASSERT_NE(entry, nullptr);
+        EXPECT_EQ(entry->frequency, 1);
+    }
+    {
+        pinyin::PinyinCandidateProvider reopened(paths);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &reopened);
+        type(controller, "shi");
+        EXPECT_EQ(controller.page().items.front().text, "是");
+        // The one real selection is retained. Two more ordinary choices must
+        // still establish a preference without relying on a three-choice window.
+        for (int n = 0; n < 2; ++n) {
+            const auto index = rank(controller.page(), "试");
+            ASSERT_LT(index, controller.page().items.size());
+            ASSERT_TRUE(controller.select(index));
+            EXPECT_EQ(host.committed, "试");
+            EXPECT_TRUE(controller.page().rawInput.empty());
+            type(controller, "shi");
+        }
+        ASSERT_EQ(controller.page().items.front().text, "试");
+        EXPECT_EQ(controller.page().items.front().consumedInputBytes, 3u);
+#if defined(MODERNIME_HAS_FCITX5)
+        EXPECT_EQ(physicalPosition(controller.page(), 0).first, 0u);
+#endif
+        ASSERT_TRUE(reopened.flush());
+    }
+    core::LearningStore store(paths.learningStore);
+    ASSERT_TRUE(store.openReadOnly());
+    const auto snapshot = store.snapshot();
+    const auto *entry = snapshot->entry("试", "shi", "", "");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 3);
+}
+
+TEST_F(CandidateRankingRegression, DisabledLearningRejectsDeletionWithoutDeferredSuppression) {
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.open());
+        ASSERT_TRUE(store.recordSuppression("拟", "ni"));
+    }
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    Host host;
+    fcitx5::ControllerOptions controllerOptions;
+    controllerOptions.learningEnabled = false;
+    fcitx5::ModernIMEController controller(host, &provider, controllerOptions);
+    type(controller, "ni");
+    const auto index = rank(controller.page(), "泥");
+    ASSERT_LT(index, controller.page().items.size());
+    ASSERT_TRUE(controller.moveCursor(static_cast<std::ptrdiff_t>(index)));
+    const auto generation = controller.displayGeneration();
+    EXPECT_FALSE(controller.handle({fcitx5::KeyKind::DeleteCandidate}));
+    EXPECT_EQ(controller.displayGeneration(), generation);
+    EXPECT_LT(rank(controller.page(), "泥"), controller.page().items.size());
+    EXPECT_EQ(rank(controller.page(), "拟"), controller.page().items.size());
+    EXPECT_EQ(provider.sharedResources()->learning, nullptr);
+
+    controllerOptions.learningEnabled = true;
+    controller.setOptions(controllerOptions);
+    ASSERT_TRUE(provider.flush());
+    controller.reset();
+    type(controller, "ni");
+    const auto restored = rank(controller.page(), "泥");
+    ASSERT_LT(restored, controller.page().items.size());
+    ASSERT_TRUE(controller.moveCursor(static_cast<std::ptrdiff_t>(restored)));
+    ASSERT_TRUE(controller.handle({fcitx5::KeyKind::DeleteCandidate}));
+    EXPECT_EQ(rank(controller.page(), "泥"), controller.page().items.size());
+    ASSERT_TRUE(provider.flush());
+    controllerOptions.learningEnabled = false;
+    controller.setOptions(controllerOptions);
+    EXPECT_EQ(rank(controller.page(), "泥"), controller.page().items.size());
+    core::LearningStore store(paths.learningStore);
+    ASSERT_TRUE(store.openReadOnly());
+    EXPECT_TRUE(store.snapshot()->isSuppressed("泥", "ni"));
+}
+
 TEST_F(CandidateRankingRegression, ColdStartWordDiscovery_Nihaoshijie) {
     pinyin::PinyinCandidateProvider provider(paths);
     Host host;

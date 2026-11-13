@@ -138,15 +138,35 @@ CandidateRanker::rank(std::string_view userInput,
             }
         }
     }
+    // Preserve the exact native first-character prior until a competing
+    // character has mature personal evidence or positive context support.
+    // This limits takeover without weakening the original boost formula.
+    double unconfirmedCharacterFloor = std::numeric_limits<double>::infinity();
+    for (const auto &candidate : candidates) {
+        if (candidate.match_priority == 2 && candidate.phrase_length == 1 &&
+            candidate.unigram_anchor > 0.0 && candidate.learning_boost >= 0.0) {
+            unconfirmedCharacterFloor =
+                std::min(unconfirmedCharacterFloor, candidate.final_score());
+        }
+    }
     std::vector<double> preferenceCosts;
     preferenceCosts.reserve(candidates.size());
     for (std::size_t i = 0; i < candidates.size(); ++i) {
         // Unadmitted alternatives must not use preference normalization to
         // bypass the existing trusted-abbreviation boundary.
         const auto &candidate = candidates[i];
-        preferenceCosts.push_back(std::isfinite(bestTrustedScore) &&
+        double cost = std::isfinite(bestTrustedScore) &&
                 candidate.match_priority == 1 && !abbreviationPromoted[i]
-            ? candidate.abbreviation_admission_score() : candidate.final_score());
+            ? candidate.abbreviation_admission_score() : candidate.final_score();
+        if (std::isfinite(unconfirmedCharacterFloor) &&
+            candidate.match_priority == 2 && candidate.phrase_length == 1 &&
+            candidate.learning_boost > 0.0 && candidate.learning_boost < 1.8 &&
+            candidate.recent_choice_bonus <= 0.0 && candidate.context_bonus <= 0.0 &&
+            candidate.language_context_bonus <= 0.0) {
+            // At equal cost the unchanged native source index breaks the tie.
+            cost = std::max(cost, unconfirmedCharacterFloor);
+        }
+        preferenceCosts.push_back(cost);
     }
     // F1（2026-10-24 容错专项）：LibIME 模糊解码把击键形读音候选（如
     // zongwen 输入下的 zong'wen）判为 prio=2、规范读音候选（zhong'wen）判为

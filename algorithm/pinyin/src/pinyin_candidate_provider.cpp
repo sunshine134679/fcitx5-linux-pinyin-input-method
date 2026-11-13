@@ -1162,6 +1162,11 @@ public:
     }
 
     bool remove(std::size_t index) {
+        // Disabled/sensitive input must not mutate either a local mask or the
+        // user dictionary, or report success without an authorized write.
+        if (!learningEnabled_) {
+            return false;
+        }
         if (checkResourceChanges()) {
             return false;
         }
