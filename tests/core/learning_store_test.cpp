@@ -137,9 +137,17 @@ void testWalClearResumesNewWritesAfterRetryExhaustion() {
                          "new generation writes can succeed");
         sqlite3_close(fault);
         assertTrue(writer.reloadIfChanged(), "timer applies the WAL clear");
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        // The timer schedules a reload; the worker publishes writability.
+        // Do not race that publication when asserting successful acceptance.
+        while (writer.epochViewState() != modernime::core::EpochViewState::Ready &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        assertTrue(writer.epochViewState() == modernime::core::EpochViewState::Ready,
+                   "timer reload becomes ready within the recovery deadline");
         assertTrue(writer.enqueueSelection("新事件", "xinshijian", {}, {}, 1001),
                    "new event is accepted after timer refresh");
-        const auto deadline = std::chrono::steady_clock::now() + 2s;
         bool persisted = false;
         while (std::chrono::steady_clock::now() < deadline) {
             if (settings.snapshot()->entry("新事件", "xinshijian", {}, {}) != nullptr) {

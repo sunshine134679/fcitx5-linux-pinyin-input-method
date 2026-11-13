@@ -1236,6 +1236,63 @@ TEST_F(CandidateRankingRegression, EnglishLearningReachability_SaturatedPreferen
     }
 }
 
+TEST_F(CandidateRankingRegression, ExactEnglishWordParticipatesInLearnedCompletionRanking) {
+    const auto now = nowMs();
+    const core::LearningSnapshot snapshot({
+        {"sudo", "sudo", {}, {}, 19, now, 0, false},
+        {"sudoi", "sudoi", {}, {}, 1, now - 60'000, 0, false}});
+    const auto words = snapshot.recallEnglishWords("sudo", 3, now);
+    ASSERT_EQ(words.size(), 2u);
+    EXPECT_EQ(words.front().text, "sudo");
+    EXPECT_EQ(words.back().text, "sudoi");
+}
+
+TEST_F(CandidateRankingRegression, RepeatedExactEnglishChoiceOverridesOneAccidentalLongerWord) {
+    for (const bool useLmdb : {false, true}) {
+        SCOPED_TRACE(useLmdb ? "LMDB" : "SQLite");
+        auto currentPaths = paths;
+        currentPaths.learningStore = (root / (useLmdb ? "sudo.lmdb" : "sudo.sqlite3")).string();
+        {
+            pinyin::PinyinCandidateProvider provider(currentPaths);
+            Host host;
+            fcitx5::ModernIMEController controller(host, &provider);
+            type(controller, "sudoi");
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Enter}));
+            ASSERT_EQ(host.committed, "sudoi");
+            for (int choice = 0; choice < 19; ++choice) {
+                type(controller, "sudo");
+                const auto index = rank(controller.page(), "sudo");
+                ASSERT_LT(index, controller.page().items.size());
+                ASSERT_EQ(controller.page().items[index].consumedInputBytes, 4u);
+                ASSERT_TRUE(controller.select(index));
+                ASSERT_EQ(host.committed, "sudo");
+            }
+            ASSERT_TRUE(provider.flush());
+            const auto snapshot = provider.sharedResources()->learning->snapshot();
+            ASSERT_NE(snapshot->entry("sudo", "sudo", {}, {}), nullptr);
+            EXPECT_EQ(snapshot->entry("sudo", "sudo", {}, {})->frequency, 19);
+            EXPECT_EQ(snapshot->entry("sudoi", "sudoi", {}, {})->frequency, 1);
+            type(controller, "sudo");
+            EXPECT_EQ(rank(controller.page(), "sudo"), 0u);
+            EXPECT_GT(rank(controller.page(), "sudoi"), 0u);
+#if defined(MODERNIME_HAS_FCITX5)
+            EXPECT_EQ(physicalPosition(controller.page(), rank(controller.page(), "sudo")),
+                      (std::pair<std::size_t, std::size_t>{0, 0}));
+#endif
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Space}));
+            EXPECT_EQ(host.committed, "sudo");
+            ASSERT_TRUE(provider.flush());
+        }
+        {
+            pinyin::PinyinCandidateProvider reopened(currentPaths);
+            ASSERT_TRUE(reopened.replaceInput("sudo"));
+            ASSERT_FALSE(reopened.page().items.empty());
+            EXPECT_EQ(reopened.page().items.front().text, "sudo");
+            EXPECT_EQ(reopened.page().items.front().consumedInputBytes, 4u);
+        }
+    }
+}
+
 TEST_F(CandidateRankingRegression, EnglishLearningReachability_EndToEndControllerPersistenceAndReverse) {
     for (const bool useLmdb : {false, true}) {
         auto testRoot = root / (useLmdb ? "lmdb_case" : "sqlite_case");

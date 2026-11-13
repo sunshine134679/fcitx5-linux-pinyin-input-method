@@ -111,6 +111,7 @@ public:
     std::vector<RecalledCandidate> recallSentenceWords(
         const std::vector<std::string> &readings, std::int64_t nowMs) const;
 
+    // Includes a learned exact word so its evidence competes with completions.
     std::vector<RecalledEnglishWord> recallEnglishWords(
         std::string_view prefix, std::size_t limit = 5,
         std::int64_t nowMs = 0) const;

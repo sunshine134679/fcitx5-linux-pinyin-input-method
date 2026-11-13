@@ -1115,7 +1115,9 @@ std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
     std::vector<RecalledEnglishWord> results;
     results.reserve(candidates.size());
     for (const auto &phrase : candidates) {
-        if (phrase.size() <= prefix.size()) {
+        // The exact word must compete with its longer completions; excluding
+        // it discards every selection of the user's already complete input.
+        if (phrase.size() < prefix.size()) {
             continue;
         }
         if (isSuppressed(phrase, phrase) || !hasPositiveFrequency(phrase, phrase)) {
