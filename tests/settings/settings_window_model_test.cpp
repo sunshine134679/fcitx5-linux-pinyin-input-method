@@ -25,10 +25,50 @@ std::filesystem::path testDirectory() {
     return path;
 }
 
+void testFailedReloadPreservesDraftAndSavedState(const std::filesystem::path &directory) {
+    const auto path = directory / "reload-failure.conf";
+    modernime::settings::SettingsWindowModel model(path);
+    auto saved = model.settings();
+    saved.inputEnabled = false;
+    model.setSettings(saved);
+    std::string error;
+    assertTrue(model.save(&error), "reload fixture saves a non-default setting");
+    auto draft = saved;
+    draft.learningEnabled = false;
+    model.setSettings(draft);
+    const auto loadedHash = model.loadedHash();
+    const auto savedHash = model.savedHash();
+    const auto revision = model.savedRevision();
+    const auto diagnostics = model.loadDiagnostics();
+    const auto retained = directory / "reload-retained.conf";
+    std::filesystem::rename(path, retained);
+    std::filesystem::create_directory(path);
+    assertTrue(!model.reloadFromDisk(&error), "a real read failure is reported by reloadFromDisk");
+    assertTrue(!error.empty() && model.validationError() == error,
+               "reload failure exposes an actionable error");
+    assertTrue(model.settings() == draft && model.savedSettings() == saved && model.dirty(),
+               "failed reload preserves the unsaved draft and saved settings");
+    assertTrue(model.loadedHash() == loadedHash && model.savedHash() == savedHash &&
+                   model.savedRevision() == revision && model.reloadRequired() &&
+                   model.loadDiagnostics() == diagnostics,
+               "failed reload preserves baselines, diagnostics and pending application revision");
+    std::filesystem::remove(path);
+    std::filesystem::rename(retained, path);
+    assertTrue(model.reloadFromDisk(&error) && error.empty() && model.validationError().empty(),
+               "a subsequent successful reload clears the error");
+    assertTrue(model.settings() == saved && !model.dirty(),
+               "successful reload adopts disk contents through the normal path");
+    std::filesystem::remove(path);
+    assertTrue(model.reloadFromDisk(&error) && model.settings() == modernime::core::defaultSettings() &&
+                   model.savedHash().empty() && !model.dirty(),
+               "explicitly missing settings retain their existing default-load semantics");
+}
+
 } // namespace
 
 int main() {
     const auto directory = testDirectory();
+    testFailedReloadPreservesDraftAndSavedState(directory);
     const auto path = directory / "settings.conf";
     modernime::settings::SettingsWindowModel model(path);
     assertTrue(!model.dirty(), "fresh model is clean");

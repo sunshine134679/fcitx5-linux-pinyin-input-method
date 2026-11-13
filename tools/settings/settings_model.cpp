@@ -35,6 +35,13 @@ bool SettingsWindowModel::reloadFromDisk(std::string *error) {
         error->clear();
     }
     const auto loaded = core::SettingsStore::load(path_);
+    if (loaded.isIoError()) {
+        lastError_ = "无法重新读取设置文件，请稍后重试。";
+        if (error != nullptr) {
+            *error = lastError_;
+        }
+        return false;
+    }
     loaded_ = loaded.settings;
     edited_ = loaded_;
     loadDiagnostics_ = loaded.diagnostics;
