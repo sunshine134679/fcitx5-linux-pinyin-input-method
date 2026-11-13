@@ -259,19 +259,27 @@ if [[ -z "$data_guard_bin" ]]; then
     exit 1
 fi
 
+# Keep the installer's partial-file ownership logic loaded before removing the
+# source payload. A profile contains user lines as well as the managed block.
+if [[ -f "$from_prefix/share/modernime/managed-files/xprofile.path" &&
+      -f "$from_prefix/share/modernime/managed-files/xprofile.content" ]]; then
+    install_state_sh="${lifecycle_sh%/*}/install_state.sh"
+    if [[ ! -f "$install_state_sh" ]]; then
+        printf 'Error: Required profile ownership helpers (install_state.sh) not available; source installation is untouched.\n' >&2
+        exit 1
+    fi
+    # shellcheck disable=SC1090
+    source "$install_state_sh"
+fi
+
 ts="$(date +%Y%m%d%H%M%S 2>/dev/null || echo 0)-$$"
 printf '[1/5] Inspecting source installation (channel=%s, version=%s, prefix=%s)...\n' \
     "$detected_channel" "${detected_version:-unknown}" "$from_prefix"
 
 printf '[2/5] Creating verified transactional backup of user configuration and learning data...\n'
-user_backup_created=false
-user_backup_dir="$data_dir/backups/migrate-$ts"
 if ! "$data_guard_bin" --pre-upgrade --data-dir "$data_dir" --config-dir "$config_dir" --tag "migrate-$ts"; then
     printf 'Error: Pre-migration user data backup or integrity check failed; aborting migration. Original installation at %s is untouched.\n' "$from_prefix" >&2
     exit 1
-fi
-if [[ -f "$user_backup_dir/backup-manifest.json" ]]; then
-    user_backup_created=true
 fi
 
 # Copy data_guard_bin to a temporary path before removing old prefix files
@@ -319,11 +327,17 @@ while IFS= read -r item; do
     fi
 done < "$manifest_file"
 
-# Also preserve install-manifest.txt and managed-files state directory
-if [[ -d "$from_prefix/share/modernime" ]]; then
-    mkdir -p "$rollback_prefix_dir/share"
-    cp -a -- "$from_prefix/share/modernime" "$rollback_prefix_dir/share/"
-fi
+# Preserve ownership metadata separately from the manifest's program payload.
+# With ~/.local, share/modernime also contains live learning and dictionary data;
+# copying that whole directory would later overwrite writes made during migration.
+source_metadata="$from_prefix/share/modernime"
+backup_metadata="$rollback_prefix_dir/share/modernime"
+mkdir -p "$backup_metadata"
+for metadata_name in install-manifest.txt install-channel.txt managed-files; do
+    if [[ -e "$source_metadata/$metadata_name" || -L "$source_metadata/$metadata_name" ]]; then
+        cp -a -- "$source_metadata/$metadata_name" "$backup_metadata/"
+    fi
+done
 
 package_attempted=false
 
@@ -737,9 +751,30 @@ restore_original_channel() {
         fi
     fi
     if [[ -d "$rollback_home_dir" ]]; then
+        local profile_target=""
+        local profile_state="$rollback_prefix_dir/share/modernime/managed-files"
+        if [[ -f "$profile_state/xprofile.path" && -f "$profile_state/xprofile.content" ]]; then
+            profile_target=$(cat "$profile_state/xprofile.path")
+        fi
         while IFS= read -r -d '' bak_file; do
             rel="${bak_file#"$rollback_home_dir/"}"
             dst="/$rel"
+            if [[ -n "$profile_target" && "$dst" == "$profile_target" ]]; then
+                # Uninstall removes only the owned block. Restore that block
+                # through the same ownership policy, retaining current lines.
+                if ! modernime_write_profile_block "$profile_state/xprofile.content" "$dst" \
+                    "$from_prefix/share/modernime/managed-files"; then
+                    source_restore_failed=true
+                    rollback_failed=true
+                fi
+                continue
+            fi
+            # Uninstall removes unchanged owned integration files. A remaining
+            # or newly created path belongs to current user/session changes.
+            if [[ -e "$dst" || -L "$dst" ]]; then
+                printf '[ROLLBACK] Preserving current external file: %s\n' "$dst" >&2
+                continue
+            fi
             mkdir -p "$(dirname "$dst")"
             if ! cp -a --remove-destination -- "$bak_file" "$dst" 2>/dev/null; then
                 source_restore_failed=true
@@ -747,14 +782,8 @@ restore_original_channel() {
             fi
         done < <(find "$rollback_home_dir" \( -type f -o -type l \) -print0)
     fi
-    if [[ "$user_backup_created" == true ]]; then
-        if ! "$temp_work/modernime-data-guard" --restore \
-            --data-dir "$data_dir" \
-            --config-dir "$config_dir" 2>/dev/null; then
-            rollback_failed=true
-            printf '[ROLLBACK] Warning: User data-guard restore reported errors.\n' >&2
-        fi
-    fi
+    # User backups remain available for explicit recovery. Program rollback must
+    # never restore an older database/configuration over current user writes.
 
     if [[ "$rollback_failed" == true ]]; then
         printf '[ROLLBACK] Warning: Rollback encountered errors; original installation may not be fully restored.\n' >&2

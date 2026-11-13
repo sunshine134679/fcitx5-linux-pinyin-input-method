@@ -803,6 +803,16 @@ def perform_restore_for_dirs(
         if _sha256_file(lmdb_data_file) != manifest["lmdb"]["sha256"]:
             raise RuntimeError(f"LMDB backup checksum mismatch: {lmdb_bak}")
 
+    for fname, meta in manifest.get("data_files", {}).items():
+        bak_f = backup_dir / "data_files" / fname
+        if not bak_f.is_file() or _sha256_file(bak_f) != meta["sha256"]:
+            raise RuntimeError(f"Data file backup corrupted: {bak_f}")
+
+    for rel, meta in manifest.get("config_files", {}).items():
+        bak_f = backup_dir / "config_files" / rel
+        if not bak_f.is_file() or _sha256_file(bak_f) != meta["sha256"]:
+            raise RuntimeError(f"Config file backup corrupted: {bak_f}")
+
     data_dir.mkdir(parents=True, exist_ok=True)
     if manifest.get("sqlite"):
         sqlite_bak = Path(manifest["sqlite"]["backup_file"])
@@ -834,19 +844,15 @@ def perform_restore_for_dirs(
             os.replace(tmp_dst, lmdb_live)
         verify_lmdb(lmdb_live)
 
-    for fname, meta in manifest.get("data_files", {}).items():
+    for fname in manifest.get("data_files", {}):
         bak_f = backup_dir / "data_files" / fname
-        if not bak_f.is_file() or _sha256_file(bak_f) != meta["sha256"]:
-            raise RuntimeError(f"Data file backup corrupted: {bak_f}")
         dst_f = data_dir / fname
         tmp_f = data_dir / f".{fname}.restore-tmp"
         shutil.copy2(bak_f, tmp_f)
         os.replace(tmp_f, dst_f)
 
-    for rel, meta in manifest.get("config_files", {}).items():
+    for rel in manifest.get("config_files", {}):
         bak_f = backup_dir / "config_files" / rel
-        if not bak_f.is_file() or _sha256_file(bak_f) != meta["sha256"]:
-            raise RuntimeError(f"Config file backup corrupted: {bak_f}")
         dst_f = config_dir / rel
         dst_f.parent.mkdir(parents=True, exist_ok=True)
         tmp_f = dst_f.parent / f".{dst_f.name}.restore-tmp"

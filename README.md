@@ -171,12 +171,14 @@ ModernIME 严格区分脚本/源码安装（`channel=script`）与系统发行�
 # 1. 检查当前安装来源、manifest、文件归属与版本
 modernime-migrate-channel --check
 
-# 2. 从 ~/.local 脚本安装平滑迁移至 Ubuntu/Debian APT 系统包（自动做 SQLite WAL / LMDB 事务备份、清理旧渠道文件并校验新包路径；若失败自动回滚恢复原状）
+# 2. 从 ~/.local 脚本安装平滑迁移至 Ubuntu/Debian APT 系统包（自动备份并校验；失败时回退程序，保留迁移期间的用户数据）
 modernime-migrate-channel --from-prefix "$HOME/.local" --to-channel deb --package-cmd "sudo apt install -y modernime"
 
 # 3. 从脚本安装平滑迁移至 openEuler DNF 系统包
 modernime-migrate-channel --from-prefix "$HOME/.local" --to-channel rpm --package-cmd "sudo dnf install -y modernime"
 ```
+
+迁移失败不会自动恢复旧学习、词典或设置。期间新建或修改的外部会话配置也会保留，并在回退日志中提示；备份仍可用于主动恢复。
 
 #### 3. Linux x86_64 便携归档（`.tar.gz` 免编译包，要求 glibc ≥ 2.34）
 ```bash
@@ -724,7 +726,7 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 ### 3. 便携绿色包 (Portable Tarball) 与源码安装
 
 - **升级**：解压新版本压缩包后直接运行 `./install.sh`。安装器具备暂存完整性校验、旧版 v0.1.6 扁平插件目录自动迁移，并在每次升级前使用在线 SQLite WAL Checkpoint + Backup API（含 `PRAGMA integrity_check` 校验）及 LMDB 备份机制，自动将用户自适应学习数据库完整备份至 `~/.local/share/modernime/learning.sqlite3.backup-<timestamp>` 与 `learning.lmdb.backup-<timestamp>`。用户自定义词典（`user-dictionary.txt`）和个性化配置会被严格保护，哈希保持不变。
-- **回退**：解压旧版本便携包或切换到旧版本源码标签，直接运行 `./install.sh` 即可重新部署旧版二进制。如需回退词频学习记录，直接将自动备份文件复制覆盖 `learning.sqlite3` / `learning.lmdb` 即可。
+- **回退**：解压旧版本便携包或切换到旧版本源码标签，运行 `./install.sh` 重新部署程序，保留当前学习、词典与配置。如需主动恢复自动备份，先退出 Fcitx5 和设置客户端，再运行 `modernime-data-guard --restore --backup-dir '完整备份目录'`；例如选用 `~/.local/share/modernime/backups/<timestamp>`，自定义数据路径时沿用原来的环境变量。此操作会恢复该备份包含的数据与设置；工具会先校验备份中的数据库、词典及配置，发现损坏即拒绝写入。
 - **安装渠道切换注意**：系统已通过 DEB 或 RPM 原生包安装时，请勿使用 `sudo ./install.sh /usr` 强制覆盖系统前缀；如需切换至便携包或源码构建版，请先通过系统包管理器（`apt remove` / `dnf remove`）卸载原生包，或使用非 root 默认用户前缀（`~/.local`）部署。
 
 ## 卸载

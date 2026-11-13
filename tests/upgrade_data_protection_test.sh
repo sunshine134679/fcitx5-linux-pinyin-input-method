@@ -19,6 +19,57 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# An unreadable/corrupt file anywhere in a backup must reject the restore
+# before replacing the live database, dictionary or configuration.
+python3 - "$data_guard" "$test_root/restore-validation" <<'PYEOF'
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+
+guard = sys.argv[1]
+root = Path(sys.argv[2])
+for broken_kind in ('data', 'config'):
+    case = root / broken_kind
+    data, config, backup = case / 'data', case / 'config', case / 'backup'
+    data.mkdir(parents=True)
+    config.mkdir()
+    database = data / 'learning.sqlite3'
+    dictionary = data / 'user-dictionary.txt'
+    settings = config / 'settings.conf'
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE learning_entries (pinyin TEXT, phrase TEXT)')
+        connection.execute("INSERT INTO learning_entries VALUES ('old', '备份前')")
+    dictionary.write_text("old\t备份词典\t10\n", encoding='utf-8')
+    settings.write_text('candidate.font_size=18\n', encoding='utf-8')
+    arguments = ['--data-dir', str(data), '--config-dir', str(config),
+                 '--backup-dir', str(backup)]
+    subprocess.run([guard, '--backup', '--tag', broken_kind, *arguments], check=True,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute("INSERT INTO learning_entries VALUES ('new', '备份后的学习')")
+    dictionary.write_text("new\t当前词典\t20\n", encoding='utf-8')
+    settings.write_text('candidate.font_size=24\n', encoding='utf-8')
+    protected = {path: path.read_bytes() for path in (database, dictionary, settings)}
+    corrupted = backup / ('data_files/user-dictionary.txt' if broken_kind == 'data'
+                          else 'config_files/settings.conf')
+    original_backup = corrupted.read_bytes()
+    corrupted.write_text('truncated backup\n', encoding='utf-8')
+    result = subprocess.run([guard, '--restore', *arguments], capture_output=True, text=True)
+    changed = [path.name for path, value in protected.items() if path.read_bytes() != value]
+    print(f'restore validation {broken_kind}: exit={result.returncode}, changed={changed}', flush=True)
+    assert result.returncode != 0 and 'backup corrupted' in result.stderr, result.stderr
+    assert not changed, f'Failed restore changed live user files: {changed}'
+    corrupted.write_bytes(original_backup)
+    subprocess.run([guard, '--restore', *arguments], check=True,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute('SELECT pinyin, phrase FROM learning_entries').fetchall() == [('old', '备份前')]
+    assert dictionary.read_text(encoding='utf-8') == "old\t备份词典\t10\n"
+    assert settings.read_text(encoding='utf-8') == 'candidate.font_size=18\n'
+print('Restore preflight validation and repaired backup recovery passed', flush=True)
+PYEOF
+
 # Build a lightweight fake binary payload so we can exercise both generated binary installer
 # and source/package upgrade hooks rapidly and deterministically.
 payload_pkg="$test_root/pkg"

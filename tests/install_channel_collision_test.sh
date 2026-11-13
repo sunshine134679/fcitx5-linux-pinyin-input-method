@@ -93,6 +93,107 @@ EOF
 
 chmod +x "$fake_bin"/*
 
+# Real migration rollback must preserve writes committed after its backup,
+# including the default layout where user data shares ~/.local/share/modernime
+# with the script installation's ownership metadata.
+python3 - "$project_root/scripts/modernime-migrate-channel" "$test_root" "$fake_bin" <<'PYEOF'
+from pathlib import Path
+import os
+import shlex
+import sqlite3
+import subprocess
+import sys
+
+migrator, test_root, fake_bin = sys.argv[1:]
+failures = []
+for shared_prefix in (False, True):
+    case = Path(test_root) / ('shared-user-data' if shared_prefix else 'separate-user-data')
+    home = case / 'home'
+    source = home / '.local' if shared_prefix else case / 'prefix'
+    data_home = source / 'share' if shared_prefix else case / 'data'
+    data, config = data_home / 'modernime', home / '.config/modernime'
+    target, temporary = case / 'target', case / 'tmp'
+    for directory in (data, config, target, temporary, source / 'bin'):
+        directory.mkdir(parents=True, exist_ok=True)
+    program = source / 'bin/modernime-settings'
+    program.write_text('#!/bin/sh\necho original-program\n', encoding='utf-8')
+    program.chmod(0o755)
+    metadata = source / 'share/modernime'
+    metadata.mkdir(parents=True, exist_ok=True)
+    channel = metadata / 'install-channel.txt'
+    channel.write_text(f'channel=script\nversion=0.2.9\nprefix={source}\n', encoding='utf-8')
+    manifest = metadata / 'install-manifest.txt'
+    external = home / '.config/environment.d/90-modernime.conf'
+    external.parent.mkdir(parents=True)
+    external.write_text('GTK_IM_MODULE=fcitx\n', encoding='utf-8')
+    managed = metadata / 'managed-files'
+    managed.mkdir()
+    (managed / 'environment.path').write_text(f'{external}\n', encoding='utf-8')
+    (managed / 'environment.content').write_bytes(external.read_bytes())
+    profile = home / '.xprofile'
+    profile_block = '# BEGIN MODERNIME ENV\nexport GTK_IM_MODULE=fcitx\n# END MODERNIME ENV\n'
+    profile.write_text('# original user line\n' + profile_block, encoding='utf-8')
+    (managed / 'xprofile.path').write_text(f'{profile}\n', encoding='utf-8')
+    (managed / 'xprofile.content').write_text(profile_block, encoding='utf-8')
+    manifest.write_text(f'{program}\n{channel}\n{external}\n{profile}\n', encoding='utf-8')
+    dictionary, settings = data / 'user-dictionary.txt', config / 'settings.conf'
+    dictionary.write_text('old\t原词条\t10\n', encoding='utf-8')
+    settings.write_text('candidate.font_size=18\n', encoding='utf-8')
+    database = data / 'learning.sqlite3'
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE learning_entries (pinyin TEXT, phrase TEXT)')
+        connection.execute("INSERT INTO learning_entries VALUES ('old', '原学习')")
+    writer = case / 'package-failure.py'
+    writer.write_text('''from pathlib import Path
+import os, sqlite3
+data = Path(os.environ['MODERNIME_DATA_HOME']) / 'modernime'
+config = Path(os.environ['MODERNIME_CONFIG_HOME']) / 'modernime'
+with sqlite3.connect(data / 'learning.sqlite3') as connection:
+    connection.execute("INSERT INTO learning_entries (pinyin, phrase) VALUES ('new', '迁移期间学习')")
+with (data / 'user-dictionary.txt').open('a', encoding='utf-8') as output:
+    output.write('new\\t迁移期间词条\\t20\\n')
+with (config / 'settings.conf').open('a', encoding='utf-8') as output:
+    output.write('candidate.page_size=7\\n')
+external = config.parent / 'environment.d/90-modernime.conf'
+external.parent.mkdir(parents=True, exist_ok=True)
+external.write_text('GTK_IM_MODULE=fcitx\\n# migration-time user edit\\n', encoding='utf-8')
+if os.environ['MODERNIME_TEST_PROFILE_EDIT'] == '1':
+    with (Path(os.environ['HOME']) / '.xprofile').open('a', encoding='utf-8') as output:
+        output.write('# migration-time profile edit\\n')
+raise SystemExit(23)
+''', encoding='utf-8')
+    environment = os.environ.copy()
+    environment.update(HOME=str(home), TMPDIR=str(temporary),
+                       MODERNIME_CONFIG_HOME=str(config.parent), MODERNIME_DATA_HOME=str(data_home),
+                       MODERNIME_TEST_PROFILE_EDIT='1' if shared_prefix else '0',
+                       MODERNIME_DESKTOP_DIR=str(home / 'Desktop'), PATH=f'{fake_bin}:/usr/bin:/bin')
+    result = subprocess.run([migrator, '--from-prefix', str(source), '--target-prefix', str(target),
+                             '--to-channel', 'deb', '--package-cmd',
+                             f'{shlex.quote(sys.executable)} {shlex.quote(str(writer))}',
+                             '--package-rollback-cmd', '/usr/bin/true', '--no-session-init'],
+                            env=environment, capture_output=True, text=True)
+    (case / 'migration.log').write_text(result.stdout + result.stderr, encoding='utf-8')
+    assert result.returncode != 0 and 'Original installation restored (channel=script' in result.stderr, result.stderr
+    assert program.read_text(encoding='utf-8') == '#!/bin/sh\necho original-program\n'
+    assert manifest.is_file() and 'channel=script' in channel.read_text(encoding='utf-8')
+    with sqlite3.connect(database) as connection:
+        phrases = {row[0] for row in connection.execute('SELECT phrase FROM learning_entries')}
+    retained = (phrases == {'原学习', '迁移期间学习'} and
+                dictionary.read_text(encoding='utf-8') == 'old\t原词条\t10\nnew\t迁移期间词条\t20\n' and
+                settings.read_text(encoding='utf-8') == 'candidate.font_size=18\ncandidate.page_size=7\n')
+    integration_retained = external.read_text(encoding='utf-8') == 'GTK_IM_MODULE=fcitx\n# migration-time user edit\n'
+    profile_text = profile.read_text(encoding='utf-8')
+    expected_user_lines = ['# original user line']
+    if shared_prefix:
+        expected_user_lines.append('# migration-time profile edit')
+    profile_retained = (profile_text.count(profile_block) == 1 and
+                        [line for line in profile_text.replace(profile_block, '').splitlines() if line] == expected_user_lines)
+    print(f'migration rollback shared_prefix={shared_prefix}: retained={retained}, integration_retained={integration_retained}, profile_retained={profile_retained}, phrases={sorted(phrases)}', flush=True)
+    if not retained or not integration_retained or not profile_retained:
+        failures.append(f'Migration rollback lost current user writes: shared_prefix={shared_prefix}')
+assert not failures, '\n'.join(failures)
+PYEOF
+
 # -------------------------------------------------------------
 # Test 1: Migration of legacy v0.1.6 plugins from flat lib/fcitx5
 # -------------------------------------------------------------
