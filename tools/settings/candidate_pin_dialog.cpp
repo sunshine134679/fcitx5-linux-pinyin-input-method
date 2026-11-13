@@ -1,6 +1,7 @@
 #include "modernime/settings/candidate_pin_dialog.h"
 #include "modernime/core/pinyin_match.h"
 #include "modernime/settings/detail/diagnostics_lifetime.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 #include <algorithm>
 #include <cstdlib>
@@ -57,7 +58,7 @@ struct PinDialog {
     std::vector<core::CandidatePin> choices;
     std::optional<std::size_t> replacing;
     GtkWidget *dialog, *stack, *rules, *search, *count, *edit, *remove, *add;
-    GtkWidget *scheme, *input, *query, *candidates, *status, *choose, *more, *details;
+    GtkWidget *scheme, *input, *query, *candidates, *status, *choose, *more, *details, *detailLabel;
     unsigned generation = 0;
     bool busy = false;
     std::size_t limit = 32;
@@ -145,9 +146,8 @@ struct PinDialog {
                 if (o.generation != request.generation) return;
                 if (!request.result.error.empty()) {
                     gtk_label_set_text(GTK_LABEL(o.status), "查找失败，请检查输入或数据安装后重试。");
-                    auto *detail = gtk_bin_get_child(GTK_BIN(o.details));
-                    gtk_label_set_text(GTK_LABEL(detail), request.result.error.substr(0, 1000).c_str());
-                    gtk_widget_show(detail); gtk_widget_show(o.details); return;
+                    gtk_label_set_text(GTK_LABEL(o.detailLabel), request.result.error.substr(0, 1000).c_str());
+                    gtk_widget_show(o.details); return;
                 }
                 o.choices = std::move(request.result.candidates);
                 for (std::size_t i = 0; i < o.choices.size(); ++i) append(o.candidates, o.choices[i].text.c_str(), o.choices[i].fullPinyin.c_str(), "", i);
@@ -204,7 +204,22 @@ GtkWidget *createCandidatePinDialog(GtkWindow *parent, const core::ModernIMESett
     setAccessibleWidgetText(o->candidates, "可置顶的完整候选", "选择后确认置顶，也可双击或按 Enter 确认");
     auto *pickActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8); gtk_box_pack_start(GTK_BOX(picker), pickActions, FALSE, FALSE, 0);
     o->choose = button(pickActions, "置顶所选候选", "pin-choose"); o->more = button(pickActions, "更多候选", "pin-more");
-    o->details = gtk_expander_new("技术详情"); gtk_container_add(GTK_CONTAINER(o->details), description("")); gtk_box_pack_start(GTK_BOX(picker), o->details, FALSE, FALSE, 0); gtk_widget_set_no_show_all(o->details, TRUE);
+    auto *detailsToggle = gtk_expander_new("技术详情");
+    setAccessibleWidgetText(detailsToggle, "技术详情", "展开查看并复制查找失败的具体原因");
+    target(detailsToggle, "pin-error-details");
+    o->detailLabel = description("");
+    gtk_label_set_selectable(GTK_LABEL(o->detailLabel), TRUE);
+    gtk_label_set_line_wrap_mode(GTK_LABEL(o->detailLabel), PANGO_WRAP_WORD_CHAR);
+    auto *detailsScroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(detailsScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(detailsScroll), TRUE);
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(detailsScroll), 120);
+    gtk_container_add(GTK_CONTAINER(detailsScroll), o->detailLabel);
+    o->details = createSettingsDisclosure(detailsToggle, detailsScroll);
+    gtk_widget_show_all(o->details);
+    gtk_widget_set_no_show_all(o->details, TRUE);
+    gtk_widget_hide(o->details);
+    gtk_box_pack_start(GTK_BOX(picker), o->details, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(body), description("确认后返回设置草稿，点击主窗口“保存设置”才会生效。"), FALSE, FALSE, 0);
     g_signal_connect(o->search, "search-changed", G_CALLBACK(+[](GtkSearchEntry *, gpointer p) { static_cast<PinDialog *>(p)->render(); }), o);
     g_signal_connect(o->add, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) { static_cast<PinDialog *>(p)->open({}); }), o);

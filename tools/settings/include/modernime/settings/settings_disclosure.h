@@ -4,6 +4,10 @@
 
 namespace modernime::settings {
 
+// Pack a disclosure title and its content as siblings, so GtkExpander does not
+// hide the content before the shared closing transition can finish.
+GtkWidget *createSettingsDisclosure(GtkWidget *controller, GtkWidget *content);
+
 // controller is a GtkToggleButton or a GtkExpander used as a title. Content
 // remains in the revealer; an optional existing arrow turns with the disclosure.
 void bindSettingsDisclosure(GtkWidget *controller, GtkWidget *revealer,

@@ -122,6 +122,16 @@ void updateDisclosure(Disclosure *state) {
 
 } // namespace
 
+GtkWidget *createSettingsDisclosure(GtkWidget *controller, GtkWidget *content) {
+    auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    auto *revealer = gtk_revealer_new();
+    gtk_container_add(GTK_CONTAINER(revealer), content);
+    gtk_box_pack_start(GTK_BOX(box), controller, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), revealer, FALSE, FALSE, 0);
+    bindSettingsDisclosure(controller, revealer);
+    return box;
+}
+
 void setSettingsRevealed(GtkWidget *widget, bool expanded, bool animate) {
     auto *revealer = GTK_REVEALER(widget);
     animate = animate && animationsEnabled(widget) && gtk_widget_get_mapped(widget);

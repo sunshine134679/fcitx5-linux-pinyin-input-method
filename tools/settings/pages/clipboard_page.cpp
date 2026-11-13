@@ -271,15 +271,24 @@ public:
         gtk_box_pack_start(GTK_BOX(historySection), historyState, FALSE, FALSE,
                            0);
 
-        errorDetails = gtk_expander_new("查看错误详情");
-        setTarget(errorDetails, "clipboard-error-details");
+        auto *errorToggle = gtk_expander_new("查看错误详情");
+        setTarget(errorToggle, "clipboard-error-details");
+        setAccessibleWidgetText(errorToggle, "查看错误详情", "展开可复制的具体原因，长内容可滚动查看");
         errorDetailsLabel = gtk_label_new("");
         gtk_label_set_selectable(GTK_LABEL(errorDetailsLabel), TRUE);
         gtk_label_set_xalign(GTK_LABEL(errorDetailsLabel), 0.0f);
         gtk_label_set_line_wrap(GTK_LABEL(errorDetailsLabel), TRUE);
         gtk_label_set_line_wrap_mode(GTK_LABEL(errorDetailsLabel), PANGO_WRAP_WORD_CHAR);
-        gtk_container_add(GTK_CONTAINER(errorDetails), errorDetailsLabel);
+        gtk_label_set_max_width_chars(GTK_LABEL(errorDetailsLabel), 68);
+        auto *errorScroll = gtk_scrolled_window_new(nullptr, nullptr);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(errorScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(errorScroll), TRUE);
+        gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(errorScroll), 160);
+        gtk_container_add(GTK_CONTAINER(errorScroll), errorDetailsLabel);
+        errorDetails = createSettingsDisclosure(errorToggle, errorScroll);
+        gtk_widget_show_all(errorDetails);
         gtk_widget_set_no_show_all(errorDetails, TRUE);
+        gtk_widget_hide(errorDetails);
         gtk_box_pack_start(GTK_BOX(historySection), errorDetails, FALSE, FALSE, 0);
 
         auto *historyActions = gtk_flow_box_new();

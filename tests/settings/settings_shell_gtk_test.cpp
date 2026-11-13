@@ -307,6 +307,13 @@ gboolean inspectDictionaryDialog(gpointer data) {
         assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(pinyin))) == "zhongqing");
         gtk_expander_set_expanded(GTK_EXPANDER(advanced), TRUE);
         assert(waitUntil([weight] { return gtk_widget_get_mapped(weight); }));
+        // Real dialog content must grow through the shared disclosure, rather
+        // than appearing in a single allocation and moving the action buttons.
+        auto *reveal = gtk_widget_get_ancestor(weight, GTK_TYPE_REVEALER);
+        assert(reveal != nullptr);
+        assert(waitUntil([reveal] {
+            return gtk_revealer_get_child_revealed(GTK_REVEALER(reveal));
+        }));
         gtk_expander_set_expanded(GTK_EXPANDER(advanced), FALSE);
         assert(waitUntil([weight] { return !gtk_widget_get_mapped(weight); }));
         assert(gtk_widget_get_sensitive(save));
@@ -1005,8 +1012,10 @@ int main(int argc, char **argv) {
         shell.show(modernime::settings::SettingsPageId::Dictionary);
         auto *dictionaryView = findAccessibleWidget(window, GTK_TYPE_TREE_VIEW, "个人词典词条列表");
         assert(dictionaryView != nullptr);
-        auto *dictModel = gtk_tree_view_get_model(GTK_TREE_VIEW(dictionaryView));
-        assert(waitUntil([dictModel] {
+        assert(waitUntil([dictionaryView] {
+            // Reload may replace the view's model; a borrowed pointer must not
+            // outlive the event-loop iteration that supplied it.
+            auto *dictModel = gtk_tree_view_get_model(GTK_TREE_VIEW(dictionaryView));
             GtkTreeIter iter;
             if (!gtk_tree_model_get_iter_first(dictModel, &iter)) {
                 return false;

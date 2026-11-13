@@ -6,6 +6,7 @@
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/runtime_environment.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include "modernime/pinyin/user_dictionary.h"
@@ -510,7 +511,12 @@ public:
             g_source_remove(idleBatchSourceId);
             idleBatchSourceId = 0;
         }
-        gtk_list_store_clear(dictionaryStore);
+        // A bound TreeView handles every row-deleted signal synchronously.
+        // Replace the emptied view in one step; filling still yields in batches.
+        auto replacement = detail::GObjectHandle<GtkListStore>::adopt(
+            gtk_list_store_new(4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT));
+        dictionaryStore = replacement.get();
+        gtk_tree_view_set_model(GTK_TREE_VIEW(dictionaryView), GTK_TREE_MODEL(dictionaryStore));
         const auto query = dictionarySearch == nullptr
                                ? std::string()
                                : gtk_entry_get_text(GTK_ENTRY(dictionarySearch));
@@ -1199,7 +1205,6 @@ private:
         setAccessibleWidgetText(advanced, "高级设置", "可选的词条排序加成，通常无需修改");
         auto *advancedBody = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
         gtk_widget_set_margin_top(advancedBody, 10);
-        gtk_container_add(GTK_CONTAINER(advanced), advancedBody);
         auto *weightRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
         auto *weightLabel = gtk_label_new("排序加成");
         auto *weight = gtk_spin_button_new_with_range(0.0, 1000000000.0, 1.0);
@@ -1214,14 +1219,7 @@ private:
         gtk_label_set_line_wrap(GTK_LABEL(weightHelp), TRUE);
         addStyleClass(weightHelp, "modernime-description");
         gtk_box_pack_start(GTK_BOX(advancedBody), weightHelp, FALSE, FALSE, 0);
-        gtk_widget_show_all(advancedBody);
-        gtk_widget_hide(advancedBody);
-        gtk_widget_set_no_show_all(advancedBody, TRUE);
-        g_signal_connect(advanced, "notify::expanded", G_CALLBACK(+[](
-            GtkExpander *expander, GParamSpec *, gpointer child) {
-                gtk_widget_set_visible(GTK_WIDGET(child), gtk_expander_get_expanded(expander));
-            }), advancedBody);
-        gtk_box_pack_start(GTK_BOX(body), advanced, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(body), createSettingsDisclosure(advanced, advancedBody), FALSE, FALSE, 0);
 
         auto state = std::make_shared<DictionaryDialogState>();
         state->pinyin = pinyin;
