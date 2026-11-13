@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -226,6 +227,128 @@ void testDictionaryReadStateControlsMutation(const std::filesystem::path &tempDi
     page.reset();
     gtk_widget_destroy(window);
     std::cout << "[Test] testDictionaryReadStateControlsMutation PASSED!" << std::endl;
+}
+
+void testDictionaryFailedSaveRetainsEntryDraft(const std::filesystem::path &tempDir) {
+    std::cout << "[Test] Running testDictionaryFailedSaveRetainsEntryDraft..." << std::endl;
+    const auto path = tempDir / "dictionary-entry-draft.txt";
+    const std::string original = "nihao\t你好\t1\n";
+    { std::ofstream(path) << original; }
+    std::string notification;
+    auto page = std::make_unique<modernime::settings::DictionaryPage>(path,
+        [&](std::string message) { notification = std::move(message); });
+    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_container_add(GTK_CONTAINER(window), page->widget());
+    gtk_widget_show_all(window);
+    auto *add = findTarget(page->widget(), "dictionary-add");
+    auto *edit = findTarget(page->widget(), "dictionary-edit");
+    auto *view = GTK_TREE_VIEW(findTarget(page->widget(), "dictionary-list"));
+    assert(add && edit && view);
+    pumpEventsUntil([&] {
+        return gtk_widget_get_sensitive(add) &&
+            gtk_tree_model_iter_n_children(gtk_tree_view_get_model(view), nullptr) == 1;
+    });
+    assert(gtk_widget_get_sensitive(add));
+
+    const auto inEntryDialog = [](GtkWidget *opener, const std::function<void(GtkDialog *, GtkEntry *, GtkEntry *)> &action) {
+        bool handled = false;
+        std::function<void()> handle = [&] {
+            auto *windows = gtk_window_list_toplevels();
+            for (auto *item = windows; item; item = item->next) {
+                const auto *title = gtk_window_get_title(GTK_WINDOW(item->data));
+                if (!GTK_IS_DIALOG(item->data) || !title ||
+                    (std::string_view(title) != "添加用户词条" && std::string_view(title) != "编辑用户词条")) continue;
+                GtkEntry *phrase = nullptr, *pinyin = nullptr;
+                std::function<void(GtkWidget *)> scan = [&](GtkWidget *widget) {
+                    const auto *name = atk_object_get_name(gtk_widget_get_accessible(widget));
+                    if (GTK_IS_ENTRY(widget) && name) {
+                        if (std::string_view(name) == "词条") phrase = GTK_ENTRY(widget);
+                        if (std::string_view(name) == "输入键") pinyin = GTK_ENTRY(widget);
+                    }
+                    if (GTK_IS_CONTAINER(widget)) gtk_container_forall(GTK_CONTAINER(widget),
+                        +[](GtkWidget *child, gpointer data) { (*static_cast<std::function<void(GtkWidget *)> *>(data))(child); }, &scan);
+                };
+                scan(GTK_WIDGET(item->data));
+                assert(phrase && pinyin);
+                handled = true;
+                action(GTK_DIALOG(item->data), phrase, pinyin);
+                break;
+            }
+            g_list_free(windows);
+        };
+        g_idle_add(+[](gpointer data) -> gboolean { (*static_cast<std::function<void()> *>(data))(); return G_SOURCE_REMOVE; }, &handle);
+        gtk_button_clicked(GTK_BUTTON(opener));
+        assert(handled);
+    };
+    const auto answerLeave = [&](int response) {
+        bool prompted = false;
+        std::function<void()> answer = [&] {
+            auto *windows = gtk_window_list_toplevels();
+            for (auto *item = windows; item; item = item->next) {
+                if (!GTK_IS_MESSAGE_DIALOG(item->data)) continue;
+                prompted = true;
+                gtk_dialog_response(GTK_DIALOG(item->data), response);
+                break;
+            }
+            g_list_free(windows);
+        };
+        g_idle_add(+[](gpointer data) -> gboolean { (*static_cast<std::function<void()> *>(data))(); return G_SOURCE_REMOVE; }, &answer);
+        const bool allowed = page->confirmLeave();
+        assert(prompted);
+        return allowed;
+    };
+
+    for (bool editing : {false, true}) {
+        if (editing) {
+            auto *first = gtk_tree_path_new_from_indices(0, -1);
+            gtk_tree_selection_select_path(gtk_tree_view_get_selection(view), first);
+            gtk_tree_path_free(first);
+            assert(gtk_widget_get_sensitive(edit));
+        }
+        std::atomic<bool> entered{false}, release{false};
+        modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+            if (op != "saveDictionary") return;
+            entered = true;
+            while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        });
+        inEntryDialog(editing ? edit : add, [](GtkDialog *dialog, GtkEntry *phrase, GtkEntry *pinyin) {
+            gtk_entry_set_text(phrase, "草稿");
+            gtk_entry_set_text(pinyin, "cao'gao");
+            gtk_dialog_response(dialog, GTK_RESPONSE_ACCEPT);
+        });
+        pumpEventsUntil([&] { return entered.load(); });
+        assert(entered.load());
+        assert(!page->confirmLeave());
+        const auto preserved = path.string() + ".preserved";
+        std::filesystem::rename(path, preserved);
+        std::filesystem::create_directory(path);
+        notification.clear();
+        release = true;
+        pumpEventsUntil([&] { return gtk_widget_get_sensitive(add) && !notification.empty(); });
+        assert(gtk_widget_get_sensitive(add) && !notification.empty());
+        assert(std::filesystem::is_directory(path));
+        modernime::settings::DataController::setIoHookForTesting(nullptr);
+        std::filesystem::remove(path);
+        std::filesystem::rename(preserved, path);
+        bool retained = false;
+        inEntryDialog(editing ? edit : add, [&](GtkDialog *dialog, GtkEntry *phrase, GtkEntry *pinyin) {
+            retained = std::string_view(gtk_entry_get_text(phrase)) == "草稿" &&
+                       std::string_view(gtk_entry_get_text(pinyin)) == "cao'gao";
+            gtk_dialog_response(dialog, GTK_RESPONSE_CANCEL);
+        });
+        std::cout << "  " << (editing ? "Edit" : "Add") << " draft retained after I/O failure: " << retained << std::endl;
+        assert(retained);
+        assert(page->hasUnsavedChanges());
+        assert(!answerLeave(GTK_RESPONSE_CANCEL));
+        assert(page->hasUnsavedChanges());
+        std::ifstream input(path);
+        assert(std::string(std::istreambuf_iterator<char>(input), {}) == original);
+    }
+    assert(answerLeave(GTK_RESPONSE_REJECT));
+    assert(!page->hasUnsavedChanges());
+    page.reset();
+    gtk_widget_destroy(window);
+    std::cout << "[Test] testDictionaryFailedSaveRetainsEntryDraft PASSED!" << std::endl;
 }
 
 // 1. Test LearningStore::entryCount() with SQL COUNT(*) and LMDB stat
@@ -1330,6 +1453,7 @@ int main(int argc, char **argv) {
     std::filesystem::create_directories(tempDir);
 
     try {
+        testDictionaryFailedSaveRetainsEntryDraft(tempDir);
         testDictionaryReadStateControlsMutation(tempDir);
         testLearningStoreEntryCount(tempDir);
         testLearningPageFeedback(tempDir);

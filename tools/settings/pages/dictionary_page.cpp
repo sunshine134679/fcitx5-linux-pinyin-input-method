@@ -616,9 +616,33 @@ public:
     }
 
     GtkWidget *widget() const { return page; }
-    bool confirmLeave() { return quickPhrases->confirmLeave(); }
+    bool confirmLeave() {
+        if (operationInProgress || entryDialogOpen) {
+            notifyMessage("个人词典操作尚未完成，请稍候再关闭或更新。");
+            return false;
+        }
+        if (!conflictDrafts.empty() || newEntryConflictDraft) {
+            auto *dialog = gtk_message_dialog_new(parentWindow(), GTK_DIALOG_MODAL,
+                GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "个人词典还有未保存的词条草稿");
+            gtk_dialog_add_buttons(GTK_DIALOG(dialog), "继续编辑", GTK_RESPONSE_CANCEL,
+                                   "放弃词条草稿并继续", GTK_RESPONSE_REJECT, nullptr);
+            gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+            setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
+                "继续编辑", "保留保存失败的词条草稿，返回词典继续编辑");
+            setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_REJECT,
+                "放弃词条草稿并继续", "放弃保存失败的词条草稿，不修改磁盘词典");
+            const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
+            gtk_widget_destroy(dialog);
+            if (response != GTK_RESPONSE_REJECT) return false;
+            conflictDrafts.clear();
+            newEntryConflictDraft.reset();
+        }
+        return quickPhrases->confirmLeave();
+    }
     bool hasUnsavedChanges() const {
-        return operationInProgress || entryDialogOpen || quickPhrases->hasUnsavedChanges() || quickPhrases->hasPendingOperations();
+        return operationInProgress || entryDialogOpen || !conflictDrafts.empty() ||
+               newEntryConflictDraft.has_value() || quickPhrases->hasUnsavedChanges() ||
+               quickPhrases->hasPendingOperations();
     }
 
 private:
@@ -1101,6 +1125,14 @@ private:
                     return;
                 }
                 owner.operationInProgress = false;
+                if (taskData->result != DictionarySaveResult::Saved && taskData->draft) {
+                    if (taskData->draft->originalPhrase && taskData->draft->originalPinyin) {
+                        owner.conflictDrafts[makeDraftKey(
+                            *taskData->draft->originalPhrase, *taskData->draft->originalPinyin)] = *taskData->draft;
+                    } else {
+                        owner.newEntryConflictDraft = taskData->draft;
+                    }
+                }
                 if (taskData->result == DictionarySaveResult::Saved) {
                     if (taskData->draft.has_value()) {
                         if (taskData->draft->originalPhrase.has_value() &&
@@ -1115,14 +1147,6 @@ private:
                     owner.refresh();
                 } else if (taskData->result == DictionarySaveResult::Conflict) {
                     if (taskData->draft.has_value()) {
-                        if (taskData->draft->originalPhrase.has_value() &&
-                            taskData->draft->originalPinyin.has_value()) {
-                            owner.conflictDrafts[makeDraftKey(
-                                *taskData->draft->originalPhrase, *taskData->draft->originalPinyin)] =
-                                *taskData->draft;
-                        } else {
-                            owner.newEntryConflictDraft = taskData->draft;
-                        }
                         owner.notifyMessage("保存失败：词典已被外部程序修改（版本冲突）。已保留您的编辑草稿，请刷新后重试。");
                     } else {
                         owner.notifyMessage("保存失败：词典已被外部程序修改（版本冲突）。未覆盖磁盘内容，请刷新后重试。");
@@ -1130,7 +1154,9 @@ private:
                     owner.setButtonsSensitive(true);
                     owner.updateActionState();
                 } else {
-                    owner.notifyMessage(taskData->error.empty() ? "保存个人词典失败" : taskData->error);
+                    auto message = taskData->error.empty() ? std::string("保存个人词典失败") : taskData->error;
+                    if (taskData->draft) message += "。编辑草稿已保留，修复后可重新打开词条继续。";
+                    owner.notifyMessage(std::move(message));
                     owner.setButtonsSensitive(true);
                     owner.updateActionState();
                 }
