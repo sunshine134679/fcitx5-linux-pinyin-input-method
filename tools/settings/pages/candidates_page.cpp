@@ -198,7 +198,11 @@ public:
 
     bool focusTarget(std::string_view target) {
         if (target == "candidate.pin") return focusWidgetOrFallback(pinRules, pinRulesRow);
-        if (target == "candidate-filter") return focusWidgetOrFallback(nullptr, candidateFilterRow);
+        if (target == "candidate-filter") {
+            filterFocusPending = true;
+            gtk_widget_queue_allocate(candidateFilterRow);
+            return focusWidgetOrFallback(nullptr, candidateFilterRow);
+        }
         if (target == "client-theme") return focusWidgetOrFallback(clientTheme);
         if (target == "candidate-page-size") {
             return focusWidgetOrFallback(candidatePageSize, candidatePageSizeFallback);
@@ -516,6 +520,20 @@ private:
             "按笔画找字", "输入拼音时使用，Esc 返回", filterKey);
         setTarget(candidateFilterRow, "candidate-filter");
         gtk_box_pack_start(GTK_BOX(navigation), candidateFilterRow, FALSE, FALSE, 0);
+        g_signal_connect_object(candidateFilterRow, "size-allocate", G_CALLBACK(+[](GtkWidget *row, GtkAllocation *allocation, GtkWidget *preview) {
+            auto *owner = static_cast<Impl *>(g_object_get_data(G_OBJECT(preview), "modernime-preview-owner"));
+            if (!owner || !owner->filterFocusPending || allocation->height <= 1) return;
+            auto *scroll = gtk_widget_get_ancestor(row, GTK_TYPE_SCROLLED_WINDOW);
+            if (!scroll) return;
+            auto *body = gtk_bin_get_child(GTK_BIN(scroll));
+            if (GTK_IS_VIEWPORT(body)) body = gtk_bin_get_child(GTK_BIN(body));
+            gint x = 0;
+            gint y = 0;
+            if (!body || !gtk_widget_translate_coordinates(row, body, 0, 0, &x, &y)) return;
+            owner->filterFocusPending = false;
+            gtk_adjustment_clamp_page(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll)),
+                                      y, y + allocation->height);
+        }), candidatePreview, static_cast<GConnectFlags>(0));
 
         g_signal_connect(candidatePageSize, "changed", G_CALLBACK(onSpinChanged), this);
         g_signal_connect(candidateFontSize, "value-changed", G_CALLBACK(onSpinChanged), this);
@@ -856,6 +874,7 @@ private:
     GtkWidget *previewScaleHint = nullptr;
     GtkWidget *nativePanelSettings = nullptr;
     GtkWidget *candidateFilterRow = nullptr;
+    bool filterFocusPending = false;
     ui::CandidateBarMetrics metrics;
     ui::CandidateBarLayout previewLayout;
     ui::RenderStyle renderStyle;
