@@ -129,6 +129,26 @@ bool isTopChineseLexical(
     return false;
 }
 
+bool isLexicalAbbreviationInput(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items,
+    const std::function<bool(std::string_view text, std::string_view pinyin)> &isLexicalWord) {
+    // Pure consonants retain the existing abbreviation policy, including its
+    // y/length boundary for English prefixes. Extend only vowel/mixed spelling
+    // or an explicitly separated syllable sequence.
+    if (items.empty() || rawInput.find_first_of("aeiouv'") == std::string_view::npos ||
+        core::EnglishDictionary::isEnglishWord(rawInput)) {
+        return false;
+    }
+    const auto &top = items.front();
+    return top.source != core::CandidateSource::Raw &&
+           (top.consumedInputBytes == 0 || top.consumedInputBytes == rawInput.size()) &&
+           pinyinSyllableCount(top.fullPinyin) >= 2 &&
+           !core::PinyinMatchPolicy::exactInputMatch(rawInput, top.fullPinyin) &&
+           core::PinyinMatchPolicy::syllableInputMatch(rawInput, top.fullPinyin) &&
+           isTopChineseLexical(rawInput, items, isLexicalWord);
+}
+
 bool hasHighConfidenceChinese(
     std::string_view rawInput,
     const std::vector<core::CandidateItem> &items,
@@ -138,6 +158,7 @@ bool hasHighConfidenceChinese(
     }
     return hasTrustedShortAbbreviation(rawInput, items) ||
            isConsonantAbbreviationInput(rawInput, items) ||
+           isLexicalAbbreviationInput(rawInput, items, isLexicalWord) ||
            (hasExactFullPinyinMatch(rawInput, items) && isTopChineseLexical(rawInput, items, isLexicalWord));
 }
 
@@ -252,11 +273,11 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     // Stage 4: English & Raw & Command Placement
     const auto rawInput = input.rawInput;
     const bool isInitialConsonant = isInitialConsonantInput(rawInput);
-    const bool isConsonantAbbreviation = isConsonantAbbreviationInput(rawInput, mixed);
-    const bool isEnglish = !isInitialConsonant && !isConsonantAbbreviation && input.isEnglishWord;
+    const bool isChineseAbbreviation = isConsonantAbbreviationInput(rawInput, mixed) ||
+        isLexicalAbbreviationInput(rawInput, mixed, input.isLexicalWord);
+    const bool isEnglish = !isInitialConsonant && !isChineseAbbreviation && input.isEnglishWord;
     const bool hasExactFullPinyinMatch = (input.shuangpin && !fullItems.empty()) ||
         pinyin::hasExactFullPinyinMatch(rawInput, mixed);
-    const bool hasTrustedShortAbbreviation = pinyin::hasTrustedShortAbbreviation(rawInput, mixed);
     const bool isTopChineseLexical = pinyin::isTopChineseLexical(rawInput, mixed, input.isLexicalWord);
     const bool hasHighConfidenceChinese = (input.shuangpin && !fullItems.empty()) ||
         pinyin::hasHighConfidenceChinese(rawInput, mixed, input.isLexicalWord);

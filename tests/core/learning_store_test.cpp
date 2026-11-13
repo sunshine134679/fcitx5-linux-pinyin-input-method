@@ -1231,6 +1231,11 @@ void testEnglishWordRecallIndex() {
 
     // 4. Dynamic delta English recall
     snapshot.recordSelection("microservices", "microservices", "", "", 2000);
+    assertTrue(snapshot.recallEnglishWords("micro", 5, 2000).empty(),
+               "single unknown English observation is stored without automatic recall");
+    assertTrue(snapshot.entry("microservices", "microservices", "", "")->frequency == 1,
+               "single unknown English observation retains its recorded frequency");
+    snapshot.recordSelection("microservices", "microservices", "", "", 2001);
     auto microMatches = snapshot.recallEnglishWords("micro", 5, 2000);
     assertTrue(!microMatches.empty(), "delta English term is recalled by prefix");
     assertTrue(microMatches[0].text == "microservices", "delta English term matches microservices");

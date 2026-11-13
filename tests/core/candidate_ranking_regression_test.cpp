@@ -1246,7 +1246,7 @@ TEST_F(CandidateRankingRegression, ExactEnglishWordParticipatesInLearnedCompleti
         SCOPED_TRACE(word);
         const core::LearningSnapshot snapshot({
             {word, word, {}, {}, 19, now, 0, false},
-            {accidental, accidental, {}, {}, 1, now - 60'000, 0, false}});
+            {accidental, accidental, {}, {}, 2, now - 60'000, 0, false}});
         const auto words = snapshot.recallEnglishWords(word, 3, now);
         ASSERT_EQ(words.size(), 2u);
         EXPECT_EQ(words.front().text, word);
@@ -1285,8 +1285,9 @@ TEST_F(CandidateRankingRegression, RepeatedExactEnglishChoiceOverridesOneAcciden
                 EXPECT_EQ(snapshot->entry(accidental, accidental, {}, {})->frequency, 1);
                 type(controller, word);
                 EXPECT_EQ(rank(controller.page(), word), 0u);
-                EXPECT_GT(rank(controller.page(), accidental), 0u);
-                EXPECT_LT(rank(controller.page(), accidental), controller.page().items.size());
+                // A single accidental observation remains stored, but is not
+                // eligible as an automatic completion until reconfirmed.
+                EXPECT_EQ(rank(controller.page(), accidental), controller.page().items.size());
 #if defined(MODERNIME_HAS_FCITX5)
                 EXPECT_EQ(physicalPosition(controller.page(), rank(controller.page(), word)),
                           (std::pair<std::size_t, std::size_t>{0, 0}));
@@ -1301,6 +1302,10 @@ TEST_F(CandidateRankingRegression, RepeatedExactEnglishChoiceOverridesOneAcciden
                 ASSERT_FALSE(reopened.page().items.empty());
                 EXPECT_EQ(reopened.page().items.front().text, word);
                 EXPECT_EQ(reopened.page().items.front().consumedInputBytes, word.size());
+                EXPECT_EQ(rank(reopened.page(), accidental), reopened.page().items.size());
+                const auto snapshot = reopened.sharedResources()->learning->snapshot();
+                ASSERT_NE(snapshot->entry(accidental, accidental, {}, {}), nullptr);
+                EXPECT_EQ(snapshot->entry(accidental, accidental, {}, {})->frequency, 1);
             }
         }
     }
@@ -2406,5 +2411,76 @@ TEST_F(CandidateRankingRegression, SingleSyllableTypoVariantSurvivesMixedPinyinI
         ASSERT_TRUE(controller.select(index));
         EXPECT_EQ(host.committed, text);
         EXPECT_TRUE(controller.page().rawInput.empty());
+    }
+}
+
+TEST_F(CandidateRankingRegression, VowelInitialAbbreviationKeepsLexicalChineseAheadOfStaticEnglish) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    type(controller, "aly");
+    const auto index = rank(controller.page(), "阿里云");
+    ASSERT_LT(index, controller.page().items.size());
+    EXPECT_EQ(index, 0u);
+    EXPECT_EQ(controller.page().items[index].consumedInputBytes, 3u);
+    ASSERT_TRUE(controller.select(index));
+    EXPECT_EQ(host.committed, "阿里云");
+    EXPECT_TRUE(controller.page().rawInput.empty());
+}
+
+TEST_F(CandidateRankingRegression, SingleAccidentalEnglishDoesNotBecomePersistentCompletion) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    type(controller, "sudoi");
+    ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Enter}));
+    ASSERT_EQ(host.committed, "sudoi");
+    for (int i = 0; i < 19; ++i) {
+        type(controller, "sudo");
+        auto index = rank(controller.page(), "sudo");
+        ASSERT_LT(index, controller.page().items.size());
+        ASSERT_TRUE(controller.select(index));
+        ASSERT_EQ(host.committed, "sudo");
+    }
+    ASSERT_TRUE(provider.flush());
+    type(controller, "sudo");
+    EXPECT_EQ(rank(controller.page(), "sudo"), 0u);
+    EXPECT_EQ(rank(controller.page(), "sudoi"), controller.page().items.size());
+}
+
+TEST_F(CandidateRankingRegression, EnglishCompletionNeedsConfirmationAndSurvivesReopen) {
+    for (const bool lmdb : {false, true}) {
+        SCOPED_TRACE(lmdb ? "LMDB" : "SQLite");
+        auto isolated = paths;
+        isolated.learningStore = (root / (lmdb ? "confirmed.lmdb" : "confirmed.sqlite3")).string();
+        {
+            pinyin::PinyinCandidateProvider provider(isolated);
+            Host host;
+            fcitx5::ModernIMEController controller(host, &provider);
+            type(controller, "hypershell");
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Enter}));
+            ASSERT_EQ(host.committed, "hypershell");
+            type(controller, "hypersh");
+            EXPECT_EQ(rank(controller.page(), "hypershell"), controller.page().items.size());
+            controller.handle({fcitx5::KeyKind::Escape});
+            type(controller, "hypershell");
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Enter}));
+            ASSERT_EQ(host.committed, "hypershell");
+            ASSERT_TRUE(provider.flush());
+        }
+        {
+            pinyin::PinyinCandidateProvider reopened(isolated);
+            Host host;
+            fcitx5::ModernIMEController controller(host, &reopened);
+            type(controller, "hypersh");
+            const auto index = rank(controller.page(), "hypershell");
+            ASSERT_LT(index, controller.page().items.size());
+            EXPECT_EQ(controller.page().items[index].consumedInputBytes, 7u);
+            ASSERT_TRUE(controller.select(index));
+            EXPECT_EQ(host.committed, "hypershell");
+            EXPECT_TRUE(controller.page().rawInput.empty());
+        }
     }
 }

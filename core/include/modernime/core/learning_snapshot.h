@@ -111,7 +111,10 @@ public:
     std::vector<RecalledCandidate> recallSentenceWords(
         const std::vector<std::string> &readings, std::int64_t nowMs) const;
 
-    // Includes a learned exact word so its evidence competes with completions.
+    // Includes admitted exact words so their evidence competes with completions.
+    // Out-of-dictionary spellings need two recorded uses (including legacy
+    // aliases/contexts); one-hit observations remain stored but are not recalled.
+    // Built-in English words retain immediate learning after their first use.
     std::vector<RecalledEnglishWord> recallEnglishWords(
         std::string_view prefix, std::size_t limit = 5,
         std::int64_t nowMs = 0) const;

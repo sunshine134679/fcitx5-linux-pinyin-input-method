@@ -1734,10 +1734,11 @@ private:
         };
 
         const bool isInitialConsonant = isInitialConsonantInput(rawInput);
-        const bool isConsonantAbbreviation =
-            isConsonantAbbreviationInput(rawInput, fullItems);
+        const bool isChineseAbbreviation =
+            isConsonantAbbreviationInput(rawInput, fullItems) ||
+            isLexicalAbbreviationInput(rawInput, fullItems, lexicalWordCheck);
         const bool isEnglish =
-            !(useShuangpin && !fullItems.empty()) && !isInitialConsonant && !isConsonantAbbreviation &&
+            !(useShuangpin && !fullItems.empty()) && !isInitialConsonant && !isChineseAbbreviation &&
             core::EnglishDictionary::isEnglishWord(rawInput);
 
         const bool hasExactFullPinyin =
@@ -1767,7 +1768,7 @@ private:
             rawInput.size() >= 3 &&
             !singleSyllableChineseProtected &&
             (isEnglish ||
-             (isConsonantAbbreviation && rawInput.size() <= 3) ||
+             (isChineseAbbreviation && rawInput.size() <= 3) ||
              (!highConfidenceChinese && !hasExactFullPinyin &&
               (!hasPinyinCoverage || hasInvalidInternalPinyinSegment(segmentedInput))));
 
@@ -1791,7 +1792,7 @@ private:
         if (shouldPredictEnglish) {
             const auto staticWords = core::EnglishDictionary::predictWords(rawInput, 3);
             for (const auto &w : staticWords) {
-                if (isConsonantAbbreviation && !core::EnglishDictionary::isModernTechWord(w)) {
+                if (isChineseAbbreviation && !core::EnglishDictionary::isModernTechWord(w)) {
                     continue;
                 }
                 if (!isSuppressed(w, w) &&

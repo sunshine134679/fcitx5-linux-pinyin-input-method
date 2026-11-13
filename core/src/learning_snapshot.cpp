@@ -1123,13 +1123,20 @@ std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
         if (isSuppressed(phrase, phrase) || !hasPositiveFrequency(phrase, phrase)) {
             continue;
         }
-        const double baseBoost = boostAt(phrase, phrase, nowMs);
         std::int64_t totalFreq = 0;
         std::int64_t lastMs = 0;
         for (const auto *item : collectVariants(phrase, normalizePinyin(phrase))) {
             totalFreq += std::max<std::int64_t>(0, item->frequency);
             lastMs = std::max(lastMs, item->lastSelectedMs);
         }
+        // A first out-of-dictionary spelling is an observation, not yet an
+        // automatic suggestion. Keep its stored facts and require repeated
+        // use before it consumes any recall/ranking budget. Built-in English
+        // words already have lexical evidence and retain immediate learning.
+        if (totalFreq < 2 && !EnglishDictionary::isEnglishWord(phrase)) {
+            continue;
+        }
+        const double baseBoost = boostAt(phrase, phrase, nowMs);
         results.push_back({phrase, totalFreq, lastMs, 0.0, baseBoost});
     }
 

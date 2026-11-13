@@ -558,6 +558,40 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
     target_link_libraries(modernime_pinyin_engine_tests PRIVATE modernime_pinyin)
     add_test(NAME modernime_pinyin_engine COMMAND modernime_pinyin_engine_tests)
 
+    add_executable(modernime_abbreviation_arbitration_tests
+        core/abbreviation_arbitration_regression_test.cpp
+        ../adapter/fcitx5/src/engine.cpp
+    )
+    target_include_directories(modernime_abbreviation_arbitration_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+    )
+    target_link_libraries(modernime_abbreviation_arbitration_tests PRIVATE modernime_pinyin)
+    add_test(NAME modernime_abbreviation_arbitration COMMAND modernime_abbreviation_arbitration_tests)
+
+    if(MODERNIME_BUILD_UI_LAYOUT_TESTS)
+        add_executable(modernime_input_experience_replay_tests
+            adapter/input_experience_replay_test.cpp
+            ../adapter/fcitx5/src/engine.cpp
+        )
+        target_include_directories(modernime_input_experience_replay_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/core
+        )
+        target_link_libraries(modernime_input_experience_replay_tests PRIVATE
+            modernime_pinyin modernime_ui_layout
+        )
+        target_compile_definitions(modernime_input_experience_replay_tests PRIVATE
+            MODERNIME_PINYIN_KNOWLEDGE_BUILD_BINARY="${CMAKE_BINARY_DIR}/data/pinyin/modernime-knowledge.dict"
+            MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY="${CMAKE_BINARY_DIR}/data/pinyin/modernime-hotwords.dict"
+            MODERNIME_INPUT_REPLAY_DATA_FILE="${CMAKE_CURRENT_SOURCE_DIR}/adapter/input_experience_replay_cases.tsv"
+        )
+        add_test(NAME modernime_input_experience_replay
+            COMMAND modernime_input_experience_replay_tests
+                "${CMAKE_CURRENT_BINARY_DIR}/input-experience-replay"
+        )
+        set_tests_properties(modernime_input_experience_replay PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+    endif()
+
     if(NOT MODERNIME_SIMULATE_MISSING_GTEST)
         find_package(Threads REQUIRED)
         find_path(GTEST_INCLUDE_DIR
@@ -588,6 +622,8 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             core/personalization_provider_regression_test.cpp
             core/personalization_controller_regression_test.cpp
             core/candidate_ranking_regression_test.cpp
+            core/english_learning_admission_test.cpp
+            core/learning_experience_curve_test.cpp
             core/cold_terminology_regression_test.cpp
             core/learning_management_regression_test.cpp
             core/learning_writer_concurrency_test.cpp

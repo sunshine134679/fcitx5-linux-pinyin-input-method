@@ -124,6 +124,13 @@ bool isConsonantAbbreviationInput(
     std::string_view rawInput,
     const std::vector<core::CandidateItem> &items);
 
+// A complete lexical pronunciation may use vowel initials or mixed spelling.
+// Exact English words keep their existing arbitration policy.
+bool isLexicalAbbreviationInput(
+    std::string_view rawInput,
+    const std::vector<core::CandidateItem> &items,
+    const std::function<bool(std::string_view text, std::string_view pinyin)> &isLexicalWord = nullptr);
+
 bool hasExactFullPinyinMatch(
     std::string_view rawInput,
     const std::vector<core::CandidateItem> &items);
