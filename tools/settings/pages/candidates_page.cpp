@@ -514,10 +514,8 @@ private:
             "候选翻页", "使用 PageUp / PageDown 和 + / = 翻页", pageNavigation);
         gtk_box_pack_start(GTK_BOX(navigation), arrowNavigationFallback, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(navigation), pageNavigationFallback, FALSE, FALSE, 0);
-        auto *filterKey = gtk_shortcut_label_new("grave");
-        setAccessibleWidgetText(filterKey, "按笔画找字快捷键", "输入拼音后按反引号键，Esc 返回正常选词");
         candidateFilterRow = createSettingRow(
-            "按笔画找字", "输入拼音时使用，Esc 返回", filterKey);
+            "按笔画找字", "输入拼音后按 Esc 下方的 ` 键，Esc 返回", nullptr);
         setTarget(candidateFilterRow, "candidate-filter");
         gtk_box_pack_start(GTK_BOX(navigation), candidateFilterRow, FALSE, FALSE, 0);
         g_signal_connect_object(candidateFilterRow, "size-allocate", G_CALLBACK(+[](GtkWidget *row, GtkAllocation *allocation, GtkWidget *preview) {
