@@ -177,6 +177,10 @@ UserDictionarySnapshot UserDictionary::loadSnapshot(
 
     std::error_code ec;
     snapshot.exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        snapshot.error = "无法检查词典文件：" + ec.message();
+        return snapshot;
+    }
     if (!snapshot.exists) {
         return snapshot;
     }
@@ -280,6 +284,7 @@ UserDictionary UserDictionary::loadText(
     auto snapshot = loadSnapshot(path);
     UserDictionary dictionary;
     dictionary.loadedContentHash_ = snapshot.contentHash;
+    dictionary.loadError_ = std::move(snapshot.error);
     std::unordered_map<std::string, std::size_t> positions;
     for (auto &entry : snapshot.entries) {
         const auto key = keyFor(entry.pinyin, entry.phrase);

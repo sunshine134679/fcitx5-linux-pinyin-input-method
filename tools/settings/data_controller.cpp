@@ -100,7 +100,9 @@ DictionarySnapshot DataController::loadDictionaryForEditing(
         snapshot.diagnostics.push_back({diag.lineNumber, diag.lineContent, diag.reason});
     }
 
-    if (!raw.exists) {
+    if (!raw.error.empty()) {
+        snapshot.status = DictionaryLoadStatus::IoError;
+    } else if (!raw.exists) {
         snapshot.status = DictionaryLoadStatus::NonExistent;
     } else if (!raw.readable) {
         snapshot.status = DictionaryLoadStatus::IoError;
@@ -302,7 +304,12 @@ bool DataController::createDictionaryBackup(
         return false;
     }
     std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) {
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        setError(error, "无法检查原词典文件：" + ec.message());
+        return false;
+    }
+    if (!exists) {
         return true;
     }
     const auto originalSnapshot = pinyin::UserDictionary::loadSnapshot(path);
@@ -383,6 +390,10 @@ DictionarySaveResult DataController::saveDictionaryIfUnchanged(
 
     std::error_code ec;
     const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        setErr("无法检查现有词典文件：" + ec.message());
+        return DictionarySaveResult::IoError;
+    }
 
     if (expectedBaseline.kind == DictionaryExpectedBaseline::Kind::ExpectNonExistent) {
         if (exists) {

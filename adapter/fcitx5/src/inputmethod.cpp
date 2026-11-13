@@ -1080,19 +1080,17 @@ void ModernIMEInputMethod::pollFileChanges() {
     }
     const auto dictionaryFile = settingsPaths().userDictionary;
     const auto dictStamp = core::SettingsFileStamp::fromPath(dictionaryFile);
-    if (dictStamp != userDictionaryStamp_) {
-        userDictionaryStamp_ = dictStamp;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
-        ensurePinyinResources();
+    ensurePinyinResources();
+    if (dictStamp != userDictionaryStamp_ ||
+        (resources_.pinyin && !resources_.pinyin->userDictionary.loadError().empty())) {
         if (pinyin::PinyinCandidateProvider::reloadUserDictionary(
                 resources_.pinyin)) {
+            userDictionaryStamp_ = dictStamp;
             FCITX_INFO() << "ModernIME user dictionary reloaded from "
                          << dictionaryFile.string();
         }
-#endif
     }
-#ifdef MODERNIME_HAS_LIBIME_PINYIN
-    ensurePinyinResources();
     if (resources_.pinyin) {
         const auto changed = resources_.pinyin->consumeDictionaryPackRefresh();
         if (changed.changed) {
@@ -1105,6 +1103,8 @@ void ModernIMEInputMethod::pollFileChanges() {
         FCITX_INFO() << "ModernIME learning store reset from "
                      << settingsPaths().learningStore.string();
     }
+#else
+    userDictionaryStamp_ = dictStamp;
 #endif
 }
 

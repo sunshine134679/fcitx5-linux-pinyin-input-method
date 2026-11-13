@@ -603,9 +603,32 @@ void testDataControllerSnapshotAndSaveBaseline() {
     assertTrue(snapCorrupt.diagnostics[0].lineNumber == 2, "diagnostic line number is 2");
 }
 
+void testDictionaryInspectionFailureIsNotTreatedAsMissing() {
+    using namespace modernime::settings;
+    const auto dir = testDirectory("dictionary-inspection-error");
+    const auto path = dir / "loop.dict";
+    std::filesystem::create_symlink(path.filename(), path);
+    const auto snapshot = DataController::loadDictionaryForEditing(path);
+    std::string backupError, saveError;
+    const bool backedUp = DataController::createDictionaryBackup(path, nullptr, &backupError);
+    const auto saved = DataController::saveDictionaryIfUnchanged(
+        path, {{"nihao", "你好", 10.0F}}, DictionaryExpectedBaseline::nonExistent(), &saveError);
+    std::cout << "dictionary inspection error: status=" << static_cast<int>(snapshot.status)
+              << " backup=" << backedUp << " save=" << static_cast<int>(saved) << '\n';
+    assertTrue(snapshot.status == DictionaryLoadStatus::IoError && !snapshot.error.empty(),
+               "failed path inspection is an I/O error, not a missing dictionary");
+    assertTrue(!backedUp && !backupError.empty(), "inspection failure cannot report a successful backup");
+    assertTrue(saved == DictionarySaveResult::IoError && !saveError.empty(),
+               "ExpectNonExistent cannot overwrite a path whose existence check failed");
+    assertTrue(std::filesystem::is_symlink(std::filesystem::symlink_status(path)),
+               "failed save preserves the original path");
+    std::filesystem::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
+    testDictionaryInspectionFailureIsNotTreatedAsMissing();
     testUserDictionaryEditingAndRoundTrip();
     testDictionaryImportExportUsesValidatedRows();
     testDictionaryImportIsStrictAndNonDestructive();

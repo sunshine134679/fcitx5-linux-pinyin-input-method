@@ -57,6 +57,7 @@ public:
     bool saveTextIfUnchanged(const std::filesystem::path &path,
                              std::string_view expectedContentHash) const;
     const std::string &loadedContentHash() const noexcept { return loadedContentHash_; }
+    const std::string &loadError() const noexcept { return loadError_; }
     void addTo(libime::PinyinDictionary &dictionary, std::size_t index, std::optional<float> costOverride = std::nullopt) const;
     bool removeFrom(libime::PinyinDictionary &dictionary, std::size_t index,
                     std::string_view pinyin, std::string_view phrase) const;
@@ -66,6 +67,7 @@ private:
                       std::optional<std::string_view> expectedContentHash,
                       int existingLockDescriptor = -1) const;
     std::string loadedContentHash_;
+    std::string loadError_;
     std::vector<UserDictionaryEntry> entries_;
     std::unordered_map<std::string, std::size_t> entryIndex_;
 };

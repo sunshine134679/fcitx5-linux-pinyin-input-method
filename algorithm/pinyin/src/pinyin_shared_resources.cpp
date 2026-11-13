@@ -543,6 +543,11 @@ bool PinyinSharedResources::setFuzzyOptions(const core::FuzzyPinyinOptions &opti
 ResourceChange PinyinSharedResources::reloadUserDictionary() {
     std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
     auto updated = UserDictionary::loadText(userDictionaryPath);
+    // A failed read is not an empty dictionary. Keep every published view and
+    // its selection generation until a complete read (or explicit removal).
+    if (!updated.loadError().empty()) {
+        return {dictionaryGeneration(), learningRevision(), false};
+    }
     if (ime && ime->dict()) {
         ime->dict()->clear(1);
         updated.addTo(*ime->dict(), 1);
@@ -586,7 +591,11 @@ void PinyinSharedResources::requestDictionaryPackRefresh() {
             PinyinProviderOptions options;
             options.learningEnabled = false;
             result.resources = create(paths, options, false);
-            if (result.stamp != packDirectoryStamp(paths.dictionaryPacks, paths.bundledDictionaryPacks))
+            // The prepared engine includes the personal dictionary too. A
+            // package update must not replace its good published layer with
+            // an empty fallback produced by a transient personal-file error.
+            if (!result.resources->userDictionary.loadError().empty() ||
+                result.stamp != packDirectoryStamp(paths.dictionaryPacks, paths.bundledDictionaryPacks))
                 result.resources.reset();
         } catch (const std::exception &) {
             result.resources.reset();

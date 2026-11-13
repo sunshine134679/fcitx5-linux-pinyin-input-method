@@ -5,9 +5,11 @@
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <sqlite3.h>
 
 namespace modernime::pinyin {
@@ -109,6 +111,63 @@ TEST_F(ArchitectureResourceCoordinationTest, ReloadUserDictionaryIncrementsGener
 
     const auto outcome = provider.selectConfirmed(staleReq, oldPageGen);
     EXPECT_FALSE(outcome.has_value());
+}
+
+TEST_F(ArchitectureResourceCoordinationTest, FailedDictionaryReloadKeepsPublishedNativeAndMixedCandidates) {
+    {
+        std::ofstream dictionary(paths.userDictionary);
+        dictionary << "ce'shi'zi'you'ci\t测式自有词\t20\n"
+                   << "docker'rong'qi\tDocker容器\t20\n";
+    }
+    paths.dictionaryPacks = (root / "packs").string();
+    paths.bundledDictionaryPacks = (root / "bundled").string();
+    PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
+    PinyinCandidateProvider native(shared, options), mixed(shared, options);
+    ASSERT_TRUE(native.replaceInput("ceshiziyouci"));
+    ASSERT_TRUE(mixed.replaceInput("dockerrongqi"));
+    const auto contains = [](const auto &provider, std::string_view text) {
+        const auto &items = provider.page().items;
+        return std::any_of(items.begin(), items.end(), [&](const auto &item) { return item.text == text; });
+    };
+    ASSERT_TRUE(contains(native, "测式自有词"));
+    ASSERT_TRUE(contains(mixed, "Docker容器"));
+    const auto generation = shared->dictionaryGeneration();
+    const auto nativePage = native.page();
+    const auto mixedPage = mixed.page();
+    const auto saved = root / "saved.dict";
+    std::filesystem::rename(paths.userDictionary, saved);
+    std::filesystem::create_directory(paths.userDictionary);
+    // A real unreadable input, independent of uid, chmod semantics or timing.
+    const auto failed = PinyinCandidateProvider::reloadUserDictionaryDetailed(shared);
+    EXPECT_FALSE(failed.changed);
+    EXPECT_EQ(shared->dictionaryGeneration(), generation);
+    EXPECT_TRUE(shared->userDictionary.contains("ceshiziyouci", "测式自有词"));
+    EXPECT_TRUE(contains(native, "测式自有词"));
+    EXPECT_TRUE(contains(mixed, "Docker容器"));
+    EXPECT_EQ(native.page().generation, nativePage.generation);
+    EXPECT_EQ(mixed.page().generation, mixedPage.generation);
+    std::filesystem::remove(paths.userDictionary);
+    std::filesystem::rename(saved, paths.userDictionary);
+    {
+        std::ofstream dictionary(paths.userDictionary);
+        dictionary << "ce'shi'zi'you'ci\t测式自有词新版\t20\n"
+                   << "docker'rong'qi\tDocker容器新版\t20\n";
+    }
+    EXPECT_TRUE(PinyinCandidateProvider::reloadUserDictionaryDetailed(shared).changed);
+    EXPECT_TRUE(contains(native, "测式自有词新版"));
+    EXPECT_TRUE(contains(mixed, "Docker容器新版"));
+    EXPECT_FALSE(contains(native, "测式自有词"));
+    EXPECT_FALSE(contains(mixed, "Docker容器"));
+    EXPECT_EQ(native.page().rawInput, nativePage.rawInput);
+    EXPECT_EQ(mixed.page().rawInput, mixedPage.rawInput);
+    // Explicit removal remains a valid empty dictionary, rather than a read failure.
+    std::filesystem::remove(paths.userDictionary);
+    EXPECT_TRUE(PinyinCandidateProvider::reloadUserDictionaryDetailed(shared).changed);
+    EXPECT_FALSE(contains(native, "测式自有词新版"));
+    EXPECT_FALSE(contains(mixed, "Docker容器新版"));
+    EXPECT_FALSE(std::filesystem::exists(paths.learningStore));
 }
 
 // 3. Learning store reload/refresh clears phrase stats and resets session history
