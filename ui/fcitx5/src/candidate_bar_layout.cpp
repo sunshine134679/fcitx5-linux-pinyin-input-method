@@ -84,6 +84,23 @@ std::string ellipsize(std::string_view value, double maxWidth,
     return prefix + std::string(marker);
 }
 
+std::string clipboardPreview(std::string_view value, double maxWidth,
+                             const std::function<double(std::string_view)> &textWidth) {
+    // Font shaping a complete 1MiB record stalls the input thread and can
+    // exceed Pango's layout range. Bound only this display projection; the
+    // candidate and its selection identity still retain the complete text.
+    constexpr std::size_t kMaximumPreviewBytes = 1024;
+    std::size_t end = 0;
+    while (end < value.size()) {
+        const auto next = nextUtf8Boundary(value, end);
+        if (next > kMaximumPreviewBytes) break;
+        end = next;
+    }
+    std::string preview(value.substr(0, end));
+    if (end < value.size()) preview += "…";
+    return ellipsize(preview, maxWidth, textWidth);
+}
+
 CandidateBarLayout measureClipboard(
     const core::CandidatePage &page, const CandidateBarMetrics &metrics,
     const std::function<double(std::string_view)> &textWidth) {
@@ -131,7 +148,7 @@ CandidateBarLayout measureClipboard(
         const auto maxTextWidth = row.width - metrics.clipboardTextPadding -
                                   rightReserved;
         layout.candidates.push_back(
-            {row, ellipsize(page.items[index].text, maxTextWidth, textWidth),
+            {row, clipboardPreview(page.items[index].text, maxTextWidth, textWidth),
              selected});
         if (selected) {
             layout.selectedPill = row;

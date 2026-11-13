@@ -3,6 +3,7 @@
 #include "modernime/ui/candidate_pagination.h"
 
 #include <cstdlib>
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <vector>
@@ -225,6 +226,30 @@ int main() {
                    longClipboardLayout.candidates.front().displayText.ends_with(
                        "…"),
                "long clipboard rows use an ellipsis instead of wrapping");
+
+    modernime::core::CandidatePage largeClipboardPage;
+    largeClipboardPage.mode = modernime::core::CandidatePageMode::Clipboard;
+    const std::string fullClipboardText(1024 * 1024, 'a');
+    for (std::size_t index = 0; index < 5; ++index)
+        largeClipboardPage.items.push_back({fullClipboardText, {}, index});
+    std::size_t maximumMeasuredBytes = 0;
+    const auto largeClipboardLayout = modernime::ui::CandidateBarLayout::measure(
+        largeClipboardPage, metrics, [&](std::string_view value) {
+            maximumMeasuredBytes = std::max(maximumMeasuredBytes, value.size());
+            return static_cast<double>(value.size() * 10);
+        });
+    assertTrue(maximumMeasuredBytes < 4096,
+               "clipboard preview never sends a full 1MiB record to font shaping");
+    assertTrue(largeClipboardLayout.candidates.size() == 5,
+               "maximum-size records retain all five physical clipboard slots");
+    for (std::size_t index = 0; index < 5; ++index) {
+        assertTrue(largeClipboardLayout.candidates[index].displayText.ends_with("…") &&
+                       largeClipboardLayout.candidates[index].displayText.size() < 100,
+                   "large clipboard previews stay within the visible single line");
+        assertTrue(largeClipboardPage.items[index].text == fullClipboardText &&
+                       largeClipboardPage.items[index].sourceIndex == index,
+                   "preview clipping preserves complete clipboard identity and content");
+    }
 
     // Tests for hitTestCandidate
     modernime::core::CandidatePage hitTestHPage;
