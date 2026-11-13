@@ -56,7 +56,8 @@ public:
         gtk_widget_set_valign(title, GTK_ALIGN_CENTER);
         gtk_box_pack_start(GTK_BOX(header), title, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 0);
-        auto *help = description("默认按 Super+;，输入缩写后按空格或数字选词，Esc 取消。\n需要启用 Fcitx5“快速输入 / Quick Phrase”插件；自定义快捷键以系统设置为准。");
+        auto *help = description("独立保存，默认 Super+; 输入");
+        gtk_widget_set_tooltip_text(help, "需要启用 Fcitx5“快速输入 / Quick Phrase”插件；自定义快捷键以系统设置为准。输入缩写后按空格或数字选词，Esc 取消。");
         gtk_box_pack_start(GTK_BOX(root), help, FALSE, FALSE, 0);
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
         search = gtk_search_entry_new();
@@ -100,7 +101,7 @@ public:
         gtk_widget_set_size_request(scroll, -1, 180);
         gtk_container_add(GTK_CONTAINER(scroll), list);
         listStack = gtk_stack_new();
-        empty = description("还没有快捷短语。点击“添加短语”，为常用文本设置缩写。");
+        empty = description("暂无快捷短语");
         gtk_widget_set_margin_top(empty, 24);
         gtk_widget_set_margin_bottom(empty, 24);
         gtk_stack_add_named(GTK_STACK(listStack), scroll, "list");
@@ -110,6 +111,7 @@ public:
 
         state = description("");
         target(state, "quick-phrase-state");
+        gtk_widget_set_no_show_all(state, TRUE);
         gtk_box_pack_start(GTK_BOX(root), state, FALSE, FALSE, 6);
         gtk_box_reorder_child(GTK_BOX(root), state, 4);
         details = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -134,14 +136,18 @@ public:
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         save = button(actions, "保存短语", "quick-phrase-save", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->start(Operation::Save); });
         gtk_widget_set_tooltip_text(save, "保存并应用快捷短语（Ctrl+S）");
-        gtk_style_context_add_class(gtk_widget_get_style_context(save), "suggested-action");
+        gtk_style_context_add_class(gtk_widget_get_style_context(add), "suggested-action");
+        g_signal_connect(save, "notify::sensitive", G_CALLBACK(+[](GObject *object, GParamSpec *, gpointer) {
+            auto *style = gtk_widget_get_style_context(GTK_WIDGET(object));
+            if (gtk_widget_get_sensitive(GTK_WIDGET(object))) gtk_style_context_add_class(style, "suggested-action");
+            else gtk_style_context_remove_class(style, "suggested-action");
+        }), nullptr);
         discard = button(actions, "放弃短语修改", "quick-phrase-discard", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->discardDraft(); });
         gtk_widget_set_tooltip_text(discard, "放弃尚未保存的快捷短语草稿");
         merge = button(actions, "检查并合并", "quick-phrase-merge", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->reviewMerge(); });
         apply = button(actions, "重试应用", "quick-phrase-apply", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->start(Operation::Apply); });
         for (auto *control : {merge, apply}) gtk_widget_set_no_show_all(control, TRUE);
         gtk_box_pack_end(GTK_BOX(header), actions, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(root), description("短语在此单独保存并应用。放弃设置不会删除已保存的短语。"), FALSE, FALSE, 0);
         g_signal_connect(search, "search-changed", G_CALLBACK(+[](GtkSearchEntry *, gpointer p) { static_cast<Impl *>(p)->render(); }), this);
         g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(list)), "changed", G_CALLBACK(+[](GtkTreeSelection *, gpointer p) { static_cast<Impl *>(p)->update(); }), this);
         g_signal_connect(list, "row-activated", G_CALLBACK(+[](GtkTreeView *, GtkTreePath *, GtkTreeViewColumn *, gpointer p) {
@@ -204,6 +210,9 @@ public:
         gtk_widget_set_sensitive(remove, canEdit && selected);
         gtk_widget_set_sensitive(save, canEdit && dirty && !conflict);
         gtk_widget_set_sensitive(discard, !busy && dirty);
+        auto *addStyle = gtk_widget_get_style_context(add);
+        if (dirty) gtk_style_context_remove_class(addStyle, "suggested-action");
+        else gtk_style_context_add_class(addStyle, "suggested-action");
         gtk_widget_set_sensitive(refreshButton, !busy && (!dirty || conflict));
         gtk_button_set_label(GTK_BUTTON(refreshButton), conflict ? "重新读取更新" : "重新读取");
         gtk_widget_set_visible(merge, conflict);
@@ -220,11 +229,12 @@ public:
             : "无法读取快捷短语，请查看详情，修复后重新读取。";
         else if (dirty) message = pendingApply ? "有未保存的修改；上次保存的短语暂未应用。" : "有未保存的短语修改。";
         else if (pendingApply) message = "已保存，暂未应用。请启动 Fcitx5 并启用“快速输入”插件，再重试应用。";
-        else if (applied) message = "已保存并应用，可以使用快捷键输入。";
-        else message = loaded ? "修改后点击“保存短语”，即可保存并应用。" : "进入快捷短语后读取列表。";
+        else if (applied) message = "已保存并应用";
+        else message = loaded ? "" : "正在读取…";
         if (!operationError.empty() && !busy && !conflict && dirty && activeOperation == Operation::Save)
             message = "保存失败，草稿已保留。请查看详情后重试。";
         gtk_label_set_text(GTK_LABEL(state), message.c_str());
+        gtk_widget_set_visible(state, !message.empty());
         const auto &error = !operationError.empty() ? operationError : baseline.error;
         gtk_label_set_text(GTK_LABEL(detailLabel), error.c_str());
         gtk_widget_set_visible(details, !error.empty());
@@ -239,10 +249,11 @@ public:
         gtk_list_store_clear(store);
         indices = filterQuickPhrases(entries, gtk_entry_get_text(GTK_ENTRY(search)));
         const auto text = !loaded || !baseline.error.empty() ? "尚未成功读取快捷短语"
-            : "共 " + std::to_string(entries.size()) + " 条，当前显示 " + std::to_string(indices.size()) + " 条";
+            : indices.size() == entries.size() ? std::to_string(entries.size()) + " 条"
+            : "显示 " + std::to_string(indices.size()) + "/" + std::to_string(entries.size()) + " 条";
         gtk_label_set_text(GTK_LABEL(count), text.c_str());
         gtk_label_set_text(GTK_LABEL(empty), !baseline.error.empty() ? "暂时无法显示短语，请重新读取。"
-            : entries.empty() ? "还没有快捷短语。点击“添加短语”，为常用文本设置缩写。" : "没有匹配的短语，试试其他缩写或关键词。");
+            : entries.empty() ? "暂无快捷短语" : "没有匹配的短语，试试其他缩写或关键词。");
         gtk_stack_set_visible_child_name(GTK_STACK(listStack), indices.empty() ? "empty" : "list");
         renderIndex = 0;
         if (!indices.empty()) renderSource = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer p) -> gboolean {

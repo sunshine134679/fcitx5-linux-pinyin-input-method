@@ -133,6 +133,10 @@ GtkWidget *findAccessibleWidget(GtkWidget *widget, GType type,
             return widget;
         }
     }
+    if (GTK_IS_MENU_BUTTON(widget)) {
+        auto *menu = gtk_menu_button_get_popover(GTK_MENU_BUTTON(widget));
+        if (menu) if (auto *result = findAccessibleWidget(GTK_WIDGET(menu), type, name)) return result;
+    }
     if (!GTK_IS_CONTAINER(widget)) {
         return nullptr;
     }

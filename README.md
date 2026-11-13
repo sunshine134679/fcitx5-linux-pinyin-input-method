@@ -208,7 +208,7 @@ sudo apt install \
     libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
 ```
 
-设置客户端要求 GTK 3.24 或更新版本，字体选择使用系统原生对话框。
+设置客户端要求 GTK 3.24 或更新版本。候选字体使用系统原生对话框，默认筛选支持常用中文的字体，可搜索名称或取消筛选查看全部字体。
 
 #### openEuler / RHEL / Fedora 构建依赖准备
 ```bash

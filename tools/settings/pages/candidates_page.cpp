@@ -1,5 +1,6 @@
 #include "modernime/settings/pages/candidates_page.h"
 #include "modernime/settings/candidate_pin_dialog.h"
+#include "modernime/settings/candidate_font_chooser.h"
 
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
@@ -29,76 +30,6 @@ void setTarget(GtkWidget *widget, std::string_view target) {
                            g_strdup(std::string(target).c_str()), g_free);
 }
 
-void compactFontCellPadding(GObject *cell, GParamSpec *, gpointer) {
-    guint padding = 0;
-    g_object_get(cell, "ypad", &padding, nullptr);
-    // GTK restores 10px padding in its cell-data function for every row.
-    // Keep the native renderer and its font attributes; only reduce padding.
-    if (padding != 4) g_object_set(cell, "ypad", 4U, nullptr);
-}
-
-void styleFontChooserChild(GtkWidget *widget, gpointer) {
-    if (GTK_IS_FONT_CHOOSER_WIDGET(widget)) {
-        addStyleClass(widget, "modernime-font-chooser");
-    } else if (GTK_IS_SEARCH_ENTRY(widget)) {
-        addStyleClass(widget, "modernime-font-search");
-        gtk_entry_set_placeholder_text(GTK_ENTRY(widget), "搜索字体名称");
-    } else if (GTK_IS_ENTRY(widget) && !GTK_IS_SPIN_BUTTON(widget)) {
-        addStyleClass(widget, "modernime-font-preview");
-    } else if (GTK_IS_TREE_VIEW(widget)) {
-        addStyleClass(widget, "modernime-font-list");
-        // FontChooser renders font names with an explicit Pango size, which
-        // takes precedence over CSS. Scale that sample without replacing its
-        // native font-family, search model or selection callbacks.
-        auto *columns = gtk_tree_view_get_columns(GTK_TREE_VIEW(widget));
-        for (auto *column = columns; column; column = column->next) {
-            auto *cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(column->data));
-            for (auto *cell = cells; cell; cell = cell->next) {
-                if (GTK_IS_CELL_RENDERER_TEXT(cell->data)) {
-                    if (!g_object_get_data(G_OBJECT(cell->data), "modernime-compact-font-cell")) {
-                        g_object_set_data(G_OBJECT(cell->data), "modernime-compact-font-cell", GINT_TO_POINTER(1));
-                        g_signal_connect(cell->data, "notify::ypad", G_CALLBACK(compactFontCellPadding), nullptr);
-                    }
-                    g_object_set(cell->data, "scale", 0.62, "scale-set", TRUE,
-                                 "ypad", 4U, nullptr);
-                    gtk_cell_renderer_set_fixed_size(GTK_CELL_RENDERER(cell->data), -1, -1);
-                }
-            }
-            g_list_free(cells);
-        }
-        g_list_free(columns);
-    } else if (GTK_IS_SCROLLED_WINDOW(widget)) {
-        gtk_widget_set_size_request(widget, -1, 168);
-        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(widget), 168);
-    }
-    if (GTK_IS_CONTAINER(widget))
-        gtk_container_foreach(GTK_CONTAINER(widget), styleFontChooserChild, nullptr);
-}
-
-void styleFontChooser(GtkButton *button, gpointer) {
-    // GtkFontButton owns this dialog and its selection/response lifecycle.
-    // Scope presentation to its transient window, including subsequent opens.
-    auto *parent = gtk_widget_get_toplevel(GTK_WIDGET(button));
-    auto *windows = gtk_window_list_toplevels();
-    for (auto *item = windows; item != nullptr; item = item->next) {
-        auto *dialog = GTK_WIDGET(item->data);
-        if (!GTK_IS_FONT_CHOOSER_DIALOG(dialog) ||
-            gtk_window_get_transient_for(GTK_WINDOW(dialog)) != GTK_WINDOW(parent)) continue;
-        addStyleClass(dialog, kSettingsWindowClass);
-        addStyleClass(dialog, "modernime-font-dialog");
-        gtk_window_set_default_size(GTK_WINDOW(dialog), 400, 320);
-        gtk_container_set_border_width(GTK_CONTAINER(dialog), 0);
-        auto *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-        gtk_container_set_border_width(GTK_CONTAINER(content), 12);
-        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
-                                       "取消", "保留原来的候选字体");
-        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_OK,
-                                       "使用字体", "在候选预览中使用选中的字体，保存设置后应用");
-        styleFontChooserChild(content, nullptr);
-        gtk_window_resize(GTK_WINDOW(dialog), 400, 320);
-    }
-    g_list_free(windows);
-}
 
 
 void finishPanelPreferences(GWeakRef *status, GError *error) {
@@ -305,7 +236,7 @@ public:
 private:
     void buildUi() {
         detail::GtkWidgetGuard pageGuard(
-            createPageShell("候选与外观", "调整候选显示、操作与指定输入的置顶偏好"));
+            createPageShell("候选与外观", ""));
         page = pageGuard.get();
 
         buildPreviewCard();
@@ -465,13 +396,7 @@ private:
         gtk_box_pack_start(GTK_BOX(card), candidatePageSizeFallback, FALSE, FALSE, 0);
 
         auto *fontControl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        candidateFontFamily = gtk_font_button_new();
-        gtk_font_button_set_title(GTK_FONT_BUTTON(candidateFontFamily), "选择候选字体");
-        gtk_font_button_set_show_size(GTK_FONT_BUTTON(candidateFontFamily), FALSE);
-        gtk_font_button_set_show_style(GTK_FONT_BUTTON(candidateFontFamily), FALSE);
-        gtk_font_chooser_set_level(GTK_FONT_CHOOSER(candidateFontFamily), GTK_FONT_CHOOSER_LEVEL_FAMILY);
-        gtk_font_chooser_set_preview_text(GTK_FONT_CHOOSER(candidateFontFamily), "你好，世界。ModernIME");
-        g_signal_connect_after(candidateFontFamily, "clicked", G_CALLBACK(styleFontChooser), nullptr);
+        candidateFontFamily = createCandidateFontButton();
         setTarget(candidateFontFamily, "candidate-font-family");
         setAccessibleWidgetText(candidateFontFamily, "候选字体", "选择系统中已安装的字体");
         gtk_box_pack_start(GTK_BOX(fontControl), candidateFontFamily, FALSE, FALSE, 0);
@@ -485,14 +410,14 @@ private:
         addStyleClass(unit, "modernime-description");
         gtk_box_pack_start(GTK_BOX(fontControl), unit, FALSE, FALSE, 0);
         candidateFontSizeFallback = createSettingRow(
-            "候选字体", "选择已安装字体，字号可设置 14–28 pt", fontControl);
+            "候选字体", "中文字体优先，14–28 pt", fontControl);
         gtk_box_pack_start(GTK_BOX(card), candidateFontSizeFallback, FALSE, FALSE, 0);
 
         candidateSpacing = createSettingsChoice();
         for (const auto &option : core::kCandidateSpacings)
             appendSettingsChoice(candidateSpacing, option.label);
         setTarget(candidateSpacing, "candidate-spacing");
-        candidateSpacingFallback = createSettingRow("候选间距", "紧凑节省横向空间，宽松便于浏览", candidateSpacing);
+        candidateSpacingFallback = createSettingRow("候选间距", "", candidateSpacing);
         gtk_box_pack_start(GTK_BOX(card), candidateSpacingFallback, FALSE, FALSE, 0);
         candidateTheme = createSettingsChoice();
         for (const auto &option : core::kCandidateThemes) {
@@ -572,7 +497,7 @@ private:
         gtk_box_pack_start(GTK_BOX(card), englishDefinitionFallback, FALSE,
                            FALSE, 0);
 
-        auto *navigation = createSectionCard("候选导航", "控制方向键与翻页键的行为");
+        auto *navigation = createSectionCard("候选导航", "");
         gtk_box_pack_start(GTK_BOX(page), navigation, FALSE, FALSE, 0);
         arrowNavigation = gtk_switch_new();
         pageNavigation = gtk_switch_new();

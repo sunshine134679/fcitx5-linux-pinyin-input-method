@@ -83,6 +83,7 @@ add_library(modernime_settings_gtk STATIC
     script_conversion_control.cpp
     symbol_browser.cpp
     candidate_pin_dialog.cpp
+    candidate_font_chooser.cpp
     settings_choice.cpp
     settings_widgets.cpp
     settings_motion.cpp

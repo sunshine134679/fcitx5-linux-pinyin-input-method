@@ -545,7 +545,7 @@ std::string_view settingsStyles() {
             background-image: none;
             color: @modernime_nav_fg_color;
             outline-color: @theme_selected_bg_color;
-            box-shadow: inset 3px 0 0 @modernime_nav_marker_color;
+            box-shadow: none;
             font-weight: 600;
         }
         .modernime-settings .modernime-nav-button.modernime-nav-selected:hover {
@@ -554,7 +554,7 @@ std::string_view settingsStyles() {
         }
         .modernime-settings .modernime-nav-button.modernime-nav-selected:active {
             background-color: @modernime_pressed_color;
-            box-shadow: inset 3px 0 0 @modernime_nav_marker_color;
+            box-shadow: none;
         }
         .modernime-nav-button.modernime-nav-selected * {
             color: @modernime_nav_fg_color;
@@ -1113,9 +1113,8 @@ std::string_view settingsStyles() {
         }
         .modernime-clipboard-list row:selected .modernime-clipboard-card {
             border-color: @modernime_control_border;
-            border-left-color: @theme_selected_bg_color;
-            background-color: @modernime_hover_color;
-            box-shadow: inset 3px 0 0 @theme_selected_bg_color;
+            background-color: @modernime_accent_surface;
+            box-shadow: none;
         }
         .modernime-card-index {
             min-width: 20px;
@@ -1560,7 +1559,13 @@ std::string_view settingsStyles() {
         }
         .modernime-clipboard-type-icon { color: @insensitive_fg_color; }
         .modernime-card-url { color: @modernime_nav_fg_color; }
-        .modernime-clipboard-toolbar { border-top: 1px solid @borders; padding-top: 12px; }
+        .modernime-clipboard-toolbar {
+            border-bottom: 1px solid @borders;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            margin-bottom: 8px;
+        }
+        .modernime-clipboard-menu button { min-width: 144px; }
         .modernime-action-flow { background-color: transparent; }
         .modernime-action-flow > flowboxchild { padding: 0; outline: none; }
         .modernime-settings .modernime-card-btn,
@@ -1574,8 +1579,8 @@ std::string_view settingsStyles() {
         }
         .modernime-settings .modernime-clipboard-list row:selected .modernime-clipboard-card {
             border-color: @modernime_nav_border_color;
-            background-color: @modernime_hover_color;
-            box-shadow: inset 3px 0 0 @theme_selected_bg_color;
+            background-color: @modernime_accent_surface;
+            box-shadow: none;
         }
         .modernime-settings scrollbar { background-color: transparent; border: none; }
         .modernime-settings scrollbar slider {

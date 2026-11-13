@@ -196,6 +196,51 @@ int main(int argc, char **argv) {
         assert(preset.isSuccess() && preset.settings.clientTheme == "rose");
         assert(preset.settings.candidateTheme == modernime::core::CandidateTheme::Rose);
         assert(preset.settings.candidateShape == modernime::core::CandidateShape::Capsule);
+
+        // Exercise the real native chooser: Chinese coverage filtering, the
+        // existing search, viewing all fonts, and cancel preserving settings.
+        shell.present();
+        shell.show(modernime::settings::SettingsPageId::Candidates);
+        assert(waitUntil([window] { return gtk_widget_get_mapped(window); }));
+        gtk_button_clicked(GTK_BUTTON(font));
+        GtkWidget *fontDialog = nullptr;
+        auto *windows = gtk_window_list_toplevels();
+        for (auto *item = windows; item; item = item->next)
+            if (GTK_IS_FONT_CHOOSER_DIALOG(item->data) && gtk_widget_get_visible(GTK_WIDGET(item->data)))
+                fontDialog = GTK_WIDGET(item->data);
+        g_list_free(windows);
+        assert(fontDialog);
+        auto *onlyChinese = findWidget(fontDialog, [](GtkWidget *widget) {
+            const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
+            return id && std::string_view(id) == "candidate-font-chinese-only";
+        });
+        assert(onlyChinese);
+        assert(waitUntil([onlyChinese] { return gtk_widget_get_sensitive(onlyChinese); }));
+        auto *fontList = findWidget(fontDialog, [](GtkWidget *widget) { return GTK_IS_TREE_VIEW(widget); });
+        auto *fontSearch = findWidget(fontDialog, [](GtkWidget *widget) { return GTK_IS_SEARCH_ENTRY(widget); });
+        assert(fontList && fontSearch);
+        PangoFontFamily **families = nullptr;
+        int familyCount = 0;
+        pango_context_list_families(gtk_widget_get_pango_context(font), &families, &familyCount);
+        bool hasDejaVu = false;
+        for (int i = 0; i < familyCount; ++i)
+            hasDejaVu |= std::string_view(pango_font_family_get_name(families[i])) == "DejaVu Sans";
+        g_free(families);
+        if (hasDejaVu) {
+            assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(onlyChinese)));
+            gtk_entry_set_text(GTK_ENTRY(fontSearch), "DejaVu Sans");
+            assert(waitUntil([fontList] {
+                return gtk_tree_model_iter_n_children(gtk_tree_view_get_model(GTK_TREE_VIEW(fontList)), nullptr) == 0;
+            }));
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(onlyChinese), FALSE);
+            assert(waitUntil([fontList] {
+                return gtk_tree_model_iter_n_children(gtk_tree_view_get_model(GTK_TREE_VIEW(fontList)), nullptr) > 0;
+            }));
+        }
+        gtk_dialog_response(GTK_DIALOG(fontDialog), GTK_RESPONSE_CANCEL);
+        assert(!gtk_widget_get_visible(fontDialog));
+        assert(!gtk_widget_get_sensitive(save));
+        assert(modernime::core::SettingsStore::load(paths.settingsFile).settings.candidateFontFamily == "DejaVu Sans");
     }
     g_object_unref(application);
     std::filesystem::remove_all(root);

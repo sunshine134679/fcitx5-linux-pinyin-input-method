@@ -118,7 +118,7 @@ public:
                 delete static_cast<SharedLifetime *>(value);
             });
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "系统与诊断", "确认输入法是否就绪，查看需要处理的项目。"));
+            "系统与诊断", ""));
         page = pageGuard.get();
         buildPage();
         refresh();

@@ -174,7 +174,7 @@ public:
     Impl(SettingsWindowModel &modelRef, std::function<void()> changedCallback)
         : model(modelRef), changed(std::move(changedCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "输入与按键", "设置中英模式、拼音方案、按键与标点编辑习惯。"));
+            "输入与按键", ""));
         page = pageGuard.get();
         buildInputStatusSection();
         buildFuzzySection();
@@ -227,7 +227,7 @@ public:
 
     void buildInputStatusSection() {
         auto *section = createSectionCard(
-            "输入状态", "这些设置决定 ModernIME 何时接收键盘输入。");
+            "输入状态", "");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
         inputEnabled = gtk_switch_new();
@@ -266,7 +266,7 @@ public:
     }
 
     void buildFuzzySection() {
-        auto *schemeSection = createSectionCard("拼音方案", "选择熟悉的输入方式。保存后生效，保留正在输入的按键。");
+        auto *schemeSection = createSectionCard("拼音方案", "");
         gtk_box_pack_start(GTK_BOX(page), schemeSection, FALSE, FALSE, 0);
         pinyinScheme = createSettingsChoice();
         for (const auto &scheme : core::kPinyinSchemes)
@@ -293,7 +293,7 @@ public:
             fuzzyControls[i] = control;
             setTarget(control, option.key);
             gtk_box_pack_start(GTK_BOX(section),
-                createSettingRow(option.label, "开启后，这两种发音可以互相匹配。", control),
+                createSettingRow(option.label, "", control),
                 FALSE, FALSE, 0);
             g_signal_connect(control, "notify::active", G_CALLBACK(onSwitchChanged), this);
         }
@@ -301,7 +301,7 @@ public:
 
     void buildShortcutSection() {
         auto *section = createSectionCard(
-            "快捷键", "设置在中文和英文输入状态之间切换的按键及以词定字。");
+            "快捷键", "");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
 
         toggleKey = gtk_button_new_with_label("");
@@ -345,7 +345,7 @@ public:
 
     void buildPunctuationSection() {
         auto *section = createSectionCard(
-            "标点", "配置中文输入状态下的标点输出方式。");
+            "标点", "");
         gtk_box_pack_start(GTK_BOX(page), section, FALSE, FALSE, 0);
         punctuation = gtk_switch_new();
         setTarget(punctuation, "punctuation");

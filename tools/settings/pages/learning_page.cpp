@@ -43,7 +43,7 @@ public:
           settingsChanged(std::move(settingsChangedCallback)),
           notify(std::move(notifyCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "智能学习", "让 ModernIME 记住你的候选选择，并结合上下文优化排序"));
+            "智能学习", ""));
         page = pageGuard.get();
         buildPage();
         refreshSettings();
@@ -76,12 +76,12 @@ public:
                                 "启用或关闭本地上下文候选排序");
         gtk_box_pack_start(GTK_BOX(learningSection),
                            createSettingRow("记忆用户候选选择",
-                                            "记住你主动选择的候选词，让常用表达更靠前。",
+                                            "",
                                             learningEnabled),
                            FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(learningSection),
                            createSettingRow("根据前后文调整候选排序",
-                                            "结合光标前后的文字，推荐适合当前语境的候选词。",
+                                            "",
                                             contextLearning),
                            FALSE, FALSE, 0);
         auto *dataSection = createSectionCard(

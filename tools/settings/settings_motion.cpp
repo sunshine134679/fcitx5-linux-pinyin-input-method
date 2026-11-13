@@ -214,8 +214,6 @@ public:
         color(cr, navigation, "modernime_accent_surface", navOpacity); cairo_fill_preserve(cr);
         color(cr, navigation, "modernime_nav_border_color", navOpacity);
         cairo_set_line_width(cr, 1); cairo_stroke(cr);
-        rounded(cr, {r.x + 4, r.y + 10, 3, std::max(0.0, r.height - 20)}, 1.5);
-        color(cr, navigation, "modernime_nav_marker_color", navOpacity); cairo_fill(cr);
         cairo_restore(cr);
     }
     void hintFocus(GtkWidget *target) {

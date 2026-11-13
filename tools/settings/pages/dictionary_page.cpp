@@ -211,7 +211,7 @@ public:
          std::function<void(std::string)> notifyCallback)
         : path(std::move(dictionaryPath)), notify(std::move(notifyCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "个人词典", "管理常用词的拼音与固定文本的快捷缩写"));
+            "个人词典", ""));
         page = pageGuard.get();
         buildPage();
         refresh();
@@ -251,7 +251,7 @@ public:
             if (gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.quickPhrases->widget()) owner.quickPhrases->refresh();
         }), this);
         auto *section = createSectionCard(
-            "我的词条", "输入词条即可建议拼音；词条修改完成后自动保存。");
+            "我的词条", "");
         gtk_box_pack_start(GTK_BOX(dictionaryContent), section, TRUE, TRUE, 0);
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -549,7 +549,7 @@ public:
                 } else if (currentSnapshot.status == DictionaryLoadStatus::IoError) {
                     state = "无法读取用户词典：" + currentSnapshot.error;
                 } else if (dictionaryEntries.empty()) {
-                    state = "暂无用户词条；可以添加个人词条或导入专业词典";
+                    state = "暂无词条";
                 } else {
                     state = "没有匹配的词条；请更换拼音或词条关键词";
                 }
@@ -1164,10 +1164,6 @@ private:
         auto *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         gtk_container_set_border_width(GTK_CONTAINER(body), 20);
         gtk_container_add(GTK_CONTAINER(content), body);
-        auto *intro = gtk_label_new("保存后，输入法会自动读取这个词条。");
-        addStyleClass(intro, "modernime-description");
-        gtk_label_set_xalign(GTK_LABEL(intro), 0);
-        gtk_box_pack_start(GTK_BOX(body), intro, FALSE, FALSE, 0);
         auto *grid = gtk_grid_new();
         gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
         gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
@@ -1214,7 +1210,7 @@ private:
         gtk_box_pack_start(GTK_BOX(weightRow), weightLabel, FALSE, FALSE, 0);
         gtk_box_pack_end(GTK_BOX(weightRow), weight, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(advancedBody), weightRow, FALSE, FALSE, 0);
-        auto *weightHelp = gtk_label_new("默认即可；输入法会根据你的使用记录调整排序。");
+        auto *weightHelp = gtk_label_new("通常无需调整");
         gtk_label_set_xalign(GTK_LABEL(weightHelp), 0);
         gtk_label_set_line_wrap(GTK_LABEL(weightHelp), TRUE);
         addStyleClass(weightHelp, "modernime-description");

@@ -27,6 +27,10 @@ namespace {
 GtkWidget *find(GtkWidget *root, std::string_view target) {
     const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(root), "modernime-settings-target"));
     if (id && target == id) return root;
+    if (GTK_IS_MENU_BUTTON(root)) {
+        auto *menu = gtk_menu_button_get_popover(GTK_MENU_BUTTON(root));
+        if (menu) if (auto *result = find(GTK_WIDGET(menu), target)) return result;
+    }
     if (!GTK_IS_CONTAINER(root)) return nullptr;
     auto *children = gtk_container_get_children(GTK_CONTAINER(root));
     GtkWidget *result = nullptr;
