@@ -675,6 +675,11 @@ SettingsSaveResult SettingsStore::saveWithResult(
 
     if (expectedBaseline.kind != SettingsBaselineKind::Unchecked) {
         const bool fileExists = std::filesystem::exists(path, filesystemError);
+        if (filesystemError) {
+            result.status = SettingsSaveStatus::IoError;
+            result.error = "无法检查当前配置文件: " + filesystemError.message();
+            return result;
+        }
         if (expectedBaseline.kind == SettingsBaselineKind::ExpectedMissing) {
             if (fileExists) {
                 result.status = SettingsSaveStatus::Conflict;

@@ -64,10 +64,51 @@ void testFailedReloadPreservesDraftAndSavedState(const std::filesystem::path &di
                "explicitly missing settings retain their existing default-load semantics");
 }
 
+void testFailedPathInspectionPreservesDraftAndTarget(const std::filesystem::path &directory) {
+    using namespace modernime::core;
+    for (const bool initiallySaved : {false, true}) {
+        const auto path = directory / (initiallySaved ? "saved-path-error.conf" : "missing-path-error.conf");
+        const auto retained = directory / "retained-path-error.conf";
+        if (initiallySaved) {
+            auto settings = defaultSettings();
+            settings.inputEnabled = false;
+            assertTrue(SettingsStore::save(path, settings), "path inspection fixture saves original settings");
+        }
+        modernime::settings::SettingsWindowModel model(path);
+        const auto saved = model.savedSettings();
+        const auto savedHash = model.savedHash();
+        const auto savedRevision = model.savedRevision();
+        auto draft = saved;
+        draft.learningEnabled = false;
+        model.setSettings(draft);
+        if (initiallySaved) std::filesystem::rename(path, retained);
+        // A self link produces ELOOP independently of user identity or permissions.
+        std::filesystem::create_symlink(path.filename(), path);
+        assertTrue(SettingsStore::load(path).isIoError(), "fixture is unreadable rather than missing");
+        std::string error;
+        const bool success = model.save(&error);
+        std::cout << "path inspection initiallySaved=" << initiallySaved << " saved=" << success
+                  << " targetIsLink=" << std::filesystem::is_symlink(path) << '\n';
+        assertTrue(!success && model.lastSaveResult().status == SettingsSaveStatus::IoError && !error.empty(),
+                   "path inspection failure is reported as I/O error, never as missing or conflict");
+        assertTrue(std::filesystem::is_symlink(path) && std::filesystem::read_symlink(path) == path.filename(),
+                   "failed path inspection leaves the original target untouched");
+        assertTrue(model.dirty() && model.settings() == draft && model.savedSettings() == saved &&
+                       model.savedHash() == savedHash && model.savedRevision() == savedRevision,
+                   "failed path inspection preserves draft and saved baseline");
+        std::filesystem::remove(path);
+        if (initiallySaved) std::filesystem::rename(retained, path);
+        assertTrue(model.save(&error) && error.empty() && !model.dirty() &&
+                       SettingsStore::load(path).settings == draft,
+                   "restoring the original target lets the same draft save normally");
+    }
+}
+
 } // namespace
 
 int main() {
     const auto directory = testDirectory();
+    testFailedPathInspectionPreservesDraftAndTarget(directory);
     testFailedReloadPreservesDraftAndSavedState(directory);
     const auto path = directory / "settings.conf";
     modernime::settings::SettingsWindowModel model(path);
