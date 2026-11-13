@@ -7,6 +7,10 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
+#include <map>
+#include <set>
+#include <tuple>
 #include <utility>
 
 namespace modernime::core {
@@ -447,6 +451,79 @@ bool LearningStore::recordSuppression(std::string_view phrase,
     return recordBatch({event});
 }
 
+bool LearningStore::applyManagement(std::string_view phrase, std::string_view pinyin,
+                                    bool forget) const {
+    sqlite3_stmt *statement = nullptr;
+    const auto sql = forget
+        ? "DELETE FROM learning_entries WHERE phrase = ? AND pinyin = ?;"
+        : "UPDATE learning_entries SET suppressed = 0 WHERE phrase = ? AND pinyin = ?;";
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) return false;
+    const bool success = bindText(statement, 1, phrase) &&
+                         bindText(statement, 2, normalizePinyin(pinyin)) &&
+                         sqlite3_step(statement) == SQLITE_DONE;
+    sqlite3_finalize(statement);
+    return success;
+}
+
+bool LearningStore::restoreTrustedEntries(const std::vector<LearningEntry> &entries,
+                                          std::int64_t *restoredRevision,
+                                          const LearningStoreState *expected) {
+    if (entries.size() > totalEntryLimit_) return false;
+    std::set<std::tuple<std::string, std::string, std::string, std::string>> identities;
+    std::map<std::pair<std::string, std::string>, std::size_t> contexts;
+    for (const auto &entry : entries) {
+        const auto pinyin = normalizePinyin(entry.pinyin);
+        if (entry.phrase.empty() || pinyin.empty() || entry.frequency < 0 ||
+            entry.negativeFeedback < 0 || entry.lastSelectedMs < 0 ||
+            !identities.emplace(pinyin, entry.phrase, entry.contextBefore, entry.contextAfter).second)
+            return false;
+        if ((!entry.contextBefore.empty() || !entry.contextAfter.empty()) &&
+            ++contexts[{pinyin, entry.phrase}] > 8) return false;
+    }
+    if (expected && !expected->snapshot) return false;
+    if (useLmdb_) return lmdbEngine_ && lmdbEngine_->RestoreTrustedLearningEntries(entries, restoredRevision,
+        expected ? &expected->snapshot->entries() : nullptr,
+        expected ? std::optional<std::int64_t>(expected->resetRevision) : std::nullopt);
+    if (!db_ || !execute("BEGIN IMMEDIATE;")) return false;
+    const auto revision = resetRevision();
+    const auto current = expected ? snapshot() : nullptr;
+    if (!revision || *revision == std::numeric_limits<std::int64_t>::max() ||
+        (expected && (!current || *revision != expected->resetRevision ||
+                      !learningEntriesEqual(current->entries(), expected->snapshot->entries()))) ||
+        !execute("DELETE FROM learning_entries;")) {
+        execute("ROLLBACK;");
+        return false;
+    }
+    sqlite3_stmt *statement = nullptr;
+    constexpr const char *sql = "INSERT INTO learning_entries "
+        "(pinyin,phrase,context_before,context_after,frequency,last_selected_ms,negative_feedback,suppressed) "
+        "VALUES(?,?,?,?,?,?,?,?);";
+    bool ok = sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) == SQLITE_OK;
+    for (const auto &entry : entries) {
+        if (!ok) break;
+        sqlite3_reset(statement);
+        sqlite3_clear_bindings(statement);
+        ok = !entry.phrase.empty() && !normalizePinyin(entry.pinyin).empty() &&
+             entry.frequency >= 0 && entry.negativeFeedback >= 0 && entry.lastSelectedMs >= 0 &&
+             bindText(statement, 1, normalizePinyin(entry.pinyin)) && bindText(statement, 2, entry.phrase) &&
+             bindText(statement, 3, entry.contextBefore) && bindText(statement, 4, entry.contextAfter) &&
+             sqlite3_bind_int64(statement, 5, entry.frequency) == SQLITE_OK &&
+             sqlite3_bind_int64(statement, 6, entry.lastSelectedMs) == SQLITE_OK &&
+             sqlite3_bind_int64(statement, 7, entry.negativeFeedback) == SQLITE_OK &&
+             sqlite3_bind_int(statement, 8, entry.suppressed ? 1 : 0) == SQLITE_OK &&
+             sqlite3_step(statement) == SQLITE_DONE;
+    }
+    sqlite3_finalize(statement);
+    ok = ok && faultInjection_ == FaultInjection::None &&
+         execute("UPDATE learning_state SET reset_revision = reset_revision + 1 WHERE id = 1;");
+    if (!ok || !execute("COMMIT;")) {
+        execute("ROLLBACK;");
+        return false;
+    }
+    if (restoredRevision) *restoredRevision = *revision + 1;
+    return true;
+}
+
 bool LearningStore::pruneContextVariants(bool *pruned) const {
     constexpr const char *sql =
         "DELETE FROM learning_entries WHERE rowid IN ("
@@ -551,6 +628,12 @@ bool LearningStore::recordBatch(const std::vector<LearningEvent> &events,
             break;
         case LearningEvent::Kind::Suppression:
             success = applySuppression(event.phrase, event.pinyin);
+            break;
+        case LearningEvent::Kind::Forget:
+            success = applyManagement(event.phrase, event.pinyin, true);
+            break;
+        case LearningEvent::Kind::Unsuppression:
+            success = applyManagement(event.phrase, event.pinyin, false);
             break;
         }
         if (!success) {

@@ -2,6 +2,8 @@
 
 #include "modernime/pinyin/pinyin_candidate_provider.h"
 #include "modernime/pinyin/user_dictionary.h"
+#include "modernime/pinyin/dictionary_pack.h"
+#include "modernime/pinyin/mixed_word_index.h"
 
 #include "modernime/core/english_definition_dictionary.h"
 #include "modernime/core/learning_store.h"
@@ -12,7 +14,10 @@
 #include <libime/core/languagemodel.h>
 
 #include <cstdint>
+#include <atomic>
+#include <utility>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,12 +37,29 @@ namespace modernime::pinyin {
 class PinyinSharedResources {
 public:
     static std::shared_ptr<PinyinSharedResources> create(
-        const PinyinDataPaths &paths, const PinyinProviderOptions &options);
+        const PinyinDataPaths &paths, const PinyinProviderOptions &options,
+        bool initializeLearning = true);
 
     PinyinSharedResources();
     virtual ~PinyinSharedResources();
 
     ResourceChange reloadUserDictionary();
+    ResourceChange reloadDictionaryPacks();
+    // Timer/engine-thread entry points: the worker owns all preparation I/O;
+    // consume only swaps ready resources and advances the dictionary generation.
+    void requestDictionaryPackRefresh();
+    ResourceChange consumeDictionaryPackRefresh();
+    void retirePinyinEngine(std::shared_ptr<libime::PinyinIME> engine) {
+        retiredPinyinEngines_.push_back(std::move(engine));
+    }
+    std::vector<DictionaryPackManifest> dictionaryPacks() const;
+    const std::filesystem::path &dictionaryPacksPath() const noexcept { return dictionaryPacksPath_; }
+    const std::filesystem::path &bundledDictionaryPacksPath() const noexcept { return bundledDictionaryPacksPath_; }
+    bool importDictionaryPack(const std::filesystem::path &directory, bool replace = false,
+                              std::string *error = nullptr);
+    bool setDictionaryPackEnabled(std::string_view id, bool enabled, std::string *error = nullptr);
+    bool removeDictionaryPack(std::string_view id, std::string *error = nullptr);
+    MixedWordIndex mixedWords;
     ResourceChange reloadLearningStore();
     ResourceChange refreshLearningStore();
 
@@ -66,7 +88,7 @@ public:
         return learningRevision_.load(std::memory_order_acquire);
     }
 
-    std::unique_ptr<libime::PinyinIME> ime;
+    std::shared_ptr<libime::PinyinIME> ime;
     std::shared_ptr<const libime::StaticLanguageModelFile> contextLanguageModel;
     std::filesystem::path contextLanguageModelPath;
     std::unique_ptr<core::LearningWriter> learning;
@@ -90,6 +112,18 @@ private:
     std::function<void()> onReadyCallback_;
     mutable std::recursive_mutex resourceMutex_;
     bool preparingWriter_ = false;
+    std::filesystem::path dictionaryPacksPath_, bundledDictionaryPacksPath_;
+    std::size_t dictionaryPackLayer_ = 0;
+    std::vector<DictionaryPack> activeDictionaryPacks_;
+    PinyinDataPaths enginePaths_;
+    struct PreparedPackRefresh {
+        std::uint64_t stamp = 0, baselineGeneration = 0;
+        std::shared_ptr<PinyinSharedResources> resources;
+    };
+    std::future<PreparedPackRefresh> pendingPackRefresh_;
+    std::uint64_t dictionaryPackStamp_ = 0;
+    std::vector<std::shared_ptr<PinyinSharedResources>> retiredPackResources_;
+    std::vector<std::shared_ptr<libime::PinyinIME>> retiredPinyinEngines_;
 };
 
 class PinyinCandidateProvider::SharedResources final : public PinyinSharedResources {

@@ -9,6 +9,7 @@
 #include <mutex>
 #include <sstream>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
@@ -353,9 +354,15 @@ DictionarySaveResult DataController::saveDictionaryIfUnchanged(
 
     // Advisory lock using flock on .lock file
     const auto lockPath = path.string() + ".lock";
-    int lockFd = open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    int lockFd = open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (lockFd < 0) {
         setErr("无法获取词典锁文件: " + std::string(strerror(errno)));
+        return DictionarySaveResult::IoError;
+    }
+    struct stat lockStatus {};
+    if (fstat(lockFd, &lockStatus) != 0 || !S_ISREG(lockStatus.st_mode)) {
+        close(lockFd);
+        setErr("词典锁路径不是普通文件");
         return DictionarySaveResult::IoError;
     }
     struct LockGuard {
@@ -405,7 +412,7 @@ DictionarySaveResult DataController::saveDictionaryIfUnchanged(
             return DictionarySaveResult::Invalid;
         }
     }
-    if (!dictionary.saveText(path)) {
+    if (!dictionary.saveTextWithLockHeld(path, guard.fd)) {
         setErr("无法保存用户词典");
         return DictionarySaveResult::IoError;
     }

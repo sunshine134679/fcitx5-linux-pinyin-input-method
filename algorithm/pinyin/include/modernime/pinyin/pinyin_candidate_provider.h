@@ -30,6 +30,8 @@ struct PinyinDataPaths final {
     std::string englishDefinitionDictionary;
     // Empty: discover the bundled, read-only contextual model.
     std::string contextLanguageModel;
+    std::string dictionaryPacks;
+    std::string bundledDictionaryPacks;
 };
 
 struct PinyinProviderOptions final {
@@ -114,6 +116,8 @@ public:
     const core::CandidatePage &page() const override;
 
     bool flush();
+    bool setCandidateFilter(std::function<bool(const core::CandidateItem &)> filter) override;
+    void clearCandidateFilter() override;
 
     // Disabled by default. Same input-thread ownership as page().
     void setDiagnosticsEnabled(bool enabled);

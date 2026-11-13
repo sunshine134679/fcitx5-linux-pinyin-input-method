@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <map>
 #include <numeric>
 #include <queue>
 #include <tuple>
@@ -110,6 +111,25 @@ std::string normalizePinyin(std::string_view pinyin) {
         normalized.push_back(static_cast<char>(std::tolower(character)));
     }
     return normalized;
+}
+
+bool learningEntriesEqual(const std::vector<LearningEntry> &left,
+                          const std::vector<LearningEntry> &right) {
+    if (left.size() != right.size()) return false;
+    struct EntryRef { const LearningEntry *entry; std::string pinyin; };
+    std::vector<EntryRef> a, b;
+    a.reserve(left.size()); b.reserve(right.size());
+    for (const auto &entry : left) a.push_back({&entry, normalizePinyin(entry.pinyin)});
+    for (const auto &entry : right) b.push_back({&entry, normalizePinyin(entry.pinyin)});
+    const auto key = [](const EntryRef &ref) {
+        const auto &entry = *ref.entry;
+        return std::tie(entry.phrase, ref.pinyin, entry.contextBefore, entry.contextAfter,
+                        entry.frequency, entry.lastSelectedMs, entry.negativeFeedback, entry.suppressed);
+    };
+    const auto less = [&](const EntryRef &x, const EntryRef &y) { return key(x) < key(y); };
+    std::sort(a.begin(), a.end(), less); std::sort(b.begin(), b.end(), less);
+    for (std::size_t i = 0; i < a.size(); ++i) if (key(a[i]) != key(b[i])) return false;
+    return true;
 }
 
 namespace {
@@ -1298,6 +1318,62 @@ void LearningSnapshot::recordSuppression(std::string_view phrase, std::string_vi
     const auto count = s.entryCount();
     s.recordSuppression(phrase, pinyin);
     finishMutation(count, phrase);
+}
+void LearningSnapshot::recordForget(std::string_view phrase, std::string_view pinyin) {
+    auto &shard = mutableShard(phrase);
+    const auto previous = shard.entryCount();
+    auto rows = shard.entries();
+    const auto normalized = normalizePinyin(pinyin);
+    std::erase_if(rows, [&](const LearningEntry &entry) {
+        return entry.phrase == phrase && normalizePinyin(entry.pinyin) == normalized;
+    });
+    shard = LearningSnapshotShard(std::move(rows), totalEntryLimit_);
+    finishMutation(previous, phrase);
+}
+void LearningSnapshot::recordUnsuppression(std::string_view phrase, std::string_view pinyin) {
+    auto &shard = mutableShard(phrase);
+    const auto previous = shard.entryCount();
+    auto rows = shard.entries();
+    const auto normalized = normalizePinyin(pinyin);
+    for (auto &entry : rows) {
+        if (entry.phrase == phrase && normalizePinyin(entry.pinyin) == normalized) {
+            entry.suppressed = false;
+        }
+    }
+    shard = LearningSnapshotShard(std::move(rows), totalEntryLimit_);
+    finishMutation(previous, phrase);
+}
+LearningQueryPage LearningSnapshot::queryLearningEntries(const LearningQuery &query) const {
+    std::map<std::pair<std::string, std::string>, LearningRecord> grouped;
+    const auto searchPinyin = normalizePinyin(query.search);
+    const auto add = [](std::int64_t left, std::int64_t right) {
+        right = std::max<std::int64_t>(0, right);
+        return left > std::numeric_limits<std::int64_t>::max() - right
+                   ? std::numeric_limits<std::int64_t>::max() : left + right;
+    };
+    for (const auto &entry : entries()) {
+        const auto pinyin = normalizePinyin(entry.pinyin);
+        if (!query.search.empty() && entry.phrase.find(query.search) == std::string::npos &&
+            (searchPinyin.empty() || pinyin.find(searchPinyin) == std::string::npos)) continue;
+        auto &record = grouped[{pinyin, entry.phrase}];
+        record.phrase = entry.phrase;
+        record.pinyin = pinyin;
+        record.frequency = add(record.frequency, entry.frequency);
+        record.negativeFeedback = add(record.negativeFeedback, entry.negativeFeedback);
+        record.lastSelectedMs = std::max(record.lastSelectedMs, entry.lastSelectedMs);
+        record.suppressed = record.suppressed || entry.suppressed;
+        ++record.contextCount;
+    }
+    LearningQueryPage page;
+    const auto limit = std::min<std::size_t>(query.limit, 200);
+    for (auto &[identity, record] : grouped) {
+        (void)identity;
+        if (query.suppressed && record.suppressed != *query.suppressed) continue;
+        const auto position = page.total++;
+        if (position >= query.offset && page.records.size() < limit)
+            page.records.push_back(std::move(record));
+    }
+    return page;
 }
 const std::vector<LearningEntry> &LearningSnapshot::entries() const {
     std::call_once(entriesCache_->initialized, [this] {

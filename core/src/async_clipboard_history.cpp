@@ -57,12 +57,16 @@ struct AsyncClipboardHistory::Impl {
         bool save = false;
         bool final = false;
         std::vector<FavoriteOperation> favoriteOperations;
+        bool pause = false;
+        bool reloadFromDisk = false;
     };
     struct Mailbox {
         std::mutex mutex;
         std::condition_variable ready;
         std::optional<Task> task;
         std::optional<ClipboardSnapshot> result;
+        bool completionPending = false;
+        bool maintenancePaused = false;
         bool closing = false;
         ClipboardObservationBatch finalObservations;
         std::vector<FavoriteOperation> finalFavoriteOperations;
@@ -79,6 +83,9 @@ struct AsyncClipboardHistory::Impl {
     bool refreshRequested = false;
     bool saveRequested = false;
     bool closed = false;
+    bool pauseRequested = false;
+    bool maintenancePaused = false;
+    bool reloadFromDiskRequested = false;
     std::thread worker;
 
     Impl(std::filesystem::path path, std::function<void()> notify,
@@ -92,20 +99,43 @@ struct AsyncClipboardHistory::Impl {
     }
 
     void dispatch() {
-        if (closed || active || (!refreshRequested && !saveRequested && waiting.empty() &&
+        if (closed || active || (maintenancePaused && !reloadFromDiskRequested) ||
+            (!pauseRequested && !refreshRequested && !saveRequested && waiting.empty() &&
                                  waitingFavoriteOperations.empty())) return;
-        Task task{std::move(waiting), saveRequested, false,
-                  std::move(waitingFavoriteOperations)};
+        Task task{std::move(waiting), saveRequested || pauseRequested, false,
+                  std::move(waitingFavoriteOperations), pauseRequested, reloadFromDiskRequested};
         waiting = {};
         waitingFavoriteOperations = {};
         refreshRequested = false;
         saveRequested = false;
+        reloadFromDiskRequested = false;
         active = true;
         {
             std::lock_guard lock(mailbox.mutex);
             mailbox.task.emplace(std::move(task));
         }
         mailbox.ready.notify_one();
+    }
+
+    // A maintenance poll acknowledges completion without consuming the result
+    // intended for the host UI. The single latest snapshot stays in mailbox.
+    std::optional<ClipboardSnapshot> collect(bool consume) {
+        std::optional<ClipboardSnapshot> result;
+        {
+            std::lock_guard lock(mailbox.mutex);
+            if (mailbox.completionPending) {
+                if (mailbox.result) completedFavoriteOperationId = mailbox.result->lastFavoriteOperationId;
+                active = false;
+                maintenancePaused = mailbox.maintenancePaused;
+                mailbox.completionPending = false;
+            }
+            if (consume) {
+                result = std::move(mailbox.result);
+                mailbox.result.reset();
+            }
+        }
+        dispatch();
+        return result;
     }
 
     void run(const std::filesystem::path &path, const std::filesystem::path &favoritesPath,
@@ -120,13 +150,18 @@ struct AsyncClipboardHistory::Impl {
         if (favoritesPath.empty()) snapshot.favoritesAvailability = ClipboardAvailability::Unavailable;
         for (;;) {
             Task task;
+            bool resetCleanCaches = false;
             {
                 std::unique_lock lock(mailbox.mutex);
                 mailbox.ready.wait(lock, [&] { return mailbox.task || mailbox.closing; });
                 if (mailbox.task) {
                     task = std::move(*mailbox.task);
                     mailbox.task.reset();
+                    resetCleanCaches = task.reloadFromDisk && mailbox.maintenancePaused;
                 } else {
+                    // A successful maintenance pause has no pending facts.
+                    // In particular, shutdown must not flush pre-restore cache.
+                    if (mailbox.maintenancePaused) return;
                     task = {std::move(mailbox.finalObservations), true, true,
                             std::move(mailbox.finalFavoriteOperations)};
                 }
@@ -134,6 +169,11 @@ struct AsyncClipboardHistory::Impl {
             std::string error;
             auto availability = ClipboardAvailability::Unavailable;
             try {
+                if (resetCleanCaches) {
+                    history = PersistentClipboardHistory(path);
+                    favorites = ClipboardFavorites(favoritesPath);
+                    knownFavoritesStamp.reset();
+                }
                 deferred.append(task.observations);
                 if (!history.loaded()) history.load(&error);
                 else history.reloadIfExternallyChanged(&error);
@@ -152,6 +192,7 @@ struct AsyncClipboardHistory::Impl {
             }
             snapshot.availability = availability;
             snapshot.error = error;
+            if (task.pause && !error.empty()) snapshot.availability = ClipboardAvailability::Unavailable;
             if (!favoritesPath.empty()) {
                 bool favoritesChanged = false;
                 std::string readError;
@@ -206,7 +247,8 @@ struct AsyncClipboardHistory::Impl {
                     knownFavoritesStamp.reset();
                 }
                 snapshot.favoritesError = !batchError.empty() ? batchError
-                    : !readError.empty() ? readError : snapshot.lastFavoriteOperationError;
+                    : !readError.empty() ? readError
+                    : task.reloadFromDisk ? std::string{} : snapshot.lastFavoriteOperationError;
                 if (favoritesChanged) {
                     try {
                         if (*snapshot.favorites != favorites.entries()) {
@@ -222,12 +264,22 @@ struct AsyncClipboardHistory::Impl {
                         knownFavoritesStamp.reset();
                     }
                 }
+                if (task.pause && !snapshot.favoritesError.empty())
+                    snapshot.favoritesAvailability = ClipboardAvailability::Unavailable;
             }
             ++snapshot.version;
             bool shouldNotify;
             {
                 std::lock_guard lock(mailbox.mutex);
                 mailbox.result = snapshot;
+                mailbox.completionPending = true;
+                if (task.reloadFromDisk) mailbox.maintenancePaused = false;
+                if (task.pause) {
+                    mailbox.maintenancePaused = snapshot.availability == ClipboardAvailability::Ready &&
+                        error.empty() && deferred.empty() &&
+                        (favoritesPath.empty() || (snapshot.favoritesAvailability == ClipboardAvailability::Ready &&
+                                                  snapshot.favoritesError.empty()));
+                }
                 shouldNotify = !mailbox.closing;
                 if (task.final) {
                     mailbox.finalError = error;
@@ -276,20 +328,20 @@ void AsyncClipboardHistory::setObservationBaseline(std::string_view text) {
     if (!impl_->closed) impl_->tracker.setBaseline(text);
 }
 void AsyncClipboardHistory::observe(std::string_view text) {
-    if (!impl_->closed && impl_->tracker.accept(text)) impl_->waiting.observe(text);
+    if (!impl_->closed && !impl_->pauseRequested && impl_->tracker.accept(text)) impl_->waiting.observe(text);
 }
 void AsyncClipboardHistory::requestRefresh() {
-    if (impl_->closed) return;
+    if (impl_->closed || impl_->pauseRequested) return;
     impl_->refreshRequested = true;
     impl_->dispatch();
 }
 void AsyncClipboardHistory::requestSave() {
-    if (impl_->closed) return;
+    if (impl_->closed || impl_->pauseRequested) return;
     impl_->saveRequested = true;
     impl_->dispatch();
 }
 bool AsyncClipboardHistory::setFavorite(std::string_view text, bool favorite) {
-    if (impl_->closed || !impl_->favoritesEnabled || text.empty() ||
+    if (impl_->closed || impl_->pauseRequested || !impl_->favoritesEnabled || text.empty() ||
         text.size() > ClipboardHistory::kMaxEntryBytes ||
         impl_->acceptedFavoriteOperationId - impl_->completedFavoriteOperationId >= ClipboardHistory::kMaxEntries) {
         return false;
@@ -305,19 +357,30 @@ std::uint64_t AsyncClipboardHistory::lastAcceptedFavoriteOperationId() const {
 }
 std::optional<ClipboardSnapshot> AsyncClipboardHistory::takeSnapshot() {
     if (impl_->closed) return std::nullopt;
-    std::optional<ClipboardSnapshot> result;
-    {
-        std::lock_guard lock(impl_->mailbox.mutex);
-        result = std::move(impl_->mailbox.result);
-        impl_->mailbox.result.reset();
-    }
-    if (result) {
-        impl_->completedFavoriteOperationId = result->lastFavoriteOperationId;
-        impl_->active = false;
-        impl_->dispatch();
-    }
-    return result;
+    return impl_->collect(true);
 }
 std::string AsyncClipboardHistory::shutdown() { return impl_->shutdown(); }
+bool AsyncClipboardHistory::pauseForMaintenance() {
+    if (impl_->closed) return false;
+    impl_->pauseRequested = true;
+    impl_->collect(false);
+    return impl_->maintenancePaused;
+}
+void AsyncClipboardHistory::resumeAfterMaintenance() {
+    if (impl_->closed || !impl_->pauseRequested) return;
+    // Failed/cancelled pauses still own legitimate pending facts: leave their
+    // persistent object intact. Only a successful drain permits cache reset.
+    impl_->collect(false);
+    impl_->pauseRequested = false;
+    // The preceding pause may still be in flight. The worker decides whether
+    // it actually acknowledged a clean pause before resetting any cache.
+    impl_->reloadFromDiskRequested = true;
+    impl_->refreshRequested = true;
+    if (impl_->maintenancePaused) {
+        std::lock_guard lock(impl_->mailbox.mutex);
+        impl_->mailbox.result.reset();
+    }
+    impl_->dispatch();
+}
 
 } // namespace modernime::core

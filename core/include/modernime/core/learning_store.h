@@ -63,6 +63,10 @@ public:
     bool recordBatch(const std::vector<LearningEvent> &events,
                      bool *pruned = nullptr,
                      bool *external_changed = nullptr);
+    // Writer-owned trusted local restore: exact facts, one transaction, new clear epoch.
+    bool restoreTrustedEntries(const std::vector<LearningEntry> &entries,
+                               std::int64_t *restoredRevision = nullptr,
+                               const LearningStoreState *expected = nullptr);
     bool backupTo(const std::filesystem::path &path) const;
     bool clear();
     std::optional<std::int64_t> resetRevision() const;
@@ -94,6 +98,8 @@ private:
                                std::string_view pinyin) const;
     bool applySuppression(std::string_view phrase,
                           std::string_view pinyin) const;
+
+    bool applyManagement(std::string_view phrase, std::string_view pinyin, bool forget) const;
 
     std::filesystem::path path_;
     sqlite3 *db_ = nullptr;

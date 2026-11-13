@@ -9,6 +9,9 @@
 #include <atomic>
 #include <cmath>
 #include <fstream>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -276,6 +279,7 @@ UserDictionary UserDictionary::loadText(
     const std::filesystem::path &path) {
     auto snapshot = loadSnapshot(path);
     UserDictionary dictionary;
+    dictionary.loadedContentHash_ = snapshot.contentHash;
     std::unordered_map<std::string, std::size_t> positions;
     for (auto &entry : snapshot.entries) {
         const auto key = keyFor(entry.pinyin, entry.phrase);
@@ -335,6 +339,23 @@ bool UserDictionary::remove(std::string_view normalizedPinyin,
 }
 
 bool UserDictionary::saveText(const std::filesystem::path &path) const {
+    return saveTextImpl(path, std::nullopt);
+}
+
+bool UserDictionary::saveTextWithLockHeld(const std::filesystem::path &path,
+                                        int lockDescriptor) const {
+    if (lockDescriptor < 0) return false;
+    return saveTextImpl(path, std::nullopt, lockDescriptor);
+}
+
+bool UserDictionary::saveTextIfUnchanged(const std::filesystem::path &path,
+                                        std::string_view expectedContentHash) const {
+    return saveTextImpl(path, expectedContentHash);
+}
+
+bool UserDictionary::saveTextImpl(const std::filesystem::path &path,
+                                 std::optional<std::string_view> expectedContentHash,
+                                 int existingLockDescriptor) const {
     if (path.empty()) {
         return false;
     }
@@ -344,6 +365,26 @@ bool UserDictionary::saveText(const std::filesystem::path &path) const {
         if (error) {
             return false;
         }
+    }
+
+    struct SaveLock {
+        int descriptor = -1;
+        ~SaveLock() { if (descriptor >= 0) ::close(descriptor); }
+    } saveLock;
+    const auto lockPath = path.string() + ".lock";
+    if (existingLockDescriptor < 0)
+        saveLock.descriptor = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    const int descriptor = existingLockDescriptor >= 0 ? existingLockDescriptor : saveLock.descriptor;
+    struct stat lockStatus {}, pathStatus {};
+    if (descriptor < 0 || ::fstat(descriptor, &lockStatus) != 0 ||
+        ::lstat(lockPath.c_str(), &pathStatus) != 0 || !S_ISREG(lockStatus.st_mode) ||
+        !S_ISREG(pathStatus.st_mode) || lockStatus.st_dev != pathStatus.st_dev ||
+        lockStatus.st_ino != pathStatus.st_ino || ::flock(descriptor, LOCK_EX) != 0) return false;
+
+    if (expectedContentHash) {
+        const auto current = loadSnapshot(path);
+        if (!current.error.empty() || (current.exists && !current.readable) ||
+            current.contentHash != *expectedContentHash) return false;
     }
 
     const auto temporary = path.string() + ".tmp." +
@@ -373,12 +414,12 @@ bool UserDictionary::saveText(const std::filesystem::path &path) const {
 }
 
 void UserDictionary::addTo(libime::PinyinDictionary &dictionary,
-                           std::size_t index) const {
+                           std::size_t index, std::optional<float> costOverride) const {
     for (const auto &entry : entries_) {
         const auto segmented = segmentedPinyin(entry.pinyin);
         if (!segmented.empty()) {
             try {
-                dictionary.addWord(index, segmented, entry.phrase, entry.weight);
+                dictionary.addWord(index, segmented, entry.phrase, costOverride.value_or(entry.weight));
             } catch (const std::invalid_argument &) {
                 // Alphabetic input may still contain invalid or incomplete
                 // syllables. One imported row must not abort the engine's

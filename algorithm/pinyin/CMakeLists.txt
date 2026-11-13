@@ -60,3 +60,10 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             "MODERNIME_ENGLISH_DICT_INSTALL_BINARY=\"${CMAKE_INSTALL_FULL_DATADIR}/modernime/pinyin/modernime-english-dict.bin\""
     )
 endif()
+
+target_sources(modernime_pinyin PRIVATE src/dictionary_pack.cpp src/mixed_word_index.cpp)
+target_compile_definitions(modernime_pinyin PUBLIC
+    MODERNIME_DICTIONARY_PACKS_SOURCE_DIR="${PROJECT_SOURCE_DIR}/data/dictionaries"
+    MODERNIME_DICTIONARY_PACKS_INSTALL_DIR="${CMAKE_INSTALL_FULL_DATADIR}/modernime/dictionary-packs")
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/data/dictionaries/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/dictionary-packs")

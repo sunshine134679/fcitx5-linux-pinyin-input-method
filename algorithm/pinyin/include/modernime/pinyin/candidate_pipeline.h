@@ -17,6 +17,7 @@ namespace modernime::pinyin {
 class RecentChoices;
 class ShuangpinInput;
 class ContextDecoder;
+class MixedWordIndex;
 
 struct CandidatePipelineResult final {
     std::vector<core::CandidateScore> scored;
@@ -41,6 +42,7 @@ CandidatePipelineResult buildCandidatePipeline(
     const libime::PinyinContext *variantContext = nullptr,
     const ShuangpinInput *shuangpin = nullptr,
     std::size_t nativeOffset = 0,
-    const ContextDecoder *contextDecoder = nullptr);
+    const ContextDecoder *contextDecoder = nullptr,
+    const MixedWordIndex *mixedWords = nullptr);
 
 } // namespace modernime::pinyin

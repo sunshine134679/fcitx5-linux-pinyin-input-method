@@ -323,6 +323,13 @@ std::int64_t nowMilliseconds() {
         .count();
 }
 
+bool validInputComposition(std::string_view input) {
+    std::string lowercase(input);
+    for (char &character : lowercase)
+        if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+    return core::PinyinMatchPolicy::validComposition(lowercase);
+}
+
 std::size_t pinyinLetterCount(std::string_view input) {
     std::size_t count = 0;
     for (const char character : input) {
@@ -727,7 +734,8 @@ public:
           observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
         shared_->setFuzzyOptions(options.fuzzyPinyin);
         shared_->setPinyinScheme(options.pinyinScheme);
-        context = std::make_unique<libime::PinyinContext>(shared_->ime.get());
+        contextIme_ = shared_->ime;
+        context = std::make_unique<libime::PinyinContext>(contextIme_.get());
         context->setUseShuangpin(shared_->usesShuangpin());
         for (auto &pin : candidatePins_) pin.input = core::PinyinMatchPolicy::canonical(pin.input);
         refresh();
@@ -737,7 +745,7 @@ public:
         checkResourceChanges();
         std::string nextInput = context->userInput();
         nextInput.append(input);
-        if (!core::PinyinMatchPolicy::validComposition(nextInput)) {
+        if (!validInputComposition(nextInput)) {
             return false;
         }
         if (!context->type(input)) {
@@ -762,7 +770,7 @@ public:
     bool replaceInput(std::string_view input) {
         checkResourceChanges();
         if (!input.empty() &&
-            !core::PinyinMatchPolicy::validComposition(input)) {
+            !validInputComposition(input)) {
             return false;
         }
         if (input.empty()) {
@@ -840,6 +848,18 @@ public:
         const auto curDictGen = shared_->dictionaryGeneration();
         if (curDictGen != observedDictionaryGeneration_) {
             observedDictionaryGeneration_ = curDictGen;
+            const auto rawInput = context->userInput().empty()
+                ? page_.rawInput : context->userInput();
+            if (contextIme_ != shared_->ime) {
+                context.reset();
+                shared_->retirePinyinEngine(std::move(contextIme_));
+                contextIme_ = shared_->ime;
+                context = std::make_unique<libime::PinyinContext>(contextIme_.get());
+                context->setUseShuangpin(shared_->usesShuangpin());
+            } else {
+                context->clear();
+            }
+            if (!rawInput.empty()) context->type(rawInput);
             changed = true;
         }
         const auto curLearnRev = shared_->learningRevision();
@@ -1203,18 +1223,10 @@ public:
             auto updatedDictionary = userDictionary();
             if (!updatedDictionary.remove(candidate.fullPinyin,
                                           candidate.text) ||
-                !updatedDictionary.saveText(userDictionaryPath())) {
+                !updatedDictionary.saveTextIfUnchanged(userDictionaryPath(), userDictionary().loadedContentHash())) {
                 return false;
             }
-            const bool removedFromLibime = userDictionary().removeFrom(
-                *ime().dict(), 1, candidate.fullPinyin, candidate.text);
-            if (!removedFromLibime) {
-                // Restore the original file if the in-memory dictionary layer
-                // could not be changed.
-                userDictionary().saveText(userDictionaryPath());
-                return false;
-            }
-            userDictionary() = std::move(updatedDictionary);
+            shared_->reloadUserDictionary();
             rebuildContext(rawInput);
             return true;
         }
@@ -1418,6 +1430,16 @@ public:
         }
     }
 
+    bool setCandidateFilter(std::function<bool(const core::CandidateItem &)> filter) {
+        candidateFilter_ = std::move(filter);
+        refresh();
+        // Explicit filter edits may discover cold candidates. Ordinary edits
+        // retain the original per-key 128-candidate request budget.
+        for (unsigned batch = 0; candidateFilter_ && page_.items.empty() &&
+             page_.hasMoreCandidates && batch < 16; ++batch) refresh(true);
+        return true;
+    }
+
 private:
     libime::PinyinIME &ime() { return *shared_->ime; }
     core::LearningWriter *learningWriter() {
@@ -1541,7 +1563,7 @@ private:
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
             variantContext.get(), shuangpin ? &*shuangpin : nullptr, nativeOffset,
-            contextual ? &*contextual : nullptr);
+            contextual ? &*contextual : nullptr, &shared_->mixedWords);
         nextNativeCandidate_ = result.nextNativeCandidate;
         page_.hasMoreCandidates = result.hasMoreCandidates;
         const auto segmentedInput =
@@ -1958,12 +1980,17 @@ private:
             page_.preedit = std::move(published.preedit);
             page_.cursor = published.cursor;
         }
-        pageAuthorized_ = !page_.items.empty();
+        if (candidateFilter_) {
+            std::erase_if(page_.items, [this](const auto &item) { return !candidateFilter_(item); });
+            page_.cursor = 0;
+        }
+        pageAuthorized_ = !page_.items.empty() || static_cast<bool>(candidateFilter_);
     }
 
     std::shared_ptr<SharedResources> shared_;
     core::PhraseFormationTracker phraseTracker_;
     RecentChoices recentChoices_;
+    std::shared_ptr<libime::PinyinIME> contextIme_;
     std::unique_ptr<libime::PinyinContext> context;
     bool contextLearningEnabled_ = true;
     bool learningEnabled_ = true;
@@ -1973,6 +2000,7 @@ private:
     bool calculatorEnabled_ = true;
     bool symbolSearchEnabled_ = true;
     std::vector<core::CandidatePin> candidatePins_;
+    std::function<bool(const core::CandidateItem &)> candidateFilter_;
     core::CandidatePage page_;
     std::optional<PinyinDiagnostics> diagnostics_;
     std::string contextBefore_;
@@ -2005,6 +2033,11 @@ void PinyinCandidateProvider::setDiagnosticsEnabled(bool enabled) {
 const PinyinDiagnostics *PinyinCandidateProvider::diagnostics() const {
     return impl_->diagnostics();
 }
+
+bool PinyinCandidateProvider::setCandidateFilter(std::function<bool(const core::CandidateItem &)> filter) {
+    return impl_->setCandidateFilter(std::move(filter));
+}
+void PinyinCandidateProvider::clearCandidateFilter() { impl_->setCandidateFilter({}); }
 
 bool PinyinCandidateProvider::append(std::string_view input) {
     return impl_->append(input);

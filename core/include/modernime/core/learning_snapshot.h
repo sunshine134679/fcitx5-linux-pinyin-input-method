@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -25,6 +26,28 @@ struct LearningEntry final {
     std::int64_t lastSelectedMs = 0;
     std::int64_t negativeFeedback = 0;
     bool suppressed = false;
+    bool operator==(const LearningEntry &) const = default;
+};
+
+// Administrative queries run on a captured immutable snapshot, outside the key path.
+struct LearningQuery final {
+    std::string search;
+    std::optional<bool> suppressed;
+    std::size_t offset = 0;
+    std::size_t limit = 100;
+};
+struct LearningRecord final {
+    std::string phrase;
+    std::string pinyin;
+    std::int64_t frequency = 0;
+    std::int64_t lastSelectedMs = 0;
+    std::int64_t negativeFeedback = 0;
+    bool suppressed = false;
+    std::size_t contextCount = 0;
+};
+struct LearningQueryPage final {
+    std::vector<LearningRecord> records;
+    std::size_t total = 0;
 };
 
 struct RecalledCandidate final {
@@ -43,6 +66,8 @@ struct RecalledEnglishWord final {
 };
 
 std::string normalizePinyin(std::string_view pinyin);
+bool learningEntriesEqual(const std::vector<LearningEntry> &left,
+                          const std::vector<LearningEntry> &right);
 
 class LearningSnapshotShard;
 
@@ -91,6 +116,7 @@ public:
         std::int64_t nowMs = 0) const;
 
     const std::vector<LearningEntry> &entries() const;
+    LearningQueryPage queryLearningEntries(const LearningQuery &query = {}) const;
 
     void recordSelection(std::string_view phrase, std::string_view pinyin,
                          std::string_view contextBefore,
@@ -99,6 +125,10 @@ public:
                                 std::string_view pinyin);
     void recordSuppression(std::string_view phrase,
                            std::string_view pinyin);
+
+    // Exact normalized full-pinyin identity; every context variant is affected.
+    void recordForget(std::string_view phrase, std::string_view pinyin);
+    void recordUnsuppression(std::string_view phrase, std::string_view pinyin);
 
 private:
     // Bound local index reconstruction at the unchanged 200k capacity.

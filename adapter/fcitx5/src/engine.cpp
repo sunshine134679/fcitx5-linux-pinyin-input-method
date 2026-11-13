@@ -551,6 +551,16 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     if (!active()) {
         return false;
     }
+    if (event.kind == KeyKind::OpenCandidateFilter) {
+        if (sensitive_ || !provider_ || !candidateFilterIndex_ || !candidateFilterIndex_->available() ||
+            compositionInput_.empty() || auxiliaryInputActive() || clipboardMode_) return false;
+        candidateFiltering_ = true;
+        candidateFilterQuery_.clear();
+        provider_->clearCandidateFilter();
+        publishProviderPage();
+        return true;
+    }
+    if (candidateFiltering_ && handleCandidateFilter(event)) return true;
     if (event.kind == KeyKind::ToggleTemporaryEnglish) {
         if (!options_.temporaryEnglishEnabled) return false;
         if (temporaryEnglishMode()) return finishTemporaryEnglish(true);
@@ -911,6 +921,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
     case KeyKind::UndoCommit:
     case KeyKind::ToggleTemporaryEnglish:
     case KeyKind::OpenComponentLookup:
+    case KeyKind::OpenCandidateFilter:
     case KeyKind::OpenCalculator:
     case KeyKind::OpenSymbols:
     case KeyKind::OpenFavoriteSymbols:
@@ -991,6 +1002,10 @@ bool ModernIMEController::select(const core::CandidateSelectionRequest &request)
         appendFallbackContext(text);
 
         if (!outcome->remainingInput.empty()) {
+            if (candidateFiltering_) {
+                candidateFiltering_ = false; candidateFilterQuery_.clear();
+                provider_->clearCandidateFilter();
+            }
             publishProviderPage(true);
             return true;
         }
@@ -1293,6 +1308,9 @@ bool ModernIMEController::commitRawPreedit(std::string_view suffix) {
 }
 
 void ModernIMEController::clearComposition() {
+    candidateFiltering_ = false;
+    candidateFilterQuery_.clear();
+    if (provider_) provider_->clearCandidateFilter();
     auxiliaryMode_ = AuxiliaryInputMode::None;
     symbolCategory_.clear(); symbolsFavoritesOnly_ = false;
     auxiliaryInput_.clear(); auxiliaryCursor_ = 0;
@@ -1347,6 +1365,7 @@ void ModernIMEController::setSensitive(bool sensitive) {
     }
     sensitive_ = sensitive;
     if (sensitive_) {
+        if (candidateFiltering_) clearCandidateFilter();
         if (auxiliaryInputActive()) cancelAuxiliaryInput();
         if (clipboardSearching_) clearComposition();
         invalidateTextActions();
@@ -1611,6 +1630,7 @@ void ModernIMEController::publishProviderPage(bool adoptRemainingComposition,
         compositionCursor_ = compositionInput_.size();
     }
     updatePreeditCursor();
+    if (candidateFiltering_) page_.preedit += "〔筛选：" + candidateFilterQuery_ + "〕";
     ensurePageBoundaries();
     host_.publishPage(page_);
 }
@@ -1736,8 +1756,54 @@ bool ModernIMEController::finishTemporaryEnglish(bool commitText) {
 }
 
 void ModernIMEController::prepareForApplicationShortcut() {
+    if (candidateFiltering_) clearCandidateFilter();
     if (temporaryEnglishMode()) finishTemporaryEnglish(true);
     else cancelAuxiliaryInput();
+}
+
+bool ModernIMEController::setCandidateFilter(std::string query) {
+    if (!active() || sensitive_ || !provider_ || !candidateFilterIndex_ || compositionInput_.empty() ||
+        auxiliaryInputActive() || clipboardMode_) return false;
+    if (query.empty()) {
+        candidateFiltering_ = true; candidateFilterQuery_.clear();
+        provider_->clearCandidateFilter(); publishProviderPage(); return true;
+    }
+    const auto filter = candidateFilterIndex_->predicate(query);
+    if (!filter || !provider_->setCandidateFilter(*filter)) return false;
+    candidateFiltering_ = true; candidateFilterQuery_ = std::move(query);
+    publishProviderPage();
+    return true;
+}
+
+void ModernIMEController::clearCandidateFilter() {
+    if (!candidateFiltering_) return;
+    candidateFiltering_ = false; candidateFilterQuery_.clear();
+    if (provider_) { provider_->clearCandidateFilter(); publishProviderPage(); }
+}
+
+bool ModernIMEController::handleCandidateFilter(const KeyEvent &event) {
+    if (event.kind == KeyKind::Escape) { clearCandidateFilter(); return true; }
+    if (event.kind == KeyKind::Backspace) {
+        if (candidateFilterQuery_.empty()) clearCandidateFilter();
+        else setCandidateFilter(candidateFilterQuery_.substr(0, candidateFilterQuery_.size() - 1));
+        return true;
+    }
+    if (event.kind == KeyKind::Character || event.kind == KeyKind::Punctuation) {
+        const auto ch = event.character;
+        if (((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == ':') &&
+            candidateFilterQuery_.size() < 64) {
+            const auto next = candidateFilterQuery_ + ch;
+            // A mode prefix is incomplete until its first query character.
+            if (next == "s:" || next == "c:") {
+                candidateFilterQuery_ = next; provider_->clearCandidateFilter(); publishProviderPage();
+            } else setCandidateFilter(next);
+        }
+        return true;
+    }
+    if ((event.kind == KeyKind::Space || event.kind == KeyKind::Enter) && page_.items.empty()) return true;
+    // Candidate selection, paging and navigation keep their existing paths.
+    if (event.kind == KeyKind::Enter) { select(page_.cursor); return true; }
+    return false;
 }
 
 bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {

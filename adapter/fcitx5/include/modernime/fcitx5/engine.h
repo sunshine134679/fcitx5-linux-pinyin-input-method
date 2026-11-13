@@ -6,6 +6,7 @@
 #include "modernime/core/input_state.h"
 #include "modernime/core/settings.h"
 #include "modernime/core/component_lookup.h"
+#include "modernime/core/candidate_filter.h"
 
 #include <algorithm>
 #include <chrono>
@@ -55,6 +56,7 @@ enum class KeyKind {
     OpenFavoriteSymbols,
     StartClipboardSearch,
     ToggleClipboardFavorite,
+    OpenCandidateFilter,
 };
 
 enum class AuxiliaryInputMode { None, TemporaryEnglish, ComponentLookup, Calculator, Symbols };
@@ -155,6 +157,10 @@ public:
     bool auxiliaryInputActive() const { return auxiliaryMode_ != AuxiliaryInputMode::None; }
     bool temporaryEnglishMode() const { return auxiliaryMode_ == AuxiliaryInputMode::TemporaryEnglish; }
     void setComponentLookup(std::shared_ptr<const core::ComponentLookup> lookup) { componentLookup_ = std::move(lookup); }
+    void setCandidateFilterIndex(std::shared_ptr<const core::CandidateFilterIndex> index) { candidateFilterIndex_ = std::move(index); }
+    bool setCandidateFilter(std::string query);
+    void clearCandidateFilter();
+    bool candidateFiltering() const { return candidateFiltering_; }
     void cancelAuxiliaryInput() { if (auxiliaryInputActive()) clearComposition(); }
     bool finishTemporaryEnglish(bool commitText);
     void prepareForApplicationShortcut();
@@ -252,6 +258,7 @@ private:
     bool editPairedPunctuation(char ascii);
     bool eraseEmptyPair();
     bool handleAuxiliaryInput(const KeyEvent &event);
+    bool handleCandidateFilter(const KeyEvent &event);
     bool openAuxiliaryInput(AuxiliaryInputMode mode, std::string_view seed);
     void publishAuxiliaryPage();
     void rememberUndo(const std::optional<TextEditContext> &before,
@@ -335,6 +342,9 @@ private:
     std::optional<UndoCommit> undoCommit_;
     AuxiliaryInputMode auxiliaryMode_ = AuxiliaryInputMode::None;
     std::shared_ptr<const core::ComponentLookup> componentLookup_;
+    std::shared_ptr<const core::CandidateFilterIndex> candidateFilterIndex_;
+    bool candidateFiltering_ = false;
+    std::string candidateFilterQuery_;
     std::string symbolCategory_;
     bool symbolsFavoritesOnly_ = false;
     std::string auxiliaryInput_;

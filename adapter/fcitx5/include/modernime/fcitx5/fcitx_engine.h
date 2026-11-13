@@ -1,6 +1,8 @@
 #pragma once
 
 #include "modernime/core/async_clipboard_history.h"
+#include "modernime/core/input_compatibility.h"
+#include "modernime/fcitx5/backend_service.h"
 #include "modernime/fcitx5/engine.h"
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -332,6 +334,7 @@ private:
 // every input context.
 struct FcitxEngineResources final {
     std::shared_ptr<const core::ComponentLookup> componentLookup;
+    std::shared_ptr<const core::CandidateFilterIndex> candidateFilter;
     std::function<std::uint64_t(std::string_view, bool)> clipboardFavoriteHandler;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::shared_ptr<pinyin::PinyinCandidateProvider::SharedResources> pinyin;
@@ -499,6 +502,7 @@ private:
     void consumeClipboardSnapshot();
     FcitxInputContextState *focusedActiveState() const;
     void pollFileChanges();
+    void observeCompatibility(fcitx::InputContext *context);
     void rememberAppMode(fcitx::InputContext *context);
     bool appStartsInChinese(fcitx::InputContext *context) const;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -537,7 +541,10 @@ private:
     std::shared_ptr<ReadyNotificationEndpoint> readyEndpoint_;
     std::shared_ptr<ReadyNotificationEndpoint> clipboardEndpoint_;
     FcitxEngineResources resources_;
+    std::shared_ptr<core::InputCompatibilityTracker> compatibility_ = std::make_shared<core::InputCompatibilityTracker>();
+    bool maintenanceActive_ = false;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
+    std::unique_ptr<BackendService> backendService_;
     std::future<
         std::shared_ptr<pinyin::PinyinCandidateProvider::SharedResources>>
         pinyinResourcesFuture_;

@@ -579,6 +579,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             core/personalization_controller_regression_test.cpp
             core/candidate_ranking_regression_test.cpp
             core/cold_terminology_regression_test.cpp
+            core/learning_management_regression_test.cpp
             core/learning_writer_concurrency_test.cpp
             core/lmdb_lifecycle_test.cpp
             core/learning_semantics_test.cpp
@@ -1071,4 +1072,43 @@ add_test(NAME modernime_clipboard_search COMMAND modernime_clipboard_search_test
 if(MODERNIME_BUILD_FCITX5)
     add_test(NAME modernime_clipboard_search_native COMMAND modernime_clipboard_capture_tests
         $<TARGET_FILE_DIR:modernime_fcitx5> search-favorites)
+endif()
+
+if(TARGET modernime_pinyin)
+    foreach(feature dictionary_pack mixed_word)
+        add_executable(modernime_${feature}_tests core/${feature}_test.cpp)
+        target_link_libraries(modernime_${feature}_tests PRIVATE modernime_pinyin)
+        target_compile_definitions(modernime_${feature}_tests PRIVATE
+            MODERNIME_TEST_DICTIONARY_PACKS="${PROJECT_SOURCE_DIR}/data/dictionaries")
+        add_test(NAME modernime_${feature} COMMAND modernime_${feature}_tests)
+    endforeach()
+endif()
+
+foreach(feature backend_support user_data_bundle)
+    add_executable(modernime_${feature}_tests core/${feature}_test.cpp)
+    target_link_libraries(modernime_${feature}_tests PRIVATE modernime_core)
+    add_test(NAME modernime_${feature} COMMAND modernime_${feature}_tests)
+endforeach()
+
+if(TARGET modernime_fcitx5_backend)
+    add_executable(modernime_backend_service_tests adapter/backend_service_test.cpp)
+    target_link_libraries(modernime_backend_service_tests PRIVATE modernime_fcitx5_backend)
+    find_program(DBUS_RUN_SESSION_EXECUTABLE dbus-run-session REQUIRED)
+    add_test(NAME modernime_backend_service
+        COMMAND "${DBUS_RUN_SESSION_EXECUTABLE}" -- $<TARGET_FILE:modernime_backend_service_tests>)
+    foreach(adapter_target modernime_clipboard_trigger_tests modernime_fcitx5_input_panel_tests
+            modernime_typing_features_tests modernime_key_translation_tests
+            modernime_adapter_recovery_tests modernime_ui_addon_tests)
+        if(TARGET ${adapter_target})
+            target_link_libraries(${adapter_target} PRIVATE modernime_fcitx5_backend)
+        endif()
+    endforeach()
+endif()
+if(TARGET modernime_pinyin)
+    add_executable(modernime_candidate_filter_tests adapter/candidate_filter_test.cpp
+        ../adapter/fcitx5/src/engine.cpp)
+    target_include_directories(modernime_candidate_filter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../adapter/fcitx5/include)
+    target_link_libraries(modernime_candidate_filter_tests PRIVATE modernime_pinyin)
+    add_test(NAME modernime_candidate_filter COMMAND modernime_candidate_filter_tests)
 endif()

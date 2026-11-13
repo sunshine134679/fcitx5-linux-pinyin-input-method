@@ -46,6 +46,12 @@ public:
                                  std::string_view pinyin);
     bool enqueueSuppression(std::string_view phrase,
                             std::string_view pinyin);
+    bool enqueueForget(std::string_view phrase, std::string_view pinyin);
+    bool enqueueUnsuppression(std::string_view phrase, std::string_view pinyin);
+    std::optional<LearningStoreState> exportConsistentState();
+    bool restoreTrustedEntries(const std::vector<LearningEntry> &entries);
+    bool restoreTrustedEntries(const std::vector<LearningEntry> &entries,
+                               const LearningStoreState &expected);
     // Wait until queued events have been processed. Returns false when the
     // backing store was unavailable or a write failed.
     bool flush();
@@ -61,10 +67,11 @@ public:
     void pauseWorkerForTest(bool pause);
     void pauseWorkerAfterReadForTest(bool pause);
     bool isWorkerWaitingAfterReadForTest() const;
+    bool isRestoringForTest() const;
     void setOnReadyCallback(std::function<void()> callback);
 
 private:
-    enum class EventKind { Selection, NegativeFeedback, Suppression, PendingCommit };
+    enum class EventKind { Selection, NegativeFeedback, Suppression, Forget, Unsuppression, PendingCommit };
 
     struct Event final {
         EventKind kind = EventKind::Selection;
@@ -75,9 +82,14 @@ private:
         std::int64_t nowMs = 0;
         std::int64_t resetRevision = 0;
         std::optional<CommitEvent> commitEvent;
+        std::uint64_t sequence = 0;
     };
 
+    bool restoreTrustedEntriesImpl(const std::vector<LearningEntry> &entries,
+                                   const LearningStoreState *expected);
+    bool enqueueManagement(std::string_view phrase, std::string_view pinyin, bool forget);
     bool enqueueForPersistence(Event event);
+    void trimQueuedEvents();
     bool enqueueSelectionLocked(std::string_view phrase, std::string_view pinyin,
                                 std::string_view contextBefore,
                                 std::string_view contextAfter,
@@ -122,9 +134,12 @@ private:
     std::shared_ptr<const LearningSnapshot> snapshot_;
     std::vector<std::shared_ptr<const LearningSnapshot>> retiredSnapshots_;
     std::uint64_t snapshotVersion_ = 0;
+    std::uint64_t eventSequence_ = 0;
     EpochViewState viewState_ = EpochViewState::Ready;
     bool stopping_ = false;
     bool processing_ = false;
+    bool restoring_ = false;
+    std::mutex managementMutex_;
     // A failed batch stays queued. flush() explicitly starts the next bounded
     // retry cycle, which gives callers a deterministic failure result instead
     // of either dropping the batch or waiting forever.

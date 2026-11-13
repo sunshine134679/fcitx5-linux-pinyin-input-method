@@ -1,5 +1,6 @@
 find_package(Fcitx5Core REQUIRED)
 find_package(Fcitx5Utils REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(modernime_fcitx5 MODULE
     src/addon.cpp
@@ -37,3 +38,12 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/addon/modernime.conf
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../config/inputmethod/modernime.conf
         DESTINATION ${CMAKE_INSTALL_DATADIR}/fcitx5/inputmethod)
 
+
+if(TARGET modernime_pinyin)
+    add_library(modernime_fcitx5_backend STATIC src/backend_service.cpp)
+    set_target_properties(modernime_fcitx5_backend PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(modernime_fcitx5_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(modernime_fcitx5_backend PUBLIC modernime_pinyin Fcitx5::Utils Threads::Threads)
+    modernime_enable_warnings(modernime_fcitx5_backend)
+    target_link_libraries(modernime_fcitx5 PRIVATE modernime_fcitx5_backend)
+endif()

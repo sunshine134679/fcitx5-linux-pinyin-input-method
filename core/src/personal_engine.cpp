@@ -1418,6 +1418,12 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                     return false;
                 }
                 changed_keys.insert(key);
+                if (event.kind == LearningEvent::Kind::Forget ||
+                    event.kind == LearningEvent::Kind::Unsuppression) {
+                    const auto compact = normalizePinyin(event.pinyin);
+                    if (const auto aliases = compact_index_.find(compact); aliases != compact_index_.end())
+                        changed_keys.insert(aliases->second.begin(), aliases->second.end());
+                }
                 if (event.kind == LearningEvent::Kind::Selection) {
                     const auto word = canonicalEnglishSelectionWord(
                         event.phrase, event.pinyin);
@@ -1536,6 +1542,25 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
             case LearningEvent::Kind::Suppression:
                 ok = staged.recordSuppression(event.pinyin, event.phrase);
                 break;
+            case LearningEvent::Kind::Forget:
+            case LearningEvent::Kind::Unsuppression: {
+                const auto compact = normalizePinyin(event.pinyin);
+                for (auto &[key, variants] : staged.db) {
+                    if (CompactPinyin(key) != compact) continue;
+                    changed_keys.insert(key);
+                    if (event.kind == LearningEvent::Kind::Forget) {
+                        const auto removed = std::erase_if(variants, [&](const StoredVariant &variant) {
+                            return variant.text == event.phrase;
+                        });
+                        staged.total_entries -= removed;
+                    } else {
+                        for (auto &variant : variants)
+                            if (variant.text == event.phrase) variant.meta.suppressed = 0;
+                    }
+                }
+                ok = true;
+                break;
+            }
             }
             if (!ok) {
                 mdb_txn_abort(txn);
@@ -1646,6 +1671,13 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                     if (found != staged.db.end() && !found->second.empty()) {
                         db_[key] = std::move(found->second);
                         RebuildCompactIndex(key);
+                    } else {
+                        db_.erase(key);
+                        const auto compact = CompactPinyin(key);
+                        if (auto indexed = compact_index_.find(compact); indexed != compact_index_.end()) {
+                            std::erase(indexed->second, key);
+                            if (indexed->second.empty()) compact_index_.erase(indexed);
+                        }
                     }
                 }
             }
@@ -1661,16 +1693,16 @@ bool PersonalEngine::RecordLearningBatch(const std::vector<LearningEvent> &event
                     }
                 }
             } else {
-                for (const auto &event : events) {
-                    const auto norm_key = NormalizePinyinKey(event.pinyin);
-                    auto it_db = db_.find(norm_key);
-                    if (it_db != db_.end()) {
-                        for (const auto &v : it_db->second) {
-                            if (v.text == event.phrase) {
-                                baseline_entries_[makeEntryId(norm_key, v.text, v.context_before, v.context_after)] =
-                                    v.meta;
-                            }
-                        }
+                for (const auto &key : changed_keys) {
+                    if (const auto previous = originals.find(key); previous != originals.end()) {
+                        for (const auto &variant : previous->second)
+                            baseline_entries_.erase(makeEntryId(key, variant.text,
+                                variant.context_before, variant.context_after));
+                    }
+                    if (const auto current = db_.find(key); current != db_.end()) {
+                        for (const auto &variant : current->second)
+                            baseline_entries_[makeEntryId(key, variant.text,
+                                variant.context_before, variant.context_after)] = variant.meta;
                     }
                 }
             }
@@ -2219,6 +2251,129 @@ bool PersonalEngine::BackupLmdbTo(const std::filesystem::path &backup_path) cons
     std::filesystem::remove(backup_path, ec);
     return mdb_env_copy2(active_env, backup_path.c_str(), MDB_CP_COMPACT) ==
            MDB_SUCCESS;
+}
+
+bool PersonalEngine::RestoreTrustedLearningEntries(const std::vector<LearningEntry> &entries,
+                                                   int64_t *restoredRevision,
+                                                   const std::vector<LearningEntry> *expectedEntries,
+                                                   std::optional<int64_t> expectedRevision) {
+    if (simulate_write_failure_ || sensitive_context_ || entries.size() > config_.max_dict_capacity)
+        return false;
+    for (const auto &entry : entries) {
+        if (entry.frequency < 0 || entry.negativeFeedback < 0 || entry.lastSelectedMs < 0 ||
+            entry.frequency > std::numeric_limits<uint32_t>::max() ||
+            entry.negativeFeedback > std::numeric_limits<uint32_t>::max()) return false;
+    }
+    // Build an isolated memory image; never mutate the live engine before COMMIT.
+    PersonalEngine staged(config_);
+    if (!staged.ApplyLearningBatch(entries, true)) return false;
+    if (staged.GetTotalEntries() != entries.size()) return false;
+    std::shared_ptr<detail::LmdbEnvironment> environment;
+    bool readOnly = false;
+    {
+        std::lock_guard lock(lmdb_mutex_);
+        environment = lmdb_env_;
+        readOnly = lmdb_read_only_;
+    }
+    if (!environment || readOnly) return false;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        std::shared_lock gate(environment->lifecycle_gate);
+        if (!environment->env) return false;
+        const auto maxSize = static_cast<std::size_t>(mdb_env_get_maxkeysize(environment->env));
+        for (const auto &[key, variants] : staged.db_) {
+            if (key.size() > maxSize || key == "!u!") return false;
+            for (const auto &variant : variants) {
+                if (variant.text.empty() || sizeof(WordMeta) + variant.text.size() +
+                    variant.context_before.size() + variant.context_after.size() > maxSize) return false;
+            }
+        }
+        MDB_txn *transaction = nullptr;
+        if (mdb_txn_begin(environment->env, nullptr, 0, &transaction) != MDB_SUCCESS) return false;
+        const auto revision = getMetaInt64(transaction, environment->meta_dbi, "reset_revision");
+        if (!revision || *revision == std::numeric_limits<int64_t>::max()) {
+            mdb_txn_abort(transaction);
+            return false;
+        }
+        if (expectedEntries) {
+            if (!expectedRevision || *expectedRevision != *revision) {
+                mdb_txn_abort(transaction);
+                return false;
+            }
+            std::vector<LearningEntry> current;
+            MDB_cursor *cursor = nullptr;
+            if (mdb_cursor_open(transaction, environment->words_dbi, &cursor) != MDB_SUCCESS) {
+                mdb_txn_abort(transaction);
+                return false;
+            }
+            MDB_val key{}, value{};
+            int status = mdb_cursor_get(cursor, &key, &value, MDB_FIRST);
+            while (status == MDB_SUCCESS) {
+                const auto view = unpackLmdbValue(value);
+                if (!view.valid) break;
+                LearningEntry entry;
+                entry.phrase = view.text;
+                entry.pinyin = ToApostrophePinyin(std::string_view(
+                    static_cast<const char *>(key.mv_data), key.mv_size));
+                entry.contextBefore = view.context_before;
+                entry.contextAfter = view.context_after;
+                entry.frequency = view.meta.hit_count;
+                entry.lastSelectedMs = view.meta.last_selected_ms > 0 ? view.meta.last_selected_ms
+                    : static_cast<int64_t>(view.meta.last_used_timestamp) * 1000LL;
+                entry.negativeFeedback = view.meta.negative_feedback;
+                entry.suppressed = view.meta.suppressed != 0;
+                current.push_back(std::move(entry));
+                status = mdb_cursor_get(cursor, &key, &value, MDB_NEXT);
+            }
+            mdb_cursor_close(cursor);
+            if (status != MDB_NOTFOUND || !learningEntriesEqual(current, *expectedEntries)) {
+                mdb_txn_abort(transaction);
+                return false;
+            }
+        }
+        const auto transactionId = mdb_txn_id(transaction);
+        int rc = mdb_drop(transaction, environment->words_dbi, 0);
+        for (const auto &[keyString, variants] : staged.db_) {
+            if (rc != MDB_SUCCESS) break;
+            MDB_val key{keyString.size(), const_cast<char *>(keyString.data())};
+            for (const auto &variant : variants) {
+                auto packed = packLmdbValue(variant.meta, variant.text,
+                                            variant.context_before, variant.context_after);
+                MDB_val value{packed.size(), packed.data()};
+                rc = mdb_put(transaction, environment->words_dbi, &key, &value, MDB_NODUPDATA);
+                if (rc != MDB_SUCCESS) break;
+            }
+        }
+        if (rc == MDB_SUCCESS) {
+            MDB_val key{14, const_cast<char *>("reset_revision")};
+            int64_t nextRevision = *revision + 1;
+            MDB_val value{sizeof(nextRevision), &nextRevision};
+            rc = mdb_put(transaction, environment->meta_dbi, &key, &value, 0);
+        }
+        if (rc == MDB_SUCCESS) rc = mdb_txn_commit(transaction);
+        else mdb_txn_abort(transaction);
+        if (rc == MDB_MAP_FULL) {
+            gate.unlock();
+            if (!environment->ensureMapCapacity(entries.size() * 128 + 65536)) return false;
+            continue;
+        }
+        if (rc != MDB_SUCCESS) return false;
+        {
+            std::lock_guard lock(lmdb_mutex_);
+            db_ = std::move(staged.db_);
+            compact_index_ = std::move(staged.compact_index_);
+            baseline_entries_.clear();
+            for (const auto &[key, variants] : db_)
+                for (const auto &variant : variants)
+                    baseline_entries_[makeEntryId(key, variant.text, variant.context_before,
+                                                  variant.context_after)] = variant.meta;
+            total_entries_ = entries.size();
+            reset_revision_ = *revision + 1;
+            last_lmdb_txn_id_ = transactionId;
+        }
+        if (restoredRevision) *restoredRevision = *revision + 1;
+        return true;
+    }
+    return false;
 }
 
 bool PersonalEngine::Clear() {

@@ -193,6 +193,51 @@ int main() {
     }
 
     {
+        const auto maintenancePath = std::filesystem::path(tmp) / "maintenance.bin";
+        const auto favoritesPath = std::filesystem::path(tmp) / "maintenance-favorites.bin";
+        Notifications maintenanceNotifications;
+        AsyncClipboardHistory client(maintenancePath, [&] { maintenanceNotifications.notify(); }, favoritesPath);
+        next(client, maintenanceNotifications);
+        modernime_clipboard_gate_arm(maintenancePath.c_str(), clipboardBeforeFsync);
+        client.setObservationBaseline("baseline");
+        client.observe("before maintenance"); client.requestSave();
+        require(modernime_clipboard_gate_wait(3000), "maintenance waits behind actual in-flight save");
+        client.observe("accepted while saving");
+        require(client.setFavorite("accepted favorite", true), "maintenance drains accepted favorite");
+        require(!client.pauseForMaintenance(), "pause polling does not wait for held I/O");
+        modernime_clipboard_gate_release();
+        const auto deadline = std::chrono::steady_clock::now() + 5s;
+        for (;;) {
+            std::unique_lock lock(maintenanceNotifications.mutex);
+            const auto previous = maintenanceNotifications.count;
+            lock.unlock();
+            if (client.pauseForMaintenance()) break;
+            lock.lock();
+            require(maintenanceNotifications.changed.wait_until(lock, deadline, [&] {
+                return maintenanceNotifications.count != previous;
+            }), "maintenance receives successful worker pause acknowledgement");
+        }
+        require(disk(maintenancePath) == std::vector<std::string>({"accepted while saving", "before maintenance"}),
+                "pause persists every accepted observation before offline restore");
+        require(disk(favoritesPath) == std::vector<std::string>{"accepted favorite"},
+                "pause persists accepted favorites before offline restore");
+        require(!client.setFavorite("rejected while paused", true), "paused owner rejects new favorite operations");
+        client.observe("rejected while paused"); client.requestRefresh(); client.requestSave();
+        ClipboardHistory restored; restored.observe("restored history"); require(restored.save(maintenancePath), "offline history replacement");
+        restored.clear(); restored.observe("restored favorite"); require(restored.save(favoritesPath), "offline favorites replacement");
+        client.resumeAfterMaintenance();
+        auto resumed = next(client, maintenanceNotifications);
+        while (*resumed.entries != std::vector<std::string>{"restored history"}) resumed = next(client, maintenanceNotifications);
+        require(resumed.availability == ClipboardAvailability::Ready &&
+                resumed.favoritesAvailability == ClipboardAvailability::Ready &&
+                *resumed.favorites == std::vector<std::string>{"restored favorite"},
+                "resume reads both restored files and does not revive old caches");
+        require(client.shutdown().empty() && disk(maintenancePath) == std::vector<std::string>{"restored history"} &&
+                disk(favoritesPath) == std::vector<std::string>{"restored favorite"},
+                "shutdown after resume preserves restored files");
+    }
+
+    {
         const auto shutdownPath = std::filesystem::path(tmp) / "shutdown.bin";
         modernime_clipboard_gate_arm(shutdownPath.c_str(), clipboardBeforeFsync);
         // One client thread owns every public operation; the test thread only

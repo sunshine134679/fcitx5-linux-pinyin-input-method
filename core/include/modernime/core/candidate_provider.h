@@ -4,6 +4,7 @@
 #include "modernime/core/commit_event.h"
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string_view>
 
@@ -49,6 +50,8 @@ public:
     // Extend the current composition by one bounded batch. Existing candidates
     // retain their positions; a changed page receives a new generation.
     virtual bool loadMoreCandidates() { return false; }
+    virtual bool setCandidateFilter(std::function<bool(const CandidateItem &)>) { return false; }
+    virtual void clearCandidateFilter() {}
     virtual void setContext(std::string_view, std::string_view) {}
     virtual void setLearningEnabled(bool) {}
     virtual void setContextLearningEnabled(bool) {}

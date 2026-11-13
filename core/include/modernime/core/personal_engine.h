@@ -197,6 +197,10 @@ public:
     bool VerifyDatabaseIntegrity() const;
     bool BackupLmdbTo(const std::filesystem::path &backup_path) const;
     bool Clear();
+    bool RestoreTrustedLearningEntries(const std::vector<LearningEntry> &entries,
+                                       int64_t *restoredRevision = nullptr,
+                                       const std::vector<LearningEntry> *expectedEntries = nullptr,
+                                       std::optional<int64_t> expectedRevision = std::nullopt);
 
     // 从现有 SQLite (learning.sqlite3) 无损迁移至 LMDB，保留原 SQLite 文件不删除
     bool MigrateFromSqlite(const std::filesystem::path &sqlite_path);

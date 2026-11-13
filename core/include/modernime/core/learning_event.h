@@ -7,7 +7,7 @@
 namespace modernime::core {
 
 struct LearningEvent final {
-    enum class Kind { Selection, NegativeFeedback, Suppression };
+    enum class Kind { Selection, NegativeFeedback, Suppression, Forget, Unsuppression };
 
     Kind kind = Kind::Selection;
     std::string phrase;

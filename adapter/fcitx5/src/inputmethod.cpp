@@ -36,6 +36,58 @@
 namespace modernime::fcitx5 {
 namespace {
 
+struct InputDispatchTimer final {
+    core::InputCompatibilityTracker &tracker;
+    fcitx::KeyEvent &event;
+    // Host callbacks may destroy the input context before dispatch returns.
+    const std::string application = event.inputContext() ? event.inputContext()->program() : std::string{};
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~InputDispatchTimer() {
+        if (event.isRelease()) return;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        tracker.recordKey(application, event.accepted(),
+            static_cast<std::uint64_t>(std::max<std::int64_t>(0, elapsed)));
+    }
+};
+
+template <typename Value>
+std::optional<Value> callOnInputThread(fcitx::EventDispatcher &dispatcher,
+    std::weak_ptr<ReadyNotificationEndpoint> endpoint,
+    std::function<Value()> function) {
+    struct Request { std::mutex mutex; bool cancelled = false; std::promise<std::optional<Value>> result; };
+    auto request = std::make_shared<Request>();
+    auto future = request->result.get_future();
+    dispatcher.schedule([endpoint, request, function = std::move(function)] {
+        std::lock_guard requestLock(request->mutex);
+        if (request->cancelled) return;
+        auto owner = endpoint.lock();
+        bool active = false;
+        if (owner) { std::lock_guard lock(owner->mutex); active = owner->active; }
+        if (!active) { request->result.set_value(std::nullopt); return; }
+        try { request->result.set_value(function()); }
+        catch (...) { request->result.set_value(std::nullopt); }
+    });
+    if (future.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+        std::lock_guard lock(request->mutex);
+        if (future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            request->cancelled = true;
+            return std::nullopt;
+        }
+    }
+    return future.get();
+}
+
+void scheduleOnInputThread(fcitx::EventDispatcher &dispatcher,
+    std::weak_ptr<ReadyNotificationEndpoint> endpoint, std::function<void()> function) {
+    dispatcher.schedule([endpoint, function = std::move(function)] {
+        auto owner = endpoint.lock();
+        bool active = false;
+        if (owner) { std::lock_guard lock(owner->mutex); active = owner->active; }
+        if (active) function();
+    });
+}
+
 // Fcitx < 5.1.2 has no cursor commit API. Keep its existing build support.
 template <typename Context>
 bool commitWithCursor(Context *ic, const std::string &text, std::size_t cursor) {
@@ -440,6 +492,7 @@ FcitxInputContextState::FcitxInputContextState(
         (void)resources;
 #endif
     controller_.setComponentLookup(resources.componentLookup);
+    controller_.setCandidateFilterIndex(resources.candidateFilter);
     controller_.setClipboardFavoriteHandler(resources.clipboardFavoriteHandler);
     host_.setController(controller_, &surroundingContext_);
     controller_.setActive(settings.defaultMode == core::InputMode::Chinese);
@@ -512,6 +565,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
     // Load the optional converter on activation. Starting another addon here
     // re-enters AddonManager's loader and prevents engine startup.
     resources_.componentLookup = std::make_shared<const core::ComponentLookup>();
+    resources_.candidateFilter = std::make_shared<const core::CandidateFilterIndex>();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // One dictionary/language-model/learning-writer set for the whole engine;
     // every input context only adds its own composition state. The load
@@ -594,6 +648,9 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
     readyEndpoint_->instance = instance_;
     readyEndpoint_->active = true;
     readyEndpoint_->onDispatch = [this]() {
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+        if (resources_.pinyin) resources_.pinyin->refreshLearningStore();
+#endif
         if (auto *contextState = focusedActiveState()) {
             if (!contextState->controller().page().preedit.empty()) {
                 contextState->controller().refreshPage();
@@ -631,6 +688,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
                 if (contextState != nullptr) {
                     contextState->syncSurroundingContext(true);
                 }
+                observeCompatibility(ic);
             });
         clipboardCapabilityWatcher_ = instance_->watchEvent(
             fcitx::EventType::InputContextCapabilityChanged,
@@ -638,6 +696,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
             [this](fcitx::Event &event) {
                 auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
                 if (ic != nullptr && instance_->inputMethod(ic) == "modernime") {
+                    observeCompatibility(ic);
                     if (auto *contextState = state(ic)) {
                         contextState->invalidateSurroundingContext();
                         if (ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
@@ -677,13 +736,14 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
             }
         }, settingsPaths().clipboardFavorites);
     resources_.clipboardFavoriteHandler = [this](std::string_view text, bool favorite) -> std::uint64_t {
-        if (!settings_.clipboardEnabled || !settings_.inputEnabled || !clipboardHistory_ || !clipboardHistory_->setFavorite(text, favorite)) return 0;
+        if (maintenanceActive_ || !settings_.clipboardEnabled || !settings_.inputEnabled || !clipboardHistory_ || !clipboardHistory_->setFavorite(text, favorite)) return 0;
         return clipboardHistory_->lastAcceptedFavoriteOperationId();
     };
 }
 
 ModernIMEInputMethod::~ModernIMEInputMethod() {
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
+    backendService_.reset();
     if (resources_.pinyin) {
         resources_.pinyin->setOnReadyCallback(nullptr);
     }
@@ -900,6 +960,7 @@ bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
 }
 
 void ModernIMEInputMethod::pollClipboard() {
+    if (maintenanceActive_) return;
     consumeClipboardSnapshot();
     if (!keyBindings_.clipboardEnabled || !settings_.inputEnabled || manager_ == nullptr ||
         instance_ == nullptr) {
@@ -947,6 +1008,7 @@ void ModernIMEInputMethod::pollClipboard() {
 }
 
 void ModernIMEInputMethod::pollFileChanges() {
+    if (maintenanceActive_) return;
     if (instance_ == nullptr) {
         return;
     }
@@ -1031,6 +1093,14 @@ void ModernIMEInputMethod::pollFileChanges() {
     }
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     ensurePinyinResources();
+    if (resources_.pinyin) {
+        const auto changed = resources_.pinyin->consumeDictionaryPackRefresh();
+        if (changed.changed) {
+            if (auto *current = focusedActiveState(); current && !current->controller().page().rawInput.empty())
+                current->controller().refreshPage();
+        }
+        resources_.pinyin->requestDictionaryPackRefresh();
+    }
     if (pinyin::PinyinCandidateProvider::refreshLearningStore(resources_.pinyin)) {
         FCITX_INFO() << "ModernIME learning store reset from "
                      << settingsPaths().learningStore.string();
@@ -1053,6 +1123,54 @@ void ModernIMEInputMethod::ensurePinyinResources() {
                     endpoint->notify();
                 }
             });
+            if (instance_ && !backendService_) {
+                const auto paths = settingsPaths();
+                auto owner = resources_.pinyin;
+                std::weak_ptr<ReadyNotificationEndpoint> weakEndpoint = readyEndpoint_;
+                BackendService::Config config;
+                config.paths = {paths.settingsFile, paths.userDictionary,
+                    paths.learningStore.parent_path().parent_path() / "fcitx5/data/quickphrase.d/modernime.mb",
+                    paths.clipboardHistory, paths.clipboardFavorites};
+                config.packRoot = owner->dictionaryPacksPath();
+                config.bundledRoot = owner->bundledDictionaryPacksPath();
+                config.compatibility = compatibility_;
+                config.getWriter = [this, weakEndpoint, owner] {
+                    auto result = callOnInputThread<std::shared_ptr<core::LearningWriter>>(
+                        dispatcher_, weakEndpoint, [owner] {
+                            auto *writer = owner->ensureLearningWriter(false);
+                            return writer ? std::shared_ptr<core::LearningWriter>(owner, writer) : nullptr;
+                        });
+                    return result.value_or(nullptr);
+                };
+                config.beginMaintenance = [this, weakEndpoint] {
+                    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                    while (std::chrono::steady_clock::now() < deadline) {
+                        const auto result = callOnInputThread<bool>(dispatcher_, weakEndpoint, [this] {
+                            maintenanceActive_ = true;
+                            return !clipboardHistory_ || clipboardHistory_->pauseForMaintenance();
+                        });
+                        if (!result) break;
+                        if (*result) return true;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    }
+                    scheduleOnInputThread(dispatcher_, weakEndpoint, [this] {
+                        if (clipboardHistory_) clipboardHistory_->resumeAfterMaintenance();
+                        maintenanceActive_ = false;
+                        clipboardNeedsBaseline_ = true;
+                    });
+                    return false;
+                };
+                config.endMaintenance = [this, weakEndpoint] {
+                    scheduleOnInputThread(dispatcher_, weakEndpoint, [this] {
+                        if (clipboardHistory_) clipboardHistory_->resumeAfterMaintenance();
+                        maintenanceActive_ = false;
+                        clipboardNeedsBaseline_ = true;
+                        pollFileChanges();
+                        if (clipboardHistory_) clipboardHistory_->requestRefresh();
+                    });
+                };
+                backendService_ = std::make_unique<BackendService>(std::move(config));
+            }
         }
     } catch (const std::exception &error) {
         FCITX_ERROR() << "ModernIME background dictionary load failed: "
@@ -1063,6 +1181,7 @@ void ModernIMEInputMethod::ensurePinyinResources() {
 
 void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
                                     fcitx::KeyEvent &event) {
+    InputDispatchTimer timing{*compatibility_, event};
     consumeClipboardSnapshot();
     if (event.isRelease()) {
         if (event.key().check(FcitxKey_Shift_L) ||
@@ -1113,7 +1232,10 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         }
         contextState->syncSurroundingContext();
         auto modernEvent = translateKey(event.key(), keyBindings_);
-        if (keyBindings_.temporaryEnglishEnabled &&
+        if (!hasNonShiftModifier(event.key()) && event.key().check(FcitxKey_grave) &&
+            !contextState->controller().page().rawInput.empty()) {
+            modernEvent = KeyEvent{KeyKind::OpenCandidateFilter};
+        } else if (keyBindings_.temporaryEnglishEnabled &&
             (event.rawKey().check(FcitxKey_e, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})) ||
              event.rawKey().check(FcitxKey_E, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})))) {
             modernEvent = KeyEvent{KeyKind::ToggleTemporaryEnglish};
@@ -1221,6 +1343,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
 
 void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
                                     fcitx::InputContextEvent &event) {
+    observeCompatibility(event.inputContext());
     // Activation runs after engine construction; lazy addon loading is safe
     // here and keeps an optional missing converter from blocking input.
     if (manager_) manager_->addon("chttrans", true);
@@ -1260,6 +1383,24 @@ void ModernIMEInputMethod::deactivate(const fcitx::InputMethodEntry &entry,
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
         contextState->controller().setActive(false);
     }
+    observeCompatibility(event.inputContext());
+}
+
+void ModernIMEInputMethod::observeCompatibility(fcitx::InputContext *context) {
+    if (!context) return;
+    core::InputCompatibilityFacts facts;
+    facts.application = context->program();
+    facts.frontend = context->frontend();
+    facts.display = context->display();
+    facts.focused = context->hasFocus();
+    facts.sensitive = context->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive);
+    facts.surroundingText = context->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+    facts.clientPreedit = context->capabilityFlags().test(fcitx::CapabilityFlag::Preedit);
+    facts.cursorRectangle = !context->cursorRect().isEmpty();
+    facts.modernimeSelected = instance_ && instance_->inputMethod(context) == "modernime";
+    facts.observedAtMs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    compatibility_->observe(std::move(facts));
 }
 
 void ModernIMEInputMethod::rememberAppMode(fcitx::InputContext *context) {

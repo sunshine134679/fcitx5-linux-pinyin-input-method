@@ -54,6 +54,13 @@ public:
     // lastFavoriteOperationId >= this ID confirms its worker batch completed.
     std::uint64_t lastAcceptedFavoriteOperationId() const;
     std::optional<ClipboardSnapshot> takeSnapshot();
+    // Host-thread polling only; never waits for I/O. Stops accepting new work,
+    // drains accepted observations/operations and confirms a successful flush.
+    // True means the worker no longer touches either file until resume.
+    bool pauseForMaintenance();
+    // Nonblocking. Discards clean old file caches and schedules a forced read
+    // of the restored files on the existing worker before publishing Ready.
+    void resumeAfterMaintenance();
     // Only shutdown may wait for I/O. Drains accepted copies, returns the last
     // persistence error, and joins before the owner/notification target dies.
     std::string shutdown();

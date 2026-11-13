@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -50,11 +51,21 @@ public:
                   std::string_view phrase) const;
     bool remove(std::string_view normalizedPinyin, std::string_view phrase);
     bool saveText(const std::filesystem::path &path) const;
-    void addTo(libime::PinyinDictionary &dictionary, std::size_t index) const;
+    // For callers already holding the stable path + ".lock" flock across
+    // baseline checks. The descriptor is validated and remains caller-owned.
+    bool saveTextWithLockHeld(const std::filesystem::path &path, int lockDescriptor) const;
+    bool saveTextIfUnchanged(const std::filesystem::path &path,
+                             std::string_view expectedContentHash) const;
+    const std::string &loadedContentHash() const noexcept { return loadedContentHash_; }
+    void addTo(libime::PinyinDictionary &dictionary, std::size_t index, std::optional<float> costOverride = std::nullopt) const;
     bool removeFrom(libime::PinyinDictionary &dictionary, std::size_t index,
                     std::string_view pinyin, std::string_view phrase) const;
 
 private:
+    bool saveTextImpl(const std::filesystem::path &path,
+                      std::optional<std::string_view> expectedContentHash,
+                      int existingLockDescriptor = -1) const;
+    std::string loadedContentHash_;
     std::vector<UserDictionaryEntry> entries_;
     std::unordered_map<std::string, std::size_t> entryIndex_;
 };

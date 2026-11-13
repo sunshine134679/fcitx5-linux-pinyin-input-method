@@ -77,3 +77,12 @@ install(FILES
     "${PROJECT_SOURCE_DIR}/data/components/upstream/chaizi.LICENSE"
     "${PROJECT_SOURCE_DIR}/data/components/upstream/pinyin.LICENSE"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/components/upstream")
+
+target_sources(modernime_core PRIVATE src/candidate_filter.cpp src/input_compatibility.cpp src/user_data_bundle.cpp)
+target_compile_definitions(modernime_core PRIVATE
+    MODERNIME_STROKE_LOOKUP_PATH="${CMAKE_INSTALL_FULL_DATADIR}/modernime/components/stroke_lookup.txt"
+    MODERNIME_STROKE_LOOKUP_SOURCE_PATH="${PROJECT_SOURCE_DIR}/data/components/stroke_lookup.txt")
+install(FILES "${PROJECT_SOURCE_DIR}/data/components/stroke_lookup.txt"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/components")
+install(FILES "${PROJECT_SOURCE_DIR}/data/components/upstream/stroke.LICENSE"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/modernime/components/upstream")

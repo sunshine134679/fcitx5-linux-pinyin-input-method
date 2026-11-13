@@ -2,6 +2,7 @@
 #include "modernime/pinyin/candidate_features.h"
 #include "modernime/pinyin/shuangpin_input.h"
 #include "modernime/pinyin/context_decoder.h"
+#include "modernime/pinyin/mixed_word_index.h"
 
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/common_characters.h"
@@ -79,7 +80,7 @@ CandidatePipelineResult buildCandidatePipeline(
     const std::vector<std::string> &previousOrder,
     const libime::PinyinContext *typoContext, const RecentChoices *recentChoices,
     const libime::PinyinContext *variantContext, const ShuangpinInput *shuangpin,
-    std::size_t nativeOffset, const ContextDecoder *contextDecoder) {
+    std::size_t nativeOffset, const ContextDecoder *contextDecoder, const MixedWordIndex *mixedWords) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
     // libime 保留 N-best 整句在前，后续候选按解码分数降序排列；高分更优。
@@ -170,6 +171,27 @@ CandidatePipelineResult buildCandidatePipeline(
         seenKeys.insert(spanKey(candidate.text, candidate.full_pinyin, entry.consumed));
         seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
         result.scored.push_back(std::move(candidate));
+    }
+
+    if (nativeOffset == 0 && mixedWords != nullptr && shuangpin == nullptr) {
+        for (const auto &entry : mixedWords->lookup(context.userInput())) {
+            const auto key = spanKey(entry.phrase, entry.pinyin, context.userInput().size());
+            if (!seenKeys.insert(key).second) {
+                for (auto &existing : result.scored)
+                    if (spanKey(existing.text, existing.full_pinyin,
+                                existing.consumed_input_bytes.value_or(0)) == key)
+                        existing.is_lexical = true;
+                continue;
+            }
+            core::CandidateScore candidate;
+            candidate.is_lexical = true;
+            candidate.text = entry.phrase;
+            candidate.full_pinyin = entry.pinyin;
+            candidate.source_index = 0;
+            candidate.consumed_input_bytes = context.userInput().size();
+            seenWords.insert(core::candidateOrderKey(candidate.text, candidate.full_pinyin));
+            result.scored.push_back(std::move(candidate));
+        }
     }
 
     if (nativeOffset == 0 && typoContext != nullptr) {
@@ -287,7 +309,7 @@ CandidatePipelineResult buildCandidatePipeline(
             recallInput, nowMs, contextBefore, contextAfter);
         for (const auto &item : recalled) {
             const auto cp = core::CommonCharacters::firstCodepoint(item.phrase);
-            if (!((cp >= 0x4E00 && cp <= 0x9FFF) ||
+            if (!MixedWordIndex::isMixedWord(item.phrase) && !((cp >= 0x4E00 && cp <= 0x9FFF) ||
                   (cp >= 0x3400 && cp <= 0x4DBF) ||
                   (cp >= 0x20000 && cp <= 0x2EBEF))) {
                 continue;
@@ -304,6 +326,7 @@ CandidatePipelineResult buildCandidatePipeline(
             // neutral prior, never the snapshot's shard/enumeration position.
             candidate.source_index = 0;
             candidate.text = item.phrase;
+            candidate.is_lexical = MixedWordIndex::isMixedWord(item.phrase);
             candidate.full_pinyin = segmentedPinyin;
             if (decodedMatch) {
                 candidate.consumed_input_bytes = decodedMatch->consumed;

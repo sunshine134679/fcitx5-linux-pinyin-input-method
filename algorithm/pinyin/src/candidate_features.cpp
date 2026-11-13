@@ -1,5 +1,6 @@
 #include "modernime/pinyin/candidate_features.h"
 #include "modernime/pinyin/recent_choice.h"
+#include "modernime/pinyin/mixed_word_index.h"
 #include "modernime/core/common_characters.h"
 #include "modernime/core/dictionary_prior.h"
 #include "modernime/core/pinyin_match.h"
@@ -99,8 +100,12 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
     candidate.dictionary_bonus = dict.bonus;
     const auto count = utf8CodePointCount(candidate.text);
     candidate.phrase_length = count;
-    candidate.is_lexical = count >= 2 && dict.is_lexical;
-    candidate.is_rare = core::CommonCharacters::containsRare(candidate.text);
+    const bool mixed = candidate.is_lexical && MixedWordIndex::isMixedWord(candidate.text);
+    candidate.is_lexical = (count >= 2 && dict.is_lexical) || mixed;
+    std::string hanText;
+    if (mixed) for (const unsigned char byte : candidate.text)
+        if (byte >= 128) hanText.push_back(static_cast<char>(byte));
+    candidate.is_rare = core::CommonCharacters::containsRare(mixed ? hanText : candidate.text);
     candidate.is_level1 = !candidate.is_rare && count == 1 &&
         core::CommonCharacters::isLevel1(core::CommonCharacters::firstCodepoint(candidate.text));
     if (request.learning != nullptr) {

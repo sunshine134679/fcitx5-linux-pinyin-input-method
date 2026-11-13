@@ -36,6 +36,12 @@ License: CC-BY-3.0
  See /usr/share/modernime/components/upstream/chaizi.LICENSE.
  Source and transformations: /usr/share/modernime/components/数据来源与许可.md
 
+Files: data/components/stroke_lookup.txt
+Copyright: CSSlayer <wengxt@gmail.com>
+License: LGPL-2.1+
+ Source: fcitx5-chinese-addons / fcitx5-module-pinyinhelper
+ See /usr/share/modernime/components/upstream/stroke.LICENSE.
+
 Files: data/components/upstream/pinyin.txt
 Copyright: 2016 mozillazg
 License: MIT
