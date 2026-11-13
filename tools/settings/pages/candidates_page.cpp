@@ -4,7 +4,6 @@
 
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
-#include "modernime/settings/settings_disclosure.h"
 #include "modernime/ui/cairo_render_surface.h"
 #include "modernime/ui/candidate_pagination.h"
 
@@ -199,7 +198,7 @@ public:
 
     bool focusTarget(std::string_view target) {
         if (target == "candidate.pin") return focusWidgetOrFallback(pinRules, pinRulesRow);
-        if (target == "candidate-filter") { setSettingsDisclosureExpanded(filterGuide, true); return focusWidgetOrFallback(filterGuide); }
+        if (target == "candidate-filter") return focusWidgetOrFallback(nullptr, candidateFilterRow);
         if (target == "client-theme") return focusWidgetOrFallback(clientTheme);
         if (target == "candidate-page-size") {
             return focusWidgetOrFallback(candidatePageSize, candidatePageSizeFallback);
@@ -262,20 +261,9 @@ private:
             gtk_widget_show_all(o.pinDialog);
         }), this);
 
-        auto *filterCard = createSectionCard("按笔画找字", "同音字太多时，可以按笔画缩小范围。");
-        filterGuide = gtk_expander_new("看个例子");
-        setTarget(filterGuide, "candidate-filter");
-        auto *guide = gtk_label_new("找“试”：输入 shi 后按 ` 键，再按 N（点）、Z（折）、H（横）、H（横）。\n"
-            "按 Esc 返回正常选词。");
-        gtk_label_set_xalign(GTK_LABEL(guide), 0);
-        gtk_label_set_line_wrap(GTK_LABEL(guide), TRUE);
-        gtk_label_set_selectable(GTK_LABEL(guide), TRUE);
-        gtk_box_pack_start(GTK_BOX(filterCard), createSettingsDisclosure(filterGuide, guide), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), filterCard, FALSE, FALSE, 0);
-
         setSettingsFocusChain(
             page, {clientTheme, previewExample, candidateStyles[0], candidateStyles[1], candidateStyles[2],
-                   candidateTheme, candidateShape, nativePanelSettings, filterGuide,
+                   candidateTheme, candidateShape, nativePanelSettings,
                    candidatePageSize, candidateFontFamily, candidateFontSize, candidateSpacing, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation, pinRules});
         refresh();
@@ -510,7 +498,7 @@ private:
         gtk_box_pack_start(GTK_BOX(card), englishDefinitionFallback, FALSE,
                            FALSE, 0);
 
-        auto *navigation = createSectionCard("候选导航", "");
+        auto *navigation = createSectionCard("候选操作", "");
         gtk_box_pack_start(GTK_BOX(page), navigation, FALSE, FALSE, 0);
         arrowNavigation = gtk_switch_new();
         pageNavigation = gtk_switch_new();
@@ -522,6 +510,12 @@ private:
             "候选翻页", "使用 PageUp / PageDown 和 + / = 翻页", pageNavigation);
         gtk_box_pack_start(GTK_BOX(navigation), arrowNavigationFallback, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(navigation), pageNavigationFallback, FALSE, FALSE, 0);
+        auto *filterKey = gtk_shortcut_label_new("grave");
+        setAccessibleWidgetText(filterKey, "按笔画找字快捷键", "输入拼音后按反引号键，Esc 返回正常选词");
+        candidateFilterRow = createSettingRow(
+            "按笔画找字", "输入拼音时使用，Esc 返回", filterKey);
+        setTarget(candidateFilterRow, "candidate-filter");
+        gtk_box_pack_start(GTK_BOX(navigation), candidateFilterRow, FALSE, FALSE, 0);
 
         g_signal_connect(candidatePageSize, "changed", G_CALLBACK(onSpinChanged), this);
         g_signal_connect(candidateFontSize, "value-changed", G_CALLBACK(onSpinChanged), this);
@@ -861,7 +855,7 @@ private:
     GtkWidget *previewSummary = nullptr;
     GtkWidget *previewScaleHint = nullptr;
     GtkWidget *nativePanelSettings = nullptr;
-    GtkWidget *filterGuide = nullptr;
+    GtkWidget *candidateFilterRow = nullptr;
     ui::CandidateBarMetrics metrics;
     ui::CandidateBarLayout previewLayout;
     ui::RenderStyle renderStyle;
