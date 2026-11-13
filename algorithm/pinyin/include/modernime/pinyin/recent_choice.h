@@ -14,6 +14,7 @@ public:
                 std::string_view pinyin, bool partial);
     double bonus(std::string_view input, std::string_view text,
                  std::string_view pinyin, bool partial) const;
+    void forget(std::string_view text, std::string_view pinyin);
     void clear() { groups_.clear(); }
 private:
     struct Group {

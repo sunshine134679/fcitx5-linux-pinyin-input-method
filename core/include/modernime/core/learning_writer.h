@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace modernime::core {
@@ -23,6 +24,12 @@ namespace modernime::core {
 enum class EpochViewState {
     Ready,
     Reloading,
+};
+
+struct ForgottenPreferences final {
+    std::uint64_t generation = 0;
+    bool complete = true;
+    std::vector<std::pair<std::string, std::string>> identities;
 };
 
 class LearningStore;
@@ -62,6 +69,12 @@ public:
     bool reloadIfChanged();
     std::shared_ptr<const LearningSnapshot> snapshot() const;
     std::int64_t resetRevision() const;
+    // Process-local invalidation for transient preferences after explicit forget.
+    // Ordinary selections do not advance it; it is not a persistent clear epoch.
+    std::uint64_t forgetGeneration() const noexcept {
+        return forgetGeneration_.load(std::memory_order_acquire);
+    }
+    ForgottenPreferences forgottenSince(std::uint64_t generation) const;
     EpochViewState epochViewState() const;
     std::size_t queuedEventsCount() const;
     void pauseWorkerForTest(bool pause);
@@ -134,6 +147,15 @@ private:
     std::shared_ptr<const LearningSnapshot> snapshot_;
     std::vector<std::shared_ptr<const LearningSnapshot>> retiredSnapshots_;
     std::uint64_t snapshotVersion_ = 0;
+    std::atomic<std::uint64_t> forgetGeneration_{0};
+    struct ForgetNotice final {
+        std::uint64_t generation;
+        std::string phrase, pinyin;
+    };
+    // Notifications only, not learning facts. Inactive consumers that miss the
+    // bounded history discard their transient window; persistent data is intact.
+    static constexpr std::size_t kMaxForgetNotices = 512;
+    std::deque<ForgetNotice> forgetNotices_;
     std::uint64_t eventSequence_ = 0;
     EpochViewState viewState_ = EpochViewState::Ready;
     bool stopping_ = false;

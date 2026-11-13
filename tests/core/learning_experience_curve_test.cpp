@@ -1,6 +1,7 @@
 #include "modernime/core/learning_store.h"
 #include "modernime/fcitx5/engine.h"
 #include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/pinyin_shared_resources.h"
 #if defined(MODERNIME_HAS_FCITX5)
 #include "modernime/ui/candidate_bar_layout.h"
 #include "modernime/ui/candidate_pagination.h"
@@ -202,6 +203,85 @@ TEST_F(LearningExperienceCurve, UnknownEnglishObservationAdmissionAndCompletionC
         ASSERT_TRUE(controller.handle({Kind::Space}));
         EXPECT_EQ(host.committed, word);
         EXPECT_TRUE(controller.page().rawInput.empty());
+    }
+}
+
+TEST_F(LearningExperienceCurve, ForgetStartsTheCurrentWindowAtTheFreshPreferenceCurve) {
+    for (const bool lmdb : {false, true}) {
+        for (const bool anotherWindowRelearnsFirst : {false, true}) {
+            SCOPED_TRACE(lmdb ? "LMDB" : "SQLite");
+            SCOPED_TRACE(anotherWindowRelearnsFirst);
+            const auto suffix = anotherWindowRelearnsFirst ? "-shared" : "-direct";
+            const auto oldData = paths(std::string("forgotten") + suffix, lmdb);
+            const auto cleanData = paths(std::string("clean") + suffix, lmdb);
+            pinyin::PinyinProviderOptions options;
+            options.contextLearningEnabled = false;
+            pinyin::PinyinCandidateProvider old(oldData, options), clean(cleanData, options);
+            CurveHost oldHost, cleanHost;
+            Controller oldController(oldHost, &old), cleanController(cleanHost, &clean);
+            for (int i = 0; i < 3; ++i) {
+                type(oldController, "shi");
+                const auto index = rank(oldController.page(), "试");
+                ASSERT_LT(index, oldController.page().items.size());
+                choose(oldController, index, true);
+                ASSERT_EQ(oldHost.committed, "试");
+            }
+            ASSERT_TRUE(old.flush());
+            ASSERT_TRUE(old.sharedResources()->learning->enqueueForget("试", "shi"));
+            ASSERT_TRUE(old.flush());
+            if (anotherWindowRelearnsFirst) {
+                // The original Provider never sees an empty learning record.
+                // Invalidating only when frequency == 0 would miss this case.
+                for (auto *provider : {&old, &clean}) {
+                    pinyin::PinyinCandidateProvider other(provider->sharedResources(), options);
+                    CurveHost host;
+                    Controller controller(host, &other);
+                    type(controller, "shi");
+                    const auto index = rank(controller.page(), "试");
+                    ASSERT_LT(index, controller.page().items.size());
+                    choose(controller, index, true);
+                    ASSERT_EQ(host.committed, "试");
+                    ASSERT_TRUE(other.flush());
+                }
+            }
+            const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            for (auto *provider : {&old, &clean}) {
+                for (int i = 0; i < 200; ++i)
+                    ASSERT_TRUE(provider->sharedResources()->learning->enqueueSelection(
+                        "是", "shi", {}, {}, now));
+                ASSERT_TRUE(provider->flush());
+            }
+            type(oldController, "shi");
+            type(cleanController, "shi");
+            for (int count = 1; count <= 4; ++count) {
+                SCOPED_TRACE(count);
+                for (auto *controller : {&oldController, &cleanController}) {
+                    const auto index = rank(controller->page(), "试");
+                    ASSERT_LT(index, controller->page().items.size());
+                    EXPECT_EQ(controller->page().items[index].consumedInputBytes, 3u);
+                    choose(*controller, index, true);
+                    EXPECT_TRUE(controller->page().rawInput.empty());
+                    type(*controller, "shi");
+                }
+                EXPECT_EQ(oldHost.committed, "试");
+                EXPECT_EQ(cleanHost.committed, "试");
+                const auto &a = oldController.page();
+                const auto &b = cleanController.page();
+                const auto oldIndex = rank(a, "试"), cleanIndex = rank(b, "试");
+                ASSERT_LT(oldIndex, a.items.size());
+                ASSERT_LT(cleanIndex, b.items.size());
+                EXPECT_EQ(a.items[oldIndex].recentChoiceBonus, b.items[cleanIndex].recentChoiceBonus);
+                EXPECT_EQ(oldIndex, cleanIndex);
+                EXPECT_EQ(position(a, oldIndex), position(b, cleanIndex));
+                EXPECT_EQ(a.items.front().text, b.items.front().text);
+            }
+            ASSERT_TRUE(old.flush());
+            ASSERT_TRUE(clean.flush());
+            persistedFrequency(oldData, "试", "shi", anotherWindowRelearnsFirst ? 5 : 4);
+            persistedFrequency(cleanData, "试", "shi", anotherWindowRelearnsFirst ? 5 : 4);
+            persistedFrequency(oldData, "是", "shi", 200);
+        }
     }
 }
 

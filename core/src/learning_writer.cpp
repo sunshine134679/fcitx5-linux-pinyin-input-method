@@ -198,6 +198,12 @@ bool LearningWriter::enqueueManagement(std::string_view phrase, std::string_view
     else next->recordUnsuppression(phrase, pinyin);
     snapshot_ = std::move(next);
     ++snapshotVersion_;
+    if (forget) {
+        const auto generation = forgetGeneration_.load(std::memory_order_relaxed) + 1;
+        forgetNotices_.push_back({generation, std::string(phrase), normalizePinyin(pinyin)});
+        if (forgetNotices_.size() > kMaxForgetNotices) forgetNotices_.pop_front();
+        forgetGeneration_.store(generation, std::memory_order_release);
+    }
     Event event;
     event.kind = forget ? EventKind::Forget : EventKind::Unsuppression;
     event.phrase = phrase;
@@ -343,6 +349,22 @@ std::shared_ptr<const LearningSnapshot> LearningWriter::snapshot() const {
 std::int64_t LearningWriter::resetRevision() const {
     std::lock_guard lock(mutex_);
     return resetRevision_;
+}
+
+ForgottenPreferences LearningWriter::forgottenSince(std::uint64_t generation) const {
+    std::lock_guard lock(mutex_);
+    ForgottenPreferences changes;
+    changes.generation = forgetGeneration_.load(std::memory_order_relaxed);
+    if (generation == changes.generation) return changes;
+    if (generation > changes.generation || forgetNotices_.empty() ||
+        generation < forgetNotices_.front().generation - 1) {
+        changes.complete = false;
+        return changes;
+    }
+    for (const auto &notice : forgetNotices_)
+        if (notice.generation > generation)
+            changes.identities.emplace_back(notice.phrase, notice.pinyin);
+    return changes;
 }
 
 EpochViewState LearningWriter::epochViewState() const {

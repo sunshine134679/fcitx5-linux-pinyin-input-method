@@ -1,5 +1,7 @@
 #include "modernime/core/learning_writer.h"
 #include "modernime/core/learning_store.h"
+#include "modernime/pinyin/pinyin_candidate_provider.h"
+#include "modernime/pinyin/pinyin_shared_resources.h"
 #include <gtest/gtest.h>
 #include <sqlite3.h>
 #include <future>
@@ -60,6 +62,92 @@ TEST_P(LearningManagementRegression, UnsuppressionPreservesFrequencyAndNegativeF
     EXPECT_EQ(after->negativeFeedback, before.negativeFeedback);
     EXPECT_EQ(writer.snapshot()->entry("你好", "nihao", "前文", {})->frequency, 1);
 }
+TEST_P(LearningManagementRegression, ForgetRestoresImmediateRankingAndStartsFirstRelearnAtOne) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = path().string();
+    paths.userDictionary = (root / "empty-user.dict").string();
+    paths.dictionaryPacks = (root / "empty-packs").string();
+    paths.bundledDictionaryPacks = (root / "empty-bundled-packs").string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    const auto rank = [](const auto &page, std::string_view text) {
+        for (std::size_t i = 0; i < page.items.size(); ++i)
+            if (page.items[i].text == text) return i;
+        return page.items.size();
+    };
+    for (int i = 0; i < 3; ++i) {
+        ASSERT_TRUE(provider.replaceInput("shi"));
+        const auto at = rank(provider.page(), "试");
+        ASSERT_LT(at, provider.page().items.size());
+        ASSERT_TRUE(provider.select(at));
+    }
+    ASSERT_TRUE(provider.flush());
+    ASSERT_TRUE(provider.replaceInput("shi"));
+    ASSERT_EQ(provider.page().items.front().text, "试");
+    ASSERT_GT(provider.page().items.front().recentChoiceBonus, 0);
+    auto *writer = provider.sharedResources()->learning.get();
+    ASSERT_NE(writer, nullptr);
+    ASSERT_TRUE(writer->enqueueForget("试", "shi"));
+    ASSERT_TRUE(writer->flush());
+    ASSERT_FALSE(writer->snapshot()->hasPositiveFrequency("试", "shi"));
+    ASSERT_TRUE(provider.replaceInput("shi"));
+    const auto forgotten = rank(provider.page(), "试");
+    ASSERT_LT(forgotten, provider.page().items.size());
+    EXPECT_DOUBLE_EQ(provider.page().items[forgotten].recentChoiceBonus, 0);
+    EXPECT_EQ(provider.page().items.front().text, "是");
+    modernime::pinyin::PinyinCandidateProvider fresh(provider.sharedResources(), options);
+    ASSERT_TRUE(fresh.replaceInput("shi"));
+    EXPECT_EQ(provider.page().items.front().text, fresh.page().items.front().text);
+    ASSERT_TRUE(provider.select(forgotten));
+    ASSERT_TRUE(provider.flush());
+    ASSERT_TRUE(provider.replaceInput("shi"));
+    EXPECT_EQ(provider.page().items.front().text, "是");
+    const auto relearned = rank(provider.page(), "试");
+    ASSERT_LT(relearned, provider.page().items.size());
+    EXPECT_DOUBLE_EQ(provider.page().items[relearned].recentChoiceBonus, 0);
+    const auto *entry = writer->snapshot()->entry("试", "shi", {}, {});
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 1);
+}
+TEST_P(LearningManagementRegression, ForgettingAnotherIdentityKeepsCurrentRecentPreference) {
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.learningStore = path().string();
+    paths.userDictionary = (root / "empty-user.dict").string();
+    paths.dictionaryPacks = (root / "empty-packs").string();
+    paths.bundledDictionaryPacks = (root / "empty-bundled").string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+    const auto target = [&] {
+        const auto &items = provider.page().items;
+        for (std::size_t i = 0; i < items.size(); ++i) if (items[i].text == "试") return i;
+        return items.size();
+    };
+    for (int count = 0; count < 3; ++count) {
+        ASSERT_TRUE(provider.replaceInput("shi"));
+        const auto index = target();
+        ASSERT_LT(index, provider.page().items.size());
+        ASSERT_TRUE(provider.select(index));
+    }
+    ASSERT_TRUE(provider.flush());
+    ASSERT_TRUE(provider.replaceInput("shi"));
+    const auto index = target();
+    ASSERT_LT(index, provider.page().items.size());
+    const auto bonus = provider.page().items[index].recentChoiceBonus;
+    ASSERT_GT(bonus, 0);
+    auto *writer = provider.sharedResources()->learning.get();
+    ASSERT_TRUE(writer->enqueueSelection("另一个", "lingyige", {}, {}, 1000));
+    ASSERT_TRUE(writer->enqueueForget("另一个", "lingyige"));
+    ASSERT_TRUE(writer->flush());
+    ASSERT_TRUE(provider.replaceInput("shi"));
+    const auto after = target();
+    ASSERT_LT(after, provider.page().items.size());
+    EXPECT_DOUBLE_EQ(provider.page().items[after].recentChoiceBonus, bonus);
+    EXPECT_EQ(provider.page().items.front().text, "试");
+    EXPECT_EQ(writer->snapshot()->entry("试", "shi", {}, {})->frequency, 3);
+}
+
 TEST_P(LearningManagementRegression, TrustedRestoreAdvancesRevisionAndPreservesAllFacts) {
     LearningWriter writer(path());
     ASSERT_TRUE(writer.enqueueSelection("旧词", "jiuci", {}, {}, 1000));

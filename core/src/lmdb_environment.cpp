@@ -365,12 +365,18 @@ std::shared_ptr<LmdbEnvironment> LmdbRegistry::getOrCreate(
 }
 
 void LmdbRegistry::unregister(const std::string &path_key, LmdbEnvironment *expected) {
-    std::lock_guard lock(registry_mutex_);
-    auto it = slots_.find(path_key);
-    if (it != slots_.end()) {
-        auto existing = it->second.lock();
-        if (!existing || existing.get() == expected) {
-            slots_.erase(it);
+    // A replacement environment can lose its last external owner while this
+    // temporary reference is held. Release it after unlocking: its destructor
+    // closes the environment and re-enters this registry.
+    std::shared_ptr<LmdbEnvironment> existing;
+    {
+        std::lock_guard lock(registry_mutex_);
+        auto it = slots_.find(path_key);
+        if (it != slots_.end()) {
+            existing = it->second.lock();
+            if (!existing || existing.get() == expected) {
+                slots_.erase(it);
+            }
         }
     }
 }

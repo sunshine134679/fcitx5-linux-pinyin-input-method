@@ -1,9 +1,23 @@
 #include "modernime/pinyin/recent_choice.h"
 #include "modernime/core/candidate_model.h"
+#include "modernime/core/learning_snapshot.h"
 
 #include <algorithm>
 
 namespace modernime::pinyin {
+
+void RecentChoices::forget(std::string_view text, std::string_view pinyin) {
+    const auto normalized = core::normalizePinyin(pinyin);
+    for (auto &group : groups_) {
+        std::erase_if(group.choices, [&](const std::string &choice) {
+            const std::string_view key(choice);
+            const auto split = key.rfind('\x1f');
+            return split != std::string_view::npos && key.substr(0, split) == text &&
+                core::normalizePinyin(key.substr(split + 1)) == normalized;
+        });
+    }
+    std::erase_if(groups_, [](const Group &group) { return group.choices.empty(); });
+}
 
 void RecentChoices::record(std::string_view input, std::string_view text,
                            std::string_view pinyin, bool partial) {

@@ -3,11 +3,15 @@
 #include "modernime/settings/data_controller.h"
 
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <sqlite3.h>
+#include <unistd.h>
 
 namespace {
 
@@ -203,6 +207,61 @@ void testFailedBackupDoesNotClearLearning() {
                                       "保留词", "baoliuci", {}, {}) != nullptr,
                "failed backup leaves original learning data untouched");
     untouched.close();
+}
+
+void testLockedBackupReturnsWithoutClearingAndCanBeRetried() {
+    const auto directory = testDirectory("locked-backup-" + std::to_string(getpid()));
+    const auto databasePath = directory / "learning.sqlite3";
+    const auto backupPath = directory / "backup.sqlite3";
+    modernime::core::LearningStore seed(databasePath);
+    assertTrue(seed.open() && seed.recordSelection("保留学习", "baoliuxuexi", {}, {}, 1000),
+               "locked-backup source is seeded");
+    const auto revision = seed.resetRevision();
+    seed.close();
+    sqlite3 *holder = nullptr;
+    assertTrue(sqlite3_open(backupPath.c_str(), &holder) == SQLITE_OK,
+               "backup destination opens for a competing owner");
+    assertTrue(sqlite3_exec(holder,
+                   "CREATE TABLE occupied(value); INSERT INTO occupied VALUES(42); BEGIN EXCLUSIVE;",
+                   nullptr, nullptr, nullptr) == SQLITE_OK,
+               "backup destination lock is actually held before the operation");
+    std::promise<void> entered;
+    auto started = entered.get_future();
+    auto operation = std::async(std::launch::async, [&] {
+        entered.set_value();
+        std::string error;
+        const bool ok = modernime::settings::DataController::backupAndClearLearning(
+            databasePath, backupPath, &error);
+        return std::pair{ok, error};
+    });
+    started.wait();
+    const bool returnedWhileLocked = operation.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    // Release the test lock before asserting so the old infinite retry loop
+    // can finish and report a normal failure instead of hanging the test suite.
+    sqlite3_exec(holder, "ROLLBACK;", nullptr, nullptr, nullptr);
+    sqlite3_close(holder);
+    const auto result = operation.get();
+    assertTrue(returnedWhileLocked, "occupied backup returns within its existing busy timeout budget");
+    assertTrue(!result.first && !result.second.empty(), "occupied backup reports failure");
+    modernime::core::LearningStore source(databasePath);
+    assertTrue(source.openReadOnly() && source.resetRevision() == revision &&
+                   source.snapshot()->hasPositiveFrequency("保留学习", "baoliuxuexi"),
+               "failed backup preserves all source facts and the clear generation");
+    source.close();
+    assertTrue(sqlite3_open(backupPath.c_str(), &holder) == SQLITE_OK, "old destination reopens");
+    sqlite3_stmt *statement = nullptr;
+    assertTrue(sqlite3_prepare_v2(holder, "SELECT value FROM occupied;", -1, &statement, nullptr) == SQLITE_OK &&
+                   sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 42,
+               "failed backup preserves the destination owner's existing data");
+    sqlite3_finalize(statement);
+    sqlite3_close(holder);
+    std::string error;
+    assertTrue(modernime::settings::DataController::backupAndClearLearning(databasePath, backupPath, &error),
+               "retry after release successfully backs up and clears: " + error);
+    modernime::core::LearningStore backup(backupPath);
+    assertTrue(backup.openReadOnly() && backup.verifySelf() &&
+                   backup.snapshot()->hasPositiveFrequency("保留学习", "baoliuxuexi"),
+               "successful retry retains the original learning in a verified backup");
 }
 
 void testConcurrentLearningWriteDuringBackupSucceeds() {
@@ -555,6 +614,7 @@ int main() {
     testDictionaryBackupCreationAndVerification();
     testLearningBackupThenClear();
     testFailedBackupDoesNotClearLearning();
+    testLockedBackupReturnsWithoutClearingAndCanBeRetried();
     testConcurrentLearningWriteDuringBackupSucceeds();
     testCorruptedBackupBlocksClear();
     testLmdbBackupAndClearSelfVerification();

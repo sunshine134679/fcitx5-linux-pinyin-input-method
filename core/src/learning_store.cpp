@@ -252,10 +252,10 @@ bool LearningStore::backupTo(const std::filesystem::path &path) const {
         sqlite3_close(backupDatabase);
         return false;
     }
-    int result = SQLITE_OK;
-    do {
-        result = sqlite3_backup_step(backup, -1);
-    } while (result == SQLITE_BUSY || result == SQLITE_LOCKED);
+    // The connection's busy handler already provides a bounded wait. Starting
+    // another step after it expires would restart that wait forever while the
+    // settings client is trying to report a failed backup without clearing.
+    const int result = sqlite3_backup_step(backup, -1);
     const auto finishResult = sqlite3_backup_finish(backup);
     const bool success = result == SQLITE_DONE && finishResult == SQLITE_OK;
     sqlite3_close(backupDatabase);

@@ -73,6 +73,8 @@ public:
     }
 
     std::shared_ptr<const core::LearningSnapshot> visibleLearning() const;
+    std::uint64_t learningForgetGeneration() const;
+    core::ForgottenPreferences forgottenSince(std::uint64_t generation) const;
     core::LearningWriter *ensureLearningWriter(bool synchronousInitialLoad = true);
     core::EnglishDefinitionDictionary *ensureEnglishDefinitionDictionary();
     bool reloadVisibility();

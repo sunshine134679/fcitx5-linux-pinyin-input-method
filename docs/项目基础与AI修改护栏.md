@@ -63,6 +63,7 @@
 - 敏感/禁学判断必须发生在修改学习事件、造词跟踪、近期意图等状态之前。新来源和反馈不能绕过同一边界；不把用户真实密码或聊天上下文写进测试、日志、截图或诊断。
 - 保留差量学习、核心默认词保护及已定义例外。Raw、English、Chinese、Command 等角色按纯政策决策，不以“一律跳过 Raw”之类捷径改变正常/Reloading 的行为。
 - Provider 的近期意图是有界会话状态，不跨 Provider/敏感边界共享，不冒充重启后持久偏好；不同衰减参数不盲目统一。
+- 显式忘记同时使该文本与规范拼音身份的近期选择失效，不能仅靠新词频暂时低于成熟阈值掩盖旧窗口。Writer拥有进程内忘记代次及最多512条身份通知，Provider只读补取并清目标；失联超过通知范围才清该消费者临时窗口，不删除无关持久事实。普通学习不发布忘记通知。
 - `resetRevision` 是用户清空世代，`snapshotVersion_` 是进程内乐观发布版本，schema 版本表示数据格式；三者不合并，也不拿显示代次充当持久化去重 ID。
 - 后台读取、发布前再次核对清空事实。二次 clear 后拒收旧结果，合法的新世代事实不能随失败重试被静默丢掉；外部 clear 不依赖 UI 先刷新才能生效。
 - `Reloading` 不代表空库已就绪，失败不得伪造 Ready。PendingCommit 按正常政策恢复决策；`flush()` 和销毁在永久读失败时有界返回/退出，不能永远等 Ready。
@@ -86,6 +87,7 @@
 2. 缓存 revision 只读事务属于 `LmdbEnvironment`，不得搬回 `PersonalEngine` 等更长寿命的调用者。在 close、RO→RW 重建、map resize 前释放缓存事务，之后按新环境重建。
 3. `readResetRevision()` 当前按 `lifecycle_gate → revision_mutex_` 保护 renew/read/reset；修改时列出所有锁及析构隐式取锁边，不能只审查显式 lock。
 4. `OpenLmdb()` 替换环境时，将旧 shared_ptr 移到局部，并在新环境门和引擎锁作用域之外释放。不得在持有 `lmdb_mutex_` 时用赋值/析构触发旧环境 close。
+   registry注销时由weak_ptr提升出的临时shared_ptr也在registry锁外释放；最后引用析构会重新注销，不能只审查显式close调用。
 5. 不能持共享门直接升级为独占门；MAP_FULL 重试要退出原事务/门后走受控扩容。最后持有者关闭，单个引擎不得主动关闭其他引擎仍持有的共享环境。
 6. LMDB mmap 值视图只在相应事务/环境有效期内使用，不跨 abort/reset/close 留悬空引用；Packed `WordMeta` 字段避免绑定要求对齐的引用，不能为了少一次复制恢复未对齐访问。
 

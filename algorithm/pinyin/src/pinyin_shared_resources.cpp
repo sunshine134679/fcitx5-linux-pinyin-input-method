@@ -743,6 +743,16 @@ std::shared_ptr<const core::LearningSnapshot> PinyinSharedResources::visibleLear
     return learning != nullptr ? learning->snapshot() : visibilitySnapshot;
 }
 
+std::uint64_t PinyinSharedResources::learningForgetGeneration() const {
+    std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
+    return learning != nullptr ? learning->forgetGeneration() : 0;
+}
+
+core::ForgottenPreferences PinyinSharedResources::forgottenSince(std::uint64_t generation) const {
+    std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
+    return learning != nullptr ? learning->forgottenSince(generation) : core::ForgottenPreferences{};
+}
+
 core::LearningWriter *PinyinSharedResources::ensureLearningWriter(bool synchronousInitialLoad) {
     std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
     if (learning == nullptr && !learningStorePath.empty()) {

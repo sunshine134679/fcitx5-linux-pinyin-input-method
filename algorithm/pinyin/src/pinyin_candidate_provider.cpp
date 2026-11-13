@@ -32,6 +32,22 @@
 
 namespace {
 
+std::string joinChineseNumberGroups(const std::vector<std::string> &groups) {
+    std::string result;
+    bool skippedZeroGroup = false;
+    for (auto group = groups.rbegin(); group != groups.rend(); ++group) {
+        if (group->empty()) {
+            skippedZeroGroup = !result.empty();
+            continue;
+        }
+        // The group renderer already supplies a leading zero below 1000.
+        // A completely skipped group needs one even when this group is >=1000.
+        if (skippedZeroGroup && !group->starts_with("零")) result += "零";
+        result += *group;
+        skippedZeroGroup = false;
+    }
+    return result;
+}
 
 std::string toChineseFinancial(std::string_view numStr) {
     if (numStr.empty()) {
@@ -106,14 +122,10 @@ std::string toChineseFinancial(std::string_view numStr) {
                 if (gIdx < 4) {
                     gText += kBigUnits[gIdx];
                 }
-                groupResults.push_back(gText);
             }
+            groupResults.push_back(std::move(gText));
         }
-        std::string intStr;
-        for (auto it = groupResults.rbegin(); it != groupResults.rend(); ++it) {
-            intStr += *it;
-        }
-        result = intStr + "元";
+        result = joinChineseNumberGroups(groupResults) + "元";
     }
 
     if (decPart.empty() || decPart == "0" || decPart == "00") {
@@ -212,12 +224,10 @@ std::string toChineseStandardNumber(std::string_view numStr) {
                 if (gIdx < 4) {
                     gText += kBigUnits[gIdx];
                 }
-                groupResults.push_back(gText);
             }
+            groupResults.push_back(std::move(gText));
         }
-        for (auto it = groupResults.rbegin(); it != groupResults.rend(); ++it) {
-            result += *it;
-        }
+        result = joinChineseNumberGroups(groupResults);
     }
     if (!decPart.empty()) {
         result += "点";
@@ -731,6 +741,7 @@ public:
           candidatePins_(options.candidatePins),
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
+          observedLearningForgetGeneration_(shared_ ? shared_->learningForgetGeneration() : 0),
           observedEpochViewState_(shared_ ? shared_->epochViewState() : core::EpochViewState::Ready) {
         shared_->setFuzzyOptions(options.fuzzyPinyin);
         shared_->setPinyinScheme(options.pinyinScheme);
@@ -871,6 +882,15 @@ public:
             changed = true;
         }
         const auto curViewState = shared_->epochViewState();
+        const auto curForgetGeneration = shared_->learningForgetGeneration();
+        if (curForgetGeneration != observedLearningForgetGeneration_) {
+            const auto changes = shared_->forgottenSince(observedLearningForgetGeneration_);
+            observedLearningForgetGeneration_ = changes.generation;
+            if (!changes.complete) recentChoices_.clear();
+            else for (const auto &[text, pinyin] : changes.identities)
+                recentChoices_.forget(text, pinyin);
+            changed = true;
+        }
         if (curViewState != observedEpochViewState_) {
             observedEpochViewState_ = curViewState;
             changed = true;
@@ -2014,6 +2034,7 @@ private:
     std::uint64_t observedDictionaryGeneration_ = 0;
     std::uint64_t observedInputConfigurationGeneration_ = 0;
     std::int64_t observedLearningRevision_ = 0;
+    std::uint64_t observedLearningForgetGeneration_ = 0;
     core::EpochViewState observedEpochViewState_ = core::EpochViewState::Ready;
 };
 
