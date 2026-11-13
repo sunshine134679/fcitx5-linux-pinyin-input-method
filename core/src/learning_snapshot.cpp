@@ -2,6 +2,7 @@
 #include "modernime/core/candidate_model.h"
 #include "modernime/core/english_dictionary.h"
 #include "modernime/core/pinyin_match.h"
+#include "english_recall_index.h"
 
 #include <algorithm>
 #include <cctype>
@@ -161,6 +162,27 @@ std::string variantKey(std::string_view phrase, std::string_view pinyin,
     return key;
 }
 
+LearningBoostEvidence aggregateLearningEvidence(const std::vector<const LearningEntry *> &variants) {
+    std::int64_t total = 0, generic = 0, last = 0, feedback = 0;
+    bool suppressed = false;
+    std::unordered_set<std::string> contexts;
+    for (const auto *item : variants) {
+        feedback = std::max(feedback, item->negativeFeedback);
+        if (item->suppressed) { suppressed = true; continue; }
+        total += std::max<std::int64_t>(0, item->frequency);
+        last = std::max(last, item->lastSelectedMs);
+        if (item->contextBefore.empty() && item->contextAfter.empty())
+            generic += std::max<std::int64_t>(0, item->frequency);
+        else contexts.insert(item->contextBefore + "\x1f" + item->contextAfter);
+    }
+    return makeLearningBoostEvidence(total, generic, contexts.size(), last, feedback, suppressed);
+}
+
+bool admittedEnglishEvidence(const LearningBoostEvidence &facts, std::string_view phrase) {
+    return !facts.suppressed && facts.frequency > 0 &&
+           (facts.frequency >= 2 || EnglishDictionary::containsWord(phrase));
+}
+
 } // namespace
 
 bool isAsciiWord(std::string_view text) {
@@ -232,9 +254,6 @@ public:
                         std::string_view contextAfter,
                         std::int64_t nowMs = 0) const;
 
-    std::vector<RecalledEnglishWord> recallEnglishWords(
-        std::string_view prefix, std::size_t limit = 5,
-        std::int64_t nowMs = 0) const;
 
     const std::vector<LearningEntry> &entries() const;
     std::size_t entryCount() const {
@@ -285,7 +304,7 @@ struct LearningSnapshotShard::RecallIndex final {
     std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> abbrIndex;
     std::vector<std::tuple<std::string, std::string, std::string>> prefixIndex;
     std::vector<std::string> abbreviationKeys;
-    std::vector<std::pair<std::string, std::string>> englishIndex;
+    EnglishRecallIndex englishIndex;
     std::unordered_map<std::string, std::vector<std::string>> englishKeys;
 };
 
@@ -298,25 +317,20 @@ std::shared_ptr<const LearningSnapshotShard::RecallIndex>
 LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entries) {
     auto index = std::make_shared<LearningSnapshotShard::RecallIndex>();
     std::unordered_set<std::string> seen;
-    std::unordered_set<std::string> seenEnglish;
+    std::unordered_map<std::string, std::vector<const LearningEntry *>> englishVariants;
     seen.reserve(entries.size());
     for (const auto &entry : entries) {
         const bool englishWord = isRecallableEnglishWord(entry.phrase);
         if (englishWord) {
             const auto key = normalizePinyin(entry.pinyin);
             if (!key.empty() && toLowerAscii(entry.phrase).starts_with(key)) {
+                englishVariants[entry.phrase].push_back(&entry);
                 auto &keys = index->englishKeys[entry.phrase];
                 if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
             }
         }
         if (entry.suppressed || entry.frequency <= 0) {
             continue;
-        }
-        if (englishWord) {
-            const auto lower = toLowerAscii(entry.phrase);
-            if (seenEnglish.insert(lower).second) {
-                index->englishIndex.emplace_back(lower, entry.phrase);
-            }
         }
         const std::string recallPinyin =
             englishWord ? entry.pinyin : PinyinMatchPolicy::segmentPinyin(entry.pinyin);
@@ -347,10 +361,14 @@ LearningSnapshotShard::buildRecallIndex(const std::vector<LearningEntry> &entrie
               [](const auto &a, const auto &b) {
                   return a < b;
               });
-    std::sort(index->englishIndex.begin(), index->englishIndex.end(),
-              [](const auto &a, const auto &b) {
-                  return a.first < b.first;
-              });
+    std::vector<EnglishRecallEvidence> englishWords;
+    englishWords.reserve(englishVariants.size());
+    for (const auto &[phrase, variants] : englishVariants) {
+        const auto evidence = aggregateLearningEvidence(variants);
+        if (admittedEnglishEvidence(evidence, phrase))
+            englishWords.push_back({toLowerAscii(phrase), phrase, evidence});
+    }
+    index->englishIndex = EnglishRecallIndex(std::move(englishWords));
     return index;
 }
 
@@ -537,60 +555,8 @@ std::size_t countUtf8Characters(std::string_view value) {
 double LearningSnapshotShard::boostAt(std::string_view phrase,
                                  std::string_view pinyin,
                                  std::int64_t nowMs) const {
-    const auto normalized = normalizePinyin(pinyin);
-    const auto variants = collectVariants(phrase, normalized);
-    if (variants.empty()) {
-        return 0.0;
-    }
-    std::int64_t totalFrequency = 0;
-    std::int64_t genericFrequency = 0;
-    std::int64_t lastSelectedMs = 0;
-    std::int64_t worstFeedback = 0;
-    bool suppressed = false;
-    std::unordered_set<std::string> distinctContexts;
-    for (const auto *item : variants) {
-        worstFeedback = std::max(worstFeedback, item->negativeFeedback);
-        if (item->suppressed) {
-            suppressed = true;
-            continue;
-        }
-        totalFrequency += std::max<std::int64_t>(0, item->frequency);
-        lastSelectedMs = std::max(lastSelectedMs, item->lastSelectedMs);
-        if (item->contextBefore.empty() && item->contextAfter.empty()) {
-            genericFrequency += std::max<std::int64_t>(0, item->frequency);
-        } else {
-            distinctContexts.insert(item->contextBefore + "\x1f" + item->contextAfter);
-        }
-    }
-    if (suppressed || totalFrequency <= 0) {
-        return 0.0;
-    }
-    // 平滑与回退：若词条从未在无上下文或通用场景被选中，且仅局限在极少数（<3）特定上下文，
-    // 其无条件频率按折扣衰减，避免单次或少数几次特定上下文训练覆盖全局常用排序。
-    double effectiveFrequency = static_cast<double>(totalFrequency);
-    if (genericFrequency == 0 && distinctContexts.size() < 3) {
-        effectiveFrequency = std::max(0.0, 0.25 * static_cast<double>(totalFrequency));
-    }
-
-    const double ageMs = std::max(
-        0.0, static_cast<double>(nowMs) -
-                 static_cast<double>(lastSelectedMs));
-    // 半衰期 T_1/2 与时间常数 tau 的物理换算：
-    // exp(-delta_t / tau) = 2^(-delta_t / T_1/2)  ==> tau = T_1/2 / ln(2)
-    // 默认半衰期为 30 天，严格保证当经过一个半衰期时衰减因子恰好为 0.5
-    constexpr double halfLifeDays = 30.0;
-    constexpr double halfLifeMs = halfLifeDays * 24.0 * 60.0 * 60.0 * 1000.0;
-    constexpr double tauMs = halfLifeMs / 0.6931471805599453; // ln(2)
-    const double recency = std::exp(-ageMs / tauMs);
-    const double frequency = std::min(
-        3.0, 0.85 * std::log1p(effectiveFrequency));
-    const double recentScale =
-        effectiveFrequency >= 3.0 ? 0.90 : (effectiveFrequency >= 2.0 ? 0.60 : (effectiveFrequency >= 1.0 ? 0.35 : 0.15));
-    const double recent = std::min(1.0, recentScale * recency);
-    const double penalty = std::min(
-        2.0, 0.75 * std::log1p(static_cast<double>(
-                        std::max<std::int64_t>(0, worstFeedback))));
-    return std::clamp(frequency + recent - penalty, -2.0, 4.0);
+    return learningBoostAt(aggregateLearningEvidence(
+        collectVariants(phrase, normalizePinyin(pinyin))), nowMs);
 }
 
 std::int64_t LearningSnapshotShard::lastSelectedMs(
@@ -1069,138 +1035,6 @@ void LearningSnapshotShard::pruneTotalEntries(std::vector<LearningEntry> &entrie
     entries = std::move(retained);
 }
 
-std::vector<RecalledEnglishWord> LearningSnapshotShard::recallEnglishWords(
-    std::string_view prefix, std::size_t limit, std::int64_t nowMs) const {
-    if (prefix.size() < 2) {
-        return {};
-    }
-    const auto lowerPrefix = toLowerAscii(prefix);
-    std::unordered_set<std::string> matchedPhrases;
-    std::vector<std::string> candidates;
-
-    const auto &baseRecall = ensureRecallIndex();
-    auto it = std::lower_bound(
-        baseRecall.englishIndex.begin(),
-        baseRecall.englishIndex.end(),
-        lowerPrefix,
-        [](const auto &pair, const std::string &val) {
-            return pair.first < val;
-        });
-    while (it != baseRecall.englishIndex.end() &&
-           it->first.starts_with(lowerPrefix)) {
-        if (matchedPhrases.insert(it->second).second) {
-            candidates.push_back(it->second);
-        }
-        ++it;
-    }
-
-    for (const auto &[vKey, entry] : delta_) {
-        if (entry.suppressed || entry.frequency <= 0) {
-            continue;
-        }
-        if (isRecallableEnglishWord(entry.phrase)) {
-            const auto lower = toLowerAscii(entry.phrase);
-            if (lower.starts_with(lowerPrefix)) {
-                if (matchedPhrases.insert(entry.phrase).second) {
-                    candidates.push_back(entry.phrase);
-                }
-            }
-        }
-    }
-
-    if (candidates.empty()) {
-        return {};
-    }
-
-    std::vector<RecalledEnglishWord> results;
-    results.reserve(candidates.size());
-    for (const auto &phrase : candidates) {
-        // The exact word must compete with its longer completions; excluding
-        // it discards every selection of the user's already complete input.
-        if (phrase.size() < prefix.size()) {
-            continue;
-        }
-        if (isSuppressed(phrase, phrase) || !hasPositiveFrequency(phrase, phrase)) {
-            continue;
-        }
-        std::int64_t totalFreq = 0;
-        std::int64_t lastMs = 0;
-        for (const auto *item : collectVariants(phrase, normalizePinyin(phrase))) {
-            totalFreq += std::max<std::int64_t>(0, item->frequency);
-            lastMs = std::max(lastMs, item->lastSelectedMs);
-        }
-        // A first out-of-dictionary spelling is an observation, not yet an
-        // automatic suggestion. Keep its stored facts and require repeated
-        // use before it consumes any recall/ranking budget. Built-in English
-        // words already have lexical evidence and retain immediate learning.
-        if (totalFreq < 2 && !EnglishDictionary::containsWord(phrase)) {
-            continue;
-        }
-        const double baseBoost = boostAt(phrase, phrase, nowMs);
-        results.push_back({phrase, totalFreq, lastMs, 0.0, baseBoost});
-    }
-
-    std::int64_t latestMs = 0;
-    double latestBoost = 0.0;
-    for (const auto &item : results) {
-        if (item.lastSelectedMs > latestMs) {
-            latestMs = item.lastSelectedMs;
-            latestBoost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
-        } else if (item.lastSelectedMs == latestMs) {
-            const double boost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
-            latestBoost = std::max(latestBoost, boost);
-        }
-    }
-    constexpr double kDormantHalfLifeMs = 12.0 * 3600.0 * 1000.0;
-    constexpr double kDormantTauMs = kDormantHalfLifeMs / 0.6931471805599453;
-    for (auto &item : results) {
-        double effectiveBoost = item.baseBoost;
-        if (latestMs > 0 && item.lastSelectedMs > 0 && item.lastSelectedMs < latestMs) {
-            const auto ageSinceLatest = latestMs - item.lastSelectedMs;
-            double dormant = std::exp(-static_cast<double>(ageSinceLatest) / kDormantTauMs);
-            if (latestBoost >= 1.8) {
-                const double discount = 1.0 - 0.30 * std::min(1.0, (latestBoost - 1.8) / (3.9 - 1.8));
-                dormant = std::min(dormant, discount);
-            }
-            effectiveBoost = item.baseBoost * dormant;
-        }
-        const auto lower = toLowerAscii(item.text);
-        double completeness = 0.0;
-        if (!lower.empty()) {
-            completeness = static_cast<double>(lowerPrefix.size()) /
-                           static_cast<double>(lower.size());
-        }
-        if (lower == lowerPrefix) {
-            completeness += 1.0;
-        }
-        item.score = effectiveBoost + completeness;
-    }
-
-    std::sort(results.begin(), results.end(),
-              [](const auto &a, const auto &b) {
-                  const bool aFin = std::isfinite(a.score);
-                  const bool bFin = std::isfinite(b.score);
-                  if (aFin != bFin) {
-                      return aFin;
-                  }
-                  if (aFin && a.score != b.score) {
-                      return a.score > b.score;
-                  }
-                  if (a.frequency != b.frequency) {
-                      return a.frequency > b.frequency;
-                  }
-                  if (a.lastSelectedMs != b.lastSelectedMs) {
-                      return a.lastSelectedMs > b.lastSelectedMs;
-                  }
-                  return a.text < b.text;
-              });
-
-    if (results.size() > limit) {
-        results.resize(limit);
-    }
-    return results;
-}
-
 // Immutable snapshots share 512 independently indexed shards. A publication
 // copies pointers and the affected shard only; the 200k vocabulary is never
 // copied or reindexed merely because 32 selections have accumulated.
@@ -1604,77 +1438,45 @@ std::vector<RecalledCandidate> LearningSnapshot::recallSentenceWords(
 
 std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(std::string_view prefix,
     std::size_t limit, std::int64_t now) const {
-    std::vector<RecalledEnglishWord> result;
-    const std::size_t shardQueryLimit = std::max(limit, std::size_t{16});
-    for (const auto &s : shards_) if (s) {
-        auto part = s->recallEnglishWords(prefix, shardQueryLimit, now);
-        result.insert(result.end(), std::make_move_iterator(part.begin()), std::make_move_iterator(part.end()));
-    }
-    std::unordered_map<std::string, RecalledEnglishWord> uniqueWords;
-    for (auto &w : result) {
-        auto it = uniqueWords.find(w.text);
-        if (it == uniqueWords.end()) {
-            uniqueWords.emplace(w.text, std::move(w));
-        } else {
-            it->second.frequency += w.frequency;
-            if (w.lastSelectedMs > it->second.lastSelectedMs) {
-                it->second.lastSelectedMs = w.lastSelectedMs;
-                it->second.baseBoost = w.baseBoost;
-            }
+    if (prefix.size() < 2 || limit == 0) return {};
+    const auto lower = toLowerAscii(prefix);
+    EnglishRecallQuery query(lower, limit, now);
+    struct ShardView {
+        const EnglishRecallIndex *index;
+        std::unordered_set<std::string> changed;
+        std::vector<EnglishRecallEvidence> replacements;
+    };
+    std::vector<ShardView> views;
+    views.reserve(kShardCount);
+    for (const auto &shard : shards_) if (shard) {
+        ShardView view{&shard->ensureRecallIndex().englishIndex, {}, {}};
+        // Only the bounded delta is aggregated on a key. Exclude every changed
+        // spelling, including newly suppressed observations, from stale base
+        // evidence. The old immutable shard/index remains untouched.
+        for (const auto &[key, item] : shard->delta_) {
+            if (isRecallableEnglishWord(item.phrase) &&
+                toLowerAscii(item.phrase).starts_with(lower))
+                view.changed.insert(item.phrase);
         }
-    }
-    result.clear();
-    result.reserve(uniqueWords.size());
-    for (auto &pair : uniqueWords) {
-        result.push_back(std::move(pair.second));
-    }
-    std::int64_t latestMs = 0;
-    double latestBoost = 0.0;
-    for (const auto &item : result) {
-        if (item.lastSelectedMs > latestMs) {
-            latestMs = item.lastSelectedMs;
-            latestBoost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
-        } else if (item.lastSelectedMs == latestMs) {
-            const double boost = std::isfinite(item.baseBoost) ? std::max(0.0, item.baseBoost) : 0.0;
-            latestBoost = std::max(latestBoost, boost);
+        for (const auto &phrase : view.changed) {
+            const auto evidence = aggregateLearningEvidence(
+                shard->collectVariants(phrase, normalizePinyin(phrase)));
+            if (admittedEnglishEvidence(evidence, phrase))
+                view.replacements.push_back({toLowerAscii(phrase), phrase, evidence});
         }
+        views.push_back(std::move(view));
     }
-    constexpr double kDormantHalfLifeMs = 12.0 * 3600.0 * 1000.0;
-    constexpr double kDormantTauMs = kDormantHalfLifeMs / 0.6931471805599453;
-    const auto lowerPrefix = toLowerAscii(prefix);
-    for (auto &item : result) {
-        double effectiveBoost = item.baseBoost;
-        if (latestMs > 0 && item.lastSelectedMs > 0 && item.lastSelectedMs < latestMs) {
-            const auto ageSinceLatest = latestMs - item.lastSelectedMs;
-            double dormant = std::exp(-static_cast<double>(ageSinceLatest) / kDormantTauMs);
-            if (latestBoost >= 1.8) {
-                const double discount = 1.0 - 0.30 * std::min(1.0, (latestBoost - 1.8) / (3.9 - 1.8));
-                dormant = std::min(dormant, discount);
-            }
-            effectiveBoost = item.baseBoost * dormant;
-        }
-        const auto lower = toLowerAscii(item.text);
-        double completeness = 0.0;
-        if (!lower.empty()) {
-            completeness = static_cast<double>(lowerPrefix.size()) /
-                           static_cast<double>(lower.size());
-        }
-        if (lower == lowerPrefix) {
-            completeness += 1.0;
-        }
-        item.score = effectiveBoost + completeness;
+    // Fix the common recency reference before applying a global Top K. A local
+    // truncation cannot predict which old complete spelling will win globally.
+    for (const auto &view : views) {
+        view.index->observeLatest(query, view.changed);
+        for (const auto &word : view.replacements) query.observeLatest(word);
     }
-    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
-        const bool aFin = std::isfinite(a.score);
-        const bool bFin = std::isfinite(b.score);
-        if (aFin != bFin) return aFin;
-        if (aFin && a.score != b.score) return a.score > b.score;
-        if (a.frequency != b.frequency) return a.frequency > b.frequency;
-        if (a.lastSelectedMs != b.lastSelectedMs) return a.lastSelectedMs > b.lastSelectedMs;
-        return a.text < b.text;
-    });
-    if (result.size() > limit) result.resize(limit);
-    return result;
+    for (const auto &view : views) {
+        view.index->collect(query, view.changed);
+        for (const auto &word : view.replacements) query.consider(word);
+    }
+    return query.results();
 }
 
 } // namespace modernime::core

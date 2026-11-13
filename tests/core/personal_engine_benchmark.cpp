@@ -385,6 +385,57 @@ void verifyPublishedSnapshotLatency(std::size_t count) {
 }
 
 
+void verifyEnglishRecallLatency(std::size_t count) {
+    constexpr std::int64_t now = 2000000000000LL;
+    for (const int frequency : {1, 2}) for (const int feedback : {0, 20}) {
+        if (frequency == 1 && feedback != 0) continue;
+        std::vector<modernime::core::LearningEntry> entries;
+        entries.reserve(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            std::string word = "microservices_";
+            auto suffix = i;
+            for (int n = 0; n < 4; ++n) { word += static_cast<char>('a' + suffix % 26); suffix /= 26; }
+            entries.push_back({word, word, {}, {}, frequency, now, feedback, false});
+        }
+        auto snapshot = std::make_shared<modernime::core::LearningSnapshot>(std::move(entries));
+        const auto firstStart = std::chrono::steady_clock::now();
+        const auto first = snapshot->recallEnglishWords("micro", 3, now);
+        const double firstUs = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - firstStart).count();
+        if (snapshot->entries().size() != count || first.size() != (frequency == 1 ? 0u : 3u)) {
+            std::cerr << "English recall capacity/admission verification failed!\n";
+            std::exit(EXIT_FAILURE);
+        }
+        auto recall = measurePercentiles(256, [&] {
+            benchmark::DoNotOptimize(snapshot->recallEnglishWords("micro", 3, now));
+        }, 16, 1);
+        double publicationUs = 0;
+        if (frequency == 2) {
+            std::int64_t timestamp = now;
+            const auto publication = measurePercentiles(128, [&] {
+                auto next = std::make_shared<modernime::core::LearningSnapshot>(*snapshot);
+                next->recordSelection("microservices_aaaa", "microservices_aaaa", {}, {}, ++timestamp);
+                auto words = next->recallEnglishWords("micro", 3, timestamp);
+                if (words.empty() || words.front().text != "microservices_aaaa") std::exit(EXIT_FAILURE);
+                benchmark::DoNotOptimize(words);
+                snapshot = std::move(next);
+            }, 16, 1);
+            publicationUs = publication.p99_us;
+        }
+        std::cout << "  English shared-prefix " << count << " entries, frequency=" << frequency
+                  << ", feedback=" << feedback << ": first=" << firstUs << " us, recall P99=" << recall.p99_us
+                  << " us, selection+next recall P99=" << publicationUs << " us\n";
+#if MODERNIME_ENFORCE_LATENCY_GATES
+        if (g_injected_gate_failure == "english_recall") recall.p99_us = 99999.0;
+        if (recall.p99_us >= 1000 || publicationUs >= 5000) {
+            std::cerr << "English recall exceeded recall 1ms / publication 5ms gate!\n";
+            std::exit(EXIT_FAILURE);
+        }
+#endif
+    }
+}
+
+
 void verifyBusyWriterLatency() {
     auto pattern = (std::filesystem::temp_directory_path() / "modernime-writer-bench-XXXXXX").string();
     if (!mkdtemp(pattern.data())) std::exit(EXIT_FAILURE);
@@ -1082,10 +1133,13 @@ void runPercentileAndMemoryVerification() {
 int main(int argc, char **argv) {
     std::string inject_gate;
     bool self_test = false;
+    bool english_only = false;
     for (int i = 1; i < argc; ++i) {
         std::string_view arg(argv[i]);
         if (arg.starts_with("--inject_gate_failure=")) {
             inject_gate = std::string(arg.substr(std::string_view("--inject_gate_failure=").size()));
+        } else if (arg == "--english_recall_latency_only") {
+            english_only = true;
         } else if (arg == "--self_test_gate_rejection") {
             self_test = true;
         }
@@ -1093,7 +1147,6 @@ int main(int argc, char **argv) {
 
 #if defined(__unix__) || defined(__linux__)
     if (self_test) {
-        std::cout << "Running deterministic self-test of all 8 performance latency gates...\n";
         const std::vector<std::string> gates = {
             "published_snapshot",
             "busy_writer",
@@ -1102,8 +1155,10 @@ int main(int argc, char **argv) {
             "lmdb_concurrent_pruning",
             "lmdb_first_observer",
             "lmdb_first_key_after_clear",
-            "startup_initial_commit"
+            "startup_initial_commit",
+            "english_recall"
         };
+        std::cout << "Running deterministic self-test of all " << gates.size() << " performance latency gates...\n";
         for (const auto &gate : gates) {
             pid_t pid = fork();
             if (pid == 0) {
@@ -1124,13 +1179,17 @@ int main(int argc, char **argv) {
                 return EXIT_FAILURE;
             }
         }
-        std::cout << "All 8 performance latency gates verified active and enforcing non-zero rejection on failure.\n";
+        std::cout << "All " << gates.size() << " performance latency gates verified active and enforcing non-zero rejection on failure.\n";
         return 0;
     }
 #endif
 
     if (!inject_gate.empty()) {
         g_injected_gate_failure = inject_gate;
+        if (inject_gate == "english_recall") {
+            verifyEnglishRecallLatency(100);
+            return 0;
+        }
         if (inject_gate == "published_snapshot") {
             verifyPublishedSnapshotLatency(100);
             return 0;
@@ -1163,7 +1222,14 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (english_only) {
+        verifyEnglishRecallLatency(50000);
+        verifyEnglishRecallLatency(200000);
+        return 0;
+    }
     runPercentileAndMemoryVerification();
+    verifyEnglishRecallLatency(50000);
+    verifyEnglishRecallLatency(200000);
     verifyPublishedSnapshotLatency(50000);
     verifyPublishedSnapshotLatency(200000);
     verifyBusyWriterLatency();

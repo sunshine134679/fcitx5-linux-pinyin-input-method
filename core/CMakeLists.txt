@@ -6,6 +6,7 @@ add_library(modernime_core STATIC
     src/pinyin_match.cpp
     src/punctuation.cpp
     src/learning_snapshot.cpp
+    src/english_recall_index.cpp
     src/learning_store.cpp
     src/learning_writer.cpp
     src/personal_engine.cpp

@@ -171,6 +171,9 @@ TEST(ArchitectureLearningSemanticsRegression, OldLongPinyinRemainsStoredButLeave
             // 模拟旧版本已经留下的事实，不走新版提交资格。
             ASSERT_TRUE(store.recordSelection(pinyin, pinyin, "", "", 1000));
             ASSERT_TRUE(store.recordSelection("gnueabihf", "gnueabihf", "", "", 1000));
+            // The control English spelling must be confirmed under the
+            // two-observation admission policy; the old raw pinyin stays once.
+            ASSERT_TRUE(store.recordSelection("gnueabihf", "gnueabihf", "", "", 1001));
         }
         LearningStore reopened(path);
         ASSERT_TRUE(reopened.openReadOnly());
