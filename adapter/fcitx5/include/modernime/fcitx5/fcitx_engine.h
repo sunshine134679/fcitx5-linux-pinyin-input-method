@@ -37,6 +37,24 @@ class Instance;
 
 namespace modernime::fcitx5 {
 
+struct SurroundingContext final {
+    std::string first;
+    std::string second;
+    ContextAvailability availability = ContextAvailability::Valid;
+};
+
+// Owned by one input context. Fcitx frontends notify every text/cursor change
+// with updateSurroundingText(); only that notification authorizes reuse.
+class SurroundingContextCache final {
+public:
+    void observe(const fcitx::SurroundingText &text);
+    SurroundingContext current(const fcitx::SurroundingText &text) const;
+    void invalidate();
+
+private:
+    std::optional<SurroundingContext> window_;
+};
+
 std::pair<std::string, std::string>
 extractSurroundingContext(const fcitx::SurroundingText &text,
                           std::size_t maxChars);
@@ -324,8 +342,10 @@ class FcitxEngineHost final : public EngineHost {
 public:
     explicit FcitxEngineHost(fcitx::InputContext &inputContext);
 
-    void setController(ModernIMEController &controller) {
+    void setController(ModernIMEController &controller,
+                       SurroundingContextCache *contextCache = nullptr) {
         controller_ = &controller;
+        contextCache_ = contextCache;
     }
 
     void publishPage(const core::CandidatePage &page) override;
@@ -338,6 +358,7 @@ public:
 private:
     fcitx::InputContext *inputContext_;
     ModernIMEController *controller_ = nullptr;
+    SurroundingContextCache *contextCache_ = nullptr;
 };
 
 class FcitxInputContextState final : public fcitx::InputContextProperty {
@@ -353,6 +374,9 @@ public:
                        std::uint64_t generation);
     std::uint64_t settingsGeneration() const { return settingsGeneration_; }
 
+    void syncSurroundingContext(bool textUpdated = false);
+    void invalidateSurroundingContext() { surroundingContext_.invalidate(); }
+
     ModernIMEController &controller() { return controller_; }
     void setClipboardEntries(std::vector<std::string> entries) {
         controller_.setClipboardEntries(std::move(entries));
@@ -362,6 +386,8 @@ public:
     }
 
 private:
+    fcitx::InputContext &inputContext_;
+    SurroundingContextCache surroundingContext_;
     FcitxEngineHost host_;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     std::unique_ptr<pinyin::PinyinCandidateProvider> provider_;

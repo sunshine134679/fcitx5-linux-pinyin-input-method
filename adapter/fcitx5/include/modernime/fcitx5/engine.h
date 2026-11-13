@@ -157,6 +157,7 @@ public:
     void setComponentLookup(std::shared_ptr<const core::ComponentLookup> lookup) { componentLookup_ = std::move(lookup); }
     void cancelAuxiliaryInput() { if (auxiliaryInputActive()) clearComposition(); }
     bool finishTemporaryEnglish(bool commitText);
+    void prepareForApplicationShortcut();
     bool setSymbolFilter(std::string category, bool favoritesOnly);
     void setActive(bool active);
     void setSensitive(bool sensitive);

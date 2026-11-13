@@ -102,6 +102,29 @@ void testPairs(fcitx::Instance &instance) {
     check(punctuation('(') && doc.text == "（", "sensitive input retains ordinary punctuation without pair");
 }
 
+void testContextCacheHostEdits(fcitx::Instance &instance) {
+    Document doc(instance.inputContextManager());
+    fcitx5::FcitxEngineHost host(doc);
+    fcitx5::ModernIMEController controller(host);
+    fcitx5::SurroundingContextCache cache;
+    host.setController(controller, &cache);
+    cache.observe(doc.surroundingText());
+    host.commit("你好");
+    auto window = cache.current(doc.surroundingText());
+    check(window.first == "你好" && window.second.empty(),
+          "host commits invalidate the previous context projection");
+    cache.observe(doc.surroundingText());
+    check(host.insertPair("（", "）"), "context fixture inserts a real pair");
+    window = cache.current(doc.surroundingText());
+    check(window.first == "你好（" && window.second == "）",
+          "pair insertion invalidates text and cursor projection");
+    cache.observe(doc.surroundingText());
+    check(host.replaceSurrounding("（", "）", ""), "context fixture removes its own pair");
+    window = cache.current(doc.surroundingText());
+    check(window.first == "你好" && window.second.empty(),
+          "surrounding replacement invalidates the previous context projection");
+}
+
 void testSmartPunctuation(fcitx::Instance &instance) {
     Document doc(instance.inputContextManager());
     fcitx5::FcitxEngineHost host(doc);
@@ -237,6 +260,93 @@ void testTemporaryEnglish(fcitx::Instance &instance) {
     send(fcitx::Key(FcitxKey_Return));
     check(doc.text.ends_with("aX"), "temporary fragment supports cursor insertion and forward deletion");
 }
+
+void testTemporaryEnglishApplicationShortcuts(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    for (const auto symbol : {FcitxKey_c, FcitxKey_Delete}) {
+        Document doc(instance.inputContextManager());
+        fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+        engine.activate(entries.front(), in);
+        auto send = [&](fcitx::Key key) {
+            fcitx::KeyEvent event(&doc, key);
+            engine.keyEvent(entries.front(), event);
+            return event.accepted();
+        };
+        check(send(fcitx::Key(FcitxKey_E,
+                  fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift}))),
+              "temporary English opens for application shortcut");
+        for (const char c : std::string("abc"))
+            check(send(fcitx::Key(std::string(1, c))), "shortcut fragment accepted");
+        auto &controller = engine.state(&doc)->controller();
+        check(!send(fcitx::Key(FcitxKey_Control_L)) && controller.temporaryEnglishMode() && doc.text.empty(),
+              "physical modifier preserves the pending fragment");
+        check(!send(fcitx::Key(symbol, fcitx::KeyState::Ctrl)), "application shortcut passes through");
+        check(doc.text == "abc" && !controller.temporaryEnglishMode(),
+              "both unmapped Ctrl+C and mapped Ctrl+Delete commit before passing through");
+        fcitx::InputContextEvent out(&doc, fcitx::EventType::InputContextFocusOut);
+        engine.deactivate(entries.front(), out);
+        check(doc.text == "abc", "application shortcut fragment survives later focus out");
+    }
+}
+
+void testAuxiliaryArrowNavigation(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    struct Query {
+        const char *input;
+        const char *first;
+        const char *second;
+    };
+    for (const auto &query : {Query{"u+yiyi", "丂", "丈"}, Query{"v;jiantou", "→", "←"}}) {
+        Document doc(instance.inputContextManager());
+        fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+        engine.activate(entries.front(), in);
+        auto send = [&](fcitx::Key key) {
+            fcitx::KeyEvent event(&doc, key);
+            engine.keyEvent(entries.front(), event);
+            return event.accepted();
+        };
+        auto typeQuery = [&] {
+            for (const char c : std::string(query.input))
+                check(send(fcitx::Key(std::string(1, c))), "auxiliary navigation query accepted");
+        };
+        typeQuery();
+        auto &controller = engine.state(&doc)->controller();
+        check(controller.page().items.size() > 1 && controller.page().items[0].text == query.first &&
+                  controller.page().items[1].text == query.second,
+              "auxiliary arrow fixture has two distinct candidates");
+        check(send(fcitx::Key(FcitxKey_Down)) && controller.page().cursor == 1,
+              "Down selects the next auxiliary candidate");
+        check(send(fcitx::Key(FcitxKey_Up)) && controller.page().cursor == 0,
+              "Up selects the previous auxiliary candidate");
+        check(send(fcitx::Key(FcitxKey_Return)) && doc.text == query.first,
+              "Up-selected auxiliary candidate commits");
+        typeQuery();
+        check(send(fcitx::Key(FcitxKey_Down)) && send(fcitx::Key(FcitxKey_space)) &&
+                  doc.text == std::string(query.first) + query.second,
+              "Down-selected auxiliary candidate commits");
+    }
+#ifdef MODERNIME_HAS_LIBIME_PINYIN
+    Document doc(instance.inputContextManager());
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entries.front(), in);
+    auto send = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key);
+        engine.keyEvent(entries.front(), event);
+        return event.accepted();
+    };
+    for (const char c : std::string("ni")) send(fcitx::Key(std::string(1, c)));
+    auto &controller = engine.state(&doc)->controller();
+    check(controller.page().pageBoundaries.size() > 1, "pinyin arrow fixture spans multiple pages");
+    const auto nextPage = controller.page().pageBoundaries[1].begin;
+    check(send(fcitx::Key(FcitxKey_Down)) && controller.page().cursor == nextPage,
+          "ordinary pinyin Down still moves a whole page");
+    check(send(fcitx::Key(FcitxKey_Up)) && controller.page().cursor == 0,
+          "ordinary pinyin Up still returns to the previous page");
+#endif
+}
+
 void testPairSurvivesClientReset(fcitx::Instance &instance) {
     fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
     const auto entries = engine.listInputMethods();
@@ -434,12 +544,15 @@ int main() {
         instance.addonManager().registerDefaultLoader(nullptr);
         instance.initialize();
         testPairs(instance);
+        testContextCacheHostEdits(instance);
         testSmartPunctuation(instance);
         testApplicationModes(instance);
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
         testUndo(instance);
 #endif
         testTemporaryEnglish(instance);
+        testTemporaryEnglishApplicationShortcuts(instance);
+        testAuxiliaryArrowNavigation(instance);
         testComponentLookup(instance);
         testUnderscoreKeepsRawEnglish(instance);
         testPairSurvivesClientReset(instance);

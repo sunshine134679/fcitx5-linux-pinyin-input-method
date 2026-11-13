@@ -209,12 +209,6 @@ pinyin::PinyinProviderOptions pinyinOptions(
 }
 #endif
 
-struct SurroundingContext final {
-    std::string first;
-    std::string second;
-    ContextAvailability availability = ContextAvailability::Valid;
-};
-
 static SurroundingContext
 extractSurroundingContextState(const fcitx::SurroundingText &text,
                           std::size_t maxChars) {
@@ -293,6 +287,18 @@ extractSurroundingContextState(const fcitx::SurroundingText &text,
             : ContextAvailability::Valid;
     return {std::move(before), std::move(after), availability};
 }
+
+void SurroundingContextCache::observe(const fcitx::SurroundingText &text) {
+    window_ = extractSurroundingContextState(text, 32);
+}
+
+SurroundingContext SurroundingContextCache::current(
+    const fcitx::SurroundingText &text) const {
+    if (text.isValid() && window_) return *window_;
+    return extractSurroundingContextState(text, 32);
+}
+
+void SurroundingContextCache::invalidate() { window_.reset(); }
 
 std::pair<std::string, std::string>
 extractSurroundingContext(const fcitx::SurroundingText &text,
@@ -373,6 +379,7 @@ void FcitxEngineHost::publishPage(const core::CandidatePage &page) {
 }
 
 void FcitxEngineHost::commit(std::string_view text) {
+    if (contextCache_) contextCache_->invalidate();
     inputContext_->commitString(std::string(text));
 }
 
@@ -391,6 +398,7 @@ std::optional<TextEditContext> FcitxEngineHost::textEditContext() const {
 bool FcitxEngineHost::insertPair(std::string_view opener, std::string_view closer) {
     if (!textEditContext() || inputContext_->capabilityFlags().test(
             fcitx::CapabilityFlag::Terminal)) return false;
+    if (contextCache_) contextCache_->invalidate();
     const auto pair = std::string(opener) + std::string(closer);
     if (commitWithCursor(inputContext_, pair, fcitx::utf8::length(opener))) return true;
     inputContext_->commitString(pair);
@@ -404,6 +412,7 @@ bool FcitxEngineHost::replaceSurrounding(std::string_view before, std::string_vi
     const auto current = textEditContext();
     if (!current || !current->before.ends_with(before) ||
         !current->after.starts_with(after)) return false;
+    if (contextCache_) contextCache_->invalidate();
     const auto left = fcitx::utf8::length(before);
     const auto right = fcitx::utf8::length(after);
     inputContext_->deleteSurroundingText(-static_cast<int>(left),
@@ -415,7 +424,7 @@ bool FcitxEngineHost::replaceSurrounding(std::string_view before, std::string_vi
 FcitxInputContextState::FcitxInputContextState(
     fcitx::InputContext &inputContext, const core::ModernIMESettings &settings,
     const FcitxEngineResources &resources, std::uint64_t settingsGeneration)
-    : host_(inputContext)
+    : inputContext_(inputContext), host_(inputContext)
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
       ,
       provider_(resources.pinyin != nullptr
@@ -432,8 +441,29 @@ FcitxInputContextState::FcitxInputContextState(
 #endif
     controller_.setComponentLookup(resources.componentLookup);
     controller_.setClipboardFavoriteHandler(resources.clipboardFavoriteHandler);
-    host_.setController(controller_);
+    host_.setController(controller_, &surroundingContext_);
     controller_.setActive(settings.defaultMode == core::InputMode::Chinese);
+}
+
+void FcitxInputContextState::syncSurroundingContext(bool textUpdated) {
+    const bool sensitive =
+        inputContext_.capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+        inputContext_.capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
+    controller_.setSensitive(sensitive);
+    if (!sensitive && inputContext_.surroundingText().isValid()) {
+        const auto &text = inputContext_.surroundingText();
+        if (textUpdated) surroundingContext_.observe(text);
+        const auto context = surroundingContext_.current(text);
+        controller_.setContext(context.first, context.second, context.availability);
+        return;
+    }
+    surroundingContext_.invalidate();
+    const auto availability =
+        !sensitive && !inputContext_.capabilityFlags().test(
+                          fcitx::CapabilityFlag::SurroundingText)
+            ? ContextAvailability::Unavailable
+            : ContextAvailability::Invalidated;
+    controller_.setContext("", "", availability);
 }
 
 void FcitxInputContextState::applySettings(
@@ -599,24 +629,7 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
                 }
                 auto *contextState = state(ic);
                 if (contextState != nullptr) {
-                    const bool isSensitive =
-                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
-                        ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
-                    contextState->controller().setSensitive(isSensitive);
-                    if (!isSensitive && ic->surroundingText().isValid()) {
-                        const auto context = extractSurroundingContextState(
-                            ic->surroundingText(), 32);
-                        contextState->controller().setContext(context.first,
-                                                              context.second,
-                                                              context.availability);
-                    } else {
-                        const auto availability =
-                            !isSensitive && !ic->capabilityFlags().test(
-                                fcitx::CapabilityFlag::SurroundingText)
-                                ? ContextAvailability::Unavailable
-                                : ContextAvailability::Invalidated;
-                        contextState->controller().setContext("", "", availability);
-                    }
+                    contextState->syncSurroundingContext(true);
                 }
             });
         clipboardCapabilityWatcher_ = instance_->watchEvent(
@@ -624,6 +637,14 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
             fcitx::EventWatcherPhase::Default,
             [this](fcitx::Event &event) {
                 auto *ic = static_cast<fcitx::InputContextEvent &>(event).inputContext();
+                if (ic != nullptr && instance_->inputMethod(ic) == "modernime") {
+                    if (auto *contextState = state(ic)) {
+                        contextState->invalidateSurroundingContext();
+                        if (ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
+                            ic->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive))
+                            contextState->controller().setSensitive(true);
+                    }
+                }
                 if (ic != nullptr &&
                     ic == instance_->inputContextManager().mostRecentInputContext() &&
                     (ic->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
@@ -1090,23 +1111,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         if (contextState->settingsGeneration() != settingsGeneration_) {
             contextState->applySettings(settings_, settingsGeneration_);
         }
-        const bool isSensitive =
-            event.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::Password) ||
-            event.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::Sensitive);
-        contextState->controller().setSensitive(isSensitive);
-        if (!isSensitive && event.inputContext()->surroundingText().isValid()) {
-            const auto context = extractSurroundingContextState(
-                event.inputContext()->surroundingText(), 32);
-            contextState->controller().setContext(
-                context.first, context.second, context.availability);
-        } else {
-            const auto availability =
-                !isSensitive && !event.inputContext()->capabilityFlags().test(
-                    fcitx::CapabilityFlag::SurroundingText)
-                    ? ContextAvailability::Unavailable
-                    : ContextAvailability::Invalidated;
-            contextState->controller().setContext("", "", availability);
-        }
+        contextState->syncSurroundingContext();
         auto modernEvent = translateKey(event.key(), keyBindings_);
         if (keyBindings_.temporaryEnglishEnabled &&
             (event.rawKey().check(FcitxKey_e, fcitx::KeyStates({fcitx::KeyState::Ctrl, fcitx::KeyState::Shift})) ||
@@ -1164,11 +1169,25 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             }
             return;
         }
-        if (!modernEvent.has_value()) {
-            if (contextState->controller().auxiliaryInputActive() && hasNonShiftModifier(event.key())) {
-                if (contextState->controller().temporaryEnglishMode()) contextState->controller().finishTemporaryEnglish(true);
-                else contextState->controller().cancelAuxiliaryInput();
+        if (modernEvent && contextState->controller().handle(*modernEvent)) {
+            if (modernEvent->kind == KeyKind::Toggle) {
+                rememberAppMode(event.inputContext());
+                const bool active = contextState->controller().active();
+                subModeAction_.setShortText(active ? "中" : "英");
+                subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
+                if (auto *ic = event.inputContext()) {
+                    subModeAction_.update(ic);
+                    ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+                }
             }
+            event.filterAndAccept();
+            return;
+        }
+        // Every unconsumed application shortcut passes the same mode boundary,
+        // including keys already translated for another mode (e.g. Ctrl+Delete).
+        if (hasNonShiftModifier(event.key()))
+            contextState->controller().prepareForApplicationShortcut();
+        if (!modernEvent.has_value()) {
             // Physical shortcuts arrive as modifier presses before the final
             // key. Keep undo/pair ownership until the actual command arrives.
             if (hasNonShiftModifier(event.key()) && !event.key().isModifier())
@@ -1185,19 +1204,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             return;
         }
 
-        if (contextState->controller().handle(*modernEvent)) {
-            if (modernEvent->kind == KeyKind::Toggle) {
-                rememberAppMode(event.inputContext());
-                const bool active = contextState->controller().active();
-                subModeAction_.setShortText(active ? "中" : "英");
-                subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
-                if (auto *ic = event.inputContext()) {
-                    subModeAction_.update(ic);
-                    ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
-                }
-            }
-            event.filterAndAccept();
-        } else if (modernEvent->kind == KeyKind::Backspace || modernEvent->kind == KeyKind::DeleteForward) {
+        if (modernEvent->kind == KeyKind::Backspace || modernEvent->kind == KeyKind::DeleteForward) {
             contextState->controller().invalidateUndo();
         } else if (modernEvent->kind == KeyKind::MoveCompositionLeft ||
                    modernEvent->kind == KeyKind::MoveCompositionRight ||
@@ -1219,6 +1226,7 @@ void ModernIMEInputMethod::activate(const fcitx::InputMethodEntry &,
     if (manager_) manager_->addon("chttrans", true);
     clipboardNeedsBaseline_ = true;
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
+        contextState->invalidateSurroundingContext();
         if (contextState->settingsGeneration() != settingsGeneration_) {
             contextState->applySettings(settings_, settingsGeneration_);
         }
@@ -1287,6 +1295,7 @@ void ModernIMEInputMethod::reset(const fcitx::InputMethodEntry &,
         ++readyEndpoint_->notificationGeneration;
     }
     if (auto *contextState = state(event.inputContext()); contextState != nullptr) {
+        contextState->invalidateSurroundingContext();
         if (event.type() == fcitx::EventType::InputContextReset &&
             event.inputContext()->hasFocus()) {
             contextState->controller().resetPreedit();

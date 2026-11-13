@@ -1735,6 +1735,11 @@ bool ModernIMEController::finishTemporaryEnglish(bool commitText) {
     return true;
 }
 
+void ModernIMEController::prepareForApplicationShortcut() {
+    if (temporaryEnglishMode()) finishTemporaryEnglish(true);
+    else cancelAuxiliaryInput();
+}
+
 bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {
     if (!temporaryEnglishMode()) {
         if (event.kind == KeyKind::Space || event.kind == KeyKind::Enter ||
@@ -1753,8 +1758,12 @@ bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {
             }
             return true;
         }
-        if (event.kind == KeyKind::PreviousCandidate) return moveCursor(-1);
-        if (event.kind == KeyKind::NextCandidate) return moveCursor(1);
+        // Up/Down carry the existing clipboard navigation kinds; auxiliary
+        // queries use them for items while ordinary pinyin keeps page movement.
+        if (event.kind == KeyKind::PreviousCandidate || event.kind == KeyKind::PreviousClipboardItem)
+            return moveCursor(-1);
+        if (event.kind == KeyKind::NextCandidate || event.kind == KeyKind::NextClipboardItem)
+            return moveCursor(1);
         if (event.kind == KeyKind::PreviousPage) return movePage(-1);
         if (event.kind == KeyKind::NextPage) return movePage(1);
     }

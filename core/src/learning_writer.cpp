@@ -30,22 +30,17 @@ LearningWriter::LearningWriter(std::filesystem::path path, bool synchronousIniti
         observerStore_->setTotalEntryLimit(totalEntryLimit_);
     }
     if (synchronousInitialLoad) {
-        storageAvailable_ = store_->open();
-        if (storageAvailable_) {
-            const auto loaded = store_->readState();
-            if (loaded.has_value()) {
-                snapshot_ = loaded->snapshot;
-                resetRevision_ = loaded->resetRevision;
-                viewState_ = EpochViewState::Ready;
-            } else {
-                storageAvailable_ = false;
-                viewState_ = EpochViewState::Reloading;
-                retryExhausted_ = true;
-                store_->close();
-            }
+        const auto loaded = loadSnapshotState(storageAvailable_);
+        if (loaded.has_value() && loaded->snapshot != nullptr) {
+            snapshot_ = loaded->snapshot;
+            resetRevision_ = loaded->resetRevision;
+            viewState_ = EpochViewState::Ready;
+            retryExhausted_ = !storageAvailable_;
         } else {
+            storageAvailable_ = false;
             viewState_ = EpochViewState::Reloading;
             retryExhausted_ = true;
+            store_->close();
         }
     } else {
         viewState_ = EpochViewState::Reloading;
@@ -55,6 +50,9 @@ LearningWriter::LearningWriter(std::filesystem::path path, bool synchronousIniti
             const auto rev = observerStore_->resetRevision();
             if (rev.has_value()) {
                 resetRevision_ = *rev;
+                // Preserve acceptance of first commits while the initial
+                // background load is pending. Its actual RW result replaces
+                // this provisional availability before snapshot publication.
                 storageAvailable_ = true;
             }
         }
@@ -315,7 +313,6 @@ bool LearningWriter::reloadIfChanged() {
         }
         resetRevision_ = *revision;
         viewState_ = EpochViewState::Reloading;
-        storageAvailable_ = true;
         retiredSnapshots_.push_back(std::move(snapshot_));
         snapshot_ = emptySnapshot();
         ++snapshotVersion_;
@@ -344,7 +341,6 @@ void LearningWriter::refreshBeforeEnqueue() {
         }
         resetRevision_ = *revision;
         viewState_ = EpochViewState::Reloading;
-        storageAvailable_ = true;
         retiredSnapshots_.push_back(std::move(snapshot_));
         snapshot_ = emptySnapshot();
         ++snapshotVersion_;
@@ -452,6 +448,23 @@ bool LearningWriter::persistBatch(const std::vector<Event> &events,
     return false;
 }
 
+std::optional<LearningStoreState> LearningWriter::loadSnapshotState(bool &writable) {
+    writable = store_->open();
+    if (writable) {
+        return store_->readState();
+    }
+    // The worker owns this connection under storeMutex_. Keep full snapshot
+    // reads off the observer connection: its lock is also used on input.
+    // Close the temporary read-only connection before any later RW attempt.
+    store_->close();
+    if (!store_->openReadOnly()) {
+        return std::nullopt;
+    }
+    auto state = store_->readState();
+    store_->close();
+    return state;
+}
+
 void LearningWriter::run() {
     while (true) {
         bool reloading = false;
@@ -502,14 +515,14 @@ void LearningWriter::run() {
                 return;
             }
             std::optional<LearningStoreState> freshState;
+            bool writable = false;
             {
                 std::lock_guard storeLock(storeMutex_);
-                if (store_->open()) {
-                    freshState = store_->readState();
-                }
+                freshState = loadSnapshotState(writable);
             }
             {
                 std::unique_lock lock(mutex_);
+                storageAvailable_ = writable;
                 workerWaitingAfterRead_ = true;
                 resumeWorkerCv_.wait(lock, [this] { return !workerPausedAfterRead_ || stopping_; });
                 workerWaitingAfterRead_ = false;
@@ -525,9 +538,9 @@ void LearningWriter::run() {
 
             std::optional<std::int64_t> currentDiskRevision;
             {
-                std::lock_guard storeLock(storeMutex_);
-                if (store_->open()) {
-                    currentDiskRevision = store_->resetRevision();
+                std::lock_guard observerLock(observerMutex_);
+                if (observerStore_->openReadOnly()) {
+                    currentDiskRevision = observerStore_->resetRevision();
                 }
             }
 
@@ -541,7 +554,8 @@ void LearningWriter::run() {
                                      std::make_move_iterator(retiredSnapshots_.end()));
                     retiredSnapshots_.clear();
                 }
-                if (!freshState.has_value() || preparedSnapshot == nullptr) {
+                if (!freshState.has_value() || preparedSnapshot == nullptr ||
+                    !currentDiskRevision.has_value()) {
                     storageAvailable_ = false;
                     retryExhausted_ = true;
                 } else if (freshState->resetRevision < resetRevision_ ||
@@ -553,8 +567,8 @@ void LearningWriter::run() {
                     automaticRetryCyclesRemaining_ = 1;
                     wakeup_.notify_one();
                 } else {
-                    storageAvailable_ = true;
-                    retryExhausted_ = false;
+                    storageAvailable_ = writable;
+                    retryExhausted_ = !writable;
                     automaticRetryCyclesRemaining_ = 1;
 
                     auto freshSnapshot = std::move(preparedSnapshot);

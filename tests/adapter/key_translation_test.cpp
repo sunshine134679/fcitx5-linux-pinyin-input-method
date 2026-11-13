@@ -60,6 +60,53 @@ int main() {
         assertTrue(elapsed.count() < 500, "100 extractions on 100k char doc finish rapidly");
     }
 
+    {
+        modernime::fcitx5::SurroundingContextCache cache;
+        fcitx::SurroundingText text;
+        text.setText("你好世界", 2, 2);
+        cache.observe(text);
+        auto window = cache.current(text);
+        assertTrue(window.first == "你好" && window.second == "世界",
+                   "notified context preserves both sides of the cursor");
+        // Same byte length, cursor and storage are not a content revision.
+        text.setText("学习中文", 2, 2);
+        cache.observe(text);
+        window = cache.current(text);
+        assertTrue(window.first == "学习" && window.second == "中文",
+                   "same-length notified edits replace the previous context");
+        cache.invalidate();
+        text.setText("重新定位", 1, 1);
+        window = cache.current(text);
+        assertTrue(window.first == "重" && window.second == "新定位",
+                   "invalidated contexts read the current host state");
+        text.setText("", 0, 0);
+        cache.observe(text);
+        window = cache.current(text);
+        assertTrue(window.first.empty() && window.second.empty() &&
+                       window.availability == modernime::fcitx5::ContextAvailability::Valid,
+                   "valid empty context clears the previous document");
+        text.invalidate();
+        cache.observe(text);
+        assertTrue(cache.current(text).availability ==
+                       modernime::fcitx5::ContextAvailability::Invalidated,
+                   "invalid host context cannot reuse a cached window");
+
+        std::string longText;
+        longText.reserve(3000000);
+        for (int i = 0; i < 1000000; ++i) longText += "文";
+        text.setText(longText, 1000000, 1000000);
+        cache.observe(text);
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 100; ++i) {
+            const auto current = cache.current(text);
+            assertTrue(current.first.size() == 96 && current.second.empty(),
+                       "long-document input retains exactly 32 context characters");
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        assertTrue(elapsed < std::chrono::milliseconds(100),
+                   "100 unchanged notified contexts avoid rescanning a million characters");
+    }
+
     const auto ctrl = fcitx::KeyStates(fcitx::KeyState::Ctrl);
     const auto shift = fcitx::KeyStates(fcitx::KeyState::Shift);
     const auto ctrlShift = fcitx::KeyStates(

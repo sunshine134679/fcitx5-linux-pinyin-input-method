@@ -56,6 +56,162 @@ protected:
     std::filesystem::path root_;
 };
 
+TEST_F(ArchitectureWriterRegression, ReadableSnapshotSurvivesWriterInitializationFailure) {
+    {
+        LearningStore seed(dbPath());
+        ASSERT_TRUE(seed.open());
+        ASSERT_TRUE(seed.clear());
+        ASSERT_TRUE(seed.recordSuppression("泥", "ni"));
+    }
+    sqlite3 *db = nullptr;
+    ASSERT_EQ(sqlite3_open(dbPath().c_str(), &db), SQLITE_OK);
+    // Reject the same initialization write that fails on a read-only file,
+    // without relying on chmod being enforced for root in CI.
+    ASSERT_EQ(sqlite3_exec(db,
+        "CREATE TRIGGER fail_writer_initialization BEFORE INSERT ON learning_state "
+        "BEGIN SELECT RAISE(ABORT, 'read-only learning fixture'); END;",
+        nullptr, nullptr, nullptr), SQLITE_OK);
+    {
+        LearningStore reader(dbPath());
+        ASSERT_TRUE(reader.openReadOnly());
+        const auto state = reader.readState();
+        ASSERT_TRUE(state.has_value());
+        EXPECT_EQ(state->resetRevision, 1);
+        EXPECT_TRUE(state->snapshot->isSuppressed("泥", "ni"));
+        LearningStore unavailableWriter(dbPath());
+        ASSERT_FALSE(unavailableWriter.open());
+    }
+
+    LearningWriter writer(dbPath());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+    EXPECT_EQ(writer.resetRevision(), 1);
+    const auto before = writer.snapshot();
+    EXPECT_TRUE(before->isSuppressed("泥", "ni"));
+    EXPECT_FALSE(writer.flush());
+
+    EXPECT_FALSE(writer.enqueueSelection("广州", "guangzhou", "", "", 3000));
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("广州", "guangzhou"));
+    EXPECT_FALSE(before->hasPositiveFrequency("广州", "guangzhou"));
+    EXPECT_FALSE(writer.flush());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+
+    ASSERT_EQ(sqlite3_exec(db, "DROP TRIGGER fail_writer_initialization;",
+                          nullptr, nullptr, nullptr), SQLITE_OK);
+    sqlite3_close(db);
+    ASSERT_TRUE(writer.flush());
+    LearningStore persisted(dbPath());
+    ASSERT_TRUE(persisted.openReadOnly());
+    const auto state = persisted.readState();
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->resetRevision, 1);
+    EXPECT_TRUE(state->snapshot->isSuppressed("泥", "ni"));
+    const auto *entry = state->snapshot->entry("广州", "guangzhou", "", "");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 1);
+}
+
+TEST_F(ArchitectureWriterRegression, WriterInitializationFailureKeepsPinyinSelectableAndSuppressed) {
+    {
+        LearningStore seed(dbPath());
+        ASSERT_TRUE(seed.open());
+        ASSERT_TRUE(seed.clear());
+        ASSERT_TRUE(seed.recordSuppression("泥", "ni"));
+    }
+    sqlite3 *db = nullptr;
+    ASSERT_EQ(sqlite3_open(dbPath().c_str(), &db), SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(db,
+        "CREATE TRIGGER fail_writer_initialization BEFORE INSERT ON learning_state "
+        "BEGIN SELECT RAISE(ABORT, 'read-only learning fixture'); END;",
+        nullptr, nullptr, nullptr), SQLITE_OK);
+    sqlite3_close(db);
+
+    PinyinDataPaths paths;
+    paths.learningStore = dbPath().string();
+    paths.userDictionary = (root_ / "user.dict").string();
+    auto shared = PinyinCandidateProvider::createSharedResources(paths, {});
+    PinyinCandidateProvider provider(shared);
+    for (const char c : std::string_view("nihao")) {
+        ASSERT_TRUE(provider.append(std::string_view(&c, 1)));
+    }
+    const auto page = provider.page();
+    ASSERT_FALSE(page.items.empty());
+    ASSERT_EQ(page.items.front().text, "你好");
+    EXPECT_EQ(page.items.front().consumedInputBytes, 5u);
+    CandidateSelectionRequest request;
+    request.displayGeneration = page.generation;
+    request.globalIndex = 0;
+    request.expected = modernime::core::candidateIdentity(page.items.front(), page);
+    const auto selected = provider.selectConfirmed(request, page.generation);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected->selected.text, "你好");
+    EXPECT_TRUE(selected->remainingInput.empty());
+    EXPECT_FALSE(provider.flush());
+
+    ASSERT_TRUE(provider.append("ni"));
+    for (const auto &item : provider.page().items) EXPECT_NE(item.text, "泥");
+    EXPECT_TRUE(shared->visibleLearning()->isSuppressed("泥", "ni"));
+}
+
+TEST_F(ArchitectureWriterRegression, ReadOnlyReloadRejectsSecondClearAndPreservesNewCommit) {
+    LearningStore external(dbPath());
+    ASSERT_TRUE(external.open());
+    ASSERT_TRUE(external.clear());
+    ASSERT_TRUE(external.recordSuppression("泥", "ni"));
+    sqlite3 *db = nullptr;
+    ASSERT_EQ(sqlite3_open(dbPath().c_str(), &db), SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(db,
+        "CREATE TRIGGER fail_writer_initialization BEFORE INSERT ON learning_state "
+        "BEGIN SELECT RAISE(ABORT, 'read-only learning fixture'); END;",
+        nullptr, nullptr, nullptr), SQLITE_OK);
+    sqlite3_close(db);
+
+    LearningWriter writer(dbPath());
+    const auto oldSnapshot = writer.snapshot();
+    writer.pauseWorkerAfterReadForTest(true);
+    struct Resume {
+        LearningWriter &writer;
+        ~Resume() { writer.pauseWorkerAfterReadForTest(false); }
+    } resume{writer};
+    ASSERT_TRUE(external.clear());
+    ASSERT_TRUE(external.recordSuppression("你好", "nihao"));
+    ASSERT_TRUE(writer.reloadIfChanged());
+    for (int i = 0; i < 500 && !writer.isWorkerWaitingAfterReadForTest(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(writer.isWorkerWaitingAfterReadForTest());
+
+    ASSERT_TRUE(external.clear());
+    ASSERT_TRUE(external.recordSuppression("上海", "shanghai"));
+    ASSERT_TRUE(writer.reloadIfChanged());
+    CommitEvent fact;
+    fact.text = "广州";
+    fact.fullPinyin = "guangzhou";
+    fact.role = CommitCandidateRole::Chinese;
+    fact.candidateIndex = 1;
+    fact.isDeviation = true;
+    fact.timestampMs = 3000;
+    writer.enqueueCommit(fact);
+    writer.pauseWorkerAfterReadForTest(false);
+    EXPECT_FALSE(writer.flush());
+    EXPECT_EQ(writer.epochViewState(), EpochViewState::Ready);
+    EXPECT_EQ(writer.resetRevision(), 3);
+    EXPECT_TRUE(writer.snapshot()->isSuppressed("上海", "shanghai"));
+    EXPECT_FALSE(writer.snapshot()->isSuppressed("你好", "nihao"));
+    EXPECT_TRUE(writer.snapshot()->hasPositiveFrequency("广州", "guangzhou"));
+    EXPECT_FALSE(oldSnapshot->hasPositiveFrequency("广州", "guangzhou"));
+
+    ASSERT_EQ(sqlite3_open(dbPath().c_str(), &db), SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(db, "DROP TRIGGER fail_writer_initialization;",
+                          nullptr, nullptr, nullptr), SQLITE_OK);
+    sqlite3_close(db);
+    ASSERT_TRUE(writer.flush());
+    const auto persisted = external.readState();
+    ASSERT_TRUE(persisted.has_value());
+    const auto *entry = persisted->snapshot->entry("广州", "guangzhou", "", "");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 1);
+}
+
 TEST_F(ArchitectureWriterRegression, CommitRacesWithPublication) {
     LearningWriter writer(dbPath());
 

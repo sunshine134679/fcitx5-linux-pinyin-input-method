@@ -85,6 +85,9 @@ private:
     bool persistBatch(const std::vector<Event> &events,
                       bool *pruned = nullptr,
                       bool *external_changed = nullptr);
+    // Constructor or worker only; the worker holds storeMutex_. A readable
+    // current snapshot remains usable even when persistence is unavailable.
+    std::optional<LearningStoreState> loadSnapshotState(bool &writable);
     void run();
     void rebaseSnapshot(const LearningStoreState &state, bool includeProcessing);
     static void applyEvent(LearningSnapshot &snapshot, const Event &event);
@@ -127,6 +130,7 @@ private:
     // of either dropping the batch or waiting forever.
     bool retryExhausted_ = false;
     int automaticRetryCyclesRemaining_ = 1;
+    // Persistence availability is independent of the visible epoch's state.
     bool storageAvailable_ = false;
     std::thread worker_;
 };
