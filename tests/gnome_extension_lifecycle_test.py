@@ -61,6 +61,72 @@ elif tool not in ("gnome-shell", "gio", "gtk-update-icon-cache", "xdg-user-dir")
 '''
 
 
+class GnomePanelRuntimeTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("gjs"), "GNOME JavaScript runtime unavailable")
+    def test_enable_before_properties_falls_back_to_inactive_icon(self):
+        source = (ROOT / "data/extensions/kimpanel@kde.org/indicator.js").read_text()
+        # Simulate only Shell imports; execute the real indicator methods in GJS.
+        source = "\n".join(line for line in source.splitlines() if not line.startswith("import "))
+        source = source.replace("export class KimIndicator", "class KimIndicator")
+        script = "const GObject = {registerClass() {}}; const PanelMenu = {Button: class {}};\n" + source + r'''
+let inactive = 0, active = 0;
+const property = {key: '/Fcitx/im'};
+const indicator = {
+    _properties: {},
+    _deactive() { inactive++; },
+    _setIcon(value) {
+        if (value !== property) throw Error('wrong input method identity');
+        active++;
+    },
+};
+KimIndicator.prototype._active.call(indicator);
+if (inactive !== 1 || active !== 0) throw Error('missing startup fallback');
+indicator._properties['/Fcitx/im'] = property;
+KimIndicator.prototype._active.call(indicator);
+if (inactive !== 1 || active !== 1) throw Error('wrong active icon');
+'''
+        result = subprocess.run([shutil.which("gjs"), "-c", script], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("gjs"), "GNOME JavaScript runtime unavailable")
+    def test_menu_releases_the_modal_grab_returned_by_shell(self):
+        source = (ROOT / "data/extensions/kimpanel@kde.org/menu.js").read_text()
+        source = "\n".join(line for line in source.splitlines() if not line.startswith("import "))
+        source = source.replace("export class KimMenu", "class KimMenu")
+        script = r'''
+const PopupMenu = {PopupMenu: class {}};
+let currentGrab = null, released = 0, nextSignal = 0;
+const signals = new Set();
+const global = {stage: {
+    connect() { const id = ++nextSignal; signals.add(id); return id; },
+    disconnect(id) { if (!signals.delete(id)) throw Error('unknown signal'); },
+}};
+const Main = {
+    pushModal(actor) {
+        if (currentGrab) throw Error('previous grab leaked');
+        return currentGrab = {actor};
+    },
+    popModal(grab) {
+        if (!currentGrab || grab !== currentGrab) throw Error('incorrect pop');
+        currentGrab = null;
+        released++;
+    },
+};
+''' + source + r'''
+const menu = Object.create(KimMenu.prototype);
+menu.actor = {};
+for (let round = 0; round < 2; round++) {
+    menu._grab();
+    if (!currentGrab || signals.size !== 4) throw Error('menu did not grab');
+    menu._ungrab();
+    if (currentGrab || signals.size !== 0) throw Error('menu did not release');
+}
+if (released !== 2) throw Error('wrong release count');
+'''
+        result = subprocess.run([shutil.which("gjs"), "-c", script], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 class GnomeExtensionLifecycleTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="modernime-gnome-")

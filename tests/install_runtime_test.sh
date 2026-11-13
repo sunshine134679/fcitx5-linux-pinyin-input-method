@@ -377,6 +377,30 @@ fi
 # Previous version in dest must still be intact
 grep -Fqx 'new-v2' "$stage_test_root/dest/bin/modernime-settings"
 
+# Remove empty bundled-pack directories while retaining unowned user packs.
+for preserve_custom_pack in no yes; do
+    pack_prefix="$test_root/uninstall-packs-$preserve_custom_pack"
+    pack_root="$pack_prefix/share/modernime/dictionary-packs"
+    mkdir -p "$pack_root/bundled/nested"
+    printf 'owned payload\n' > "$pack_root/bundled/nested/entries.tsv"
+    printf '%s\n' "$pack_root/bundled/nested/entries.tsv" > "$pack_prefix/share/modernime/install-manifest.txt"
+    if [[ "$preserve_custom_pack" == yes ]]; then
+        mkdir -p "$pack_root/custom"
+        printf 'user pack\n' > "$pack_root/custom/entries.tsv"
+    fi
+    MODERNIME_PREFIX="$pack_prefix" MODERNIME_CONFIG_HOME="$test_root/pack-config" \
+        bash "$project_root/uninstall.sh" >/dev/null
+    if [[ -e "$pack_root/bundled" ]]; then
+        printf 'Uninstall left empty bundled dictionary-pack directories\n' >&2
+        exit 1
+    fi
+    if [[ "$preserve_custom_pack" == yes ]]; then
+        grep -Fx 'user pack' "$pack_root/custom/entries.tsv" >/dev/null
+    else
+        test ! -e "$pack_prefix/share/modernime"
+    fi
+done
+
 # Refusal from a temporary directory must happen before user data backup;
 # unrelated CLI flags do not authorize writing to the default user prefix.
 guard_package="$test_root/guard-package"

@@ -258,10 +258,11 @@ rmdir --ignore-fail-on-non-empty "$prefix/lib/fcitx5" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/pinyin" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/components/upstream" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/components" 2>/dev/null || true
-if [[ -d "$prefix/share/modernime/extensions" ]]; then
-    find "$prefix/share/modernime/extensions" -depth -type d -exec rmdir {} + 2>/dev/null || true
-    rmdir --ignore-fail-on-non-empty "$prefix/share/modernime/extensions" 2>/dev/null || true
-fi
+for payload_tree in extensions dictionary-packs; do
+    if [[ -d "$prefix/share/modernime/$payload_tree" ]]; then
+        find "$prefix/share/modernime/$payload_tree" -depth -type d -exec rmdir -- {} + 2>/dev/null || true
+    fi
+done
 rmdir --ignore-fail-on-non-empty "$prefix/share/modernime" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$prefix/share/doc/modernime" 2>/dev/null || true
 rmdir --ignore-fail-on-non-empty "$config_home/environment.d" 2>/dev/null || true

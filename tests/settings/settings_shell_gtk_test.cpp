@@ -1002,6 +1002,7 @@ int main(int argc, char **argv) {
         drainEvents();
         auto *add = findTarget(window, "dictionary-add");
         assert(add != nullptr);
+        assert(waitUntil([add] { return gtk_widget_get_sensitive(add); }));
         DictionaryDialogProbe dialogProbe;
         g_timeout_add(10, inspectDictionaryDialog, &dialogProbe);
         gtk_button_clicked(GTK_BUTTON(add));

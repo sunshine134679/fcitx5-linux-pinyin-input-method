@@ -19,7 +19,7 @@ export class KimMenu extends PopupMenu.PopupMenu {
             'open-state-changed', this._onOpenStateChanged.bind(this));
         this._kimKeyPressId = this.actor.connect(
             'key-press-event', this._onSourceKeyPress.bind(this));
-        this.grabbed = false;
+        this._modalGrab = null;
         this._propertySwitch = [];
         this.kimpanel = params.kimpanel;
     }
@@ -27,7 +27,7 @@ export class KimMenu extends PopupMenu.PopupMenu {
     destroy() {
         this.disconnect(this._openStateChangedId);
         this.actor.disconnect(this._kimKeyPressId);
-        if (this.grabbed) {
+        if (this._modalGrab) {
             this._ungrab();
         }
         this.execMenu([]);
@@ -86,10 +86,10 @@ export class KimMenu extends PopupMenu.PopupMenu {
 
     _onOpenStateChanged(menu, open) {
         if (open) {
-            if (!this.grabbed)
+            if (!this._modalGrab)
                 this._grab();
         } else {
-            if (this.grabbed)
+            if (this._modalGrab)
                 this._ungrab();
         }
         // Setting the max-height won't do any good if the minimum height of the
@@ -102,14 +102,14 @@ export class KimMenu extends PopupMenu.PopupMenu {
     }
 
     _onHoverCapture() {
-        if (!this.grabbed)
+        if (!this._modalGrab)
             return false;
 
         return false;
     }
 
     _onEventCapture(actor, event) {
-        if (!this.grabbed)
+        if (!this._modalGrab)
             return false;
 
         let activeMenuContains = this.actor.contains(event.get_source());
@@ -131,7 +131,7 @@ export class KimMenu extends PopupMenu.PopupMenu {
     }
 
     _onKeyFocusChanged() {
-        if (!this.grabbed)
+        if (!this._modalGrab)
             return;
 
         let focus = global.stage.key_focus;
@@ -144,7 +144,7 @@ export class KimMenu extends PopupMenu.PopupMenu {
     }
 
     _grab() {
-        Main.pushModal(this.actor);
+        this._modalGrab = Main.pushModal(this.actor);
 
         this._eventCaptureId = global.stage.connect(
             'captured-event', this._onEventCapture.bind(this));
@@ -156,7 +156,6 @@ export class KimMenu extends PopupMenu.PopupMenu {
         this._keyFocusNotifyId = global.stage.connect(
             'notify::key-focus', this._onKeyFocusChanged.bind(this));
 
-        this.grabbed = true;
     }
 
     _ungrab() {
@@ -168,7 +167,7 @@ export class KimMenu extends PopupMenu.PopupMenu {
         this._leaveEventId = 0;
         global.stage.disconnect(this._keyFocusNotifyId);
         this._keyFocusNotifyId = 0;
-        this.grabbed = false;
-        Main.popModal(this.actor);
+        Main.popModal(this._modalGrab);
+        this._modalGrab = null;
     }
 };

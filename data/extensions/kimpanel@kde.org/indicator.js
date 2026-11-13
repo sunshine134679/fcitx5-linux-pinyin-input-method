@@ -168,7 +168,7 @@ export class KimIndicator extends PanelMenu.Button {
         if (this._properties['/Fcitx/im']) {
             this._setIcon(this._properties['/Fcitx/im']);
         } else {
-            self._deactive()
+            this._deactive();
         }
     }
 
