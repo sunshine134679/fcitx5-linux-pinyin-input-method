@@ -2,6 +2,7 @@
 
 #include "modernime/settings/data_controller.h"
 #include "modernime/settings/dictionary_pronunciation.h"
+#include "modernime/settings/dictionary_pack_manager.h"
 #include "modernime/settings/quick_phrase_editor.h"
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
@@ -74,16 +75,16 @@ void updateDictionaryDialogValidity(DictionaryDialogState *state) {
     std::string message;
     bool error = false;
     if (*phrase == '\0') {
-        message = "输入常用词、人名或专业名词，拼音会自动建议。";
+        message = "可添加中文或中英混合词，例如 A股、Docker容器。";
     } else if (*reading == '\0') {
         message = state->loading && state->autoPinyin
             ? "正在读取本地词库，稍后自动填写拼音…"
-            : "无法自动建议这个词的读音，请填写完整拼音，例如 ni'hao。";
+            : "请填写完整输入键，例如 ni'hao、agu 或 dockerrongqi。";
     } else if (!valid) {
-        message = "请填写不带声调的完整拼音，用 ' 分隔音节，ü 写作 v。";
+        message = "请填写完整拼音或混合词输入键；拼音不带声调，ü 写作 v。";
         error = true;
     } else if (!state->autoPinyin) {
-        message = "已使用你填写的读音。";
+        message = "已使用你填写的输入键。";
     } else if (state->approximate) {
         message = "这是按汉字组合的建议读音；人名和多音字请确认，也可直接修改。";
     } else {
@@ -239,16 +240,19 @@ public:
         gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(views));
         gtk_widget_set_halign(switcher, GTK_ALIGN_START);
         addStyleClass(switcher, "modernime-dictionary-switcher");
-        setAccessibleWidgetText(switcher, "词典管理方式", "切换拼音词条与快捷短语，保留未保存的短语草稿");
+        setAccessibleWidgetText(switcher, "词典管理方式", "切换拼音词条、快捷短语与离线词库包，保留未保存的短语草稿");
         gtk_box_pack_start(GTK_BOX(page), switcher, FALSE, FALSE, 0);
         auto *dictionaryContent = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         gtk_stack_add_titled(GTK_STACK(views), dictionaryContent, "dictionary", "拼音词条");
         quickPhrases = std::make_unique<QuickPhraseEditor>(quickPhrasePath(), notify);
         gtk_stack_add_titled(GTK_STACK(views), quickPhrases->widget(), "quick-phrases", "快捷短语");
+        dictionaryPacks = std::make_unique<DictionaryPackManager>(notify);
+        gtk_stack_add_titled(GTK_STACK(views), dictionaryPacks->widget(), "dictionary-packs", "词库包");
         gtk_box_pack_start(GTK_BOX(page), views, TRUE, TRUE, 0);
         g_signal_connect(views, "notify::visible-child-name", G_CALLBACK(+[](GObject *, GParamSpec *, gpointer p) {
             auto &owner = *static_cast<Impl *>(p);
             if (gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.quickPhrases->widget()) owner.quickPhrases->refresh();
+            if (gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.dictionaryPacks->widget()) owner.dictionaryPacks->refresh();
         }), this);
         auto *section = createSectionCard(
             "我的词条", "");
@@ -329,7 +333,7 @@ public:
         setTarget(editButton, "dictionary-edit");
         setTarget(deleteButton, "dictionary-delete");
         setTarget(importButton, "dictionary-import-export");
-        gtk_widget_set_tooltip_text(addButton, "添加一条用户词典词条");
+        gtk_widget_set_tooltip_text(addButton, "添加中文或中英混合词，如 A股（agu）、Docker容器（dockerrongqi）");
         gtk_widget_set_tooltip_text(editButton, "编辑选中的词条");
         gtk_widget_set_tooltip_text(deleteButton, "删除选中的词条");
         gtk_widget_set_tooltip_text(importButton, "从文本文件导入词条");
@@ -412,6 +416,7 @@ public:
 
     void refresh() {
         if (quickPhrases && gtk_stack_get_visible_child(GTK_STACK(views)) == quickPhrases->widget()) quickPhrases->refresh();
+        if (dictionaryPacks && gtk_stack_get_visible_child(GTK_STACK(views)) == dictionaryPacks->widget()) dictionaryPacks->refresh();
         if (idleBatchSourceId != 0) {
             g_source_remove(idleBatchSourceId);
             idleBatchSourceId = 0;
@@ -588,6 +593,10 @@ public:
             gtk_stack_set_visible_child_name(GTK_STACK(views), "quick-phrases");
             return quickPhrases->focusTarget(target);
         }
+        if (target == "dictionary-packs" || target.starts_with("pack-")) {
+            gtk_stack_set_visible_child_name(GTK_STACK(views), "dictionary-packs");
+            return dictionaryPacks->focusTarget(target);
+        }
         gtk_stack_set_visible_child_name(GTK_STACK(views), "dictionary");
         const std::array controls{dictionarySearch, addButton, importButton};
         for (auto *control : controls) {
@@ -602,6 +611,9 @@ public:
 
     GtkWidget *widget() const { return page; }
     bool confirmLeave() { return quickPhrases->confirmLeave(); }
+    bool hasUnsavedChanges() const {
+        return operationInProgress || entryDialogOpen || quickPhrases->hasUnsavedChanges() || quickPhrases->hasPendingOperations();
+    }
 
 private:
     static void onSelectionChanged(GtkTreeSelection *, gpointer data) {
@@ -1154,6 +1166,7 @@ private:
             selected.has_value() ? "编辑用户词条" : "添加用户词条",
             parentWindow(), GTK_DIALOG_MODAL, "取消", GTK_RESPONSE_CANCEL,
             "保存", GTK_RESPONSE_ACCEPT, nullptr);
+        entryDialogOpen = true;
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
                                        "取消", "关闭对话框且不保存词条修改");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT,
@@ -1170,21 +1183,22 @@ private:
         gtk_box_pack_start(GTK_BOX(body), grid, FALSE, FALSE, 0);
 
         auto *phraseLabel = gtk_label_new("词条");
-        auto *pinyinLabel = gtk_label_new("拼音");
+        auto *pinyinLabel = gtk_label_new("输入键");
         gtk_widget_set_halign(phraseLabel, GTK_ALIGN_START);
         gtk_widget_set_halign(pinyinLabel, GTK_ALIGN_START);
         auto *phrase = gtk_entry_new();
-        gtk_entry_set_placeholder_text(GTK_ENTRY(phrase), "例如：王小明、项目名称");
+        gtk_entry_set_placeholder_text(GTK_ENTRY(phrase), "例如：王小明、A股、Docker容器");
         gtk_widget_set_hexpand(phrase, TRUE);
         auto *readings = gtk_combo_box_text_new_with_entry();
         auto *pinyin = gtk_bin_get_child(GTK_BIN(readings));
-        gtk_entry_set_placeholder_text(GTK_ENTRY(pinyin), "自动建议，可直接修改读音");
+        gtk_entry_set_placeholder_text(GTK_ENTRY(pinyin), "例如：wang'xiaoming、agu、dockerrongqi");
+        gtk_widget_set_tooltip_text(pinyin, "中文填写完整拼音；混合词保留英文字母并接汉字拼音，如 Docker容器 → dockerrongqi。手动输入后不会被自动建议覆盖。");
         gtk_widget_set_hexpand(readings, TRUE);
         auto *automatic = gtk_button_new_with_label("自动填写");
         setTarget(automatic, "dictionary-suggest-pinyin");
         setAccessibleWidgetText(automatic, "自动填写", "重新根据词条建议拼音");
-        setAccessibleWidgetText(pinyin, "拼音", "自动建议的读音，可修改人名和多音字读音");
-        setAccessibleWidgetText(phrase, "词条", "输入要保存的中文词条");
+        setAccessibleWidgetText(pinyin, "输入键", "中文填写完整拼音，中英混合词填写英文与拼音组成的完整键，可手动修改");
+        setAccessibleWidgetText(phrase, "词条", "输入要保存的中文或中英混合词条");
         gtk_grid_attach(GTK_GRID(grid), phraseLabel, 0, 0, 1, 1);
         gtk_grid_attach(GTK_GRID(grid), phrase, 1, 0, 2, 1);
         gtk_grid_attach(GTK_GRID(grid), pinyinLabel, 0, 1, 1, 1);
@@ -1246,6 +1260,7 @@ private:
             gtk_entry_set_text(GTK_ENTRY(pinyin), newEntryConflictDraft->pinyin.c_str());
             gtk_entry_set_text(GTK_ENTRY(phrase), newEntryConflictDraft->phrase.c_str());
             gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), newEntryConflictDraft->weight);
+            state->autoPinyin = false;
         }
         setSettingsFocusChain(dialog, {phrase, pinyin, automatic, advanced, weight, cancel, state->accept});
         gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
@@ -1263,6 +1278,7 @@ private:
         const auto response = gtk_dialog_run(GTK_DIALOG(dialog));
         if (response != GTK_RESPONSE_ACCEPT) {
             gtk_widget_destroy(dialog);
+            entryDialogOpen = false;
             return false;
         }
 
@@ -1271,6 +1287,7 @@ private:
         const auto weightValue = static_cast<float>(
             gtk_spin_button_get_value(GTK_SPIN_BUTTON(weight)));
         gtk_widget_destroy(dialog);
+        entryDialogOpen = false;
 
         pinyin::UserDictionary dictionary;
         for (std::size_t index = 0; index < dictionaryEntries.size(); ++index) {
@@ -1319,6 +1336,7 @@ private:
     GtkWidget *page = nullptr;
     GtkWidget *views = nullptr;
     std::unique_ptr<QuickPhraseEditor> quickPhrases;
+    std::unique_ptr<DictionaryPackManager> dictionaryPacks;
     GtkListStore *dictionaryStore = nullptr;
     GtkWidget *dictionaryView = nullptr;
     GtkWidget *dictionarySearch = nullptr;
@@ -1339,6 +1357,7 @@ private:
     uint64_t batchGeneration = 0;
     uint64_t operationGeneration = 0;
     bool operationInProgress = false;
+    bool entryDialogOpen = false;
     guint idleBatchSourceId = 0;
     std::unordered_map<std::string, DraftEntry> conflictDrafts;
     std::optional<DraftEntry> newEntryConflictDraft;
@@ -1365,6 +1384,10 @@ bool DictionaryPage::focusTarget(std::string_view target) {
 
 bool DictionaryPage::confirmLeave() {
     return impl_->confirmLeave();
+}
+
+bool DictionaryPage::hasUnsavedChanges() const {
+    return impl_->hasUnsavedChanges();
 }
 
 } // namespace modernime::settings

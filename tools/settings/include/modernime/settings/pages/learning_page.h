@@ -32,6 +32,7 @@ public:
     void refresh(bool notify);
     void refreshSettings();
     bool focusTarget(std::string_view target);
+    bool hasPendingOperations() const;
 
 private:
     class Impl;

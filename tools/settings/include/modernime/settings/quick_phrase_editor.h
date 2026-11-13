@@ -27,6 +27,7 @@ public:
     void refresh();
     bool focusTarget(std::string_view target);
     bool hasUnsavedChanges() const;
+    bool hasPendingOperations() const;
     bool confirmLeave();
 
 private:

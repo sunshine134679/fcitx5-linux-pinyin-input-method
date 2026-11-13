@@ -27,6 +27,20 @@ constexpr std::array kPages{
 };
 
 constexpr std::array kSearchEntries{
+    SettingsSearchEntry{SettingsPageId::Learning, "learning-record-search", "搜索学习记录",
+                        "查找词语或拼音，忘记偏好、解除屏蔽", "learning manage forget unsuppress 学习管理 屏蔽 忘记"},
+    SettingsSearchEntry{SettingsPageId::Dictionary, "dictionary-packs", "词库包",
+                        "导入、更新和启停本地离线词库包", "pack offline 词库 专业词 行业词 中英混合词"},
+    SettingsSearchEntry{SettingsPageId::Dictionary, "dictionary-add", "添加中英混合词",
+                        "在个人词典中保存 A股、Docker容器及完整输入键", "mixed word agu dockerrongqi 混合词"},
+    SettingsSearchEntry{SettingsPageId::Candidates, "candidate-filter", "笔画与部件筛选",
+                        "输入拼音后按反引号键缩小同音候选范围", "candidate filter stroke 笔画 部件 筛选"},
+    SettingsSearchEntry{SettingsPageId::Diagnostics, "application-diagnostics", "应用兼容诊断",
+                        "查看输入法实际观察到的应用能力与排查建议", "applications toolkit wayland x11 应用 诊断 兼容"},
+    SettingsSearchEntry{SettingsPageId::Diagnostics, "bundle-export", "创建数据备份",
+                        "选择设置、词典和学习数据，保存至本地文件夹", "bundle export backup 数据包 导出 备份"},
+    SettingsSearchEntry{SettingsPageId::Diagnostics, "bundle-restore", "恢复数据备份",
+                        "比较备份差异，明确选择要恢复的数据", "bundle restore import 恢复 还原"},
     SettingsSearchEntry{SettingsPageId::Overview, "", "概览",
                         "查看 ModernIME 设置和本地数据概况", "overview home"},
     SettingsSearchEntry{SettingsPageId::Input, "", "输入与按键",

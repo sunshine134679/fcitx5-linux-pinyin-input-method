@@ -624,6 +624,7 @@ GtkWidget *QuickPhraseEditor::widget() const { return impl_->root; }
 void QuickPhraseEditor::refresh() { if (!impl_->dirty && !impl_->busy) impl_->start(Impl::Operation::Read); }
 bool QuickPhraseEditor::focusTarget(std::string_view target) { return impl_->focusTarget(target); }
 bool QuickPhraseEditor::hasUnsavedChanges() const { return impl_->dirty; }
+bool QuickPhraseEditor::hasPendingOperations() const { return impl_->busy || impl_->activeDialog; }
 bool QuickPhraseEditor::confirmLeave() { return impl_->confirmLeave(); }
 
 } // namespace modernime::settings

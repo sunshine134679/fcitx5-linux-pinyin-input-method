@@ -627,6 +627,20 @@ private:
                     presentError("已保存，应用状态待确认");
                     requestOverviewRefresh();
                 }
+            },
+            [this] { return !model.dirty() && !dictionaryPage->hasUnsavedChanges() && !clipboardPage->hasPendingOperations() && !learningPage->hasPendingOperations(); },
+            [this] {
+                std::string error;
+                if (!model.reloadFromDisk(&error)) {
+                    presentError("数据已恢复，但设置读取失败：" + error);
+                    return;
+                }
+                refreshSettingsPages();
+                dictionaryPage->refresh();
+                clipboardPage->refresh(false);
+                learningPage->refresh(false);
+                updateActionState();
+                requestOverviewRefresh();
             });
         addPage(SettingsPageId::Diagnostics, diagnosticsPage->widget());
 

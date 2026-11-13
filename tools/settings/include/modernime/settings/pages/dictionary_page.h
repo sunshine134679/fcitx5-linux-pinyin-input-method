@@ -29,6 +29,7 @@ public:
     void refresh();
     bool focusTarget(std::string_view target);
     bool confirmLeave();
+    bool hasUnsavedChanges() const;
 
 private:
     class Impl;

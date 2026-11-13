@@ -3,6 +3,7 @@
 #include "modernime/settings/data_controller.h"
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
+#include "modernime/settings/learning_manager.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include <gtk/gtk.h>
@@ -137,8 +138,16 @@ public:
                          this);
         g_signal_connect(clearLearningButton, "clicked", G_CALLBACK(onClear),
                          this);
+        records = std::make_unique<LearningManager>([life = lifetime](std::string message) {
+            life->withOwner([&](Impl &owner) {
+                owner.refresh(false, false);
+                owner.notifyMessage(std::move(message));
+            });
+        });
+        gtk_box_pack_start(GTK_BOX(page), records->widget(), FALSE, FALSE, 0);
+        gtk_box_reorder_child(GTK_BOX(page), records->widget(), 2);
         setSettingsFocusChain(
-            page, {learningEnabled, contextLearning, retryButton, clearLearningButton});
+            page, {learningEnabled, contextLearning, retryButton, clearLearningButton, records->widget()});
     }
 
     struct RefreshTaskData {
@@ -192,9 +201,13 @@ public:
         }
     }
 
-    void refresh(bool shouldNotify) {
+    void refresh(bool shouldNotify, bool includeRecords = true) {
         if (isClearing_) {
             return;
+        }
+        if (includeRecords && records) {
+            gtk_widget_set_sensitive(records->widget(), TRUE);
+            records->refresh();
         }
         gtk_label_set_text(GTK_LABEL(dataStatus), "正在读取学习记录…");
         gtk_widget_hide(retryButton);
@@ -222,6 +235,7 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        if (records && records->focusTarget(target)) return true;
         if (target == "learning-clear" || target == "learning-data") {
             return focusWidgetOrFallback(clearLearningButton, learningDataFallback);
         }
@@ -241,6 +255,8 @@ public:
     }
 
     GtkWidget *widget() const { return page; }
+
+    bool hasPendingOperations() const { return isClearing_ || (records && g_object_get_data(G_OBJECT(records->widget()), "modernime-learning-mutation-busy")); }
 
 private:
     static void onSwitchChanged(GObject *, GParamSpec *, gpointer data) {
@@ -302,6 +318,10 @@ private:
         if (impl->isClearing_) {
             return;
         }
+        if (impl->records && g_object_get_data(G_OBJECT(impl->records->widget()), "modernime-learning-mutation-busy")) {
+            impl->notifyMessage("请等待当前学习记录操作完成。");
+            return;
+        }
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO,
@@ -339,7 +359,13 @@ private:
             return;
         }
 
+        if (impl->records && g_object_get_data(G_OBJECT(impl->records->widget()), "modernime-learning-mutation-busy")) {
+            impl->notifyMessage("请等待当前学习记录操作完成。");
+            return;
+        }
+
         impl->isClearing_ = true;
+        if (impl->records) gtk_widget_set_sensitive(impl->records->widget(), FALSE);
         ++impl->refreshGeneration_;
         gtk_widget_set_sensitive(impl->clearLearningButton, FALSE);
         gtk_label_set_text(GTK_LABEL(impl->dataStatus), "正在备份并清空学习记录…");
@@ -381,6 +407,7 @@ private:
     GtkWidget *dataStatus = nullptr;
     GtkWidget *operationResult = nullptr;
     GtkWidget *retryButton = nullptr;
+    std::unique_ptr<LearningManager> records;
     bool refreshing = false;
     bool isClearing_ = false;
     uint64_t refreshGeneration_ = 0;
@@ -413,5 +440,7 @@ void LearningPage::refreshSettings() {
 bool LearningPage::focusTarget(std::string_view target) {
     return impl_->focusTarget(target);
 }
+
+bool LearningPage::hasPendingOperations() const { return impl_->hasPendingOperations(); }
 
 } // namespace modernime::settings

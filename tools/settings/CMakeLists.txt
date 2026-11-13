@@ -39,6 +39,7 @@ if(FCITX5_UTILS_FOUND AND FCITX5_UTILS_LIBDIR)
 endif()
 
 add_library(modernime_settings_logic STATIC
+    backend_client.cpp
     data_controller.cpp
     quick_phrase_store.cpp
     candidate_pin_query.cpp
@@ -77,6 +78,10 @@ target_compile_features(modernime_settings_logic PUBLIC cxx_std_20)
 modernime_enable_warnings(modernime_settings_logic)
 
 add_library(modernime_settings_gtk STATIC
+    learning_manager.cpp
+    dictionary_pack_manager.cpp
+    application_diagnostics.cpp
+    data_bundle_manager.cpp
     quick_phrase_editor.cpp
     input_rule_dialog.cpp
     input_assist.cpp

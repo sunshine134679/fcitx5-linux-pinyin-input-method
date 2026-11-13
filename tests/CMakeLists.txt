@@ -259,6 +259,16 @@ if(MODERNIME_BUILD_SETTINGS)
             SKIP_RETURN_CODE 77
             TIMEOUT 30)
     endforeach()
+    find_program(MODERNIME_TEST_DBUS_RUN_SESSION dbus-run-session REQUIRED)
+    foreach(extension IN ITEMS application_diagnostics dictionary_pack_manager backend_management)
+        add_executable(modernime_${extension}_gtk_tests settings/${extension}_gtk_test.cpp)
+        target_link_libraries(modernime_${extension}_gtk_tests PRIVATE modernime_settings_components)
+        add_test(NAME modernime_${extension}_gtk
+            COMMAND "${MODERNIME_TEST_DBUS_RUN_SESSION}" -- $<TARGET_FILE:modernime_${extension}_gtk_tests>)
+        set_tests_properties(modernime_${extension}_gtk PROPERTIES
+            ENVIRONMENT "GTK_IM_MODULE=gtk-im-context-simple"
+            RESOURCE_LOCK modernime_gtk_display SKIP_RETURN_CODE 77 TIMEOUT 30)
+    endforeach()
     add_executable(modernime_input_assist_gtk_tests settings/input_assist_gtk_test.cpp)
     target_link_libraries(modernime_input_assist_gtk_tests PRIVATE modernime_settings_components)
     add_test(NAME modernime_input_assist_gtk COMMAND modernime_input_assist_gtk_tests)

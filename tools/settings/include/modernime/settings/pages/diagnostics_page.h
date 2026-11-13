@@ -25,7 +25,9 @@ public:
                     Environment environment,
                     std::function<void(std::string)> notify,
                     std::function<std::uint64_t()> reloadRevision,
-                    std::function<void(std::uint64_t)> reloadSucceeded);
+                    std::function<void(std::uint64_t)> reloadSucceeded,
+                    std::function<bool()> canRestore = {},
+                    std::function<void()> restored = {});
     ~DiagnosticsPage();
 
     DiagnosticsPage(const DiagnosticsPage &) = delete;

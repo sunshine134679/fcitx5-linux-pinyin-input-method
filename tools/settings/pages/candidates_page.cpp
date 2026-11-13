@@ -4,6 +4,7 @@
 
 #include "modernime/settings/detail/gtk_raii.h"
 #include "modernime/settings/settings_widgets.h"
+#include "modernime/settings/settings_disclosure.h"
 #include "modernime/ui/cairo_render_surface.h"
 #include "modernime/ui/candidate_pagination.h"
 
@@ -198,6 +199,7 @@ public:
 
     bool focusTarget(std::string_view target) {
         if (target == "candidate.pin") return focusWidgetOrFallback(pinRules, pinRulesRow);
+        if (target == "candidate-filter") { setSettingsDisclosureExpanded(filterGuide, true); return focusWidgetOrFallback(filterGuide); }
         if (target == "client-theme") return focusWidgetOrFallback(clientTheme);
         if (target == "candidate-page-size") {
             return focusWidgetOrFallback(candidatePageSize, candidatePageSizeFallback);
@@ -260,9 +262,24 @@ private:
             gtk_widget_show_all(o.pinDialog);
         }), this);
 
+        auto *filterCard = createSectionCard("筛选同音候选", "输入拼音后按反引号键 `，按笔画或部件缩小候选范围。");
+        filterGuide = gtk_expander_new("查看操作方法");
+        setTarget(filterGuide, "candidate-filter");
+        auto *guide = gtk_label_new("输入拼音（如 shi）→ 按 ` → 输入筛选串 → 选词\n\n"
+            "笔画：h 横 · s 竖 · p 撇 · n 点捺 · z 折\n"
+            "例如输入 nzhh，可筛选出“试”。\n\n"
+            "部件：输入 c: 加部件拼音，如 c:mumu。\n"
+            "Esc 退出筛选并保留拼音；退格删除筛选串。\n"
+            "空格、回车和数字键照常选词，暂不支持的字不会匹配。");
+        gtk_label_set_xalign(GTK_LABEL(guide), 0);
+        gtk_label_set_line_wrap(GTK_LABEL(guide), TRUE);
+        gtk_label_set_selectable(GTK_LABEL(guide), TRUE);
+        gtk_box_pack_start(GTK_BOX(filterCard), createSettingsDisclosure(filterGuide, guide), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(page), filterCard, FALSE, FALSE, 0);
+
         setSettingsFocusChain(
             page, {clientTheme, previewExample, candidateStyles[0], candidateStyles[1], candidateStyles[2],
-                   candidateTheme, candidateShape, nativePanelSettings,
+                   candidateTheme, candidateShape, nativePanelSettings, filterGuide,
                    candidatePageSize, candidateFontFamily, candidateFontSize, candidateSpacing, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation, pinRules});
         refresh();
@@ -848,6 +865,7 @@ private:
     GtkWidget *previewSummary = nullptr;
     GtkWidget *previewScaleHint = nullptr;
     GtkWidget *nativePanelSettings = nullptr;
+    GtkWidget *filterGuide = nullptr;
     ui::CandidateBarMetrics metrics;
     ui::CandidateBarLayout previewLayout;
     ui::RenderStyle renderStyle;

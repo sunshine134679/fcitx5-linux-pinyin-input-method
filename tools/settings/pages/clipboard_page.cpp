@@ -636,6 +636,8 @@ public:
 
     GtkWidget *widget() const { return page; }
 
+    bool hasPendingOperations() const { return isOperating; }
+
 private:
     static void onSwitchChanged(GObject *, GParamSpec *, gpointer data) {
         onChanged(nullptr, data);
@@ -1143,5 +1145,7 @@ void ClipboardPage::refreshSettings() {
 bool ClipboardPage::focusTarget(std::string_view target) {
     return impl_->focusTarget(target);
 }
+
+bool ClipboardPage::hasPendingOperations() const { return impl_->hasPendingOperations(); }
 
 } // namespace modernime::settings

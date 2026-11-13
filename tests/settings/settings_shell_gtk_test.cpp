@@ -295,7 +295,7 @@ gboolean inspectDictionaryDialog(gpointer data) {
                gtk_widget_get_accessible(save))) ==
            "校验通过后保存当前词条");
 
-    auto *pinyin = findAccessibleWidget(dialog, GTK_TYPE_ENTRY, "拼音");
+    auto *pinyin = findAccessibleWidget(dialog, GTK_TYPE_ENTRY, "输入键");
     auto *phrase = findAccessibleWidget(dialog, GTK_TYPE_ENTRY, "词条");
     auto *weight =
         findAccessibleWidget(dialog, GTK_TYPE_SPIN_BUTTON, "权重");

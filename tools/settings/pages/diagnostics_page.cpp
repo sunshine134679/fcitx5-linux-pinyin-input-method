@@ -1,4 +1,6 @@
 #include "modernime/settings/pages/diagnostics_page.h"
+#include "modernime/settings/application_diagnostics.h"
+#include "modernime/settings/data_bundle_manager.h"
 
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
@@ -103,7 +105,8 @@ public:
          Environment currentEnvironment,
          std::function<void(std::string)> notifyCallback,
          std::function<std::uint64_t()> reloadRevisionCallback,
-         std::function<void(std::uint64_t)> reloadSucceededCallback)
+         std::function<void(std::uint64_t)> reloadSucceededCallback,
+         std::function<bool()> canRestore, std::function<void()> restored)
         : fcitx(std::move(fcitxPath)), remote(std::move(remotePath)),
           environment(std::move(currentEnvironment)),
           notify(std::move(notifyCallback)),
@@ -120,7 +123,28 @@ public:
         detail::GtkWidgetGuard pageGuard(createPageShell(
             "系统与诊断", ""));
         page = pageGuard.get();
+        auto *outerPage = page;
+        auto *runtimeBody = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+        page = runtimeBody;
         buildPage();
+        page = outerPage;
+        applications = std::make_unique<ApplicationDiagnostics>();
+        bundles = std::make_unique<DataBundleManager>(std::move(canRestore), std::move(restored));
+        views = gtk_stack_new();
+        gtk_stack_set_homogeneous(GTK_STACK(views), FALSE);
+        gtk_stack_set_interpolate_size(GTK_STACK(views), TRUE);
+        gtk_stack_set_transition_type(GTK_STACK(views), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+        gtk_stack_set_transition_duration(GTK_STACK(views), 160);
+        gtk_stack_add_titled(GTK_STACK(views), runtimeBody, "runtime", "运行状态");
+        gtk_stack_add_titled(GTK_STACK(views), applications->widget(), "applications", "应用诊断");
+        gtk_stack_add_titled(GTK_STACK(views), bundles->widget(), "bundles", "备份恢复");
+        auto *switcher = gtk_stack_switcher_new();
+        gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(views));
+        gtk_widget_set_halign(switcher, GTK_ALIGN_START);
+        addStyleClass(switcher, "modernime-dictionary-switcher");
+        setAccessibleWidgetText(switcher, "诊断与数据工具", "切换运行状态、应用诊断和备份恢复");
+        gtk_box_pack_start(GTK_BOX(page), switcher, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(page), views, FALSE, FALSE, 0);
         refresh();
         pageGuard.release();
     }
@@ -129,11 +153,19 @@ public:
 
     GtkWidget *widget() const { return page; }
 
-    void refresh() { startTask(RuntimeAction::Probe); }
+    void refresh() { startTask(RuntimeAction::Probe); if (applications) applications->refresh(); }
 
     void reload() { startTask(RuntimeAction::Reload); }
 
     bool focusTarget(std::string_view target) {
+        if (applications && target.starts_with("application-")) {
+            gtk_stack_set_visible_child_name(GTK_STACK(views), "applications");
+            return applications->focusTarget(target);
+        }
+        if (bundles && (target.starts_with("bundle-") || target == "data-bundle")) {
+            gtk_stack_set_visible_child_name(GTK_STACK(views), "bundles");
+            return bundles->focusTarget(target);
+        }
         for (auto *control : {refreshButton, reloadButton, panelEnableButton}) {
             if (control == nullptr) {
                 continue;
@@ -141,6 +173,7 @@ public:
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
             if (id != nullptr && target == id) {
+                gtk_stack_set_visible_child_name(GTK_STACK(views), "runtime");
                 if (!gtk_widget_get_sensitive(control) && busy) {
                     pendingFocusTarget = target;
                     return true;
@@ -527,6 +560,9 @@ private:
     GtkWidget *modernime = nullptr;
     GtkWidget *refreshButton = nullptr;
     GtkWidget *reloadButton = nullptr;
+    GtkWidget *views = nullptr;
+    std::unique_ptr<ApplicationDiagnostics> applications;
+    std::unique_ptr<DataBundleManager> bundles;
     GtkWidget *panelSection = nullptr;
     GtkWidget *panelTitle = nullptr;
     GtkWidget *panelMessage = nullptr;
@@ -538,12 +574,14 @@ DiagnosticsPage::DiagnosticsPage(std::filesystem::path fcitx,
                                  Environment environment,
                                  std::function<void(std::string)> notify,
                                  std::function<std::uint64_t()> reloadRevision,
-                                 std::function<void(std::uint64_t)> reloadSucceeded)
+                                 std::function<void(std::uint64_t)> reloadSucceeded,
+                                 std::function<bool()> canRestore, std::function<void()> restored)
     : impl_(std::make_unique<Impl>(std::move(fcitx), std::move(remote),
                                    std::move(environment),
                                    std::move(notify),
                                    std::move(reloadRevision),
-                                   std::move(reloadSucceeded))) {}
+                                   std::move(reloadSucceeded),
+                                   std::move(canRestore), std::move(restored))) {}
 
 DiagnosticsPage::~DiagnosticsPage() = default;
 
