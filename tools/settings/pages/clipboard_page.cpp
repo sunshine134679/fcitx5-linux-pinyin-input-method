@@ -893,22 +893,7 @@ private:
         const char *typeName = meta.badgeClass == "modernime-badge-code" ? "代码" :
                                meta.badgeClass == "modernime-badge-url" ? "链接" :
                                meta.badgeClass == "modernime-badge-multiline" ? "多行文本" : "文本";
-        const char *typeIcon = meta.badgeClass == "modernime-badge-code" ? "text-x-script-symbolic" :
-                               meta.badgeClass == "modernime-badge-url" ? "insert-link-symbolic" :
-                               "text-x-generic-symbolic";
-        auto *typeBadge = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-        addStyleClass(typeBadge, "modernime-clipboard-type");
-        addStyleClass(typeBadge, meta.badgeClass.c_str());
-        gtk_widget_set_valign(typeBadge, GTK_ALIGN_CENTER);
-        auto *typeImage = gtk_image_new_from_icon_name(typeIcon, GTK_ICON_SIZE_MENU);
-        gtk_image_set_pixel_size(GTK_IMAGE(typeImage), 14);
-        addStyleClass(typeImage, "modernime-clipboard-type-icon");
-        gtk_box_pack_start(GTK_BOX(typeBadge), typeImage, FALSE, FALSE, 0);
-        auto *badgeLabel = gtk_label_new(typeName);
-        gtk_box_pack_start(GTK_BOX(typeBadge), badgeLabel, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(header), typeBadge, FALSE, FALSE, 0);
-
-        const std::string metaStr = std::to_string(meta.charCount) + " 字";
+        const auto metaStr = std::string(typeName) + " · " + std::to_string(meta.charCount) + " 字";
         auto *metaLabel = gtk_label_new(metaStr.c_str());
         addStyleClass(metaLabel, "modernime-card-meta");
         gtk_box_pack_start(GTK_BOX(header), metaLabel, FALSE, FALSE, 0);
