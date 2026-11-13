@@ -385,6 +385,7 @@ public:
                     owner.currentBaseline =
                         DictionaryExpectedBaseline::fromSnapshot(owner.currentSnapshot);
                     owner.dictionaryEntries = std::move(snapshotPtr->entries);
+                    owner.loadInProgress = false;
                     owner.setButtonsSensitive(true);
                     owner.applyFilter();
                 }
@@ -393,14 +394,18 @@ public:
         delete snapshotPtr;
     }
 
+    bool canMutateDictionary() const {
+        return !loadInProgress && !operationInProgress &&
+               (currentSnapshot.status == DictionaryLoadStatus::Success ||
+                currentSnapshot.status == DictionaryLoadStatus::NonExistent);
+    }
+
     void setButtonsSensitive(bool sensitive) {
-        const bool allow = sensitive && !operationInProgress;
-        const bool hasCorruptedLines =
-            (currentSnapshot.status == DictionaryLoadStatus::CorruptedLines);
+        const bool allow = sensitive && !loadInProgress && !operationInProgress;
         const bool hasIoError =
             (currentSnapshot.status == DictionaryLoadStatus::IoError);
 
-        const bool canMutate = allow && !hasCorruptedLines && !hasIoError;
+        const bool canMutate = sensitive && canMutateDictionary();
         const bool canExport = allow && !hasIoError;
 
         if (addButton != nullptr) gtk_widget_set_sensitive(addButton, canMutate);
@@ -422,6 +427,7 @@ public:
             idleBatchSourceId = 0;
         }
         ++loadGeneration;
+        loadInProgress = true;
         setButtonsSensitive(false);
         if (dictionaryCount != nullptr) {
             gtk_label_set_text(GTK_LABEL(dictionaryCount), "正在读取用户词典…");
@@ -626,7 +632,7 @@ private:
 
     static void onAdd(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        if (impl->operationInProgress) {
+        if (!impl->canMutateDictionary()) {
             return;
         }
         impl->editEntry(std::nullopt);
@@ -634,7 +640,7 @@ private:
 
     static void onEdit(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        if (impl->operationInProgress) {
+        if (!impl->canMutateDictionary()) {
             return;
         }
         const auto selected = impl->selectedIndex();
@@ -647,7 +653,7 @@ private:
 
     static void onDelete(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        if (impl->operationInProgress) {
+        if (!impl->canMutateDictionary()) {
             return;
         }
         const auto selected = impl->selectedIndex();
@@ -667,7 +673,7 @@ private:
         if (response != GTK_RESPONSE_YES) {
             return;
         }
-        if (impl->operationInProgress) {
+        if (!impl->canMutateDictionary()) {
             return;
         }
         auto entries = impl->dictionaryEntries;
@@ -910,7 +916,7 @@ private:
 
     static void onImport(GtkButton *, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        if (impl->operationInProgress) {
+        if (!impl->canMutateDictionary()) {
             return;
         }
         auto *fileChooser = gtk_file_chooser_dialog_new(
@@ -1043,7 +1049,7 @@ private:
     }
 
     void updateActionState() {
-        const bool hasSelected = selectedIndex().has_value() && !operationInProgress;
+        const bool hasSelected = canMutateDictionary() && selectedIndex().has_value();
         if (editButton != nullptr) {
             gtk_widget_set_sensitive(editButton, hasSelected);
         }
@@ -1136,7 +1142,7 @@ private:
     void saveEntriesAsync(std::vector<pinyin::UserDictionaryEntry> entries,
                           std::string successMessage,
                           std::optional<DraftEntry> draft = std::nullopt) {
-        if (operationInProgress) {
+        if (!canMutateDictionary()) {
             return;
         }
         operationInProgress = true;
@@ -1159,7 +1165,7 @@ private:
     }
 
     bool editEntry(std::optional<std::size_t> selected) {
-        if (operationInProgress) {
+        if (!canMutateDictionary()) {
             return false;
         }
         auto *dialog = gtk_dialog_new_with_buttons(
@@ -1356,6 +1362,7 @@ private:
     uint64_t loadGeneration = 0;
     uint64_t batchGeneration = 0;
     uint64_t operationGeneration = 0;
+    bool loadInProgress = false;
     bool operationInProgress = false;
     bool entryDialogOpen = false;
     guint idleBatchSourceId = 0;

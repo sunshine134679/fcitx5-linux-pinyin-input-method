@@ -158,6 +158,76 @@ const char *samplePinyin(int index) {
     return syls[index % 5];
 }
 
+void testDictionaryReadStateControlsMutation(const std::filesystem::path &tempDir) {
+    std::cout << "[Test] Running testDictionaryReadStateControlsMutation..." << std::endl;
+    const auto path = tempDir / "dictionary-read-state.txt";
+    const std::string damaged = "nihao\t你好\t1\n损坏行\n";
+    { std::ofstream(path) << damaged; }
+    auto page = std::make_unique<modernime::settings::DictionaryPage>(path, [](std::string) {});
+    auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_container_add(GTK_CONTAINER(window), page->widget());
+    gtk_widget_show_all(window);
+    auto *view = GTK_TREE_VIEW(findTarget(page->widget(), "dictionary-list"));
+    auto *edit = findTarget(page->widget(), "dictionary-edit");
+    auto *remove = findTarget(page->widget(), "dictionary-delete");
+    auto *add = findTarget(page->widget(), "dictionary-add");
+    auto *import = findTarget(page->widget(), "dictionary-import-export");
+    auto *search = findTarget(page->widget(), "dictionary-search");
+    assert(view && edit && remove && add && import && search);
+    const auto rowCount = [&] {
+        return gtk_tree_model_iter_n_children(gtk_tree_view_get_model(view), nullptr);
+    };
+    const auto cannotMutate = [&] {
+        return !gtk_widget_get_sensitive(edit) && !gtk_widget_get_sensitive(remove) &&
+               !gtk_widget_get_sensitive(add) && !gtk_widget_get_sensitive(import);
+    };
+    pumpEventsUntil([&] { return rowCount() == 1; });
+    assert(rowCount() == 1);
+    auto *first = gtk_tree_path_new_from_indices(0, -1);
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(view), first);
+    gtk_tree_path_free(first);
+    std::cout << "  Damaged dictionary after selecting a valid row: edit="
+              << gtk_widget_get_sensitive(edit) << " delete=" << gtk_widget_get_sensitive(remove)
+              << std::endl;
+    assert(cannotMutate());
+    assert(modernime::pinyin::UserDictionary::loadSnapshot(path).diagnostics.size() == 1);
+
+    { std::ofstream(path) << "nihao\t你好\t1\nzaijian\t再见\t1\n"; }
+    page->refresh();
+    pumpEventsUntil([&] { return rowCount() == 2 && gtk_widget_get_sensitive(add); });
+    assert(rowCount() == 2 && gtk_widget_get_sensitive(add));
+
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    modernime::settings::DataController::setIoHookForTesting([&](std::string_view op) {
+        if (op != "loadDictionary") return;
+        entered = true;
+        while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    });
+    page->refresh();
+    pumpEventsUntil([&] { return entered.load(); });
+    assert(entered.load());
+    first = gtk_tree_path_new_from_indices(0, -1);
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(view), first);
+    gtk_tree_path_free(first);
+    assert(cannotMutate());
+    gtk_entry_set_text(GTK_ENTRY(search), "nihao");
+    g_signal_emit_by_name(search, "search-changed");
+    pumpEventsUntil([&] { return rowCount() == 1; });
+    assert(rowCount() == 1 && cannotMutate());
+    release = true;
+    pumpEventsUntil([&] { return gtk_widget_get_sensitive(add) && rowCount() == 1; });
+    assert(gtk_widget_get_sensitive(add) && rowCount() == 1);
+    modernime::settings::DataController::setIoHookForTesting(nullptr);
+    first = gtk_tree_path_new_from_indices(0, -1);
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(view), first);
+    gtk_tree_path_free(first);
+    assert(gtk_widget_get_sensitive(edit) && gtk_widget_get_sensitive(remove));
+    page.reset();
+    gtk_widget_destroy(window);
+    std::cout << "[Test] testDictionaryReadStateControlsMutation PASSED!" << std::endl;
+}
+
 // 1. Test LearningStore::entryCount() with SQL COUNT(*) and LMDB stat
 void testLearningStoreEntryCount(const std::filesystem::path &tempDir) {
     std::cout << "[Test] Running testLearningStoreEntryCount..." << std::endl;
@@ -334,17 +404,17 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     scanContainer(page->widget());
     assert(view != nullptr);
 
-    GtkTreeModel *model = gtk_tree_view_get_model(view);
-    assert(model != nullptr);
+    const auto currentModel = [view] { return gtk_tree_view_get_model(view); };
+    assert(currentModel() != nullptr);
 
     // Pump events until all 50k entries are populated
     std::cout << "  Waiting for 50k entries to load asynchronously and batch-render..." << std::endl;
     pumpEventsUntil([&]() {
-        const int count = gtk_tree_model_iter_n_children(model, nullptr);
+        const int count = gtk_tree_model_iter_n_children(currentModel(), nullptr);
         return count >= 50000;
     }, std::chrono::seconds(15));
 
-    const int totalRendered = gtk_tree_model_iter_n_children(model, nullptr);
+    const int totalRendered = gtk_tree_model_iter_n_children(currentModel(), nullptr);
     std::cout << "  Rendered entries in GtkListStore: " << totalRendered << std::endl;
     assert(totalRendered == 50000);
 
@@ -379,11 +449,11 @@ void testDictionaryPageAsyncAndBatch(const std::filesystem::path &tempDir) {
     drainEvents();
 
     pumpEventsUntil([&]() {
-        const int count = gtk_tree_model_iter_n_children(model, nullptr);
+        const int count = gtk_tree_model_iter_n_children(currentModel(), nullptr);
         return count > 0 && count < 50000;
     }, std::chrono::seconds(5));
 
-    const int filteredCount = gtk_tree_model_iter_n_children(model, nullptr);
+    const int filteredCount = gtk_tree_model_iter_n_children(currentModel(), nullptr);
     std::cout << "  Filtered count for '词123': " << filteredCount << " (without reading disk)" << std::endl;
     assert(filteredCount > 0);
 
@@ -429,12 +499,12 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     scanView(page->widget());
     assert(view != nullptr);
 
-    GtkTreeModel *model = gtk_tree_view_get_model(view);
+    const auto currentModel = [view] { return gtk_tree_view_get_model(view); };
     auto *addBtn = findTarget(page->widget(), "dictionary-add");
     assert(addBtn != nullptr);
     const auto currentLoadReady = [&] {
         return gtk_widget_get_sensitive(addBtn) &&
-               gtk_tree_model_iter_n_children(model, nullptr) == 500;
+               gtk_tree_model_iter_n_children(currentModel(), nullptr) == 500;
     };
     pumpEventsUntil(currentLoadReady, std::chrono::seconds(5));
     assert(currentLoadReady());
@@ -455,7 +525,7 @@ void testDictionaryPageAsyncIoAndSlowIoSafety(const std::filesystem::path &tempD
     page->refresh();
     assert(!gtk_widget_get_sensitive(addBtn));
     std::cout << "  Pending refresh retains "
-              << gtk_tree_model_iter_n_children(model, nullptr)
+              << gtk_tree_model_iter_n_children(currentModel(), nullptr)
               << " old rows; current load is not ready" << std::endl;
 
     // Pump events during the 2-second real production loadDictionary worker
@@ -660,23 +730,23 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     scan(page->widget());
     assert(view != nullptr);
     assert(searchEntry != nullptr);
-    GtkTreeModel *model = gtk_tree_view_get_model(view);
+    const auto currentModel = [view] { return gtk_tree_view_get_model(view); };
 
     // Wait for initial load (20,000 entries)
     pumpEventsUntil([&]() {
-        return gtk_tree_model_iter_n_children(model, nullptr) >= 20000;
+        return gtk_tree_model_iter_n_children(currentModel(), nullptr) >= 20000;
     }, std::chrono::seconds(10));
-    assert(gtk_tree_model_iter_n_children(model, nullptr) == 20000);
+    assert(gtk_tree_model_iter_n_children(currentModel(), nullptr) == 20000);
 
     HeartbeatMonitor heartbeat;
     heartbeat.start();
 
     struct FilterObservation {
         GtkSearchEntry *entry = nullptr;
-        GtkTreeModel *model = nullptr;
+        GtkTreeView *view = nullptr;
         int xueOldRowsBeforeFilter = -1;
         int zhongOldRowsBeforeFilter = -1;
-    } filterObs{searchEntry, model};
+    } filterObs{searchEntry, view};
 
     const guint signalId = g_signal_lookup("search-changed", GTK_TYPE_SEARCH_ENTRY);
     const gulong emissionHook = g_signal_add_emission_hook(
@@ -685,7 +755,7 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
             auto *obs = static_cast<FilterObservation *>(data);
             if (paramValues != nullptr && g_value_get_object(&paramValues[0]) == obs->entry) {
                 const auto *query = gtk_entry_get_text(GTK_ENTRY(obs->entry));
-                const int currentRows = gtk_tree_model_iter_n_children(obs->model, nullptr);
+                const int currentRows = gtk_tree_model_iter_n_children(gtk_tree_view_get_model(obs->view), nullptr);
                 if (std::strcmp(query, "xue") == 0 && obs->xueOldRowsBeforeFilter < 0) {
                     obs->xueOldRowsBeforeFilter = currentRows;
                     std::cout << "  before_production_filter query=xue old_rows=" << currentRows << std::endl;
@@ -714,10 +784,10 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     // Round 1: set text "pin" -> wait for search-changed to fire and idle batch render to start (> 0 rows)
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "pin");
     pumpEventsUntil([&] {
-        return observedSearchSignals >= 1 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
+        return observedSearchSignals >= 1 && gtk_tree_model_iter_n_children(currentModel(), nullptr) > 0;
     }, std::chrono::seconds(5));
     assert(observedSearchSignals >= 1);
-    const int round1Rows = gtk_tree_model_iter_n_children(model, nullptr);
+    const int round1Rows = gtk_tree_model_iter_n_children(currentModel(), nullptr);
     std::cout << "  round1_before_interrupt_rows=" << round1Rows
               << " expected_total=" << totalPin << std::endl;
     assert(round1Rows > 0 && round1Rows < totalPin);
@@ -726,10 +796,10 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     gtk_entry_set_text(GTK_ENTRY(searchEntry), "xue");
     g_signal_emit_by_name(searchEntry, "search-changed");
     pumpEventsUntil([&] {
-        return observedSearchSignals >= 2 && gtk_tree_model_iter_n_children(model, nullptr) > 0;
+        return observedSearchSignals >= 2 && gtk_tree_model_iter_n_children(currentModel(), nullptr) > 0;
     }, std::chrono::seconds(5));
     assert(observedSearchSignals >= 2);
-    const int round2Rows = gtk_tree_model_iter_n_children(model, nullptr);
+    const int round2Rows = gtk_tree_model_iter_n_children(currentModel(), nullptr);
     std::cout << "  round2_before_interrupt_rows=" << round2Rows
               << " expected_total=" << totalXue << std::endl;
     assert(round2Rows > 0 && round2Rows < totalXue);
@@ -747,17 +817,18 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     assert(!expectedIndices.empty());
 
     pumpEventsUntil([&] {
-        const int count = gtk_tree_model_iter_n_children(model, nullptr);
+        const int count = gtk_tree_model_iter_n_children(currentModel(), nullptr);
         return count == static_cast<int>(expectedIndices.size());
     }, std::chrono::seconds(10));
 
-    const int finalCount = gtk_tree_model_iter_n_children(model, nullptr);
+    const int finalCount = gtk_tree_model_iter_n_children(currentModel(), nullptr);
     std::cout << "  Actual search-changed signals: " << observedSearchSignals << std::endl;
     std::cout << "  Rendered rows for 'zhong': " << finalCount
               << " (expected " << expectedIndices.size() << ")" << std::endl;
     assert(finalCount == static_cast<int>(expectedIndices.size()));
 
     // EXACT verification of each row: col 0 = pinyin, col 1 = phrase, col 3 = sourceIndex
+    auto *model = currentModel();
     GtkTreeIter iter;
     gboolean valid = gtk_tree_model_get_iter_first(model, &iter);
     for (std::size_t i = 0; i < expectedIndices.size(); ++i) {
@@ -800,9 +871,9 @@ void testContinuousSearch(const std::filesystem::path &tempDir) {
     const auto expectedCeShi = modernime::settings::DataController::filterDictionary(allEntries, "ceshi");
     assert(!expectedCeShi.empty());
     pumpEventsUntil([&] {
-        return gtk_tree_model_iter_n_children(model, nullptr) == static_cast<int>(expectedCeShi.size());
+        return gtk_tree_model_iter_n_children(currentModel(), nullptr) == static_cast<int>(expectedCeShi.size());
     }, std::chrono::seconds(10));
-    assert(gtk_tree_model_iter_n_children(model, nullptr) == static_cast<int>(expectedCeShi.size()));
+    assert(gtk_tree_model_iter_n_children(currentModel(), nullptr) == static_cast<int>(expectedCeShi.size()));
 
     std::filesystem::rename(dictPathMoved, dictPath);
 
@@ -1259,6 +1330,7 @@ int main(int argc, char **argv) {
     std::filesystem::create_directories(tempDir);
 
     try {
+        testDictionaryReadStateControlsMutation(tempDir);
         testLearningStoreEntryCount(tempDir);
         testLearningPageFeedback(tempDir);
         testFilterDictionaryPureFunction();
