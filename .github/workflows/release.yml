@@ -815,7 +815,7 @@ jobs:
           name: "ModernIME ${{ needs.resolve-target.outputs.tag }}"
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
           body_path: release-notes.md
           files: |
             release-assets/*
