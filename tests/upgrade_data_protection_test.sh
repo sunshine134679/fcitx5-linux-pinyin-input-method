@@ -19,6 +19,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Standard XDG paths must select the same live data for backup and restore.
+python3 - "$data_guard" "$test_root/xdg-only" <<'PYEOF'
+from pathlib import Path
+import os
+import subprocess
+import sys
+
+guard, case = sys.argv[1], Path(sys.argv[2])
+data, config = case / 'data/modernime', case / 'config/modernime'
+data.mkdir(parents=True)
+config.mkdir(parents=True)
+dictionary, settings = data / 'user-dictionary.txt', config / 'settings.conf'
+dictionary.write_text('old\t原词条\t10\n', encoding='utf-8')
+settings.write_text('candidate.font_size=18\n', encoding='utf-8')
+environment = {key: value for key, value in os.environ.items()
+               if not key.startswith('MODERNIME_') and key != 'SUDO_USER'}
+environment.update(HOME=str(case / 'home'), XDG_DATA_HOME=str(data.parent),
+                   XDG_CONFIG_HOME=str(config.parent))
+subprocess.run([guard, '--backup', '--tag', 'xdg'], env=environment, check=True)
+assert (data / 'backups/xdg/backup-manifest.json').is_file(), 'XDG backup was not created'
+dictionary.write_text('new\t当前词条\t20\n', encoding='utf-8')
+settings.write_text('candidate.font_size=24\n', encoding='utf-8')
+subprocess.run([guard, '--restore'], env=environment, check=True)
+assert dictionary.read_text(encoding='utf-8') == 'old\t原词条\t10\n'
+assert settings.read_text(encoding='utf-8') == 'candidate.font_size=18\n'
+assert not (case / 'home/.local/share/modernime').exists()
+print('XDG-only backup and restore passed', flush=True)
+PYEOF
+
 # An unreadable/corrupt file anywhere in a backup must reject the restore
 # before replacing the live database, dictionary or configuration.
 python3 - "$data_guard" "$test_root/restore-validation" <<'PYEOF'

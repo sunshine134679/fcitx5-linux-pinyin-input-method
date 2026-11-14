@@ -591,7 +591,8 @@ with patch.object(module.ExtensionLifecycle, "save", lambda *_: os._exit(77)):
     def make_migration_source(self):
         # Real installed consumer, including the data guard and its dependencies.
         (self.prefix / "bin").mkdir(exist_ok=True)
-        for name in ("modernime-session-init", "modernime-migrate-channel", "modernime-data-guard"):
+        for name in ("modernime-session-init", "modernime-session-runner",
+                     "modernime-migrate-channel", "modernime-data-guard"):
             shutil.copy2(ROOT / "scripts" / name, self.prefix / "bin" / name)
         for name in ("install_state.sh", "install_lifecycle.sh", "gnome_extension.py"):
             shutil.copy2(ROOT / "scripts" / name, self.prefix / "share/modernime" / name)
@@ -646,6 +647,42 @@ with patch.object(module.ExtensionLifecycle, "save", lambda *_: os._exit(77)):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(self.target.exists())
         self.assertEqual(self.settings(), self.initial)
+
+    def test_installed_migration_replaces_owned_session_entrypoints(self):
+        self.make_migration_source()
+        native, payload = self.root / "new-native", self.root / "native-payload"
+        shutil.copytree(self.prefix, payload)
+        (payload / "share/modernime/install-channel.txt").write_text("channel=deb\nversion=0.1.25\n")
+        (payload / "share/modernime/install-manifest.txt").unlink()
+        desktop = self.root / "desktop"
+        profile = self.root / "home/.xprofile"
+        profile.write_text("# user session setting\n")
+        self.env.update(MODERNIME_DESKTOP_DIR=str(desktop), MODERNIME_SKIP_DESKTOP_SHORTCUT="0",
+                        MODERNIME_XPROFILE_FILE=str(profile), XDG_CURRENT_DESKTOP="", DISPLAY="")
+        setup = ('source "$1/scripts/install_state.sh"; source "$1/scripts/install_lifecycle.sh"; '
+                 'modernime_integrate "$2" "$3" "$4" "$2/share/modernime/managed-files" '
+                 '"$5" "$2/share/modernime/install-manifest.txt"')
+        result = subprocess.run(["bash", "-c", setup, "fixture", str(ROOT), str(self.prefix),
+                                 str(self.config), str(desktop), str(self.data)],
+                                env=self.env, capture_output=True, text=True, timeout=25)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        package_cmd = f"mkdir -p {shlex.quote(str(native))} && cp -a {shlex.quote(str(payload))}/. {shlex.quote(str(native))}/"
+        result = subprocess.run(["bash", str(self.prefix / "bin/modernime-migrate-channel"),
+                                 "--from-prefix", str(self.prefix), "--target-prefix", str(native),
+                                 "--to-channel", "deb", "--package-cmd", package_cmd, "--no-session-init"],
+                                env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.env["MODERNIME_PREFIX"] = str(native)
+        result = subprocess.run(["bash", str(native / "bin/modernime-session-init")],
+                                env=self.env, capture_output=True, text=True, timeout=25)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path in (self.config / "environment.d/90-modernime.conf",
+                     self.config / "autostart/modernime-fcitx5-session.desktop",
+                     desktop / "modernime-settings.desktop"):
+            self.assertNotIn(str(self.prefix), path.read_text(), str(path))
+            self.assertIn(str(native), path.read_text(), str(path))
+        self.assertFalse((self.prefix / "bin/modernime-session-runner").exists())
+        self.assertEqual(profile.read_text(), "# user session setting\n\n")
 
 
 if __name__ == "__main__":

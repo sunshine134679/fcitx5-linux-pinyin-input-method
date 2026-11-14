@@ -259,6 +259,12 @@ void testTemporaryEnglish(fcitx::Instance &instance) {
     send(fcitx::Key(FcitxKey_Left)); send(fcitx::Key(FcitxKey_X)); send(fcitx::Key(FcitxKey_Delete));
     send(fcitx::Key(FcitxKey_Return));
     check(doc.text.ends_with("aX"), "temporary fragment supports cursor insertion and forward deletion");
+    send(trigger);
+    for (const char c : std::string("foo`bar")) {
+        if (!send(fcitx::Key(std::string(1, c)))) doc.commitString(std::string(1, c));
+    }
+    send(fcitx::Key(FcitxKey_Return));
+    check(doc.text.ends_with("foo`bar"), "temporary English preserves backtick order instead of opening candidate filtering");
 }
 
 void testTemporaryEnglishApplicationShortcuts(fcitx::Instance &instance) {

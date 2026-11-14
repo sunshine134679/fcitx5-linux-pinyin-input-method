@@ -259,18 +259,14 @@ if [[ -z "$data_guard_bin" ]]; then
     exit 1
 fi
 
-# Keep the installer's partial-file ownership logic loaded before removing the
-# source payload. A profile contains user lines as well as the managed block.
-if [[ -f "$from_prefix/share/modernime/managed-files/xprofile.path" &&
-      -f "$from_prefix/share/modernime/managed-files/xprofile.content" ]]; then
-    install_state_sh="${lifecycle_sh%/*}/install_state.sh"
-    if [[ ! -f "$install_state_sh" ]]; then
-        printf 'Error: Required profile ownership helpers (install_state.sh) not available; source installation is untouched.\n' >&2
-        exit 1
-    fi
-    # shellcheck disable=SC1090
-    source "$install_state_sh"
+# Keep the same ownership logic as uninstall loaded before deleting its payload.
+install_state_sh="${lifecycle_sh%/*}/install_state.sh"
+if [[ ! -f "$install_state_sh" ]]; then
+    printf 'Error: Required ownership helpers (install_state.sh) not available; source installation is untouched.\n' >&2
+    exit 1
 fi
+# shellcheck disable=SC1090
+source "$install_state_sh"
 
 ts="$(date +%Y%m%d%H%M%S 2>/dev/null || echo 0)-$$"
 printf '[1/5] Inspecting source installation (channel=%s, version=%s, prefix=%s)...\n' \
@@ -813,6 +809,17 @@ if [[ -n "$project_root" && -f "$project_root/uninstall.sh" ]]; then
         restore_original_channel
         exit 1
     fi
+else
+    # Installed packages have no repository uninstall.sh. Remove their external
+    # integration through its shared ownership policy before the new session init.
+    while IFS= read -r item; do
+        [[ -z "$item" || "$item" == "$from_prefix/"* ]] && continue
+        if ! modernime_remove_external_managed_file "$item" "$from_prefix/share/modernime/managed-files"; then
+            printf 'Error: Cannot safely remove external managed file: %s\n' "$item" >&2
+            restore_original_channel
+            exit 1
+        fi
+    done < "$managed_list"
 fi
 
 # Ensure all recorded script files in from_prefix are removed before package installation

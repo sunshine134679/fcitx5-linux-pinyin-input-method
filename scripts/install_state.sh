@@ -101,6 +101,38 @@ modernime_remove_managed_file() {
     fi
 }
 
+# Shared by uninstall and the installed channel-migration entry point.
+# Only recorded ownership permits removal; unrelated/user-modified files remain.
+modernime_remove_external_managed_file() {
+    local target=$1 managed_state_dir=$2
+    if [[ "$target" != /* || "$target" == *"/../"* || "$target" == *"/.." ]]; then
+        return 1
+    fi
+    local key recorded_path matches
+    for key in desktop environment autostart xprofile; do
+        matches=false
+        recorded_path="$managed_state_dir/$key.path"
+        if [[ -f "$recorded_path" && "$(cat "$recorded_path")" == "$target" ]]; then
+            matches=true
+        fi
+        case "$key:$target" in
+            desktop:*/modernime-settings.desktop|\
+            environment:*/environment.d/90-modernime.conf|\
+            autostart:*/autostart/modernime-fcitx5-session.desktop)
+                matches=true ;;
+        esac
+        if [[ "$matches" == true ]]; then
+            if [[ "$key" == xprofile ]]; then
+                modernime_remove_profile_block "$target" "$managed_state_dir"
+            else
+                modernime_remove_managed_file "$target" "$key" "$managed_state_dir"
+            fi
+            return $?
+        fi
+    done
+    return 1
+}
+
 # Accept one complete, non-nested installer block. Surrounding user lines are
 # intentionally excluded from the ownership snapshot.
 modernime_profile_block() {

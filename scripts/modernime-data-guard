@@ -518,7 +518,9 @@ def resolve_user_dirs(args) -> list[tuple[Path, Path]]:
         return [(data_dir, config_dir)]
 
     # Check if explicit env vars are set
-    if os.environ.get("MODERNIME_DATA_HOME") or os.environ.get("MODERNIME_CONFIG_HOME"):
+    if any(os.environ.get(key) for key in (
+        "MODERNIME_DATA_HOME", "MODERNIME_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"
+    )):
         home = Path(os.environ.get("HOME", "/root"))
         data_base = Path(
             os.environ.get(

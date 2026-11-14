@@ -154,6 +154,37 @@ void clickWithConfirmation(GtkWidget *button) {
     gtk_button_clicked(GTK_BUTTON(button));
 }
 
+void inEntryDialog(GtkWidget *opener, const std::function<void(GtkDialog *, GtkEntry *, GtkEntry *)> &action) {
+    bool handled = false;
+    std::function<void()> handle = [&] {
+        auto *windows = gtk_window_list_toplevels();
+        for (auto *item = windows; item; item = item->next) {
+            const auto *title = gtk_window_get_title(GTK_WINDOW(item->data));
+            if (!GTK_IS_DIALOG(item->data) || !title ||
+                (std::string_view(title) != "添加用户词条" && std::string_view(title) != "编辑用户词条")) continue;
+            GtkEntry *phrase = nullptr, *pinyin = nullptr;
+            std::function<void(GtkWidget *)> scan = [&](GtkWidget *widget) {
+                const auto *name = atk_object_get_name(gtk_widget_get_accessible(widget));
+                if (GTK_IS_ENTRY(widget) && name) {
+                    if (std::string_view(name) == "词条") phrase = GTK_ENTRY(widget);
+                    if (std::string_view(name) == "输入键") pinyin = GTK_ENTRY(widget);
+                }
+                if (GTK_IS_CONTAINER(widget)) gtk_container_forall(GTK_CONTAINER(widget),
+                    +[](GtkWidget *child, gpointer data) { (*static_cast<std::function<void(GtkWidget *)> *>(data))(child); }, &scan);
+            };
+            scan(GTK_WIDGET(item->data));
+            assert(phrase && pinyin);
+            handled = true;
+            action(GTK_DIALOG(item->data), phrase, pinyin);
+            break;
+        }
+        g_list_free(windows);
+    };
+    g_idle_add(+[](gpointer data) -> gboolean { (*static_cast<std::function<void()> *>(data))(); return G_SOURCE_REMOVE; }, &handle);
+    gtk_button_clicked(GTK_BUTTON(opener));
+    assert(handled);
+}
+
 const char *samplePinyin(int index) {
     static const char *syls[] = {"ce'shi", "ni'hao", "zhong'guo", "pin'yin", "xue'xi"};
     return syls[index % 5];
@@ -250,36 +281,6 @@ void testDictionaryFailedSaveRetainsEntryDraft(const std::filesystem::path &temp
     });
     assert(gtk_widget_get_sensitive(add));
 
-    const auto inEntryDialog = [](GtkWidget *opener, const std::function<void(GtkDialog *, GtkEntry *, GtkEntry *)> &action) {
-        bool handled = false;
-        std::function<void()> handle = [&] {
-            auto *windows = gtk_window_list_toplevels();
-            for (auto *item = windows; item; item = item->next) {
-                const auto *title = gtk_window_get_title(GTK_WINDOW(item->data));
-                if (!GTK_IS_DIALOG(item->data) || !title ||
-                    (std::string_view(title) != "添加用户词条" && std::string_view(title) != "编辑用户词条")) continue;
-                GtkEntry *phrase = nullptr, *pinyin = nullptr;
-                std::function<void(GtkWidget *)> scan = [&](GtkWidget *widget) {
-                    const auto *name = atk_object_get_name(gtk_widget_get_accessible(widget));
-                    if (GTK_IS_ENTRY(widget) && name) {
-                        if (std::string_view(name) == "词条") phrase = GTK_ENTRY(widget);
-                        if (std::string_view(name) == "输入键") pinyin = GTK_ENTRY(widget);
-                    }
-                    if (GTK_IS_CONTAINER(widget)) gtk_container_forall(GTK_CONTAINER(widget),
-                        +[](GtkWidget *child, gpointer data) { (*static_cast<std::function<void(GtkWidget *)> *>(data))(child); }, &scan);
-                };
-                scan(GTK_WIDGET(item->data));
-                assert(phrase && pinyin);
-                handled = true;
-                action(GTK_DIALOG(item->data), phrase, pinyin);
-                break;
-            }
-            g_list_free(windows);
-        };
-        g_idle_add(+[](gpointer data) -> gboolean { (*static_cast<std::function<void()> *>(data))(); return G_SOURCE_REMOVE; }, &handle);
-        gtk_button_clicked(GTK_BUTTON(opener));
-        assert(handled);
-    };
     const auto answerLeave = [&](int response) {
         bool prompted = false;
         std::function<void()> answer = [&] {
@@ -349,6 +350,84 @@ void testDictionaryFailedSaveRetainsEntryDraft(const std::filesystem::path &temp
     page.reset();
     gtk_widget_destroy(window);
     std::cout << "[Test] testDictionaryFailedSaveRetainsEntryDraft PASSED!" << std::endl;
+}
+
+void testDictionaryDialogKeepsOpeningBaseline(const std::filesystem::path &tempDir) {
+    std::cout << "[Test] Running testDictionaryDialogKeepsOpeningBaseline..." << std::endl;
+    for (const bool editing : {false, true}) {
+        const auto path = tempDir / (editing ? "dialog-refresh-edit.txt" : "dialog-refresh-delete.txt");
+        { std::ofstream(path) << "nihao\t你好\t1\nzaijian\t再见\t1\n"; }
+        std::string notification;
+        auto page = std::make_unique<modernime::settings::DictionaryPage>(path,
+            [&](std::string message) { notification = std::move(message); });
+        auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        gtk_container_add(GTK_CONTAINER(window), page->widget());
+        gtk_widget_show_all(window);
+        auto *add = findTarget(page->widget(), "dictionary-add");
+        auto *view = GTK_TREE_VIEW(findTarget(page->widget(), "dictionary-list"));
+        const auto readyWithRows = [&](int count) {
+            return gtk_widget_get_sensitive(add) &&
+                gtk_tree_model_iter_n_children(gtk_tree_view_get_model(view), nullptr) == count;
+        };
+        pumpEventsUntil([&] { return readyWithRows(2); });
+        assert(readyWithRows(2));
+        auto *first = gtk_tree_path_new_from_indices(0, -1);
+        gtk_tree_selection_select_path(gtk_tree_view_get_selection(view), first);
+        gtk_tree_path_free(first);
+        const std::string external = "zaijian\t再见\t1\n";
+        const auto refreshDuringDialog = [&] {
+            { std::ofstream(path) << external; }
+            // A second --page dictionary request reaches this same refresh entry point.
+            page->refresh();
+            pumpEventsUntil([&] { return readyWithRows(1); });
+            assert(readyWithRows(1));
+        };
+        if (editing) {
+            inEntryDialog(findTarget(page->widget(), "dictionary-edit"),
+                [&](GtkDialog *dialog, GtkEntry *phrase, GtkEntry *pinyin) {
+                    assert(std::string_view(gtk_entry_get_text(phrase)) == "你好");
+                    gtk_entry_set_text(phrase, "草稿");
+                    gtk_entry_set_text(pinyin, "cao'gao");
+                    refreshDuringDialog();
+                    gtk_dialog_response(dialog, GTK_RESPONSE_ACCEPT);
+                });
+        } else {
+            std::function<void()> answer = [&] {
+                auto *windows = gtk_window_list_toplevels();
+                bool handled = false;
+                for (auto *item = windows; item; item = item->next) {
+                    if (!GTK_IS_MESSAGE_DIALOG(item->data)) continue;
+                    refreshDuringDialog();
+                    gtk_dialog_response(GTK_DIALOG(item->data), GTK_RESPONSE_YES);
+                    handled = true;
+                    break;
+                }
+                g_list_free(windows);
+                assert(handled);
+            };
+            g_idle_add(+[](gpointer data) -> gboolean {
+                (*static_cast<std::function<void()> *>(data))();
+                return G_SOURCE_REMOVE;
+            }, &answer);
+            gtk_button_clicked(GTK_BUTTON(findTarget(page->widget(), "dictionary-delete")));
+        }
+        pumpEventsUntil([&] { return !notification.empty() && gtk_widget_get_sensitive(add); });
+        assert(notification.find("冲突") != std::string::npos);
+        std::ifstream input(path);
+        assert(std::string(std::istreambuf_iterator<char>(input), {}) == external);
+        if (editing) {
+            assert(page->hasUnsavedChanges());
+            // The original was removed externally; the preserved draft remains reachable via Add.
+            inEntryDialog(add, [](GtkDialog *dialog, GtkEntry *phrase, GtkEntry *pinyin) {
+                assert(std::string_view(gtk_entry_get_text(phrase)) == "草稿");
+                assert(std::string_view(gtk_entry_get_text(pinyin)) == "cao'gao");
+                gtk_dialog_response(dialog, GTK_RESPONSE_CANCEL);
+            });
+        }
+        page.reset();
+        gtk_widget_destroy(window);
+    }
+    std::cout << "[Test] testDictionaryDialogKeepsOpeningBaseline PASSED!" << std::endl;
 }
 
 // 1. Test LearningStore::entryCount() with SQL COUNT(*) and LMDB stat
@@ -1453,6 +1532,7 @@ int main(int argc, char **argv) {
     std::filesystem::create_directories(tempDir);
 
     try {
+        testDictionaryDialogKeepsOpeningBaseline(tempDir);
         testDictionaryFailedSaveRetainsEntryDraft(tempDir);
         testDictionaryReadStateControlsMutation(tempDir);
         testLearningStoreEntryCount(tempDir);

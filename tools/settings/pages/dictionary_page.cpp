@@ -685,6 +685,10 @@ private:
             impl->notifyMessage("请先选择要删除的词条");
             return;
         }
+        // The nested dialog loop can receive another navigation/refresh request.
+        // Keep the confirmed row and the save baseline in the same snapshot.
+        auto entries = impl->dictionaryEntries;
+        const auto expectedBaseline = impl->currentBaseline;
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
             GTK_BUTTONS_YES_NO, "确定删除选中的用户词条吗？");
@@ -697,13 +701,10 @@ private:
         if (response != GTK_RESPONSE_YES) {
             return;
         }
-        if (!impl->canMutateDictionary()) {
-            return;
-        }
-        auto entries = impl->dictionaryEntries;
         entries.erase(entries.begin() +
                       static_cast<std::ptrdiff_t>(*selected));
-        impl->saveEntriesAsync(std::move(entries), "词条已删除；输入法会自动读取（约 2 秒）");
+        impl->saveEntriesAsync(std::move(entries), expectedBaseline,
+                              "词条已删除；输入法会自动读取（约 2 秒）");
     }
 
     struct ImportPreviewTaskData {
@@ -1147,7 +1148,16 @@ private:
                     owner.refresh();
                 } else if (taskData->result == DictionarySaveResult::Conflict) {
                     if (taskData->draft.has_value()) {
-                        owner.notifyMessage("保存失败：词典已被外部程序修改（版本冲突）。已保留您的编辑草稿，请刷新后重试。");
+                        const auto &draft = *taskData->draft;
+                        const bool originalMissing = draft.originalPhrase && draft.originalPinyin &&
+                            std::none_of(owner.dictionaryEntries.begin(), owner.dictionaryEntries.end(),
+                                [&draft](const auto &entry) {
+                                    return draft.originalPhrase == entry.phrase &&
+                                           draft.originalPinyin == entry.pinyin;
+                                });
+                        owner.notifyMessage(originalMissing
+                            ? "保存失败：原词条已被外部删除（版本冲突）。草稿已保留，可点“添加”继续编辑。"
+                            : "保存失败：词典已被外部程序修改（版本冲突）。已保留您的编辑草稿，请刷新后重试。");
                     } else {
                         owner.notifyMessage("保存失败：词典已被外部程序修改（版本冲突）。未覆盖磁盘内容，请刷新后重试。");
                     }
@@ -1166,9 +1176,12 @@ private:
     }
 
     void saveEntriesAsync(std::vector<pinyin::UserDictionaryEntry> entries,
+                          const DictionaryExpectedBaseline &expectedBaseline,
                           std::string successMessage,
                           std::optional<DraftEntry> draft = std::nullopt) {
-        if (!canMutateDictionary()) {
+        // Callers already validated the opening snapshot. A pending view refresh
+        // must not drop a confirmed edit; the worker checks that snapshot on disk.
+        if (operationInProgress) {
             return;
         }
         operationInProgress = true;
@@ -1176,7 +1189,7 @@ private:
         setButtonsSensitive(false);
 
         auto *taskData = new SaveTaskData{
-            lifetime, operationGeneration, path, currentBaseline, std::move(entries),
+            lifetime, operationGeneration, path, expectedBaseline, std::move(entries),
             std::move(successMessage), DictionarySaveResult::Invalid, {}, std::move(draft)
         };
         auto *task = g_task_new(nullptr, nullptr, onSaveFinished, nullptr);
@@ -1193,6 +1206,22 @@ private:
     bool editEntry(std::optional<std::size_t> selected) {
         if (!canMutateDictionary()) {
             return false;
+        }
+        const auto expectedBaseline = currentBaseline;
+        auto state = std::make_shared<DictionaryDialogState>();
+        state->existing = dictionaryEntries;
+        std::optional<DraftEntry> recoveredDraft;
+        if (!selected && !newEntryConflictDraft) {
+            for (const auto &[key, draft] : conflictDrafts) {
+                if (std::none_of(state->existing.begin(), state->existing.end(),
+                    [&draft](const auto &entry) {
+                        return draft.originalPhrase == entry.phrase &&
+                               draft.originalPinyin == entry.pinyin;
+                    })) {
+                    recoveredDraft = draft;
+                    break;
+                }
+            }
         }
         auto *dialog = gtk_dialog_new_with_buttons(
             selected.has_value() ? "编辑用户词条" : "添加用户词条",
@@ -1263,21 +1292,19 @@ private:
         gtk_box_pack_start(GTK_BOX(advancedBody), weightHelp, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(body), createSettingsDisclosure(advanced, advancedBody), FALSE, FALSE, 0);
 
-        auto state = std::make_shared<DictionaryDialogState>();
         state->pinyin = pinyin;
         state->phrase = phrase;
         state->weight = weight;
         state->validation = validation;
         state->readings = readings;
         state->automatic = automatic;
-        state->existing = dictionaryEntries;
         state->autoPinyin = !selected.has_value();
         state->accept = gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
         addStyleClass(state->accept, kSettingsPrimaryButtonClass);
         setAccessibleWidgetText(state->accept, "保存", "校验通过后保存当前词条");
         auto *cancel = gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
-        if (selected.has_value() && *selected < dictionaryEntries.size()) {
-            const auto &entry = dictionaryEntries[*selected];
+        if (selected.has_value() && *selected < state->existing.size()) {
+            const auto &entry = state->existing[*selected];
             auto it = conflictDrafts.find(makeDraftKey(entry.phrase, entry.pinyin));
             if (it != conflictDrafts.end()) {
                 gtk_entry_set_text(GTK_ENTRY(pinyin), it->second.pinyin.c_str());
@@ -1292,6 +1319,11 @@ private:
             gtk_entry_set_text(GTK_ENTRY(pinyin), newEntryConflictDraft->pinyin.c_str());
             gtk_entry_set_text(GTK_ENTRY(phrase), newEntryConflictDraft->phrase.c_str());
             gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), newEntryConflictDraft->weight);
+            state->autoPinyin = false;
+        } else if (recoveredDraft) {
+            gtk_entry_set_text(GTK_ENTRY(pinyin), recoveredDraft->pinyin.c_str());
+            gtk_entry_set_text(GTK_ENTRY(phrase), recoveredDraft->phrase.c_str());
+            gtk_spin_button_set_value(GTK_SPIN_BUTTON(weight), recoveredDraft->weight);
             state->autoPinyin = false;
         }
         setSettingsFocusChain(dialog, {phrase, pinyin, automatic, advanced, weight, cancel, state->accept});
@@ -1322,9 +1354,9 @@ private:
         entryDialogOpen = false;
 
         pinyin::UserDictionary dictionary;
-        for (std::size_t index = 0; index < dictionaryEntries.size(); ++index) {
+        for (std::size_t index = 0; index < state->existing.size(); ++index) {
             if (!selected.has_value() || index != *selected) {
-                const auto &entry = dictionaryEntries[index];
+                const auto &entry = state->existing[index];
                 if (!dictionary.upsert(entry.pinyin, entry.phrase,
                                        entry.weight)) {
                     notifyMessage("现有用户词典包含非法词条");
@@ -1338,17 +1370,18 @@ private:
             notifyMessage("词条未保存：拼音、词条或权重格式不合法");
             return false;
         }
-        DraftEntry draft;
+        DraftEntry draft = recoveredDraft.value_or(DraftEntry{});
         draft.pinyin = pinyinText;
         draft.phrase = phraseText;
         draft.weight = weightValue;
-        draft.baseBaseline = currentBaseline;
-        if (selected.has_value() && *selected < dictionaryEntries.size()) {
-            draft.originalPhrase = dictionaryEntries[*selected].phrase;
-            draft.originalPinyin = dictionaryEntries[*selected].pinyin;
-            draft.originalWeight = dictionaryEntries[*selected].weight;
+        draft.baseBaseline = expectedBaseline;
+        if (selected.has_value() && *selected < state->existing.size()) {
+            draft.originalPhrase = state->existing[*selected].phrase;
+            draft.originalPinyin = state->existing[*selected].pinyin;
+            draft.originalWeight = state->existing[*selected].weight;
         }
-        saveEntriesAsync(dictionary.entries(), "词条已保存；输入法会自动读取（约 2 秒）", std::move(draft));
+        saveEntriesAsync(dictionary.entries(), expectedBaseline,
+                         "词条已保存；输入法会自动读取（约 2 秒）", std::move(draft));
         return true;
     }
 

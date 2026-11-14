@@ -784,7 +784,9 @@ void LearningWriter::run() {
             success = persistBatch(events, &pruned, &externalChanged);
             if (success) {
                 const auto rev = store_->resetRevision();
-                if (rev.has_value() && (*rev > resetRevision_ || pruned || externalChanged)) {
+                // The input thread advances the epoch under mutex_, independently
+                // of storeMutex_. Use the same synchronized read as other readers.
+                if (rev.has_value() && (*rev > resetRevision() || pruned || externalChanged)) {
                     freshState = store_->readState();
                 }
             }

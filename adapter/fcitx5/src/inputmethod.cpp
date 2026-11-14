@@ -1233,6 +1233,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         contextState->syncSurroundingContext();
         auto modernEvent = translateKey(event.key(), keyBindings_);
         if (!hasNonShiftModifier(event.key()) && event.key().check(FcitxKey_grave) &&
+            !contextState->controller().auxiliaryInputActive() &&
             !contextState->controller().page().rawInput.empty()) {
             modernEvent = KeyEvent{KeyKind::OpenCandidateFilter};
         } else if (keyBindings_.temporaryEnglishEnabled &&

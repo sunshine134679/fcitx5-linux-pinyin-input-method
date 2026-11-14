@@ -158,30 +158,11 @@ while IFS= read -r path; do
 
     # 3. External managed file handling (when not inside prefix)
     if [[ "$path" != "$prefix_clean/"* ]]; then
-        case "$path" in
-            "$recorded_desktop"|"$desktop_shortcut"|*/modernime-settings.desktop)
-                modernime_remove_managed_file "$path" desktop "$managed_state_dir"
-                continue
-                ;;
-            "$recorded_environment"|"$environment_file"|*/environment.d/90-modernime.conf)
-                modernime_remove_managed_file "$path" environment "$managed_state_dir"
-                continue
-                ;;
-            "$recorded_autostart"|"$autostart_file"|*/autostart/modernime-fcitx5-session.desktop)
-                modernime_remove_managed_file "$path" autostart "$managed_state_dir"
-                continue
-                ;;
-            "$recorded_xprofile")
-                if [[ -n "$recorded_xprofile" ]]; then
-                    modernime_remove_profile_block "$path" "$managed_state_dir"
-                    continue
-                fi
-                ;;
-            *)
-                printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
-                exit 1
-                ;;
-        esac
+        if ! modernime_remove_external_managed_file "$path" "$managed_state_dir"; then
+            printf 'Refusing unexpected manifest path: %s\n' "$path" >&2
+            exit 1
+        fi
+        continue
     fi
 
     # 4. Canonical parent & target containment and namespace ownership check
