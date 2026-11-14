@@ -23,7 +23,6 @@ struct OverviewSnapshot final {
     std::string setupDescription;
     std::string setupActionLabel;
     std::string clipboardShortcut;
-    std::string trialInstructions;
     std::string defaultMode;
     std::string toggleKey;
     std::size_t dictionaryEntries = 0;

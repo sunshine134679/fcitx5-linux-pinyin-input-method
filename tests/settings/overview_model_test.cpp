@@ -85,7 +85,7 @@ void testCollectsOverviewFromPersistedData() {
     runtime.desktopPanel = {modernime::settings::DesktopPanelState::Pending, "等待重新登录", "重新登录后检查候选面板"};
     const auto pendingPanel = modernime::settings::collectOverviewSnapshot(paths, modernime::core::defaultSettings(), runtime);
     assertTrue(pendingPanel.setupAction == modernime::settings::OverviewSetupAction::DesktopPanel &&
-                   pendingPanel.setupDescription == runtime.desktopPanel.message,
+                   pendingPanel.setupDescription == runtime.desktopPanel.title,
                "active engine does not hide a missing desktop candidate panel");
     runtime.desktopPanel = {};
     runtime.modernimeActive = false;
@@ -94,7 +94,7 @@ void testCollectsOverviewFromPersistedData() {
     settings.clipboardTrigger = "V+3";
     const auto ready = modernime::settings::collectOverviewSnapshot(paths, settings, runtime);
     assertTrue(ready.setupAction == modernime::settings::OverviewSetupAction::Activate &&
-                   ready.trialInstructions.find("nihc") != std::string::npos &&
+                   ready.setupDescription == "ModernIME 未激活" &&
                    ready.clipboardShortcut.find("V+3") != std::string::npos,
                "setup uses activation and current input preferences");
     settings.inputEnabled = false;

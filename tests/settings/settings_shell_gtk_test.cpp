@@ -606,11 +606,10 @@ int main(int argc, char **argv) {
         auto *trial = findAccessibleWidget(window, GTK_TYPE_ENTRY, "试输入");
         assert(trial != nullptr);
         gtk_entry_set_text(GTK_ENTRY(trial), "你好");
-        // Real input retains text; scheme guidance is available on demand.
+        // Real input retains text without tutorial copy in labels or tooltips.
         assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(trial))) == "你好");
         auto *trialHelp = gtk_widget_get_tooltip_text(trial);
-        assert(trialHelp != nullptr && std::string_view(trialHelp).find("按空格") != std::string_view::npos);
-        assert(findLabelText(window, trialHelp) == nullptr);
+        assert(trialHelp == nullptr);
         g_free(trialHelp);
         assert(findLabelText(window, "已收到“你好”。可以继续试长句，或到其他应用输入。") == nullptr);
         auto *oldSummary = findLabelText(window, "ModernIME 正在运行");

@@ -98,8 +98,6 @@ public:
         gtk_button_set_label(GTK_BUTTON(setupButton), snapshot.setupActionLabel.c_str());
         // Healthy state needs no duplicate setup paragraph or redundant action.
         gtk_widget_set_visible(setupActions, setupAction != OverviewSetupAction::None);
-        gtk_widget_set_tooltip_text(trialEntry, snapshot.trialInstructions.c_str());
-        setAccessibleWidgetText(trialEntry, "试输入", snapshot.trialInstructions);
 
         if (!snapshot.notices.empty()) {
             auto *notices = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -249,7 +247,7 @@ public:
         gtk_entry_set_placeholder_text(GTK_ENTRY(trialEntry), "试试输入中文");
         gtk_entry_set_width_chars(GTK_ENTRY(trialEntry), 12);
         gtk_entry_set_icon_from_icon_name(GTK_ENTRY(trialEntry), GTK_ENTRY_ICON_SECONDARY, "input-keyboard-symbolic");
-        setAccessibleWidgetText(trialEntry, "试输入", "使用当前系统输入法试输入，不修改设置");
+        setAccessibleWidgetText(trialEntry, "试输入", "");
         gtk_box_pack_start(GTK_BOX(workbench), trialEntry, FALSE, FALSE, 0);
     }
 
