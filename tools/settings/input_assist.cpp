@@ -49,12 +49,12 @@ struct Preview {
                 gtk_list_store_append(store, &iter);
                 gtk_list_store_set(store, &iter, 0, match.text.c_str(), 1, match.components.c_str(), -1);
             }
-            gtk_label_set_text(GTK_LABEL(status), query.empty() ? "填写完整部件组合，支持原部件或拼音。" : matches.empty() ? "没有匹配的字，试试完整的部件组合。" : "选择汉字后可复制；正文输入时使用 u+ 触发。" );
+            gtk_label_set_text(GTK_LABEL(status), query.empty() ? "" : matches.empty() ? "没有匹配的字" : "" );
         } else {
             const auto calculation = core::calculate(query);
             value = calculation.valid ? calculation.text : "";
             gtk_label_set_text(GTK_LABEL(results), value.c_str());
-            gtk_label_set_text(GTK_LABEL(status), query.empty() ? "输入表达式即可预览结果。" : calculation.valid ? "Enter、空格或末尾 = 可在正文中上屏。" : calculation.error.c_str());
+            gtk_label_set_text(GTK_LABEL(status), query.empty() || calculation.valid ? "" : calculation.error.c_str());
         }
         gtk_widget_set_sensitive(copy, !value.empty());
     }
@@ -109,7 +109,7 @@ GtkWidget *preview(GtkWindow *parent, bool component) {
         component ? gtk_tree_view_new() : gtk_label_new(""), gtk_button_new_with_label("复制结果"),
         component ? gtk_button_new_with_label("重新加载") : nullptr, gtk_expander_new("技术详情"), {}, {}, {}, 0};
     owner->lifetime = std::make_shared<Preview::Lifetime>(owner);
-    gtk_box_pack_start(GTK_BOX(body), label(component ? "填写部件或部件拼音，无需 u+；例如 木木、mumu、ri+yue。" : "直接填写表达式，无需 v=。支持四则运算、括号与取余（%），结果为近似值。"), FALSE, FALSE, 0);
+    gtk_widget_set_tooltip_text(owner->entry, component ? "填写部件或部件拼音，无需 u+" : "四则运算、括号与取余（%）；结果为近似值");
     target(owner->entry, "assist-preview-input"); target(owner->status, "assist-preview-state");
     target(owner->results, "assist-preview-results"); target(owner->copy, "assist-preview-copy");
     gtk_entry_set_placeholder_text(GTK_ENTRY(owner->entry), component ? "木木 / mumu" : "(2+3)*4");
@@ -200,10 +200,10 @@ public:
                 o.model.setSettings(std::move(settings)); o.changed();
             }), this);
         };
-        row("临时英文", "Ctrl+Shift+E 输入一段英文；Enter 确认、Esc 取消，结束后回到中文。", "input.temporary_english", temporary, nullptr);
-        row("拆字查字", "输入 u+ 后填写部件拼音，如 u+mumu → 林；支持空格、数字或鼠标选字。", "input.component_lookup", component, &componentPreview);
-        row("离线计算器", "输入 v= 后填写表达式，如 v=(2+3)*4 → 20；Enter 或空格上屏。", "input.calculator", calculator, &calculatorPreview);
-        row("符号搜索", "输入 v; 搜索名称或拼音；也可从 v 菜单进入符号与收藏。", "symbols.enabled", symbols, &symbolBrowser);
+        row("临时英文 · Ctrl+Shift+E", "Ctrl+Shift+E 输入一段英文；Enter 确认、Esc 取消，结束后回到中文。", "input.temporary_english", temporary, nullptr);
+        row("拆字查字 · u+", "输入 u+ 后填写部件拼音，如 u+mumu → 林；支持空格、数字或鼠标选字。", "input.component_lookup", component, &componentPreview);
+        row("离线计算器 · v=", "输入 v= 后填写表达式，如 v=(2+3)*4 → 20；Enter 或空格上屏。", "input.calculator", calculator, &calculatorPreview);
+        row("符号搜索 · v;", "输入 v; 搜索名称或拼音；也可从 v 菜单进入符号与收藏。", "symbols.enabled", symbols, &symbolBrowser);
         gtk_button_set_label(GTK_BUTTON(symbolBrowser), "浏览与收藏");
         target(symbolBrowser, "symbol-browser");
         setAccessibleWidgetText(symbolBrowser, "浏览符号与收藏", "按分类或名称查找符号，预览、复制并管理收藏");

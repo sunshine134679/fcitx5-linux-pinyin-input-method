@@ -7,6 +7,17 @@
 int main() {
     using namespace modernime::settings;
 
+    assert(parseSettingsPage("工作台") == SettingsPageId::Overview);
+    assert(parseSettingsPage("输入习惯") == SettingsPageId::Input);
+    assert(parseSettingsPage("我的词语") == SettingsPageId::Dictionary);
+    assert(parseSettingsPage("维护") == SettingsPageId::Diagnostics);
+    const auto navigation = settingsNavigationDefinitions();
+    assert(navigation.size() == 6);
+    assert(navigation.back().id == SettingsPageId::Diagnostics);
+    assert(settingsNavigationOwner(SettingsPageId::Learning) == SettingsPageId::Dictionary);
+    assert(settingsNavigationOwner(SettingsPageId::Updates) == SettingsPageId::Diagnostics);
+    assert(searchSettings("我的词语").front().page == SettingsPageId::Dictionary);
+
     const auto pages = settingsPageDefinitions();
     assert(pages.size() == 8);
     assert(pages.front().id == SettingsPageId::Overview);

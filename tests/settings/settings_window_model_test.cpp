@@ -113,11 +113,13 @@ int main() {
     const auto path = directory / "settings.conf";
     modernime::settings::SettingsWindowModel model(path);
     assertTrue(!model.dirty(), "fresh model is clean");
+    assertTrue(model.changes().empty(), "clean model has no change summary");
     assertTrue(model.savedSettings() == model.settings(),
                "fresh model exposes its saved settings");
 
     model.editDefaults();
     assertTrue(model.dirty(), "editing defaults marks the model dirty");
+    assertTrue(model.changes().size() == 1, "explicit default write remains visible even with equal values");
     assertTrue(!std::filesystem::exists(path),
                "editing defaults does not create a settings file");
     std::string error;
@@ -133,8 +135,11 @@ int main() {
     settings.defaultMode = modernime::core::InputMode::English;
     model.setSettings(settings);
     assertTrue(model.dirty(), "edited settings are dirty");
+    assertTrue(model.changes().size() == 2 && model.changes().front().group == "输入习惯",
+               "summary reports changed settings and their user-facing scope");
     assertTrue(model.save(&error), "edited settings save: " + error);
     assertTrue(!model.dirty(), "saved model is clean");
+    assertTrue(model.changes().empty(), "successful save clears the change summary");
     assertTrue(model.reloadRequired(),
                "saving changed settings requires an engine reload");
     const auto firstSavedRevision = model.savedRevision();

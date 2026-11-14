@@ -58,7 +58,7 @@ struct Browser {
         const auto *entry = selected();
         const bool isFavorite = entry && favorites.contains(entry->id);
         gtk_label_set_text(GTK_LABEL(preview), entry ? entry->text.c_str() : "未选择符号");
-        const auto detail = entry ? entry->name + " · " + categoryName(entry->category) : "选择结果后可收藏或复制。";
+        const auto detail = entry ? entry->name + " · " + categoryName(entry->category) : "";
         gtk_label_set_text(GTK_LABEL(details), detail.c_str());
         gtk_button_set_label(GTK_BUTTON(favorite), isFavorite ? "取消收藏" : "收藏符号");
         gtk_widget_set_sensitive(copy, entry != nullptr);
@@ -90,8 +90,8 @@ struct Browser {
             gtk_tree_selection_select_iter(gtk_tree_view_get_selection(GTK_TREE_VIEW(results)), &selectedIter);
         const auto message = matches.empty()
             ? (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(only)) && favorites.empty()
-                ? std::string("还没有收藏。取消“仅收藏”后选择符号添加。")
-                : std::string("没有匹配的符号，试试其他关键词或分类。"))
+                ? std::string("暂无收藏")
+                : std::string("没有匹配的符号"))
             : "显示 " + std::to_string(matches.size()) + " 个符号，已收藏 " + std::to_string(favorites.size()) + " / 128 个";
         gtk_label_set_text(GTK_LABEL(count), message.c_str());
         selectionChanged();
@@ -132,10 +132,11 @@ GtkWidget *openSymbolBrowser(GtkWindow *parent, SettingsWindowModel &model,
     auto *body = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     gtk_container_set_border_width(GTK_CONTAINER(body), 20);
     gtk_box_set_spacing(GTK_BOX(body), 10);
-    gtk_box_pack_start(GTK_BOX(body), description("离线浏览常用符号。支持中文、拼音、英文或原符号搜索；输入时用 v; 打开符号搜索。"), FALSE, FALSE, 0);
 
     owner->query = gtk_search_entry_new();
     target(owner->query, "symbol-query");
+    gtk_widget_set_tooltip_text(owner->query, "搜索名称、拼音、英文或原符号；输入时用 v; 打开");
+    gtk_widget_set_tooltip_text(gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT), "返回设置草稿，主窗口保存后生效");
     gtk_entry_set_placeholder_text(GTK_ENTRY(owner->query), "搜索符号，例如 箭头、jiantou、arrow、→");
     setAccessibleWidgetText(owner->query, "搜索符号", "支持中文名称、拼音、英文和原符号，忽略英文大小写与空白");
     gtk_box_pack_start(GTK_BOX(body), owner->query, FALSE, FALSE, 0);
@@ -178,7 +179,7 @@ GtkWidget *openSymbolBrowser(GtkWindow *parent, SettingsWindowModel &model,
     target(owner->count, "symbol-count");
     gtk_box_pack_start(GTK_BOX(body), owner->count, FALSE, FALSE, 0);
 
-    auto *selection = createSectionCard("符号预览", "当前选中的完整符号");
+    auto *selection = createSectionCard("", "");
     auto *selectionRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_set_margin_top(selectionRow, 8);
     owner->preview = gtk_label_new("");
@@ -207,7 +208,6 @@ GtkWidget *openSymbolBrowser(GtkWindow *parent, SettingsWindowModel &model,
     target(owner->status, "symbol-status");
     gtk_box_pack_start(GTK_BOX(selection), owner->status, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(body), selection, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(body), description("确认后返回设置草稿，点击主窗口“保存设置”才会生效。"), FALSE, FALSE, 0);
 
     g_signal_connect(owner->query, "changed", G_CALLBACK(+[](GtkEditable *, gpointer p) { static_cast<Browser *>(p)->render(); }), owner);
     g_signal_connect(owner->category, "changed", G_CALLBACK(+[](GtkWidget *, gpointer p) { static_cast<Browser *>(p)->render(); }), owner);

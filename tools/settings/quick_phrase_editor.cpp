@@ -44,7 +44,7 @@ public:
     Impl(std::filesystem::path file, std::function<void(std::string)> notifyCallback,
          std::function<QuickPhraseReloadResult()> reloadCallback)
         : path(std::move(file)), notify(std::move(notifyCallback)), reload(std::move(reloadCallback)) {
-        detail::GtkWidgetGuard guard(createSectionCard("", "把常用的固定文本保存为缩写，在快速输入中调用。"));
+        detail::GtkWidgetGuard guard(createSectionCard("", ""));
         root = guard.get();
         target(root, "quick-phrases");
         setAccessibleWidgetText(root, "快捷短语", "把常用的固定文本保存为缩写，在快速输入中调用");
@@ -56,15 +56,14 @@ public:
         gtk_widget_set_valign(title, GTK_ALIGN_CENTER);
         gtk_box_pack_start(GTK_BOX(header), title, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 0);
-        auto *help = description("独立保存，默认 Super+; 输入");
-        gtk_widget_set_tooltip_text(help, "需要启用 Fcitx5“快速输入 / Quick Phrase”插件；自定义快捷键以系统设置为准。输入缩写后按空格或数字选词，Esc 取消。");
-        gtk_box_pack_start(GTK_BOX(root), help, FALSE, FALSE, 0);
+        gtk_widget_set_tooltip_text(title, "默认按 Super+; 后输入缩写；需启用 Fcitx5 快速输入插件。");
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
         search = gtk_search_entry_new();
         target(search, "quick-phrase-search");
         gtk_entry_set_placeholder_text(GTK_ENTRY(search), "搜索缩写或固定文本");
         setAccessibleWidgetText(search, "搜索快捷短语", "按缩写或固定文本筛选，忽略英文大小写");
         gtk_widget_set_hexpand(search, TRUE);
+        gtk_style_context_add_class(gtk_widget_get_style_context(searchRow), "modernime-content-toolbar");
         gtk_box_pack_start(GTK_BOX(searchRow), search, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(root), searchRow, FALSE, FALSE, 8);
 
@@ -86,6 +85,7 @@ public:
         store = storeOwner.get();
         list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
         target(list, "quick-phrase-list");
+        gtk_style_context_add_class(gtk_widget_get_style_context(list), "modernime-content-list");
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(list), FALSE);
         setAccessibleWidgetText(list, "快捷短语列表", "选择短语后编辑或删除，双击编辑，Delete 删除");
         for (const auto &[name, column] : {std::pair{"缩写", 0}, std::pair{"固定文本", 1}}) {
@@ -142,7 +142,7 @@ public:
             if (gtk_widget_get_sensitive(GTK_WIDGET(object))) gtk_style_context_add_class(style, "suggested-action");
             else gtk_style_context_remove_class(style, "suggested-action");
         }), nullptr);
-        discard = button(actions, "放弃短语修改", "quick-phrase-discard", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->discardDraft(); });
+        discard = button(actions, "放弃修改", "quick-phrase-discard", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->discardDraft(); });
         gtk_widget_set_tooltip_text(discard, "放弃尚未保存的快捷短语草稿");
         merge = button(actions, "检查并合并", "quick-phrase-merge", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->reviewMerge(); });
         apply = button(actions, "重试应用", "quick-phrase-apply", +[](GtkButton *, gpointer p) { static_cast<Impl *>(p)->start(Operation::Apply); });
@@ -241,6 +241,12 @@ public:
         auto *style = gtk_widget_get_style_context(state);
         if (!error.empty() || conflict) gtk_style_context_add_class(style, "modernime-status-error");
         else gtk_style_context_remove_class(style, "modernime-status-error");
+        const unsigned flags = (dirty ? 1U : 0U) | (busy ? 2U : 0U) |
+            (activeDialog ? 4U : 0U) | (pendingApply ? 8U : 0U);
+        if (flags != reportedState) {
+            reportedState = flags;
+            if (stateChanged) stateChanged();
+        }
     }
 
     void render() {
@@ -388,6 +394,7 @@ public:
             static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
             "取消", GTK_RESPONSE_CANCEL, accept, GTK_RESPONSE_ACCEPT, nullptr);
         activeDialog = popup;
+        update();
         gtk_style_context_add_class(gtk_widget_get_style_context(popup), "modernime-settings");
         gtk_window_set_default_size(GTK_WINDOW(popup), 560, -1);
         gtk_dialog_set_default_response(GTK_DIALOG(popup), GTK_RESPONSE_ACCEPT);
@@ -406,7 +413,7 @@ public:
         g_object_set_data_full(G_OBJECT(popup), "modernime-quick-phrase-dialog", contextData, +[](gpointer p) { delete static_cast<Dialog *>(p); });
         g_signal_connect(popup, "destroy", G_CALLBACK(+[](GtkWidget *dialog, gpointer p) {
             auto &data = *static_cast<Dialog *>(p);
-            data.lifetime->withOwner([&](Impl &owner) { if (owner.activeDialog == dialog) owner.activeDialog = nullptr; });
+            data.lifetime->withOwner([&](Impl &owner) { if (owner.activeDialog == dialog) { owner.activeDialog = nullptr; owner.update(); } });
         }), contextData);
         g_signal_connect(popup, "response", G_CALLBACK((+[](GtkDialog *dialog, gint response, gpointer p) {
             auto &data = *static_cast<Dialog *>(p);
@@ -455,7 +462,7 @@ public:
         if (error.empty()) for (std::size_t i = 0; i < entries.size(); ++i) {
             if ((!data.index || i != *data.index) && entries[i] == entry) { error = "相同的缩写和文本已存在。"; break; }
         }
-        gtk_label_set_text(GTK_LABEL(data.validation), error.empty() ? "确认后加入草稿，点击“保存短语”保存并应用。" : error.c_str());
+        gtk_label_set_text(GTK_LABEL(data.validation), error.empty() ? "加入草稿，保存后生效。" : error.c_str());
         if (activeDialog) gtk_dialog_set_response_sensitive(GTK_DIALOG(activeDialog), GTK_RESPONSE_ACCEPT, error.empty());
         return error.empty();
     }
@@ -505,7 +512,7 @@ public:
         gtk_label_set_max_width_chars(GTK_LABEL(text), 60);
         gtk_label_set_ellipsize(GTK_LABEL(text), PANGO_ELLIPSIZE_END);
         gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), text, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), description("确认后从草稿移除，保存短语后生效。"), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), description("保存短语后删除生效。"), FALSE, FALSE, 0);
         gtk_widget_show_all(dialog);
     }
 
@@ -521,7 +528,7 @@ public:
             if (!contains(baseline.entries, entry) && !contains(data->proposed, entry)) data->proposed.push_back(entry);
         auto *area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
         gtk_window_set_default_size(GTK_WINDOW(dialog), 640, 440);
-        gtk_box_pack_start(GTK_BOX(area), description("外部新增与草稿修改已合在下方。勾选要保留的短语；同一缩写可以保留不同文本。\n确认只更新草稿，检查后仍需点击“保存短语”。"), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(area), description("选择要保留的短语。确认后更新草稿，保存后生效。"), FALSE, FALSE, 0);
         detail::GObjectHandle<GtkListStore> storeOwner = detail::GObjectHandle<GtkListStore>::adopt(
             gtk_list_store_new(3, G_TYPE_BOOLEAN, G_TYPE_STRING, G_TYPE_STRING));
         data->mergeStore = storeOwner.get();
@@ -612,6 +619,8 @@ public:
     guint renderSource = 0;
     std::size_t renderIndex = 0;
     Operation activeOperation = Operation::Read;
+    std::function<void()> stateChanged;
+    unsigned reportedState = 0;
     bool loaded = false, dirty = false, busy = false, conflict = false, pendingApply = false, applied = false, uiAlive = true;
     std::string operationError;
 };
@@ -621,6 +630,7 @@ QuickPhraseEditor::QuickPhraseEditor(std::filesystem::path path, std::function<v
     : impl_(std::make_unique<Impl>(std::move(path), std::move(notify), std::move(reload))) {}
 QuickPhraseEditor::~QuickPhraseEditor() = default;
 GtkWidget *QuickPhraseEditor::widget() const { return impl_->root; }
+void QuickPhraseEditor::setStateChanged(std::function<void()> changed) { impl_->stateChanged = std::move(changed); }
 void QuickPhraseEditor::refresh() { if (!impl_->dirty && !impl_->busy) impl_->start(Impl::Operation::Read); }
 bool QuickPhraseEditor::focusTarget(std::string_view target) { return impl_->focusTarget(target); }
 bool QuickPhraseEditor::hasUnsavedChanges() const { return impl_->dirty; }

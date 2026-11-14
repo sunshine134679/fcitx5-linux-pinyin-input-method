@@ -216,6 +216,28 @@ int main(int argc, char **argv) {
     gtk_dialog_response(GTK_DIALOG(dialog()), GTK_RESPONSE_ACCEPT);
     ready(window);
     assert(service.count("pack.enable") == 1 && service.enabled);
+    // The inline switch applies immediately and refreshes its actual backend state.
+    auto *packList = find(window, "pack-list");
+    auto *useColumn = gtk_tree_view_get_column(GTK_TREE_VIEW(packList), 0);
+    auto *cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(useColumn));
+    assert(cells && GTK_IS_CELL_RENDERER_TOGGLE(cells->data));
+    auto *inlineToggle = GTK_CELL_RENDERER(cells->data);
+    g_list_free(cells);
+    g_signal_emit_by_name(inlineToggle, "toggled", "1");
+    // A second activation during the request must not dispatch a duplicate write.
+    g_signal_emit_by_name(inlineToggle, "toggled", "1");
+    assert(!dialog());
+    ready(window);
+    assert(service.count("pack.disable") == 2 && !service.enabled);
+    GtkTreeIter switchedRow;
+    auto *packModel = gtk_tree_view_get_model(GTK_TREE_VIEW(packList));
+    assert(gtk_tree_model_iter_nth_child(packModel, &switchedRow, nullptr, 1));
+    gboolean active = TRUE;
+    gtk_tree_model_get(packModel, &switchedRow, 5, &active, -1);
+    assert(!active);
+    g_signal_emit_by_name(inlineToggle, "toggled", "1");
+    ready(window);
+    assert(service.count("pack.enable") == 2 && service.enabled);
     click(window, "pack-remove");
     gtk_dialog_response(GTK_DIALOG(dialog()), GTK_RESPONSE_CANCEL);
     assert(service.count("pack.remove") == 0);

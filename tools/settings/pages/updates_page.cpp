@@ -446,7 +446,7 @@ private:
                              static_cast<GConnectFlags>(0));
 
         gtk_box_pack_start(GTK_BOX(section), grid, FALSE, FALSE, 0);
-        checkDetailsLabel = wrappedLabel("检查后可在这里查看完整结果。", true);
+        checkDetailsLabel = wrappedLabel("待检查", true);
         addStyleClass(checkDetailsLabel, "modernime-check-details-message");
         setTarget(checkDetailsLabel, "updates-check-details-message");
         gtk_box_pack_start(GTK_BOX(section), checkDetailsLabel, FALSE, FALSE, 0);
@@ -493,7 +493,7 @@ private:
 
         gtk_box_pack_end(GTK_BOX(summary), checkButton, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(section), summary, FALSE, FALSE, 0);
-        statusMessageLabel = wrappedLabel("尚未检查更新");
+        statusMessageLabel = wrappedLabel("待检查");
         addStyleClass(statusMessageLabel, "modernime-release-status");
         setTarget(statusMessageLabel, "updates-status");
         auto *progress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -508,6 +508,7 @@ private:
         addStyleClass(statusHintLabel, "modernime-status-hint");
         setTarget(statusHintLabel, "updates-status-hint");
         gtk_widget_set_margin_top(statusHintLabel, 4);
+        gtk_widget_set_no_show_all(statusHintLabel, TRUE);
         gtk_box_pack_start(GTK_BOX(version), statusHintLabel, FALSE, FALSE, 0);
         downloadProgress = gtk_progress_bar_new();
         setTarget(downloadProgress, "updates-download-progress");
@@ -551,7 +552,7 @@ private:
         setTarget(notesStateLabel, "updates-release-state");
         gtk_box_pack_start(GTK_BOX(notesStateBox), notesStateLabel, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(section), notesStateBox, FALSE, FALSE, 0);
-        changelogLabel = wrappedLabel("展开后加载官方更新说明。", true);
+        changelogLabel = wrappedLabel("暂无更新说明", true);
         setTarget(changelogLabel, "updates-release-notes");
         addStyleClass(changelogLabel, "modernime-release-notes");
 #if PANGO_VERSION_CHECK(1, 50, 0)
@@ -917,7 +918,7 @@ private:
         gtk_label_set_text(GTK_LABEL(commandLabel), "");
         gtk_widget_hide(commandLabel);
         gtk_label_set_text(GTK_LABEL(checkDetailsLabel), "正在读取完整检查结果…");
-        gtk_label_set_text(GTK_LABEL(guideDescLabel), "正在检查安装渠道，请稍候。");
+        gtk_label_set_text(GTK_LABEL(guideDescLabel), "正在识别安装方式…");
 
         launchTask(online);
     }
@@ -956,7 +957,7 @@ private:
                        "可重新检查，展开检查详情查看原因。",
                        "warning");
             gtk_label_set_text(GTK_LABEL(checkDetailsLabel), errMsg);
-            gtk_label_set_text(GTK_LABEL(guideDescLabel), "本次检查未完成，请重新检查后获取升级命令。");
+            gtk_label_set_text(GTK_LABEL(guideDescLabel), "暂未获取升级命令");
             gtk_label_set_text(GTK_LABEL(candidateVersionLabel), "暂不可用");
             gtk_label_set_text(GTK_LABEL(channelLabel), "未检测");
             focusCopyWhenReady = false;
@@ -979,7 +980,9 @@ private:
     void setSummary(const std::string &message, const char *hint,
                     const char *stateClass) {
         gtk_label_set_text(GTK_LABEL(statusMessageLabel), message.c_str());
-        gtk_label_set_text(GTK_LABEL(statusHintLabel), hint);
+        const bool showHint = std::string_view(stateClass) == "warning" && hint && *hint;
+        gtk_label_set_text(GTK_LABEL(statusHintLabel), showHint ? hint : "");
+        gtk_widget_set_visible(statusHintLabel, showHint);
         auto *context = gtk_widget_get_style_context(summaryCard);
         for (const auto *name : {"neutral", "success", "warning"}) {
             gtk_style_context_remove_class(context, name);
@@ -1018,7 +1021,7 @@ private:
         gtk_label_set_text(GTK_LABEL(candidateVersionLabel), candDisplay.c_str());
         gtk_label_set_text(GTK_LABEL(checkDetailsLabel),
                            status.statusMessage.empty()
-                               ? (status.checked ? "检查未提供额外说明。" : "检查后可在这里查看完整结果。")
+                               ? (status.checked ? "无额外信息" : "待检查")
                                : status.statusMessage.c_str());
         if (status.cacheMayBeStale && !status.packageManagerLocked) {
             gtk_label_set_text(GTK_LABEL(checkDetailsLabel),
@@ -1034,18 +1037,17 @@ private:
         if (status.packageManagerLocked && !status.checkedOnline) {
             setSummary("软件包管理器正忙", "仍可在线检查官方版本；安装请等待系统包操作结束。", "warning");
         } else if (status.updateAvailable) {
-            setSummary("可更新至 " + status.candidateVersion,
-                       "自动选择当前安装渠道的更新包，下载后可重启完成安装。", "success");
+            setSummary("可更新至 " + status.candidateVersion, "", "success");
         } else if (status.offlineOrUnreachable) {
             setSummary("暂时无法确认更新", "请重新检查；若仍失败，可展开检查详情查看原因。", "warning");
         } else if (status.checkedOnline) {
-            setSummary("未发现新版本", "已查询官方最新正式版本。", "neutral");
+            setSummary("已是最新版本", "", "neutral");
         } else if (status.cacheMayBeStale) {
-            setSummary("本地软件源缓存未发现更新", "点击检查更新，在线查询官方最新版本。", "neutral");
+            setSummary("待检查", "", "neutral");
         } else if (status.checked) {
-            setSummary("检查已结束", "暂无可用版本信息，可展开检查详情查看原因。", "neutral");
+            setSummary("未获取版本信息", "", "neutral");
         } else {
-            setSummary("尚未检查更新", "检查官方发布，查看是否有可用版本。", "neutral");
+            setSummary("待检查", "", "neutral");
         }
 
         const auto cmd = upgradeCommand(status);
@@ -1054,14 +1056,14 @@ private:
         gtk_widget_set_sensitive(copyCommandButton, !busy && !cmd.empty());
         if (cmd.empty()) {
             gtk_label_set_text(GTK_LABEL(guideDescLabel), status.checked
-                ? "暂未确认适用的升级命令。请按原安装渠道升级，或打开软件源页面查看说明。"
-                : "先检查更新，确认安装渠道后会在这里显示对应命令。");
+                ? "未获取适用的升级命令"
+                : "待检查");
         } else if (status.installChannel == "script") {
             gtk_label_set_text(GTK_LABEL(guideDescLabel),
-                "当前为脚本安装。以下命令会迁移到系统包渠道；确认需要迁移后，再复制到终端执行。");
+                "执行此命令会将脚本安装迁移为系统软件包。");
         } else {
             gtk_label_set_text(GTK_LABEL(guideDescLabel),
-                "复制以下命令到终端执行。系统包管理器会刷新软件源并确认升级内容。");
+                "");
         }
     }
 
@@ -1147,6 +1149,18 @@ GtkWidget *UpdatesPage::widget() const {
 
 void UpdatesPage::refresh() {
     impl_->refresh();
+}
+
+void UpdatesPage::setEmbedded(bool embedded) {
+    auto *header = static_cast<GtkWidget *>(g_object_get_data(G_OBJECT(impl_->widget()), "modernime-page-header"));
+    if (header) {
+        gtk_widget_set_no_show_all(header, embedded);
+        gtk_widget_set_visible(header, !embedded);
+    }
+    gtk_widget_set_margin_start(impl_->widget(), embedded ? 0 : 24);
+    gtk_widget_set_margin_end(impl_->widget(), embedded ? 0 : 24);
+    gtk_widget_set_margin_top(impl_->widget(), embedded ? 0 : 20);
+    gtk_widget_set_margin_bottom(impl_->widget(), embedded ? 0 : 18);
 }
 
 bool UpdatesPage::focusTarget(std::string_view target) {

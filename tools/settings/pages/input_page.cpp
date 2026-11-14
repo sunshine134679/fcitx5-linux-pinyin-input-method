@@ -173,22 +173,46 @@ class InputPage::Impl final {
 public:
     Impl(SettingsWindowModel &modelRef, std::function<void()> changedCallback)
         : model(modelRef), changed(std::move(changedCallback)) {
-        detail::GtkWidgetGuard pageGuard(createPageShell(
-            "输入与按键", ""));
-        page = pageGuard.get();
+        detail::GtkWidgetGuard pageGuard(createPageShell("输入习惯", ""));
+        auto *outerPage = pageGuard.get();
+        categories = gtk_stack_new();
+        gtk_stack_set_homogeneous(GTK_STACK(categories), FALSE);
+        gtk_stack_set_transition_type(GTK_STACK(categories), GTK_STACK_TRANSITION_TYPE_NONE);
+        const auto category = [this](const char *name, const char *title) {
+            auto *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+            gtk_stack_add_titled(GTK_STACK(categories), body, name, title);
+            return body;
+        };
+        page = category("pinyin", "拼音与状态");
         buildInputStatusSection();
         buildFuzzySection();
+        page = category("keys", "按键与标点");
         buildShortcutSection();
+        buildPunctuationSection();
+        page = category("assist", "输入辅助");
         script = std::make_unique<ScriptConversionControl>();
         gtk_box_pack_start(GTK_BOX(page), script->widget(), FALSE, FALSE, 0);
         assist = std::make_unique<InputAssist>(model, changed);
         gtk_box_pack_start(GTK_BOX(page), assist->widget(), FALSE, FALSE, 0);
-        buildPunctuationSection();
-        setSettingsFocusChain(page, {inputEnabled, defaultMode, rememberPerApp, appRules, pinyinScheme, fuzzyExpander,
+        learningSection = category("learning", "学习行为");
+        gtk_widget_set_no_show_all(learningSection, TRUE);
+        gtk_widget_hide(learningSection);
+        page = outerPage;
+        auto *switcher = gtk_stack_switcher_new();
+        gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(categories));
+        gtk_widget_set_halign(switcher, GTK_ALIGN_START);
+        addStyleClass(switcher, "modernime-dictionary-switcher");
+        setAccessibleWidgetText(switcher, "输入习惯分类", "选择拼音、按键、辅助或学习行为");
+        gtk_box_pack_start(GTK_BOX(page), switcher, FALSE, FALSE, 0);
+        g_object_set_data(G_OBJECT(page), "modernime-page-fixed-content", switcher);
+        gtk_box_pack_start(GTK_BOX(page), categories, TRUE, TRUE, 0);
+        gtk_widget_show_all(categories);
+        gtk_stack_set_visible_child_name(GTK_STACK(categories), "pinyin");
+        setSettingsFocusChain(page, {switcher, inputEnabled, defaultMode, rememberPerApp, appRules, pinyinScheme, fuzzyExpander,
             fuzzyControls[0], fuzzyControls[1], fuzzyControls[2],
             fuzzyControls[3], fuzzyControls[4], fuzzyControls[5],
             toggleKey, characterExtraction, undoCommit, script->widget(), assist->widget(), punctuation, autoPair, smartPunctuation,
-            punctuationAdvanced, underscore, punctuationRules});
+            punctuationAdvanced, underscore, punctuationRules, learningSection});
         refresh();
         pageGuard.release();
     }
@@ -607,7 +631,39 @@ public:
         }
     }
 
+    static GtkWidget *findTarget(GtkWidget *root, std::string_view target) {
+        const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(root), "modernime-settings-target"));
+        if (id && target == id) return root;
+        if (!GTK_IS_CONTAINER(root)) return nullptr;
+        auto *children = gtk_container_get_children(GTK_CONTAINER(root));
+        GtkWidget *found = nullptr;
+        for (auto *item = children; item && !found; item = item->next)
+            found = findTarget(GTK_WIDGET(item->data), target);
+        g_list_free(children);
+        return found;
+    }
+
+    void setLearningControls(GtkWidget *controls) {
+        if (!controls || learningControls) return;
+        auto *selectedCategory = gtk_stack_get_visible_child(GTK_STACK(categories));
+        learningControls = controls;
+        gtk_widget_set_no_show_all(learningSection, FALSE);
+        gtk_box_pack_start(GTK_BOX(learningSection), controls, FALSE, FALSE, 0);
+        gtk_widget_show_all(learningSection);
+        gtk_widget_show(learningSection);
+        if (selectedCategory) gtk_stack_set_visible_child(GTK_STACK(categories), selectedCategory);
+    }
+
     bool focusTarget(std::string_view target) {
+        const auto lookup = target == "toggle-key-shift" ? std::string_view("toggle-key") : target;
+        if (auto *control = findTarget(categories, lookup)) {
+            auto *category = control;
+            while (gtk_widget_get_parent(category) != categories && gtk_widget_get_parent(category))
+                category = gtk_widget_get_parent(category);
+            if (gtk_widget_get_parent(category) == categories)
+                gtk_stack_set_visible_child(GTK_STACK(categories), category);
+            if (category == learningSection) return focusWidgetOrFallback(control, learningSection);
+        }
         if (script->focusTarget(target)) return true;
         if (assist->focusTarget(target)) return true;
         for (const auto &[control, fallback] : editingControls) {
@@ -648,6 +704,9 @@ public:
     SettingsWindowModel &model;
     std::function<void()> changed;
     GtkWidget *page = nullptr;
+    GtkWidget *categories = nullptr;
+    GtkWidget *learningSection = nullptr;
+    GtkWidget *learningControls = nullptr;
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
     GtkWidget *pinyinScheme = nullptr;
@@ -682,6 +741,10 @@ GtkWidget *InputPage::widget() const {
 
 void InputPage::refresh() {
     impl_->refresh();
+}
+
+void InputPage::setLearningControls(GtkWidget *controls) {
+    impl_->setLearningControls(controls);
 }
 
 bool InputPage::focusTarget(std::string_view target) {

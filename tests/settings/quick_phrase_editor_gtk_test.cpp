@@ -201,6 +201,9 @@ int main(int argc, char **argv) {
     std::filesystem::remove(path);
     {
         DictionaryPage dictionary(root / "user.dict", [](std::string) {});
+        dictionary.setLearningPage(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0), [] {}, [](std::string_view) { return false; });
+        auto *dictionaryViews = find(dictionary.widget(), "dictionary-views");
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(dictionaryViews))) == "dictionary");
         auto *dictionaryWindow = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         gtk_window_set_default_size(GTK_WINDOW(dictionaryWindow), 780, 650);
         gtk_style_context_add_class(gtk_widget_get_style_context(dictionaryWindow), "modernime-settings");
@@ -212,6 +215,11 @@ int main(int argc, char **argv) {
         assert(settingsPageDefinitions().size() == 8 && !searchSettings("快捷短语").empty());
         wait([&] { return gtk_widget_is_sensitive(find(dictionaryWindow, "quick-phrase-add")); });
         wait([&] { return !gtk_stack_get_transition_running(GTK_STACK(find(dictionaryWindow, "dictionary-views"))); });
+        edit(dictionaryWindow, "quick-phrase-add", "cg", "草稿定位");
+        assert(dictionary.hasUnsavedChanges());
+        assert(dictionary.focusTarget("dictionary-search"));
+        assert(dictionary.focusTarget("dictionary-draft"));
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(dictionaryViews))) == "quick-phrases");
         if (const auto *captures = std::getenv("MODERNIME_QUICK_PHRASE_CAPTURES"))
             capture(dictionaryWindow, std::filesystem::path(captures) / "个人词典内入口.png");
         gtk_widget_destroy(dictionaryWindow);

@@ -75,20 +75,20 @@ void updateDictionaryDialogValidity(DictionaryDialogState *state) {
     std::string message;
     bool error = false;
     if (*phrase == '\0') {
-        message = "可添加中文或中英混合词，例如 A股、Docker容器。";
+        message.clear();
     } else if (*reading == '\0') {
         message = state->loading && state->autoPinyin
             ? "正在读取本地词库，稍后自动填写拼音…"
-            : "请填写完整输入键，例如 ni'hao、agu 或 dockerrongqi。";
+            : "请填写读音或输入键。";
     } else if (!valid) {
         message = "请填写完整拼音或混合词输入键；拼音不带声调，ü 写作 v。";
         error = true;
     } else if (!state->autoPinyin) {
-        message = "已使用你填写的输入键。";
+        message.clear();
     } else if (state->approximate) {
-        message = "这是按汉字组合的建议读音；人名和多音字请确认，也可直接修改。";
+        message = "请确认建议读音。";
     } else {
-        message = "已填写词库读音；人名和多音字可修改或从读音列表选择。";
+        message.clear();
     }
     auto *style = gtk_widget_get_style_context(state->validation);
     if (error) gtk_style_context_add_class(style, "modernime-status-error");
@@ -212,7 +212,7 @@ public:
          std::function<void(std::string)> notifyCallback)
         : path(std::move(dictionaryPath)), notify(std::move(notifyCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "个人词典", ""));
+            "我的词语", ""));
         page = pageGuard.get();
         buildPage();
         refresh();
@@ -234,17 +234,21 @@ public:
         setTarget(views, "dictionary-views");
         gtk_stack_set_homogeneous(GTK_STACK(views), FALSE);
         gtk_stack_set_interpolate_size(GTK_STACK(views), TRUE);
-        gtk_stack_set_transition_type(GTK_STACK(views), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+        gtk_stack_set_transition_type(GTK_STACK(views), GTK_STACK_TRANSITION_TYPE_NONE);
         gtk_stack_set_transition_duration(GTK_STACK(views), 160);
         auto *switcher = gtk_stack_switcher_new();
         gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(views));
         gtk_widget_set_halign(switcher, GTK_ALIGN_START);
         addStyleClass(switcher, "modernime-dictionary-switcher");
-        setAccessibleWidgetText(switcher, "词典管理方式", "切换拼音词条、快捷短语与离线词库包，保留未保存的短语草稿");
-        gtk_box_pack_start(GTK_BOX(page), switcher, FALSE, FALSE, 0);
+        setAccessibleWidgetText(switcher, "我的词语分类", "切换词条、短语、学习记录与词库包，保留未保存的短语草稿");
+        auto *fixedTools = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+        gtk_box_pack_start(GTK_BOX(fixedTools), switcher, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(page), fixedTools, FALSE, FALSE, 0);
+        g_object_set_data(G_OBJECT(page), "modernime-page-fixed-content", fixedTools);
         auto *dictionaryContent = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-        gtk_stack_add_titled(GTK_STACK(views), dictionaryContent, "dictionary", "拼音词条");
+        gtk_stack_add_titled(GTK_STACK(views), dictionaryContent, "dictionary", "词条");
         quickPhrases = std::make_unique<QuickPhraseEditor>(quickPhrasePath(), notify);
+        quickPhrases->setStateChanged([this] { emitStateChanged(); });
         gtk_stack_add_titled(GTK_STACK(views), quickPhrases->widget(), "quick-phrases", "快捷短语");
         dictionaryPacks = std::make_unique<DictionaryPackManager>(notify);
         gtk_stack_add_titled(GTK_STACK(views), dictionaryPacks->widget(), "dictionary-packs", "词库包");
@@ -253,14 +257,14 @@ public:
             auto &owner = *static_cast<Impl *>(p);
             if (gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.quickPhrases->widget()) owner.quickPhrases->refresh();
             if (gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.dictionaryPacks->widget()) owner.dictionaryPacks->refresh();
+            if (owner.learningPage && gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.learningPage && owner.refreshLearning) owner.refreshLearning();
+            if (owner.dictionaryToolbar) gtk_widget_set_visible(owner.dictionaryToolbar,
+                g_strcmp0(gtk_stack_get_visible_child_name(GTK_STACK(owner.views)), "dictionary") == 0);
         }), this);
-        auto *section = createSectionCard(
-            "我的词条", "");
+        auto *section = createSectionCard("", "");
         gtk_box_pack_start(GTK_BOX(dictionaryContent), section, TRUE, TRUE, 0);
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-        auto *searchLabel = gtk_label_new("搜索");
-        gtk_widget_set_halign(searchLabel, GTK_ALIGN_START);
         dictionarySearch = gtk_search_entry_new();
         gtk_entry_set_placeholder_text(GTK_ENTRY(dictionarySearch),
                                        "输入拼音或词条关键词");
@@ -270,10 +274,10 @@ public:
         setTarget(dictionarySearch, "dictionary-search");
         setAccessibleWidgetText(dictionarySearch, "搜索",
                                 "按拼音或词条关键词实时筛选个人词典");
-        gtk_box_pack_start(GTK_BOX(searchRow), searchLabel, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(searchRow), dictionarySearch, TRUE, TRUE, 0);
-        gtk_widget_set_margin_bottom(searchRow, 10);
-        gtk_box_pack_start(GTK_BOX(section), searchRow, FALSE, FALSE, 0);
+        dictionaryToolbar = searchRow;
+        addStyleClass(searchRow, "modernime-content-toolbar");
+        gtk_box_pack_start(GTK_BOX(fixedTools), searchRow, FALSE, FALSE, 0);
 
         dictionaryCount = gtk_label_new("正在读取用户词典…");
         addStyleClass(dictionaryCount, "modernime-description");
@@ -297,6 +301,7 @@ public:
                                     "选择词条后可以编辑或删除");
         for (const auto &column : {std::pair<const char *, int>{"词条", 1}, {"拼音", 0}}) {
             auto *renderer = gtk_cell_renderer_text_new();
+            g_object_set(renderer, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
             auto *viewColumn = gtk_tree_view_column_new_with_attributes(
                 column.first, renderer, "text", column.second, nullptr);
             gtk_tree_view_column_set_expand(viewColumn, TRUE);
@@ -307,7 +312,55 @@ public:
         gtk_widget_set_vexpand(scrolled, TRUE);
         gtk_widget_set_size_request(scrolled, -1, 160);
         gtk_container_add(GTK_CONTAINER(scrolled), dictionaryView);
-        gtk_box_pack_start(GTK_BOX(section), scrolled, TRUE, TRUE, 0);
+        auto *workspace = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+        addStyleClass(dictionaryView, "modernime-content-list");
+        gtk_box_pack_start(GTK_BOX(workspace), scrolled, TRUE, TRUE, 0);
+        detailPanel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+        auto *details = detailPanel;
+        addStyleClass(details, "modernime-content-detail-empty");
+        gtk_widget_set_hexpand(details, FALSE);
+        gtk_widget_set_valign(details, GTK_ALIGN_START);
+        gtk_widget_set_size_request(details, 220, -1);
+        gtk_box_pack_start(GTK_BOX(workspace), details, FALSE, FALSE, 0);
+        detailTitle = gtk_label_new("未选择词条");
+        detailReading = gtk_label_new("");
+        for (auto *label : {detailTitle, detailReading}) {
+            gtk_label_set_xalign(GTK_LABEL(label), 0);
+            gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+            gtk_label_set_line_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+            gtk_label_set_max_width_chars(GTK_LABEL(label), 1);
+            gtk_label_set_selectable(GTK_LABEL(label), TRUE);
+            gtk_box_pack_start(GTK_BOX(details), label, FALSE, FALSE, 0);
+        }
+        addStyleClass(detailTitle, "modernime-word-detail-title");
+        gtk_widget_set_no_show_all(detailReading, TRUE);
+        addStyleClass(detailReading, "modernime-description");
+        detailActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_box_pack_start(GTK_BOX(details), detailActions, FALSE, FALSE, 0);
+        learningLink = gtk_button_new_with_label("学习记录");
+        setTarget(learningLink, "dictionary-learning");
+        gtk_widget_set_halign(learningLink, GTK_ALIGN_START);
+        gtk_widget_set_no_show_all(learningLink, TRUE);
+        gtk_box_pack_start(GTK_BOX(details), learningLink, FALSE, FALSE, 0);
+        g_signal_connect(learningLink, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
+            auto &owner = *static_cast<Impl *>(data);
+            const auto index = owner.selectedIndex();
+            if (!index || !owner.focusLearning) return;
+            const auto query = "learning-query:" + owner.dictionaryEntries[*index].phrase;
+            owner.showLearning();
+            owner.focusLearning(query);
+        }), this);
+        g_signal_connect(workspace, "size-allocate", G_CALLBACK(+[](GtkWidget *box, GtkAllocation *allocation, gpointer) {
+            const auto orientation = allocation->width >= 640 ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL;
+            if (gtk_orientable_get_orientation(GTK_ORIENTABLE(box)) != orientation) {
+                gtk_orientable_set_orientation(GTK_ORIENTABLE(box), orientation);
+                auto *children = gtk_container_get_children(GTK_CONTAINER(box));
+                auto *details = children && children->next ? GTK_WIDGET(children->next->data) : nullptr;
+                if (details) gtk_widget_set_size_request(details, orientation == GTK_ORIENTATION_HORIZONTAL ? 220 : -1, -1);
+                g_list_free(children);
+            }
+        }), nullptr);
+        gtk_box_pack_start(GTK_BOX(section), workspace, TRUE, TRUE, 0);
         dictionaryState = gtk_label_new("");
         addStyleClass(dictionaryState, "modernime-description");
         gtk_widget_set_halign(dictionaryState, GTK_ALIGN_START);
@@ -321,7 +374,7 @@ public:
                          this);
 
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-        gtk_widget_set_margin_top(actions, 10);
+        gtk_widget_set_margin_top(actions, 0);
         gtk_widget_set_margin_bottom(actions, 2);
         addButton = gtk_button_new_with_label("添加");
         addStyleClass(addButton, kSettingsPrimaryButtonClass);
@@ -333,6 +386,7 @@ public:
         setTarget(editButton, "dictionary-edit");
         setTarget(deleteButton, "dictionary-delete");
         setTarget(importButton, "dictionary-import-export");
+        setTarget(exportButton, "dictionary-export");
         gtk_widget_set_tooltip_text(addButton, "添加中文或中英混合词，如 A股（agu）、Docker容器（dockerrongqi）");
         gtk_widget_set_tooltip_text(editButton, "编辑选中的词条");
         gtk_widget_set_tooltip_text(deleteButton, "删除选中的词条");
@@ -346,11 +400,17 @@ public:
                                 "从文本文件导入并整体替换个人词典");
         setAccessibleWidgetText(exportButton, "导出",
                                 "将当前个人词典导出为文本文件");
-        for (auto *button : {addButton, editButton, deleteButton, importButton,
-                             exportButton}) {
+        for (auto *button : {addButton, importButton, exportButton}) {
             gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
         }
-        gtk_box_pack_start(GTK_BOX(section), actions, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(detailActions), editButton, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(detailActions), deleteButton, FALSE, FALSE, 0);
+        gtk_widget_show_all(detailActions);
+        gtk_widget_set_no_show_all(detailActions, TRUE);
+        gtk_widget_hide(detailActions);
+        gtk_box_pack_start(GTK_BOX(searchRow), actions, FALSE, FALSE, 0);
+        gtk_widget_show_all(searchRow);
+        gtk_widget_set_no_show_all(searchRow, TRUE);
         g_signal_connect(addButton, "clicked", G_CALLBACK(onAdd), this);
         g_signal_connect(editButton, "clicked", G_CALLBACK(onEdit), this);
         g_signal_connect(deleteButton, "clicked", G_CALLBACK(onDelete), this);
@@ -358,10 +418,9 @@ public:
         g_signal_connect(exportButton, "clicked", G_CALLBACK(onExport), this);
         g_signal_connect(dictionarySearch, "search-changed",
                          G_CALLBACK(onSearchChanged), this);
-        setSettingsFocusChain(page, {switcher, views});
+        setSettingsFocusChain(page, {switcher, dictionarySearch, addButton, importButton, exportButton, views});
         setSettingsFocusChain(
-            dictionaryContent, {dictionarySearch, dictionaryView, addButton, editButton,
-                   deleteButton, importButton, exportButton});
+            dictionaryContent, {dictionaryView, editButton, deleteButton, learningLink});
     }
 
     struct LoadTaskData {
@@ -417,6 +476,7 @@ public:
         } else {
             updateActionState();
         }
+        emitStateChanged();
     }
 
     void refresh() {
@@ -560,7 +620,7 @@ public:
                 } else if (currentSnapshot.status == DictionaryLoadStatus::IoError) {
                     state = "无法读取用户词典：" + currentSnapshot.error;
                 } else if (dictionaryEntries.empty()) {
-                    state = "暂无词条";
+                    state = "暂无个人词条";
                 } else {
                     state = "没有匹配的词条；请更换拼音或词条关键词";
                 }
@@ -594,7 +654,42 @@ public:
             [](gpointer d) { delete static_cast<BatchRenderContext *>(d); });
     }
 
+    void setLearningPage(GtkWidget *child, std::function<void()> refresh, std::function<bool(std::string_view)> focus) {
+        const auto *visible = gtk_stack_get_visible_child_name(GTK_STACK(views));
+        const std::string previous = visible ? visible : "dictionary";
+        learningPage = child;
+        refreshLearning = std::move(refresh);
+        focusLearning = std::move(focus);
+        gtk_stack_add_titled(GTK_STACK(views), child, "learning", "学习记录");
+        gtk_container_child_set(GTK_CONTAINER(views), child, "position", 2, nullptr);
+        gtk_widget_show_all(child);
+        auto *resume = gtk_stack_get_child_by_name(GTK_STACK(views), previous.c_str());
+        if (resume) {
+            gtk_widget_show(resume);
+            gtk_stack_set_visible_child(GTK_STACK(views), resume);
+        }
+        gtk_widget_show(learningLink);
+        updateActionState();
+    }
+    void showLearning() {
+        if (learningPage) gtk_stack_set_visible_child_name(GTK_STACK(views), "learning");
+    }
+    void setStateChanged(std::function<void()> changed) { stateChanged = std::move(changed); }
+    void emitStateChanged() { if (stateChanged) stateChanged(); }
     bool focusTarget(std::string_view target) {
+        if (target == "dictionary-draft") {
+            const bool entryDraft = operationInProgress || entryDialogOpen || !conflictDrafts.empty() || newEntryConflictDraft.has_value();
+            if (!entryDraft && (quickPhrases->hasUnsavedChanges() || quickPhrases->hasPendingOperations())) {
+                gtk_stack_set_visible_child_name(GTK_STACK(views), "quick-phrases");
+                return quickPhrases->focusTarget("quick-phrase-search");
+            }
+            gtk_stack_set_visible_child_name(GTK_STACK(views), "dictionary");
+            return focusWidgetOrFallback(newEntryConflictDraft ? addButton : dictionarySearch);
+        }
+        if (learningPage && (target == "learning-data" || target.starts_with("learning-") || target == "context-learning")) {
+            showLearning();
+            return focusLearning && focusLearning(target);
+        }
         if (target == "quick-phrases" || target.starts_with("quick-phrase-")) {
             gtk_stack_set_visible_child_name(GTK_STACK(views), "quick-phrases");
             return quickPhrases->focusTarget(target);
@@ -604,7 +699,9 @@ public:
             return dictionaryPacks->focusTarget(target);
         }
         gtk_stack_set_visible_child_name(GTK_STACK(views), "dictionary");
-        const std::array controls{dictionarySearch, addButton, importButton};
+        if (target == "dictionary-import") return focusWidgetOrFallback(importButton);
+        if (target == "dictionary-export") return focusWidgetOrFallback(exportButton);
+        const std::array controls{dictionarySearch, dictionaryView, addButton, editButton, deleteButton, importButton, exportButton, learningLink};
         for (auto *control : controls) {
             const auto *id = static_cast<const char *>(g_object_get_data(
                 G_OBJECT(control), "modernime-settings-target"));
@@ -636,6 +733,7 @@ public:
             if (response != GTK_RESPONSE_REJECT) return false;
             conflictDrafts.clear();
             newEntryConflictDraft.reset();
+            emitStateChanged();
         }
         return quickPhrases->confirmLeave();
     }
@@ -691,7 +789,10 @@ private:
         const auto expectedBaseline = impl->currentBaseline;
         auto *dialog = gtk_message_dialog_new(
             impl->parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
-            GTK_BUTTONS_YES_NO, "确定删除选中的用户词条吗？");
+            GTK_BUTTONS_YES_NO, "删除“%s”？", entries[*selected].phrase.c_str());
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+            "读音 / 输入键：%s\n仅删除这个个人词条，学习记录仍保留。", entries[*selected].pinyin.c_str());
+        gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_NO);
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_YES,
                                        "删除", "删除选中的个人词典词条");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_NO,
@@ -801,7 +902,7 @@ private:
         gtk_container_set_border_width(GTK_CONTAINER(mainBox), 16);
         gtk_container_add(GTK_CONTAINER(contentArea), mainBox);
 
-        auto *headerLabel = gtk_label_new("词典导入预览统计");
+        auto *headerLabel = gtk_label_new("导入预览");
         addStyleClass(headerLabel, "modernime-section-title");
         gtk_widget_set_halign(headerLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(mainBox), headerLabel, FALSE, FALSE, 0);
@@ -811,10 +912,10 @@ private:
         gtk_container_set_border_width(GTK_CONTAINER(statsCard), 8);
 
         std::ostringstream s1, s2, s3, s4;
-        s1 << "• 文件包含有效词条：" << preview.totalParsed << " 条";
-        s2 << "• 新增词条（合并后追加）：" << preview.newEntries << " 条";
-        s3 << "• 完全一致词条（拼音、词条与权重相同）：" << preview.duplicateEntries << " 条";
-        s4 << "• 权重冲突词条（拼音与词条相同但权重不同）：" << preview.conflictEntries << " 条";
+        s1 << "有效词条：" << preview.totalParsed << " 条";
+        s2 << "新增：" << preview.newEntries << " 条";
+        s3 << "重复：" << preview.duplicateEntries << " 条";
+        s4 << "排序加成不同：" << preview.conflictEntries << " 条";
 
         for (const auto &text : {s1.str(), s2.str(), s3.str(), s4.str()}) {
             auto *label = gtk_label_new(text.c_str());
@@ -823,15 +924,15 @@ private:
         }
         gtk_box_pack_start(GTK_BOX(mainBox), statsCard, FALSE, FALSE, 0);
 
-        auto *modeLabel = gtk_label_new("请选择导入方式：");
+        auto *modeLabel = gtk_label_new("导入方式");
         gtk_widget_set_halign(modeLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(mainBox), modeLabel, FALSE, FALSE, 0);
 
         auto *mergeRadio = gtk_radio_button_new_with_label(
-            nullptr, "合并导入（推荐：保留当前词典，追加新词条）");
+            nullptr, "合并导入，保留已有词条");
         auto *replaceRadio = gtk_radio_button_new_with_label_from_widget(
             GTK_RADIO_BUTTON(mergeRadio),
-            "整体替换（清空现有词典，自动创建安全备份后写入导入词条）");
+            "整体替换现有词典，先创建备份");
         setAccessibleWidgetText(mergeRadio, "合并导入", "保留当前词典，追加新词条");
         setAccessibleWidgetText(replaceRadio, "整体替换", "清空现有词典，自动创建安全备份后写入导入词条");
 
@@ -844,15 +945,15 @@ private:
         if (preview.conflictEntries > 0) {
             conflictBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
             gtk_widget_set_margin_start(conflictBox, 20);
-            auto *conflictTitle = gtk_label_new("检测到权重冲突，合并时的冲突处理规则：");
+            auto *conflictTitle = gtk_label_new("排序加成不同时");
             gtk_widget_set_halign(conflictTitle, GTK_ALIGN_START);
             gtk_box_pack_start(GTK_BOX(conflictBox), conflictTitle, FALSE, FALSE, 0);
 
             keepConflictRadio = gtk_radio_button_new_with_label(
-                nullptr, "保留现有词条权重（忽略导入文件中的新权重）");
+                nullptr, "保留现有排序加成");
             overwriteConflictRadio = gtk_radio_button_new_with_label_from_widget(
                 GTK_RADIO_BUTTON(keepConflictRadio),
-                "使用导入权重覆盖现有词条权重");
+                "使用导入的排序加成");
             setAccessibleWidgetText(keepConflictRadio, "保留现有词条权重", "合并时保留现有词条权重");
             setAccessibleWidgetText(overwriteConflictRadio, "使用导入权重覆盖", "合并时使用导入文件权重覆盖现有词条");
 
@@ -888,6 +989,7 @@ private:
         gtk_widget_destroy(dialog);
 
         operationInProgress = true;
+        emitStateChanged();
         ++operationGeneration;
         setButtonsSensitive(false);
 
@@ -1074,6 +1176,23 @@ private:
     }
 
     void updateActionState() {
+        const auto index = selectedIndex();
+        if (detailTitle) gtk_label_set_text(GTK_LABEL(detailTitle), index ? dictionaryEntries[*index].phrase.c_str() : "未选择词条");
+        const auto reading = index ? "读音：" + dictionaryEntries[*index].pinyin : "";
+        if (detailReading) {
+            gtk_label_set_text(GTK_LABEL(detailReading), reading.c_str());
+            gtk_widget_set_visible(detailReading, index.has_value());
+        }
+        if (detailPanel) {
+            auto *style = gtk_widget_get_style_context(detailPanel);
+            gtk_style_context_remove_class(style, index ? "modernime-content-detail-empty" : "modernime-content-details");
+            gtk_style_context_add_class(style, index ? "modernime-content-details" : "modernime-content-detail-empty");
+        }
+        if (detailActions) gtk_widget_set_visible(detailActions, index.has_value());
+        if (learningLink) {
+            gtk_widget_set_sensitive(learningLink, index.has_value());
+            gtk_widget_set_visible(learningLink, index.has_value() && learningPage);
+        }
         const bool hasSelected = canMutateDictionary() && selectedIndex().has_value();
         if (editButton != nullptr) {
             gtk_widget_set_sensitive(editButton, hasSelected);
@@ -1170,6 +1289,7 @@ private:
                     owner.setButtonsSensitive(true);
                     owner.updateActionState();
                 }
+                owner.emitStateChanged();
             });
             delete taskData;
         }
@@ -1185,6 +1305,7 @@ private:
             return;
         }
         operationInProgress = true;
+        emitStateChanged();
         ++operationGeneration;
         setButtonsSensitive(false);
 
@@ -1228,6 +1349,7 @@ private:
             parentWindow(), GTK_DIALOG_MODAL, "取消", GTK_RESPONSE_CANCEL,
             "保存", GTK_RESPONSE_ACCEPT, nullptr);
         entryDialogOpen = true;
+        emitStateChanged();
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL,
                                        "取消", "关闭对话框且不保存词条修改");
         setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT,
@@ -1343,6 +1465,7 @@ private:
         if (response != GTK_RESPONSE_ACCEPT) {
             gtk_widget_destroy(dialog);
             entryDialogOpen = false;
+            emitStateChanged();
             return false;
         }
 
@@ -1352,6 +1475,7 @@ private:
             gtk_spin_button_get_value(GTK_SPIN_BUTTON(weight)));
         gtk_widget_destroy(dialog);
         entryDialogOpen = false;
+        emitStateChanged();
 
         pinyin::UserDictionary dictionary;
         for (std::size_t index = 0; index < state->existing.size(); ++index) {
@@ -1400,6 +1524,16 @@ private:
     std::function<void(std::string)> notify;
     GtkWidget *page = nullptr;
     GtkWidget *views = nullptr;
+    GtkWidget *learningPage = nullptr;
+    GtkWidget *dictionaryToolbar = nullptr;
+    GtkWidget *detailPanel = nullptr;
+    GtkWidget *detailTitle = nullptr;
+    GtkWidget *detailReading = nullptr;
+    GtkWidget *detailActions = nullptr;
+    GtkWidget *learningLink = nullptr;
+    std::function<void()> refreshLearning;
+    std::function<bool(std::string_view)> focusLearning;
+    std::function<void()> stateChanged;
     std::unique_ptr<QuickPhraseEditor> quickPhrases;
     std::unique_ptr<DictionaryPackManager> dictionaryPacks;
     GtkListStore *dictionaryStore = nullptr;
@@ -1439,6 +1573,12 @@ DictionaryPage::~DictionaryPage() = default;
 GtkWidget *DictionaryPage::widget() const {
     return impl_->widget();
 }
+
+void DictionaryPage::setLearningPage(GtkWidget *page, std::function<void()> refresh, std::function<bool(std::string_view)> focus) {
+    impl_->setLearningPage(page, std::move(refresh), std::move(focus));
+}
+void DictionaryPage::showLearning() { impl_->showLearning(); }
+void DictionaryPage::setStateChanged(std::function<void()> changed) { impl_->setStateChanged(std::move(changed)); }
 
 void DictionaryPage::refresh() {
     impl_->refresh();

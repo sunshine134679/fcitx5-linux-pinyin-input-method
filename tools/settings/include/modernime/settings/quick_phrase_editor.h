@@ -25,6 +25,7 @@ public:
     _GtkWidget *widget() const;
     // Lazy and non-destructive: never replaces an unsaved draft or an active operation.
     void refresh();
+    void setStateChanged(std::function<void()> changed);
     bool focusTarget(std::string_view target);
     bool hasUnsavedChanges() const;
     bool hasPendingOperations() const;

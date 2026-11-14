@@ -197,7 +197,7 @@ public:
         setTarget(clipboardTrigger, "clipboard-trigger");
         clipboardTriggerFallback = createSettingRow(
             "触发键",
-            "先输入字母，再紧跟数字。例如 V+2。",
+            "",
             clipboardTrigger);
         setAccessibleWidgetText(clipboardTrigger, "剪贴板触发键",
             "设置在中文输入状态打开本地剪贴板历史的按键");
@@ -227,7 +227,10 @@ public:
         setAccessibleWidgetText(favoritesToggle, "仅收藏", "只显示已收藏的剪贴板内容");
         gtk_box_pack_start(GTK_BOX(searchBar), searchEntry, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(searchBar), favoritesToggle, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(historySection), searchBar, FALSE, FALSE, 0);
+        auto *fixedTools = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        gtk_box_pack_start(GTK_BOX(fixedTools), searchBar, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(page), fixedTools, FALSE, FALSE, 0);
+        g_object_set_data(G_OBJECT(page), "modernime-page-fixed-content", fixedTools);
         g_signal_connect(searchEntry, "search-changed", G_CALLBACK(onSearchChanged), this);
         g_signal_connect(favoritesToggle, "toggled", G_CALLBACK(onSearchChanged), this);
 
@@ -333,8 +336,7 @@ public:
         gtk_menu_button_set_popover(GTK_MENU_BUTTON(moreButton), menu);
         gtk_widget_show_all(menuItems);
         gtk_box_pack_start(GTK_BOX(historyActions), moreButton, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(historySection), historyActions, FALSE, FALSE, 0);
-        gtk_box_reorder_child(GTK_BOX(historySection), historyActions, 1);
+        gtk_box_pack_start(GTK_BOX(fixedTools), historyActions, FALSE, FALSE, 0);
         g_signal_connect(refreshButton, "clicked", G_CALLBACK(onRefresh), this);
         g_signal_connect(copyButton, "clicked", G_CALLBACK(onCopy), this);
         g_signal_connect(deleteButton, "clicked", G_CALLBACK(onDelete), this);
@@ -439,6 +441,7 @@ public:
         }
         ++historyGeneration;
         isFiltering = true;
+        gtk_label_set_text(GTK_LABEL(historyCount), "正在筛选…");
         updateHistoryActionState();
         if (debounce) {
             auto *token = new std::shared_ptr<detail::DiagnosticsLifetime<Impl>>(lifetime);
@@ -581,9 +584,9 @@ public:
             if (gtk_entry_get_text(GTK_ENTRY(searchEntry))[0] != '\0') {
                 summary += "没有匹配的内容，试试其他关键词。";
             } else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(favoritesToggle))) {
-                summary += "还没有收藏。取消“仅收藏”后，选择内容并点击“收藏”。";
+                summary += "暂无收藏";
             } else {
-                summary += "还没有剪贴板内容。复制一段文字后刷新历史，或在这里查看已收藏的内容。";
+                summary += "暂无剪贴板内容";
             }
         }
         gtk_label_set_text(GTK_LABEL(historyState), summary.c_str());

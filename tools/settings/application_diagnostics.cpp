@@ -7,6 +7,7 @@
 #include "modernime/settings/settings_widgets.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -75,7 +76,7 @@ void constrainChoiceLabels(GtkWidget *widget) {
 class ApplicationDiagnostics::Impl final {
 public:
     Impl() : lifetime(std::make_shared<Lifetime>(this)) {
-        detail::GtkWidgetGuard guard(createSectionCard("应用兼容性诊断", ""));
+        detail::GtkWidgetGuard guard(createSectionCard("", ""));
         root = guard.get();
         target(root, "application-diagnostics");
         setAccessibleWidgetText(root, "应用兼容性诊断", "查看应用的输入状态");
@@ -88,11 +89,6 @@ public:
             });
         }), new SharedLifetime(lifetime), destroySignalState, GConnectFlags(0));
 
-        auto *intro = wrappedLabel("先在要检查的应用里打几个字，再回来点“刷新”。");
-        style(intro, "modernime-setting-desc");
-        gtk_widget_set_margin_bottom(intro, 14);
-        gtk_box_pack_start(GTK_BOX(root), intro, FALSE, FALSE, 0);
-
         auto *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
         selectorSlot = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         gtk_widget_set_hexpand(selectorSlot, TRUE);
@@ -101,6 +97,18 @@ public:
         target(refreshButton, "application-refresh");
         setAccessibleWidgetText(refreshButton, "刷新应用诊断", "重新读取已观察的应用和所选应用的诊断信息");
         gtk_box_pack_end(GTK_BOX(controls), refreshButton, FALSE, FALSE, 0);
+        copyButton = gtk_button_new_with_label("复制诊断摘要");
+        target(copyButton, "application-copy-summary");
+        setAccessibleWidgetText(copyButton, "复制诊断摘要", "复制当前显示的应用身份、状态和技术详情，不包含输入正文");
+        gtk_widget_set_sensitive(copyButton, FALSE);
+        gtk_box_pack_end(GTK_BOX(controls), copyButton, FALSE, FALSE, 0);
+        g_signal_connect_data(copyButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
+            (*static_cast<SharedLifetime *>(data))->withOwner([](Impl &owner) {
+                if (owner.reportSummary.empty()) return;
+                gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), owner.reportSummary.c_str(), -1);
+                setLabel(owner.status, "诊断摘要已复制，可粘贴给协助排查的人。");
+            });
+        }), new SharedLifetime(lifetime), destroySignalState, GConnectFlags(0));
         gtk_box_pack_start(GTK_BOX(root), controls, FALSE, FALSE, 0);
         g_signal_connect_data(refreshButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
             (*static_cast<SharedLifetime *>(data))->withOwner([](Impl &owner) { owner.refresh(); });
@@ -211,6 +219,7 @@ public:
         GtkWidget *control = nullptr;
         if (id == "application-diagnostics" || id == "application-selector") control = selector;
         else if (id == "application-refresh") control = refreshButton;
+        else if (id == "application-copy-summary") control = copyButton;
         else if (id == "application-details") {
             if (!gtk_widget_get_visible(disclosure)) return focusWidgetOrFallback(selector, root);
             control = detailsToggle;
@@ -265,11 +274,13 @@ private:
     }
 
     void updateFocusChain() {
-        if (refreshButton && detailsToggle) setSettingsFocusChain(root, {selectorSlot, refreshButton, detailsToggle});
+        if (refreshButton && detailsToggle) setSettingsFocusChain(root, {selectorSlot, refreshButton, copyButton, detailsToggle});
     }
 
     void startLoading(const char *title, const char *message, bool listLoading) {
         busy = true;
+        reportSummary.clear();
+        gtk_widget_set_sensitive(copyButton, FALSE);
         setLabel(summary, title);
         setLabel(status, message);
         gtk_button_set_label(GTK_BUTTON(refreshButton), "读取中…");
@@ -327,6 +338,7 @@ private:
             ? "请确认 Fcitx5 与 ModernIME 正在运行，然后重试。" : reply.message);
         setLabel(technical, "错误标识：" + (reply.error.empty() ? std::string("未知") : reply.error));
         gtk_widget_show(disclosure);
+        updateCopySummary();
         finishLoading(true);
     }
 
@@ -335,7 +347,7 @@ private:
         const auto name = data.text("application");
         setLabel(summary, observed ? (name.empty() ? "未知应用" : name)
             : (application.empty() ? "还没有检测到应用" : "还没有检测到这个应用"));
-        setLabel(status, observed ? "最近一次使用输入法时的状态。"
+        setLabel(status, observed ? ""
             : "先在这个应用里打几个字，再回来点“刷新”。");
         const auto protocol = data.text("transport");
         setLabel(transport, observed && protocol == "x11" ? "X11"
@@ -374,7 +386,26 @@ private:
             detail += "\n敏感输入受隐私边界限制；周边文本能力值不代表应用的普通输入能力。";
         setLabel(technical, detail);
         gtk_widget_show(disclosure);
+        updateCopySummary();
         finishLoading(false);
+    }
+
+    void updateCopySummary() {
+        // Compose only the same whitelisted fields already displayed in this view.
+        reportSummary = "ModernIME 应用诊断\n";
+        for (auto *item : {summary, status}) {
+            reportSummary += gtk_label_get_text(GTK_LABEL(item));
+            reportSummary += '\n';
+        }
+        if (gtk_widget_get_visible(facts)) {
+            const std::array<std::pair<const char *, GtkWidget *>, 4> values{{
+                {"连接方式", transport}, {"输入框状态", focused},
+                {"敏感输入", sensitive}, {"ModernIME", selected}}};
+            for (const auto &[name, value] : values)
+                reportSummary += std::string(name) + "：" + gtk_label_get_text(GTK_LABEL(value)) + '\n';
+        }
+        reportSummary += gtk_label_get_text(GTK_LABEL(technical));
+        gtk_widget_set_sensitive(copyButton, TRUE);
     }
 
     BackendClient backend;
@@ -384,9 +415,11 @@ private:
     std::vector<std::string> applications;
     std::string application;
     std::string pendingFocus;
+    std::string reportSummary;
     GtkWidget *selectorSlot = nullptr;
     GtkWidget *selector = nullptr;
     GtkWidget *refreshButton = nullptr;
+    GtkWidget *copyButton = nullptr;
     GtkWidget *spinner = nullptr;
     GtkWidget *summary = nullptr;
     GtkWidget *status = nullptr;

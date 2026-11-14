@@ -52,7 +52,7 @@ public:
     using Lifetime = detail::DiagnosticsLifetime<Impl>;
 
     explicit Impl(std::function<void(std::string)> callback) : notify(std::move(callback)) {
-        detail::GtkWidgetGuard guard(createSectionCard("词库包", "添加更多专业词和中英混合词。内置包仅供示例。"));
+        detail::GtkWidgetGuard guard(createSectionCard("词库包", ""));
         root = guard.get();
         target(root, "dictionary-packs");
         g_signal_connect(root, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer data) {
@@ -75,10 +75,11 @@ public:
         gtk_box_pack_start(GTK_BOX(root), count, FALSE, FALSE, 4);
 
         auto storeOwner = detail::GObjectHandle<GtkListStore>::adopt(
-            gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT));
+            gtk_list_store_new(6, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT, G_TYPE_BOOLEAN));
         store = storeOwner.get();
         list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
         target(list, "pack-list");
+        gtk_style_context_add_class(gtk_widget_get_style_context(list), "modernime-content-list");
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(list), FALSE);
         setAccessibleWidgetText(list, "词库包列表", "选择词库包后可启用、停用或移除用户副本");
         for (const auto &[name, column] : {std::pair{"名称", 0}, std::pair{"版本", 1},
@@ -90,6 +91,19 @@ public:
             gtk_tree_view_column_set_min_width(viewColumn, column == 0 ? 170 : column == 1 ? 80 : column == 2 ? 56 : 110);
             gtk_tree_view_append_column(GTK_TREE_VIEW(list), viewColumn);
         }
+        enabledRenderer = gtk_cell_renderer_toggle_new();
+        gtk_cell_renderer_toggle_set_activatable(GTK_CELL_RENDERER_TOGGLE(enabledRenderer), TRUE);
+        auto *enabledColumn = gtk_tree_view_column_new_with_attributes("使用", enabledRenderer, "active", 5, nullptr);
+        gtk_tree_view_insert_column(GTK_TREE_VIEW(list), enabledColumn, 0);
+        g_signal_connect(enabledRenderer, "toggled", G_CALLBACK(+[](GtkCellRendererToggle *, gchar *pathText, gpointer data) {
+            auto &owner = *static_cast<Impl *>(data);
+            if (!owner.alive || owner.busy || !owner.loaded) return;
+            auto *path = gtk_tree_path_new_from_string(pathText);
+            if (!path) return;
+            gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(owner.list)), path);
+            gtk_tree_path_free(path);
+            owner.changeSelected(false, true);
+        }), this);
         g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(list)), "changed",
                          G_CALLBACK(+[](GtkTreeSelection *, gpointer p) {
             static_cast<Impl *>(p)->selectionChanged();
@@ -112,7 +126,7 @@ public:
         target(state, "pack-state");
         gtk_box_pack_start(GTK_BOX(root), state, FALSE, FALSE, 6);
 
-        detailsText = description("选择词库包查看来源与许可。");
+        detailsText = description("未选择词库包");
         gtk_label_set_selectable(GTK_LABEL(detailsText), TRUE);
         detailsToggle = gtk_expander_new("来源与许可");
         target(detailsToggle, "pack-details");
@@ -129,6 +143,7 @@ public:
             for (auto *control : {root, list, import, reload, toggle, remove})
                 g_signal_handlers_disconnect_by_data(control, this);
             g_signal_handlers_disconnect_by_data(gtk_tree_view_get_selection(GTK_TREE_VIEW(list)), this);
+            g_signal_handlers_disconnect_by_data(enabledRenderer, this);
         }
     }
 
@@ -167,12 +182,12 @@ public:
                     const auto entries = std::to_string(entry.entries);
                     const auto status = std::string(entry.enabled ? "已启用" : "已停用");
                     gtk_list_store_set(owner.store, &row, 0, entry.name.c_str(), 1, entry.version.c_str(),
-                                       2, entries.c_str(), 3, status.c_str(), 4, index, -1);
+                                       2, entries.c_str(), 3, status.c_str(), 4, index, 5, entry.enabled, -1);
                     if (entry.id == selectedId)
                         gtk_tree_selection_select_iter(gtk_tree_view_get_selection(GTK_TREE_VIEW(owner.list)), &row);
                 }
                 owner.loaded = true;
-                const auto summary = owner.packs.empty() ? "暂无词库包，可从本地目录导入。" :
+                const auto summary = owner.packs.empty() ? "暂无词库包" :
                     "共 " + std::to_string(owner.packs.size()) + " 个词库包";
                 gtk_label_set_text(GTK_LABEL(owner.count), summary.c_str());
                 owner.selectionChanged();
@@ -266,7 +281,7 @@ private:
 
     void selectionChanged() {
         const auto selected = selection();
-        const auto text = selected ? metadata(packs[*selected]) : "选择词库包查看来源与许可。";
+        const auto text = selected ? metadata(packs[*selected]) : "未选择词库包";
         gtk_label_set_text(GTK_LABEL(detailsText), text.c_str());
         updateActions();
     }
@@ -316,7 +331,7 @@ private:
         });
     }
 
-    void changeSelected(bool removing) {
+    void changeSelected(bool removing, bool immediate = false) {
         if (!alive || busy || !loaded) return;
         const auto selected = selection();
         if (!selected) return;
@@ -326,13 +341,23 @@ private:
         updateActions();
         const auto action = removing ? "pack.remove" : pack.enabled ? "pack.disable" : "pack.enable";
         const auto verb = removing ? "移除用户副本" : pack.enabled ? "停用" : "启用";
+        if (immediate && !removing) {
+            GtkTreeIter row;
+            GtkTreeModel *model = nullptr;
+            if (gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(list)), &model, &row)) {
+                const auto status = std::string("正在") + verb + "…";
+                gtk_list_store_set(store, &row, 3, status.c_str(), -1);
+            }
+            finishMutation(action, pack.id);
+            return;
+        }
         const auto title = std::string(verb) + "“" + pack.name + "”？";
         auto *confirm = gtk_message_dialog_new(parentWindow(), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
                                                GTK_BUTTONS_NONE, "%s", title.c_str());
         gtk_dialog_add_buttons(GTK_DIALOG(confirm), "取消", GTK_RESPONSE_CANCEL, verb, GTK_RESPONSE_ACCEPT, nullptr);
-        const auto detail = removing ? "移除后，随软件提供的词库仍会保留。不会删除学习记录。" :
-                            pack.enabled ? "停用后不再使用这个包里的词。不会删除学习记录，相同词仍可能来自其他词库。" :
-                            "启用后，稍等片刻即可使用。";
+        const auto detail = removing ? "移除用户副本，保留内置词库和学习记录。" :
+                            pack.enabled ? "停用此包，保留学习记录。" :
+                            "重新输入时生效。";
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(confirm), "%s", detail);
         gtk_dialog_set_default_response(GTK_DIALOG(confirm), GTK_RESPONSE_CANCEL);
         showDialog(confirm, [action = std::string(action), id = pack.id](Impl &owner, GtkWidget *, int response) {
@@ -408,6 +433,7 @@ private:
     GtkWidget *root = nullptr, *list = nullptr, *import = nullptr, *reload = nullptr;
     GtkWidget *toggle = nullptr, *remove = nullptr, *count = nullptr, *state = nullptr;
     GtkWidget *detailsText = nullptr, *detailsToggle = nullptr, *dialog = nullptr;
+    GtkCellRenderer *enabledRenderer = nullptr;
     GtkListStore *store = nullptr;
     std::string pendingFocus;
     std::vector<Pack> packs;

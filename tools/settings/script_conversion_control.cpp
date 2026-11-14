@@ -77,7 +77,7 @@ public:
 
     Impl() {
         life->owner = this;
-        root = createSectionCard("简繁输出", "此项立即生效；其他设置仍需保存。");
+        root = createSectionCard("简繁输出", "");
         g_object_add_weak_pointer(G_OBJECT(root), reinterpret_cast<gpointer *>(&root));
         control = gtk_switch_new(); target(control, "script-traditional");
         gtk_widget_set_valign(control, GTK_ALIGN_CENTER);
@@ -197,11 +197,11 @@ public:
             gtk_label_set_text(GTK_LABEL(status), work.desired ? "切换失败。请检查 Fcitx 简繁转换插件后重试。" : "简繁转换暂不可用。请启动 Fcitx 并启用简繁转换插件，再刷新。");
             gtk_label_set_text(GTK_LABEL(shortcut), "无法读取当前快捷键");
         } else if (work.configure) {
-            gtk_label_set_text(GTK_LABEL(status), "已请求打开 Fcitx 配置，调整后请刷新。");
+            gtk_label_set_text(GTK_LABEL(status), "已打开 Fcitx 配置");
         } else {
             gtk_label_set_text(GTK_LABEL(shortcut), work.keys.c_str());
-            if (work.desired) gtk_label_set_text(GTK_LABEL(status), traditional ? "已切换为繁体，立即生效。" : "已切换为简体，立即生效。");
-            else gtk_label_set_text(GTK_LABEL(status), "立即生效，不随主窗口“保存设置”或“放弃修改”改变。");
+            if (work.desired) gtk_label_set_text(GTK_LABEL(status), traditional ? "已切换为繁体" : "已切换为简体");
+            else gtk_label_set_text(GTK_LABEL(status), "立即生效");
         }
         if (!work.error.empty()) gtk_widget_show_all(detailText);
     }

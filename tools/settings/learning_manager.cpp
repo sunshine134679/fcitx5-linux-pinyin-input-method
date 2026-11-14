@@ -74,7 +74,7 @@ public:
 
     explicit Impl(std::function<void(std::string)> callback) : notify(std::move(callback)) {
         detail::GtkWidgetGuard guard(createSectionCard(
-            "学习记录", "这里的操作立即生效。"));
+            "学习记录", ""));
         root = guard.get();
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -107,6 +107,7 @@ public:
         store = storeOwner.get();
         list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
         target(list, "learning-records");
+        gtk_style_context_add_class(gtk_widget_get_style_context(list), "modernime-content-list");
         gtk_tree_view_set_enable_search(GTK_TREE_VIEW(list), FALSE);
         gtk_tree_selection_set_mode(gtk_tree_view_get_selection(GTK_TREE_VIEW(list)), GTK_SELECTION_SINGLE);
         setAccessibleWidgetText(list, "学习记录列表", "每页最多一百条，选择词语及读音后忘记或解除屏蔽");
@@ -152,10 +153,12 @@ public:
         gtk_box_pack_start(GTK_BOX(root), pager, FALSE, FALSE, 0);
 
         detailToggle = gtk_expander_new("所选记录详情");
-        detailLabel = label("选择一条记录查看详情。");
+        detailLabel = label("未选择记录");
         target(detailLabel, "learning-record-details");
         gtk_label_set_selectable(GTK_LABEL(detailLabel), TRUE);
-        gtk_box_pack_start(GTK_BOX(root), createSettingsDisclosure(detailToggle, detailLabel), FALSE, FALSE, 4);
+        auto *recordDetails = createSettingsDisclosure(detailToggle, detailLabel);
+        gtk_expander_set_expanded(GTK_EXPANDER(detailToggle), TRUE);
+        gtk_box_pack_start(GTK_BOX(root), recordDetails, FALSE, FALSE, 4);
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         forgetButton = button(actions, "忘记所选词", "learning-forget", +[](GtkButton *, gpointer data) {
             static_cast<Impl *>(data)->confirmForget();
@@ -245,7 +248,7 @@ public:
         gtk_widget_set_sensitive(next, ready() && offset + pageSize < total && offset + pageSize <= maximumOffset);
         gtk_widget_set_sensitive(forgetButton, ready() && selected.has_value());
         gtk_widget_set_sensitive(unsuppress, ready() && selected && selected->suppressed);
-        std::string details = "选择一条记录查看详情。";
+        std::string details = "未选择记录";
         if (selected) {
             details = selected->identity.phrase + "\n拼音：" + selected->identity.pinyin +
                 "\n使用场景：" + std::to_string(selected->contextCount) +
@@ -271,7 +274,7 @@ public:
             const char *message = loading ? "正在读取学习记录…" : !readError.empty()
                 ? "未能读取学习记录，请重试。" : *gtk_entry_get_text(GTK_ENTRY(search))
                 ? "没有匹配的记录，可修改搜索词。" : gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(suppressedOnly))
-                ? "暂无屏蔽记录。" : "暂无学习记录；选择候选词后会逐步积累。";
+                ? "暂无屏蔽记录。" : "暂无学习记录";
             gtk_label_set_text(GTK_LABEL(empty), message);
         }
         gtk_stack_set_visible_child_name(GTK_STACK(content), records.empty() ? "empty" : "list");
@@ -418,6 +421,13 @@ public:
 
     bool focusTarget(std::string_view id) {
         if (!uiAlive) return false;
+        if (id.starts_with("learning-query:")) {
+            if (mutating) return false;
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(suppressedOnly), FALSE);
+            gtk_entry_set_text(GTK_ENTRY(search), std::string(id.substr(15)).c_str());
+            queryChanged(false);
+            return focusWidgetOrFallback(search, root);
+        }
         for (auto *control : {search, list, forgetButton, unsuppress, refreshButton, suppressedOnly, retry, previous, next}) {
             const auto *name = static_cast<const char *>(g_object_get_data(G_OBJECT(control), "modernime-settings-target"));
             if (name && id == name) return focusWidgetOrFallback(control, root);

@@ -10,6 +10,11 @@
 
 namespace modernime::settings {
 
+struct SettingsChange final {
+    std::string_view group;
+    std::string_view title;
+};
+
 class SettingsWindowModel final {
 public:
     using Revision = std::uint64_t;
@@ -19,6 +24,7 @@ public:
     const core::ModernIMESettings &settings() const { return edited_; }
     const core::ModernIMESettings &savedSettings() const { return loaded_; }
     bool dirty() const;
+    std::vector<SettingsChange> changes() const;
     core::SettingsValidationResult validation() const {
         return core::validateSettings(edited_);
     }

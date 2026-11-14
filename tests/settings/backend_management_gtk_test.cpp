@@ -33,7 +33,8 @@ void wait(const std::function<bool()> &ready) {
 void click(GtkWidget *w){assert(GTK_IS_BUTTON(w));gtk_button_clicked(GTK_BUTTON(w));}
 std::string text(GtkWidget *w){return gtk_label_get_text(GTK_LABEL(w));}
 struct Service {
-    std::string action;std::vector<std::string> args;bool suppressed=true,forgotten=false;unsigned writes=0,exports=0,restores=0;
+    std::string action;std::vector<std::string> args;bool suppressed=true,forgotten=false;unsigned writes=0,exports=0,restores=0,previews=0;
+    std::string previewToken;
     static void call(GDBusConnection *,const gchar *,const gchar *,const gchar *,const gchar *,GVariant *params,GDBusMethodInvocation *inv,gpointer p){
         auto &s=*static_cast<Service *>(p);const char *name=nullptr;gchar **args=nullptr;g_variant_get(params,"(&s^as)",&name,&args);
         s.action=name;s.args.clear();for(auto **it=args;*it;++it)s.args.emplace_back(*it);g_strfreev(args);std::string json="{\"ok\":true}";
@@ -43,9 +44,15 @@ struct Service {
             json=s.forgotten?R"({"ok":true,"total":0,"records":[]})":std::string(R"({"ok":true,"total":101,"records":[{"phrase":")")+(offset=="100"?"第二页":"合成词")+R"(","pinyin":"hechengci","frequency":5,"lastSelectedMs":1000,"negativeFeedback":0,"contextCount":2,"suppressed":)"+(s.suppressed?"true":"false")+"}]}";
         } else if(s.action=="learning.unsuppress"){assert((s.args==std::vector<std::string>{"合成词","hechengci"}));s.suppressed=false;++s.writes;}
         else if(s.action=="learning.forget"){assert((s.args==std::vector<std::string>{"合成词","hechengci"}));s.forgotten=true;++s.writes;}
-        else if(s.action=="bundle.export"){++s.exports;assert(s.args.size()==2);assert(s.args[1]=="settings,dictionary,quick-phrases,learning");}
-        else if(s.action=="bundle.preview")json=R"({"ok":true,"token":"synthetic-preview","differences":[{"component":"settings","included":true,"present":true,"changed":true,"currentEntries":1,"bundleEntries":1},{"component":"learning","included":true,"present":true,"changed":true,"currentEntries":9,"bundleEntries":3},{"component":"clipboard-history","included":true,"present":true,"changed":true,"currentEntries":9,"bundleEntries":3}]})";
-        else if(s.action=="bundle.restore"){++s.restores;assert(s.args.size()==3);assert(s.args[1]=="synthetic-preview");assert(s.args[2]=="learning");}
+        else if(s.action=="bundle.export"){++s.exports;assert(s.args.size()==2);assert(s.args[1]=="settings,dictionary,quick-phrases,learning");
+            if(s.exports==1)json=R"({"ok":false,"error":"write_failed","message":"备份目录不可写"})";
+        }
+        else if(s.action=="bundle.preview"){
+            s.previewToken="synthetic-preview-"+std::to_string(++s.previews);
+            json=std::string(R"({"ok":true,"token":")")+s.previewToken+R"(","differences":[{"component":"settings","included":true,"present":true,"changed":true,"currentEntries":1,"bundleEntries":1},{"component":"learning","included":true,"present":true,"changed":true,"currentEntries":9,"bundleEntries":3},{"component":"clipboard-history","included":true,"present":true,"changed":true,"currentEntries":9,"bundleEntries":3}]})";
+        } else if(s.action=="bundle.restore"){++s.restores;assert(s.args.size()==3);assert(s.args[1]==s.previewToken);assert(s.args[2]=="learning");
+            if(s.restores==1)json=R"({"ok":false,"error":"preview_expired","message":"备份已变化"})";
+        }
         else assert(false);
         g_dbus_method_invocation_return_value(inv,g_variant_new("(s)",json.c_str()));
     }
@@ -79,10 +86,22 @@ int main(int argc,char **argv) {
     wait([&]{return dialog("bundle-export-confirm") && gtk_widget_get_sensitive(dialog("bundle-export-confirm"));});
     auto *selection=dialog("bundle-export-selection");assert(!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(selection,"clipboard-history"))));assert(!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(selection,"clipboard-favorites"))));
     gtk_dialog_response(GTK_DIALOG(selection),GTK_RESPONSE_ACCEPT);wait([&]{return fake.exports==1 && gtk_widget_get_sensitive(find(window,"bundle-export"));});
+    assert(dialog("bundle-export-selection")==selection);
+    assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(selection,"learning"))));
+    assert(text(find(window,"bundle-status")).find("选择已保留")!=std::string::npos);
+    gtk_dialog_response(GTK_DIALOG(selection),GTK_RESPONSE_ACCEPT);wait([&]{return fake.exports==2 && !dialog("bundle-export-selection");});
     click(find(window,"bundle-restore"));chooser=dialog("bundle-restore-directory");assert(chooser);gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(chooser),temporary);
     wait([&]{auto *path=gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));const bool ready=path && std::string(path)==temporary;g_free(path);return ready;});gtk_dialog_response(GTK_DIALOG(chooser),GTK_RESPONSE_ACCEPT);
     wait([&]{return dialog("bundle-restore-preview")!=nullptr;});selection=dialog("bundle-restore-preview");assert(!gtk_widget_get_sensitive(find(selection,"bundle-restore-confirm")));
     assert(!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(selection,"clipboard-history"))));gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(find(selection,"learning")),TRUE);
-    gtk_dialog_response(GTK_DIALOG(selection),GTK_RESPONSE_ACCEPT);wait([&]{return restored && fake.restores==1;});
+    gtk_dialog_response(GTK_DIALOG(selection),GTK_RESPONSE_ACCEPT);wait([&]{return fake.restores==1 && gtk_widget_get_sensitive(find(window,"bundle-restore"));});
+    assert(!restored && dialog("bundle-restore-preview")==selection);
+    assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(selection,"learning"))));
+    gtk_dialog_response(GTK_DIALOG(selection),GTK_RESPONSE_ACCEPT);
+    wait([&]{return fake.previews==2 && dialog("bundle-restore-preview");});
+    assert(fake.restores==1); // Re-preview never replays the previous write.
+    selection=dialog("bundle-restore-preview");
+    assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(selection,"learning"))));
+    gtk_dialog_response(GTK_DIALOG(selection),GTK_RESPONSE_ACCEPT);wait([&]{return restored && fake.restores==2;});
     gtk_widget_destroy(window);std::filesystem::remove_all(folder);g_dbus_connection_unregister_object(bus,registration);g_dbus_node_info_unref(info);g_object_unref(bus);
 }

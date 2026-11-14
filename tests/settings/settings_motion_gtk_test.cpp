@@ -14,14 +14,15 @@
 #include <unistd.h>
 
 namespace {
-GtkWidget *find(GtkWidget *widget, const std::string &key) {
+GtkWidget *find(GtkWidget *widget, const std::string &key, bool mappedOnly = false) {
     const auto *target = static_cast<const char *>(g_object_get_data(G_OBJECT(widget), "modernime-settings-target"));
     const auto *name = atk_object_get_name(gtk_widget_get_accessible(widget));
-    if ((target && key == target) || (name && key == name)) return widget;
+    if (((target && key == target) || (name && key == name)) &&
+        (!mappedOnly || gtk_widget_get_mapped(widget))) return widget;
     if (!GTK_IS_CONTAINER(widget)) return nullptr;
     auto *children = gtk_container_get_children(GTK_CONTAINER(widget));
     GtkWidget *result = nullptr;
-    for (auto *item = children; item && !result; item = item->next) result = find(GTK_WIDGET(item->data), key);
+    for (auto *item = children; item && !result; item = item->next) result = find(GTK_WIDGET(item->data), key, mappedOnly);
     g_list_free(children);
     return result;
 }
@@ -46,9 +47,14 @@ void pointerClick(GtkWidget *widget) {
     if (GDK_IS_X11_DISPLAY(display) && xdotool) {
         auto *window = gtk_widget_get_toplevel(widget);
         int x = 0, y = 0, rootX = 0, rootY = 0;
-        assert(gtk_widget_translate_coordinates(widget, window,
+        const bool translated = gtk_widget_translate_coordinates(widget, window,
             gtk_widget_get_allocated_width(widget) / 2,
-            gtk_widget_get_allocated_height(widget) / 2, &x, &y));
+            gtk_widget_get_allocated_height(widget) / 2, &x, &y);
+        if (!translated) std::cerr << "Cannot translate pointer target: "
+            << atk_object_get_name(gtk_widget_get_accessible(widget))
+            << ", type=" << G_OBJECT_TYPE_NAME(widget)
+            << ", mapped=" << gtk_widget_get_mapped(widget) << '\n';
+        assert(translated);
         gdk_window_get_origin(gtk_widget_get_window(window), &rootX, &rootY);
         auto *pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(display));
         gdk_device_warp(pointer, gtk_widget_get_screen(widget), rootX + x, rootY + y);
@@ -104,12 +110,12 @@ int main(int argc, char **argv) {
         auto *shape = find(window, "candidate-shape");
         auto *length = find(window, "candidate-page-size");
         auto *spacing = find(window, "candidate-spacing");
-        auto *restore = find(window, "放弃修改");
+        auto *restore = find(window, "放弃修改", true);
         auto *save = find(window, "保存设置");
         assert(theme && candidate && shape && length && spacing && restore && save);
         auto *stack = gtk_widget_get_ancestor(theme, GTK_TYPE_STACK);
         assert(stack && wait([&] { return !gtk_stack_get_transition_running(GTK_STACK(stack)); }));
-        pointerClick(find(window, "输入与按键"));
+        pointerClick(find(window, "输入习惯"));
         assert(std::string(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "input");
         pointerClick(find(window, "候选与外观"));
         assert(std::string(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "candidates");
@@ -127,10 +133,14 @@ int main(int argc, char **argv) {
             g_object_unref(pixbuf);
         };
         record("blue");
+        shell.show(settings::SettingsPageId::Candidates, "candidate-style");
+        frames(60);
         pointerClick(find(window, "candidate-style-textured"));
         assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(find(window, "candidate-style-textured"))));
         const int originalCandidate = settings::settingsChoiceActive(candidate);
         // Exercise the actual menu selection boundary, including popover cleanup.
+        shell.show(settings::SettingsPageId::Candidates, "client-theme");
+        frames(60);
         pointerClick(theme);
         assert(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(theme)));
         frames(160);
@@ -219,8 +229,8 @@ int main(int argc, char **argv) {
         frames(250);
         auto *checkUpdate = find(window, "updates-check");
         assert(checkUpdate && wait([&] { return gtk_widget_get_sensitive(checkUpdate); }));
-        gtk_button_clicked(GTK_BUTTON(find(window, "更新与安装")));
-        assert(gtk_widget_get_sensitive(checkUpdate));
+        shell.show(settings::SettingsPageId::Updates);
+        assert(wait([&] { return gtk_widget_get_sensitive(checkUpdate); }));
         shell.show(settings::SettingsPageId::Diagnostics);
         frames(250);
         shell.show(settings::SettingsPageId::Candidates);

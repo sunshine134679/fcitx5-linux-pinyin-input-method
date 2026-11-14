@@ -78,7 +78,7 @@ struct PinDialog {
             const bool matches = std::string_view(text).find(queryText) != std::string_view::npos; g_free(text);
             if (matches) { append(rules, name, pin.input.c_str(), pin.text.c_str(), i); ++visible; }
         }
-        const auto message = settings.candidatePins.empty() ? std::string("还没有置顶规则。添加后只影响对应方案和输入。")
+        const auto message = settings.candidatePins.empty() ? std::string("暂无置顶规则")
             : "共 " + std::to_string(settings.candidatePins.size()) + " 条，当前显示 " + std::to_string(visible) + " 条";
         gtk_label_set_text(GTK_LABEL(count), message.c_str()); ruleSelection();
     }
@@ -86,7 +86,7 @@ struct PinDialog {
         ++generation; choices.clear(); limit = 32;
         gtk_list_store_clear(GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(candidates))));
         gtk_widget_set_sensitive(choose, FALSE); gtk_widget_set_sensitive(more, FALSE);
-        gtk_label_set_text(GTK_LABEL(status), "填写实际输入按键，点击“查找候选”。"); gtk_widget_hide(details);
+        gtk_label_set_text(GTK_LABEL(status), ""); gtk_widget_hide(details);
     }
     void open(std::optional<std::size_t> index) {
         replacing = index; invalidate();
@@ -151,7 +151,7 @@ struct PinDialog {
                 }
                 o.choices = std::move(request.result.candidates);
                 for (std::size_t i = 0; i < o.choices.size(); ++i) append(o.candidates, o.choices[i].text.c_str(), o.choices[i].fullPinyin.c_str(), "", i);
-                gtk_label_set_text(GTK_LABEL(o.status), o.choices.empty() ? "没有可置顶的完整候选。请检查方案或输入更完整的拼音。" : "选择完整候选作为置顶；不在这里提交或学习词条。");
+                gtk_label_set_text(GTK_LABEL(o.status), o.choices.empty() ? "没有可置顶的完整候选。请检查方案或输入更完整的拼音。" : "");
                 gtk_widget_set_sensitive(o.more, request.result.hasMore && o.limit < 1024);
             });
         }, nullptr);
@@ -179,7 +179,6 @@ GtkWidget *createCandidatePinDialog(GtkWindow *parent, const core::ModernIMESett
         gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT)), "suggested-action");
     gtk_window_set_default_size(GTK_WINDOW(dialog), 720, 560);
     auto *body = gtk_dialog_get_content_area(GTK_DIALOG(dialog)); gtk_container_set_border_width(GTK_CONTAINER(body), 20); gtk_box_set_spacing(GTK_BOX(body), 12);
-    gtk_box_pack_start(GTK_BOX(body), description("规则只提升已召回且未屏蔽的完整候选，不生成新词。取消规则后恢复原排序。"), FALSE, FALSE, 0);
     o->stack = gtk_stack_new(); gtk_stack_set_homogeneous(GTK_STACK(o->stack), FALSE); gtk_box_pack_start(GTK_BOX(body), o->stack, TRUE, TRUE, 0);
     auto *manager = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12); gtk_stack_add_named(GTK_STACK(o->stack), manager, "rules");
     o->search = gtk_search_entry_new(); target(o->search, "pin-search"); gtk_entry_set_placeholder_text(GTK_ENTRY(o->search), "搜索方案、输入或置顶词");
@@ -190,7 +189,6 @@ GtkWidget *createCandidatePinDialog(GtkWindow *parent, const core::ModernIMESett
     o->rules = tree(manager, "pin-rules", true); o->count = description(""); gtk_box_pack_start(GTK_BOX(manager), o->count, FALSE, FALSE, 0);
     auto *picker = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12); gtk_stack_add_named(GTK_STACK(o->stack), picker, "picker");
     auto *back = button(picker, "返回规则列表", "pin-back");
-    gtk_box_pack_start(GTK_BOX(picker), description("选择输入方案并填写实际按键，再从完整候选中选择。此处不会修改词典或记录学习。"), FALSE, FALSE, 0);
     o->scheme = createSettingsChoice(); target(o->scheme, "pin-scheme"); for (const auto &scheme : core::kPinyinSchemes) appendSettingsChoice(o->scheme, scheme.label);
     gtk_box_pack_start(GTK_BOX(picker), createSettingRow("拼音方案", "全拼和两种双拼分别保存", o->scheme), FALSE, FALSE, 0);
     auto *queryRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8); gtk_box_pack_start(GTK_BOX(picker), queryRow, FALSE, FALSE, 0);
@@ -198,6 +196,8 @@ GtkWidget *createCandidatePinDialog(GtkWindow *parent, const core::ModernIMESett
     setAccessibleWidgetText(o->input, "输入按键", "填写对应方案下的实际拼音或双拼按键");
     gtk_entry_set_max_length(GTK_ENTRY(o->input), 128);
     gtk_box_pack_start(GTK_BOX(queryRow), o->input, TRUE, TRUE, 0); o->query = button(queryRow, "查找候选", "pin-query");
+    gtk_widget_set_tooltip_text(o->query, "按当前方案查找候选，不修改词典或学习记录");
+    gtk_widget_set_tooltip_text(gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT), "返回设置草稿，主窗口保存后生效");
     o->status = description(""); target(o->status, "pin-state"); gtk_box_pack_start(GTK_BOX(picker), o->status, FALSE, FALSE, 0);
     o->candidates = tree(picker, "pin-candidates", false);
     setAccessibleWidgetText(o->rules, "候选置顶规则", "选择规则后更换或取消置顶，双击更换，Delete 取消");
@@ -220,7 +220,6 @@ GtkWidget *createCandidatePinDialog(GtkWindow *parent, const core::ModernIMESett
     gtk_widget_set_no_show_all(o->details, TRUE);
     gtk_widget_hide(o->details);
     gtk_box_pack_start(GTK_BOX(picker), o->details, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(body), description("确认后返回设置草稿，点击主窗口“保存设置”才会生效。"), FALSE, FALSE, 0);
     g_signal_connect(o->search, "search-changed", G_CALLBACK(+[](GtkSearchEntry *, gpointer p) { static_cast<PinDialog *>(p)->render(); }), o);
     g_signal_connect(o->add, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) { static_cast<PinDialog *>(p)->open({}); }), o);
     g_signal_connect(o->edit, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) { auto &owner = *static_cast<PinDialog *>(p); if (auto i = selection(owner.rules)) owner.open(i); }), o);

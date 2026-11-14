@@ -31,6 +31,8 @@ public:
     GtkWidget *widget() const;
     void refresh(bool notify);
     void refreshSettings();
+    GtkWidget *takeBehaviorWidget();
+    void setEmbedded(bool embedded);
     bool focusTarget(std::string_view target);
     bool hasPendingOperations() const;
 

@@ -425,6 +425,33 @@ gboolean confirmVisibleMessageDialog(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+struct MessageResultProbe final {
+    std::string expected;
+    int response = GTK_RESPONSE_CLOSE;
+    bool ran = false;
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+};
+
+gboolean inspectMessageResult(gpointer data) {
+    auto &probe = *static_cast<MessageResultProbe *>(data);
+    auto *windows = gtk_window_list_toplevels();
+    GtkWidget *dialog = nullptr;
+    for (auto *item = windows; item && !dialog; item = item->next) {
+        auto *candidate = GTK_WIDGET(item->data);
+        if (GTK_IS_MESSAGE_DIALOG(candidate) && gtk_widget_get_mapped(candidate) &&
+            findLabelText(candidate, probe.expected)) dialog = candidate;
+    }
+    g_list_free(windows);
+    if (!dialog) {
+        assert(std::chrono::steady_clock::now() < probe.deadline);
+        return G_SOURCE_CONTINUE;
+    }
+    probe.ran = true;
+    gtk_dialog_response(GTK_DIALOG(dialog), probe.response);
+    return G_SOURCE_REMOVE;
+}
+
 struct CloseApplicationProbe final {
     modernime::core::SettingsPaths paths;
     std::unique_ptr<modernime::settings::SettingsShell> shell;
@@ -579,11 +606,11 @@ int main(int argc, char **argv) {
         auto *trial = findAccessibleWidget(window, GTK_TYPE_ENTRY, "试输入");
         assert(trial != nullptr);
         gtk_entry_set_text(GTK_ENTRY(trial), "你好");
-        // The trial keeps the entered text; instructions are available on
-        // demand instead of adding a second paragraph below the input.
+        // Real input retains text; scheme guidance is available on demand.
         assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(trial))) == "你好");
         auto *trialHelp = gtk_widget_get_tooltip_text(trial);
         assert(trialHelp != nullptr && std::string_view(trialHelp).find("按空格") != std::string_view::npos);
+        assert(findLabelText(window, trialHelp) == nullptr);
         g_free(trialHelp);
         assert(findLabelText(window, "已收到“你好”。可以继续试长句，或到其他应用输入。") == nullptr);
         auto *oldSummary = findLabelText(window, "ModernIME 正在运行");
@@ -600,7 +627,7 @@ int main(int argc, char **argv) {
 
         // Selected navigation text keeps the chosen theme accent on focus and hover.
         shell.show(modernime::settings::SettingsPageId::Overview);
-        auto *overviewNav = findAccessibleWidget(window, GTK_TYPE_BUTTON, "概览");
+        auto *overviewNav = findAccessibleWidget(window, GTK_TYPE_BUTTON, "工作台");
         assert(overviewNav != nullptr);
         gtk_widget_grab_focus(overviewNav);
         assert(waitUntil([overviewNav] { return gtk_widget_has_focus(overviewNav); }));
@@ -626,12 +653,23 @@ int main(int argc, char **argv) {
         checkNavColor();
         gtk_widget_unset_state_flags(overviewNav, GTK_STATE_FLAG_PRELIGHT);
 
+        shell.show(modernime::settings::SettingsPageId::Input);
+        drainEvents();
+        auto *initialInput = findTarget(window, "input-enabled");
+        assert(initialInput && gtk_widget_get_mapped(initialInput));
+        auto *initialRuntime = findTarget(window, "diagnostics-refresh");
+        shell.show(modernime::settings::SettingsPageId::Diagnostics);
+        drainEvents();
+        assert(initialRuntime && gtk_widget_get_mapped(initialRuntime));
+        assert(!gtk_widget_get_mapped(findTarget(window, "updates-check")));
         shell.show(modernime::settings::SettingsPageId::Input,
                    "input-enabled");
         drainEvents();
         auto *inputEnabled = findTarget(window, "input-enabled");
         auto *defaultMode = findTarget(window, "default-mode");
-        auto *more = findTarget(window, "input-more");
+        auto *more = findTarget(window, "maintenance-more");
+        auto *inputCategories = findAccessibleWidget(window, GTK_TYPE_STACK_SWITCHER, "输入习惯分类");
+        assert(more && inputCategories);
         assert(inputEnabled != nullptr);
         if (!waitUntil([inputEnabled] {
                 return gtk_widget_has_focus(inputEnabled);
@@ -644,17 +682,17 @@ int main(int argc, char **argv) {
         drainEvents();
         auto *candidateFont = findTarget(window, "candidate-font-size");
         assert(candidateFont != nullptr && GTK_IS_SPIN_BUTTON(candidateFont));
-        assert(gtk_widget_get_mapped(candidateFont));
         shell.show(modernime::settings::SettingsPageId::Candidates,
                    "candidate-font-size");
+        assert(gtk_widget_get_mapped(candidateFont));
         assert(waitUntil([window, candidateFont] {
             return hasFocusWithin(window, candidateFont);
         }));
         for (const auto target : {"arrow-navigation", "page-navigation"}) {
             auto *control = findTarget(window, target);
             assert(control != nullptr && GTK_IS_SWITCH(control));
-            assert(gtk_widget_get_mapped(control));
             shell.show(modernime::settings::SettingsPageId::Candidates, target);
+            assert(gtk_widget_get_mapped(control));
             assert(waitUntil([window, control] {
                 return hasFocusWithin(window, control);
             }));
@@ -740,7 +778,7 @@ int main(int argc, char **argv) {
         drainEvents();
         gtk_button_clicked(GTK_BUTTON(example));
         assert(waitUntil([choicePopover] { return gtk_widget_get_mapped(choicePopover); }));
-        auto *singleCharacter = findAccessibleWidget(choicePopover, GTK_TYPE_MODEL_BUTTON, "单字");
+        auto *singleCharacter = findAccessibleWidget(choicePopover, GTK_TYPE_MODEL_BUTTON, "日常单字");
         assert(singleCharacter != nullptr);
         gtk_button_clicked(GTK_BUTTON(singleCharacter));
         assert(modernime::settings::settingsChoiceActive(example) == 0);
@@ -780,9 +818,9 @@ int main(int argc, char **argv) {
         // Return to the original focus route before input-page traversal checks.
         shell.show(modernime::settings::SettingsPageId::Input, "input-enabled");
         drainEvents();
-        assert(defaultMode != nullptr && more != nullptr);
+        assert(defaultMode != nullptr && inputCategories != nullptr);
         traverseFocus(window, true);
-        assert(gtk_widget_has_focus(more));
+        assert(hasFocusWithin(window, inputCategories));
         traverseFocus(window, false);
         assert(gtk_widget_has_focus(inputEnabled));
         traverseFocus(window, false);
@@ -791,6 +829,8 @@ int main(int argc, char **argv) {
         auto *shiftPreset = findTarget(window, "toggle-key-shift");
         auto *toggleKey = findTarget(window, "toggle-key");
         assert(shiftPreset == nullptr && toggleKey != nullptr);
+        shell.show(modernime::settings::SettingsPageId::Input, "toggle-key");
+        assert(gtk_widget_get_mapped(toggleKey));
         gtk_button_clicked(GTK_BUTTON(toggleKey));
         gtk_widget_grab_focus(toggleKey);
         dispatchKey(window, GDK_KEY_Shift_L, GdkModifierType{});
@@ -1062,7 +1102,7 @@ int main(int argc, char **argv) {
         assert(refresh != nullptr && reload != nullptr);
         assert(waitUntil([reload] { return gtk_widget_get_sensitive(reload); }));
         auto *diagnosticsPage = findAccessibleWidget(
-            window, GTK_TYPE_BOX, "系统与诊断");
+            window, GTK_TYPE_BOX, "维护");
         auto *serviceStatus = findLabelText(diagnosticsPage, "正在运行");
         assert(serviceStatus != nullptr);
         assert(std::string_view(atk_object_get_name(
@@ -1355,8 +1395,8 @@ int main(int argc, char **argv) {
             {modernime::settings::SettingsPageId::Candidates, "candidates"},
             {modernime::settings::SettingsPageId::Dictionary, "dictionary"},
             {modernime::settings::SettingsPageId::Clipboard, "clipboard"},
-            {modernime::settings::SettingsPageId::Learning, "learning"},
-            {modernime::settings::SettingsPageId::Updates, "updates"},
+            {modernime::settings::SettingsPageId::Learning, "dictionary"},
+            {modernime::settings::SettingsPageId::Updates, "diagnostics"},
             {modernime::settings::SettingsPageId::Diagnostics, "diagnostics"},
         };
 
@@ -1385,7 +1425,7 @@ int main(int argc, char **argv) {
 
         window.showLearningPage();
         drainEvents();
-        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "learning");
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "dictionary");
 
         window.showDictionaryPage();
         drainEvents();
@@ -1397,7 +1437,7 @@ int main(int argc, char **argv) {
 
         window.showUpdatesPage();
         drainEvents();
-        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "updates");
+        assert(std::string_view(gtk_stack_get_visible_child_name(GTK_STACK(stack))) == "diagnostics");
 
         // 3. Sub-target navigation via show(page, target)
         window.show(modernime::settings::SettingsPageId::Candidates, "candidate-font-size");
@@ -1430,8 +1470,19 @@ int main(int argc, char **argv) {
         assert(GTK_IS_LABEL(notice));
         assert(gtk_label_get_single_line_mode(GTK_LABEL(notice)));
         assert(std::string_view(gtk_label_get_text(GTK_LABEL(notice))).find('\n') == std::string_view::npos);
-        assert(waitUntil([notice] { return std::string_view(gtk_label_get_text(GTK_LABEL(notice))).empty(); },
-                         std::chrono::seconds(6)));
+        auto *detailsButton = findAccessibleWidget(winWidget, GTK_TYPE_BUTTON, "查看操作结果");
+        assert(detailsButton && gtk_widget_get_mapped(detailsButton));
+        MessageResultProbe resultProbe{longError};
+        g_timeout_add(10, inspectMessageResult, &resultProbe);
+        gtk_button_clicked(GTK_BUTTON(detailsButton));
+        assert(resultProbe.ran);
+        assert(!std::string_view(gtk_label_get_text(GTK_LABEL(notice))).empty());
+        MessageResultProbe clearProbe{longError, GTK_RESPONSE_APPLY};
+        g_timeout_add(10, inspectMessageResult, &clearProbe);
+        gtk_button_clicked(GTK_BUTTON(detailsButton));
+        assert(clearProbe.ran);
+        assert(std::string_view(gtk_label_get_text(GTK_LABEL(notice))).empty());
+        assert(!gtk_widget_get_visible(detailsButton));
     }
 
     CloseApplicationProbe closeProbe;

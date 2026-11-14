@@ -121,7 +121,7 @@ public:
                 delete static_cast<SharedLifetime *>(value);
             });
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "系统与诊断", ""));
+            "维护", ""));
         page = pageGuard.get();
         auto *outerPage = page;
         auto *runtimeBody = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
@@ -132,19 +132,27 @@ public:
         bundles = std::make_unique<DataBundleManager>(std::move(canRestore), std::move(restored));
         views = gtk_stack_new();
         gtk_stack_set_homogeneous(GTK_STACK(views), FALSE);
-        gtk_stack_set_interpolate_size(GTK_STACK(views), TRUE);
-        gtk_stack_set_transition_type(GTK_STACK(views), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
-        gtk_stack_set_transition_duration(GTK_STACK(views), 160);
-        gtk_stack_add_titled(GTK_STACK(views), runtimeBody, "runtime", "运行状态");
+        gtk_stack_set_interpolate_size(GTK_STACK(views), FALSE);
+        gtk_stack_set_transition_type(GTK_STACK(views), GTK_STACK_TRANSITION_TYPE_NONE);
+        gtk_stack_add_titled(GTK_STACK(views), runtimeBody, "runtime", "状态");
+        gtk_widget_show_all(runtimeBody);
+        gtk_stack_set_visible_child_name(GTK_STACK(views), "runtime");
         gtk_stack_add_titled(GTK_STACK(views), applications->widget(), "applications", "应用诊断");
         gtk_stack_add_titled(GTK_STACK(views), bundles->widget(), "bundles", "备份恢复");
         auto *switcher = gtk_stack_switcher_new();
         gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(views));
         gtk_widget_set_halign(switcher, GTK_ALIGN_START);
         addStyleClass(switcher, "modernime-dictionary-switcher");
-        setAccessibleWidgetText(switcher, "诊断与数据工具", "切换运行状态、应用诊断和备份恢复");
+        setAccessibleWidgetText(switcher, "维护分类", "切换状态、应用诊断、备份和更新");
         gtk_box_pack_start(GTK_BOX(page), switcher, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), views, FALSE, FALSE, 0);
+        g_object_set_data(G_OBJECT(page), "modernime-page-fixed-content", switcher);
+        gtk_box_pack_start(GTK_BOX(page), views, TRUE, TRUE, 0);
+        g_signal_connect_data(views, "notify::visible-child-name", G_CALLBACK(+[](GObject *, GParamSpec *, gpointer data) {
+            (*static_cast<SharedLifetime *>(data))->withOwner([](Impl &self) {
+                if (self.updatesWidget && gtk_stack_get_visible_child(GTK_STACK(self.views)) == self.updatesWidget && self.refreshUpdates)
+                    self.refreshUpdates();
+            });
+        }), new SharedLifetime(state), destroySignalState, static_cast<GConnectFlags>(0));
         refresh();
         pageGuard.release();
     }
@@ -157,7 +165,30 @@ public:
 
     void reload() { startTask(RuntimeAction::Reload); }
 
+    void setUpdatesPage(GtkWidget *updatesPage, std::function<void()> refresh,
+                        std::function<bool(std::string_view)> focus) {
+        if (!updatesPage || updatesWidget) return;
+        auto *selectedView = gtk_stack_get_visible_child(GTK_STACK(views));
+        updatesWidget = updatesPage;
+        refreshUpdates = std::move(refresh);
+        focusUpdates = std::move(focus);
+        gtk_stack_add_titled(GTK_STACK(views), updatesPage, "updates", "更新");
+        gtk_widget_show(updatesPage);
+        if (selectedView) gtk_stack_set_visible_child(GTK_STACK(views), selectedView);
+    }
+
+    void showUpdates() {
+        if (!updatesWidget) return;
+        const bool alreadyVisible = gtk_stack_get_visible_child(GTK_STACK(views)) == updatesWidget;
+        gtk_stack_set_visible_child_name(GTK_STACK(views), "updates");
+        if (alreadyVisible && refreshUpdates) refreshUpdates();
+    }
+
     bool focusTarget(std::string_view target) {
+        if (updatesWidget && (target.starts_with("updates-") || target == "diagnostics-check-update")) {
+            gtk_stack_set_visible_child_name(GTK_STACK(views), "updates");
+            return focusUpdates && focusUpdates(target);
+        }
         if (applications && target.starts_with("application-")) {
             gtk_stack_set_visible_child_name(GTK_STACK(views), "applications");
             return applications->focusTarget(target);
@@ -253,7 +284,8 @@ private:
         addStyleClass(statusMessage, "modernime-status-heading");
         setTarget(statusMessage, "diagnostics-summary");
         gtk_box_pack_start(GTK_BOX(summary), statusMessage, FALSE, FALSE, 0);
-        nextStep = wrappedLabel("正在读取 Fcitx5 与 ModernIME 的状态。");
+        nextStep = wrappedLabel("");
+        gtk_widget_set_no_show_all(nextStep, TRUE);
         addStyleClass(nextStep, "modernime-status-hint");
         setTarget(nextStep, "diagnostics-next-step");
         gtk_box_pack_start(GTK_BOX(summary), nextStep, FALSE, FALSE, 0);
@@ -419,6 +451,8 @@ private:
             gtk_widget_show(panelSection);
             setLabel(panelTitle, panel.title.c_str());
             setLabel(panelMessage, panel.message.c_str());
+            gtk_widget_set_no_show_all(panelMessage, TRUE);
+            gtk_widget_set_visible(panelMessage, panel.state != DesktopPanelState::Active);
             gtk_widget_set_visible(panelEnableButton, panelCanEnable);
         } else gtk_widget_hide(panelSection);
         const auto availText = runtimeStatus.available ? "可用" : "不可用";
@@ -487,6 +521,8 @@ private:
                     const char *stateClass) {
         setLabel(statusMessage, title);
         setLabel(nextStep, hint);
+        gtk_widget_set_no_show_all(nextStep, TRUE);
+        gtk_widget_set_visible(nextStep, std::string_view(stateClass) == "error" || std::string_view(stateClass) == "warning");
         auto *context = gtk_widget_get_style_context(statusBanner);
         for (const auto *name : {"neutral", "success", "warning", "error"}) {
             gtk_style_context_remove_class(context, name);
@@ -561,6 +597,9 @@ private:
     GtkWidget *refreshButton = nullptr;
     GtkWidget *reloadButton = nullptr;
     GtkWidget *views = nullptr;
+    GtkWidget *updatesWidget = nullptr;
+    std::function<void()> refreshUpdates;
+    std::function<bool(std::string_view)> focusUpdates;
     std::unique_ptr<ApplicationDiagnostics> applications;
     std::unique_ptr<DataBundleManager> bundles;
     GtkWidget *panelSection = nullptr;
@@ -596,6 +635,13 @@ void DiagnosticsPage::refresh() {
 void DiagnosticsPage::reload() {
     impl_->reload();
 }
+
+void DiagnosticsPage::setUpdatesPage(GtkWidget *page, std::function<void()> refresh,
+                                     std::function<bool(std::string_view)> focus) {
+    impl_->setUpdatesPage(page, std::move(refresh), std::move(focus));
+}
+
+void DiagnosticsPage::showUpdates() { impl_->showUpdates(); }
 
 bool DiagnosticsPage::focusTarget(std::string_view target) {
     return impl_->focusTarget(target);

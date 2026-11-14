@@ -30,6 +30,7 @@ public:
 
     GtkWidget *widget() const;
     void refresh();
+    void setEmbedded(bool embedded);
     bool focusTarget(std::string_view target);
 
 private:

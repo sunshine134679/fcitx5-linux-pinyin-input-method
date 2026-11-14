@@ -59,7 +59,7 @@ struct FakeBackend {
             "\"toolkit\":\"unknown\",\"sandbox\":\"unknown\",\"focused\":true,\"sensitive\":false,"
             "\"surroundingText\":true,\"clientPreedit\":true,\"cursorRectangle\":true,"
             "\"modernimeSelected\":true,\"observedAtMs\":42,\"handledKeys\":7,"
-            "\"maximumDispatchUs\":125,\"suggestions\":[]}";
+            "\"maximumDispatchUs\":125,\"inputText\":\"PRIVATE_INPUT_BODY\",\"suggestions\":[]}";
     }
 
     void release() {
@@ -148,6 +148,17 @@ int main(int argc, char **argv) {
     assert(details.find("沙盒：未知") != std::string::npos);
     assert(details.find("42 ms") != std::string::npos && details.find("单调时钟") != std::string::npos);
     assert(details.find("125 μs") != std::string::npos && details.find("不含") != std::string::npos);
+    auto *copy = find(window, "application-copy-summary");
+    assert(gtk_widget_get_sensitive(copy));
+    gtk_button_clicked(GTK_BUTTON(copy));
+    auto *copied = gtk_clipboard_wait_for_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD));
+    assert(copied);
+    const std::string diagnosticSummary = copied;
+    g_free(copied);
+    assert(diagnosticSummary.find("org.example.Editor") != std::string::npos);
+    assert(diagnosticSummary.find("连接方式：Wayland") != std::string::npos);
+    assert(diagnosticSummary.find(details) != std::string::npos);
+    assert(diagnosticSummary.find("PRIVATE_INPUT_BODY") == std::string::npos);
 
     fake.fail = true;
     component->refresh();

@@ -49,6 +49,7 @@ public:
 
     GtkWidget *widget() const;
     void refresh();
+    void setLearningControls(GtkWidget *controls);
     bool focusTarget(std::string_view target);
 
 private:

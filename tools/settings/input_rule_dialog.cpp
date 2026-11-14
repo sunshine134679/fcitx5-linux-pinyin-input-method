@@ -77,8 +77,8 @@ struct RuleDialog {
             append(key, mode == core::InputMode::English ? "英文" : "中文");
         else for (const auto &[key, value] : draft.punctuationOverrides) append(std::string(1, key), value);
         const auto total = apps ? draft.appInputModes.size() : draft.punctuationOverrides.size();
-        const auto message = total == 0 ? (apps ? "尚未设置应用规则，沿用全局默认状态。" : "尚未自定义标点，沿用智能转换与配对设置。")
-            : visible == 0 ? std::string("没有匹配项，试试其他关键词。")
+        const auto message = total == 0 ? (apps ? "暂无应用规则" : "暂无自定义标点")
+            : visible == 0 ? std::string("没有匹配项")
             : "共 " + std::to_string(total) + " 条，当前显示 " + std::to_string(visible) + " 条";
         gtk_label_set_text(GTK_LABEL(count), message.c_str());
         selectionChanged();
@@ -152,7 +152,7 @@ struct RuleDialog {
             if (form->oldKey) gtk_entry_set_text(GTK_ENTRY(form->value), draft.punctuationOverrides.at(form->oldKey->front()).c_str());
         }
         if (form->oldKey) gtk_entry_set_text(GTK_ENTRY(form->key), form->oldKey->c_str());
-        gtk_box_pack_start(GTK_BOX(body), description(apps ? "输入 Fcitx 使用的应用标识，例如 code、org.gnome.TextEditor；区分大小写，不支持通配符。" : "固定输出优先于智能标点与自动配对；删除此规则即可恢复。"), FALSE, FALSE, 0);
+        gtk_widget_set_tooltip_text(form->key, apps ? "应用标识区分大小写，不支持通配符" : "固定输出优先于智能标点与自动配对");
         gtk_box_pack_start(GTK_BOX(body), createSettingRow(apps ? "应用标识" : "按键", "", form->key), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(body), createSettingRow(apps ? "默认状态" : "输出文本", "", form->value), FALSE, FALSE, 0);
         gtk_style_context_add_class(gtk_widget_get_style_context(form->error), "modernime-status-error");
@@ -208,9 +208,6 @@ GtkWidget *createInputRuleDialog(GtkWindow *parent, const core::ModernIMESetting
     owner->dialog = dialog;
     styleDialog(dialog); gtk_window_set_default_size(GTK_WINDOW(dialog), 680, 470);
     auto *body = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    gtk_box_pack_start(GTK_BOX(body), description(owner->apps
-        ? "开启按应用记忆时，已记住的状态优先；其他情况先用这里的规则，再用全局默认。保存规则后，下次激活应用时生效。"
-        : "为指定英文标点设置固定输出。自定义优先于智能转换和自动配对，删除后恢复原行为。"), FALSE, FALSE, 0);
     owner->search = gtk_search_entry_new(); target(owner->search, "input-rule-search");
     gtk_entry_set_placeholder_text(GTK_ENTRY(owner->search), owner->apps ? "搜索应用标识或中英文状态" : "搜索按键或输出文本");
     setAccessibleWidgetText(owner->search, "搜索规则", "按规则内容筛选，忽略英文大小写");
@@ -240,7 +237,7 @@ GtkWidget *createInputRuleDialog(GtkWindow *parent, const core::ModernIMESetting
     gtk_box_pack_start(GTK_BOX(body), scroll, TRUE, TRUE, 0);
     owner->count = description("");
     gtk_box_pack_start(GTK_BOX(body), owner->count, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(body), description("确认后返回设置草稿，点击主窗口“保存设置”才会生效。"), FALSE, FALSE, 0);
+    gtk_widget_set_tooltip_text(gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT), "返回设置草稿，主窗口保存后生效");
     g_signal_connect(add, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) { static_cast<RuleDialog *>(p)->edit({}); }), owner);
     g_signal_connect(owner->editButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) { auto &o = *static_cast<RuleDialog *>(p); if (auto key = o.selected()) o.edit(key); }), owner);
     g_signal_connect(owner->deleteButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) { static_cast<RuleDialog *>(p)->remove(); }), owner);

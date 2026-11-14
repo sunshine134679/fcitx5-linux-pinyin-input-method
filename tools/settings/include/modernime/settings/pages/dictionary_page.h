@@ -27,6 +27,10 @@ public:
 
     GtkWidget *widget() const;
     void refresh();
+    void setLearningPage(GtkWidget *page, std::function<void()> refresh,
+                         std::function<bool(std::string_view)> focus);
+    void showLearning();
+    void setStateChanged(std::function<void()> changed);
     bool focusTarget(std::string_view target);
     bool confirmLeave();
     bool hasUnsavedChanges() const;

@@ -186,7 +186,6 @@ public:
 
     ~Impl() {
         motion.reset();
-        if (taskStatusTimeout != 0) g_source_remove(taskStatusTimeout);
     }
 
     GtkWidget *window() const { return windowOwner.get(); }
@@ -202,10 +201,15 @@ public:
     void show(SettingsPageId page, std::string_view target) {
         if (motion) { motion->finishTheme(); motion->cancelHint(); }
         if (searchPopover) gtk_popover_popdown(GTK_POPOVER(searchPopover));
-        const auto &definition = pageDefinition(page);
+        const bool learningBehavior = page == SettingsPageId::Learning &&
+            (target == "learning-enabled" || target == "context-learning");
+        const auto visiblePage = learningBehavior ? SettingsPageId::Input : settingsNavigationOwner(page);
+        const auto &definition = pageDefinition(visiblePage);
         gtk_stack_set_visible_child_name(GTK_STACK(stack),
                                          std::string(definition.name).c_str());
-        updateNavigation(page);
+        updateNavigation(visiblePage);
+        if (page == SettingsPageId::Learning && !learningBehavior) dictionaryPage->showLearning();
+        if (page == SettingsPageId::Updates) diagnosticsPage->showUpdates();
 
         switch (page) {
         case SettingsPageId::Overview:
@@ -225,6 +229,7 @@ public:
             break;
         case SettingsPageId::Learning:
             learningPage->refresh(false);
+            if (learningBehavior) inputPage->refresh();
             break;
         case SettingsPageId::Updates:
             updatesPage->refresh();
@@ -245,26 +250,15 @@ public:
     }
 
     void presentError(std::string_view message) {
-        if (taskStatusTimeout != 0) {
-            g_source_remove(taskStatusTimeout);
-            taskStatusTimeout = 0;
-        }
         std::string compact(message);
         for (auto &character : compact) {
             if (character == '\n' || character == '\r' || character == '\t') character = ' ';
         }
         gtk_label_set_text(GTK_LABEL(taskStatus), compact.c_str());
         gtk_widget_set_tooltip_text(taskStatus, std::string(message).c_str());
+        taskMessage = message;
+        if (taskMessageButton) gtk_widget_set_visible(taskMessageButton, !message.empty());
         if (motion) motion->showMessage();
-        if (message.empty()) return;
-        taskStatusTimeout = g_timeout_add(5000, +[](gpointer data) -> gboolean {
-            auto &owner = *static_cast<Impl *>(data);
-            owner.taskStatusTimeout = 0;
-            if (owner.motion) owner.motion->hideMessage();
-            else gtk_label_set_text(GTK_LABEL(owner.taskStatus), "");
-            gtk_widget_set_tooltip_text(owner.taskStatus, nullptr);
-            return G_SOURCE_REMOVE;
-        }, this);
     }
 
 private:
@@ -435,7 +429,7 @@ private:
             gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
         auto *sidebar = sidebarGuard.get();
         addStyleClass(sidebar, kSettingsSidebarClass);
-        gtk_widget_set_size_request(sidebar, 220, -1);
+        gtk_widget_set_size_request(sidebar, 196, -1);
         gtk_widget_set_hexpand(sidebar, FALSE);
 
         auto *brandBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
@@ -447,17 +441,13 @@ private:
         gtk_label_set_text(GTK_LABEL(brandLabel), "ModernIME");
         gtk_widget_set_halign(brandLabel, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(brandBox), brandLabel, FALSE, FALSE, 0);
-        auto *caption = gtk_label_new("输入法设置");
-        addStyleClass(caption, "modernime-brand-caption");
-        gtk_widget_set_halign(caption, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(brandBox), caption, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(sidebar), brandBox, FALSE, FALSE, 0);
 
         searchEntry = gtk_search_entry_new();
         addStyleClass(searchEntry, "modernime-search-box");
         gtk_entry_set_placeholder_text(GTK_ENTRY(searchEntry), "搜索设置");
-        gtk_entry_set_width_chars(GTK_ENTRY(searchEntry), 14);
-        gtk_entry_set_max_width_chars(GTK_ENTRY(searchEntry), 18);
+        gtk_entry_set_width_chars(GTK_ENTRY(searchEntry), 12);
+        gtk_entry_set_max_width_chars(GTK_ENTRY(searchEntry), 14);
         gtk_widget_set_tooltip_text(searchEntry,
                                     "仅在本地搜索设置名称和说明");
         setAccessibleWidgetText(searchEntry, "搜索设置",
@@ -476,7 +466,13 @@ private:
         searchResults = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
         gtk_widget_set_size_request(searchResults, 360, -1);
         gtk_container_set_border_width(GTK_CONTAINER(searchResults), 8);
-        gtk_container_add(GTK_CONTAINER(searchPopover), searchResults);
+        auto *searchScroll = gtk_scrolled_window_new(nullptr, nullptr);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(searchScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(searchScroll), 80);
+        gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(searchScroll), 360);
+        gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(searchScroll), TRUE);
+        gtk_container_add(GTK_CONTAINER(searchScroll), searchResults);
+        gtk_container_add(GTK_CONTAINER(searchPopover), searchScroll);
         // This small local index needs no delayed query: a queued search-changed
         // signal could reopen suggestions after Escape or a focus change.
         g_signal_connect(searchEntry, "changed",
@@ -493,7 +489,7 @@ private:
 
         auto *navBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
         navigationBox = navBox;
-        for (const auto &definition : settingsPageDefinitions()) {
+        for (const auto &definition : settingsNavigationDefinitions()) {
             auto *button = gtk_button_new();
             addStyleClass(button, "modernime-nav-button");
             gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
@@ -503,14 +499,14 @@ private:
             gtk_widget_set_margin_end(button, 6);
             gtk_widget_set_margin_top(button, 1);
             gtk_widget_set_margin_bottom(button, 1);
-            if (definition.id == SettingsPageId::Dictionary || definition.id == SettingsPageId::Updates)
+            if (definition.id == SettingsPageId::Dictionary || definition.id == SettingsPageId::Diagnostics)
                 gtk_widget_set_margin_top(button, 8);
 
             auto *btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
             gtk_widget_set_margin_start(btnBox, 8);
             gtk_widget_set_margin_end(btnBox, 8);
-            gtk_widget_set_margin_top(btnBox, 3);
-            gtk_widget_set_margin_bottom(btnBox, 3);
+            gtk_widget_set_margin_top(btnBox, 1);
+            gtk_widget_set_margin_bottom(btnBox, 1);
 
             auto *icon = createSettingsPageIcon(definition.id);
             addStyleClass(icon, "modernime-nav-icon");
@@ -596,15 +592,12 @@ private:
         inputPage = std::make_unique<InputPage>(model, [this] {
             updateActionState();
         });
-        addPage(SettingsPageId::Input, inputPage->widget());
-        addInputPageMenu();
         candidatesPage = std::make_unique<CandidatesPage>(model, [this] {
             updateActionState();
         });
         addPage(SettingsPageId::Candidates, candidatesPage->widget());
         dictionaryPage =
             std::make_unique<DictionaryPage>(paths.userDictionary, notify);
-        addPage(SettingsPageId::Dictionary, dictionaryPage->widget());
         clipboardPage = std::make_unique<ClipboardPage>(
             model, paths.clipboardHistory,
             [this] { updateActionState(); }, notify, paths.clipboardFavorites);
@@ -612,10 +605,19 @@ private:
         learningPage = std::make_unique<LearningPage>(
             model, paths.learningStore,
             [this] { updateActionState(); }, notify);
-        addPage(SettingsPageId::Learning, learningPage->widget());
+        learningPage->setEmbedded(true);
+        auto *learningControls = learningPage->takeBehaviorWidget();
+        inputPage->setLearningControls(learningControls);
+        g_object_unref(learningControls);
+        dictionaryPage->setLearningPage(learningPage->widget(),
+            [this] { learningPage->refresh(false); },
+            [this](std::string_view target) { return learningPage->focusTarget(target); });
+        dictionaryPage->setStateChanged([this] { if (editState) updateActionState(); });
+        addPage(SettingsPageId::Input, inputPage->widget());
+        addPage(SettingsPageId::Dictionary, dictionaryPage->widget());
         updatesPage = std::make_unique<UpdatesPage>(environment, notify,
             [this] { return prepareUpdateRestart(); }, [this] { hideWindow(); });
-        addPage(SettingsPageId::Updates, updatesPage->widget());
+        updatesPage->setEmbedded(true);
         diagnosticsPage = std::make_unique<DiagnosticsPage>(
             fcitx, remote, environment, notify,
             [this] { return model.savedRevision(); },
@@ -642,6 +644,10 @@ private:
                 updateActionState();
                 requestOverviewRefresh();
             });
+        diagnosticsPage->setUpdatesPage(updatesPage->widget(),
+            [this] { updatesPage->refresh(); },
+            [this](std::string_view target) { return updatesPage->focusTarget(target); });
+        addMaintenanceMenu();
         addPage(SettingsPageId::Diagnostics, diagnosticsPage->widget());
 
         return stackGuard.release();
@@ -658,7 +664,7 @@ private:
         scrolledGuard.release();
     }
 
-    void addInputPageMenu() {
+    void addMaintenanceMenu() {
         detail::GtkWidgetGuard menuGuard(createSettingsPopover(nullptr));
         auto *menu = menuGuard.get();
         auto *defaults = gtk_model_button_new();
@@ -678,16 +684,16 @@ private:
         auto *menuButton = menuButtonGuard.get();
         gtk_button_set_label(GTK_BUTTON(menuButton), "更多");
         gtk_widget_set_halign(menuButton, GTK_ALIGN_END);
-        gtk_widget_set_tooltip_text(menuButton, "打开输入体验的更多操作");
+        gtk_widget_set_tooltip_text(menuButton, "恢复设置默认值");
         setAccessibleWidgetText(menuButton, "更多",
-                                "打开输入体验的更多操作菜单");
+                                "打开设置维护操作菜单");
         g_object_set_data_full(G_OBJECT(menuButton),
                                "modernime-settings-target",
-                               g_strdup("input-more"), g_free);
+                               g_strdup("maintenance-more"), g_free);
         gtk_menu_button_set_popover(GTK_MENU_BUTTON(menuButton), menu);
         menuGuard.release();
-        setPageHeaderAction(inputPage->widget(), menuButton);
-        prependSettingsFocusChainChild(inputPage->widget(), menuButton);
+        setPageHeaderAction(diagnosticsPage->widget(), menuButton);
+        prependSettingsFocusChainChild(diagnosticsPage->widget(), menuButton);
         menuButtonGuard.release();
     }
 
@@ -699,13 +705,37 @@ private:
 
         editState = gtk_label_new(nullptr);
         gtk_label_set_ellipsize(GTK_LABEL(editState), PANGO_ELLIPSIZE_END);
-        gtk_label_set_max_width_chars(GTK_LABEL(editState), 22);
-        gtk_label_set_width_chars(GTK_LABEL(editState), 22);
+        gtk_label_set_max_width_chars(GTK_LABEL(editState), 18);
         gtk_label_set_xalign(GTK_LABEL(editState), 0);
         gtk_label_set_text(GTK_LABEL(editState), "● 所有设置已保存");
         addStyleClass(editState, "modernime-status");
         gtk_widget_set_halign(editState, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(bar), editState, FALSE, FALSE, 0);
+        auto *changeButton = gtk_menu_button_new();
+        addStyleClass(changeButton, "modernime-change-summary");
+        gtk_container_add(GTK_CONTAINER(changeButton), editState);
+        setAccessibleWidgetText(changeButton, "查看待保存设置", "查看设置修改范围；短语草稿单独保存");
+        changeSummary = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        gtk_container_set_border_width(GTK_CONTAINER(changeSummary), 14);
+        auto *changeScroll = gtk_scrolled_window_new(nullptr, nullptr);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(changeScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(changeScroll), 320);
+        gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(changeScroll), TRUE);
+        gtk_container_add(GTK_CONTAINER(changeScroll), changeSummary);
+        auto *changePopover = createSettingsPopover(changeButton);
+        gtk_container_add(GTK_CONTAINER(changePopover), changeScroll);
+        gtk_menu_button_set_popover(GTK_MENU_BUTTON(changeButton), changePopover);
+        gtk_widget_show_all(changeScroll);
+        gtk_box_pack_start(GTK_BOX(bar), changeButton, FALSE, FALSE, 0);
+
+        contentDraft = gtk_button_new_with_label("词语草稿");
+        addStyleClass(contentDraft, "modernime-draft-badge");
+        gtk_widget_set_no_show_all(contentDraft, TRUE);
+        setAccessibleWidgetText(contentDraft, "词语有独立草稿", "在我的词语中继续编辑并单独保存");
+        gtk_box_pack_start(GTK_BOX(bar), contentDraft, FALSE, FALSE, 0);
+        g_signal_connect(contentDraft, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
+            auto *owner = static_cast<Impl *>(data);
+            owner->show(SettingsPageId::Dictionary, "dictionary-draft");
+        }), this);
 
         taskStatus = gtk_label_new("");
         g_object_set_data_full(G_OBJECT(taskStatus), "modernime-settings-target",
@@ -717,7 +747,22 @@ private:
         gtk_label_set_xalign(GTK_LABEL(taskStatus), 0);
         gtk_widget_set_valign(taskStatus, GTK_ALIGN_CENTER);
         gtk_widget_set_halign(taskStatus, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(bar), taskStatus, TRUE, TRUE, 0);
+        taskMessageButton = gtk_button_new();
+        addStyleClass(taskMessageButton, "modernime-message-button");
+        gtk_widget_set_no_show_all(taskMessageButton, TRUE);
+        gtk_container_add(GTK_CONTAINER(taskMessageButton), taskStatus);
+        gtk_widget_show(taskStatus);
+        gtk_widget_set_hexpand(taskMessageButton, TRUE);
+        gtk_box_pack_start(GTK_BOX(bar), taskMessageButton, TRUE, TRUE, 0);
+        setAccessibleWidgetText(taskMessageButton, "查看操作结果", "打开完整提示，可手动清除");
+        g_signal_connect(taskMessageButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
+            auto &owner = *static_cast<Impl *>(data);
+            auto *dialog = gtk_message_dialog_new(GTK_WINDOW(owner.window()), GTK_DIALOG_MODAL,
+                GTK_MESSAGE_INFO, GTK_BUTTONS_NONE, "%s", owner.taskMessage.c_str());
+            gtk_dialog_add_buttons(GTK_DIALOG(dialog), "清除提示", GTK_RESPONSE_APPLY, "关闭", GTK_RESPONSE_CLOSE, nullptr);
+            if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_APPLY) owner.presentError("");
+            gtk_widget_destroy(dialog);
+        }), this);
 
         auto *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         const auto labels = settingsActionLabels();
@@ -771,8 +816,14 @@ private:
             gtk_box_pack_start(GTK_BOX(searchResults), hint, FALSE, FALSE, 0);
         }
 
-        constexpr std::size_t kMaximumVisibleResults = 10;
-        const auto count = std::min(results.size(), kMaximumVisibleResults);
+        const auto count = results.size();
+        if (count) {
+            const auto text = std::to_string(count) + " 个结果";
+            auto *summary = gtk_label_new(text.c_str());
+            gtk_label_set_xalign(GTK_LABEL(summary), 0);
+            addStyleClass(summary, "modernime-description");
+            gtk_box_pack_start(GTK_BOX(searchResults), summary, FALSE, FALSE, 0);
+        }
         for (std::size_t index = 0; index < count; ++index) {
             const auto &entry = results[index];
             auto *button = gtk_button_new();
@@ -833,7 +884,8 @@ private:
             }
             return false;
         case SettingsPageId::Learning:
-            if (learningPage->focusTarget(target)) {
+            if (target == "learning-enabled" || target == "context-learning") return inputPage->focusTarget(target);
+            if (dictionaryPage->focusTarget(target)) {
                 return true;
             }
             if (target == "learning-clear") {
@@ -841,7 +893,7 @@ private:
             }
             return false;
         case SettingsPageId::Updates:
-            return updatesPage->focusTarget(target);
+            return diagnosticsPage->focusTarget(target);
         case SettingsPageId::Diagnostics:
             return diagnosticsPage->focusTarget(target);
         }
@@ -861,6 +913,26 @@ private:
         gtk_widget_set_sensitive(saveButton, canSave);
         gtk_widget_set_sensitive(restoreButton,
                                  model.dirty() && !actionBusy);
+        const auto changes = model.changes();
+        clearContainer(changeSummary);
+        auto *summaryTitle = gtk_label_new(changes.empty() ? "设置已保存" : "将保存以下设置");
+        gtk_label_set_xalign(GTK_LABEL(summaryTitle), 0);
+        addStyleClass(summaryTitle, "modernime-section-title");
+        gtk_box_pack_start(GTK_BOX(changeSummary), summaryTitle, FALSE, FALSE, 0);
+        for (const auto &change : changes) {
+            const auto text = std::string(change.group) + " · " + std::string(change.title);
+            auto *row = gtk_label_new(text.c_str());
+            gtk_label_set_xalign(GTK_LABEL(row), 0);
+            gtk_box_pack_start(GTK_BOX(changeSummary), row, FALSE, FALSE, 0);
+        }
+        const bool hasDraft = dictionaryPage && dictionaryPage->hasUnsavedChanges();
+        gtk_widget_set_visible(contentDraft, hasDraft);
+        if (hasDraft) {
+            auto *note = gtk_label_new("词语草稿在「我的词语」中单独保存。");
+            addStyleClass(note, "modernime-description");
+            gtk_box_pack_start(GTK_BOX(changeSummary), note, FALSE, FALSE, 0);
+        }
+        gtk_widget_show_all(changeSummary);
 
         std::string stateClass;
         std::string status;
@@ -872,7 +944,7 @@ private:
             status = "! " + message;
         } else if (model.dirty()) {
             stateClass = "modernime-status-dirty";
-            status = "● 有未保存的修改";
+            status = std::to_string(changes.size()) + " 项设置待保存";
         } else {
             status = savedFeedback ? "✓ 所有设置已保存" : "● 所有设置已保存";
         }
@@ -1141,8 +1213,11 @@ private:
     GtkWidget *searchPopover = nullptr;
     GtkWidget *searchResults = nullptr;
     GtkWidget *editState = nullptr;
+    GtkWidget *changeSummary = nullptr;
+    GtkWidget *contentDraft = nullptr;
     GtkWidget *taskStatus = nullptr;
-    guint taskStatusTimeout = 0;
+    GtkWidget *taskMessageButton = nullptr;
+    std::string taskMessage;
     GtkWidget *restoreButton = nullptr;
     GtkWidget *saveButton = nullptr;
     std::vector<std::pair<SettingsPageId, GtkWidget *>> navigationButtons;

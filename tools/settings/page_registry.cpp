@@ -26,7 +26,20 @@ constexpr std::array kPages{
                            "系统与支持"},
 };
 
+constexpr std::array kNavigation{
+    SettingsPageDefinition{SettingsPageId::Overview, "overview", "工作台", "查看输入状态，试用常用输入功能", "开始"},
+    SettingsPageDefinition{SettingsPageId::Input, "input", "输入习惯", "设置拼音、按键、辅助输入与学习习惯", "输入体验"},
+    SettingsPageDefinition{SettingsPageId::Candidates, "candidates", "候选与外观", "边看边调候选显示与选词方式", "输入体验"},
+    SettingsPageDefinition{SettingsPageId::Dictionary, "dictionary", "我的词语", "管理词条、短语、学习记录与词库包", "个人内容"},
+    SettingsPageDefinition{SettingsPageId::Clipboard, "clipboard", "剪贴板", "查找、收藏与管理复制过的内容", "个人内容"},
+    SettingsPageDefinition{SettingsPageId::Diagnostics, "diagnostics", "维护", "查看状态、排查问题、备份与更新", "维护"},
+};
+
 constexpr std::array kSearchEntries{
+    SettingsSearchEntry{SettingsPageId::Overview, "", "工作台", "查看输入状态，试用常用输入功能", "workspace home"},
+    SettingsSearchEntry{SettingsPageId::Input, "", "输入习惯", "设置拼音、按键、辅助输入与学习习惯", "input"},
+    SettingsSearchEntry{SettingsPageId::Dictionary, "", "我的词语", "管理词条、短语、学习记录与词库包", "words"},
+    SettingsSearchEntry{SettingsPageId::Diagnostics, "", "维护", "查看状态、排查问题、备份与更新", "maintenance"},
     SettingsSearchEntry{SettingsPageId::Learning, "learning-record-search", "搜索学习记录",
                         "查找词语或拼音，忘记偏好、解除屏蔽", "learning manage forget unsuppress 学习管理 屏蔽 忘记"},
     SettingsSearchEntry{SettingsPageId::Dictionary, "dictionary-packs", "词库包",
@@ -232,6 +245,16 @@ std::span<const SettingsPageDefinition> settingsPageDefinitions() {
     return kPages;
 }
 
+std::span<const SettingsPageDefinition> settingsNavigationDefinitions() {
+    return kNavigation;
+}
+
+SettingsPageId settingsNavigationOwner(SettingsPageId page) {
+    if (page == SettingsPageId::Learning) return SettingsPageId::Dictionary;
+    if (page == SettingsPageId::Updates) return SettingsPageId::Diagnostics;
+    return page;
+}
+
 std::span<const SettingsSearchEntry> settingsSearchEntries() {
     return kSearchEntries;
 }
@@ -270,6 +293,9 @@ std::optional<SettingsPageId> parseSettingsPage(std::string_view name) {
         return std::nullopt;
     }
 
+    for (const auto &page : kNavigation) {
+        if (normalized == page.name || normalized == page.title) return page.id;
+    }
     for (const auto &page : kPages) {
         if (normalized == page.name || normalized == page.title) {
             return page.id;

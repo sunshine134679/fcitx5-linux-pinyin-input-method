@@ -21,8 +21,8 @@ struct ClientPalette {
 };
 const ClientPalette &clientPalette(std::string_view key) {
     static constexpr ClientPalette palettes[]{
-        {"blue", "#f4f6f9", "#ffffff", "#eaf0f6", "#edf2f7", "#ffffff",
-         "#243247", "#5e6d82", "#dfe5ee", "#becbdc", "#3569b8", "#ffffff", false},
+        {"blue", "#f7f8fb", "#ffffff", "#202938", "#eef1f7", "#ffffff",
+         "#202938", "#687488", "#e0e5ee", "#cbd3e1", "#3869d4", "#ffffff", false},
         {"jade", "#f2f6f3", "#fdfffc", "#e7efe9", "#ecf3ee", "#fefffd",
          "#293b32", "#5d7064", "#dce6de", "#bdcfc3", "#347b65", "#ffffff", false},
         {"night", "#151f2c", "#212e3e", "#192635", "#192534", "#29394c",
@@ -441,16 +441,18 @@ GtkWidget *createSettingsStatusArt(SettingsStatusArt kind) {
 
 std::string_view settingsStyles() {
     return R"css(
-        /* Shared surface hierarchy: canvas, raised cards, interactive controls. */
-        @define-color theme_bg_color #f3f6fb;
+        /* Quiet workspace surfaces; only previews and content inspectors are framed. */
+        @define-color theme_bg_color #f5f6f7;
         @define-color theme_base_color #ffffff;
-        @define-color theme_fg_color #202938;
-        @define-color insensitive_fg_color #5d697a;
-        @define-color borders #dde3ec;
+        @define-color theme_fg_color #242b35;
+        @define-color insensitive_fg_color #626c79;
+        @define-color borders #dce0e5;
         @define-color theme_selected_bg_color #1262ff;
         @define-color theme_selected_fg_color #ffffff;
-        @define-color modernime_sidebar_color #eaf0f7;
-        @define-color modernime_control_border #bac6d6;
+        @define-color modernime_sidebar_color #202938;
+        @define-color modernime_sidebar_ink #dce5f4;
+        @define-color modernime_sidebar_muted #a6b4c9;
+        @define-color modernime_control_border #bfc7d1;
         @define-color modernime_accent_surface #e5eeff;
         @define-color modernime_nav_fg_color #0b55eb;
         @define-color modernime_shadow #203a64;
@@ -459,7 +461,7 @@ std::string_view settingsStyles() {
         @define-color success_color #147452;
         @define-color modernime_hover_color #f7faff;
         @define-color modernime_pressed_color #dce8ff;
-        @define-color modernime_inset_color #edf2f8;
+        @define-color modernime_inset_color #eceff2;
         @define-color modernime_accent_hover #0957ed;
         @define-color modernime_accent_pressed #084bd0;
         @define-color modernime_muted_control #9aa9bd;
@@ -478,12 +480,7 @@ std::string_view settingsStyles() {
             font-size: 14px;
         }
 
-        .modernime-sidebar {
-            border-right: 1px solid @borders;
-            background-color: @modernime_sidebar_color;
-            box-shadow: none;
-            padding: 10px 8px;
-        }
+        .modernime-sidebar { border-right: none; background-color: @modernime_sidebar_color; color: @modernime_sidebar_ink; box-shadow: none; padding: 18px 6px 10px; }
 
         .modernime-sidebar viewport {
             background-color: transparent;
@@ -500,39 +497,13 @@ std::string_view settingsStyles() {
             letter-spacing: 0.5px;
         }
 
-        .modernime-settings entry.modernime-search-box {
-            border-radius: 8px;
-            background-image: none;
-            background-color: mix(@modernime_sidebar_color, @theme_base_color, 0.65);
-            border: 1px solid transparent;
-            box-shadow: none;
-            color: @theme_fg_color;
-            padding: 7px 10px;
-            margin-bottom: 6px;
-        }
+        .modernime-settings entry.modernime-search-box { border-radius: 7px; background-image: none; background-color: @theme_base_color; border: 1px solid transparent; box-shadow: none; color: @theme_fg_color; padding: 7px 10px; margin-bottom: 6px; }
         .modernime-settings entry.modernime-search-box:hover { border-color: @borders; }
-        .modernime-settings entry.modernime-search-box:focus {
-            background-color: @theme_base_color;
-            border-color: @theme_selected_bg_color;
-        }
+        .modernime-settings entry.modernime-search-box:focus { background-color: @theme_base_color; color: @theme_fg_color; border-color: @theme_selected_bg_color; }
 
-        .modernime-nav-button {
-            border-radius: 9px;
-            background-image: none;
-            background-color: transparent;
-            box-shadow: none;
-            padding: 6px 8px;
-            margin: 2px 0;
-            border: 1px solid transparent;
-            color: @theme_fg_color;
-            transition: none;
-        }
+        .modernime-nav-button { border-radius: 8px; background-image: none; background-color: transparent; box-shadow: none; padding: 4px 8px; margin: 2px 0; border: 1px solid transparent; color: @modernime_sidebar_ink; transition: none; }
 
-        .modernime-settings .modernime-nav-button:hover {
-            background-color: @modernime_hover_color;
-            border-color: @borders;
-            box-shadow: none;
-        }
+        .modernime-settings .modernime-nav-button:hover { background-color: alpha(@modernime_sidebar_ink, 0.08); border-color: alpha(@modernime_sidebar_ink, 0.16); box-shadow: none; }
 
         .modernime-settings .modernime-nav-button:active {
             background-color: @modernime_pressed_color;
@@ -604,12 +575,7 @@ std::string_view settingsStyles() {
             border: none;
         }
 
-        .modernime-page-title {
-            font-size: 24px;
-            font-weight: 700;
-            color: @theme_fg_color;
-            letter-spacing: -0.2px;
-        }
+        .modernime-page-title { font-size: 28px; font-weight: 700; color: @theme_fg_color; letter-spacing: -0.8px; }
 
         .modernime-page-subtitle {
             font-size: 13px;
@@ -626,24 +592,28 @@ std::string_view settingsStyles() {
 
         .modernime-settings .modernime-dictionary-switcher button {
             background-color: transparent;
-            border-color: transparent;
-            padding: 6px 18px;
-            min-width: 92px;
-            border-radius: 7px;
+            background-image: none;
+            border: 1px solid transparent;
+            padding: 7px 10px;
+            min-width: 0;
+            min-height: 22px;
+            border-radius: 6px;
             box-shadow: none;
             color: @insensitive_fg_color;
+            font-size: 13px;
         }
         .modernime-dictionary-switcher {
-            background-color: @modernime_inset_color;
-            border-radius: 10px;
-            padding: 3px;
+            background-color: @theme_bg_color;
+            border-bottom: 1px solid @borders;
+            border-radius: 0;
+            padding: 0 0 10px;
         }
         .modernime-settings .modernime-dictionary-switcher button:checked {
-            background-color: @theme_base_color;
-            border-color: @borders;
+            background-color: @modernime_accent_surface;
+            border-color: @modernime_nav_border_color;
             color: @modernime_nav_fg_color;
             font-weight: 600;
-            box-shadow: 0 1px 2px alpha(@modernime_shadow, 0.05);
+            box-shadow: none;
         }
         .modernime-settings .modernime-dictionary-switcher button:hover:not(:checked) {
             color: @theme_fg_color;
@@ -666,7 +636,7 @@ std::string_view settingsStyles() {
             border-color: @borders;
             color: @modernime_nav_fg_color;
             font-weight: 600;
-            box-shadow: 0 1px 3px alpha(@modernime_shadow, 0.05);
+            box-shadow: none;
         }
         .modernime-settings .modernime-style-option:hover:not(:checked) {
             background-color: @modernime_hover_color;
@@ -788,12 +758,19 @@ std::string_view settingsStyles() {
         .modernime-diagnostics-card button { padding: 7px 13px; }
 
         .modernime-section {
-            border: 1px solid @borders;
-            border-radius: 12px;
-            background-color: @theme_base_color;
-            box-shadow: 0 2px 5px alpha(@modernime_shadow, 0.025);
-            padding: 18px 20px;
+            border: none;
+            border-bottom: 1px solid @borders;
+            border-radius: 0;
+            background-color: transparent;
+            box-shadow: none;
+            padding: 8px 0 16px;
             margin-bottom: 4px;
+        }
+        .modernime-section:last-child { border-bottom: none; }
+        .modernime-section .modernime-section {
+            border: none;
+            padding: 4px 0;
+            margin-bottom: 0;
         }
 
         .modernime-section > .modernime-description {
@@ -828,12 +805,8 @@ std::string_view settingsStyles() {
         }
 
         /* Overview: one input workbench, two shortcuts, one content library. */
-        .modernime-overview-workbench {
-            border: none;
-            background-color: transparent;
-            padding: 0 0 8px;
-        }
-        .modernime-overview-status { font-size: 14px; font-weight: 500; }
+        .modernime-overview-workbench { border: 1px solid @borders; border-radius: 16px; background-color: @theme_base_color; padding: 18px 22px 10px; margin-bottom: 8px; }
+        .modernime-overview-status { font-size: 13px; font-weight: 500; color: @insensitive_fg_color; }
         .modernime-settings button.modernime-overview-diagnostics {
             padding: 6px 10px;
             background-color: transparent;
@@ -844,26 +817,9 @@ std::string_view settingsStyles() {
         .modernime-settings button.modernime-overview-diagnostics:hover {
             background-color: @modernime_pressed_color;
         }
-        .modernime-settings entry.modernime-overview-trial {
-            font-size: 18px;
-            min-height: 52px;
-            padding: 12px 20px;
-            border: 1px solid @borders;
-            border-radius: 12px;
-            background-color: @theme_base_color;
-            background-image: none;
-            box-shadow: inset 0 1px 2px alpha(@modernime_shadow, 0.035),
-                        0 3px 8px alpha(@modernime_shadow, 0.035);
-            color: @theme_fg_color;
-        }
-        .modernime-settings entry.modernime-overview-trial:hover {
-            border-color: mix(@borders, @theme_selected_bg_color, 0.35);
-        }
-        .modernime-settings entry.modernime-overview-trial:focus {
-            border-color: @theme_selected_bg_color;
-            box-shadow: 0 0 0 3px alpha(@theme_selected_bg_color, 0.12),
-                        inset 0 1px 2px alpha(@modernime_shadow, 0.025);
-        }
+        .modernime-settings entry.modernime-overview-trial { font-size: 32px; min-height: 94px; padding: 8px 0; border: 1px solid transparent; border-radius: 0; background-color: @theme_base_color; background-image: none; box-shadow: none; color: @theme_fg_color; }
+        .modernime-settings entry.modernime-overview-trial:hover { border-bottom-color: @borders; }
+        .modernime-settings entry.modernime-overview-trial:focus { border-bottom-color: @theme_selected_bg_color; box-shadow: none; }
         .modernime-settings entry.modernime-overview-trial:drop(active) {
             border-color: @theme_selected_bg_color;
         }
@@ -872,56 +828,27 @@ std::string_view settingsStyles() {
             margin: 0;
             outline-width: 0;
         }
-        .modernime-settings button.modernime-overview-shortcut {
-            padding: 14px;
-            border-radius: 10px;
-            box-shadow: none;
-            border-color: @borders;
-        }
+        .modernime-settings button.modernime-overview-shortcut { padding: 14px 16px; border-radius: 12px; box-shadow: none; border-color: @borders; }
         .modernime-overview-shortcut-icon {
             padding: 8px;
             border-radius: 8px;
             background-color: @modernime_inset_color;
             color: @modernime_nav_fg_color;
         }
-        .modernime-overview-library {
-            border: 1px solid @borders;
-            border-radius: 12px;
-            background-color: @theme_base_color;
-            padding: 12px 6px 6px;
-            box-shadow: 0 2px 5px alpha(@modernime_shadow, 0.025);
-        }
+        .modernime-overview-library { border: none; background-color: transparent; padding: 8px 0; box-shadow: none; }
         .modernime-overview-library-title {
             font-size: 13px;
             font-weight: 600;
             color: @insensitive_fg_color;
             margin: 0 10px 2px;
         }
-        .modernime-settings button.modernime-overview-content-row {
-            padding: 10px;
-            border: 1px solid transparent;
-            border-radius: 9px;
-            box-shadow: none;
-            background-color: transparent;
-            transition: color 100ms ease, background-color 100ms ease;
-        }
-        .modernime-settings button.modernime-overview-content-row:hover {
-            background-color: transparent;
-            border-color: transparent;
-        }
+        .modernime-settings button.modernime-overview-content-row { padding: 16px 14px; border: 1px solid @borders; border-radius: 12px; box-shadow: none; background-color: @theme_base_color; transition: color 100ms ease, background-color 100ms ease; }
+        .modernime-settings button.modernime-overview-content-row:hover { background-color: @modernime_hover_color; border-color: @modernime_control_border; }
         .modernime-settings button.modernime-overview-content-row:active {
             background-color: @modernime_pressed_color;
         }
-        .modernime-overview-content-icon {
-            color: @insensitive_fg_color;
-            padding: 6px;
-            border-radius: 8px;
-        }
-        .modernime-overview-content-arrow {
-            color: @insensitive_fg_color;
-            padding: 5px;
-            border-radius: 7px;
-        }
+        .modernime-overview-content-icon { color: @modernime_nav_fg_color; padding: 0; border-radius: 6px; }
+        .modernime-overview-content-arrow { color: @insensitive_fg_color; padding: 0; border-radius: 6px; }
         .modernime-overview-content-row:hover .modernime-overview-content-icon,
         .modernime-overview-content-row:hover .modernime-overview-content-arrow {
             color: @modernime_nav_fg_color;
@@ -930,13 +857,7 @@ std::string_view settingsStyles() {
         .modernime-overview-content-row:hover .modernime-overview-content-title {
             color: @modernime_nav_fg_color;
         }
-        .modernime-overview-count {
-            font-size: 13px;
-            color: @theme_fg_color;
-            padding: 4px 8px;
-            border-radius: 6px;
-            background-color: @modernime_inset_color;
-        }
+        .modernime-overview-count { font-size: 34px; font-weight: 500; color: @theme_fg_color; padding: 0; background-color: transparent; }
         .modernime-overview-notices {
             border: 1px solid alpha(@warning_color, 0.4);
             border-radius: 9px;
@@ -1191,14 +1112,75 @@ std::string_view settingsStyles() {
             box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
         }
 
-        /* Candidates Hero Preview & Controls matching layout-1.png */
-        .modernime-preview-card {
-            border: 1px solid @borders;
-            border-radius: 10px;
-            background-color: @theme_base_color;
+        /* The production candidate renderer is the focal surface of this workspace. */
+        .modernime-preview-card { border: 1px solid @borders; border-radius: 14px; background-color: @modernime_inset_color; box-shadow: none; padding: 14px 18px; margin-bottom: 4px; }
+
+        .modernime-candidate-workspace,
+        .modernime-candidate-workspace viewport,
+        .modernime-candidate-controls,
+        .modernime-candidate-controls > stack,
+        .modernime-candidate-controls scrolledwindow,
+        .modernime-candidate-controls viewport {
+            background-color: transparent;
+            border: none;
             box-shadow: none;
-            padding: 14px 18px;
-            margin-bottom: 4px;
+        }
+        .modernime-candidate-task { padding: 12px 2px 4px; }
+        .modernime-candidate-workspace-wide .modernime-candidate-task { padding: 12px 0 4px 12px; }
+        .modernime-candidate-controls > header {
+            background-color: @theme_bg_color;
+            background-image: none;
+            border: none;
+            border-bottom: 1px solid @borders;
+            box-shadow: none;
+            padding: 0 0 8px;
+        }
+        .modernime-candidate-controls > header tabs { border: none; padding: 0; }
+        .modernime-candidate-controls > header tab {
+            background-color: transparent;
+            background-image: none;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            box-shadow: none;
+            padding: 7px 12px;
+            margin: 0 4px 0 0;
+            color: @insensitive_fg_color;
+            font-size: 13px;
+        }
+        .modernime-candidate-controls > header tab:checked {
+            background-color: @modernime_accent_surface;
+            border-color: @modernime_nav_border_color;
+            color: @modernime_nav_fg_color;
+            box-shadow: none;
+            font-weight: 600;
+        }
+        .modernime-candidate-controls > header tab:hover:not(:checked) {
+            background-color: @modernime_hover_color;
+            color: @theme_fg_color;
+        }
+        .modernime-keyboard-focus .modernime-candidate-controls > header tab:focus {
+            outline: 2px solid @theme_selected_bg_color;
+            outline-offset: -2px;
+        }
+        .modernime-candidate-controls undershoot { background: none; box-shadow: none; }
+        .modernime-content-details { background-color: @theme_base_color; border: 1px solid @borders; border-radius: 12px; box-shadow: none; padding: 18px; }
+        .modernime-word-detail-title { font-size: 25px; font-weight: 600; margin-bottom: 10px; }
+        .modernime-content-detail-empty { color: @insensitive_fg_color; padding: 14px; }
+        .modernime-content-detail-empty .modernime-word-detail-title { font-size: 14px; font-weight: 400; }
+        .modernime-content-toolbar { margin: 0 0 12px; }
+        .modernime-content-list.view { border: none; }
+        .modernime-content-list.view header button {
+            background-color: @modernime_inset_color; border: none; border-bottom: 1px solid @borders;
+            border-radius: 0; padding: 8px 12px; font-size: 12px; color: @insensitive_fg_color;
+        }
+        .modernime-settings .modernime-content-list.view:selected { background-color: @modernime_accent_surface; color: @modernime_nav_fg_color; }
+        .modernime-settings button.modernime-change-summary,
+        .modernime-settings button.modernime-message-button { border-color: transparent; background-color: transparent; min-width: 0; }
+        .modernime-settings button.modernime-draft-badge { color: @warning_color; background-color: alpha(@warning_color, 0.08); min-width: 0; }
+        .modernime-content-details .modernime-section {
+            background-color: transparent;
+            border: none;
+            padding: 0;
         }
 
         .modernime-preview-header {
@@ -1224,12 +1206,7 @@ std::string_view settingsStyles() {
             margin-top: 4px;
         }
 
-        .modernime-sidebar-footer {
-            font-size: 11.5px;
-            color: @insensitive_fg_color;
-            border-top: 1px solid @borders;
-            padding-top: 14px;
-        }
+        .modernime-sidebar-footer { font-size: 11.5px; color: @modernime_sidebar_muted; border-top: 1px solid alpha(@modernime_sidebar_ink, 0.15); padding-top: 14px; }
 
         button {
             border-radius: 8px;
@@ -1267,7 +1244,7 @@ std::string_view settingsStyles() {
         }
 
         .modernime-nav-label { font-size: 14px; }
-        .modernime-brand { font-size: 20px; font-weight: 700; color: @theme_fg_color; letter-spacing: -0.3px; }
+        .modernime-brand { font-size: 20px; font-weight: 700; color: @modernime_sidebar_ink; letter-spacing: -0.5px; }
         .modernime-brand-caption { font-size: 11.5px; color: @insensitive_fg_color; }
         .modernime-settings entry,
         .modernime-settings spinbutton,
@@ -1827,6 +1804,8 @@ void applySettingsTheme(std::string_view theme) {
     define("modernime_control_border", palette.controlBorder);
     define("modernime_control_surface", palette.control);
     define("modernime_sidebar_color", palette.sidebar);
+    define("modernime_sidebar_ink", theme == "blue" ? "#dce5f4" : palette.ink);
+    define("modernime_sidebar_muted", theme == "blue" ? "#a6b4c9" : palette.muted);
     define("modernime_inset_color", palette.inset);
     define("modernime_accent_surface", "mix(@theme_base_color, @theme_selected_bg_color, 0.09)");
     define("modernime_hover_color", "mix(@modernime_control_surface, @theme_selected_bg_color, 0.045)");
@@ -2016,6 +1995,35 @@ GtkWidget *createScrollablePage(GtkWidget *page) {
     gtk_widget_set_hexpand(surface, TRUE);
     gtk_widget_set_vexpand(surface, TRUE);
 
+    gtk_widget_set_hexpand(page, TRUE);
+    gtk_widget_set_vexpand(page, TRUE);
+    gtk_widget_set_halign(page, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(page, GTK_ALIGN_FILL);
+    gtk_container_add(GTK_CONTAINER(surface), pageGuard.release());
+    if (g_object_get_data(G_OBJECT(page), "modernime-page-self-scrolling")) {
+        return surfaceGuard.release();
+    }
+
+    // Keep the page and its lookup targets in place. Only its body scrolls;
+    // the heading and optional task switcher remain available at every offset.
+    auto *header = static_cast<GtkWidget *>(g_object_get_data(G_OBJECT(page), "modernime-page-header"));
+    auto *fixed = static_cast<GtkWidget *>(g_object_get_data(G_OBJECT(page), "modernime-page-fixed-content"));
+    auto *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, gtk_box_get_spacing(GTK_BOX(page)));
+    gtk_container_unset_focus_chain(GTK_CONTAINER(page));
+    auto *children = gtk_container_get_children(GTK_CONTAINER(page));
+    for (auto *item = children; item; item = item->next) {
+        auto *child = GTK_WIDGET(item->data);
+        if (child == header || child == fixed) continue;
+        gboolean expand = FALSE, fill = FALSE;
+        guint padding = 0;
+        GtkPackType pack = GTK_PACK_START;
+        gtk_box_query_child_packing(GTK_BOX(page), child, &expand, &fill, &padding, &pack);
+        g_object_ref(child);
+        gtk_container_remove(GTK_CONTAINER(page), child);
+        gtk_box_pack_start(GTK_BOX(body), child, expand, fill, padding);
+        g_object_unref(child);
+    }
+    g_list_free(children);
     detail::GtkWidgetGuard scrolledGuard(
         gtk_scrolled_window_new(nullptr, nullptr));
     auto *scrolled = scrolledGuard.get();
@@ -2026,19 +2034,14 @@ GtkWidget *createScrollablePage(GtkWidget *page) {
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_hexpand(scrolled, TRUE);
     gtk_widget_set_vexpand(scrolled, TRUE);
-    gtk_widget_set_hexpand(page, TRUE);
-    gtk_widget_set_vexpand(page, TRUE);
-    gtk_widget_set_halign(page, GTK_ALIGN_FILL);
-    gtk_widget_set_valign(page, GTK_ALIGN_FILL);
-    gtk_container_add(GTK_CONTAINER(surface), pageGuard.get());
-    pageGuard.release();
-    gtk_container_add(GTK_CONTAINER(scrolled), surface);
-    surfaceGuard.release();
+    gtk_container_add(GTK_CONTAINER(scrolled), body);
+    gtk_box_pack_start(GTK_BOX(page), scrolled, TRUE, TRUE, 0);
+    scrolledGuard.release();
     auto *viewport = gtk_bin_get_child(GTK_BIN(scrolled));
     if (viewport != nullptr) {
         addStyleClass(viewport, "modernime-page-viewport");
     }
-    return scrolledGuard.release();
+    return surfaceGuard.release();
 }
 
 GtkWidget *createSettingRow(std::string_view title,
@@ -2064,18 +2067,6 @@ GtkWidget *createSettingRow(std::string_view title,
     gtk_label_set_max_width_chars(GTK_LABEL(label), 1);
     setAccessibleWidgetText(label, title, "设置名称");
     gtk_box_pack_start(GTK_BOX(textVBox), label, FALSE, FALSE, 0);
-    if (!description.empty()) {
-        auto *hint = gtk_label_new(std::string(description).c_str());
-        addStyleClass(hint, "modernime-setting-desc");
-        gtk_label_set_xalign(GTK_LABEL(hint), 0.0F);
-        gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
-        gtk_label_set_line_wrap_mode(GTK_LABEL(hint), PANGO_WRAP_WORD_CHAR);
-        gtk_label_set_max_width_chars(GTK_LABEL(hint), 1);
-        gtk_widget_set_hexpand(hint, TRUE);
-        gtk_box_pack_start(GTK_BOX(textVBox), hint, FALSE, FALSE, 0);
-    }
-
-
     gtk_box_pack_start(GTK_BOX(row), textVBox, TRUE, TRUE, 0);
 
     if (control != nullptr) {
@@ -2086,6 +2077,8 @@ GtkWidget *createSettingRow(std::string_view title,
             setAccessibleWidgetText(control, {}, title);
         } else {
             setAccessibleWidgetText(control, title, description);
+            if (!description.empty() && !gtk_widget_get_has_tooltip(control))
+                gtk_widget_set_tooltip_text(control, std::string(description).c_str());
         }
         gtk_box_pack_end(GTK_BOX(row), control, FALSE, FALSE, 0);
         controlGuard.release();

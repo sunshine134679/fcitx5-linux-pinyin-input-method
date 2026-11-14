@@ -24,17 +24,17 @@ public:
     std::array<GtkWidget *,6> choices{};
     std::unique_ptr<BackendClient> client=std::make_unique<BackendClient>();
     std::function<bool()> canRestore;std::function<void()> restored;
-    bool busy=false,restoreMode=false,committing=false;unsigned generation=0;std::string directory,token;
+    bool busy=false,restoreMode=false,committing=false,exportNeedsLocation=false;unsigned generation=0;std::string directory,token,retainedSelection;
     std::vector<std::string> supportedComponents;
     Impl(std::function<bool()> ready,std::function<void()> done):canRestore(std::move(ready)),restored(std::move(done)) {
-        root=createSectionCard("备份与恢复","");target(root,"data-bundle");
+        root=createSectionCard("","");target(root,"data-bundle");
         auto *actions=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);
         exportButton=gtk_button_new_with_label("创建备份");restoreButton=gtk_button_new_with_label("从备份恢复");
         target(exportButton,"bundle-export");target(restoreButton,"bundle-restore");
         gtk_style_context_add_class(gtk_widget_get_style_context(exportButton),"suggested-action");
         gtk_box_pack_start(GTK_BOX(actions),exportButton,FALSE,FALSE,0);gtk_box_pack_start(GTK_BOX(actions),restoreButton,FALSE,FALSE,0);
         gtk_box_pack_start(GTK_BOX(root),actions,FALSE,FALSE,0);
-        status=label("剪贴板内容默认不备份。");target(status,"bundle-status");gtk_label_set_selectable(GTK_LABEL(status),TRUE);
+        status=label("");target(status,"bundle-status");gtk_label_set_selectable(GTK_LABEL(status),TRUE);
         gtk_box_pack_start(GTK_BOX(root),status,FALSE,FALSE,0);
         gtk_widget_set_tooltip_text(root,"备份用户数据至本地文件夹，不包含程序、内置资源及词库包。请只恢复自己信任的备份。");
         g_signal_connect(exportButton,"clicked",G_CALLBACK(+[](GtkButton *,gpointer p){static_cast<Impl *>(p)->choose(false);}),this);
@@ -88,7 +88,13 @@ public:
         gtk_widget_set_sensitive(accept,FALSE);
         g_signal_connect(newDialog,"response",G_CALLBACK(+[](GtkDialog *d,gint response,gpointer p){auto &s=*static_cast<Impl *>(p);
             if(s.committing)return;
-            if(response!=GTK_RESPONSE_ACCEPT){gtk_widget_destroy(GTK_WIDGET(d));s.token.clear();return;}
+            if(response!=GTK_RESPONSE_ACCEPT){gtk_widget_destroy(GTK_WIDGET(d));s.token.clear();s.retainedSelection.clear();return;}
+            if(s.restoreMode && s.token.empty()){
+                s.retainedSelection=s.selected();gtk_widget_destroy(GTK_WIDGET(d));s.preview();return;
+            }
+            if(!s.restoreMode && s.exportNeedsLocation){
+                s.retainedSelection=s.selected();gtk_widget_destroy(GTK_WIDGET(d));s.exportNeedsLocation=false;s.choose(false);return;
+            }
             s.commit();
         }),this);
         gtk_widget_show_all(newDialog);
@@ -98,7 +104,25 @@ public:
         for(std::size_t n=0;n<ids.size();++n)if(choices[n] && gtk_widget_get_sensitive(choices[n]) && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(choices[n]))){if(!csv.empty())csv+=',';csv+=ids[n];}
         return csv;
     }
+    bool retained(std::size_t n) const {
+        const auto csv=","+retainedSelection+",";
+        return csv.find(","+std::string(ids[n])+",")!=std::string::npos;
+    }
     void updateAccept(){if(accept)gtk_widget_set_sensitive(accept,!busy && !selected().empty());}
+    void showCommitFailure(const std::string &message,bool restoring,bool uncertain) {
+        committing=false;
+        exportNeedsLocation=!restoring && uncertain;
+        const auto next=restoring?" 选择已保留，请重新查看差异后确认恢复。":
+            uncertain?" 选择已保留。请先核对原备份目录，再另选位置创建备份。":
+            " 选择已保留，请检查文件夹权限和可用空间后重试。";
+        state(false,message+next);
+        if(dialog){
+            gtk_widget_set_sensitive(dialog,TRUE);
+            gtk_label_set_text(GTK_LABEL(dialogStatus),(message+next).c_str());
+            gtk_button_set_label(GTK_BUTTON(accept),restoring?"重新查看差异":uncertain?"另选备份位置":"重试创建备份");
+            updateAccept();
+        }
+    }
     void exportChoices() {
         makeChoicesDialog("创建本地备份","创建备份");
         state(true,"正在读取备份选项…");const auto run=++generation;
@@ -107,8 +131,8 @@ public:
             if(!dialog)return;
             const auto &supported=reply.data.array("selectionComponents");
             for(std::size_t n=0;n<ids.size();++n){const bool available=reply.ok && std::any_of(supported.begin(),supported.end(),[n](const auto &v){return v.text()==ids[n];});
-                gtk_widget_set_sensitive(choices[n],available);gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(choices[n]),available && n<4);}
-            gtk_label_set_text(GTK_LABEL(dialogStatus),reply.ok?"剪贴板历史和收藏默认不选；备份未加密，请妥善保管。":reply.message.c_str());updateAccept();
+                gtk_widget_set_sensitive(choices[n],available);gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(choices[n]),available && (retainedSelection.empty()?n<4:retained(n)));}
+            gtk_label_set_text(GTK_LABEL(dialogStatus),reply.ok?"备份未加密，请妥善保管。":reply.message.c_str());updateAccept();
         });
     }
     void preview() {
@@ -116,10 +140,10 @@ public:
         token.clear();state(true,"正在比较备份与当前数据…");const auto run=++generation;
         client->execute("capabilities",{},[this,run](BackendReply caps){
             if(!root || run!=generation)return;
-            if(!caps.ok){state(false,caps.message);return;}
+            if(!caps.ok){state(false,caps.message+" 请重新选择备份文件夹以查看差异。");return;}
             supportedComponents.clear();for(const auto &v:caps.data.array("selectionComponents"))supportedComponents.push_back(v.text());
         client->execute("bundle.preview",{directory},[this,run](BackendReply reply){if(!root || run!=generation)return;
-            state(false,reply.ok?"请选择要恢复的数据。":reply.message);if(!reply.ok)return;
+            state(false,reply.ok?"请选择要恢复的数据。":reply.message+" 请重新选择备份文件夹以查看差异。");if(!reply.ok)return;
             token=reply.data.text("token");if(token.empty()){state(false,"暂时无法查看备份，请重新选择。");return;}
             makeChoicesDialog("查看差异并恢复","恢复所选数据");
             for(std::size_t n=0;n<ids.size();++n){
@@ -131,17 +155,18 @@ public:
                 else if(!found->boolean("changed"))text+=" · 与当前相同";
                 else if(n==0)text+=" · 设置有变化";
                 else text+=" · 当前 "+std::to_string(found->number("currentEntries"))+" → 备份 "+std::to_string(found->number("bundleEntries"));
-                gtk_button_set_label(GTK_BUTTON(choices[n]),text.c_str());gtk_widget_set_sensitive(choices[n],available);gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(choices[n]),FALSE);
+                gtk_button_set_label(GTK_BUTTON(choices[n]),text.c_str());gtk_widget_set_sensitive(choices[n],available);gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(choices[n]),available && retained(n));
             }
-            gtk_label_set_text(GTK_LABEL(dialogStatus),"所选数据会被备份中的内容替换。请确认这是你自己的备份。");updateAccept();
+            gtk_label_set_text(GTK_LABEL(dialogStatus),"所选数据将被备份中的内容替换。");updateAccept();
         });
         });
     }
     void commit() {
         if(busy || !client)return;
         const auto csv=selected();if(csv.empty())return;
-        if(restoreMode && canRestore && !canRestore()){gtk_label_set_text(GTK_LABEL(dialogStatus),"请先保存或放弃未保存的修改，然后重新预览。");gtk_widget_set_sensitive(accept,FALSE);token.clear();return;}
+        if(restoreMode && canRestore && !canRestore()){token.clear();showCommitFailure("请先保存或放弃未保存的修改。",true,false);return;}
         if(restoreMode && token.empty())return;
+        retainedSelection=csv;
         committing=true;state(true,restoreMode?"正在恢复，请稍候…":"正在创建备份…");gtk_widget_set_sensitive(dialog,FALSE);
         const auto run=++generation;const bool restoring=restoreMode;
         std::vector<std::string> args=restoring?std::vector<std::string>{directory,token,csv}:std::vector<std::string>{directory,csv};token.clear();
@@ -151,14 +176,14 @@ public:
                 state(true,"操作结果未确认，正在重新查询服务状态…");
                 client->execute("capabilities",{},[this,run,restoring,message](BackendReply checked){
                     if(!root || run!=generation)return;
-                    committing=false;if(dialog)gtk_widget_destroy(dialog);
-                    state(false,message+(restoring?" 请重新查看差异后再恢复。":" 请核对备份目录后再操作。"));
+                    showCommitFailure(message,restoring,true);
                     if(checked.ok && restoring && restored)restored();
                 });return;
             }
-            committing=false;if(dialog)gtk_widget_destroy(dialog);
-            if(reply.ok){state(false,restoring?"所选数据已恢复。":"备份已保存至："+directory);if(restoring && restored)restored();}
-            else state(false,reply.message+(restoring?" 请重新查看差异后再恢复。":""));
+            if(reply.ok){
+                committing=false;if(dialog)gtk_widget_destroy(dialog);retainedSelection.clear();exportNeedsLocation=false;
+                state(false,restoring?"所选数据已恢复。":"备份已保存至："+directory);if(restoring && restored)restored();
+            } else showCommitFailure(reply.message,restoring,false);
         });
     }
 };

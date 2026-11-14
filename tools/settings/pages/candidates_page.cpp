@@ -45,7 +45,8 @@ void finishPanelPreferences(GWeakRef *status, GError *error) {
 }
 
 void openPanelPreferences(GtkButton *, gpointer label) {
-    gtk_label_set_text(GTK_LABEL(label), "正在打开 GNOME 面板设置…");
+    gtk_widget_show(GTK_WIDGET(label));
+    gtk_label_set_text(GTK_LABEL(label), "正在打开面板设置…");
     auto *status = new GWeakRef;
     g_weak_ref_init(status, label);
     g_bus_get(G_BUS_TYPE_SESSION, nullptr, +[](GObject *, GAsyncResult *result, gpointer data) {
@@ -197,6 +198,10 @@ public:
     }
 
     bool focusTarget(std::string_view target) {
+        const bool selection = target == "candidate.pin" || target == "candidate-filter" ||
+            target == "number-selection" || target == "english-definition" ||
+            target == "arrow-navigation" || target == "page-navigation";
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(controlTabs), selection ? 1 : 0);
         if (target == "candidate.pin") return focusWidgetOrFallback(pinRules, pinRulesRow);
         if (target == "candidate-filter") {
             filterFocusPending = true;
@@ -244,15 +249,42 @@ private:
             createPageShell("候选与外观", ""));
         page = pageGuard.get();
 
+        g_object_set_data(G_OBJECT(page), "modernime-page-self-scrolling", GINT_TO_POINTER(1));
+        workspace = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+        addStyleClass(workspace, "modernime-candidate-workspace");
+        gtk_widget_set_vexpand(workspace, TRUE);
+        gtk_box_pack_start(GTK_BOX(page), workspace, TRUE, TRUE, 0);
         buildPreviewCard();
+        controlTabs = gtk_notebook_new();
+        addStyleClass(controlTabs, "modernime-candidate-controls");
+        gtk_widget_set_hexpand(controlTabs, TRUE);
+        gtk_widget_set_vexpand(controlTabs, TRUE);
+        gtk_box_pack_start(GTK_BOX(workspace), controlTabs, TRUE, TRUE, 0);
+        const auto createTask = [&](const char *title, const char *target) {
+            auto *scroll = gtk_scrolled_window_new(nullptr, nullptr);
+            gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+            gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 40);
+            auto *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+            addStyleClass(body, "modernime-candidate-task");
+            setTarget(body, target);
+            gtk_container_add(GTK_CONTAINER(scroll), body);
+            gtk_notebook_append_page(GTK_NOTEBOOK(controlTabs), scroll, gtk_label_new(title));
+            return body;
+        };
+        settingsContent = createTask("外观", "candidate-appearance");
+        operationContent = createTask("选词与置顶", "candidate-selection");
         buildClientAppearance();
         buildSettingsCard();
-        auto *pins = createSectionCard("候选置顶", "为指定方案和输入选择首选词，其他输入继续使用现有排序。");
+        g_signal_connect(workspace, "size-allocate", G_CALLBACK(+[](GtkWidget *, GtkAllocation *allocation, gpointer data) {
+            static_cast<Impl *>(data)->updateWorkspaceLayout(allocation->width);
+        }), this);
+        auto *pins = createSectionCard("候选置顶", "");
         pinRules = gtk_button_new_with_label("管理规则");
         setTarget(pinRules, "candidate.pin");
-        pinRulesRow = createSettingRow("置顶规则", "从实际完整候选中选择；取消置顶不删除词条或学习记录。", pinRules);
+        gtk_widget_set_tooltip_text(pinRules, "为指定输入选择首选词；取消置顶保留词条和学习记录");
+        pinRulesRow = createSettingRow("置顶规则", "", pinRules);
         gtk_box_pack_start(GTK_BOX(pins), pinRulesRow, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(page), pins, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(operationContent), pins, FALSE, FALSE, 0);
         g_signal_connect(pinRules, "clicked", G_CALLBACK(+[](GtkButton *, gpointer p) {
             auto &o = *static_cast<Impl *>(p);
             if (o.pinDialog) { gtk_window_present(GTK_WINDOW(o.pinDialog)); return; }
@@ -266,7 +298,7 @@ private:
         }), this);
 
         setSettingsFocusChain(
-            page, {clientTheme, previewExample, candidateStyles[0], candidateStyles[1], candidateStyles[2],
+            page, {clientTheme, previewExample, previewSizing, previewCompare, candidateStyles[0], candidateStyles[1], candidateStyles[2],
                    candidateTheme, candidateShape, nativePanelSettings,
                    candidatePageSize, candidateFontFamily, candidateFontSize, candidateSpacing, numberSelection,
                    englishDefinition, arrowNavigation, pageNavigation, pinRules});
@@ -277,34 +309,54 @@ private:
     void buildPreviewCard() {
         previewCard = createSectionCard("", "");
         addStyleClass(previewCard, "modernime-preview-card");
-        gtk_box_pack_start(GTK_BOX(page), previewCard, FALSE, FALSE, 0);
+        gtk_widget_set_valign(previewCard, GTK_ALIGN_START);
+        gtk_widget_set_hexpand(previewCard, TRUE);
+        gtk_box_pack_start(GTK_BOX(workspace), previewCard, FALSE, FALSE, 0);
 
         auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        auto *headerLabel = gtk_label_new("候选预览 · 不记录学习");
-        addStyleClass(headerLabel, "modernime-preview-header");
-        gtk_widget_set_halign(headerLabel, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(header), headerLabel, TRUE, TRUE, 0);
+        compositionLabel = gtk_label_new(nullptr);
+        addStyleClass(compositionLabel, "modernime-composition-text");
+        gtk_widget_set_halign(compositionLabel, GTK_ALIGN_START);
+        gtk_widget_set_tooltip_text(compositionLabel, "候选预览，不记录学习");
+        gtk_box_pack_start(GTK_BOX(header), compositionLabel, TRUE, TRUE, 0);
         previewExample = createSettingsChoice();
-        for (const auto *text : {"单字", "双字", "混合词组"}) {
+        for (const auto *text : {"日常单字", "日常词语", "混合词组", "长词", "英文释义", "读音提示"}) {
             appendSettingsChoice(previewExample, text);
         }
         setSettingsChoiceActive(previewExample, 1);
         setTarget(previewExample, "candidate-preview-example");
-        setAccessibleWidgetText(previewExample, "预览示例", "切换单字、双字或不同长度的候选，比较同一候选栏的容量");
+        setAccessibleWidgetText(previewExample, "预览示例", "切换日常词语、长词、英文释义和读音提示，预览不记录学习");
         gtk_box_pack_end(GTK_BOX(header), previewExample, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(previewCard), header, FALSE, FALSE, 0);
-
-        compositionLabel = gtk_label_new(nullptr);
-        addStyleClass(compositionLabel, "modernime-composition-text");
-        gtk_widget_set_halign(compositionLabel, GTK_ALIGN_START);
-        gtk_box_pack_start(GTK_BOX(previewCard), compositionLabel, FALSE, FALSE, 0);
+        auto *previewTools = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        previewSizing = createSettingsChoice();
+        appendSettingsChoice(previewSizing, "适应窗口");
+        appendSettingsChoice(previewSizing, "实际大小");
+        setSettingsChoiceActive(previewSizing, 0);
+        setTarget(previewSizing, "candidate-preview-sizing");
+        setAccessibleWidgetText(previewSizing, "预览显示大小", "适应窗口会缩放文字；实际大小可横向滚动查看完整候选栏");
+        gtk_box_pack_start(GTK_BOX(previewTools), previewSizing, FALSE, FALSE, 0);
+        previewCompare = gtk_toggle_button_new_with_label("查看原效果");
+        setTarget(previewCompare, "candidate-preview-compare");
+        setAccessibleWidgetText(previewCompare, "查看原效果", "临时查看上次保存的候选外观，再次点击返回当前调整");
+        gtk_box_pack_start(GTK_BOX(previewTools), previewCompare, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(previewCard), previewTools, FALSE, FALSE, 0);
+        g_signal_connect(previewSizing, "changed", G_CALLBACK(+[](GtkWidget *, gpointer data) {
+            auto *self = static_cast<Impl *>(data);
+            self->finishPreviewTransition();
+            self->updatePreviewViewport();
+        }), this);
+        g_signal_connect(previewCompare, "toggled", G_CALLBACK(onExampleChanged), this);
 
         // Draw the real candidate bar. Its width depends on the capacity and
         // font settings, never on the length of the example words.
         candidatePreview = gtk_drawing_area_new();
         setTarget(candidatePreview, "candidate-preview");
         gtk_widget_set_hexpand(candidatePreview, TRUE);
-        gtk_box_pack_start(GTK_BOX(previewCard), candidatePreview, FALSE, FALSE, 0);
+        previewViewport = gtk_scrolled_window_new(nullptr, nullptr);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(previewViewport), GTK_POLICY_NEVER, GTK_POLICY_NEVER);
+        gtk_container_add(GTK_CONTAINER(previewViewport), candidatePreview);
+        gtk_box_pack_start(GTK_BOX(previewCard), previewViewport, FALSE, FALSE, 0);
         g_signal_connect(candidatePreview, "draw", G_CALLBACK(onPreviewDraw), this);
         g_signal_connect(candidatePreview, "size-allocate",
                          G_CALLBACK(+[](GtkWidget *, GtkAllocation *allocation, gpointer data) {
@@ -341,8 +393,7 @@ private:
         previewSummary = gtk_label_new(nullptr);
         addStyleClass(previewSummary, "modernime-description");
         gtk_label_set_xalign(GTK_LABEL(previewSummary), 0.0F);
-        gtk_label_set_line_wrap(GTK_LABEL(previewSummary), TRUE);
-        gtk_label_set_max_width_chars(GTK_LABEL(previewSummary), 1);
+        gtk_label_set_line_wrap(GTK_LABEL(previewSummary), FALSE);
         setTarget(previewSummary, "candidate-preview-summary");
         auto *previewMeta = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
         gtk_box_pack_start(GTK_BOX(previewCard), previewMeta, FALSE, FALSE, 0);
@@ -350,19 +401,17 @@ private:
         previewScaleHint = gtk_label_new("预览随窗口宽度适配");
         addStyleClass(previewScaleHint, "modernime-description");
         gtk_label_set_xalign(GTK_LABEL(previewScaleHint), 1.0F);
-        gtk_label_set_line_wrap(GTK_LABEL(previewScaleHint), TRUE);
-        gtk_label_set_max_width_chars(GTK_LABEL(previewScaleHint), 1);
+        gtk_label_set_line_wrap(GTK_LABEL(previewScaleHint), FALSE);
         setTarget(previewScaleHint, "candidate-preview-scale");
         gtk_box_pack_end(GTK_BOX(previewMeta), previewScaleHint, TRUE, TRUE, 0);
-        appearanceActions = gtk_grid_new();
-        gtk_grid_set_column_spacing(GTK_GRID(appearanceActions), 12);
-        gtk_grid_set_row_spacing(GTK_GRID(appearanceActions), 8);
+        appearanceActions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         gtk_widget_set_margin_top(appearanceActions, 4);
-        gtk_box_pack_start(GTK_BOX(previewCard), appearanceActions, FALSE, FALSE, 0);
+
         if (g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0 ||
             g_getenv("WAYLAND_DISPLAY") != nullptr) {
-            auto *nativeHint = gtk_label_new(
-                "此预览用于自绘候选栏；Wayland 外观由桌面或应用面板管理。");
+            auto *nativeHint = gtk_label_new("");
+            gtk_widget_set_no_show_all(nativeHint, TRUE);
+            gtk_widget_set_tooltip_text(candidatePreview, "Wayland 候选外观由桌面面板管理");
             addStyleClass(nativeHint, "modernime-description");
             gtk_label_set_xalign(GTK_LABEL(nativeHint), 0.0F);
             gtk_label_set_line_wrap(GTK_LABEL(nativeHint), TRUE);
@@ -376,7 +425,7 @@ private:
                 gtk_box_pack_start(GTK_BOX(previewCard), nativePanelSettings, FALSE, FALSE, 0);
             }
         }
-        definitionPreview = gtk_label_new("hello · int. 你好；喂");
+        definitionPreview = gtk_label_new("");
         addStyleClass(definitionPreview, "modernime-description");
         gtk_widget_set_halign(definitionPreview, GTK_ALIGN_START);
         gtk_widget_set_margin_top(definitionPreview, 4);
@@ -385,8 +434,9 @@ private:
     }
 
     void buildSettingsCard() {
-        auto *card = createSectionCard("候选显示", "");
-        gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(settingsContent), appearanceActions, FALSE, FALSE, 0);
+        auto *card = createSectionCard("字体与容量", "");
+        gtk_box_pack_start(GTK_BOX(settingsContent), card, FALSE, FALSE, 0);
 
         // Compact native controls keep all supported values keyboard-accessible.
         candidatePageSize = createSettingsChoice();
@@ -396,8 +446,9 @@ private:
                                           (std::to_string(value) + " 个").c_str());
         }
         setTarget(candidatePageSize, "candidate-page-size");
+        gtk_widget_set_tooltip_text(candidatePageSize, "按单字容量设置长度，长词自动分页");
         candidatePageSizeFallback = createSettingRow(
-            "候选栏长度", "以可容纳的单字候选数为基准（3–9 个），词组按长度自动分页", candidatePageSize);
+            "候选栏长度", "", candidatePageSize);
         gtk_box_pack_start(GTK_BOX(card), candidatePageSizeFallback, FALSE, FALSE, 0);
 
         auto *fontControl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -408,6 +459,7 @@ private:
         candidateFontSize = gtk_spin_button_new_with_range(
             core::kMinimumCandidateFontSize, core::kMaximumCandidateFontSize, 1.0);
         gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(candidateFontSize), TRUE);
+        gtk_widget_set_tooltip_text(candidateFontSize, "候选字号，14–28 pt");
         gtk_entry_set_width_chars(GTK_ENTRY(candidateFontSize), 2);
         setTarget(candidateFontSize, "candidate-font-size");
         gtk_box_pack_start(GTK_BOX(fontControl), candidateFontSize, FALSE, FALSE, 0);
@@ -415,7 +467,7 @@ private:
         addStyleClass(unit, "modernime-description");
         gtk_box_pack_start(GTK_BOX(fontControl), unit, FALSE, FALSE, 0);
         candidateFontSizeFallback = createSettingRow(
-            "候选字体", "中文字体优先，14–28 pt", fontControl);
+            "候选字体", "", fontControl);
         gtk_box_pack_start(GTK_BOX(card), candidateFontSizeFallback, FALSE, FALSE, 0);
 
         candidateSpacing = createSettingsChoice();
@@ -437,23 +489,15 @@ private:
         }
         setTarget(candidateTheme, "candidate-theme");
         setAccessibleWidgetText(candidateTheme, "候选栏配色", "选择候选栏和剪贴板菜单的配色，立即预览，不改变界面主题");
-        candidateThemeFallback = previewCard;
-        auto *paletteLabel = gtk_label_new("候选栏配色");
-        gtk_label_set_mnemonic_widget(GTK_LABEL(paletteLabel), candidateTheme);
-        gtk_grid_attach(GTK_GRID(appearanceActions), paletteLabel, 0, 1, 1, 1);
-        gtk_grid_attach(GTK_GRID(appearanceActions), candidateTheme, 1, 1, 1, 1);
+        candidateThemeFallback = createSettingRow("候选栏配色", "", candidateTheme);
+        gtk_box_pack_start(GTK_BOX(appearanceActions), candidateThemeFallback, FALSE, FALSE, 0);
         candidateShape = createSettingsChoice();
         for (const auto &option : core::kCandidateShapes)
             appendSettingsChoice(candidateShape, option.label);
         setTarget(candidateShape, "candidate-shape");
         setAccessibleWidgetText(candidateShape, "候选轮廓", "选择圆润、方正或胶囊形状，立即预览");
-        candidateShapeFallback = previewCard;
-        gtk_grid_attach(GTK_GRID(appearanceActions), gtk_label_new("轮廓"), 2, 1, 1, 1);
-        gtk_grid_attach(GTK_GRID(appearanceActions), candidateShape, 3, 1, 1, 1);
-
-        auto *styleLabel = gtk_label_new("候选风格");
-        gtk_label_set_xalign(GTK_LABEL(styleLabel), 0);
-        gtk_grid_attach(GTK_GRID(appearanceActions), styleLabel, 0, 0, 1, 1);
+        candidateShapeFallback = createSettingRow("候选轮廓", "", candidateShape);
+        gtk_box_pack_start(GTK_BOX(appearanceActions), candidateShapeFallback, FALSE, FALSE, 0);
         auto *selector = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
         addStyleClass(selector, "modernime-style-selector");
         setTarget(selector, "candidate-style");
@@ -473,22 +517,16 @@ private:
                 if (gtk_toggle_button_get_active(control)) onSpinChanged(GTK_WIDGET(control), data);
             }), this);
         }
-        gtk_grid_attach(GTK_GRID(appearanceActions), selector, 1, 0, 3, 1);
-        styleHint = gtk_label_new("");
-        addStyleClass(styleHint, "modernime-description");
-        gtk_label_set_xalign(GTK_LABEL(styleHint), 0);
-        gtk_label_set_line_wrap(GTK_LABEL(styleHint), TRUE);
-        gtk_label_set_line_wrap_mode(GTK_LABEL(styleHint), PANGO_WRAP_WORD_CHAR);
-        gtk_label_set_max_width_chars(GTK_LABEL(styleHint), 1);
-        gtk_grid_attach(GTK_GRID(appearanceActions), styleHint, 0, 2, 4, 1);
-
+        gtk_box_pack_start(GTK_BOX(appearanceActions), createSettingRow("候选风格", "", selector), FALSE, FALSE, 0);
         // Row 3: 数字键选词
         numberSelection = gtk_switch_new();
         gtk_widget_set_tooltip_text(numberSelection, "空格确认首选，数字键选择对应候选");
         setTarget(numberSelection, "number-selection");
         numberSelectionFallback = createSettingRow(
-            "数字键选词", "空格确认首选，数字键选择对应候选", numberSelection);
-        gtk_box_pack_start(GTK_BOX(card), numberSelectionFallback, FALSE,
+            "数字键选词", "", numberSelection);
+        auto *selection = createSectionCard("选词", "");
+        gtk_box_pack_start(GTK_BOX(operationContent), selection, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(selection), numberSelectionFallback, FALSE,
                            FALSE, 0);
 
         // Row 4: 显示英文释义
@@ -497,26 +535,28 @@ private:
             englishDefinition, "解释仅作为附注显示，不占编号、不改变排序");
         setTarget(englishDefinition, "english-definition");
         englishDefinitionFallback = createSettingRow(
-            "显示英文释义", "解释仅作为附注显示，不占编号、不改变排序",
-            englishDefinition);
-        gtk_box_pack_start(GTK_BOX(card), englishDefinitionFallback, FALSE,
+            "显示英文释义", "", englishDefinition);
+        gtk_box_pack_start(GTK_BOX(selection), englishDefinitionFallback, FALSE,
                            FALSE, 0);
 
         auto *navigation = createSectionCard("候选操作", "");
-        gtk_box_pack_start(GTK_BOX(page), navigation, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(operationContent), navigation, FALSE, FALSE, 0);
         arrowNavigation = gtk_switch_new();
         pageNavigation = gtk_switch_new();
         setTarget(arrowNavigation, "arrow-navigation");
+        gtk_widget_set_tooltip_text(arrowNavigation, "左右移动拼音光标，上下切换候选");
+        gtk_widget_set_tooltip_text(pageNavigation, "使用 PageUp / PageDown 和 + / = 翻页");
         setTarget(pageNavigation, "page-navigation");
         arrowNavigationFallback = createSettingRow(
-            "方向键编辑与选词", "左右移动拼音光标，上下切换候选项", arrowNavigation);
+            "方向键编辑与选词", "", arrowNavigation);
         pageNavigationFallback = createSettingRow(
-            "候选翻页", "使用 PageUp / PageDown 和 + / = 翻页", pageNavigation);
+            "候选翻页", "", pageNavigation);
         gtk_box_pack_start(GTK_BOX(navigation), arrowNavigationFallback, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(navigation), pageNavigationFallback, FALSE, FALSE, 0);
         candidateFilterRow = createSettingRow(
-            "按笔画找字", "输入拼音后按 Esc 下方的 ` 键，Esc 返回", nullptr);
+            "按笔画找字", "", nullptr);
         setTarget(candidateFilterRow, "candidate-filter");
+        gtk_widget_set_tooltip_text(candidateFilterRow, "输入拼音后按 Esc 下方的 ` 键，Esc 返回");
         gtk_box_pack_start(GTK_BOX(navigation), candidateFilterRow, FALSE, FALSE, 0);
         g_signal_connect_object(candidateFilterRow, "size-allocate", G_CALLBACK(+[](GtkWidget *row, GtkAllocation *allocation, GtkWidget *preview) {
             auto *owner = static_cast<Impl *>(g_object_get_data(G_OBJECT(preview), "modernime-preview-owner"));
@@ -582,17 +622,21 @@ private:
             "你好", "你号", "拟好", "拟合", "霓虹", "倪皓", "逆号", "泥壕", "妮好"};
         static constexpr std::array mixed{
             "你好", "你号", "拟好", "你好啊", "你好呀", "你好吗", "你还好", "你好吧", "你好哇"};
+        static constexpr std::array longWords{
+            "中华人民共和国", "中华人民共和国国歌", "中华人民", "中华", "中华文化", "中华民族", "中华儿女", "中华大地", "中"};
+        static constexpr std::array english{
+            "hello", "help", "hello world", "helper", "helpful", "helicopter", "helm", "held", "hell"};
+        static constexpr std::array readings{
+            "卡住", "卡壳", "卡口", "卡子", "卡片", "卡车", "卡通", "卡包", "卡"};
         const int example = settingsChoiceActive(previewExample);
-        const auto &samples = example == 0 ? single : example == 1 ? doubleWords : mixed;
-        const auto settings = controlSettings();
-        for (std::size_t i = 0; i < core::kCandidateStyles.size(); ++i)
-            if (core::kCandidateStyles[i].value == settings.candidateStyle) {
-                std::string hint = styleDescription(i);
-                if (settings.candidateTheme == core::CandidateTheme::HighContrast)
-                    hint += " · 高对比配色保留清晰的实色边界";
-                gtk_label_set_text(GTK_LABEL(styleHint), hint.c_str());
-            }
-        gtk_widget_set_visible(definitionPreview, settings.englishDefinitionEnabled);
+        const auto &samples = example == 0 ? single : example == 1 ? doubleWords :
+            example == 2 ? mixed : example == 3 ? longWords : example == 4 ? english : readings;
+        const bool comparing = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(previewCompare));
+        const auto settings = comparing ? model.savedSettings() : controlSettings();
+        gtk_label_set_text(GTK_LABEL(definitionPreview), comparing ? "原效果" :
+            example == 4 && !settings.englishDefinitionEnabled ? "英文释义已关闭" : "");
+        gtk_widget_set_visible(definitionPreview, comparing ||
+            (example == 4 && !settings.englishDefinitionEnabled));
         const bool fontChanged = previewSettings.candidateFontSize != settings.candidateFontSize ||
             previewSettings.candidateFontFamily != settings.candidateFontFamily;
         const bool shapeChanged = previewSettings.candidateShape != settings.candidateShape;
@@ -600,7 +644,9 @@ private:
             previewSettings.candidateStyle != settings.candidateStyle ||
             previewSettings.candidateTheme != settings.candidateTheme ||
             previewSettings.candidateSpacing != settings.candidateSpacing ||
-            previewSettings.candidatePageSize != settings.candidatePageSize || previewSample != example;
+            previewSettings.candidatePageSize != settings.candidatePageSize ||
+            previewSettings.englishDefinitionEnabled != settings.englishDefinitionEnabled ||
+            previewSample != example;
         if (!appearanceChanged) return;
 
         const bool animate = previewInitialized && !fontChanged && previewSample == example &&
@@ -617,6 +663,15 @@ private:
         for (const auto *sample : samples) {
             core::CandidateItem item;
             item.text = sample;
+            if (example == 4 && settings.englishDefinitionEnabled) {
+                static constexpr std::array definitions{
+                    "你好", "帮助", "你好，世界", "助手", "有帮助的", "直升机", "掌舵", "握住", "地狱"};
+                item.annotation = definitions[candidatePage.items.size()];
+            }
+            if (example == 5 && candidatePage.items.size() < 4) {
+                item.readingHint = "qiǎ";
+                item.readingHintAfterCharIndex = 1;
+            }
             candidatePage.items.push_back(std::move(item));
         }
         auto *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
@@ -645,17 +700,20 @@ private:
         } else {
             finishPreviewTransition();
         }
-        gtk_widget_set_size_request(candidatePreview, 1, static_cast<int>(std::ceil(metrics.canvasHeight)));
-        gtk_label_set_markup(GTK_LABEL(compositionLabel), example == 0
-            ? "ni<b>|</b>" : "nihao<b>|</b>");
+        updatePreviewViewport();
+        static constexpr std::array compositions{
+            "ni<b>|</b>", "nihao<b>|</b>", "nihao<b>|</b>",
+            "zhonghuarenmin<b>|</b>", "hello<b>|</b>", "kazhu<b>|</b>"};
+        gtk_label_set_markup(GTK_LABEL(compositionLabel), compositions[std::clamp(example, 0, 5)]);
         std::string accessibleCandidates;
         for (const auto &candidate : previewLayout.candidates) {
             if (!accessibleCandidates.empty()) accessibleCandidates += " · ";
             accessibleCandidates += candidate.displayText;
+            if (!candidate.annotation.empty()) accessibleCandidates += candidate.annotation;
+            if (!candidate.hint.empty()) accessibleCandidates += "（" + candidate.hint + "）";
         }
         setAccessibleWidgetText(candidatePreview, "候选栏预览", accessibleCandidates);
-        const auto summary = "当前页 " + std::to_string(previewLayout.candidates.size()) +
-            " 个 · 按词长自动分页";
+        const auto summary = "当前页 " + std::to_string(previewLayout.candidates.size()) + " 个";
         gtk_label_set_text(GTK_LABEL(previewSummary), summary.c_str());
         updateScaleHint();
         gtk_widget_queue_draw(candidatePreview);
@@ -743,7 +801,37 @@ private:
         return G_SOURCE_CONTINUE;
     }
 
+    void updateWorkspaceLayout(int width) {
+        const bool wide = width >= 860;
+        if (wide == wideWorkspace) return;
+        wideWorkspace = wide;
+        gtk_orientable_set_orientation(GTK_ORIENTABLE(workspace),
+            wide ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL);
+        gtk_box_set_child_packing(GTK_BOX(workspace), previewCard, wide, wide, 0, GTK_PACK_START);
+        gtk_box_set_child_packing(GTK_BOX(workspace), controlTabs, TRUE, TRUE, 0, GTK_PACK_START);
+        gtk_widget_set_size_request(controlTabs, wide ? 340 : -1, -1);
+        auto *context = gtk_widget_get_style_context(workspace);
+        if (wide) gtk_style_context_add_class(context, "modernime-candidate-workspace-wide");
+        else gtk_style_context_remove_class(context, "modernime-candidate-workspace-wide");
+    }
+
+    void updatePreviewViewport() {
+        if (candidatePreview == nullptr) return;
+        const bool actualSize = settingsChoiceActive(previewSizing) == 1;
+        const int height = static_cast<int>(std::ceil(metrics.canvasHeight));
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(previewViewport),
+            actualSize ? GTK_POLICY_AUTOMATIC : GTK_POLICY_NEVER, GTK_POLICY_NEVER);
+        gtk_widget_set_size_request(candidatePreview,
+            actualSize ? static_cast<int>(std::ceil(metrics.canvasWidth)) : 1, height);
+        // Reserve only the bar and native scrollbar: controls retain the remaining height.
+        gtk_widget_set_size_request(previewViewport, 1, height + (actualSize ? 18 : 0));
+        previewFrame.reset();
+        updateScaleHint();
+        gtk_widget_queue_draw(candidatePreview);
+    }
+
     double previewScale() const {
+        if (settingsChoiceActive(previewSizing) == 1) return 1.0;
         return std::min(1.0, gtk_widget_get_allocated_width(candidatePreview) / metrics.canvasWidth);
     }
 
@@ -754,14 +842,15 @@ private:
         const double scale = previewScale();
         const auto text = scale >= 1.0 ? std::string("实际大小 · 100%")
             : "缩放 " + std::to_string(static_cast<int>(std::lround(scale * 100.0))) +
-                "% · 字号不变";
+                "%（含文字）";
         gtk_label_set_text(GTK_LABEL(previewScaleHint), text.c_str());
     }
 
     static gboolean onPreviewDraw(GtkWidget *, cairo_t *context, gpointer data) {
         auto *impl = static_cast<Impl *>(data);
-        const double scale = std::min(1.0, gtk_widget_get_allocated_width(impl->candidatePreview) /
-                                             std::max(1.0, impl->displayedCanvasWidth));
+        const double scale = settingsChoiceActive(impl->previewSizing) == 1 ? 1.0 :
+            std::min(1.0, gtk_widget_get_allocated_width(impl->candidatePreview) /
+                           std::max(1.0, impl->displayedCanvasWidth));
         cairo_save(context);
         if (impl->previewTick != 0) {
             cairo_scale(context, scale, scale);
@@ -862,6 +951,14 @@ private:
     bool refreshing = false;
 
     GtkWidget *page = nullptr;
+    GtkWidget *workspace = nullptr;
+    GtkWidget *controlTabs = nullptr;
+    GtkWidget *settingsContent = nullptr;
+    GtkWidget *operationContent = nullptr;
+    GtkWidget *previewViewport = nullptr;
+    GtkWidget *previewSizing = nullptr;
+    GtkWidget *previewCompare = nullptr;
+    bool wideWorkspace = false;
     GtkWidget *clientTheme = nullptr;
     GtkWidget *previewCard = nullptr;
     GtkWidget *appearanceActions = nullptr;
@@ -904,7 +1001,6 @@ private:
     GtkWidget *candidateShape = nullptr;
     GtkWidget *candidateShapeFallback = nullptr;
     std::array<GtkWidget *, 3> candidateStyles{};
-    GtkWidget *styleHint = nullptr;
     GtkWidget *candidateSpacing = nullptr;
     GtkWidget *candidateSpacingFallback = nullptr;
     GtkWidget *numberSelection = nullptr;

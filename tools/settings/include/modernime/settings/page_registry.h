@@ -35,6 +35,8 @@ struct SettingsSearchEntry final {
 };
 
 std::span<const SettingsPageDefinition> settingsPageDefinitions();
+std::span<const SettingsPageDefinition> settingsNavigationDefinitions();
+SettingsPageId settingsNavigationOwner(SettingsPageId page);
 std::span<const SettingsSearchEntry> settingsSearchEntries();
 std::vector<SettingsSearchEntry> searchSettings(std::string_view query);
 std::optional<SettingsPageId> parseSettingsPage(std::string_view name);

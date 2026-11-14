@@ -44,7 +44,7 @@ public:
           settingsChanged(std::move(settingsChangedCallback)),
           notify(std::move(notifyCallback)) {
         detail::GtkWidgetGuard pageGuard(createPageShell(
-            "智能学习", ""));
+            "学习记录", ""));
         page = pageGuard.get();
         buildPage();
         refreshSettings();
@@ -59,8 +59,8 @@ public:
     }
 
     void buildPage() {
-        auto *learningSection = createSectionCard(
-            "学习行为", "关闭后不会删除已经保存的学习数据。");
+        learningSection = createSectionCard(
+            "学习行为", "");
         gtk_box_pack_start(GTK_BOX(page), learningSection, FALSE, FALSE, 0);
 
         learningEnabled = gtk_switch_new();
@@ -86,7 +86,7 @@ public:
                                             contextLearning),
                            FALSE, FALSE, 0);
         auto *dataSection = createSectionCard(
-            "学习数据", "学习记录保存在本地；清空前会自动创建可恢复的备份。");
+            "学习数据", "");
         gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
         learningDataFallback = dataSection;
 
@@ -103,9 +103,6 @@ public:
         };
         dataStatus = dataLabel("learning-status");
         gtk_style_context_add_class(gtk_widget_get_style_context(dataStatus), "modernime-data-summary");
-        auto *dataHint = dataLabel("learning-data-hint");
-        gtk_label_set_text(GTK_LABEL(dataHint), "记录仅保存在本机。清空前会自动备份，可恢复。");
-        gtk_style_context_add_class(gtk_widget_get_style_context(dataHint), "modernime-description");
         operationResult = dataLabel("learning-operation-result");
         gtk_label_set_selectable(GTK_LABEL(operationResult), TRUE);
         gtk_widget_set_no_show_all(operationResult, TRUE);
@@ -190,7 +187,7 @@ public:
                 gtk_widget_set_sensitive(owner.clearLearningButton,
                                          !owner.isClearing_ && taskData->count != 0);
                 const auto message = taskData->count == 0
-                    ? std::string("暂无学习记录；选择候选词后会逐步积累。")
+                    ? std::string("暂无学习记录")
                     : "已保存 " + std::to_string(taskData->count) + " 条学习记录";
                 gtk_label_set_text(GTK_LABEL(owner.dataStatus), message.c_str());
                 if (taskData->shouldNotify) {
@@ -254,6 +251,21 @@ public:
         return false;
     }
 
+    GtkWidget *takeBehaviorWidget() {
+        if (behaviorTaken || !learningSection || !gtk_widget_get_parent(learningSection)) return nullptr;
+        behaviorTaken = true;
+        g_object_ref(learningSection);
+        gtk_container_remove(GTK_CONTAINER(gtk_widget_get_parent(learningSection)), learningSection);
+        setSettingsFocusChain(page, {records->widget(), retryButton, clearLearningButton});
+        return learningSection;
+    }
+    void setEmbedded(bool embedded) {
+        auto *header = GTK_WIDGET(g_object_get_data(G_OBJECT(page), "modernime-page-header"));
+        if (header) {
+            gtk_widget_set_no_show_all(header, embedded);
+            gtk_widget_set_visible(header, !embedded);
+        }
+    }
     GtkWidget *widget() const { return page; }
 
     bool hasPendingOperations() const { return isClearing_ || (records && g_object_get_data(G_OBJECT(records->widget()), "modernime-learning-mutation-busy")); }
@@ -328,7 +340,7 @@ private:
             "清空学习记录？");
         setAccessibleWidgetText(dialog, "清空学习记录", "确认是否备份并清空本地学习记录");
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
-            "将重置已记录的输入习惯。清空前会自动创建可恢复的备份。");
+            "将重置已记录的输入习惯。清空前会自动创建备份文件。");
         auto *messageArea = gtk_message_dialog_get_message_area(GTK_MESSAGE_DIALOG(dialog));
         gtk_box_set_spacing(GTK_BOX(messageArea), 8);
         auto *labels = gtk_container_get_children(GTK_CONTAINER(messageArea));
@@ -400,6 +412,7 @@ private:
     std::function<void()> settingsChanged;
     std::function<void(std::string)> notify;
     GtkWidget *page = nullptr;
+    GtkWidget *learningSection = nullptr;
     GtkWidget *learningEnabled = nullptr;
     GtkWidget *contextLearning = nullptr;
     GtkWidget *clearLearningButton = nullptr;
@@ -408,6 +421,7 @@ private:
     GtkWidget *operationResult = nullptr;
     GtkWidget *retryButton = nullptr;
     std::unique_ptr<LearningManager> records;
+    bool behaviorTaken = false;
     bool refreshing = false;
     bool isClearing_ = false;
     uint64_t refreshGeneration_ = 0;
@@ -432,6 +446,9 @@ GtkWidget *LearningPage::widget() const {
 void LearningPage::refresh(bool notify) {
     impl_->refresh(notify);
 }
+
+GtkWidget *LearningPage::takeBehaviorWidget() { return impl_->takeBehaviorWidget(); }
+void LearningPage::setEmbedded(bool embedded) { impl_->setEmbedded(embedded); }
 
 void LearningPage::refreshSettings() {
     impl_->refreshSettings();

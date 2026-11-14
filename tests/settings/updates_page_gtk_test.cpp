@@ -185,7 +185,7 @@ esac
         for (const char *version : {"0.1.23", "0.1.22"}) {
             policy(version);
             query();
-            check(message().find("本地软件源缓存") != std::string::npos,
+            check(message() == "待检查",
                   "cached no-update result must disclose its local-cache scope");
             check(detailsMessage().find("检查更新") != std::string::npos,
                   "cached result must direct users to the integrated check action");
@@ -233,7 +233,7 @@ esac
 
         writeFile(root / "show", "");
         query();
-        check(containsLabel(page.widget(), "展开后加载官方更新说明。"),
+        check(containsLabel(page.widget(), "暂无更新说明"),
               "local package metadata must leave official release notes explicitly unloaded");
 
         writeFile(root / "fail", "fail");
@@ -273,7 +273,7 @@ printf 'Available Packages\nName : modernime\nVersion : 0.1.22\nRelease : 1\nRep
 )sh");
         assert(::chmod((root / "bin/dnf").c_str(), 0755) == 0);
         query();
-        check(message().find("本地软件源缓存") != std::string::npos &&
+        check(message() == "待检查" &&
               detailsMessage().find("检查更新") != std::string::npos,
               "RPM cached result must point to the integrated check action");
         check(containsLabel(page.widget(), "0.1.22-1"), "RPM candidate must not be substituted with installed version");
@@ -379,7 +379,7 @@ exec(sys.argv[2])
         writeFile(root / "release.json", R"json({"tag_name":"v0.1.23","draft":false,"prerelease":false,"body":"# ModernIME v0.1.23\n\n## 输入辅助\n\n- **快捷短语**：输入 `foo_bar`，保留 <原文> & 符号。\n- 访问[官方说明](https://example.invalid/notes)。\n\n```text\n<code> & data\n```"})json");
         gtk_button_clicked(GTK_BUTTON(notesRetry));
         assert(waitUntil([button] { return gtk_widget_get_sensitive(button); }));
-        check(message() == "未发现新版本" && nextStep().find("官方") != std::string::npos,
+        check(message() == "已是最新版本" && nextStep().empty(),
               "online no-update result must not ask users to refresh repositories");
         check(detailsMessage().find("sudo apt update") == std::string::npos,
               "online result must remove obsolete privileged-refresh instructions");

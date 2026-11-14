@@ -65,7 +65,12 @@ struct FontDialog {
         const auto *name = selected ? pango_font_family_get_name(selected) : nullptr;
         const auto text = !name ? std::string("选择字体，查看中文预览") : chinese.contains(name)
             ? fontDescription(name) : "不含常用中文字形，中文将使用系统回退字体";
-        gtk_label_set_text(GTK_LABEL(description), text.c_str());
+        // Family names and the preview already identify the selected font.
+        // Keep coverage advice on demand rather than repeating a font summary.
+        gtk_widget_set_tooltip_text(dialog, text.c_str());
+        const bool fallback = name != nullptr && !chinese.contains(name);
+        gtk_label_set_text(GTK_LABEL(description), fallback ? "中文使用系统备用字体" : "");
+        gtk_widget_set_visible(description, fallback);
     }
 
     void refilter() {
@@ -102,7 +107,8 @@ void prepareFontDialog(GtkWidget *dialog) {
     gtk_widget_set_margin_top(state->description, 8);
     gtk_box_pack_end(GTK_BOX(content), state->description, FALSE, FALSE, 0);
     gtk_widget_show_all(filters);
-    gtk_widget_show(state->description);
+    gtk_widget_set_no_show_all(state->description, TRUE);
+    gtk_widget_hide(state->description);
     g_signal_connect(state->onlyChinese, "toggled", G_CALLBACK(+[](GtkToggleButton *, gpointer data) {
         static_cast<FontDialog *>(data)->refilter();
     }), state);
