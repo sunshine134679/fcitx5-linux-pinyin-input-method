@@ -240,7 +240,7 @@ private:
                 callback(owner, GTK_WIDGET(source), result);
             });
             gtk_widget_destroy(GTK_WIDGET(source));
-        }), context, +[](gpointer p, GClosure *) { delete static_cast<DialogContext *>(p); }, G_CONNECT_DEFAULT);
+        }), context, +[](gpointer p, GClosure *) { delete static_cast<DialogContext *>(p); }, GConnectFlags(0));
         g_signal_connect_data(dialog, "destroy", G_CALLBACK(+[](GtkWidget *source, gpointer p) {
             auto *data = static_cast<std::shared_ptr<Lifetime> *>(p);
             (*data)->withOwner([&](Impl &owner) {
@@ -251,7 +251,7 @@ private:
                 }
             });
         }), new std::shared_ptr<Lifetime>(lifetime),
-           +[](gpointer p, GClosure *) { delete static_cast<std::shared_ptr<Lifetime> *>(p); }, G_CONNECT_DEFAULT);
+           +[](gpointer p, GClosure *) { delete static_cast<std::shared_ptr<Lifetime> *>(p); }, GConnectFlags(0));
         gtk_widget_show_all(dialog);
     }
 
