@@ -1558,10 +1558,10 @@ dialog::backdrop {
     position: sticky;
     top: 100px;
   }
-  .story-panel:nth-child(2) {
+  .story-panel:nth-of-type(2) {
     top: 116px;
   }
-  .story-panel:nth-child(3) {
+  .story-panel:nth-of-type(3) {
     top: 132px;
   }
 }
@@ -2375,4 +2375,52 @@ dialog::backdrop {
 @media (max-width: 760px) {
   #client { scroll-margin-top: -50px; }
   .screenshot-button img { width: 200%; transform: translateX(-20%); }
+}
+
+/* Scroll follows the writing scenes; all content is visible without JavaScript. */
+.motion-anchor { display: block; height: 0; pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .hero-stage {
+    translate: 0 var(--hero-drift, 0px);
+    rotate: var(--hero-turn, 0deg);
+  }
+  .story-panel {
+    transform: translateY(var(--story-y, 0px)) scale(var(--story-scale, 1));
+    opacity: var(--story-opacity, 1);
+  }
+  .story-art {
+    translate: 0 calc((1 - var(--scene, 1)) * 32px);
+  }
+  .learning-art .mini-composition {
+    clip-path: inset(0 calc((1 - var(--scene, 1)) * 100%) 0 0);
+  }
+  .learning-art .mini-candidates b {
+    scale: calc(.86 + var(--scene, 1) * .14);
+    transform-origin: left center;
+  }
+  .word-entry:not(:first-child), .clip-line {
+    translate: calc((1 - var(--item-progress, 1)) * 38px) 0;
+    opacity: calc(.3 + var(--item-progress, 1) * .7);
+  }
+  .clip-line { translate: 0 calc((1 - var(--item-progress, 1)) * 28px); }
+  .client-scroll-surface {
+    transform: perspective(1400px) translateY(calc((1 - var(--client-arrival, 1)) * 42px)) rotateX(calc((1 - var(--client-arrival, 1)) * 7deg)) scale(calc(.95 + var(--client-arrival, 1) * .05));
+    transform-origin: center bottom;
+  }
+  .fan-night {
+    translate: calc((1 - var(--fan-open, 1)) * 24px) calc((1 - var(--fan-open, 1)) * 80px);
+    rotate: calc((1 - var(--fan-open, 1)) * -12deg);
+  }
+  .fan-jade { translate: calc((1 - var(--fan-open, 1)) * -16px) 0; }
+  .fan-purple {
+    translate: calc((1 - var(--fan-open, 1)) * 30px) calc((1 - var(--fan-open, 1)) * -80px);
+    rotate: calc((1 - var(--fan-open, 1)) * 10deg);
+  }
+  .section-heading, .privacy-line, .closing { translate: 0 var(--arrival-y, 0px); }
+  .client-theme-options i { transition: scale .25s, box-shadow .25s; }
+  .client-theme-options button:hover i { scale: 1.16; }
+  .client-theme-options button:active i { scale: .9; }
+  .quiet-link .icon, .button .icon { transition: translate .25s; }
+  .quiet-link:hover .icon { translate: 3px 0; }
+  .button:hover .icon { translate: 0 -2px; }
 }

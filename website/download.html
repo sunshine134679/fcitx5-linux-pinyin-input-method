@@ -15,6 +15,7 @@
   <link rel="icon" href="assets/modernime-icon.png" type="image/png">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="support.css">
+  <script src="interactions.js" defer></script>
   <script src="app.js" defer></script>
   <script src="download.js" defer></script>
   <title>下载 ModernIME · 开始写下下一句</title>
@@ -52,7 +53,7 @@
           <a id="install-doc-link" class="quiet-link" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#快速安装与发行包下载" target="_blank" rel="noopener">完整安装说明与密钥核验 <span aria-hidden="true">↗</span></a>
         </div>
         <div class="download-terminal">
-          <div class="download-terminal-toolbar"><span>在终端执行</span><button id="copy-install" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></svg><span>复制命令</span></button></div>
+          <div class="download-terminal-toolbar"><span>在终端执行</span><button id="copy-install" type="button"><svg class="icon copy-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></svg><svg class="icon copy-check" aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg><span>复制命令</span></button></div>
           <pre tabindex="0" aria-label="安装命令"><code id="install-command">(
 set -eu
 . /etc/os-release

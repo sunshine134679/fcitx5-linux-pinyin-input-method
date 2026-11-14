@@ -3,7 +3,6 @@
 // Animation is a presentation layer: text, selection and settings update immediately.
 (() => {
   const preference = matchMedia('(prefers-reduced-motion: reduce)');
-  const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
   const active = new Map();
   const ease = 'cubic-bezier(.16,1,.3,1)';
   const settle = 'cubic-bezier(.22,.8,.25,1)';
@@ -40,14 +39,7 @@
     run('.hero-actions', { opacity: [0, 1], translate: ['0 10px', '0 0'] }, { duration: 650, delay: 330 });
     run('.hero-footnote', { opacity: [0, 1] }, { duration: 700, delay: 430 });
     run('.writing-sheet', { opacity: [0, 1], translate: ['30px 44px', '0 0'], rotate: ['7deg', '0deg'], scale: [.94, 1] }, { duration: 1100, delay: 120 });
-    run('.key-ni', { opacity: [0, 1], translate: ['-16px -34px', '0 0'], rotate: ['-15deg', '0deg'] }, { duration: 1000, delay: 280 });
-    run('.key-hao', { opacity: [0, 1], translate: ['25px 35px', '0 0'], rotate: ['15deg', '0deg'] }, { duration: 1000, delay: 420 });
-    run('.space-key', [
-      { opacity: 0, translate: '0 28px' }, { opacity: 1, translate: '0 0', offset: .5 },
-      { opacity: 1, translate: '0 0', offset: .7 }, { opacity: 1, translate: '0 5px', offset: .79 },
-      { opacity: 1, translate: '0 0' }
-    ], { duration: 1600, delay: 420 });
-    run('.stage-note', { opacity: [0, 1] }, { duration: 800, delay: 800 });
+    run('.typing-caption', { opacity: [0, 1], translate: ['0 18px', '0 0'] }, { duration: 800, delay: 800 });
     run('.hero-candidate', { opacity: [0, 1], translate: ['24px 8px', '0 0'] }, { duration: 600, delay: 550 });
     run('.composition>span:first-child', { clipPath: ['inset(0 100% 0 0)', 'inset(0 0% 0 0)'] }, { duration: 480, delay: 780, easing: 'steps(6,end)' });
     document.querySelectorAll('.candidate-options button').forEach((button, index) => {
@@ -128,20 +120,15 @@
     return snapshot;
   }
 
-  function theme(snapshot, button) {
-    if (!snapshot) return;
-    const root = document.querySelector('#appearance-studio');
-    const preview = root.querySelector('.studio-preview');
-    const bounds = preview.getBoundingClientRect(), origin = button.getBoundingClientRect();
-    const x = Math.max(0, Math.min(bounds.width, origin.left + origin.width / 2 - bounds.left));
-    const y = Math.max(0, Math.min(bounds.height, origin.top + origin.height / 2 - bounds.top));
-    preview.append(snapshot);
-    snapshot.querySelector('textarea').scrollTop = preview.querySelector('textarea').scrollTop;
-    colorCover = snapshot;
+  function revealColor(cover, button) {
+    const bounds = cover.getBoundingClientRect(), origin = button.getBoundingClientRect();
+    const width = cover.offsetWidth, height = cover.offsetHeight;
+    const x = Math.max(0, Math.min(width, (origin.left + origin.width / 2 - bounds.left) * width / bounds.width));
+    const y = Math.max(0, Math.min(height, (origin.top + origin.height / 2 - bounds.top) * height / bounds.height));
     // A circular hole in the old, inert view reveals the complete new palette.
     // Equal polygon point counts let the browser interpolate the radius itself.
     const hole = radius => {
-      const points = [`0px 0px`, `${bounds.width}px 0px`, `${bounds.width}px ${bounds.height}px`, `0px ${bounds.height}px`, `0px 0px`];
+      const points = ['0px 0px', `${width}px 0px`, `${width}px ${height}px`, `0px ${height}px`, '0px 0px'];
       for (let i = 0; i <= 48; i++) {
         const angle = i / 48 * Math.PI * 2;
         points.push(`${x + Math.cos(angle) * radius}px ${y + Math.sin(angle) * radius}px`);
@@ -149,7 +136,17 @@
       points.push('0px 0px');
       return `polygon(evenodd, ${points.join(',')})`;
     };
-    const animation = play(snapshot, { clipPath: [hole(0), hole(Math.hypot(bounds.width, bounds.height))] }, { duration: 760, easing: 'cubic-bezier(.3,.7,.2,1)' });
+    return play(cover, { clipPath: [hole(0), hole(Math.hypot(width, height))] }, { duration: 850, easing: 'cubic-bezier(.3,.7,.2,1)' });
+  }
+
+  function theme(snapshot, button) {
+    if (!snapshot) return;
+    const root = document.querySelector('#appearance-studio');
+    const preview = root.querySelector('.studio-preview');
+    preview.append(snapshot);
+    snapshot.querySelector('textarea').scrollTop = preview.querySelector('textarea').scrollTop;
+    colorCover = snapshot;
+    const animation = revealColor(snapshot, button);
     after(animation, () => {
       snapshot.remove();
       if (colorCover === snapshot) { colorCover = null; root.classList.remove('theme-revealing'); }
@@ -162,7 +159,7 @@
   }
 
   const imageChanges = new WeakMap();
-  function image(element, src, alt) {
+  function image(element, src, alt, { origin, direction = 1 } = {}) {
     if (element.getAttribute('src') === src) { element.alt = alt; return; }
     const previous = imageChanges.get(element);
     const overlay = (previous?.overlay || element).cloneNode();
@@ -171,7 +168,8 @@
     overlay.className = 'screenshot-transition';
     overlay.setAttribute('aria-hidden', 'true');
     overlay.alt = '';
-    previous?.overlay.remove();
+    if (previous) { active.get(previous.overlay)?.cancel(); previous.overlay.remove(); }
+    active.get(element)?.cancel();
     element.src = src;
     element.alt = alt;
     if (preference.matches) { imageChanges.delete(element); return; }
@@ -180,8 +178,10 @@
     imageChanges.set(element, state);
     const reveal = () => {
       if (imageChanges.get(element) !== state) return;
-      play(element, { opacity: [.7, 1], translate: ['14px 0', '0 0'] }, { duration: 450 });
-      after(play(overlay, { opacity: [1, 0] }, { duration: 400 }), () => {
+      const animation = origin ? revealColor(overlay, origin) : play(overlay, { opacity: [1, 0], translate: ['0 0', `${direction * -22}px 0`] }, { duration: 420 });
+      if (origin) play(origin.querySelector('i'), { scale: [1, 1.35, 1] }, { duration: 500 });
+      else play(element, { opacity: [.7, 1], translate: [`${direction * 28}px 0`, '0 0'] }, { duration: 550 });
+      after(animation, () => {
         overlay.remove();
         if (imageChanges.get(element) === state) imageChanges.delete(element);
       });
@@ -200,6 +200,7 @@
       const start = details.getBoundingClientRect().height;
       prior?.animation.cancel();
       details.open = true;
+      details.dataset.expanded = String(opening);
       const expanded = details.getBoundingClientRect().height;
       const border = parseFloat(getComputedStyle(details).borderTopWidth) + parseFloat(getComputedStyle(details).borderBottomWidth);
       const end = opening ? expanded : summary.getBoundingClientRect().height + border;
@@ -211,6 +212,7 @@
         if (drawers.get(details) !== state) return;
         details.open = opening;
         details.style.overflow = '';
+        delete details.dataset.expanded;
         drawers.delete(details);
       });
     });
@@ -229,37 +231,81 @@
     hero,
     heroChoice(source, target, word) { stopHero(); commit(source, target, word); play(target, { scale: [1.12, 1], opacity: [.55, 1] }, { duration: 420 }); },
     commit, captureTheme, theme, candidates, image,
-    panel(element) { play(element, { opacity: [.3, 1], translate: ['8px 0', '0 0'] }, { duration: 330 }); },
+    panel(element, direction = 1) { play(element, { opacity: [.35, 1], translate: [`${direction * 22}px 0`, '0 0'] }, { duration: 430 }); },
     openDialog(dialog) { play(dialog, { opacity: [0, 1], scale: [.94, 1], translate: ['0 20px', '0 0'] }, { duration: 420 }); },
     closeDialog
   };
 
 
   const stacked = matchMedia('(min-width: 1000px)');
-  const storyPanels = [...document.querySelectorAll('.story-panel')];
+  const clamp = value => Math.max(0, Math.min(1, value));
+  const smooth = value => 1 - Math.pow(1 - clamp(value), 3);
+  // Flow markers stay in the document while the cards stick and transform.
+  // Their measurements therefore never feed the animation back into itself.
+  const stories = [...document.querySelectorAll('.story-panel')].map(panel => {
+    const marker = document.createElement('span');
+    marker.className = 'motion-anchor';
+    marker.setAttribute('aria-hidden', 'true');
+    panel.before(marker);
+    return { panel, marker, items: [...panel.querySelectorAll('.word-entry:not(:first-child), .clip-line')] };
+  });
+  const heroSection = document.querySelector('.hero');
+  const heroStage = document.querySelector('.hero-stage');
+  const clientStage = document.querySelector('.client-stage');
+  const clientSurface = document.querySelector('.client-scroll-surface');
+  const fan = document.querySelector('.palette-fan');
+  const fanSection = document.querySelector('.appearance-teaser');
+  const arrivals = [...document.querySelectorAll('.section-heading, .privacy-line, .closing')];
   let scrollFrame;
   function updateDepth() {
-    cancelAnimationFrame(scrollFrame);
+    if (scrollFrame) return;
     scrollFrame = requestAnimationFrame(() => {
-      storyPanels.forEach((panel, index) => {
-        const next = storyPanels[index + 1];
-        if (preference.matches || !stacked.matches || !next || panel.matches(':focus-within')) {
-          panel.style.removeProperty('--story-scale');
-          panel.style.removeProperty('--story-opacity');
-          return;
-        }
-        const progress = Math.max(0, Math.min(1, (innerHeight * .55 - next.getBoundingClientRect().top) / (innerHeight * .45)));
-        panel.style.setProperty('--story-scale', 1 - progress * .035);
-        panel.style.setProperty('--story-opacity', 1 - progress * .2);
+      scrollFrame = null;
+      const reduced = preference.matches;
+      const height = innerHeight;
+      // Read geometry before writes; scroll schedules one frame, never an idle loop.
+      const tops = stories.map(({ marker }) => marker.getBoundingClientRect().top);
+      const heroTop = heroSection?.getBoundingClientRect().top || 0;
+      const clientTop = clientStage?.getBoundingClientRect().top || 0;
+      const fanTop = fanSection?.getBoundingClientRect().top || 0;
+      const arrivalTops = arrivals.map(element => element.getBoundingClientRect().top - (parseFloat(element.style.getPropertyValue('--arrival-y')) || 0));
+      stories.forEach(({ panel, items }, index) => {
+        const stable = reduced || panel.matches(':focus-within');
+        const enter = stable ? 1 : smooth((height * .97 - tops[index]) / (height * .62));
+        const leave = stable || !stacked.matches || index === stories.length - 1 ? 0 : clamp((height * .66 - tops[index + 1]) / Math.max(1, height * .66 - 116 - index * 16));
+        panel.style.setProperty('--story-y', `${(1 - enter) * (stacked.matches ? 64 : 28) - leave * 12}px`);
+        panel.style.setProperty('--story-scale', 1 - (1 - enter) * .045 - leave * .055);
+        panel.style.setProperty('--story-opacity', 1 - leave * .22);
+        const scene = stable ? 1 : clamp((height * .88 - tops[index]) / (height * .5));
+        panel.style.setProperty('--scene', smooth(scene));
+        items.forEach((item, itemIndex) => {
+          const progress = stable ? 1 : smooth((scene - itemIndex * .12) / .72);
+          item.style.setProperty('--item-progress', progress);
+        });
+      });
+      if (heroStage) {
+        const progress = reduced || heroStage.matches(':focus-within') ? 0 : clamp(-heroTop / height);
+        heroStage.style.setProperty('--hero-drift', `${progress * (stacked.matches ? 70 : 24)}px`);
+        heroStage.style.setProperty('--hero-turn', `${progress * -4}deg`);
+      }
+      if (clientSurface) {
+        const progress = reduced || clientSurface.matches(':focus-within') ? 1 : smooth((height * .96 - clientTop) / (height * .7));
+        clientSurface.style.setProperty('--client-arrival', progress);
+      }
+      if (fan) fan.style.setProperty('--fan-open', reduced ? 1 : smooth((height * .9 - fanTop) / (height * .6)));
+      arrivals.forEach((element, index) => {
+        const progress = reduced || element.matches(':focus-within') ? 1 : smooth((height * .96 - arrivalTops[index]) / (height * .35));
+        element.style.setProperty('--arrival-y', `${(1 - progress) * 24}px`);
       });
     });
   }
   addEventListener('scroll', updateDepth, {passive:true});
   addEventListener('resize', updateDepth);
   document.addEventListener('focusin', updateDepth);
+  document.addEventListener('focusout', updateDepth);
   stacked.addEventListener('change', updateDepth);
   if (!location.hash && scrollY < 150 && document.querySelector('.hero-stage')) hero();
-  document.querySelectorAll('.faq-list details, .studio-export').forEach(wireDrawer);
+  document.querySelectorAll('.faq-list details, .help-questions details, .studio-export').forEach(wireDrawer);
   preference.addEventListener('change', () => {
     updateDepth();
     if (!preference.matches) return;
@@ -267,5 +313,7 @@
     colorCover?.remove();
     document.querySelector('#appearance-studio')?.classList.remove('theme-revealing');
   });
+  document.fonts?.ready.then(updateDepth);
+  addEventListener('load', updateDepth, { once: true });
   updateDepth();
 })();
