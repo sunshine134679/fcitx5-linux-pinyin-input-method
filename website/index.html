@@ -6,7 +6,7 @@
 <meta property="og:title" content="下一句，更像你。 · ModernIME"><meta property="og:description" content="为 Linux 桌面打造的中文输入法。全拼与双拼、本地学习、个人词语，让常写的表达越来越顺手。"><meta property="og:type" content="website"><meta property="og:url" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/">
 <meta property="og:image" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/assets/client-v0213-candidates-lavender.png"><meta property="og:image:alt" content="ModernIME 当前本地开发预览，候选与外观页面"><meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/modernime-icon.png" type="image/png"><link rel="stylesheet" href="styles.css">
-<script src="interactions.js" defer></script><script src="app.js" defer></script>
+<script src="interactions.js" defer></script><script src="app.js" defer></script><script src="story-demos.js" defer></script>
 </head><body class="home-page">
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
@@ -36,11 +36,47 @@
 <div class="platform-line page-width"><span>从你的 Linux 桌面开始</span><p>Ubuntu 24.04<span>/</span>openEuler 24.09</p><a href="download.html#platforms">查看系统支持<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
 </div></div></div>
 <div class="page-chapter" data-chapter="everyday"><div class="chapter-sheet"><div class="chapter-surface">
-<section class="everyday section-space page-width" id="features" aria-labelledby="everyday-title"><div class="section-heading"><div><p class="section-kicker">写日常，也写自己的习惯</p><h2 id="everyday-title">少一点寻找，<br>多一点顺手。</h2></div><p>每一次选词，每一个常用表达，<br>都能在自己的桌面上管理。</p></div>
+<section class="everyday section-space page-width" id="features" aria-labelledby="everyday-title"><div class="section-heading"><div><p class="section-kicker">写日常，也写自己的习惯</p><h2 id="everyday-title">少一点寻找，<br>多一点顺手。</h2></div><div class="story-heading-aside"><p>每一次选词，每一个常用表达，<br>都能在自己的桌面上管理。</p><button class="demo-motion-toggle" id="story-motion-toggle" type="button" aria-pressed="false" hidden>暂停演示</button></div></div>
 <div class="story-stack">
- <article class="story-panel story-learning"><div class="story-copy"><span class="story-label">常用的词，逐渐熟悉</span><h3>你的选择，<br>会被记住。</h3><p>本地候选记忆与上下文学习，帮助常用表达更容易被找到。需要时，也能查看、备份和清理学习记录。</p><a href="help.html#learning" class="quiet-link">了解本地学习<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div><div class="story-art learning-art" aria-label="候选记忆示意"><p>今天的项目，叫<span>星河计划</span></p><div class="mini-composition">xing'he'ji'hua</div><div class="mini-candidates"><b><small>1</small>星河计划</b><span><small>2</small>星河</span><span><small>3</small>星和</span></div><div class="local-caption">候选选择在本地积累 <span>示意</span></div></div></article>
- <article class="story-panel story-words"><div class="story-copy"><span class="story-label">总要写的，留给自己</span><h3>人名、术语，<br>还有你的口头禅。</h3><p>把自己的词语收进个人词典，按习惯编辑拼音，也可以导入已有词库。熟悉的表达，有自己的位置。</p><a href="help.html#personal-words" class="quiet-link">管理个人词语<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div><div class="story-art words-art"><div class="word-entry"><span>词语</span><span>拼音</span></div><div class="word-entry"><strong>林小满</strong><span>lin xiao man</span></div><div class="word-entry"><strong>星河计划</strong><span>xing he ji hua</span></div><div class="word-entry"><strong>辛苦啦</strong><span>xin ku la</span></div><p class="local-caption">你的词典，随时可以整理 <span>示意</span></p></div></article>
- <article class="story-panel story-flow"><div class="story-copy"><span class="story-label">刚刚复制的，再用一次</span><h3>接着写，<br>不用来回找。</h3><p>开启本地剪贴板历史后，用 V+2 呼出最近复制的内容。常用的文字，还可以收藏起来。</p><a href="help.html#clipboard" class="quiet-link">使用剪贴板<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div><div class="story-art clipboard-art"><div class="clip-shortcut"><kbd>V</kbd><span>+</span><kbd>2</kbd><span>剪贴板历史</span></div><div class="clip-line"><span>设计评审安排在周五下午。</span><small>文字</small></div><div class="clip-line"><span>https://example.com/notes</span><small>链接</small></div><div class="clip-line"><span>git status</span><small>代码</small></div><p class="local-caption">内容留在本地，收藏与清理由你决定 <span>示意</span></p></div></article>
+ <article class="story-panel story-learning" data-story-demo="learning">
+  <div class="story-copy"><span class="story-label">常用的词，逐渐熟悉</span><h3>你的选择，<br>会被记住。</h3><p>本地候选记忆与上下文学习，帮助常用表达更容易被找到。需要时，也能查看、备份和清理学习记录。</p><a href="help.html#learning" class="quiet-link">了解本地学习<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+  <div class="story-art learning-art">
+   <div class="demo-stage" role="img" aria-label="本地学习示意：输入拼音，空格选中星河计划，选择记录留在本地。">
+    <div aria-hidden="true">
+     <div class="demo-paper"><span class="demo-overline">今天的随记</span><p>今天的项目，叫<br><span class="demo-committed">星河计划</span><span class="demo-caret"></span></p></div>
+     <div class="mini-composition"><span class="demo-preedit">xing'he'ji'hua</span></div>
+     <div class="demo-candidate-slot"><div class="mini-candidates demo-candidate-list"><b class="demo-choice"><small>1</small>星河计划</b><span><small>2</small>星河</span><span><small>3</small>星和</span></div><div class="demo-memory"><span><strong>星河计划</strong><small>这次选择，留在本地</small></span><svg class="icon"><use href="#i-check"/></svg></div></div>
+     <div class="demo-learning-foot"><span>选择熟悉的表达</span><kbd class="demo-space">space ↵</kbd></div>
+    </div>
+   </div>
+   <div class="demo-caption"><span class="demo-status" aria-hidden="true">这次选择，留在本地</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-replay aria-label="重播本地学习演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
+  </div>
+ </article>
+ <article class="story-panel story-words" data-story-demo="words">
+  <div class="story-copy"><span class="story-label">总要写的，留给自己</span><h3>人名、术语，<br>还有你的口头禅。</h3><p>把自己的词语收进个人词典，按习惯编辑拼音，也可以导入已有词库。熟悉的表达，有自己的位置。</p><a href="help.html#personal-words" class="quiet-link">管理个人词语<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+  <div class="story-art words-art">
+   <div class="demo-stage" role="img" aria-label="个人词语示意：填写星河计划与拼音，保存后加入个人词典。">
+    <div aria-hidden="true">
+     <div class="demo-word-input"><div><span class="demo-overline">添加词语</span><strong class="demo-word-input-text">星河计划</strong><small>xing he ji hua</small></div><span class="demo-word-save">保存 <svg class="icon"><use href="#i-plus"/></svg></span></div>
+     <div class="demo-word-list"><div class="word-entry"><span>我的词语</span><span>拼音</span></div><div class="word-entry demo-word-row"><strong>林小满</strong><span>lin xiao man</span></div><div class="word-entry demo-word-row" data-order="new"><strong>星河计划<svg class="icon demo-word-check"><use href="#i-check"/></svg></strong><span>xing he ji hua</span></div><div class="word-entry demo-word-row"><strong>辛苦啦</strong><span>xin ku la</span></div></div>
+    </div>
+   </div>
+   <div class="demo-caption"><span class="demo-status" aria-hidden="true">常用词，有自己的位置</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-replay aria-label="重播个人词语演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
+  </div>
+ </article>
+ <article class="story-panel story-flow" data-story-demo="clipboard">
+  <div class="story-copy"><span class="story-label">刚刚复制的，再用一次</span><h3>接着写，<br>不用来回找。</h3><p>开启本地剪贴板历史后，用 V+2 呼出最近复制的内容。常用的文字，还可以收藏起来。</p><a href="help.html#clipboard" class="quiet-link">使用剪贴板<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+  <div class="story-art clipboard-art">
+   <div class="demo-stage" role="img" aria-label="剪贴板示意：按 V 和 2 呼出历史，选择设计评审的文字继续输入。">
+    <div aria-hidden="true">
+     <div class="clip-shortcut"><kbd class="demo-key-v">V</kbd><span>+</span><kbd class="demo-key-two">2</kbd><span>剪贴板历史</span></div>
+     <div class="clip-line demo-clip-row"><span>设计评审安排在周五下午。</span><small>文字</small></div><div class="clip-line demo-clip-row"><span>https://example.com/notes</span><small>链接</small></div><div class="clip-line demo-clip-row"><span>git status</span><small>代码</small></div>
+     <div class="demo-paste"><span class="demo-overline">接着写</span><p><span class="demo-clip-result">设计评审安排在周五下午。</span><span class="demo-caret"></span></p></div>
+    </div>
+   </div>
+   <div class="demo-caption"><span class="demo-status" aria-hidden="true">接着写，不用来回找</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-replay aria-label="重播剪贴板演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
+  </div>
+ </article>
 </div></section>
 <section class="privacy-line page-width"><div><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><h2>输入在本地，习惯也在。</h2></div><p>拼音解码、个人词典与学习不依赖云端输入服务。<br>更新时才连接相应的软件源。</p><a href="help.html#privacy" class="quiet-link">了解数据与隐私</a></section>
 </div></div></div>

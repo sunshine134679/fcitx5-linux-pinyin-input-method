@@ -263,9 +263,6 @@
     const chapters = [...main.querySelectorAll('.page-chapter')].map(element => ({
       element, sheet: element.querySelector('.chapter-sheet'), surface: element.querySelector('.chapter-surface')
     }));
-    const stories = [...main.querySelectorAll('.story-panel')].map(element => ({
-      element, items: [...element.querySelectorAll('.word-entry:not(:first-child), .clip-line')]
-    }));
     const client = main.querySelector('.client-stage');
     const clientSection = client.closest('.client-section');
     const screen = main.querySelector('.client-scroll-surface');
@@ -309,7 +306,7 @@
         });
         geometry = {
           height, inset, chapters: chapters.map(({ element }) => metric(element)),
-          hero: metric(heroStage), stories: stories.map(({ element }) => metric(element)),
+          hero: metric(heroStage),
           client: metric(client), fan: metric(fan), range: Math.max(1, document.documentElement.scrollHeight - height)
         };
         needsMeasure = false;
@@ -340,11 +337,6 @@
       set(heroStage, '--key-hao-y', px(departure * 80));
       set(heroStage, '--key-hao-turn', deg(departure * 12));
       set(heroStage, '--caption-y', px(departure * -24));
-      stories.forEach(({ element, items }, index) => {
-        const scene = element.matches(':focus-within') ? 1 : clamp((height * .92 - (geometry.stories[index].top - y)) / (height * .48));
-        set(element, '--scene', smooth(scene).toFixed(4));
-        items.forEach((item, order) => set(item, '--item-progress', smooth((scene - order * .1) / .75).toFixed(4)));
-      });
       const arrival = clientSection.matches(':focus-within') ? 1 : smooth((height * .94 - (geometry.client.top - y)) / (height * .66));
       const remaining = (1 - arrival) * strength;
       set(screen, '--screen-transform', remaining < .001 ? 'none' : `perspective(1400px) translate3d(0,${px(remaining * 52)},0) rotateX(${deg(remaining * 9)}) scale(${(1 - remaining * .065).toFixed(5)})`);
