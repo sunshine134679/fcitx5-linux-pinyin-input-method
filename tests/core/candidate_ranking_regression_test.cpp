@@ -788,6 +788,62 @@ TEST_F(CandidateRankingRegression, RepeatedPartialChoiceReachesSecondSeatWithout
     EXPECT_EQ(snapshot->entry("你", "nihaoshijie", "", ""), nullptr);
 }
 
+TEST_F(CandidateRankingRegression, RepeatedFuzzyPartialChoiceSwitchesThePersonalPrefixSeat) {
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.open());
+        ASSERT_TRUE(store.recordBatch(std::vector<core::LearningEvent>(50,
+            {core::LearningEvent::Kind::Selection, "子", "zi", {}, {}, nowMs()})));
+    }
+    pinyin::PinyinProviderOptions options;
+    options.contextLearningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    for (int choice = 0; choice < 10; ++choice) {
+        type(controller, "zidaili");
+        if (choice <= 1) {
+            EXPECT_EQ(rank(controller.page(), "子"), 1u);
+        }
+        const auto index = rank(controller.page(), "之");
+        ASSERT_LT(index, controller.page().items.size());
+        EXPECT_EQ(controller.page().items[index].fullPinyin, "zhi");
+        EXPECT_EQ(controller.page().items[index].consumedInputBytes, 2u);
+        ASSERT_TRUE(controller.select(index));
+        EXPECT_EQ(host.committed, "之");
+        ASSERT_EQ(controller.page().rawInput, "daili");
+        // Edit away the unselected suffix without ending the current session.
+        // Escape/reset intentionally clears recent choices and is not a
+        // continuous preference-switching scenario.
+        for (int remaining = 0; remaining < 5; ++remaining) {
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Backspace}));
+        }
+        ASSERT_TRUE(controller.page().rawInput.empty());
+    }
+    type(controller, "zidaili");
+    const auto index = rank(controller.page(), "之");
+    ASSERT_LT(index, controller.page().items.size());
+    EXPECT_EQ(index, 1u);
+    EXPECT_EQ(controller.page().items.front().text, "子代理");
+    EXPECT_EQ(controller.page().items.front().consumedInputBytes, 7u);
+    EXPECT_GT(controller.page().items[index].recentChoiceBonus, 0.0);
+#if defined(MODERNIME_HAS_FCITX5)
+    EXPECT_EQ(physicalPosition(controller.page(), index),
+              (std::pair<std::size_t, std::size_t>{0, 1}));
+#endif
+    ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Digit, 0, '2'}));
+    EXPECT_EQ(host.committed, "之");
+    EXPECT_EQ(controller.page().rawInput, "daili");
+    ASSERT_TRUE(provider.flush());
+    core::LearningStore store(paths.learningStore);
+    ASSERT_TRUE(store.openReadOnly());
+    const auto snapshot = store.snapshot();
+    const auto entry = snapshot->entry("之", "zhi", "", "");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 11);
+    EXPECT_EQ(snapshot->entry("之", "zidaili", "", ""), nullptr);
+}
+
 TEST_F(CandidateRankingRegression, DerivedPrefixUsesItsOwnPersistedLearning) {
     pinyin::PinyinCandidateProvider provider(paths);
     Host host;

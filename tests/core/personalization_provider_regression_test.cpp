@@ -97,6 +97,50 @@ TEST_F(PersonalizationProviderRegression, LearningToggleClearsTransientSequenceB
     EXPECT_TRUE(learnedName());
 }
 
+TEST_F(PersonalizationProviderRegression, ClearDiscardsPreClearPartialPhraseButKeepsNewSelection) {
+    for (const auto *backend : {"clear-partial.sqlite3", "clear-partial.lmdb"}) {
+        SCOPED_TRACE(backend);
+        paths.learningStore = (root / backend).string();
+        modernime::pinyin::PinyinProviderOptions options;
+        options.contextLearningEnabled = false;
+        auto shared = PinyinCandidateProvider::createSharedResources(paths, options);
+        PinyinCandidateProvider provider(shared, options);
+
+        ASSERT_TRUE(provider.append("nihao"));
+        const auto first = indexOf(provider, "你");
+        ASSERT_LT(first, provider.page().items.size());
+        ASSERT_EQ(provider.page().items[first].consumedInputBytes, 2u);
+        ASSERT_TRUE(provider.select(first));
+        ASSERT_EQ(provider.page().rawInput, "hao");
+        ASSERT_TRUE(provider.flush());
+
+        LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.open());
+        ASSERT_TRUE(store.clear());
+        ASSERT_TRUE(store.snapshot()->entries().empty());
+        ASSERT_TRUE(PinyinCandidateProvider::reloadLearningStore(shared));
+        ASSERT_EQ(provider.page().rawInput, "hao");
+
+        const auto afterClear = indexOf(provider, "号");
+        ASSERT_LT(afterClear, provider.page().items.size());
+        ASSERT_EQ(provider.page().items[afterClear].consumedInputBytes, 3u);
+        ASSERT_TRUE(provider.select(afterClear));
+        EXPECT_TRUE(provider.page().rawInput.empty());
+        ASSERT_TRUE(provider.flush());
+        store.close();
+
+        LearningStore reopened(paths.learningStore);
+        ASSERT_TRUE(reopened.open());
+        const auto snapshot = reopened.snapshot();
+        ASSERT_NE(snapshot, nullptr);
+        EXPECT_FALSE(snapshot->hasPositiveFrequency("你号", "nihao"));
+        EXPECT_FALSE(snapshot->hasPositiveFrequency("你", "ni"));
+        const auto *selected = snapshot->entry("号", "hao", "", "");
+        ASSERT_NE(selected, nullptr);
+        EXPECT_EQ(selected->frequency, 1);
+    }
+}
+
 TEST_F(PersonalizationProviderRegression, SuppressedNativeCandidateStaysHiddenAcrossSharedAndRestartedProviders) {
     auto shared = PinyinCandidateProvider::createSharedResources(paths, {});
     {

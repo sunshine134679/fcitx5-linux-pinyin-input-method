@@ -1764,8 +1764,9 @@ void ModernIMEController::prepareForApplicationShortcut() {
 bool ModernIMEController::setCandidateFilter(std::string query) {
     if (!active() || sensitive_ || !provider_ || !candidateFilterIndex_ || compositionInput_.empty() ||
         auxiliaryInputActive() || clipboardMode_) return false;
-    if (query.empty()) {
-        candidateFiltering_ = true; candidateFilterQuery_.clear();
+    // A mode prefix remains editable before its first query character.
+    if (query.empty() || query == "s:" || query == "c:") {
+        candidateFiltering_ = true; candidateFilterQuery_ = std::move(query);
         provider_->clearCandidateFilter(); publishProviderPage(); return true;
     }
     const auto filter = candidateFilterIndex_->predicate(query);
@@ -1792,11 +1793,7 @@ bool ModernIMEController::handleCandidateFilter(const KeyEvent &event) {
         const auto ch = event.character;
         if (((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == ':') &&
             candidateFilterQuery_.size() < 64) {
-            const auto next = candidateFilterQuery_ + ch;
-            // A mode prefix is incomplete until its first query character.
-            if (next == "s:" || next == "c:") {
-                candidateFilterQuery_ = next; provider_->clearCandidateFilter(); publishProviderPage();
-            } else setCandidateFilter(next);
+            setCandidateFilter(candidateFilterQuery_ + ch);
         }
         return true;
     }

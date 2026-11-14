@@ -128,10 +128,16 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
     }
     candidate.recent_choice_bonus = 0.0;
     if (request.recentChoices != nullptr && candidate.learning_boost >= 1.8) {
+        // RecentChoices records the actual committed span. Fuzzy partial
+        // candidates can have priority 0, so match quality cannot identify
+        // their partial-selection group when decoder span evidence exists.
+        const bool partial = candidate.consumed_input_bytes
+            ? (*candidate.consumed_input_bytes > 0 &&
+               *candidate.consumed_input_bytes < request.input.size())
+            : candidate.decoded_match_priority.value_or(
+                  core::PinyinMatchPolicy::priority(request.input, candidate.full_pinyin)) == -1;
         candidate.recent_choice_bonus = request.recentChoices->bonus(
-            request.input, candidate.text, candidate.full_pinyin,
-            candidate.decoded_match_priority.value_or(
-                core::PinyinMatchPolicy::priority(request.input, candidate.full_pinyin)) == -1);
+            request.input, candidate.text, candidate.full_pinyin, partial);
     }
 }
 } // namespace modernime::pinyin

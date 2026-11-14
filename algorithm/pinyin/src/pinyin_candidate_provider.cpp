@@ -877,6 +877,9 @@ public:
         if (curLearnRev != observedLearningRevision_) {
             observedLearningRevision_ = curLearnRev;
             recentChoices_.clear();
+            // Already committed fragments belong to the previous learning epoch.
+            // Keep the unconsumed input, but do not form a new word from them.
+            phraseTracker_.cancelComposition();
             phraseTracker_.resetCommitHistory();
             fallbackContextBefore_.clear();
             changed = true;
@@ -994,10 +997,13 @@ public:
                                            : std::string(rawInput))
                                     : candidate.fullPinyin;
 
+        // Filtering is an explicit choice even when it moves the target into
+        // the first visible slot. An empty filter has no predicate here.
         auto event = makeCommitEvent(
             candidate.text, fullPinyin, rawInput.substr(0, consumedBytes),
             expectedId.role, consumedBytes, partialSelection,
-            request.globalIndex > 0, request.globalIndex, 0,
+            request.globalIndex > 0 || static_cast<bool>(candidateFilter_),
+            request.globalIndex, 0,
             contextBefore_, contextAfter_);
 
         if (!learningEnabled_) {
