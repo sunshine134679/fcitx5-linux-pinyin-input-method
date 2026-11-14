@@ -162,7 +162,7 @@ private:
             auto stop = loop.addIOEvent(stopPipe_[0], fcitx::IOEventFlag::In,
                 [&](fcitx::EventSourceIO *, int, fcitx::IOEventFlags) { loop.exit(); return true; });
             if (!stop || !bus.addObjectVTable(objectPath, interfaceName, endpoint) ||
-                !bus.requestName(serviceName, fcitx::dbus::RequestNameFlag::None)) {
+                !bus.requestName(serviceName, fcitx::Flags<fcitx::dbus::RequestNameFlag>{})) {
                 setError("后端DBus服务注册失败或名称已占用");
                 return;
             }

@@ -30,9 +30,9 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.10_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.2.10-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.10-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.11_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime-0.2.11-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.11-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
@@ -755,12 +755,16 @@ modernime-session-init --remove-gnome-extension
 
 ## 版本更新记录
 
-### v0.2.10（2026-11-14）
+### v0.2.11（2026-11-14）
 
 - 改善中英文候选排序与智能学习，减少误输入英文长期占位和生僻英文抢占中文简拼的问题。
 - 增加学习记录管理、离线词库包、备份恢复与诊断入口，完善词条草稿和用户数据保护。
 - 优化长剪贴板预览、词典筛选及查字操作，修复 GNOME 面板与安装卸载问题。
-- 详见 [v0.2.10 发布说明](docs/releases/v0.2.10-发布说明.md)。
+- 修复旧版 Fcitx5 的构建兼容性。详见 [v0.2.11 发布说明](docs/releases/v0.2.11-发布说明.md)。
+
+### v0.2.10（未发布）
+
+- 发行构建被旧版 Fcitx5 的接口兼容问题阻断，保留原标签，修复后改发 v0.2.11。
 
 ### v0.2.9（2026-11-12）
 
