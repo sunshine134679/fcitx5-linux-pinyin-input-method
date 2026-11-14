@@ -17,6 +17,8 @@
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h.1M10 9h.1M14 9h.1M18 9h.1M6 12h.1M10 12h.1M14 12h.1M18 12h.1M8 15h8"/></symbol>
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.8 6.2L21 12l-6.2 2.8L12 21l-2.8-6.2L3 12l6.2-2.8Z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
     <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6m0 6 7-7"/></symbol>
@@ -46,10 +48,10 @@
      <div class="demo-paper"><span class="demo-overline">今天的随记</span><p>今天的项目，叫<br><span class="demo-committed">星河计划</span><span class="demo-caret"></span></p></div>
      <div class="mini-composition"><span class="demo-preedit">xing'he'ji'hua</span></div>
      <div class="demo-candidate-slot"><div class="mini-candidates demo-candidate-list"><b class="demo-choice"><small>1</small>星河计划</b><span><small>2</small>星河</span><span><small>3</small>星和</span></div><div class="demo-memory"><span><strong>星河计划</strong><small>这次选择，留在本地</small></span><svg class="icon"><use href="#i-check"/></svg></div></div>
-     <div class="demo-learning-foot"><span>选择熟悉的表达</span><kbd class="demo-space">space ↵</kbd></div>
+     <div class="demo-learning-foot"><span>选择熟悉的表达</span><kbd class="demo-space">space ␣</kbd></div>
     </div>
    </div>
-   <div class="demo-caption"><span class="demo-status" aria-hidden="true">这次选择，留在本地</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-replay aria-label="重播本地学习演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
+   <div class="demo-caption"><span class="demo-status" aria-hidden="true">这次选择，留在本地</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-toggle aria-label="暂停演示" aria-pressed="false" hidden><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span>暂停</span></button><button type="button" data-demo-replay aria-label="重播本地学习演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
   </div>
  </article>
  <article class="story-panel story-words" data-story-demo="words">
@@ -61,7 +63,7 @@
      <div class="demo-word-list"><div class="word-entry"><span>我的词语</span><span>拼音</span></div><div class="word-entry demo-word-row"><strong>林小满</strong><span>lin xiao man</span></div><div class="word-entry demo-word-row" data-order="new"><strong>星河计划<svg class="icon demo-word-check"><use href="#i-check"/></svg></strong><span>xing he ji hua</span></div><div class="word-entry demo-word-row"><strong>辛苦啦</strong><span>xin ku la</span></div></div>
     </div>
    </div>
-   <div class="demo-caption"><span class="demo-status" aria-hidden="true">常用词，有自己的位置</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-replay aria-label="重播个人词语演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
+   <div class="demo-caption"><span class="demo-status" aria-hidden="true">常用词，有自己的位置</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-toggle aria-label="暂停演示" aria-pressed="false" hidden><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span>暂停</span></button><button type="button" data-demo-replay aria-label="重播个人词语演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
   </div>
  </article>
  <article class="story-panel story-flow" data-story-demo="clipboard">
@@ -74,7 +76,7 @@
      <div class="demo-paste"><span class="demo-overline">接着写</span><p><span class="demo-clip-result">设计评审安排在周五下午。</span><span class="demo-caret"></span></p></div>
     </div>
    </div>
-   <div class="demo-caption"><span class="demo-status" aria-hidden="true">接着写，不用来回找</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-replay aria-label="重播剪贴板演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
+   <div class="demo-caption"><span class="demo-status" aria-hidden="true">接着写，不用来回找</span><span class="demo-caption-tools"><small>示意</small><button type="button" data-demo-toggle aria-label="暂停演示" aria-pressed="false" hidden><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span>暂停</span></button><button type="button" data-demo-replay aria-label="重播剪贴板演示" hidden><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>重播</button></span></div>
   </div>
  </article>
 </div></section>

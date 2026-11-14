@@ -150,8 +150,8 @@
         track(scene, rows[0], [
           [0, { backgroundColor: base, scale: 1 }],
           [2350, { backgroundColor: base, scale: 1 }, ease],
-          [2650, { backgroundColor: '#d4c9ee', scale: 1.025 }],
-          [3000, { backgroundColor: '#d4c9ee', scale: 1.025 }, ease],
+          [2650, { backgroundColor: '#dce6f5', scale: 1.025 }],
+          [3000, { backgroundColor: '#dce6f5', scale: 1.025 }, ease],
           [3400, { backgroundColor: base, scale: 1 }],
           [8000, { backgroundColor: base, scale: 1 }]
         ]);
@@ -215,6 +215,15 @@
 
   function updateToggle() {
     scenes.forEach(scene => {
+      const localToggle = scene.panel.querySelector('[data-demo-toggle]');
+      if (localToggle) {
+        localToggle.hidden = false;
+        localToggle.disabled = reduced.matches;
+        localToggle.setAttribute('aria-pressed', String(manuallyPaused));
+        localToggle.setAttribute('aria-label', reduced.matches ? '已减少动态效果' : manuallyPaused ? '继续演示' : '暂停演示');
+        localToggle.querySelector('use').setAttribute('href', manuallyPaused ? '#i-play' : '#i-pause');
+        localToggle.querySelector('span').textContent = manuallyPaused ? '继续' : '暂停';
+      }
       const replay = scene.panel.querySelector('[data-demo-replay]');
       if (replay) {
         replay.hidden = false;
@@ -274,12 +283,15 @@
     if (!frame) frame = requestAnimationFrame(() => chooseScene());
   }
 
-  toggle?.addEventListener('click', () => {
+  function togglePlayback() {
+    if (reduced.matches) return;
     manuallyPaused = !manuallyPaused;
     updateToggle();
     chooseScene();
-  });
+  }
+  toggle?.addEventListener('click', togglePlayback);
   scenes.forEach(scene => {
+    scene.panel.querySelector('[data-demo-toggle]')?.addEventListener('click', togglePlayback);
     scene.panel.querySelector('[data-demo-replay]')?.addEventListener('click', () => {
       if (reduced.matches) { clear(scene); return; }
       pause(scene);
