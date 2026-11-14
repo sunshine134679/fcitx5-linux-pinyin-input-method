@@ -41,12 +41,13 @@ jobs:
           mkdir -p "$PWD/build/ci/gtest_output"
           GTEST_OUTPUT="xml:$PWD/build/ci/gtest_output/personal_engine.xml" \
           ctest --test-dir build/ci --output-on-failure \
-            -E '^modernime_personal_engine_benchmark$' \
+            -E '^(modernime_personal_engine_benchmark|modernime_input_experience_replay)$' \
             --output-junit "$PWD/build/ci/debug-junit.xml" \
             --parallel $(nproc)
 
       # Latency budgets describe shipped optimized code. Keep Debug correctness
-      # coverage above, and run the same mandatory benchmark in Release mode.
+      # coverage above. Run the unchanged full replay and benchmark in Release;
+      # the replay includes input latency evidence and all 247 correctness cases.
       - name: Run optimized algorithm performance gate
         run: |
           cmake -S . -B build/ci-performance -DCMAKE_BUILD_TYPE=Release \
@@ -56,9 +57,9 @@ jobs:
             -DMODERNIME_BUILD_SETTINGS=ON \
             -DMODERNIME_BUILD_UI_LAYOUT_TESTS=ON \
             -DMODERNIME_BUILD_TESTS=ON
-          cmake --build build/ci-performance --target modernime_personal_engine_benchmark --parallel 2
+          cmake --build build/ci-performance --target modernime_personal_engine_benchmark modernime_input_experience_replay_tests --parallel 2
           ctest --test-dir build/ci-performance --output-on-failure \
-            -R '^modernime_personal_engine_benchmark$' \
+            -R '^(modernime_personal_engine_benchmark|modernime_input_experience_replay)$' \
             --output-junit "$PWD/build/ci-performance/release-junit.xml"
 
       - name: Verify required tests contracts

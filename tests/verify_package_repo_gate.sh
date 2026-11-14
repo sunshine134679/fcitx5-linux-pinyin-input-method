@@ -128,7 +128,7 @@ done
 
 rpm_extract_dir="${work_dir}/rpm-extracted"
 mkdir -p "${rpm_extract_dir}"
-python3 - "${rpm_file}" "${rpm_extract_dir}" "${expected_version}" <<'PYEOF'
+python3 - "${rpm_file}" "${rpm_extract_dir}" "${expected_version}" "${repo_root}" <<'PYEOF'
 import gzip
 import hashlib
 from pathlib import Path
@@ -139,6 +139,7 @@ import sys
 rpm_path = Path(sys.argv[1]).resolve()
 extract_dir = Path(sys.argv[2]).resolve()
 expected_ver = sys.argv[3]
+source_root = Path(sys.argv[4]).resolve()
 
 raw = rpm_path.read_bytes()
 assert raw[:4] == b"\xed\xab\xee\xdb", "Invalid RPM lead magic"
@@ -297,11 +298,28 @@ for asset in context_assets:
     assert asset.is_file() and asset.stat().st_size > 0, f"RPM missing context model asset: {asset}"
 assert (rootfs / "usr/bin/modernime-update").is_file(), "RPM missing native update helper"
 component_assets = [rootfs / ("usr/share/modernime/components/" + path) for path in (
-    "component_lookup.tsv", "数据来源与许可.md", "upstream/chaizi.LICENSE", "upstream/pinyin.LICENSE")]
+    "component_lookup.tsv", "数据来源与许可.md", "upstream/chaizi.LICENSE", "upstream/pinyin.LICENSE",
+    "stroke_lookup.txt", "upstream/stroke.LICENSE")]
 for asset in component_assets:
     assert asset.is_file() and asset.stat().st_size > 0, f"RPM missing component data/license: {asset}"
-# The fixed payload now also includes /usr/bin/modernime-session-runner.
-expected_regular_files = 23 + len(context_assets) + len(icon_paths) + len(ext_paths) + len(component_assets)
+pack_root = rootfs / "usr/share/modernime/dictionary-packs"
+pack_names = {"说明.md"}
+for pack in ("computing", "law", "medicine", "mixed-common"):
+    pack_names.update(f"{pack}/{name}" for name in ("entries.tsv", "manifest.ini"))
+    if pack != "mixed-common":
+        pack_names.add(f"{pack}/disabled")
+actual_pack_names = {p.relative_to(pack_root).as_posix() for p in pack_root.rglob("*") if p.is_file()}
+assert actual_pack_names == pack_names, (
+    f"RPM dictionary pack contents differ: missing={pack_names - actual_pack_names}, extra={actual_pack_names - pack_names}"
+)
+for name in pack_names:
+    asset = pack_root / name
+    assert not asset.is_symlink(), f"RPM dictionary pack must be a regular file: {asset}"
+    assert asset.read_bytes() == (source_root / "data/dictionaries" / name).read_bytes(), f"RPM dictionary pack differs from source: {name}"
+for name in ("stroke_lookup.txt", "upstream/stroke.LICENSE"):
+    assert (rootfs / "usr/share/modernime/components" / name).read_bytes() == (source_root / "data/components" / name).read_bytes(), f"RPM stroke asset differs from source: {name}"
+# 原有文件边界不变，精确计入新增笔画数据/许可与四套离线词库。
+expected_regular_files = 23 + len(context_assets) + len(icon_paths) + len(ext_paths) + len(component_assets) + len(pack_names)
 assert len(payload_reg_files) == expected_regular_files, (
     f"Expected {expected_regular_files} regular files in RPM payload, got {len(payload_reg_files)}"
 )
