@@ -40,7 +40,7 @@ class Page(HTMLParser):
 
 
 PAGE_ASSETS = {
-    "index.html": ("styles.css", "app.js", "interactions.js"),
+    "index.html": ("styles.css", "app.js", "interactions.js", "story-demos.js"),
     "appearance.html": ("styles.css", "app.js", "interactions.js", "studio.js"),
     "download.html": ("styles.css", "support.css", "app.js", "interactions.js", "download.js"),
     "help.html": ("styles.css", "support.css", "app.js", "interactions.js"),

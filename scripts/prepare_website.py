@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 
 PAGES = ("index.html", "appearance.html", "download.html", "help.html")
-CACHE_ASSETS = ("styles.css", "support.css", "app.js", "studio.js", "interactions.js", "download.js")
+CACHE_ASSETS = ("styles.css", "support.css", "app.js", "studio.js", "interactions.js", "download.js", "story-demos.js")
 FILES = PAGES + CACHE_ASSETS + ("sitemap.xml", "robots.txt")
 
 
