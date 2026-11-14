@@ -95,13 +95,15 @@ MODERNIME_PREFIX="$HOME/.local" ./install.sh`
   };
   let currentInstall = 'ubuntu';
   let currentStage = root.querySelector('input[name="install-stage"]:checked')?.value === 'update' ? 'update' : 'new';
+  let copyGeneration = 0;
+  const panel = root.querySelector('#install-panel');
 
   function setText(selector, text) {
     const element = root.querySelector(selector);
     if (element) element.textContent = text;
   }
 
-  function render() {
+  function render(direction = 0) {
     const base = installOptions[currentInstall];
     const option = currentStage === 'update' ? { ...base, ...updateOptions[currentInstall] } : base;
     setText('#install-heading', option.heading);
@@ -116,21 +118,49 @@ MODERNIME_PREFIX="$HOME/.local" ./install.sh`
       documentation.href = currentStage === 'update' ? repository + '#在线更新与缓存' : option.documentation;
       documentation.textContent = (currentStage === 'update' ? '完整更新说明' : option.linkLabel) + ' ↗';
     }
+    copyGeneration += 1;
+    copyButton.classList.remove('is-copied');
     setText('#copy-install span', '复制命令');
     commandElement.parentElement?.scrollTo(0, 0);
+    if (direction && panel) window.siteMotion?.panel(panel, direction);
   }
 
   const tabs = [...platformTabs.querySelectorAll('[role="tab"]')];
+  const platformIndicator = document.createElement('span');
+  platformIndicator.className = 'download-platform-indicator';
+  platformIndicator.setAttribute('aria-hidden', 'true');
+  platformTabs.append(platformIndicator);
+
+  function positionPlatformIndicator() {
+    const selected = tabs.find(tab => tab.dataset.install === currentInstall);
+    if (!selected) return;
+    platformIndicator.style.width = `${selected.offsetWidth}px`;
+    platformIndicator.style.height = `${selected.offsetHeight}px`;
+    platformIndicator.style.transform = `translate(${selected.offsetLeft}px, ${selected.offsetTop}px)`;
+  }
+  positionPlatformIndicator();
+  platformTabs.classList.add('has-platform-indicator');
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(positionPlatformIndicator).observe(platformTabs);
+  } else {
+    window.addEventListener('resize', positionPlatformIndicator);
+  }
+
   function choosePlatform(tab, focus = false) {
     if (!installOptions[tab.dataset.install]) return;
+    if (tab.dataset.install === currentInstall) {
+      if (focus) tab.focus();
+      return;
+    }
+    const previousIndex = tabs.findIndex(item => item.dataset.install === currentInstall);
     currentInstall = tab.dataset.install;
     tabs.forEach(item => {
       item.setAttribute('aria-selected', String(item === tab));
       item.tabIndex = item === tab ? 0 : -1;
     });
-    const panel = root.querySelector('#install-panel');
     if (panel) panel.setAttribute('aria-labelledby', tab.id);
-    render();
+    positionPlatformIndicator();
+    render(Math.sign(tabs.indexOf(tab) - previousIndex));
     if (focus) tab.focus();
   }
   tabs.forEach((tab, index) => {
@@ -149,14 +179,17 @@ MODERNIME_PREFIX="$HOME/.local" ./install.sh`
   root.querySelectorAll('input[name="install-stage"]').forEach(input => {
     input.addEventListener('change', () => {
       currentStage = input.value === 'update' ? 'update' : 'new';
-      render();
+      render(currentStage === 'update' ? 1 : -1);
     });
   });
   copyButton.addEventListener('click', async () => {
     const command = commandElement.textContent;
+    const generation = ++copyGeneration;
     const copied = typeof copyText === 'function' && await copyText(command);
+    if (generation !== copyGeneration) return;
     if (copied) {
-      if (commandElement.textContent === command) setText('#copy-install span', '已复制');
+      setText('#copy-install span', '已复制');
+      copyButton.classList.add('is-copied');
       if (typeof notify === 'function') notify('已复制命令，请到终端执行。');
     } else {
       const range = document.createRange();

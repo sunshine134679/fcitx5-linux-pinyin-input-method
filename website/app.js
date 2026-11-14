@@ -124,12 +124,12 @@ if (document.querySelector('#client')) {
   const clientSection = document.querySelector('#client');
   let clientPage = 'candidates';
   let clientTheme = 'lavender';
-  function updateClientPreview() {
+  function updateClientPreview(motion = {}) {
     const page = clientPages[clientPage];
     const theme = clientThemes[clientTheme];
     const src = `assets/client-v0213-${clientPage}-${clientTheme}.webp`;
     const alt = `${page.alt}，${theme.name}界面主题`;
-    if (window.siteMotion) window.siteMotion.image(screenshot, src, alt);
+    if (window.siteMotion) window.siteMotion.image(screenshot, src, alt, motion);
     else { screenshot.src = src; screenshot.alt = alt; }
     clientSection.dataset.previewTheme = clientTheme;
     for (const key of ['canvas', 'accent', 'ink', 'border']) clientSection.style.setProperty('--client-' + key, theme[key]);
@@ -142,14 +142,15 @@ if (document.querySelector('#client')) {
     document.querySelector('#open-screenshot').setAttribute('aria-label', `高清查看${theme.name}主题的${page.title}客户端截图`);
   }
   wireTabs(document.querySelector('.client-tabs'), tab => {
+    const direction = Object.keys(clientPages).indexOf(tab.dataset.client) > Object.keys(clientPages).indexOf(clientPage) ? 1 : -1;
     clientPage = tab.dataset.client;
-    updateClientPreview();
+    updateClientPreview({ direction });
   });
   document.querySelectorAll('.client-theme-options button').forEach(button => {
     button.addEventListener('click', () => {
       if (clientTheme === button.dataset.clientTheme) return;
       clientTheme = button.dataset.clientTheme;
-      updateClientPreview();
+      updateClientPreview({ origin: button });
     });
   });
   document.querySelector('#open-screenshot').addEventListener('click', () => {
