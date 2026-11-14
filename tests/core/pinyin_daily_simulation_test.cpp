@@ -3,10 +3,15 @@
 #include "modernime/core/pinyin_match.h"
 #include "native_pinyin_test_baseline.h"
 
+#include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -788,8 +793,9 @@ void testDormantDisplacementAndNasalTypoPersonalization(const std::filesystem::p
 }
 
 // 9. 1,000 轮日常高频打字抗污染与首选稳定性压力基准测试
-void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
-    const auto stressPath = testPath("anti-pollution-stress.sqlite3");
+void testOneThousandRoundsAntiPollutionStress(
+    const std::filesystem::path &stressPath,
+    std::optional<std::uint32_t> shuffleSeed = std::nullopt) {
     {
         modernime::core::LearningStore store(stressPath);
         assertTrue(store.open(), "open stress store for seed setup");
@@ -833,15 +839,13 @@ void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
         }
     }
 
-    auto provider = makeSimulationProvider(stressPath);
-
     struct StressTarget {
         std::string_view input;
         std::string_view expectedTop;
         std::string_view forbiddenTop;
     };
 
-    const std::vector<StressTarget> targets = {
+    std::vector<StressTarget> targets = {
         {"shi", "是", "试"},
         {"zhege", "这个", "这歌"},
         {"zhe'ge", "这个", "这歌"},
@@ -861,78 +865,124 @@ void testOneThousandRoundsAntiPollutionStress(const std::filesystem::path &) {
 
     uint64_t totalEvaluations = 0;
     uint64_t usurpationCount = 0;
+    uint64_t accidentalSelections = 0;
+    std::mt19937 random(shuffleSeed.value_or(0));
+    int accidentalRound = 25;
+    std::cout << "STRESS_BEGIN backend=" << stressPath.extension().string()
+              << " seed=" << (shuffleSeed ? std::to_string(*shuffleSeed) : "original")
+              << '\n';
 
-    for (int round = 0; round < 1000; ++round) {
-        for (const auto &t : targets) {
-            provider.reset();
-            provider.resetCommitHistory();
-            assertTrue(provider.append(std::string(t.input)), "append stress input");
-            assertTrue(!provider.page().items.empty(), "non-empty candidate page");
-            const auto topText = provider.page().items.front().text;
-            ++totalEvaluations;
-
-            if (topText != t.expectedTop) {
-                std::cerr << "Round " << round << " Usurpation on input '" << t.input
-                          << "': expected '" << t.expectedTop << "', got '" << topText << "'\n";
-                ++usurpationCount;
+    {
+        auto provider = makeSimulationProvider(stressPath);
+        for (int round = 0; round < 1000; ++round) {
+            if (shuffleSeed) {
+                std::shuffle(targets.begin(), targets.end(), random);
+                if (round % 50 == 0) accidentalRound = static_cast<int>(random() % 50);
             }
-            assertTrue(topText != t.forbiddenTop, "Forbidden word usurped top rank");
-            assertTrue(topText == t.expectedTop, "Expected top candidate must be rank 0");
+            for (const auto &t : targets) {
+                provider.reset();
+                provider.resetCommitHistory();
+                assertTrue(provider.append(std::string(t.input)), "append stress input");
+                assertTrue(!provider.page().items.empty(), "non-empty candidate page");
+                const auto topText = provider.page().items.front().text;
+                ++totalEvaluations;
 
-            // 模拟用户真实打字选用首选，持续产生合法学习
-            const auto selIdx = indexOf(provider.page(), t.expectedTop);
-            if (selIdx < provider.page().items.size()) {
+                if (topText != t.expectedTop) {
+                    std::cerr << "Round " << round << " Usurpation on input '" << t.input
+                              << "': expected '" << t.expectedTop << "', got '" << topText << "'\n";
+                    ++usurpationCount;
+                }
+                assertTrue(topText != t.forbiddenTop, "Forbidden word usurped top rank");
+                assertTrue(topText == t.expectedTop, "Expected top candidate must be rank 0");
+
+                // 模拟用户真实打字选用首选，持续产生合法学习
+                const auto selIdx = indexOf(provider.page(), t.expectedTop);
+                assertTrue(selIdx < provider.page().items.size(), "stress target exists");
                 assertTrue(provider.select(selIdx), "select top candidate in stress test");
+                assertTrue(provider.page().rawInput.empty(), "stress selection consumes full input");
             }
-        }
 
-        // 每 50 轮模拟一次偶发次选，验证不会发生单次偶选篡位
-        // 与主循环一致，每次查询按独立输入处理；不评价“键盘试”等连续语境。
-        if (round % 50 == 25) {
-            provider.reset();
-            provider.setContext("", "");
-            assertTrue(provider.append("shi"), "append shi for occasional pick");
-            const auto shiIdx = indexOf(provider.page(), "试");
-            if (shiIdx < provider.page().items.size()) {
-                provider.select(shiIdx);
+            // 每 50 轮模拟一次偶发次选，验证不会发生单次偶选篡位
+            // 与主循环一致，每次查询按独立输入处理；不评价“键盘试”等连续语境。
+            if (round % 50 == accidentalRound) {
+                provider.reset();
+                provider.setContext("", "");
+                assertTrue(provider.append("shi"), "append shi for occasional pick");
+                const auto shiIdx = indexOf(provider.page(), "试");
+                assertTrue(shiIdx < provider.page().items.size(), "occasional 试 exists");
+                assertTrue(provider.select(shiIdx), "select occasional 试");
+                ++accidentalSelections;
+                provider.reset();
+                provider.setContext("", "");
+                assertTrue(provider.append("shi"), "append shi post occasional pick");
+                assertTrue(provider.page().items.front().text == "是",
+                           "Occasional selection of '试' must not hijack '是'");
+
+                provider.reset();
+                provider.setContext("", "");
+                assertTrue(provider.append("de"), "append de for occasional pick");
+                const auto deIdx = indexOf(provider.page(), "地");
+                assertTrue(deIdx < provider.page().items.size(), "occasional 地 exists");
+                assertTrue(provider.select(deIdx), "select occasional 地");
+                ++accidentalSelections;
+                provider.reset();
+                provider.setContext("", "");
+                assertTrue(provider.append("de"), "append de post occasional pick");
+                assertTrue(provider.page().items.front().text == "的",
+                           "Occasional selection of '地' must not hijack '的'");
             }
-            provider.reset();
-            provider.setContext("", "");
-            assertTrue(provider.append("shi"), "append shi post occasional pick");
-            assertTrue(provider.page().items.front().text == "是",
-                       "Occasional selection of '试' must not hijack '是'");
 
-            provider.reset();
-            provider.setContext("", "");
-            assertTrue(provider.append("de"), "append de for occasional pick");
-            const auto deIdx = indexOf(provider.page(), "地");
-            if (deIdx < provider.page().items.size()) {
-                provider.select(deIdx);
+            if (round % 100 == 99) {
+                assertTrue(provider.flush(), "flush stress learning");
             }
-            provider.reset();
-            provider.setContext("", "");
-            assertTrue(provider.append("de"), "append de post occasional pick");
-            assertTrue(provider.page().items.front().text == "的",
-                       "Occasional selection of '地' must not hijack '的'");
-        }
-
-        if (round % 100 == 99) {
-            provider.flush();
         }
     }
 
     assertTrue(usurpationCount == 0, "Stress benchmark must have 0 usurpations across 1000 rounds");
     assertTrue(totalEvaluations == 15000, "1000 rounds x 15 targets = 15,000 evaluations");
+    {
+        auto reopened = makeSimulationProvider(stressPath);
+        for (const auto &target : targets) {
+            reopened.reset();
+            reopened.resetCommitHistory();
+            assertTrue(reopened.append(std::string(target.input)), "reopen stress input");
+            assertTrue(!reopened.page().items.empty(), "reopen stress candidates");
+            assertTrue(reopened.page().items.front().text == target.expectedTop,
+                       "stress preference survives reopen");
+        }
+    }
+    std::cout << "STRESS_RESULT evaluations=" << totalEvaluations
+              << " accidental_selections=" << accidentalSelections
+              << " reopened_checks=" << targets.size()
+              << " usurpations=" << usurpationCount << '\n';
 
     std::error_code error;
-    std::filesystem::remove(stressPath, error);
+    std::filesystem::remove_all(stressPath, error);
     std::filesystem::remove(stressPath.string() + "-wal", error);
     std::filesystem::remove(stressPath.string() + "-shm", error);
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+    if (argc != 1) {
+        if (argc != 4 || std::string_view(argv[1]) != "--stress" ||
+            (std::string_view(argv[3]) != "sqlite" && std::string_view(argv[3]) != "lmdb")) {
+            std::cerr << "usage: " << argv[0] << " [--stress SEED sqlite|lmdb]\n";
+            return EXIT_FAILURE;
+        }
+        const std::string_view seedText(argv[2]);
+        std::uint32_t seed = 0;
+        const auto parsed = std::from_chars(seedText.data(), seedText.data() + seedText.size(), seed);
+        if (parsed.ec != std::errc{} || parsed.ptr != seedText.data() + seedText.size()) {
+            std::cerr << "invalid stress seed\n";
+            return EXIT_FAILURE;
+        }
+        const auto path = testPath(std::string("anti-pollution-stress-") + argv[2] +
+                                  (std::string_view(argv[3]) == "lmdb" ? ".lmdb" : ".sqlite3"));
+        testOneThousandRoundsAntiPollutionStress(path, seed);
+        return EXIT_SUCCESS;
+    }
     const auto learningPath = testPath("daily-simulation-learning.sqlite3");
 
     std::cout << "[1/9] Running Single Pinyin Priority Benchmark (32 syllables)...\n";
@@ -961,7 +1011,7 @@ int main() {
     testDormantDisplacementAndNasalTypoPersonalization(learningPath);
 
     std::cout << "[9/9] Running 1,000-Round Anti-Pollution & High-Frequency Stress Simulation Benchmark...\n";
-    testOneThousandRoundsAntiPollutionStress(learningPath);
+    testOneThousandRoundsAntiPollutionStress(testPath("anti-pollution-stress.sqlite3"));
 
     std::error_code error;
     std::filesystem::remove(learningPath, error);

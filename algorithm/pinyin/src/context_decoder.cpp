@@ -10,11 +10,14 @@
 #include "modernime/core/learning_snapshot.h"
 #include "modernime/core/pinyin_match.h"
 #include "modernime/core/common_characters.h"
-#include "modernime/core/candidate_model.h"
-#include <unordered_map>
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <string>
+#include <string_view>
+#include <unordered_set>
+#include <vector>
 
 namespace modernime::pinyin {
 namespace {
@@ -35,6 +38,55 @@ private:
     const libime::PinyinDictionary &base_;
     mutable libime::PinyinMatchState localMatch_;
 };
+
+struct LearnedSentenceWord {
+    std::string text;
+    std::string encodedPinyin;
+    double boost;
+};
+
+struct LearnedSentenceEvidence {
+    double total = 0.0;
+    bool rareCovered = false;
+};
+
+LearnedSentenceEvidence sentenceLearningEvidence(
+    std::string_view text, std::string_view encodedPinyin,
+    const std::vector<LearnedSentenceWord> &words) {
+    if (words.empty() || encodedPinyin.empty() || encodedPinyin.size() % 2 != 0 ||
+        !fcitx::utf8::validate(text)) return {};
+    std::vector<std::size_t> ends{0};
+    for (std::size_t i = 1; i <= text.size(); ++i)
+        if (i == text.size() || (static_cast<unsigned char>(text[i]) & 0xc0U) != 0x80U)
+            ends.push_back(i);
+    const auto syllables = encodedPinyin.size() / 2;
+    if (ends.size() != syllables + 1) return {};
+
+    // Evidence belongs to aligned text/readings, not a decoder's tokenization.
+    // Choose disjoint learned spans so overlapping words never count twice.
+    std::vector<double> best(syllables + 1);
+    // Keep coverage reachability separately: a stronger overlapping common-word
+    // span must not discard an otherwise valid rare-character covering path.
+    std::vector<double> covered(syllables + 1, -std::numeric_limits<double>::infinity());
+    covered.front() = 0.0;
+    for (std::size_t begin = 0; begin < syllables; ++begin) {
+        const auto character = text.substr(ends[begin], ends[begin + 1] - ends[begin]);
+        best[begin + 1] = std::max(best[begin + 1], best[begin]);
+        if (!core::CommonCharacters::containsRare(character))
+            covered[begin + 1] = std::max(covered[begin + 1], covered[begin]);
+        for (const auto &word : words) {
+            const auto length = word.encodedPinyin.size() / 2;
+            if (length > syllables - begin ||
+                text.substr(ends[begin], ends[begin + length] - ends[begin]) != word.text ||
+                encodedPinyin.substr(begin * 2, length * 2) != word.encodedPinyin)
+                continue;
+            const auto evidence = word.boost * static_cast<double>(length);
+            best[begin + length] = std::max(best[begin + length], best[begin] + evidence);
+            covered[begin + length] = std::max(covered[begin + length], covered[begin] + evidence);
+        }
+    }
+    return {best.back(), std::isfinite(covered.back())};
+}
 
 // Keep up to four plausible tokenizations at each character boundary. The
 // previous greedy longest word can hide a useful suffix (e.g. a pronoun + 的).
@@ -179,7 +231,7 @@ std::vector<core::CandidateScore> ContextDecoder::candidates() const {
             readings.push_back(context_.candidateFullPinyin(i));
     }
     SentenceDictionary dictionary(context_);
-    std::unordered_map<std::string, double> learnedWords;
+    std::vector<LearnedSentenceWord> learnedWords;
     if (learning_) for (const auto &word : learning_->recallSentenceWords(readings, nowMs_)) {
         std::vector<char> encoded;
         try { encoded = libime::PinyinEncoder::encodeFullPinyin(word.pinyin); }
@@ -199,7 +251,8 @@ std::vector<core::CandidateScore> ContextDecoder::candidates() const {
         // in this request-local dictionary, without changing shared dictionaries.
         dictionary.addWord(1, word.pinyin, word.phrase,
                            lexicalCost + static_cast<float>(2.0 * std::clamp(word.learningBoost, 0.0, 3.0)));
-        learnedWords.emplace(core::candidateOrderKey(word.phrase, word.pinyin), word.learningBoost);
+        learnedWords.push_back({word.phrase, std::string(encoded.begin(), encoded.end()),
+                                std::min(word.learningBoost, 3.0)});
     }
     if (!active_ && learnedWords.empty()) return result;
     auto graph = context_.useShuangpin()
@@ -219,22 +272,16 @@ std::vector<core::CandidateScore> ContextDecoder::candidates() const {
         candidate.source_index = i;
         candidate.language_context_bonus = evidence;
         std::string encoded;
-        double componentEvidence = 0.0;
-        bool rareCovered = true;
         for (const auto *node : sentence.sentence()) {
             const auto &part = static_cast<const libime::PinyinLatticeNode *>(node)->encodedPinyin();
             encoded += part;
-            const auto pinyin = libime::PinyinEncoder::decodeFullPinyin(part);
-            const auto found = learnedWords.find(core::candidateOrderKey(node->word(), pinyin));
-            if (found != learnedWords.end())
-                componentEvidence += std::min(found->second, 3.0) * static_cast<double>(part.size() / 2);
-            else if (core::CommonCharacters::containsRare(node->word())) rareCovered = false;
         }
-        if (evidence < 1.0 && componentEvidence == 0.0) continue;
-        if (componentEvidence > 0.0) {
+        const auto component = sentenceLearningEvidence(candidate.text, encoded, learnedWords);
+        if (evidence < 1.0 && component.total == 0.0) continue;
+        if (component.total > 0.0) {
             candidate.decoder_score = sentence.score();
-            candidate.learned_word_bonus = componentEvidence / static_cast<double>(encoded.size() / 2);
-            candidate.learned_rare_coverage = rareCovered;
+            candidate.learned_word_bonus = component.total / static_cast<double>(encoded.size() / 2);
+            candidate.learned_rare_coverage = component.rareCovered;
         }
         candidate.full_pinyin = libime::PinyinEncoder::decodeFullPinyin(encoded.data(), encoded.size());
         candidate.consumed_input_bytes = sentence.sentence().back()->to()->index();

@@ -7,6 +7,7 @@
 #include "modernime/pinyin/candidate_features.h"
 #include <libime/pinyin/pinyindictionary.h>
 #include "modernime/pinyin/candidate_pipeline.h"
+#include "modernime/pinyin/context_decoder.h"
 #include "modernime/pinyin/pinyin_shared_resources.h"
 #include <libime/pinyin/pinyincontext.h>
 #include "modernime/pinyin/pinyin_candidate_provider.h"
@@ -68,6 +69,12 @@ protected:
         for (char key : input) ASSERT_TRUE(c.handle({fcitx5::KeyKind::Character, key}));
         ASSERT_EQ(c.page().rawInput, input);
     }
+    static void eraseUnselectedSuffix(fcitx5::ModernIMEController &controller) {
+        const auto remaining = controller.page().rawInput.size();
+        for (std::size_t i = 0; i < remaining; ++i)
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Backspace}));
+        ASSERT_TRUE(controller.page().rawInput.empty());
+    }
 #if defined(MODERNIME_HAS_FCITX5)
     static double textWidth(std::string_view text, double font) {
         double result = 0;
@@ -87,6 +94,55 @@ protected:
             if (global >= b.begin && global < b.end) return {n, global - b.begin};
         }
         throw std::runtime_error("candidate lost during pagination");
+    }
+    static void choosePhysical(fcitx5::ModernIMEController &controller,
+                               std::size_t index, double panel, bool digit) {
+        auto metrics = ui::CandidateBarMetrics::reference(20, 9);
+        metrics.panelWidth = panel;
+        const auto width = [](std::string_view text) { return textWidth(text, 20); };
+        const auto boundaries = ui::CandidatePagination::partition(
+            controller.page().items, metrics, width);
+        const auto previousLayout = controller.layoutGeneration();
+        const auto expected = core::candidateIdentity(controller.page().items[index],
+                                                      controller.page());
+        ASSERT_TRUE(controller.setPageBoundaries(controller.displayGeneration(),
+                                                 previousLayout + 1,
+                                                 boundaries));
+        EXPECT_FALSE(controller.setPageBoundaries(controller.displayGeneration(),
+                                                  previousLayout, boundaries));
+        EXPECT_EQ(core::candidateIdentity(controller.page().items[index], controller.page()),
+                  expected);
+        const auto [physicalPage, slot] = physicalPosition(controller.page(), index, 20, panel);
+        ASSERT_LT(physicalPage, boundaries.size());
+        const auto initialPage = controller.currentPageIndex();
+        for (auto p = initialPage; p < physicalPage; ++p)
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::NextPage}));
+        for (auto p = initialPage; p > physicalPage; --p)
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::PreviousPage}));
+        ASSERT_EQ(controller.currentPageIndex(), physicalPage);
+        if (digit) {
+            ASSERT_LT(slot, 9u);
+            ASSERT_TRUE(controller.handle(
+                {fcitx5::KeyKind::Digit, 0, static_cast<char>('1' + slot)}));
+            return;
+        }
+        const auto boundary = boundaries[physicalPage];
+        core::CandidatePage visible = controller.page();
+        visible.items.assign(controller.page().items.begin() + boundary.begin,
+                             controller.page().items.begin() + boundary.end);
+        visible.cursor -= boundary.begin;
+        const auto layout = ui::CandidateBarLayout::measure(visible, metrics, width);
+        ASSERT_LT(slot, layout.candidates.size());
+        const auto &bounds = layout.candidates[slot].bounds;
+        const auto hit = ui::hitTestCandidate(layout, metrics,
+                                             bounds.x + bounds.width / 2,
+                                             bounds.y + bounds.height / 2);
+        ASSERT_EQ(hit, static_cast<int>(slot));
+        const auto global = boundary.begin + static_cast<std::size_t>(hit);
+        const core::CandidateSelectionRequest request{
+            controller.sessionId(), controller.displayGeneration(), global,
+            core::candidateIdentity(controller.page().items[global], controller.page())};
+        ASSERT_TRUE(controller.select(request));
     }
 #endif
     std::filesystem::path root;
@@ -202,6 +258,55 @@ TEST_F(CandidateRankingRegression, DecoderRecallOnlyCandidateHasNoInventedScore)
     EXPECT_FALSE(std::optional<float>(found->decoder_score).has_value());
     EXPECT_DOUBLE_EQ(found->decoder_bonus, 0.0);
     EXPECT_GT(found->learning_boost, 0.0);
+}
+
+TEST_F(CandidateRankingRegression, SentenceLearningUsesDisjointTextAndReadingAlignedSpans) {
+    pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    auto shared = pinyin::PinyinSharedResources::create(paths, options);
+    libime::PinyinContext context(shared->ime.get());
+    constexpr std::int64_t clock = 1000000;
+    constexpr std::string_view raw = "woshizhongguoren";
+    ASSERT_TRUE(context.type(std::string(raw)));
+    const std::vector<core::LearningEntry> learned{
+        {"中国", "zhong'guo", "", "", 3, clock},
+        {"国人", "guo'ren", "", "", 3, clock},
+        // 模拟旧数据的错误读音别名；wo'shi 确实出现在当前输入并被有界召回，
+        // 但不能把该证据借给位于另一音节范围内的同文本「国人」。
+        {"国人", "wo'shi", "", "", 100, clock}};
+    for (std::size_t count = 1; count <= learned.size(); ++count) {
+        SCOPED_TRACE(count);
+        const core::LearningSnapshot snapshot(
+            std::vector<core::LearningEntry>(learned.begin(), learned.begin() + count));
+        const auto recalled = snapshot.recallSentenceWords({"wo'shi'zhong'guo'ren"}, clock);
+        ASSERT_EQ(recalled.size(), count);
+        pinyin::ContextDecoder decoder(context, "", &snapshot, clock);
+        // 别名会真实召回「国人中国人」；直接检查该格点候选，避免把未进入
+        // 有界补充解码的原句当作音节匹配成功或失败的证据。
+        const std::string_view target = count == 3 ? "国人中国人" : "我是中国人";
+        const auto supplemented = decoder.candidates();
+        ASSERT_NE(std::find_if(supplemented.begin(), supplemented.end(), [&](const auto &candidate) {
+            return candidate.text == target && candidate.full_pinyin == "wo'shi'zhong'guo'ren" &&
+                   candidate.consumed_input_bytes == raw.size();
+        }), supplemented.end());
+        const auto result = pinyin::buildCandidatePipeline(context, *shared->ime->dict(),
+            &snapshot, clock, {}, {}, {}, nullptr, nullptr, nullptr, nullptr, 0, &decoder);
+        const auto found = std::find_if(result.order.begin(), result.order.end(),
+            [&](std::size_t index) {
+                const auto &candidate = result.scored[index];
+                return candidate.text == target &&
+                       candidate.full_pinyin == "wo'shi'zhong'guo'ren" &&
+                       candidate.consumed_input_bytes == raw.size();
+            });
+        ASSERT_NE(found, result.order.end());
+        const auto &candidate = result.scored[*found];
+        // 中国/国人共享「国」，只能覆盖 2 音节。第三快照的 wo'shi 前缀
+        // 独立覆盖 2 音节，但其更强证据不能借给末尾 guo'ren 的同文本。
+        const auto prefix = count == 3 ? std::min(snapshot.boostAt("国人", "wo'shi", clock), 3.0) : 0.0;
+        const auto expected = (std::min(snapshot.boostAt("中国", "zhong'guo", clock), 3.0) + prefix) * 2.0 / 5.0;
+        EXPECT_NEAR(candidate.learned_word_bonus, expected, 1e-9);
+        EXPECT_DOUBLE_EQ(candidate.learning_boost, 0.0);
+    }
 }
 
 TEST_F(CandidateRankingRegression, DecoderSupplementalPenaltyReducesEvidence) {
@@ -843,6 +948,237 @@ TEST_F(CandidateRankingRegression, RepeatedFuzzyPartialChoiceSwitchesThePersonal
     EXPECT_EQ(entry->frequency, 11);
     EXPECT_EQ(snapshot->entry("之", "zidaili", "", ""), nullptr);
 }
+
+TEST_F(CandidateRankingRegression, InterleavedPartialChoicesPromoteAcrossSentenceLengths) {
+    struct Case {
+        const char *raw;
+        const char *sentence;
+        const char *target;
+        const char *pinyin;
+        std::size_t consumed;
+        const char *suffix;
+    };
+    const std::vector<Case> cases{
+        {"nihaoshijie", "你好世界", "你", "ni", 2, "haoshijie"},
+        {"woshizhongguoren", "我是中国人", "我", "wo", 2, "shizhongguoren"},
+        {"qingbangwodakaiwenjian", "请帮我打开文件", "请", "qing", 4, "bangwodakaiwenjian"}};
+    // 两种固定顺序各用新库；同一个窗口交错学习，避免仅连续同词才有效。
+    for (const bool reverse : {false, true}) {
+        SCOPED_TRACE(reverse ? "reverse order" : "rotating order");
+        auto data = paths;
+        data.learningStore = (root / (reverse ? "reverse.sqlite3" : "rotating.sqlite3")).string();
+        pinyin::PinyinProviderOptions options;
+        options.contextLearningEnabled = false;
+        pinyin::PinyinCandidateProvider provider(data, options);
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        for (std::size_t round = 0; round < 5; ++round) {
+            for (std::size_t offset = 0; offset < cases.size(); ++offset) {
+                const auto position = (round + offset) % cases.size();
+                const auto &tc = cases[reverse ? cases.size() - 1 - position : position];
+                SCOPED_TRACE(std::string(tc.raw) + " round=" + std::to_string(round));
+                type(controller, tc.raw);
+                const auto index = rank(controller.page(), tc.target);
+                ASSERT_LT(index, controller.page().items.size());
+                EXPECT_EQ(controller.page().items.front().text, tc.sentence);
+                EXPECT_EQ(controller.page().items[index].fullPinyin, tc.pinyin);
+                EXPECT_EQ(controller.page().items[index].consumedInputBytes, tc.consumed);
+                ASSERT_TRUE(controller.select(index));
+                EXPECT_EQ(host.committed, tc.target);
+                ASSERT_EQ(controller.page().rawInput, tc.suffix);
+                eraseUnselectedSuffix(controller);
+            }
+        }
+        for (const auto &tc : cases) {
+            SCOPED_TRACE(tc.raw);
+            type(controller, tc.raw);
+            const auto index = rank(controller.page(), tc.target);
+            ASSERT_LT(index, controller.page().items.size());
+            EXPECT_EQ(index, 1u);
+            EXPECT_EQ(controller.page().items.front().text, tc.sentence);
+            EXPECT_EQ(controller.page().items.front().consumedInputBytes,
+                      std::string_view(tc.raw).size());
+            EXPECT_EQ(controller.page().items[index].consumedInputBytes, tc.consumed);
+#if defined(MODERNIME_HAS_FCITX5)
+            EXPECT_EQ(physicalPosition(controller.page(), index),
+                      (std::pair<std::size_t, std::size_t>{0, 1}));
+            choosePhysical(controller, index, 610, reverse);
+#else
+            ASSERT_TRUE(controller.select(index));
+#endif
+            EXPECT_EQ(host.committed, tc.target);
+            ASSERT_EQ(controller.page().rawInput, tc.suffix);
+            eraseUnselectedSuffix(controller);
+        }
+        ASSERT_TRUE(provider.flush());
+        core::LearningStore store(data.learningStore);
+        ASSERT_TRUE(store.openReadOnly());
+        const auto snapshot = store.snapshot();
+        for (const auto &tc : cases) {
+            const auto *entry = snapshot->entry(tc.target, tc.pinyin, "", "");
+            ASSERT_NE(entry, nullptr) << tc.target;
+            EXPECT_EQ(entry->frequency, 6) << tc.target;
+            EXPECT_EQ(snapshot->entry(tc.target, tc.raw, "", ""), nullptr);
+        }
+    }
+}
+
+TEST_F(CandidateRankingRegression, FuzzyPartialIntentSurvivesInterleavedSpellingsAndOtherChoices) {
+    {
+        core::LearningStore store(paths.learningStore);
+        ASSERT_TRUE(store.open());
+        ASSERT_TRUE(store.recordBatch(std::vector<core::LearningEvent>(50,
+            {core::LearningEvent::Kind::Selection, "子", "zi", {}, {}, nowMs()})));
+    }
+    struct Spelling { const char *raw; std::size_t consumed; const char *suffix; };
+    const std::vector<Spelling> spellings{
+        {"zidaili", 2, "daili"}, {"zi'dai'li", 3, "dai'li"}};
+    pinyin::PinyinProviderOptions options;
+    options.contextLearningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    for (std::size_t round = 0; round < 10; ++round) {
+        for (std::size_t offset = 0; offset < spellings.size(); ++offset) {
+            const auto &tc = spellings[(round + offset) % spellings.size()];
+            SCOPED_TRACE(std::string(tc.raw) + " round=" + std::to_string(round));
+            type(controller, tc.raw);
+            const auto index = rank(controller.page(), "之");
+            ASSERT_LT(index, controller.page().items.size());
+            EXPECT_EQ(controller.page().items[index].fullPinyin, "zhi");
+            EXPECT_EQ(controller.page().items[index].consumedInputBytes, tc.consumed);
+            ASSERT_TRUE(controller.select(index));
+            EXPECT_EQ(host.committed, "之");
+            ASSERT_EQ(controller.page().rawInput, tc.suffix);
+            eraseUnselectedSuffix(controller);
+
+            const auto unrelated = (round + offset) % 2 == 0;
+            type(controller, unrelated ? "shi" : "jian");
+            const auto noise = rank(controller.page(), unrelated ? "试" : "键");
+            ASSERT_LT(noise, controller.page().items.size());
+            ASSERT_TRUE(controller.select(noise));
+            EXPECT_EQ(host.committed, unrelated ? "试" : "键");
+            ASSERT_TRUE(controller.page().rawInput.empty());
+        }
+    }
+    for (const auto &tc : spellings) {
+        SCOPED_TRACE(tc.raw);
+        type(controller, tc.raw);
+        const auto index = rank(controller.page(), "之");
+        ASSERT_LT(index, controller.page().items.size());
+        EXPECT_EQ(index, 1u);
+        EXPECT_EQ(controller.page().items.front().text, "子代理");
+        EXPECT_EQ(controller.page().items.front().consumedInputBytes,
+                  std::string_view(tc.raw).size());
+        EXPECT_GT(controller.page().items[index].recentChoiceBonus, 0.0);
+        EXPECT_EQ(controller.page().items[index].consumedInputBytes, tc.consumed);
+#if defined(MODERNIME_HAS_FCITX5)
+        EXPECT_EQ(physicalPosition(controller.page(), index),
+                  (std::pair<std::size_t, std::size_t>{0, 1}));
+        choosePhysical(controller, index, 610, tc.consumed == 2);
+#else
+        ASSERT_TRUE(controller.select(index));
+#endif
+        EXPECT_EQ(host.committed, "之");
+        ASSERT_EQ(controller.page().rawInput, tc.suffix);
+        eraseUnselectedSuffix(controller);
+    }
+    ASSERT_TRUE(provider.flush());
+    core::LearningStore store(paths.learningStore);
+    ASSERT_TRUE(store.openReadOnly());
+    const auto snapshot = store.snapshot();
+    const auto *entry = snapshot->entry("之", "zhi", "", "");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 22);
+    for (const auto &tc : spellings)
+        EXPECT_EQ(snapshot->entry("之", tc.raw, "", ""), nullptr);
+}
+
+#if defined(MODERNIME_HAS_FCITX5)
+TEST_F(CandidateRankingRegression, LearnedAbbreviationPrefixKeepsIdentityAcrossWidthAndSelectionMethods) {
+    pinyin::PinyinProviderOptions options;
+    options.contextLearningEnabled = false;
+    pinyin::PinyinCandidateProvider provider(paths, options);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    for (int round = 0; round < 5; ++round) {
+        type(controller, "zenmehuishi");
+        if (round == 0) {
+            ASSERT_FALSE(controller.page().items.empty());
+            EXPECT_EQ(controller.page().items.front().text, "怎么回事");
+        }
+        const auto index = rank(controller.page(), "怎么");
+        ASSERT_LT(index, controller.page().items.size());
+        ASSERT_TRUE(controller.select(index));
+        EXPECT_EQ(host.committed, "怎么");
+        ASSERT_EQ(controller.page().rawInput, "huishi");
+        eraseUnselectedSuffix(controller);
+    }
+    struct Spelling { const char *raw; std::size_t consumed; const char *suffix; };
+    const std::vector<Spelling> spellings{
+        {"zmhuishi", 2, "huishi"}, {"z'm'hui'shi", 4, "hui'shi"},
+        {"zenmhuishi", 4, "huishi"}, {"zenmehuishi", 5, "huishi"}};
+    for (const auto &tc : spellings) {
+        for (const bool digit : {false, true}) {
+            for (const double panel : {180.0, 610.0}) {
+                SCOPED_TRACE(std::string(tc.raw) + (digit ? " digit " : " mouse ") +
+                             std::to_string(panel));
+                type(controller, tc.raw);
+                const auto index = rank(controller.page(), "怎么");
+                ASSERT_LT(index, controller.page().items.size());
+                EXPECT_EQ(index, 1u);
+                // 两条整句都含已学的「怎么」，不能因原生分词不同而偏奖替代词。
+                EXPECT_EQ(controller.page().items.front().text, "怎么回事");
+                const auto full = core::candidateIdentity(controller.page().items.front(),
+                                                           controller.page());
+                EXPECT_EQ(full.role, core::CommitCandidateRole::Chinese);
+                EXPECT_EQ(full.consumedInputBytes, std::string_view(tc.raw).size());
+                const auto identity = core::candidateIdentity(
+                    controller.page().items[index], controller.page());
+                EXPECT_EQ(identity.fullPinyin, "zen'me");
+                EXPECT_EQ(identity.consumedInputBytes, tc.consumed);
+                EXPECT_EQ(physicalPosition(controller.page(), index, 20, 180),
+                          (std::pair<std::size_t, std::size_t>{1, 0}));
+                EXPECT_EQ(physicalPosition(controller.page(), index, 20, 610),
+                          (std::pair<std::size_t, std::size_t>{0, 1}));
+
+                // 先发布另一宽度，再切到实际选择宽度；旧几何不能覆盖新映射。
+                auto previousMetrics = ui::CandidateBarMetrics::reference(20, 9);
+                previousMetrics.panelWidth = panel == 180 ? 610 : 180;
+                const auto previousBoundaries = ui::CandidatePagination::partition(
+                    controller.page().items, previousMetrics,
+                    [](std::string_view text) { return textWidth(text, 20); });
+                const auto oldDisplay = controller.displayGeneration();
+                const auto oldLayout = controller.layoutGeneration();
+                ASSERT_TRUE(controller.setPageBoundaries(oldDisplay, oldLayout,
+                                                         previousBoundaries));
+                const core::CandidateSelectionRequest oldRequest{
+                    controller.sessionId(), oldDisplay, index, identity};
+                choosePhysical(controller, index, panel, digit);
+                EXPECT_EQ(host.committed, "怎么");
+                ASSERT_EQ(controller.page().rawInput, tc.suffix);
+                EXPECT_FALSE(controller.select(oldRequest));
+                EXPECT_FALSE(controller.setPageBoundaries(oldDisplay, oldLayout,
+                                                          previousBoundaries));
+                EXPECT_EQ(host.committed, "怎么");
+                EXPECT_EQ(controller.page().rawInput, tc.suffix);
+                eraseUnselectedSuffix(controller);
+            }
+        }
+    }
+    ASSERT_TRUE(provider.flush());
+    core::LearningStore store(paths.learningStore);
+    ASSERT_TRUE(store.openReadOnly());
+    const auto snapshot = store.snapshot();
+    const auto *entry = snapshot->entry("怎么", "zen'me", "", "");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->frequency, 21);
+    for (const auto &tc : spellings)
+        EXPECT_EQ(snapshot->entry("怎么", tc.raw, "", ""), nullptr);
+    EXPECT_EQ(snapshot->entry("怎么回事", "zen'me'hui'shi", "", ""), nullptr);
+    EXPECT_EQ(snapshot->entry("怎么会是", "zen'me'hui'shi", "", ""), nullptr);
+}
+#endif
 
 TEST_F(CandidateRankingRegression, DerivedPrefixUsesItsOwnPersistedLearning) {
     pinyin::PinyinCandidateProvider provider(paths);
