@@ -78,7 +78,7 @@ public:
         }), this);
         detail::GtkWidgetGuard pageGuard(createPageShell("工作台", "", refreshButton));
         page = pageGuard.get();
-        buildInputWorkbench();
+        buildStatusLine();
         content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         gtk_widget_set_hexpand(content, TRUE);
         gtk_box_pack_start(GTK_BOX(page), content, FALSE, FALSE, 0);
@@ -92,8 +92,7 @@ public:
         clearContainer(summary);
         clearContainer(content);
         setupAction = snapshot.setupAction;
-        gtk_box_pack_start(GTK_BOX(summary),
-            label(snapshot.runtimeSummary, "modernime-overview-status"), TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(summary), statusLabel(snapshot.runtimeSummary), TRUE, TRUE, 0);
         gtk_widget_set_tooltip_text(setupButton, snapshot.setupDescription.c_str());
         gtk_button_set_label(GTK_BUTTON(setupButton), snapshot.setupActionLabel.c_str());
         // Healthy state needs no duplicate setup paragraph or redundant action.
@@ -119,136 +118,83 @@ public:
             gtk_box_pack_start(GTK_BOX(content), notices, FALSE, FALSE, 0);
         }
 
-        // Two task-oriented shortcuts, followed by a single compact content list.
-        auto *shortcuts = gtk_flow_box_new();
-        gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(shortcuts), GTK_SELECTION_NONE);
-        gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(shortcuts), TRUE);
-        gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(shortcuts), 1);
-        gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(shortcuts), 2);
-        gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(shortcuts), 10);
-        gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(shortcuts), 10);
-        addStyleClass(shortcuts, "modernime-overview-shortcuts");
-        gtk_flow_box_insert(GTK_FLOW_BOX(shortcuts), createShortcut(
-            "候选与外观", "配色、字体与候选栏",
-            SettingsPageId::Candidates), -1);
-        gtk_flow_box_insert(GTK_FLOW_BOX(shortcuts), createShortcut(
-            "输入习惯", "默认" + snapshot.defaultMode + "，" + snapshot.toggleKey + " 切换中英",
-            SettingsPageId::Input), -1);
-        gtk_box_pack_start(GTK_BOX(content), shortcuts, FALSE, FALSE, 0);
-
-        auto *library = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-        addStyleClass(library, "modernime-overview-library");
-        gtk_box_set_homogeneous(GTK_BOX(library), TRUE);
-        gtk_box_pack_start(GTK_BOX(library), createContentRow(
-            "我的词语", snapshot.dictionaryEntries == 0 ? "添加常用词与专用短语" : "管理常用词与专用短语",
-            snapshot.dictionaryEntries, "词条", SettingsPageId::Dictionary),
-            TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(library), createContentRow(
-            "剪贴板", snapshot.clipboardShortcut,
-            snapshot.clipboardEntries, "记录", SettingsPageId::Clipboard), TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(library), createContentRow(
-            "学习记录", "查看与管理已经学会的词语",
-            snapshot.learningEntries, "记录", SettingsPageId::Learning), TRUE, TRUE, 0);
+        auto *library = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        addStyleClass(library, "modernime-overview-list");
+        gtk_box_pack_start(GTK_BOX(library), createListRow("我的词语", SettingsPageId::Dictionary,
+            std::to_string(snapshot.dictionaryEntries) + " 词条"), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(library), createListRow("剪贴板", SettingsPageId::Clipboard,
+            std::to_string(snapshot.clipboardEntries) + " 条"), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(library), createListRow("学习记录", SettingsPageId::Learning,
+            std::to_string(snapshot.learningEntries) + " 条"), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(content), library, FALSE, FALSE, 0);
+
+        auto *settings = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        addStyleClass(settings, "modernime-overview-list");
+        gtk_box_pack_start(GTK_BOX(settings), createListRow("候选与外观", SettingsPageId::Candidates), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(settings), createListRow("输入习惯", SettingsPageId::Input), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(content), settings, FALSE, FALSE, 0);
         gtk_widget_show_all(summary);
         gtk_widget_show_all(content);
     }
 
-    GtkWidget *createShortcut(std::string_view title, std::string_view description,
-                              SettingsPageId destination) {
-        auto *button = createDestinationButton(title, destination, navigate, description);
+    GtkWidget *createListRow(std::string_view title, SettingsPageId destination,
+                             std::string_view count = {}) {
+        auto *button = createDestinationButton(title, destination, navigate, count);
         gtk_widget_destroy(gtk_bin_get_child(GTK_BIN(button)));
-        addStyleClass(button, "modernime-overview-shortcut");
-        gtk_widget_set_size_request(button, 180, -1);
-        auto *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-        auto *icon = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-        addStyleClass(icon, "modernime-overview-shortcut-icon");
-        gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
-        gtk_box_pack_start(GTK_BOX(icon), createSettingsPageIcon(destination, 24), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(row), icon, FALSE, FALSE, 0);
-        auto *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-        gtk_box_pack_start(GTK_BOX(text), label(title, "modernime-setting-title"), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(row), text, TRUE, TRUE, 0);
-        gtk_box_pack_end(GTK_BOX(row), gtk_image_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_MENU), FALSE, FALSE, 0);
-        gtk_widget_set_tooltip_text(button, std::string(description).c_str());
-        gtk_container_add(GTK_CONTAINER(button), row);
-        return button;
-    }
-
-    GtkWidget *createContentRow(std::string_view title, std::string_view description,
-                               std::size_t count,
-                               std::string_view unit, SettingsPageId destination) {
-        auto *button = createDestinationButton(title, destination, navigate, description);
-        gtk_widget_destroy(gtk_bin_get_child(GTK_BIN(button)));
-        // Pointer activation navigates immediately; keyboard traversal retains
-        // its own visible focus instead of leaving a selected-looking row.
         gtk_widget_set_focus_on_click(button, FALSE);
-        addStyleClass(button, "modernime-overview-content-row");
-        auto *row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-        auto *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        auto *icon = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-        addStyleClass(icon, "modernime-overview-content-icon");
+        addStyleClass(button, "modernime-overview-row");
+        auto *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+        auto *icon = createSettingsPageIcon(destination, 20);
         gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
-        gtk_box_pack_start(GTK_BOX(icon), createSettingsPageIcon(destination, 20), FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(top), icon, FALSE, FALSE, 0);
-        auto *titleLabel = label(title, "modernime-setting-title");
-        addStyleClass(titleLabel, "modernime-overview-content-title");
-        gtk_box_pack_start(GTK_BOX(top), titleLabel, TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(row), top, FALSE, FALSE, 0);
-        auto *numbers = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-        auto *value = label(std::to_string(count), "modernime-overview-count");
-        gtk_label_set_line_wrap(GTK_LABEL(value), FALSE);
-        gtk_widget_set_valign(value, GTK_ALIGN_CENTER);
-        gtk_box_pack_start(GTK_BOX(numbers), value, FALSE, FALSE, 0);
-        auto *suffix = label(unit, "modernime-description");
-        gtk_widget_set_valign(suffix, GTK_ALIGN_END);
-        gtk_widget_set_margin_bottom(suffix, 9);
-        gtk_box_pack_start(GTK_BOX(numbers), suffix, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(row), numbers, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(row), icon, FALSE, FALSE, 0);
+        auto *titleLabel = label(title, "modernime-overview-row-title");
+        gtk_widget_set_valign(titleLabel, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(row), titleLabel, TRUE, TRUE, 0);
+        if (!count.empty()) {
+            auto *value = label(count, "modernime-overview-row-count");
+            gtk_label_set_line_wrap(GTK_LABEL(value), FALSE);
+            gtk_widget_set_valign(value, GTK_ALIGN_CENTER);
+            gtk_box_pack_start(GTK_BOX(row), value, FALSE, FALSE, 0);
+        }
         auto *arrow = gtk_image_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_MENU);
-        addStyleClass(arrow, "modernime-overview-content-arrow");
         gtk_widget_set_valign(arrow, GTK_ALIGN_CENTER);
-        gtk_box_pack_end(GTK_BOX(top), arrow, FALSE, FALSE, 0);
+        gtk_box_pack_end(GTK_BOX(row), arrow, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(button), row);
         return button;
     }
 
-    void buildInputWorkbench() {
-        auto *workbench = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-        addStyleClass(workbench, "modernime-overview-workbench");
-        gtk_box_pack_start(GTK_BOX(page), workbench, FALSE, FALSE, 0);
-        auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-        summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-        gtk_box_pack_start(GTK_BOX(summary), label("正在检查输入状态…", "modernime-overview-status"), TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(header), summary, TRUE, TRUE, 0);
-        auto *diagnostics = createDestinationButton("诊断", SettingsPageId::Diagnostics,
-            navigate, "检查输入法运行状态并处理问题");
-        addStyleClass(diagnostics, "modernime-overview-diagnostics");
-        gtk_widget_set_valign(diagnostics, GTK_ALIGN_CENTER);
-        gtk_box_pack_end(GTK_BOX(header), diagnostics, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(workbench), header, FALSE, FALSE, 0);
+    static GtkWidget *statusLabel(std::string_view text) {
+        auto *value = label(text, "modernime-overview-status-label");
+        gtk_label_set_line_wrap(GTK_LABEL(value), FALSE);
+        gtk_label_set_ellipsize(GTK_LABEL(value), PANGO_ELLIPSIZE_END);
+        gtk_widget_set_valign(value, GTK_ALIGN_CENTER);
+        return value;
+    }
 
-        setupActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    void buildStatusLine() {
+        auto *statusLine = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        addStyleClass(statusLine, "modernime-overview-status-line");
+        gtk_box_pack_start(GTK_BOX(page), statusLine, FALSE, FALSE, 0);
+        summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        gtk_box_pack_start(GTK_BOX(summary), statusLabel("正在检查输入状态…"), TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(statusLine), summary, TRUE, TRUE, 0);
+
+        setupActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         gtk_widget_set_no_show_all(setupActions, TRUE);
         setupButton = gtk_button_new_with_label("启用 ModernIME");
         addStyleClass(setupButton, "suggested-action");
         gtk_widget_set_valign(setupButton, GTK_ALIGN_CENTER);
         g_signal_connect(setupButton, "clicked", G_CALLBACK(+[](GtkButton *, gpointer data) {
             auto &self = *static_cast<Impl *>(data);
-            gtk_widget_grab_focus(self.trialEntry);
             if (self.setup) self.setup(self.setupAction);
         }), this);
         gtk_box_pack_start(GTK_BOX(setupActions), setupButton, FALSE, FALSE, 0);
         gtk_widget_show_all(setupButton);
-        gtk_box_pack_end(GTK_BOX(header), setupActions, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(statusLine), setupActions, FALSE, FALSE, 0);
 
-        trialEntry = gtk_entry_new();
-        addStyleClass(trialEntry, "modernime-overview-trial");
-        gtk_entry_set_placeholder_text(GTK_ENTRY(trialEntry), "试试输入中文");
-        gtk_entry_set_width_chars(GTK_ENTRY(trialEntry), 12);
-        gtk_entry_set_icon_from_icon_name(GTK_ENTRY(trialEntry), GTK_ENTRY_ICON_SECONDARY, "input-keyboard-symbolic");
-        setAccessibleWidgetText(trialEntry, "试输入", "");
-        gtk_box_pack_start(GTK_BOX(workbench), trialEntry, FALSE, FALSE, 0);
+        auto *diagnostics = createDestinationButton("诊断", SettingsPageId::Diagnostics, navigate, "");
+        gtk_widget_set_valign(diagnostics, GTK_ALIGN_CENTER);
+        gtk_box_pack_start(GTK_BOX(statusLine), diagnostics, FALSE, FALSE, 0);
     }
 
     void setSetupBusy(bool busy) {
@@ -264,7 +210,6 @@ public:
     GtkWidget *setupActions = nullptr;
     GtkWidget *setupButton = nullptr;
     GtkWidget *refreshButton = nullptr;
-    GtkWidget *trialEntry = nullptr;
     GtkWidget *page = nullptr;
     GtkWidget *content = nullptr;
 };

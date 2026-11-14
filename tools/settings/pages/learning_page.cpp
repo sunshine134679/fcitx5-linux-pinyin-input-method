@@ -85,8 +85,8 @@ public:
                                             "",
                                             contextLearning),
                            FALSE, FALSE, 0);
-        auto *dataSection = createSectionCard(
-            "学习数据", "");
+        auto *dataSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+        gtk_style_context_add_class(gtk_widget_get_style_context(dataSection), "modernime-learning-storage-state");
         gtk_box_pack_start(GTK_BOX(page), dataSection, FALSE, FALSE, 0);
         learningDataFallback = dataSection;
 
@@ -121,14 +121,12 @@ public:
         gtk_style_context_add_class(gtk_widget_get_style_context(clearLearningButton), "destructive-action");
         gtk_widget_set_sensitive(clearLearningButton, FALSE);
         setTarget(clearLearningButton, "learning-clear");
-        gtk_widget_set_margin_top(clearLearningButton, 8);
+        gtk_widget_set_margin_top(clearLearningButton, 0);
         gtk_widget_set_halign(clearLearningButton, GTK_ALIGN_START);
         gtk_widget_set_tooltip_text(clearLearningButton,
                                     "备份后清空本地已记录的学习排序数据");
         setAccessibleWidgetText(clearLearningButton, "清空学习记录",
                                 "先创建并验证备份，清空本地学习排序");
-        gtk_box_pack_start(GTK_BOX(dataSection), clearLearningButton, FALSE,
-                           FALSE, 0);
         g_signal_connect(learningEnabled, "notify::active", G_CALLBACK(onSwitchChanged),
                          this);
         g_signal_connect(contextLearning, "notify::active", G_CALLBACK(onSwitchChanged),
@@ -141,10 +139,14 @@ public:
                 owner.notifyMessage(std::move(message));
             });
         });
-        gtk_box_pack_start(GTK_BOX(page), records->widget(), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(page), records->widget(), TRUE, TRUE, 0);
         gtk_box_reorder_child(GTK_BOX(page), records->widget(), 2);
+        auto *footer = GTK_WIDGET(g_object_get_data(G_OBJECT(records->widget()), "modernime-learning-footer"));
+        gtk_box_pack_end(GTK_BOX(footer), clearLearningButton, FALSE, FALSE, 0);
+        gtk_container_unset_focus_chain(GTK_CONTAINER(footer));
+        learningDataFallback = records->widget();
         setSettingsFocusChain(
-            page, {learningEnabled, contextLearning, retryButton, clearLearningButton, records->widget()});
+            page, {learningEnabled, contextLearning, records->widget(), retryButton});
     }
 
     struct RefreshTaskData {
@@ -173,7 +175,7 @@ public:
                               taskData->error.c_str());
                     gtk_widget_set_sensitive(owner.clearLearningButton, FALSE);
                     const auto message = "读取失败：" + taskData->error;
-                    gtk_label_set_text(GTK_LABEL(owner.dataStatus), message.c_str());
+                    owner.setDataStatus(message, true);
                     gtk_widget_show(owner.retryButton);
                     if (taskData->shouldNotify) {
                         owner.notifyMessage(taskData->error);
@@ -189,7 +191,7 @@ public:
                 const auto message = taskData->count == 0
                     ? std::string("暂无学习记录")
                     : "已保存 " + std::to_string(taskData->count) + " 条学习记录";
-                gtk_label_set_text(GTK_LABEL(owner.dataStatus), message.c_str());
+                owner.setDataStatus(message);
                 if (taskData->shouldNotify) {
                     owner.notifyMessage("学习记录统计已刷新");
                 }
@@ -206,7 +208,7 @@ public:
             gtk_widget_set_sensitive(records->widget(), TRUE);
             records->refresh();
         }
-        gtk_label_set_text(GTK_LABEL(dataStatus), "正在读取学习记录…");
+        setDataStatus("正在读取学习记录…");
         gtk_widget_hide(retryButton);
         ++refreshGeneration_;
         auto *taskData = new RefreshTaskData{lifetime, path, refreshGeneration_, shouldNotify, 0, {}, {}};
@@ -256,10 +258,23 @@ public:
         behaviorTaken = true;
         g_object_ref(learningSection);
         gtk_container_remove(GTK_CONTAINER(gtk_widget_get_parent(learningSection)), learningSection);
-        setSettingsFocusChain(page, {records->widget(), retryButton, clearLearningButton});
+        setSettingsFocusChain(page, {records->widget(), retryButton});
         return learningSection;
     }
+    void setDataStatus(const std::string &message, bool attention = false) {
+        storageAttention = attention;
+        gtk_label_set_text(GTK_LABEL(dataStatus), message.c_str());
+        gtk_widget_set_visible(dataStatus, !isEmbedded || attention);
+    }
     void setEmbedded(bool embedded) {
+        isEmbedded = embedded;
+        gtk_widget_set_margin_start(page, embedded ? 0 : 24);
+        gtk_widget_set_margin_end(page, embedded ? 0 : 24);
+        gtk_widget_set_margin_top(page, embedded ? 0 : 20);
+        gtk_widget_set_margin_bottom(page, embedded ? 0 : 18);
+        gtk_box_set_spacing(GTK_BOX(page), embedded ? 0 : 12);
+        gtk_widget_set_no_show_all(dataStatus, embedded);
+        gtk_widget_set_visible(dataStatus, !embedded || storageAttention);
         auto *header = GTK_WIDGET(g_object_get_data(G_OBJECT(page), "modernime-page-header"));
         if (header) {
             gtk_widget_set_no_show_all(header, embedded);
@@ -380,7 +395,7 @@ private:
         if (impl->records) gtk_widget_set_sensitive(impl->records->widget(), FALSE);
         ++impl->refreshGeneration_;
         gtk_widget_set_sensitive(impl->clearLearningButton, FALSE);
-        gtk_label_set_text(GTK_LABEL(impl->dataStatus), "正在备份并清空学习记录…");
+        impl->setDataStatus("正在备份并清空学习记录…", true);
         gtk_widget_hide(impl->operationResult);
         gtk_widget_hide(impl->retryButton);
 
@@ -421,6 +436,8 @@ private:
     GtkWidget *operationResult = nullptr;
     GtkWidget *retryButton = nullptr;
     std::unique_ptr<LearningManager> records;
+    bool isEmbedded = false;
+    bool storageAttention = false;
     bool behaviorTaken = false;
     bool refreshing = false;
     bool isClearing_ = false;

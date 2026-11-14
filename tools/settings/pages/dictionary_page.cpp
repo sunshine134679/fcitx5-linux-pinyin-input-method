@@ -229,7 +229,23 @@ public:
         }
     }
 
+    GtkWidget *scrollableView(GtkWidget *child) {
+        auto *scroll = gtk_scrolled_window_new(nullptr, nullptr);
+        addStyleClass(scroll, "modernime-page-scroller");
+        gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_NONE);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_widget_set_hexpand(scroll, TRUE);
+        gtk_widget_set_vexpand(scroll, TRUE);
+        gtk_container_add(GTK_CONTAINER(scroll), child);
+        auto *viewport = gtk_bin_get_child(GTK_BIN(scroll));
+        if (viewport) addStyleClass(viewport, "modernime-page-viewport");
+        return scroll;
+    }
+    bool visibleView(const char *name) const {
+        return g_strcmp0(gtk_stack_get_visible_child_name(GTK_STACK(views)), name) == 0;
+    }
     void buildPage() {
+        g_object_set_data(G_OBJECT(page), "modernime-page-self-scrolling", GINT_TO_POINTER(1));
         views = gtk_stack_new();
         setTarget(views, "dictionary-views");
         gtk_stack_set_homogeneous(GTK_STACK(views), FALSE);
@@ -246,17 +262,17 @@ public:
         gtk_box_pack_start(GTK_BOX(page), fixedTools, FALSE, FALSE, 0);
         g_object_set_data(G_OBJECT(page), "modernime-page-fixed-content", fixedTools);
         auto *dictionaryContent = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-        gtk_stack_add_titled(GTK_STACK(views), dictionaryContent, "dictionary", "词条");
+        gtk_stack_add_titled(GTK_STACK(views), scrollableView(dictionaryContent), "dictionary", "词条");
         quickPhrases = std::make_unique<QuickPhraseEditor>(quickPhrasePath(), notify);
         quickPhrases->setStateChanged([this] { emitStateChanged(); });
-        gtk_stack_add_titled(GTK_STACK(views), quickPhrases->widget(), "quick-phrases", "快捷短语");
+        gtk_stack_add_titled(GTK_STACK(views), scrollableView(quickPhrases->widget()), "quick-phrases", "快捷短语");
         dictionaryPacks = std::make_unique<DictionaryPackManager>(notify);
-        gtk_stack_add_titled(GTK_STACK(views), dictionaryPacks->widget(), "dictionary-packs", "词库包");
+        gtk_stack_add_titled(GTK_STACK(views), scrollableView(dictionaryPacks->widget()), "dictionary-packs", "词库包");
         gtk_box_pack_start(GTK_BOX(page), views, TRUE, TRUE, 0);
         g_signal_connect(views, "notify::visible-child-name", G_CALLBACK(+[](GObject *, GParamSpec *, gpointer p) {
             auto &owner = *static_cast<Impl *>(p);
-            if (gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.quickPhrases->widget()) owner.quickPhrases->refresh();
-            if (gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.dictionaryPacks->widget()) owner.dictionaryPacks->refresh();
+            if (owner.visibleView("quick-phrases")) owner.quickPhrases->refresh();
+            if (owner.visibleView("dictionary-packs")) owner.dictionaryPacks->refresh();
             if (owner.learningPage && gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.learningPage && owner.refreshLearning) owner.refreshLearning();
             if (owner.dictionaryToolbar) gtk_widget_set_visible(owner.dictionaryToolbar,
                 g_strcmp0(gtk_stack_get_visible_child_name(GTK_STACK(owner.views)), "dictionary") == 0);
@@ -480,8 +496,8 @@ public:
     }
 
     void refresh() {
-        if (quickPhrases && gtk_stack_get_visible_child(GTK_STACK(views)) == quickPhrases->widget()) quickPhrases->refresh();
-        if (dictionaryPacks && gtk_stack_get_visible_child(GTK_STACK(views)) == dictionaryPacks->widget()) dictionaryPacks->refresh();
+        if (quickPhrases && visibleView("quick-phrases")) quickPhrases->refresh();
+        if (dictionaryPacks && visibleView("dictionary-packs")) dictionaryPacks->refresh();
         if (idleBatchSourceId != 0) {
             g_source_remove(idleBatchSourceId);
             idleBatchSourceId = 0;

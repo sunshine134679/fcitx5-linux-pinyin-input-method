@@ -404,7 +404,7 @@ private:
         gtk_label_set_line_wrap(GTK_LABEL(previewScaleHint), FALSE);
         setTarget(previewScaleHint, "candidate-preview-scale");
         gtk_box_pack_end(GTK_BOX(previewMeta), previewScaleHint, TRUE, TRUE, 0);
-        appearanceActions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        appearanceActions = createSectionCard("", "");
         gtk_widget_set_margin_top(appearanceActions, 4);
 
         if (g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0 ||

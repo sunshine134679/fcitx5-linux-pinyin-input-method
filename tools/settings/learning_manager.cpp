@@ -3,7 +3,6 @@
 #include "modernime/settings/backend_client.h"
 #include "modernime/settings/detail/diagnostics_lifetime.h"
 #include "modernime/settings/detail/gtk_raii.h"
-#include "modernime/settings/settings_disclosure.h"
 #include "modernime/settings/settings_widgets.h"
 
 #include <gtk/gtk.h>
@@ -73,9 +72,11 @@ public:
     enum Column { Phrase, Pinyin, Frequency, Suppressed, ColumnCount };
 
     explicit Impl(std::function<void(std::string)> callback) : notify(std::move(callback)) {
-        detail::GtkWidgetGuard guard(createSectionCard(
-            "学习记录", ""));
+        detail::GtkWidgetGuard guard(gtk_box_new(GTK_ORIENTATION_VERTICAL, 8));
         root = guard.get();
+        gtk_widget_set_hexpand(root, TRUE);
+        gtk_widget_set_vexpand(root, TRUE);
+        gtk_style_context_add_class(gtk_widget_get_style_context(root), "modernime-learning-panel");
 
         auto *searchRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         search = gtk_search_entry_new();
@@ -90,11 +91,13 @@ public:
         gtk_box_pack_start(GTK_BOX(root), searchRow, FALSE, FALSE, 4);
         suppressedOnly = gtk_check_button_new_with_label("仅显示屏蔽记录");
         target(suppressedOnly, "learning-record-suppressed-only");
-        gtk_box_pack_start(GTK_BOX(root), suppressedOnly, FALSE, FALSE, 0);
 
         auto *stateRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_style_context_add_class(gtk_widget_get_style_context(stateRow), "modernime-learning-filterbar");
+        gtk_box_pack_start(GTK_BOX(stateRow), suppressedOnly, FALSE, FALSE, 0);
         state = label("正在读取学习记录…");
         target(state, "learning-record-status");
+        gtk_label_set_xalign(GTK_LABEL(state), 1.0F);
         gtk_box_pack_start(GTK_BOX(stateRow), state, TRUE, TRUE, 0);
         retry = button(stateRow, "重试", "learning-record-retry", +[](GtkButton *, gpointer data) {
             static_cast<Impl *>(data)->refresh();
@@ -124,17 +127,26 @@ public:
         }
         auto *scroll = gtk_scrolled_window_new(nullptr, nullptr);
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-        gtk_widget_set_size_request(scroll, -1, 230);
+        gtk_widget_set_size_request(scroll, -1, 72);
+        gtk_widget_set_vexpand(scroll, TRUE);
+        gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_NONE);
+        gtk_style_context_add_class(gtk_widget_get_style_context(scroll), "modernime-learning-table");
         gtk_container_add(GTK_CONTAINER(scroll), list);
         content = gtk_stack_new();
         gtk_stack_add_named(GTK_STACK(content), scroll, "list");
         empty = label("正在读取学习记录…");
-        gtk_widget_set_margin_top(empty, 30);
-        gtk_widget_set_margin_bottom(empty, 30);
+        gtk_widget_set_margin_top(empty, 12);
+        gtk_widget_set_margin_bottom(empty, 12);
         gtk_stack_add_named(GTK_STACK(content), empty, "empty");
-        gtk_box_pack_start(GTK_BOX(root), content, FALSE, FALSE, 4);
+        gtk_widget_set_vexpand(content, TRUE);
+        gtk_box_pack_start(GTK_BOX(root), content, TRUE, TRUE, 0);
 
         auto *pager = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_style_context_add_class(gtk_widget_get_style_context(pager), "modernime-learning-pager");
+        g_object_set_data(G_OBJECT(root), "modernime-learning-footer", pager);
+        pageStatus = label("");
+        target(pageStatus, "learning-record-page-status");
+        gtk_box_pack_start(GTK_BOX(pager), pageStatus, TRUE, TRUE, 0);
         previous = button(pager, "上一页", "learning-record-previous", +[](GtkButton *, gpointer data) {
             auto &owner = *static_cast<Impl *>(data);
             if (!owner.ready() || owner.offset == 0) return;
@@ -147,20 +159,18 @@ public:
             owner.offset += pageSize;
             owner.request();
         });
-        pageStatus = label("");
-        target(pageStatus, "learning-record-page-status");
-        gtk_box_pack_end(GTK_BOX(pager), pageStatus, TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(root), pager, FALSE, FALSE, 0);
+        gtk_box_pack_end(GTK_BOX(root), pager, FALSE, FALSE, 0);
 
-        detailToggle = gtk_expander_new("所选记录详情");
-        detailLabel = label("未选择记录");
+        selectionBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+        gtk_style_context_add_class(gtk_widget_get_style_context(selectionBar), "modernime-learning-selection");
+        detailLabel = label("");
         target(detailLabel, "learning-record-details");
         gtk_label_set_selectable(GTK_LABEL(detailLabel), TRUE);
-        auto *recordDetails = createSettingsDisclosure(detailToggle, detailLabel);
-        gtk_expander_set_expanded(GTK_EXPANDER(detailToggle), TRUE);
-        gtk_box_pack_start(GTK_BOX(root), recordDetails, FALSE, FALSE, 4);
+        gtk_label_set_ellipsize(GTK_LABEL(detailLabel), PANGO_ELLIPSIZE_END);
+        gtk_label_set_lines(GTK_LABEL(detailLabel), 2);
+        gtk_box_pack_start(GTK_BOX(selectionBar), detailLabel, TRUE, TRUE, 0);
         auto *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        forgetButton = button(actions, "忘记所选词", "learning-forget", +[](GtkButton *, gpointer data) {
+        forgetButton = button(actions, "忘记", "learning-forget", +[](GtkButton *, gpointer data) {
             static_cast<Impl *>(data)->confirmForget();
         });
         gtk_style_context_add_class(gtk_widget_get_style_context(forgetButton), "destructive-action");
@@ -169,7 +179,11 @@ public:
             const auto record = owner.selection();
             if (owner.ready() && record && record->suppressed) owner.mutate(record->identity, false);
         });
-        gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 4);
+        gtk_box_pack_start(GTK_BOX(selectionBar), actions, FALSE, FALSE, 0);
+        gtk_widget_show_all(selectionBar);
+        gtk_widget_set_no_show_all(selectionBar, TRUE);
+        gtk_widget_hide(selectionBar);
+        gtk_box_pack_start(GTK_BOX(root), selectionBar, FALSE, FALSE, 0);
         operationState = label("");
         target(operationState, "learning-record-operation-status");
         gtk_label_set_selectable(GTK_LABEL(operationState), TRUE);
@@ -188,7 +202,7 @@ public:
             static_cast<Impl *>(data)->deactivate();
         }), this);
         setSettingsFocusChain(root, {search, refreshButton, suppressedOnly, retry, list,
-                                    previous, next, detailToggle, forgetButton, unsuppress});
+                                    forgetButton, unsuppress, pager});
         update();
         guard.release();
     }
@@ -248,14 +262,17 @@ public:
         gtk_widget_set_sensitive(next, ready() && offset + pageSize < total && offset + pageSize <= maximumOffset);
         gtk_widget_set_sensitive(forgetButton, ready() && selected.has_value());
         gtk_widget_set_sensitive(unsuppress, ready() && selected && selected->suppressed);
-        std::string details = "未选择记录";
+        std::string details;
+        std::string metadata;
         if (selected) {
-            details = selected->identity.phrase + "\n拼音：" + selected->identity.pinyin +
-                "\n使用场景：" + std::to_string(selected->contextCount) +
-                "　降低推荐次数：" + std::to_string(selected->negativeFeedback) +
-                "\n最近选用：" + selectedTime(selected->lastSelectedMs);
+            details = selected->identity.phrase + "（" + selected->identity.pinyin + "）\n最近选用：" + selectedTime(selected->lastSelectedMs);
+            metadata = "使用场景：" + std::to_string(selected->contextCount) +
+                "　降低推荐次数：" + std::to_string(selected->negativeFeedback);
         }
         gtk_label_set_text(GTK_LABEL(detailLabel), details.c_str());
+        gtk_widget_set_tooltip_text(detailLabel, (details + "\n" + metadata).c_str());
+        setAccessibleWidgetText(detailLabel, details, metadata);
+        gtk_widget_set_visible(selectionBar, selected.has_value());
         if (loading) gtk_label_set_text(GTK_LABEL(state), "正在读取学习记录…");
         else if (!readError.empty()) gtk_label_set_text(GTK_LABEL(state), readError.c_str());
         else {
@@ -448,7 +465,7 @@ public:
     GtkWidget *previous = nullptr;
     GtkWidget *next = nullptr;
     GtkWidget *pageStatus = nullptr;
-    GtkWidget *detailToggle = nullptr;
+    GtkWidget *selectionBar = nullptr;
     GtkWidget *detailLabel = nullptr;
     GtkWidget *forgetButton = nullptr;
     GtkWidget *unsuppress = nullptr;

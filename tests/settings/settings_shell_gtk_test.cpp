@@ -603,15 +603,7 @@ int main(int argc, char **argv) {
                    findLabelText(window, "ModernIME 正在运行") != nullptr;
         }));
         assert(!std::filesystem::exists(fcitxLog));
-        auto *trial = findAccessibleWidget(window, GTK_TYPE_ENTRY, "试输入");
-        assert(trial != nullptr);
-        gtk_entry_set_text(GTK_ENTRY(trial), "你好");
-        // Real input retains text without tutorial copy in labels or tooltips.
-        assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(trial))) == "你好");
-        auto *trialHelp = gtk_widget_get_tooltip_text(trial);
-        assert(trialHelp == nullptr);
-        g_free(trialHelp);
-        assert(findLabelText(window, "已收到“你好”。可以继续试长句，或到其他应用输入。") == nullptr);
+        assert(findAccessibleWidget(window, GTK_TYPE_ENTRY, "试输入") == nullptr);
         auto *oldSummary = findLabelText(window, "ModernIME 正在运行");
         bool refreshed = false;
         g_object_weak_ref(G_OBJECT(oldSummary), +[](gpointer data, GObject *) {
@@ -621,10 +613,9 @@ int main(int argc, char **argv) {
         assert(refreshOverview != nullptr);
         gtk_button_clicked(GTK_BUTTON(refreshOverview));
         assert(waitUntil([&] { return refreshed; }));
-        assert(std::string_view(gtk_entry_get_text(GTK_ENTRY(trial))) == "你好");
-        gtk_entry_set_text(GTK_ENTRY(trial), "");
+        assert(findAccessibleWidget(window, GTK_TYPE_ENTRY, "试输入") == nullptr);
 
-        // Selected navigation text keeps the chosen theme accent on focus and hover.
+        // Selected navigation text remains readable on its solid plate on focus and hover.
         shell.show(modernime::settings::SettingsPageId::Overview);
         auto *overviewNav = findAccessibleWidget(window, GTK_TYPE_BUTTON, "工作台");
         assert(overviewNav != nullptr);
@@ -638,7 +629,7 @@ int main(int argc, char **argv) {
                                         gtk_widget_get_state_flags(navLabel), &color);
             GdkRGBA expected{};
             assert(gtk_style_context_lookup_color(gtk_widget_get_style_context(navLabel),
-                                                   "modernime_nav_fg_color", &expected));
+                                                   "modernime_sidebar_selected_fg", &expected));
             assert(std::abs(color.red - expected.red) < 0.01);
             assert(std::abs(color.green - expected.green) < 0.01);
             assert(std::abs(color.blue - expected.blue) < 0.01);

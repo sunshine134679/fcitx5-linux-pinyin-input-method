@@ -21,18 +21,18 @@ struct ClientPalette {
 };
 const ClientPalette &clientPalette(std::string_view key) {
     static constexpr ClientPalette palettes[]{
-        {"blue", "#f7f8fb", "#ffffff", "#202938", "#eef1f7", "#ffffff",
-         "#202938", "#687488", "#e0e5ee", "#cbd3e1", "#3869d4", "#ffffff", false},
-        {"jade", "#f2f6f3", "#fdfffc", "#e7efe9", "#ecf3ee", "#fefffd",
-         "#293b32", "#5d7064", "#dce6de", "#bdcfc3", "#347b65", "#ffffff", false},
+        {"blue", "#f5f6f7", "#ffffff", "#edf0f4", "#f0f2f5", "#ffffff",
+         "#262b32", "#6b727d", "#dfe2e7", "#c8cdd5", "#3869d4", "#ffffff", false},
+        {"jade", "#f5f6f5", "#ffffff", "#edf1ef", "#f0f3f1", "#ffffff",
+         "#282e2b", "#69726d", "#dee3e0", "#c6cec9", "#347b65", "#ffffff", false},
         {"night", "#151f2c", "#212e3e", "#192635", "#192534", "#29394c",
          "#e8eef7", "#abbcd0", "#394b60", "#586e88", "#8bb5ed", "#142940", true},
-        {"amber", "#f7f4ee", "#fffdf8", "#efe9df", "#f3ede3", "#fffefa",
-         "#3b3228", "#746556", "#e6dfd3", "#cfc1ad", "#966033", "#ffffff", false},
-        {"rose", "#f8f3f4", "#fffcfd", "#f0e7eb", "#f5edf0", "#fffefe",
-         "#3d3038", "#75616d", "#e8dfe4", "#d3c1cb", "#a04d70", "#ffffff", false},
-        {"lavender", "#f5f3f9", "#fefcff", "#ece8f3", "#f0ecf6", "#fefeff",
-         "#342e43", "#6d627c", "#e4dfec", "#c9bfd9", "#765b9f", "#ffffff", false},
+        {"amber", "#f6f5f3", "#ffffff", "#f1eee8", "#f3f1ed", "#ffffff",
+         "#302c28", "#746e66", "#e3e0da", "#cec8bf", "#966033", "#ffffff", false},
+        {"rose", "#f6f5f5", "#ffffff", "#f2edef", "#f3f0f1", "#ffffff",
+         "#30292d", "#756b70", "#e5dfe2", "#d0c6cb", "#a04d70", "#ffffff", false},
+        {"lavender", "#f6f6f7", "#ffffff", "#efedf3", "#f2f1f5", "#ffffff",
+         "#2b2930", "#706c78", "#e1dfe6", "#cbc7d3", "#765b9f", "#ffffff", false},
         {"contrast", "#080a0c", "#14181b", "#0c1013", "#0c1115", "#171d22",
          "#ffffff", "#e3ebf2", "#a3b1be", "#d0dbe5", "#ffdf70", "#141719", true},
     };
@@ -441,7 +441,7 @@ GtkWidget *createSettingsStatusArt(SettingsStatusArt kind) {
 
 std::string_view settingsStyles() {
     return R"css(
-        /* Quiet workspace surfaces; only previews and content inspectors are framed. */
+        /* Native settings surfaces: neutral chrome, bounded groups, restrained accents. */
         @define-color theme_bg_color #f5f6f7;
         @define-color theme_base_color #ffffff;
         @define-color theme_fg_color #242b35;
@@ -449,9 +449,11 @@ std::string_view settingsStyles() {
         @define-color borders #dce0e5;
         @define-color theme_selected_bg_color #1262ff;
         @define-color theme_selected_fg_color #ffffff;
-        @define-color modernime_sidebar_color #202938;
-        @define-color modernime_sidebar_ink #dce5f4;
-        @define-color modernime_sidebar_muted #a6b4c9;
+        @define-color modernime_sidebar_color #edf0f4;
+        @define-color modernime_sidebar_ink #262b32;
+        @define-color modernime_sidebar_selected_bg @theme_selected_bg_color;
+        @define-color modernime_sidebar_selected_fg @theme_selected_fg_color;
+        @define-color modernime_sidebar_muted #6b727d;
         @define-color modernime_control_border #bfc7d1;
         @define-color modernime_accent_surface #e5eeff;
         @define-color modernime_nav_fg_color #0b55eb;
@@ -480,7 +482,7 @@ std::string_view settingsStyles() {
             font-size: 14px;
         }
 
-        .modernime-sidebar { border-right: none; background-color: @modernime_sidebar_color; color: @modernime_sidebar_ink; box-shadow: none; padding: 18px 6px 10px; }
+        .modernime-sidebar { border-right: 1px solid @borders; background-color: @modernime_sidebar_color; color: @modernime_sidebar_ink; box-shadow: none; padding: 18px 6px 10px; }
 
         .modernime-sidebar viewport {
             background-color: transparent;
@@ -511,24 +513,22 @@ std::string_view settingsStyles() {
         }
 
         .modernime-settings .modernime-nav-button.modernime-nav-selected {
-            background-color: @modernime_accent_surface;
-            border-color: @modernime_nav_border_color;
+            background-color: @modernime_sidebar_selected_bg;
+            border-color: @modernime_sidebar_selected_bg;
             background-image: none;
-            color: @modernime_nav_fg_color;
-            outline-color: @theme_selected_bg_color;
+            color: @modernime_sidebar_selected_fg;
+            outline-color: @modernime_sidebar_selected_fg;
             box-shadow: none;
-            font-weight: 600;
+            font-weight: 500;
         }
-        .modernime-settings .modernime-nav-button.modernime-nav-selected:hover {
-            background-color: @modernime_pressed_color;
-            border-color: @modernime_nav_border_color;
-        }
+        .modernime-settings .modernime-nav-button.modernime-nav-selected:hover,
         .modernime-settings .modernime-nav-button.modernime-nav-selected:active {
-            background-color: @modernime_pressed_color;
+            background-color: @modernime_sidebar_selected_bg;
+            border-color: @modernime_sidebar_selected_bg;
             box-shadow: none;
         }
         .modernime-nav-button.modernime-nav-selected * {
-            color: @modernime_nav_fg_color;
+            color: @modernime_sidebar_selected_fg;
         }
         .modernime-settings .modernime-nav-button,
         .modernime-settings .modernime-nav-button * {
@@ -575,7 +575,7 @@ std::string_view settingsStyles() {
             border: none;
         }
 
-        .modernime-page-title { font-size: 28px; font-weight: 700; color: @theme_fg_color; letter-spacing: -0.8px; }
+        .modernime-page-title { font-size: 23px; font-weight: 600; color: @theme_fg_color; }
 
         .modernime-page-subtitle {
             font-size: 13px;
@@ -590,28 +590,28 @@ std::string_view settingsStyles() {
             font-size: 12.5px;
         }
 
+        .modernime-dictionary-switcher {
+            background-color: @modernime_inset_color;
+            border: 1px solid @borders;
+            border-radius: 7px;
+            padding: 3px;
+        }
         .modernime-settings .modernime-dictionary-switcher button {
             background-color: transparent;
             background-image: none;
             border: 1px solid transparent;
-            padding: 7px 10px;
+            padding: 4px 14px;
             min-width: 0;
             min-height: 22px;
-            border-radius: 6px;
+            border-radius: 5px;
             box-shadow: none;
             color: @insensitive_fg_color;
             font-size: 13px;
         }
-        .modernime-dictionary-switcher {
-            background-color: @theme_bg_color;
-            border-bottom: 1px solid @borders;
-            border-radius: 0;
-            padding: 0 0 10px;
-        }
         .modernime-settings .modernime-dictionary-switcher button:checked {
-            background-color: @modernime_accent_surface;
-            border-color: @modernime_nav_border_color;
-            color: @modernime_nav_fg_color;
+            background-color: @theme_base_color;
+            border-color: @modernime_control_border;
+            color: @theme_fg_color;
             font-weight: 600;
             box-shadow: none;
         }
@@ -657,7 +657,7 @@ std::string_view settingsStyles() {
         }
         .modernime-settings treeview {
             -GtkTreeView-horizontal-separator: 16;
-            -GtkTreeView-vertical-separator: 10;
+            -GtkTreeView-vertical-separator: 8;
             border: none;
         }
         .modernime-settings treeview:selected { color: @modernime_nav_fg_color; }
@@ -758,17 +758,17 @@ std::string_view settingsStyles() {
         .modernime-diagnostics-card button { padding: 7px 13px; }
 
         .modernime-section {
-            border: none;
-            border-bottom: 1px solid @borders;
-            border-radius: 0;
-            background-color: transparent;
-            box-shadow: none;
-            padding: 8px 0 16px;
+            border: 1px solid @borders;
+            border-radius: 9px;
+            background-color: @theme_base_color;
+            box-shadow: 0 1px 2px alpha(@modernime_shadow, 0.025);
+            padding: 14px 18px;
             margin-bottom: 4px;
         }
-        .modernime-section:last-child { border-bottom: none; }
         .modernime-section .modernime-section {
             border: none;
+            background-color: transparent;
+            box-shadow: none;
             padding: 4px 0;
             margin-bottom: 0;
         }
@@ -804,60 +804,32 @@ std::string_view settingsStyles() {
             color: @insensitive_fg_color;
         }
 
-        /* Overview: one input workbench, two shortcuts, one content library. */
-        .modernime-overview-workbench { border: 1px solid @borders; border-radius: 16px; background-color: @theme_base_color; padding: 18px 22px 10px; margin-bottom: 8px; }
-        .modernime-overview-status { font-size: 13px; font-weight: 500; color: @insensitive_fg_color; }
-        .modernime-settings button.modernime-overview-diagnostics {
-            padding: 6px 10px;
+        /* Overview is a native status and destination list, without a trial field. */
+        .modernime-overview-status-line {
+            padding: 8px 2px 14px;
+        }
+        .modernime-overview-status-label { font-size: 14px; color: @theme_fg_color; }
+        .modernime-overview-list {
+            border: 1px solid @borders;
+            border-radius: 9px;
+            background-color: @theme_base_color;
+            padding: 2px 16px;
+        }
+        .modernime-settings button.modernime-overview-row {
+            padding: 15px 0;
+            min-height: 24px;
+            border: none;
+            border-bottom: 1px solid @borders;
+            border-radius: 0;
             background-color: transparent;
-            border-color: transparent;
             box-shadow: none;
-            color: @modernime_nav_fg_color;
         }
-        .modernime-settings button.modernime-overview-diagnostics:hover {
-            background-color: @modernime_pressed_color;
-        }
-        .modernime-settings entry.modernime-overview-trial { font-size: 32px; min-height: 94px; padding: 8px 0; border: 1px solid transparent; border-radius: 0; background-color: @theme_base_color; background-image: none; box-shadow: none; color: @theme_fg_color; }
-        .modernime-settings entry.modernime-overview-trial:hover { border-bottom-color: @borders; }
-        .modernime-settings entry.modernime-overview-trial:focus { border-bottom-color: @theme_selected_bg_color; box-shadow: none; }
-        .modernime-settings entry.modernime-overview-trial:drop(active) {
-            border-color: @theme_selected_bg_color;
-        }
-        .modernime-overview-shortcuts > flowboxchild {
-            padding: 0;
-            margin: 0;
-            outline-width: 0;
-        }
-        .modernime-settings button.modernime-overview-shortcut { padding: 14px 16px; border-radius: 12px; box-shadow: none; border-color: @borders; }
-        .modernime-overview-shortcut-icon {
-            padding: 8px;
-            border-radius: 8px;
-            background-color: @modernime_inset_color;
-            color: @modernime_nav_fg_color;
-        }
-        .modernime-overview-library { border: none; background-color: transparent; padding: 8px 0; box-shadow: none; }
-        .modernime-overview-library-title {
-            font-size: 13px;
-            font-weight: 600;
-            color: @insensitive_fg_color;
-            margin: 0 10px 2px;
-        }
-        .modernime-settings button.modernime-overview-content-row { padding: 16px 14px; border: 1px solid @borders; border-radius: 12px; box-shadow: none; background-color: @theme_base_color; transition: color 100ms ease, background-color 100ms ease; }
-        .modernime-settings button.modernime-overview-content-row:hover { background-color: @modernime_hover_color; border-color: @modernime_control_border; }
-        .modernime-settings button.modernime-overview-content-row:active {
-            background-color: @modernime_pressed_color;
-        }
-        .modernime-overview-content-icon { color: @modernime_nav_fg_color; padding: 0; border-radius: 6px; }
-        .modernime-overview-content-arrow { color: @insensitive_fg_color; padding: 0; border-radius: 6px; }
-        .modernime-overview-content-row:hover .modernime-overview-content-icon,
-        .modernime-overview-content-row:hover .modernime-overview-content-arrow {
-            color: @modernime_nav_fg_color;
-            background-color: @modernime_accent_surface;
-        }
-        .modernime-overview-content-row:hover .modernime-overview-content-title {
-            color: @modernime_nav_fg_color;
-        }
-        .modernime-overview-count { font-size: 34px; font-weight: 500; color: @theme_fg_color; padding: 0; background-color: transparent; }
+        .modernime-settings button.modernime-overview-row:last-child { border-bottom: none; }
+        .modernime-settings button.modernime-overview-row:hover { background-color: @modernime_hover_color; }
+        .modernime-settings button.modernime-overview-row:active { background-color: @modernime_pressed_color; }
+        .modernime-overview-row-title { font-size: 14px; font-weight: 500; color: @theme_fg_color; }
+        .modernime-overview-row-count { font-size: 13px; color: @insensitive_fg_color; }
+        .modernime-overview-row image { color: @insensitive_fg_color; }
         .modernime-overview-notices {
             border: 1px solid alpha(@warning_color, 0.4);
             border-radius: 9px;
@@ -998,7 +970,7 @@ std::string_view settingsStyles() {
             background-color: @theme_base_color;
             box-shadow: none;
             border-radius: 0 0 12px 12px;
-            padding: 10px 24px;
+            padding: 8px 24px;
         }
 
         /* Preview Box */
@@ -1113,7 +1085,7 @@ std::string_view settingsStyles() {
         }
 
         /* The production candidate renderer is the focal surface of this workspace. */
-        .modernime-preview-card { border: 1px solid @borders; border-radius: 14px; background-color: @modernime_inset_color; box-shadow: none; padding: 14px 18px; margin-bottom: 4px; }
+        .modernime-preview-card { border: 1px solid @borders; border-radius: 9px; background-color: @modernime_inset_color; box-shadow: none; padding: 14px 18px; margin-bottom: 4px; }
 
         .modernime-candidate-workspace,
         .modernime-candidate-workspace viewport,
@@ -1128,29 +1100,34 @@ std::string_view settingsStyles() {
         .modernime-candidate-task { padding: 12px 2px 4px; }
         .modernime-candidate-workspace-wide .modernime-candidate-task { padding: 12px 0 4px 12px; }
         .modernime-candidate-controls > header {
-            background-color: @theme_bg_color;
+            background-color: transparent;
             background-image: none;
             border: none;
-            border-bottom: 1px solid @borders;
             box-shadow: none;
-            padding: 0 0 8px;
+            padding: 0 0 4px;
         }
-        .modernime-candidate-controls > header tabs { border: none; padding: 0; }
+        .modernime-candidate-controls > header tabs {
+            background-color: @modernime_inset_color;
+            border: 1px solid @borders;
+            border-radius: 7px;
+            padding: 3px;
+        }
         .modernime-candidate-controls > header tab {
             background-color: transparent;
             background-image: none;
             border: 1px solid transparent;
-            border-radius: 6px;
+            border-radius: 5px;
             box-shadow: none;
-            padding: 7px 12px;
-            margin: 0 4px 0 0;
+            min-height: 22px;
+            padding: 4px 14px;
+            margin: 0;
             color: @insensitive_fg_color;
             font-size: 13px;
         }
         .modernime-candidate-controls > header tab:checked {
-            background-color: @modernime_accent_surface;
-            border-color: @modernime_nav_border_color;
-            color: @modernime_nav_fg_color;
+            background-color: @theme_base_color;
+            border-color: @modernime_control_border;
+            color: @theme_fg_color;
             box-shadow: none;
             font-weight: 600;
         }
@@ -1168,10 +1145,31 @@ std::string_view settingsStyles() {
         .modernime-content-detail-empty { color: @insensitive_fg_color; padding: 14px; }
         .modernime-content-detail-empty .modernime-word-detail-title { font-size: 14px; font-weight: 400; }
         .modernime-content-toolbar { margin: 0 0 12px; }
+        .modernime-learning-panel {
+            background-color: @theme_base_color;
+            border: 1px solid @borders;
+            border-radius: 9px;
+            padding: 12px;
+        }
+        .modernime-learning-filterbar { padding: 0 2px 4px; }
+        .modernime-learning-table {
+            border: 1px solid @borders;
+            border-radius: 5px;
+            background-color: @theme_base_color;
+        }
+        .modernime-learning-selection {
+            border-top: 1px solid @borders;
+            padding: 8px 2px 0;
+        }
+        .modernime-learning-pager { padding-top: 4px; }
+        .modernime-learning-storage-state { padding: 0; }
+        .modernime-learning-storage-state .modernime-data-summary {
+            font-size: 13px; font-weight: 400;
+        }
         .modernime-content-list.view { border: none; }
         .modernime-content-list.view header button {
             background-color: @modernime_inset_color; border: none; border-bottom: 1px solid @borders;
-            border-radius: 0; padding: 8px 12px; font-size: 12px; color: @insensitive_fg_color;
+            border-radius: 0; padding: 6px 12px; font-size: 12px; color: @insensitive_fg_color;
         }
         .modernime-settings .modernime-content-list.view:selected { background-color: @modernime_accent_surface; color: @modernime_nav_fg_color; }
         .modernime-settings button.modernime-change-summary,
@@ -1209,14 +1207,14 @@ std::string_view settingsStyles() {
         .modernime-sidebar-footer { font-size: 11.5px; color: @modernime_sidebar_muted; border-top: 1px solid alpha(@modernime_sidebar_ink, 0.15); padding-top: 14px; }
 
         button {
-            border-radius: 8px;
+            border-radius: 6px;
             background-image: none;
             background-color: @modernime_control_surface;
             box-shadow: none;
             border: 1px solid @borders;
             color: @theme_fg_color;
-            min-height: 24px;
-            padding: 7px 13px;
+            min-height: 20px;
+            padding: 6px 14px;
             transition: background-color 100ms ease, border-color 100ms ease,
                         color 100ms ease;
         }
@@ -1244,7 +1242,7 @@ std::string_view settingsStyles() {
         }
 
         .modernime-nav-label { font-size: 14px; }
-        .modernime-brand { font-size: 20px; font-weight: 700; color: @modernime_sidebar_ink; letter-spacing: -0.5px; }
+        .modernime-brand { font-size: 19px; font-weight: 600; color: @modernime_sidebar_ink; }
         .modernime-brand-caption { font-size: 11.5px; color: @insensitive_fg_color; }
         .modernime-settings entry,
         .modernime-settings spinbutton,
@@ -1256,10 +1254,10 @@ std::string_view settingsStyles() {
             border-color: @modernime_control_border;
         }
         .modernime-settings entry {
-            min-height: 24px;
-            padding: 7px 10px;
+            min-height: 20px;
+            padding: 6px 10px;
             border: 1px solid @modernime_control_border;
-            border-radius: 8px;
+            border-radius: 6px;
             box-shadow: none;
         }
         .modernime-settings entry:disabled,
@@ -1329,8 +1327,8 @@ std::string_view settingsStyles() {
             box-shadow: none;
         }
         .modernime-settings button.suggested-action:disabled {
-            background-color: @modernime_accent_surface;
-            border-color: @modernime_accent_surface;
+            background-color: @modernime_inset_color;
+            border-color: @borders;
             color: @modernime_disabled_fg;
         }
         .modernime-settings button:disabled label { color: inherit; }
@@ -1498,7 +1496,7 @@ std::string_view settingsStyles() {
             min-height: 38px;
             padding: 0;
             border: 1px solid @modernime_control_border;
-            border-radius: 8px;
+            border-radius: 6px;
         }
         .modernime-settings spinbutton entry {
             min-height: 24px;
@@ -1804,8 +1802,8 @@ void applySettingsTheme(std::string_view theme) {
     define("modernime_control_border", palette.controlBorder);
     define("modernime_control_surface", palette.control);
     define("modernime_sidebar_color", palette.sidebar);
-    define("modernime_sidebar_ink", theme == "blue" ? "#dce5f4" : palette.ink);
-    define("modernime_sidebar_muted", theme == "blue" ? "#a6b4c9" : palette.muted);
+    define("modernime_sidebar_ink", palette.ink);
+    define("modernime_sidebar_muted", palette.muted);
     define("modernime_inset_color", palette.inset);
     define("modernime_accent_surface", "mix(@theme_base_color, @theme_selected_bg_color, 0.09)");
     define("modernime_hover_color", "mix(@modernime_control_surface, @theme_selected_bg_color, 0.045)");

@@ -210,9 +210,9 @@ public:
         if (plate.width <= 1 || plate.height <= 1) return;
         Rect r{plate.x + .5, plate.y + .5, plate.width - 1, plate.height - 1};
         cairo_save(cr);
-        rounded(cr, r, 9);
-        color(cr, navigation, "modernime_accent_surface", navOpacity); cairo_fill_preserve(cr);
-        color(cr, navigation, "modernime_nav_border_color", navOpacity);
+        rounded(cr, r, 7);
+        color(cr, navigation, "modernime_sidebar_selected_bg", navOpacity); cairo_fill_preserve(cr);
+        color(cr, navigation, "modernime_sidebar_selected_bg", navOpacity);
         cairo_set_line_width(cr, 1); cairo_stroke(cr);
         cairo_restore(cr);
     }
