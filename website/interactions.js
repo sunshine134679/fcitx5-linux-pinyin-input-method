@@ -39,6 +39,18 @@
     run('.hero-actions', { opacity: [0, 1], translate: ['0 10px', '0 0'] }, { duration: 650, delay: 330 });
     run('.hero-footnote', { opacity: [0, 1] }, { duration: 700, delay: 430 });
     run('.writing-sheet', { opacity: [0, 1], translate: ['30px 44px', '0 0'], rotate: ['7deg', '0deg'], scale: [.94, 1] }, { duration: 1100, delay: 120 });
+    run('.input-key-ni', [
+      { opacity: 0, translate: '-25px 30px', rotate: '-14deg' },
+      { opacity: 1, translate: '0 0', rotate: '0deg', offset: .52 },
+      { opacity: 1, translate: '0 5px', rotate: '0deg', offset: .72 },
+      { opacity: 1, translate: '0 0', rotate: '0deg' }
+    ], { duration: 1300, delay: 180 });
+    run('.input-key-hao', [
+      { opacity: 0, translate: '25px -20px', rotate: '14deg' },
+      { opacity: 1, translate: '0 0', rotate: '0deg', offset: .58 },
+      { opacity: 1, translate: '0 5px', rotate: '0deg', offset: .78 },
+      { opacity: 1, translate: '0 0', rotate: '0deg' }
+    ], { duration: 1500, delay: 240 });
     run('.typing-caption', { opacity: [0, 1], translate: ['0 18px', '0 0'] }, { duration: 800, delay: 800 });
     run('.hero-candidate', { opacity: [0, 1], translate: ['24px 8px', '0 0'] }, { duration: 600, delay: 550 });
     run('.composition>span:first-child', { clipPath: ['inset(0 100% 0 0)', 'inset(0 0% 0 0)'] }, { duration: 480, delay: 780, easing: 'steps(6,end)' });
@@ -237,83 +249,183 @@
   };
 
 
-  const stacked = matchMedia('(min-width: 1000px)');
   const clamp = value => Math.max(0, Math.min(1, value));
-  const smooth = value => 1 - Math.pow(1 - clamp(value), 3);
-  // Flow markers stay in the document while the cards stick and transform.
-  // Their measurements therefore never feed the animation back into itself.
-  const stories = [...document.querySelectorAll('.story-panel')].map(panel => {
-    const marker = document.createElement('span');
-    marker.className = 'motion-anchor';
-    marker.setAttribute('aria-hidden', 'true');
-    panel.before(marker);
-    return { panel, marker, items: [...panel.querySelectorAll('.word-entry:not(:first-child), .clip-line')] };
-  });
-  const heroSection = document.querySelector('.hero');
+  const smooth = value => { const t = clamp(value); return t * t * (3 - 2 * t); };
+  const main = document.querySelector('.page-chapters');
+  const header = document.querySelector('.site-header');
   const heroStage = document.querySelector('.hero-stage');
-  const clientStage = document.querySelector('.client-stage');
-  const clientSurface = document.querySelector('.client-scroll-surface');
-  const fan = document.querySelector('.palette-fan');
-  const fanSection = document.querySelector('.appearance-teaser');
-  const arrivals = [...document.querySelectorAll('.section-heading, .privacy-line, .closing')];
-  let scrollFrame;
-  function updateDepth() {
-    if (scrollFrame) return;
-    scrollFrame = requestAnimationFrame(() => {
-      scrollFrame = null;
-      const reduced = preference.matches;
-      const height = innerHeight;
-      // Read geometry before writes; scroll schedules one frame, never an idle loop.
-      const tops = stories.map(({ marker }) => marker.getBoundingClientRect().top);
-      const heroTop = heroSection?.getBoundingClientRect().top || 0;
-      const clientTop = clientStage?.getBoundingClientRect().top || 0;
-      const fanTop = fanSection?.getBoundingClientRect().top || 0;
-      const arrivalTops = arrivals.map(element => element.getBoundingClientRect().top - (parseFloat(element.style.getPropertyValue('--arrival-y')) || 0));
-      stories.forEach(({ panel, items }, index) => {
-        const stable = reduced || panel.matches(':focus-within');
-        const enter = stable ? 1 : smooth((height * .97 - tops[index]) / (height * .62));
-        const leave = stable || !stacked.matches || index === stories.length - 1 ? 0 : clamp((height * .66 - tops[index + 1]) / Math.max(1, height * .66 - 116 - index * 16));
-        panel.style.setProperty('--story-y', `${(1 - enter) * (stacked.matches ? 64 : 28) - leave * 12}px`);
-        panel.style.setProperty('--story-scale', 1 - (1 - enter) * .045 - leave * .055);
-        panel.style.setProperty('--story-opacity', 1 - leave * .22);
-        const scene = stable ? 1 : clamp((height * .88 - tops[index]) / (height * .5));
-        panel.style.setProperty('--scene', smooth(scene));
-        items.forEach((item, itemIndex) => {
-          const progress = stable ? 1 : smooth((scene - itemIndex * .12) / .72);
-          item.style.setProperty('--item-progress', progress);
+  const compact = matchMedia('(max-width: 760px)');
+  const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
+
+  // A chapter keeps its natural layout position while its sheet holds the last
+  // viewport. The next whole sheet takes over; the browser owns all scrolling.
+  if (main) {
+    const chapters = [...main.querySelectorAll('.page-chapter')].map(element => ({
+      element, sheet: element.querySelector('.chapter-sheet'), surface: element.querySelector('.chapter-surface')
+    }));
+    const stories = [...main.querySelectorAll('.story-panel')].map(element => ({
+      element, items: [...element.querySelectorAll('.word-entry:not(:first-child), .clip-line')]
+    }));
+    const client = main.querySelector('.client-stage');
+    const clientSection = client.closest('.client-section');
+    const screen = main.querySelector('.client-scroll-surface');
+    const fan = main.querySelector('.palette-fan');
+    const written = new Map();
+    let frame = 0, needsMeasure = true, geometry;
+
+    function metric(element) {
+      let top = 0;
+      for (let node = element; node; node = node.offsetParent) {
+        if (!node.classList.contains('chapter-sheet')) top += node.offsetTop;
+      }
+      return { top, height: element.offsetHeight };
+    }
+    function set(element, property, value) {
+      if (!written.has(element)) written.set(element, new Map());
+      const properties = written.get(element);
+      if (properties.get(property) === value) return;
+      properties.set(property, value);
+      element.style.setProperty(property, value);
+    }
+    function measure() { needsMeasure = true; schedule(); }
+    function reset() {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      written.forEach((properties, element) => properties.forEach((_, property) => element.style.removeProperty(property)));
+      written.clear();
+      document.documentElement.classList.remove('chapters-ready');
+    }
+    function render() {
+      frame = 0;
+      if (preference.matches || document.hidden) return;
+      if (needsMeasure) {
+        const height = document.documentElement.clientHeight;
+        const inset = header.offsetHeight;
+        document.documentElement.classList.add('chapters-ready');
+        set(main, '--chapter-height', `${height - inset}px`);
+        chapters.forEach(({ element, sheet, surface }, index) => {
+          set(element, '--chapter-order', index + 1);
+          set(sheet, '--chapter-pin', `${Math.min(inset, height - surface.offsetHeight)}px`);
         });
+        geometry = {
+          height, inset, chapters: chapters.map(({ element }) => metric(element)),
+          hero: metric(heroStage), stories: stories.map(({ element }) => metric(element)),
+          client: metric(client), fan: metric(fan), range: Math.max(1, document.documentElement.scrollHeight - height)
+        };
+        needsMeasure = false;
+      }
+      const { height, inset } = geometry;
+      const y = scrollY, strength = compact.matches ? .45 : 1;
+      const px = n => `${n.toFixed(2)}px`;
+      const deg = n => `${n.toFixed(3)}deg`;
+      const arrivals = geometry.chapters.map((bounds, index) => index === 0 ? 1 : smooth((height - (bounds.top - y)) / (height - inset - 24)));
+      chapters.forEach(({ surface }, index) => {
+        const focused = surface.contains(document.activeElement) && document.activeElement.matches(':focus-visible');
+        const enter = focused ? 0 : 1 - arrivals[index];
+        const leave = focused ? 0 : arrivals[index + 1] || 0;
+        const scale = 1 - enter * (compact.matches ? .055 : .12) - leave * (compact.matches ? .02 : .05);
+        set(surface, '--chapter-transform', enter < .001 && leave < .001 ? 'none' : `translate3d(0,${px(enter * (compact.matches ? 46 : 104))},0) scale(${scale.toFixed(5)})`);
+        set(surface, '--chapter-origin', enter > .001 ? '50% 0' : '50% 100%');
+        set(surface, '--chapter-radius', px(enter * (compact.matches ? 26 : 48) + leave * 26));
+        set(surface, '--chapter-shadow', (enter * .17).toFixed(3));
+        set(surface, '--chapter-shade', (leave * .09).toFixed(3));
       });
-      if (heroStage) {
-        const progress = reduced || heroStage.matches(':focus-within') ? 0 : clamp(-heroTop / height);
-        heroStage.style.setProperty('--hero-drift', `${progress * (stacked.matches ? 70 : 24)}px`);
-        heroStage.style.setProperty('--hero-turn', `${progress * -4}deg`);
+      set(header, '--reading-progress', clamp(y / geometry.range).toFixed(4));
+      const departure = heroStage.querySelector(':focus-visible') ? 0 : clamp(y / geometry.chapters[0].height * 2) * strength;
+      set(heroStage, '--paper-y', px(departure * 36));
+      set(heroStage, '--paper-turn', deg(departure * 4));
+      set(heroStage, '--candidate-y', px(departure * -32));
+      set(heroStage, '--key-ni-y', px(departure * -95));
+      set(heroStage, '--key-ni-turn', deg(departure * -14));
+      set(heroStage, '--key-hao-y', px(departure * 80));
+      set(heroStage, '--key-hao-turn', deg(departure * 12));
+      set(heroStage, '--caption-y', px(departure * -24));
+      stories.forEach(({ element, items }, index) => {
+        const scene = element.matches(':focus-within') ? 1 : clamp((height * .92 - (geometry.stories[index].top - y)) / (height * .48));
+        set(element, '--scene', smooth(scene).toFixed(4));
+        items.forEach((item, order) => set(item, '--item-progress', smooth((scene - order * .1) / .75).toFixed(4)));
+      });
+      const arrival = clientSection.matches(':focus-within') ? 1 : smooth((height * .94 - (geometry.client.top - y)) / (height * .66));
+      const remaining = (1 - arrival) * strength;
+      set(screen, '--screen-transform', remaining < .001 ? 'none' : `perspective(1400px) translate3d(0,${px(remaining * 52)},0) rotateX(${deg(remaining * 9)}) scale(${(1 - remaining * .065).toFixed(5)})`);
+      set(fan, '--fan-open', smooth((height * .92 - (geometry.fan.top - y)) / (height * .65)).toFixed(4));
+    }
+    function schedule() {
+      if (!frame && !preference.matches && !document.hidden) frame = requestAnimationFrame(render);
+    }
+    function alignAnchor(hash, behavior = 'instant') {
+      let target;
+      try { target = document.getElementById(decodeURIComponent(hash.slice(1))); } catch { return false; }
+      if (!target || !main.contains(target) && target !== main) return false;
+      if (needsMeasure && !preference.matches) { cancelAnimationFrame(frame); render(); }
+      const padding = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || header.offsetHeight;
+      const margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+      scrollTo({ top: target === main ? 0 : metric(target).top - padding - margin, behavior: preference.matches ? 'instant' : behavior });
+      return true;
+    }
+    window.siteMotion.alignAnchor = alignAnchor;
+    document.addEventListener('click', event => {
+      const link = event.target.closest('a[href]');
+      if (!link || event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const destination = new URL(link.href, location.href);
+      if (destination.origin !== location.origin || destination.pathname !== location.pathname || !destination.hash) return;
+      if (!alignAnchor(destination.hash, 'smooth')) return;
+      event.preventDefault();
+      if (location.hash !== destination.hash) history.pushState(history.state, '', destination.hash);
+      if (event.detail === 0) {
+        const target = document.getElementById(decodeURIComponent(destination.hash.slice(1)));
+        target.setAttribute('tabindex', '-1');
+        target.focus({ preventScroll: true });
       }
-      if (clientSurface) {
-        const progress = reduced || clientSurface.matches(':focus-within') ? 1 : smooth((height * .96 - clientTop) / (height * .7));
-        clientSurface.style.setProperty('--client-arrival', progress);
-      }
-      if (fan) fan.style.setProperty('--fan-open', reduced ? 1 : smooth((height * .9 - fanTop) / (height * .6)));
-      arrivals.forEach((element, index) => {
-        const progress = reduced || element.matches(':focus-within') ? 1 : smooth((height * .96 - arrivalTops[index]) / (height * .35));
-        element.style.setProperty('--arrival-y', `${(1 - progress) * 24}px`);
+    });
+    addEventListener('scroll', schedule, { passive: true });
+    addEventListener('resize', measure, { passive: true });
+    addEventListener('pageshow', event => {
+      measure();
+      if (!event.persisted && location.hash) requestAnimationFrame(() => alignAnchor(location.hash));
+    });
+    main.addEventListener('focusin', schedule);
+    main.addEventListener('focusout', schedule);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) measure(); });
+    if ('ResizeObserver' in window) {
+      const observer = new ResizeObserver(measure);
+      chapters.forEach(({ surface }) => observer.observe(surface));
+    }
+    document.fonts?.ready.then(measure);
+    addEventListener('load', measure, { once: true });
+    compact.addEventListener('change', measure);
+    preference.addEventListener('change', () => preference.matches ? reset() : measure());
+    measure();
+  }
+
+  // The paper follows a nearby pointer; the keys and candidate float at their
+  // own depths. Touch and keyboard navigation keep a stable writing surface.
+  if (heroStage) {
+    let pointerFrame;
+    const resetTilt = () => {
+      cancelAnimationFrame(pointerFrame);
+      heroStage.style.removeProperty('--tilt-x');
+      heroStage.style.removeProperty('--tilt-y');
+    };
+    heroStage.addEventListener('pointermove', event => {
+      if (preference.matches || !finePointer.matches) return;
+      cancelAnimationFrame(pointerFrame);
+      pointerFrame = requestAnimationFrame(() => {
+        const rect = heroStage.getBoundingClientRect();
+        heroStage.style.setProperty('--tilt-x', `${(event.clientY - rect.top - rect.height / 2) / rect.height * -6}deg`);
+        heroStage.style.setProperty('--tilt-y', `${(event.clientX - rect.left - rect.width / 2) / rect.width * 8}deg`);
       });
     });
+    heroStage.addEventListener('pointerleave', resetTilt);
+    preference.addEventListener('change', resetTilt);
+    finePointer.addEventListener('change', resetTilt);
+    if ((!location.hash || performance.getEntriesByType('navigation')[0]?.type === 'reload') && scrollY < 150) hero();
   }
-  addEventListener('scroll', updateDepth, {passive:true});
-  addEventListener('resize', updateDepth);
-  document.addEventListener('focusin', updateDepth);
-  document.addEventListener('focusout', updateDepth);
-  stacked.addEventListener('change', updateDepth);
-  if (!location.hash && scrollY < 150 && document.querySelector('.hero-stage')) hero();
   document.querySelectorAll('.faq-list details, .help-questions details, .studio-export').forEach(wireDrawer);
   preference.addEventListener('change', () => {
-    updateDepth();
     if (!preference.matches) return;
     active.forEach(animation => animation.cancel());
     colorCover?.remove();
     document.querySelector('#appearance-studio')?.classList.remove('theme-revealing');
   });
-  document.fonts?.ready.then(updateDepth);
-  addEventListener('load', updateDepth, { once: true });
-  updateDepth();
 })();

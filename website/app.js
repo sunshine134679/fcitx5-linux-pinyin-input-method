@@ -209,7 +209,9 @@ function revealLinkedAnswer() {
   const target = document.getElementById(id);
   const details = target?.closest('details');
   if (details) details.open = true;
-  if (target) requestAnimationFrame(() => target.scrollIntoView({block:'start', behavior:'instant'}));
+  if (target) requestAnimationFrame(() => {
+    if (!window.siteMotion?.alignAnchor?.(location.hash)) target.scrollIntoView({block:'start', behavior:'instant'});
+  });
 }
 addEventListener('hashchange', revealLinkedAnswer);
 if (location.hash) revealLinkedAnswer();
