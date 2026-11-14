@@ -1,2 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/</loc></url></urlset>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/</loc></url>
+  <url><loc>https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/appearance.html</loc></url>
+  <url><loc>https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/download.html</loc></url>
+  <url><loc>https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/help.html</loc></url>
+</urlset>

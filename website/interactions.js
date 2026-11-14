@@ -234,218 +234,38 @@
     closeDialog
   };
 
-  // Follow native scroll position. There is no wheel interception or idle render loop.
-  function initScrollDepth() {
-    const hero = document.querySelector('.hero-stage');
-    const studio = document.querySelector('#appearance-studio');
-    const client = document.querySelector('.client-stage');
-    const surface = document.querySelector('.client-scroll-surface');
-    const header = document.querySelector('.site-header');
-    const main = document.querySelector('main');
-    const chapters = [...document.querySelectorAll('.page-chapter')].map((element, index) => ({
-      element, sheet: element.querySelector('.chapter-sheet'), surface: element.querySelector('.chapter-surface'), index
-    }));
-    const illustrations = [...document.querySelectorAll('.personal-details .detail-art')];
-    const compact = matchMedia('(max-width: 800px)');
-    const written = new Map();
-    let frame = 0, needsMeasure = true, geometry;
-    const clamp = value => Math.max(0, Math.min(1, value));
-    const smooth = value => value * value * (3 - 2 * value);
 
-    function metric(element) {
-      let top = 0;
-      // Sticky sheets move visually; their original chapter remains the layout anchor.
-      for (let node = element; node; node = node.offsetParent) {
-        if (!node.classList.contains('chapter-sheet')) top += node.offsetTop;
-      }
-      return { top, height: element.offsetHeight };
-    }
-
-    function set(element, property, value) {
-      if (!written.has(element)) written.set(element, new Map());
-      const properties = written.get(element);
-      if (properties.get(property) === value) return;
-      properties.set(property, value);
-      element.style.setProperty(property, value);
-    }
-
-    function reset() {
-      cancelAnimationFrame(frame);
-      frame = 0;
-      written.forEach((properties, element) => properties.forEach((_, property) => element.style.removeProperty(property)));
-      written.clear();
-      document.documentElement.classList.remove('scroll-depth', 'chapters-ready');
-    }
-
-    function render() {
-      frame = 0;
-      if (preference.matches || document.hidden) return;
-      if (needsMeasure) {
-        const viewport = document.documentElement.clientHeight;
-        const headerHeight = header.offsetHeight;
-        document.documentElement.classList.add('chapters-ready');
-        set(main, '--chapter-height', (viewport - headerHeight) + 'px');
-        chapters.forEach(({ element, sheet, surface, index }) => {
-          set(element, '--chapter-order', index + 1);
-          // Tall chapters scroll completely before their last viewport is held.
-          set(sheet, '--chapter-pin', Math.min(headerHeight, viewport - surface.offsetHeight) + 'px');
-        });
-        geometry = {
-          hero: metric(hero), studio: metric(studio), client: metric(client),
-          illustrations: illustrations.map(metric),
-          chapters: chapters.map(({ element }) => metric(element)), headerHeight,
-          viewport,
-          range: Math.max(1, document.documentElement.scrollHeight - document.documentElement.clientHeight)
-        };
-        needsMeasure = false;
-      }
-      const y = scrollY, height = geometry.viewport;
-      const strength = compact.matches ? .45 : 1;
-      const px = value => value.toFixed(2) + 'px';
-      const deg = value => value.toFixed(3) + 'deg';
-      document.documentElement.classList.add('scroll-depth');
-      set(header, '--reading-progress', clamp(y / geometry.range).toFixed(4));
-
-      // Each new sheet rises over the held final viewport of the preceding chapter.
-      const arrivals = geometry.chapters.map((bounds, index) => index === 0 ? 1 :
-        smooth(clamp((height - (bounds.top - y)) / (height - geometry.headerHeight - 24))));
-      chapters.forEach(({ surface }, index) => {
-        const focused = surface.contains(document.activeElement);
-        const entering = focused ? 0 : 1 - arrivals[index];
-        const leaving = focused ? 0 : (arrivals[index + 1] || 0);
-        const lift = entering * (compact.matches ? 46 : 104);
-        const scale = 1 - entering * (compact.matches ? .055 : .12) - leaving * (compact.matches ? .018 : .045);
-        const radius = entering * (compact.matches ? 26 : 48) + leaving * 24;
-        set(surface, '--chapter-transform', entering < .001 && leaving < .001 ? 'none' : `translate3d(0,${px(lift)},0) scale(${scale.toFixed(5)})`);
-        set(surface, '--chapter-origin', entering > .001 ? '50% 0' : '50% 100%');
-        set(surface, '--chapter-radius', px(radius));
-        set(surface, '--chapter-shadow', (entering * .16).toFixed(3));
-        set(surface, '--chapter-shade', (leaving * .08).toFixed(3));
+  const stacked = matchMedia('(min-width: 1000px)');
+  const storyPanels = [...document.querySelectorAll('.story-panel')];
+  let scrollFrame;
+  function updateDepth() {
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = requestAnimationFrame(() => {
+      storyPanels.forEach((panel, index) => {
+        const next = storyPanels[index + 1];
+        if (preference.matches || !stacked.matches || !next || panel.matches(':focus-within')) {
+          panel.style.removeProperty('--story-scale');
+          panel.style.removeProperty('--story-opacity');
+          return;
+        }
+        const progress = Math.max(0, Math.min(1, (innerHeight * .55 - next.getBoundingClientRect().top) / (innerHeight * .45)));
+        panel.style.setProperty('--story-scale', 1 - progress * .035);
+        panel.style.setProperty('--story-opacity', 1 - progress * .2);
       });
-
-      const heroStart = Math.max(0, geometry.hero.top - height * .35);
-      const departure = clamp((y - heroStart) / (geometry.hero.height + height * .25)) * strength;
-      set(hero, '--scroll-paper-y', px(departure * 42));
-      set(hero, '--scroll-paper-turn', deg(departure * 3.6));
-      set(hero, '--scroll-ni-y', px(departure * -84));
-      set(hero, '--scroll-ni-turn', deg(departure * -12));
-      set(hero, '--scroll-hao-y', px(departure * 70));
-      set(hero, '--scroll-hao-turn', deg(departure * 10));
-      set(hero, '--scroll-space-y', px(departure * -38));
-      set(hero, '--scroll-candidate-y', px(departure * -12));
-      set(hero, '--scroll-orbit-y', px(departure * 56));
-
-      const approach = smooth(clamp((height * .9 - (geometry.studio.top - y)) / (height * .44)));
-      const studioDrift = studio.matches(':focus-within') ? 0 : (1 - approach) * 38 * strength;
-      set(studio, '--scroll-studio-y', px(studioDrift));
-
-      illustrations.forEach((illustration, index) => {
-        const bounds = geometry.illustrations[index];
-        const position = Math.max(-1, Math.min(1, (height * .56 - (bounds.top + bounds.height / 2 - y)) / (height * .65)));
-        set(illustration, '--scroll-art-y', px(-position * (index === 1 ? 22 : 14) * strength));
-      });
-
-      const arrival = client.matches(':focus-within') ? 1 : smooth(clamp((height * .94 - (geometry.client.top - y)) / (height * .66)));
-      const remaining = (1 - arrival) * strength;
-      // Finish at a real, untransformed pixel grid so the native screenshots stay sharp.
-      set(surface, '--scroll-screen', remaining < .001 ? 'none' : `perspective(1400px) translate3d(0,${px(remaining * 52)},0) rotateX(${deg(remaining * 9)}) scale(${(1 - remaining * .065).toFixed(4)})`);
-      set(client, '--scroll-note-y', px(remaining * -23));
-    }
-
-    function schedule() {
-      if (!frame && !preference.matches && !document.hidden) frame = requestAnimationFrame(render);
-    }
-    function measure() { needsMeasure = true; schedule(); }
-    function anchorTarget(hash) {
-      if (!hash || hash === '#') return main;
-      try { return document.getElementById(decodeURIComponent(hash.slice(1))); }
-      catch { return null; }
-    }
-    function alignAnchor(hash, behavior = 'instant') {
-      const target = anchorTarget(hash);
-      if (!target) return;
-      const inset = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || header.offsetHeight;
-      scrollTo({ top: hash && hash !== '#' ? metric(target).top - inset : 0, behavior });
-    }
-    // Navigate to the original layout position, not the temporary sticky/scale position.
-    document.addEventListener('click', event => {
-      const link = event.target.closest('a[href^="#"]');
-      if (!link || event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      const hash = link.getAttribute('href');
-      const target = anchorTarget(hash);
-      if (!target) return;
-      event.preventDefault();
-      if (location.hash !== hash) history.pushState(history.state, '', hash);
-      if (event.detail === 0) {
-        target.setAttribute('tabindex', '-1');
-        target.focus({ preventScroll: true });
-      }
-      alignAnchor(hash, preference.matches ? 'instant' : 'smooth');
     });
-    window.addEventListener('hashchange', () => alignAnchor(location.hash));
-    window.addEventListener('pageshow', event => {
-      if (!event.persisted && location.hash) requestAnimationFrame(() => alignAnchor(location.hash));
-    });
-    window.addEventListener('scroll', schedule, { passive: true });
-    window.addEventListener('resize', measure, { passive: true });
-    window.addEventListener('pageshow', measure);
-    main.addEventListener('focusin', schedule);
-    main.addEventListener('focusout', schedule);
-    if ('ResizeObserver' in window) {
-      const observer = new ResizeObserver(measure);
-      [main, hero, studio, client, ...chapters.map(({ surface }) => surface)].forEach(element => observer.observe(element));
-    }
-    document.fonts.ready.then(measure);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) measure(); });
-    preference.addEventListener('change', () => { if (preference.matches) reset(); else measure(); });
-    compact.addEventListener('change', measure);
-    measure();
   }
-
-  document.addEventListener('DOMContentLoaded', () => {
-    initScrollDepth();
-    if (!location.hash && scrollY < 150) hero();
-    const entries = new Map();
-    const onView = (selector, action) => { const element = document.querySelector(selector); if (element) entries.set(element, action); };
-    onView('.studio-palettes', () => document.querySelectorAll('.palette-sample').forEach((swatch, index) => play(swatch, { scale: [.65, 1], opacity: [0, 1] }, { duration: 520, delay: index * 45 })));
-    onView('.personal-details', () => {
-      document.querySelectorAll('.detail-art-words>span').forEach((word, index) => play(word, { translate: ['0 15px', '0 0'], opacity: [0, 1], rotate: ['-12deg', '0deg'] }, { duration: 650, delay: index * 120 }));
-      document.querySelectorAll('.detail-art-learning i').forEach((bar, index) => play(bar, { scale: ['1 0', '1 1'] }, { duration: 650, delay: 180 + index * 140 }));
-      document.querySelectorAll('.detail-art-clipboard>span').forEach((key, index) => play(key, { translate: ['0 0', '0 5px', '0 0'] }, { duration: 480, delay: 500 + index * 130 }));
-    });
-    onView('.client-stage', () => {
-      play(document.querySelector('.annotation-line'), { scale: ['0 1', '1 1'], opacity: [0, 1] }, { duration: 800, delay: 300 });
-    });
-    onView('#download-package', () => play(document.querySelector('#download-package .icon'), { translate: ['0 -8px', '0 3px', '0 0'], opacity: [0, 1, 1] }, { duration: 700, delay: 120 }));
-    if ('IntersectionObserver' in window) {
-      const observer = new IntersectionObserver(records => records.forEach(record => {
-        if (!record.isIntersecting) return;
-        entries.get(record.target)();
-        observer.unobserve(record.target);
-      }), { threshold: .2 });
-      entries.forEach((_, element) => observer.observe(element));
-    }
-    document.querySelectorAll('.faq-list details, .studio-export').forEach(wireDrawer);
-
-    const stage = document.querySelector('.hero-stage');
-    let pointerFrame;
-    const resetTilt = () => { stage.style.removeProperty('--tilt-x'); stage.style.removeProperty('--tilt-y'); };
-    stage.addEventListener('pointermove', event => {
-      if (preference.matches || !finePointer.matches) return;
-      cancelAnimationFrame(pointerFrame);
-      pointerFrame = requestAnimationFrame(() => {
-        const rect = stage.getBoundingClientRect();
-        stage.style.setProperty('--tilt-x', `${(event.clientY - rect.top - rect.height / 2) / rect.height * -5}deg`);
-        stage.style.setProperty('--tilt-y', `${(event.clientX - rect.left - rect.width / 2) / rect.width * 7}deg`);
-      });
-    });
-    stage.addEventListener('pointerleave', () => { cancelAnimationFrame(pointerFrame); resetTilt(); });
-    preference.addEventListener('change', () => {
-      if (!preference.matches) return;
-      cancelAnimationFrame(pointerFrame);
-      resetTilt();
-      active.forEach(animation => animation.cancel());
-      colorCover?.remove();
-    });
+  addEventListener('scroll', updateDepth, {passive:true});
+  addEventListener('resize', updateDepth);
+  document.addEventListener('focusin', updateDepth);
+  stacked.addEventListener('change', updateDepth);
+  if (!location.hash && scrollY < 150 && document.querySelector('.hero-stage')) hero();
+  document.querySelectorAll('.faq-list details, .studio-export').forEach(wireDrawer);
+  preference.addEventListener('change', () => {
+    updateDepth();
+    if (!preference.matches) return;
+    active.forEach(animation => animation.cancel());
+    colorCover?.remove();
+    document.querySelector('#appearance-studio')?.classList.remove('theme-revealing');
   });
+  updateDepth();
 })();
