@@ -5,7 +5,9 @@ import hashlib
 from pathlib import Path
 import shutil
 
-FILES = ("index.html", "styles.css", "app.js", "studio.js", "interactions.js", "sitemap.xml", "robots.txt")
+PAGES = ("index.html", "appearance.html", "download.html", "help.html")
+CACHE_ASSETS = ("styles.css", "support.css", "app.js", "studio.js", "interactions.js", "download.js")
+FILES = PAGES + CACHE_ASSETS + ("sitemap.xml", "robots.txt")
 
 
 def repository_digest(root):
@@ -53,11 +55,15 @@ def prepare(source, destination):
     for name in FILES:
         shutil.copyfile(source / name, destination / name)
     # A new page must never reuse the previous release's cached scripts/styles.
-    html = (source / "index.html").read_text(encoding="utf-8")
-    for name in ("styles.css", "app.js", "studio.js", "interactions.js"):
-        digest = hashlib.sha256((source / name).read_bytes()).hexdigest()[:12]
-        html = html.replace(f'"{name}"', f'"{name}?v={digest}"')
-    (destination / "index.html").write_text(html, encoding="utf-8")
+    cache_versions = {
+        name: hashlib.sha256((source / name).read_bytes()).hexdigest()[:12]
+        for name in CACHE_ASSETS
+    }
+    for page in PAGES:
+        html = (source / page).read_text(encoding="utf-8")
+        for name, digest in cache_versions.items():
+            html = html.replace(f'"{name}"', f'"{name}?v={digest}"')
+        (destination / page).write_text(html, encoding="utf-8")
     shutil.copytree(source / "assets", destination / "assets", dirs_exist_ok=True)
     (destination / ".nojekyll").touch()
     if before != repository_digest(destination):
