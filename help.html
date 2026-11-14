@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F7F8FC">
+  <meta name="description" content="ModernIME 使用帮助：安装与启用、拼音和快捷输入、候选外观、X11 与 Wayland、本地学习、词典与数据备份。">
+  <meta property="og:title" content="ModernIME 使用帮助">
+  <meta property="og:description" content="从第一次安装到日常输入，找到你需要的下一步。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/help.html">
+  <meta property="og:image" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/assets/modernime-icon.png">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/help.html">
+  <link rel="icon" href="assets/modernime-icon.png" type="image/png">
+  <link rel="stylesheet" href="styles.css?v=52bf747b4971">
+  <link rel="stylesheet" href="support.css?v=ed2d24da258b">
+  <script src="interactions.js?v=1373f42eb267" defer></script>
+  <script src="app.js?v=4bb9b4511305" defer></script>
+  <title>使用帮助 · ModernIME</title>
+</head>
+<body class="support-page">
+  <a class="skip-link" href="#main">跳至内容</a>
+  <header class="site-header"><div class="nav-wrap page-width"><a class="brand" href="index.html" aria-label="ModernIME 首页"><img src="assets/modernime-icon.png" width="36" height="36" alt=""><span>ModernIME</span></a><button class="menu-toggle" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="展开导航"><span></span><span></span></button><nav id="main-nav" aria-label="主导航"><a href="index.html">产品</a><a href="appearance.html">外观体验</a><a href="help.html" aria-current="page">帮助</a><a class="button button-small" href="download.html">下载 ModernIME</a></nav></div></header>
+  <main id="main">
+    <section class="support-intro page-width" aria-labelledby="help-title"><div><p class="section-kicker">使用帮助</p><h1 id="help-title">让输入，更顺手。</h1><p class="support-lead">从第一次安装到日常使用，找到你需要的下一步。</p></div><a class="quiet-link" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/README.md" target="_blank" rel="noopener">阅读完整文档 <span aria-hidden="true">↗</span></a></section>
+
+    <div class="help-layout page-width">
+      <aside class="help-sidebar"><nav aria-label="帮助分类"><a href="#installation">安装与启用</a><a href="#input">日常输入</a><a href="#appearance">候选与外观</a><a href="#learning">学习与数据</a></nav><p>正在寻找设置？<br>在客户端按 <kbd>Ctrl</kbd> + <kbd>F</kbd>，搜索功能名称即可定位。</p></aside>
+      <div class="help-content">
+        <section class="help-section" id="installation" aria-labelledby="installation-title">
+          <div class="help-section-heading"><span class="help-section-symbol" aria-hidden="true">↓</span><h2 id="installation-title">安装与启用</h2></div>
+          <div class="help-questions">
+            <details id="supported-systems"><summary>我的 Linux 系统可以用吗？</summary><div><p>签名 APT 源面向 Ubuntu 24.04 LTS amd64；DNF 源面向 openEuler 24.09 x86_64。其他系统或 ARM64 等架构，请先按文档准备依赖并从源码构建，不代表所有发行版都已完成验证。</p><p>openEuler 24.03 LTS-SP4 需额外配置限定范围的 24.09 EPOL 依赖源。Ubuntu 22.04 与 Debian 12 已停止提供预编译包。</p><a href="download.html">选择安装方式</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#快速安装与发行包下载" target="_blank" rel="noopener">兼容范围与 EPOL 配置</a></div></details>
+            <details id="start-typing"><summary>已经装好，怎样开始输入中文？</summary><div><p>ModernIME 是 Fcitx5 的输入法组件。打开 Fcitx5 配置，添加 ModernIME，再切换到它；然后在输入框中输入 <code>nihao</code>，用空格选词。</p><p>在应用菜单搜索「ModernIME」可打开独立设置客户端。若输入法尚未出现，在当前用户的桌面终端执行：</p><pre tabindex="0"><code>modernime-session-init</code></pre><p>若提示文件已安装但初始化未完成，先修复提示中的问题，再运行这条命令；无需重复安装。自定义安装路径时沿用原来的环境设置。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#fcitx5-启动与检查" target="_blank" rel="noopener">启动与会话检查</a></div></details>
+            <details id="updates"><summary>已经在用了，怎样更新？</summary><div><p>在设置客户端搜索「检查更新」。发现新版后按提示下载，校验完成后点击「重启并更新」；有未保存设置时，先处理草稿。</p><p>更新沿用当前安装渠道。APT 和 DNF 用户也可通过原软件源更新；源码用户在原仓库更新后重新安装，便携用户使用新版归档。系统包安装阶段仍可能需要系统授权。</p><a href="download.html#install">查看更新命令</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#在线更新与缓存" target="_blank" rel="noopener">更新说明</a></div></details>
+            <details id="channel-migration"><summary>原来用源码安装，可以改用 APT 或 DNF 吗？</summary><div><p>可以，但需要先迁移渠道，不能直接跨渠道覆盖。在终端执行 <code>modernime-migrate-channel --check</code> 检查当前来源，再按文档配置软件源并迁移。</p><p>迁移会先备份并校验数据。失败时回退程序，保留期间的新学习、词典和设置，不自动恢复旧数据。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#install-channel-migration" target="_blank" rel="noopener">安装渠道迁移步骤</a></div></details>
+          </div>
+        </section>
+
+        <section class="help-section" id="input" aria-labelledby="input-title">
+          <div class="help-section-heading"><span class="help-section-symbol" aria-hidden="true">拼</span><h2 id="input-title">日常输入</h2></div>
+          <div class="help-questions">
+            <details id="pinyin"><summary>支持全拼、双拼和模糊音吗？</summary><div><p>支持全拼、简拼、小鹤双拼与自然码双拼。在客户端搜索「拼音方案」选择习惯的方式，个人词典和完整拼音学习记录可继续使用。</p><p>模糊音可单独调整 z/zh、c/ch、s/sh、l/n、en/eng、in/ing 六组。选好后点击「保存设置」。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#设置客户端布局与操作" target="_blank" rel="noopener">查看输入设置</a></div></details>
+            <details id="input-tools"><summary>除了拼音，还有哪些顺手的小工具？</summary><div><p>在中文输入时，可用这些入口处理临时需求；相关开关可在客户端搜索名称。</p><dl class="help-shortcuts"><div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd></dt><dd>临时英文输入</dd></div><div><dt><code>u+mumu</code></dt><dd>按部件拼音查「林」</dd></div><div><dt><code>v=(2+3)*4</code></dt><dd>离线计算，得到 20</dd></div><div><dt><code>v;</code></dt><dd>查找符号与收藏</dd></div></dl><p>剪贴板入口默认是 <code>v</code> 后按 <code>2</code>；进入后可用 <kbd>Ctrl</kbd> + <kbd>F</kbd> 搜索，或 <kbd>Ctrl</kbd> + <kbd>D</kbd> 收藏。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/docs/输入辅助功能接口.md" target="_blank" rel="noopener">输入辅助说明</a></div></details>
+            <details id="application-compatibility"><summary>只有某个应用不能输入，先检查哪里？</summary><div><p>先确认已切换到 ModernIME，并把光标放入可编辑的输入框。再打开设置客户端的「维护」，查看运行状态和应用兼容诊断；旧版客户端对应「系统与诊断」。</p><p>Wayland 下的应用、桌面面板和 X11 使用不同链路，浏览器或 Qt 应用可能还需要相应配置。按当前应用与桌面类型查看文档中的步骤。</p><a href="#wayland">了解 X11 与 Wayland 的区别</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#wayland-与会话说明" target="_blank" rel="noopener">应用兼容说明</a></div></details>
+          </div>
+        </section>
+
+        <section class="help-section" id="appearance" aria-labelledby="appearance-title">
+          <div class="help-section-heading"><span class="help-section-symbol" aria-hidden="true">字</span><h2 id="appearance-title">候选与外观</h2></div>
+          <div class="help-questions">
+            <details id="appearance-settings"><summary>怎样调整字号、颜色和候选栏？</summary><div><p>进入客户端「候选与外观」，边看预览边选择配色、轮廓、字号和间距，最后点击「保存设置」。自绘候选栏会自动应用，无需为了改颜色重启输入法。</p><p>设置窗口的「界面主题」与「候选栏配色」相互独立。网站预览便于挑选搭配，实际效果还会受到字体与桌面环境影响。</p><a href="appearance.html">试试外观搭配</a></div></details>
+            <details id="wayland"><summary>为什么 Wayland 中的候选栏和网站预览不同？</summary><div><p>X11 使用 ModernIME 自绘候选栏；Wayland 由 Fcitx5 连接应用或桌面提供的候选面板，因此外观会随桌面与应用而不同。</p><p>GNOME 原生面板需要项目提供的 ModernIME Input Panel 扩展。在客户端「候选与外观」打开 GNOME 面板设置，可调整该面板的字体、配色、轮廓和间距。</p><p>首次安装或更新扩展后可能需要重新登录，再运行 <code>modernime-session-init</code>。若仍未出现，在「维护」或旧版「系统与诊断」查看面板状态；请勿在 Wayland 下强制使用 X11 自绘面板。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#wayland-与会话说明" target="_blank" rel="noopener">Wayland 与会话说明</a></div></details>
+            <details id="appearance-config"><summary>网站选好的外观，怎样带回客户端？</summary><div><p>最简单的方式是在「候选与外观」选择相同的配色、轮廓和间距，再保存。</p><p>也可从外观体验页复制或下载配置片段，只将片段中的设置合并到现有 <code>settings.conf</code>；不要用片段替换整个配置文件，以免丢失其他设置。</p><a href="appearance.html#studio-export">选择并导出外观配置</a></div></details>
+          </div>
+        </section>
+
+        <section class="help-section" id="learning" aria-labelledby="data-title"><span class="support-anchor" id="data" aria-hidden="true"></span>
+          <div class="help-section-heading"><span class="help-section-symbol" aria-hidden="true">忆</span><h2 id="data-title">学习与数据</h2></div>
+          <div class="help-questions">
+            <details id="privacy"><summary>输入的文字会发送到云端吗？</summary><div><p>拼音解码、个人词典和用户学习在本地完成，不依赖云端输入服务。上下文学习可以关闭，敏感输入场景会停用相关学习。</p><p>安装、检查更新和升级会连接相应软件源，与日常输入和学习分开。设置客户端可管理学习开关和本地记录。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#常用功能与核心特性" target="_blank" rel="noopener">功能与数据说明</a></div></details>
+            <details id="personal-words"><summary>怎样添加常用词、人名或快捷短语？</summary><div><p>在客户端「我的词语」中打开个人词典，添加词条并确认拼音。人名或多音字可以手动修改读音；保存后，运行中的输入法会自动读取。</p><p>常用的整段文字可以保存为快捷短语，用缩写调出。默认按 <kbd>Super</kbd> + <kbd>;</kbd> 进入快速输入，再输入缩写；需要启用 Fcitx5 的 Quick Phrase 插件，自定义快捷键以你的配置为准。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#设置客户端布局与操作" target="_blank" rel="noopener">个人词典与快捷短语</a></div></details>
+            <details id="forgetting"><summary>选错过的词，可以让输入法忘记吗？</summary><div><p>在客户端搜索「学习记录」，按词语或拼音找到记录后管理偏好。当前客户端可逐词忘记或解除屏蔽，也可以在「我的词语」中维护自己的词条。</p><p>想重新开始时可清空学习记录。清空前会自动备份并校验；备份失败会保留原记录。页面会显示结果与备份位置。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#设置客户端布局与操作" target="_blank" rel="noopener">学习记录与词典管理</a></div></details>
+            <details id="clipboard"><summary>剪贴板历史怎样搜索、收藏和清理？</summary><div><p>打开客户端「剪贴板」，搜索需要的文字或只查看收藏。输入时也可用默认的 <code>v</code> 后按 <code>2</code> 打开剪贴板菜单，按 <kbd>Ctrl</kbd> + <kbd>F</kbd> 搜索。</p><p>复制会保留完整内容；删除与清空前会要求确认。历史和收藏分开管理，清空历史不会清空收藏；数据备份默认不包含剪贴板。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/docs/输入扩展功能接口.md" target="_blank" rel="noopener">剪贴板与收藏说明</a></div></details>
+            <details id="backup"><summary>换电脑或整理数据前，怎样备份？</summary><div><p>在当前客户端搜索「创建数据备份」，选择设置、词典和学习数据，保存到本地文件夹。恢复前可以比较差异并选择要恢复的内容；先处理尚未保存的草稿。</p><p>备份默认不含剪贴板。剪贴板历史与收藏独立保存，清空历史会保留收藏。需要迁移或清理时，请分别检查它们。</p><p>旧版客户端没有这个入口时，可先使用个人词典的导出功能，并按文档中的安装与数据说明处理。</p><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#设置客户端布局与操作" target="_blank" rel="noopener">备份与恢复说明</a></div></details>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <section class="help-contact page-width" aria-labelledby="contact-title"><div><h2 id="contact-title">还有没解决的问题？</h2><p>反馈时附上系统版本、桌面环境、ModernIME 版本，以及出现问题前的操作，方便复现。</p></div><a class="button button-secondary" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/issues" target="_blank" rel="noopener">到 GitHub 反馈 <span aria-hidden="true">↗</span></a></section>
+  </main>
+  <footer class="page-width site-footer"><div><a class="brand" href="index.html"><img src="assets/modernime-icon.png" width="28" height="28" alt=""><span>ModernIME</span></a><p>为 Linux 桌面的每一次表达。</p></div><div class="footer-links"><a href="download.html">下载与安装</a><a href="help.html">使用帮助</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method" target="_blank" rel="noopener">GitHub</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/LICENSE" target="_blank" rel="noopener">开源许可</a></div></footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

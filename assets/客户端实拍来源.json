@@ -1,0 +1,430 @@
+{
+  "客户端版本": "0.2.13",
+  "版本命令输出": "ModernIME settings 0.2.13",
+  "可执行文件SHA256": "75673a08e5a0124ca0ae065d5cf0b1026e2b6d066ed912fd765b926cfb32e321",
+  "发布状态": "本机已安装客户端实拍，用于本地开发预览；截图不等于已发布安装包或线上官网已经包含这些界面。",
+  "原生尺寸": [
+    2940,
+    2160
+  ],
+  "逻辑窗口尺寸": [
+    980,
+    720
+  ],
+  "GDK_SCALE": 3,
+  "采集方式": "Xvfb 独立显示、私有 D-Bus 会话、GTK3 原生渲染；Gdk.pixbuf_get_from_window 读取完整客户端窗口。PNG 未插值放大、未重绘界面；WebP 为逐像素一致的无损编码。",
+  "隔离方法": {
+    "XDG目录": "在启动私有 D-Bus 会话前设置独立临时 XDG_CONFIG_HOME、XDG_DATA_HOME、XDG_CACHE_HOME 与 XDG_RUNTIME_DIR，客户端、引擎及自动激活服务共同继承。",
+    "运行身份核对": "核对正式会话客户端与引擎的环境变量、独立显示及私有 D-Bus，并核对实际加载插件的 SHA-256。",
+    "个人内容": "正式素材仅使用为截图生成的个人词语和学习记录，剪贴板为空；不含用户真实词库或学习内容。",
+    "素材范围": "仅包含正式隔离采集的图片，前期探查图片未纳入交付。"
+  },
+  "已加载配套引擎": [
+    {
+      "文件": "modernime_fcitx5.so",
+      "SHA256": "4d7c494d5f644568ba16c7321b646981a0fc63dbd1bd4fb21ad1a96a6c9f562e"
+    },
+    {
+      "文件": "modernime_ui.so",
+      "SHA256": "034864fe39795ad1f1bee2447946e4ffbb90d93c7cf505546ba65a8d81b0d271"
+    }
+  ],
+  "演示数据": {
+    "个人词语": [
+      "产品设计",
+      "用户体验",
+      "A股",
+      "Docker容器"
+    ],
+    "学习记录": [
+      "产品设计",
+      "用户体验",
+      "输入法",
+      "显示效果",
+      "快捷键",
+      "个人词典",
+      "字体大小",
+      "你好",
+      "会议",
+      "工作",
+      "方便",
+      "方案"
+    ],
+    "说明": "学习次数与记录时间均为隔离截图样例，不代表真实使用统计。"
+  },
+  "真实页面对应": {
+    "candidates": "候选与外观 → 外观",
+    "input": "输入习惯 → 拼音与状态",
+    "learning": "我的词语 → 学习记录",
+    "overview": "工作台"
+  },
+  "候选栏配色": "所有主题截图的候选栏均固定雾紫，真实体现候选配色与界面主题独立。",
+  "主题像素核对": {
+    "amber": {
+      "页面底色": [
+        246,
+        245,
+        243
+      ],
+      "侧栏底色": [
+        241,
+        238,
+        232
+      ],
+      "导航选中底色": [
+        150,
+        96,
+        51
+      ]
+    },
+    "blue": {
+      "页面底色": [
+        245,
+        246,
+        247
+      ],
+      "侧栏底色": [
+        237,
+        240,
+        244
+      ],
+      "导航选中底色": [
+        56,
+        105,
+        212
+      ]
+    },
+    "contrast": {
+      "页面底色": [
+        8,
+        10,
+        12
+      ],
+      "侧栏底色": [
+        12,
+        16,
+        19
+      ],
+      "导航选中底色": [
+        255,
+        223,
+        112
+      ]
+    },
+    "jade": {
+      "页面底色": [
+        245,
+        246,
+        245
+      ],
+      "侧栏底色": [
+        237,
+        241,
+        239
+      ],
+      "导航选中底色": [
+        52,
+        123,
+        101
+      ]
+    },
+    "lavender": {
+      "页面底色": [
+        246,
+        246,
+        247
+      ],
+      "侧栏底色": [
+        239,
+        237,
+        243
+      ],
+      "导航选中底色": [
+        118,
+        91,
+        159
+      ]
+    },
+    "night": {
+      "页面底色": [
+        21,
+        31,
+        44
+      ],
+      "侧栏底色": [
+        25,
+        38,
+        53
+      ],
+      "导航选中底色": [
+        139,
+        181,
+        237
+      ]
+    },
+    "rose": {
+      "页面底色": [
+        246,
+        245,
+        245
+      ],
+      "侧栏底色": [
+        242,
+        237,
+        239
+      ],
+      "导航选中底色": [
+        160,
+        77,
+        112
+      ]
+    }
+  },
+  "截图": [
+    {
+      "页面": "candidates",
+      "主题": "amber",
+      "文件": "client-v0213-candidates-amber.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "9a7e4f463ad13c212b172a7aebc80ca3cbaab5b3e0212b5f1e7a9031b81191e3",
+      "WebP文件": "client-v0213-candidates-amber.webp",
+      "WebP_SHA256": "b479a4a13bd519689aac8a9d9a68ce1884533287dc3cecd773d9ba8a4654a73a",
+      "采集时间": "2026-11-14T13:26:17.993235+00:00"
+    },
+    {
+      "页面": "candidates",
+      "主题": "blue",
+      "文件": "client-v0213-candidates-blue.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "79fb0497a10eb366ebfdec6da9183568df0bb8a6cde1e3e1f0d27a9180412dd4",
+      "WebP文件": "client-v0213-candidates-blue.webp",
+      "WebP_SHA256": "cfd6e1c9906c54a9c812f15e53d1d6304f3a29b246763f2f8a706623f7fe8a23",
+      "采集时间": "2026-11-14T13:26:06.474904+00:00"
+    },
+    {
+      "页面": "candidates",
+      "主题": "contrast",
+      "文件": "client-v0213-candidates-contrast.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "34c2a20692279382ff9360cc281cd700ff7332b63ade7b1f38132625e8926814",
+      "WebP文件": "client-v0213-candidates-contrast.webp",
+      "WebP_SHA256": "1f0e915a999f402deb305d83447c57ab11980c55110d8298c11ef6a88da83600",
+      "采集时间": "2026-11-14T13:26:35.384126+00:00"
+    },
+    {
+      "页面": "candidates",
+      "主题": "jade",
+      "文件": "client-v0213-candidates-jade.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "92b5399e686b6b5276fa153a3307a0ae6837d6335be466d49e5317f89b731b37",
+      "WebP文件": "client-v0213-candidates-jade.webp",
+      "WebP_SHA256": "a223b6a8923c4e0b29f50313458030377c9a5c235708105a310705e8b0db2c60",
+      "采集时间": "2026-11-14T13:26:12.361589+00:00"
+    },
+    {
+      "页面": "candidates",
+      "主题": "lavender",
+      "文件": "client-v0213-candidates-lavender.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "3d80bbcbd54680081cfce31fa375e26f0ff411ce3d96f0a49a99b3b013959e5f",
+      "WebP文件": "client-v0213-candidates-lavender.webp",
+      "WebP_SHA256": "9979ce4379553b18e9a9f5704c2d405d50d16b002f1b22acb16010cf1f0810d4",
+      "采集时间": "2026-11-14T13:26:00.872053+00:00"
+    },
+    {
+      "页面": "candidates",
+      "主题": "night",
+      "文件": "client-v0213-candidates-night.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "ac93a48ed6b60524aa56acb0b047b94fba7efb45c741707a1a48f49329636dcc",
+      "WebP文件": "client-v0213-candidates-night.webp",
+      "WebP_SHA256": "cab4cf5832bd2fad09520a1913566d3173a13e57e318c0957f260a0e1dcc302e",
+      "采集时间": "2026-11-14T13:26:29.479122+00:00"
+    },
+    {
+      "页面": "candidates",
+      "主题": "rose",
+      "文件": "client-v0213-candidates-rose.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "ac8ce681a2b1340977a675ccc04b9e8598f8be37044c5258d8666032f21d3519",
+      "WebP文件": "client-v0213-candidates-rose.webp",
+      "WebP_SHA256": "a0ac7b1902200d8116ec1f2057aba93dcc1a6bde9057b9cdd806813782efb783",
+      "采集时间": "2026-11-14T13:26:23.615131+00:00"
+    },
+    {
+      "页面": "input",
+      "主题": "amber",
+      "文件": "client-v0213-input-amber.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "e2d8a7cc552cff802232986672e29933db315fb9c68974822b1e97d9da89d1cb",
+      "WebP文件": "client-v0213-input-amber.webp",
+      "WebP_SHA256": "0c4107a333496039b09c5642a251e6ba25cd43d15e47a7aa10bf61b7439d2a92",
+      "采集时间": "2026-11-14T13:26:19.335908+00:00"
+    },
+    {
+      "页面": "input",
+      "主题": "blue",
+      "文件": "client-v0213-input-blue.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "382ae5a7a68e1ed3495bab87c21c90752b780551bc48cf4743491f3e6723f02f",
+      "WebP文件": "client-v0213-input-blue.webp",
+      "WebP_SHA256": "985945a8d367c8ebe2ae6364e5e35f6db3f5233288b233ddc2bb78bd68ce4937",
+      "采集时间": "2026-11-14T13:26:07.829952+00:00"
+    },
+    {
+      "页面": "input",
+      "主题": "contrast",
+      "文件": "client-v0213-input-contrast.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "151ffa94d9d15bf74274f0899ad1694a2fa6818639b20b66c9a2d2fdd037a8ce",
+      "WebP文件": "client-v0213-input-contrast.webp",
+      "WebP_SHA256": "df4b38671d6fd38d107e42a1687d7275e906feb61228f8b45c23f706238e1a4b",
+      "采集时间": "2026-11-14T13:26:36.727637+00:00"
+    },
+    {
+      "页面": "input",
+      "主题": "jade",
+      "文件": "client-v0213-input-jade.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "87a73b3ad1eb056097ff73459d42dd1e0dd31897ccfa90f5f508763d73dcd86c",
+      "WebP文件": "client-v0213-input-jade.webp",
+      "WebP_SHA256": "d0517c3ec5680f8facc7f2d473d791a127243be0373da7e12a4a9fa79bac5409",
+      "采集时间": "2026-11-14T13:26:13.739233+00:00"
+    },
+    {
+      "页面": "input",
+      "主题": "lavender",
+      "文件": "client-v0213-input-lavender.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "c60a9c4537684948100bf3dd93e3a00d77b61a403bdaeb2cd52c5f16c3ab27a8",
+      "WebP文件": "client-v0213-input-lavender.webp",
+      "WebP_SHA256": "5d6e219a7c0a62ab4202704dfa2ce6b7f5b1ba80e4ad5db89867a3a2dc27f709",
+      "采集时间": "2026-11-14T13:26:02.228039+00:00"
+    },
+    {
+      "页面": "input",
+      "主题": "night",
+      "文件": "client-v0213-input-night.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "a58bdc05c8830448ba20d77dd185a4994e25c3276f580d704229b31ff13ed2a9",
+      "WebP文件": "client-v0213-input-night.webp",
+      "WebP_SHA256": "97e8f2dbd793864ed7c4557feb44bdda3a1e3ddf3e140dfe3fa1f14f5ed7d9de",
+      "采集时间": "2026-11-14T13:26:30.830395+00:00"
+    },
+    {
+      "页面": "input",
+      "主题": "rose",
+      "文件": "client-v0213-input-rose.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "7f1e61b368a88c830ef521d699b10e316571936dc45abb535ad2f80747a024f1",
+      "WebP文件": "client-v0213-input-rose.webp",
+      "WebP_SHA256": "9f59f27991fd5e7aa11d45062e8685f99d121237ce9d7698dc50645a58648cb5",
+      "采集时间": "2026-11-14T13:26:24.959765+00:00"
+    },
+    {
+      "页面": "learning",
+      "主题": "amber",
+      "文件": "client-v0213-learning-amber.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "c6162a3df1269854790ad7750f5e82ebc16a06539689ccdf0fd436d70eb7ce82",
+      "WebP文件": "client-v0213-learning-amber.webp",
+      "WebP_SHA256": "1d668af07a3ca0a8a89e6e11106581020817f9b6b30a2b019a988a47f02cab26",
+      "采集时间": "2026-11-14T13:26:20.681132+00:00"
+    },
+    {
+      "页面": "learning",
+      "主题": "blue",
+      "文件": "client-v0213-learning-blue.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "c2773f7bdc76392db2ec5375e7acec1869767f924050f2c018841dc77cedfcaf",
+      "WebP文件": "client-v0213-learning-blue.webp",
+      "WebP_SHA256": "c582a22b4e3873a6f85e13ff2abbbe00f2c35cfe4c15363a1bdcc3337bc987fc",
+      "采集时间": "2026-11-14T13:26:09.179216+00:00"
+    },
+    {
+      "页面": "learning",
+      "主题": "contrast",
+      "文件": "client-v0213-learning-contrast.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "055817cfeec3117b8d25ad6bba695e2ecce28bfe284b668497bf861710269732",
+      "WebP文件": "client-v0213-learning-contrast.webp",
+      "WebP_SHA256": "73e456707a211f56ca3f4f444d9334936d7684f95e4f56b8be85d6e29b197d24",
+      "采集时间": "2026-11-14T13:26:38.076663+00:00"
+    },
+    {
+      "页面": "learning",
+      "主题": "jade",
+      "文件": "client-v0213-learning-jade.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "66dac580b6aa37988f02a7e8ae0d7b54ab632f17cea29d8aa182eb66ff6c1311",
+      "WebP文件": "client-v0213-learning-jade.webp",
+      "WebP_SHA256": "5699f6fed0af751393fc0f31021d3843f25af5a9af2cd7ab05ba17e82b0a618c",
+      "采集时间": "2026-11-14T13:26:15.107706+00:00"
+    },
+    {
+      "页面": "learning",
+      "主题": "lavender",
+      "文件": "client-v0213-learning-lavender.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "6e9b31861bfca9305ad26ce53c4eb9ab3181641d73aa8313fcf25816318e1407",
+      "WebP文件": "client-v0213-learning-lavender.webp",
+      "WebP_SHA256": "4441a3775fb7fe3e1b454d5fe4122c3269ddcc00d7b746f14db60c9f3a50dc11",
+      "采集时间": "2026-11-14T13:26:03.577507+00:00"
+    },
+    {
+      "页面": "learning",
+      "主题": "night",
+      "文件": "client-v0213-learning-night.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "465f4154edeaf02cec25e80f8179c057b56f895244061bfefff55d3efe35c27c",
+      "WebP文件": "client-v0213-learning-night.webp",
+      "WebP_SHA256": "00d28a8cff69edc5930938e55451825afb9837827c376cd20f6ca072ebf03a52",
+      "采集时间": "2026-11-14T13:26:32.187328+00:00"
+    },
+    {
+      "页面": "learning",
+      "主题": "rose",
+      "文件": "client-v0213-learning-rose.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "f53da19210f6be9449320bed9d1227b2ed00cd99cbc23b86f44eb8ce065ba5c0",
+      "WebP文件": "client-v0213-learning-rose.webp",
+      "WebP_SHA256": "1f00f05cd003dbcca6f8c35eba16f88e94cfedef8e8d2a68f7b2f9e971483e2c",
+      "采集时间": "2026-11-14T13:26:26.315060+00:00"
+    }
+  ],
+  "补充截图": [
+    {
+      "页面": "overview",
+      "主题": "lavender",
+      "文件": "client-v0213-overview-lavender.png",
+      "宽": 2940,
+      "高": 2160,
+      "SHA256": "a139c12ed4d7d04ac693846dc5b59fa7e978f48272c2b0aa03dd50cf7f605b6e",
+      "WebP文件": "client-v0213-overview-lavender.webp",
+      "WebP_SHA256": "7dd10d1095ab4fdc3184b9a49823cf39d60cee0a74d67520d85b33be5a7f9b5e",
+      "采集时间": "2026-11-14T13:27:08.056304+00:00"
+    }
+  ],
+  "验证": "21 张页面/主题 PNG 哈希互不相同，七套界面底色互不相同；全部22组 PNG/WebP 均为2940×2160且逐像素一致。没有重编译客户端，没有渲染视频。"
+}

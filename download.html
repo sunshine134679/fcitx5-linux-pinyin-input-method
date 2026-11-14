@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F7F8FC">
+  <meta name="description" content="选择适合你的 ModernIME 安装方式：Ubuntu 24.04 签名 APT 源、openEuler 24.09 签名 DNF 源、发行包或源码构建，以及首次启用与更新指引。">
+  <meta property="og:title" content="下载 ModernIME · 开始写下下一句">
+  <meta property="og:description" content="选择你的 Linux 系统，安装 ModernIME，开始熟悉而顺手的中文输入。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/download.html">
+  <meta property="og:image" content="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/assets/modernime-icon.png">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/download.html">
+  <link rel="icon" href="assets/modernime-icon.png" type="image/png">
+  <link rel="stylesheet" href="styles.css?v=52bf747b4971">
+  <link rel="stylesheet" href="support.css?v=ed2d24da258b">
+  <script src="interactions.js?v=1373f42eb267" defer></script>
+  <script src="app.js?v=4bb9b4511305" defer></script>
+  <script src="download.js?v=9a93cd67d3e5" defer></script>
+  <title>下载 ModernIME · 开始写下下一句</title>
+</head>
+<body class="support-page">
+  <a class="skip-link" href="#main">跳至内容</a>
+  <header class="site-header">
+    <div class="nav-wrap page-width">
+      <a class="brand" href="index.html" aria-label="ModernIME 首页"><img src="assets/modernime-icon.png" width="36" height="36" alt=""><span>ModernIME</span></a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="展开导航"><span></span><span></span></button>
+      <nav id="main-nav" aria-label="主导航"><a href="index.html">产品</a><a href="appearance.html">外观体验</a><a href="help.html">帮助</a><a class="button button-small" href="download.html" aria-current="page">下载 ModernIME</a></nav>
+    </div>
+  </header>
+  <main id="main" data-download>
+    <section class="support-intro page-width" aria-labelledby="download-title">
+      <div><p class="section-kicker">开始使用</p><h1 id="download-title">下载 ModernIME</h1><p class="support-lead">选好你的系统，把下一句带到桌面。</p></div>
+      <a class="quiet-link" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases" target="_blank" rel="noopener">发行记录与历史版本 <span aria-hidden="true">↗</span></a>
+    </section>
+
+    <section class="download-section page-width" id="install" aria-labelledby="platform-title">
+      <div class="download-section-heading" id="platforms"><h2 id="platform-title">你使用哪一种系统？</h2><p>在系统「关于」中可查看发行版与架构。</p></div>
+      <div class="download-platforms" role="tablist" aria-label="选择系统与架构">
+        <button id="install-tab-ubuntu" role="tab" type="button" aria-selected="true" aria-controls="install-panel" data-install="ubuntu"><span class="platform-name">Ubuntu <span class="platform-version">24.04 LTS</span></span><span class="platform-architecture">amd64 / x86_64</span></button>
+        <button id="install-tab-openeuler" role="tab" type="button" aria-selected="false" aria-controls="install-panel" tabindex="-1" data-install="openeuler"><span class="platform-name">openEuler <span class="platform-version">24.09</span></span><span class="platform-architecture">x86_64</span></button>
+        <button id="install-tab-source" role="tab" type="button" aria-selected="false" aria-controls="install-panel" tabindex="-1" data-install="source"><span class="platform-name">其他 Linux 系统</span><span class="platform-architecture">其他版本、ARM64 等架构</span></button>
+      </div>
+      <div class="download-install-panel" id="install-panel" role="tabpanel" aria-labelledby="install-tab-ubuntu">
+        <div class="download-install-copy">
+          <span class="download-badge" id="install-badge">签名软件源</span>
+          <h3 id="install-heading">通过 APT 软件源安装</h3>
+          <p id="install-support">适用于 Ubuntu 24.04（noble）amd64。</p>
+          <fieldset class="download-stage"><legend>你是第一次使用吗？</legend><label><input type="radio" name="install-stage" value="new" checked><span>首次安装</span></label><label><input type="radio" name="install-stage" value="update"><span>已有 ModernIME</span></label></fieldset>
+          <p class="download-instruction" id="install-prerequisite">首次安装需配置独立签名密钥与软件源。复制命令后，在终端执行。</p>
+          <p class="download-update-note" id="install-update-note" hidden>也可在设置客户端搜索「检查更新」，按提示下载并更新。</p>
+          <a id="install-doc-link" class="quiet-link" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#快速安装与发行包下载" target="_blank" rel="noopener">完整安装说明与密钥核验 <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="download-terminal">
+          <div class="download-terminal-toolbar"><span>在终端执行</span><button id="copy-install" type="button"><svg class="icon copy-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></svg><svg class="icon copy-check" aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg><span>复制命令</span></button></div>
+          <pre tabindex="0" aria-label="安装命令"><code id="install-command">(
+set -eu
+. /etc/os-release
+if [ &quot;$ID&quot; != ubuntu ] || [ &quot;$VERSION_ID&quot; != 24.04 ] || [ &quot;$(dpkg --print-architecture)&quot; != amd64 ]; then
+  echo &#x27;此软件源仅适用于 Ubuntu 24.04 amd64，请参阅源码构建说明。&#x27; &gt;&amp;2
+  exit 1
+fi
+sudo install -d -m 0755 /usr/share/keyrings
+key_file=$(mktemp)
+trap &#x27;rm -f &quot;$key_file&quot;&#x27; EXIT
+curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/modernime-archive-keyring.gpg -o &quot;$key_file&quot;
+sudo install -m 0644 &quot;$key_file&quot; /usr/share/keyrings/modernime-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/modernime.sources &gt;/dev/null &lt;&lt;&#x27;REPO&#x27;
+Types: deb
+URIs: https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt
+Suites: noble
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg
+REPO
+sudo apt update
+sudo apt install modernime
+)</code></pre>
+        </div>
+      </div>
+      <noscript><p class="download-notice">安装方式切换需要 JavaScript。请查看 <a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#快速安装与发行包下载">完整安装说明</a>，或从 <a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases">GitHub Releases</a> 选择发行包。</p></noscript>
+      <p class="download-channel-note">以前用源码或便携包安装？请先<a href="#channel-migration">检查安装渠道</a>，再决定是否切换软件源。</p>
+    </section>
+
+    <section class="download-release-row page-width" aria-labelledby="release-title">
+      <div><h2 id="release-title">也可以下载安装包</h2><p>在 GitHub Releases 选择与你的系统匹配的 DEB、RPM 或 Linux x86_64 便携归档。版本与可用文件以发行页为准。</p><p class="support-detail">便携归档要求 glibc ≥ 2.34 及匹配运行库；其他架构请选择源码构建。</p></div>
+      <a id="download-package" class="button button-secondary" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/releases/latest" target="_blank" rel="noopener">前往发行页下载 <span aria-hidden="true">↗</span></a>
+    </section>
+
+    <section class="download-next page-width" id="after-install" aria-labelledby="after-install-title">
+      <div class="download-section-heading"><h2 id="after-install-title">装好之后，写下第一句。</h2><a class="quiet-link" href="help.html#start-typing">遇到启用问题？</a></div>
+      <ol class="download-steps">
+        <li><span class="download-step-number" aria-hidden="true">1</span><div><h3>打开设置客户端</h3><p>在应用菜单搜索「ModernIME」。也可在终端运行 <code>modernime-settings</code>。</p><p class="support-detail">用户级安装若找不到命令，请运行 <code>~/.local/bin/modernime-settings</code>。</p></div></li>
+        <li><span class="download-step-number" aria-hidden="true">2</span><div><h3>添加并切换输入法</h3><p>在 Fcitx5 配置中添加 ModernIME，再切换到它。已有 Fcitx5 可以继续使用。</p></div></li>
+        <li><span class="download-step-number" aria-hidden="true">3</span><div><h3>找一处输入框试试</h3><p>输入 <code>nihao</code>，用空格选词。之后到「候选与外观」挑选自己喜欢的搭配。</p><a class="quiet-link" href="appearance.html">先看看外观体验</a></div></li>
+      </ol>
+      <p class="download-session-note">输入法尚未出现时，在当前桌面终端运行 <code>modernime-session-init</code>。GNOME 面板首次安装或更新后可能需要重新登录，<a href="help.html#wayland">查看会话说明</a>。</p>
+    </section>
+
+    <section class="download-migration page-width" id="channel-migration" aria-labelledby="migration-title">
+      <div><p class="section-kicker">已经在用 ModernIME</p><h2 id="migration-title">更新沿用原渠道。</h2><p>APT、DNF、源码和便携安装有各自的更新方式。先在客户端搜索「检查更新」；想从源码或便携安装转到系统包时，使用渠道迁移工具。</p></div>
+      <div class="download-migration-detail"><p>先检查当前安装来源：</p><pre tabindex="0" aria-label="检查安装渠道命令"><code>modernime-migrate-channel --check</code></pre><p>迁移前会备份并校验数据。失败时回退程序，保留迁移期间的学习、词典和设置，不自动覆盖为旧数据。</p><a class="quiet-link" href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method#install-channel-migration" target="_blank" rel="noopener">查看完整迁移步骤 <span aria-hidden="true">↗</span></a></div>
+    </section>
+  </main>
+  <footer class="page-width site-footer"><div><a class="brand" href="index.html"><img src="assets/modernime-icon.png" width="28" height="28" alt=""><span>ModernIME</span></a><p>为 Linux 桌面的每一次表达。</p></div><div class="footer-links"><a href="download.html">下载与安装</a><a href="help.html">使用帮助</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method" target="_blank" rel="noopener">GitHub</a><a href="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/main/LICENSE" target="_blank" rel="noopener">开源许可</a></div></footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
