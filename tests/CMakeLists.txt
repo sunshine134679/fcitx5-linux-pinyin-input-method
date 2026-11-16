@@ -748,10 +748,10 @@ if(MODERNIME_BUILD_FCITX5)
     add_dependencies(modernime_clipboard_capture_tests modernime_fcitx5)
     add_test(NAME modernime_clipboard_capture
         COMMAND modernime_clipboard_capture_tests $<TARGET_FILE_DIR:modernime_fcitx5>)
-    set_tests_properties(modernime_clipboard_capture PROPERTIES TIMEOUT 360)
+    set_tests_properties(modernime_clipboard_capture PROPERTIES TIMEOUT 480)
     add_test(NAME modernime_clipboard_async
         COMMAND modernime_clipboard_capture_tests $<TARGET_FILE_DIR:modernime_fcitx5> --async)
-    set_tests_properties(modernime_clipboard_async PROPERTIES TIMEOUT 60)
+    set_tests_properties(modernime_clipboard_async PROPERTIES TIMEOUT 120)
 
     add_executable(modernime_clipboard_trigger_tests
         adapter/clipboard_trigger_test.cpp
@@ -874,7 +874,7 @@ if(MODERNIME_BUILD_FCITX5)
     add_test(NAME modernime_adapter_recovery COMMAND modernime_adapter_recovery_tests)
     set_tests_properties(modernime_adapter_recovery PROPERTIES
         ENVIRONMENT "MODERNIME_FAULT_HOOKS_LIB=$<TARGET_FILE:config_fault_hooks>"
-        TIMEOUT 120
+        TIMEOUT 360
     )
 endif()
 

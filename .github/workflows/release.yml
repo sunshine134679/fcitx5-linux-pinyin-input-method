@@ -653,11 +653,13 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y \
-            git build-essential cmake pkg-config python3 ca-certificates \
+            git build-essential python3-pip pkg-config python3 ca-certificates \
             libsqlite3-dev liblmdb-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
             libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
             libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev
+          pip3 install --no-cache-dir "cmake>=3.24,<4"
+          cmake --version
 
       - name: Checkout bound product source SHA
         uses: actions/checkout@v4
