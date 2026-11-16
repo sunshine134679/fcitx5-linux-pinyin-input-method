@@ -38,6 +38,7 @@ public:
     void reload();
     void setUpdatesPage(GtkWidget *page, std::function<void()> refresh,
                         std::function<bool(std::string_view)> focus);
+    void showStatus();
     void showUpdates();
     bool focusTarget(std::string_view target);
 

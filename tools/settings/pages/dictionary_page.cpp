@@ -687,6 +687,9 @@ public:
         gtk_widget_show(learningLink);
         updateActionState();
     }
+    void showEntries() {
+        gtk_stack_set_visible_child_name(GTK_STACK(views), "dictionary");
+    }
     void showLearning() {
         if (learningPage) gtk_stack_set_visible_child_name(GTK_STACK(views), "learning");
     }
@@ -1593,6 +1596,7 @@ GtkWidget *DictionaryPage::widget() const {
 void DictionaryPage::setLearningPage(GtkWidget *page, std::function<void()> refresh, std::function<bool(std::string_view)> focus) {
     impl_->setLearningPage(page, std::move(refresh), std::move(focus));
 }
+void DictionaryPage::showEntries() { impl_->showEntries(); }
 void DictionaryPage::showLearning() { impl_->showLearning(); }
 void DictionaryPage::setStateChanged(std::function<void()> changed) { impl_->setStateChanged(std::move(changed)); }
 

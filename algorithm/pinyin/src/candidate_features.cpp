@@ -63,32 +63,36 @@ DictBonusResult dictionaryBonus(const libime::PinyinDictionary &dictionary,
     } catch (const std::exception &) {
         return {0.0, false};
     }
+    std::string exactKey;
+    exactKey.reserve(encoded.size() + 1 + phrase.size());
+    exactKey.append(encoded.data(), encoded.size());
+    exactKey.push_back('!');
+    exactKey.append(phrase);
+
     double userBonus = 0.0;
     double systemBonus = 0.0;
     bool isLexical = false;
-    dictionary.matchWords(
-        encoded.data(), encoded.size(),
-        [&userBonus, &systemBonus, &isLexical, phrase,
-         singleCharacter, phraseLength](std::string_view,
-                          std::string_view hanzi,
-                          float cost) {
-            if (hanzi != phrase) {
-                return true;
+    const std::size_t layers = dictionary.dictSize();
+    for (std::size_t idx = 0; idx < layers; ++idx) {
+        const auto *trie = dictionary.trie(idx);
+        if (trie == nullptr) {
+            continue;
+        }
+        const float cost = trie->exactMatchSearch(exactKey);
+        if (!libime::DATrie<float>::isValid(cost)) {
+            continue;
+        }
+        isLexical = true;
+        if (cost >= 0.0F) {
+            if (!singleCharacter || cost > 0.0F) {
+                userBonus = std::max(userBonus,
+                                     core::curatedDictionaryBonus(cost, phraseLength));
             }
-            isLexical = true;
-            if (cost >= 0.0F) {
-                if (!singleCharacter || cost > 0.0F) {
-                    userBonus = std::max(userBonus,
-                                         core::curatedDictionaryBonus(cost, phraseLength));
-                }
-            } else if (!singleCharacter) {
-                systemBonus = std::max(systemBonus,
-                                       core::systemDictionaryBonus(cost));
-            }
-            // 同一 phrase 在用户词典与系统词典中可能各出现一次，
-            // 两种来源都命中后即可提前终止，无需继续遍历剩余前缀子树。
-            return userBonus <= 0.0 || systemBonus <= 0.0;
-        });
+        } else if (!singleCharacter) {
+            systemBonus = std::max(systemBonus,
+                                   core::systemDictionaryBonus(cost));
+        }
+    }
     return {core::combinedDictionaryBonus(userBonus, systemBonus), isLexical};
 }
 

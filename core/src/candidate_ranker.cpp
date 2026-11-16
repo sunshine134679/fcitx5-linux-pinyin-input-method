@@ -149,6 +149,19 @@ CandidateRanker::rank(std::string_view userInput,
                 std::min(unconfirmedCharacterFloor, candidate.final_score());
         }
     }
+    // Protect the native multi-character lexical leader from one-shot accidental
+    // selection of a secondary phrase (`learning_boost < 1.15`, without context
+    // or recent-choice confirmation). A second selection (>= 1.53) promotes it.
+    double unconfirmedPhraseFloor = std::numeric_limits<double>::infinity();
+    for (const auto &candidate : candidates) {
+        if (candidate.match_priority == 2 && candidate.phrase_length >= 2 &&
+            candidate.is_lexical && candidate.source_index == 0 &&
+            candidate.learning_boost >= 0.0 &&
+            candidate.consumed_input_bytes.value_or(userInput.size()) == userInput.size()) {
+            unconfirmedPhraseFloor =
+                std::min(unconfirmedPhraseFloor, candidate.final_score());
+        }
+    }
     std::vector<double> preferenceCosts;
     preferenceCosts.reserve(candidates.size());
     for (std::size_t i = 0; i < candidates.size(); ++i) {
@@ -165,6 +178,14 @@ CandidateRanker::rank(std::string_view userInput,
             candidate.language_context_bonus <= 0.0) {
             // At equal cost the unchanged native source index breaks the tie.
             cost = std::max(cost, unconfirmedCharacterFloor);
+        } else if (std::isfinite(unconfirmedPhraseFloor) &&
+                   candidate.match_priority == 2 && candidate.phrase_length >= 2 &&
+                   !(candidate.is_lexical && candidate.source_index == 0) &&
+                   candidate.learning_boost > 0.0 && candidate.learning_boost < 1.15 &&
+                   candidate.recent_choice_bonus <= 0.0 && candidate.context_bonus <= 0.0 &&
+                   candidate.language_context_bonus < 1.0 &&
+                   candidate.consumed_input_bytes.value_or(userInput.size()) == userInput.size()) {
+            cost = std::max(cost, unconfirmedPhraseFloor + 1e-6);
         }
         preferenceCosts.push_back(cost);
     }

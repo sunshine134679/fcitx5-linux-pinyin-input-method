@@ -39,8 +39,16 @@ CommitLearningDecision decideCommitLearning(const CommitEvent &event,
     }
 
     if (event.role == CommitCandidateRole::Raw) {
-        if (PinyinMatchPolicy::isValidPinyinSequence(event.text) &&
-            !EnglishDictionary::isEnglishWord(event.text)) {
+        const bool isTypoCorrectedPinyin = [&] {
+            if (event.text.size() < 4 || EnglishDictionary::isEnglishWord(event.text)) {
+                return false;
+            }
+            const auto normalized = PinyinMatchPolicy::normalizeTypoInput(event.text);
+            return !normalized.empty() && normalized != event.text &&
+                   PinyinMatchPolicy::isValidPinyinSequence(normalized);
+        }();
+        if (!EnglishDictionary::isEnglishWord(event.text) &&
+            (PinyinMatchPolicy::isValidPinyinSequence(event.text) || isTypoCorrectedPinyin)) {
             return CommitLearningDecision::IgnoreRawPinyin;
         }
     }

@@ -177,6 +177,10 @@ public:
         if (selectedView) gtk_stack_set_visible_child(GTK_STACK(views), selectedView);
     }
 
+    void showStatus() {
+        gtk_stack_set_visible_child_name(GTK_STACK(views), "runtime");
+    }
+
     void showUpdates() {
         if (!updatesWidget) return;
         const bool alreadyVisible = gtk_stack_get_visible_child(GTK_STACK(views)) == updatesWidget;
@@ -640,6 +644,8 @@ void DiagnosticsPage::setUpdatesPage(GtkWidget *page, std::function<void()> refr
                                      std::function<bool(std::string_view)> focus) {
     impl_->setUpdatesPage(page, std::move(refresh), std::move(focus));
 }
+
+void DiagnosticsPage::showStatus() { impl_->showStatus(); }
 
 void DiagnosticsPage::showUpdates() { impl_->showUpdates(); }
 

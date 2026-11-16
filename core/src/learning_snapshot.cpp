@@ -681,7 +681,8 @@ double LearningSnapshotShard::contextBoost(
         bestBoost = std::max(bestBoost, itemBoost);
     }
     if (worstFeedback > 0) {
-        const double penalty = 0.5 * std::log1p(static_cast<double>(worstFeedback));
+        const double penalty =
+            1.40 + 0.5 * std::log1p(static_cast<double>(worstFeedback - 1));
         bestBoost = std::max(0.0, bestBoost - penalty);
     }
     return bestBoost;

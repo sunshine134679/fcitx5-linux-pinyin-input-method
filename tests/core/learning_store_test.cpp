@@ -1654,6 +1654,39 @@ void testLearningStoreEntryCountLightweightAndFailure() {
     std::filesystem::remove(lmdbPath);
 }
 
+void testSingletonTimeDecayAndNegativeNeutralization() {
+    modernime::core::LearningSnapshot snap;
+    constexpr std::int64_t t0 = 1'700'000'000'000LL;
+    constexpr std::int64_t dayMs = 24LL * 60 * 60 * 1000;
+    snap.recordSelection("误触词", "wuchuci", "前文", {}, t0);
+    const double b0 = snap.boostAt("误触词", "wuchuci", t0);
+    const double b30 = snap.boostAt("误触词", "wuchuci", t0 + 30 * dayMs);
+    const double b90 = snap.boostAt("误触词", "wuchuci", t0 + 90 * dayMs);
+    const double b365 = snap.boostAt("误触词", "wuchuci", t0 + 365 * dayMs);
+    assertTrue(b0 > 0.3 && b30 < b0 && b90 < 0.02 && b365 < 0.001,
+               "singleton selection genuinely forgets over months");
+
+    assertTrue(snap.contextBoost("误触词", "wuchuci", "前文", {}, t0) > 0.5,
+               "singleton context boost starts positive");
+    snap.recordNegativeFeedback("误触词", "wuchuci");
+    assertTrue(snap.boostAt("误触词", "wuchuci", t0) < 0.0,
+               "single negative feedback neutralizes single accidental selection");
+    assertTrue(snap.contextBoost("误触词", "wuchuci", "前文", {}, t0) == 0.0,
+               "single negative feedback neutralizes singleton context boost");
+
+    modernime::core::LearningSnapshot habit;
+    for (int i = 0; i < 10; ++i) {
+        habit.recordSelection("习惯词", "xiguanci", {}, {}, t0 + i);
+    }
+    assertTrue(habit.boostAt("习惯词", "xiguanci", t0 + 365 * dayMs) > 1.5,
+               "established multi-use habit stays durable over a year");
+    for (int i = 0; i < 10; ++i) {
+        habit.recordNegativeFeedback("习惯词", "xiguanci");
+    }
+    assertTrue(habit.boostAt("习惯词", "xiguanci", t0) < 0.0,
+               "equal repeated negative feedback neutralizes higher-frequency entry without fixed 2.0 cap");
+}
+
 } // namespace
 
 int main() {
@@ -1710,5 +1743,6 @@ int main() {
     testLearningStoreSmallCapacityBoundaryRetainsLimitExactForSqliteAndLmdb();
     testPersonalEngineStandaloneRetainsCustomPruneTarget();
     testLearningStoreEntryCountLightweightAndFailure();
+    testSingletonTimeDecayAndNegativeNeutralization();
     return EXIT_SUCCESS;
 }

@@ -77,6 +77,33 @@ int main() {
     require(invoke("learning.search", {"你好"}).find("你好") != std::string::npos, "learning search");
     require(invoke("learning.forget", {"你好", "nihao"}).find("\"ok\":true") != std::string::npos, "forget flush");
     require(!writer->snapshot()->hasPositiveFrequency("你好", "nihao"), "in-process snapshot updated");
+    {
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto staleMs = nowMs - 14LL * 24 * 60 * 60 * 1000;
+        require(writer->enqueueSelection("陈旧单次词", "chenjiudanci", {}, {}, staleMs), "seed stale singleton");
+        require(writer->enqueueSelection("误触单次词", "wuchudanci", {}, {}, nowMs), "seed recent singleton");
+        require(writer->enqueueNegativeFeedback("误触单次词", "wuchudanci"), "seed singleton negative feedback");
+        require(writer->enqueueSelection("近期保留词", "jinqibaoliu", {}, {}, nowMs), "seed recent keep");
+        require(writer->enqueueSelection("高频习惯词", "gaopinxiguan", {}, {}, staleMs), "seed habit 1");
+        require(writer->enqueueSelection("高频习惯词", "gaopinxiguan", {}, {}, staleMs + 100), "seed habit 2");
+        require(writer->enqueueSelection("屏蔽陈旧词", "pingbichenjiu", {}, {}, staleMs), "seed suppressed singleton");
+        require(writer->enqueueSuppression("屏蔽陈旧词", "pingbichenjiu"), "suppress singleton");
+        require(writer->flush(), "flush prune_stale fixtures");
+        const auto pruneReply = invoke("learning.prune_stale", {"7"});
+        require(pruneReply.find("\"ok\":true") != std::string::npos &&
+                pruneReply.find("\"removed\":2") != std::string::npos,
+                "learning.prune_stale removes stale and rejected singletons only");
+        const auto snap = writer->snapshot();
+        require(snap->entry("陈旧单次词", "chenjiudanci", {}, {}) == nullptr, "stale singleton pruned");
+        require(snap->entry("误触单次词", "wuchudanci", {}, {}) == nullptr, "rejected singleton pruned");
+        require(snap->hasPositiveFrequency("近期保留词", "jinqibaoliu"), "recent singleton preserved");
+        require(snap->hasPositiveFrequency("高频习惯词", "gaopinxiguan"), "multi-use habit preserved");
+        require(snap->isSuppressed("屏蔽陈旧词", "pingbichenjiu"), "suppressed singleton preserved");
+        require(invoke("learning.forget", {"近期保留词", "jinqibaoliu"}).find("\"ok\":true") != std::string::npos, "clean recent");
+        require(invoke("learning.forget", {"高频习惯词", "gaopinxiguan"}).find("\"ok\":true") != std::string::npos, "clean habit");
+        require(invoke("learning.forget", {"屏蔽陈旧词", "pingbichenjiu"}).find("\"ok\":true") != std::string::npos, "clean suppressed");
+    }
     require(invoke("bundle.restore", {(cleanup.path / "backup").string(), "missing-token", "learning"}).find("\"ok\":false") != std::string::npos, "unpreviewed restore rejected");
     require(invoke("bundle.export", {(cleanup.path / "backup").string()}).find("\"ok\":true") != std::string::npos, "bundle export");
     const auto preview = invoke("bundle.preview", {(cleanup.path / "backup").string()});

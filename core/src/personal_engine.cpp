@@ -695,7 +695,7 @@ float PersonalEngine::CalculateScore(const WordMeta &meta,
 
     // 5. 负反馈惩罚项
     if (meta.negative_feedback > 0) {
-        score -= 0.75 * std::log1p(static_cast<double>(meta.negative_feedback));
+        score -= 1.05 + 0.85 * std::log1p(static_cast<double>(meta.negative_feedback - 1));
     }
 
     return static_cast<float>(std::max(0.0, score));

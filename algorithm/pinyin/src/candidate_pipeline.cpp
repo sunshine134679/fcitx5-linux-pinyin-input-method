@@ -342,6 +342,72 @@ CandidatePipelineResult buildCandidatePipeline(
     for (auto &candidate : result.scored) {
         populateCandidateFeatures(candidate, dictionary, request);
     }
+    // Prevent an obscure 3+ syllable zero-cost SystemDict entry (e.g. "签赌案"
+    // under "qian'du'an") from using the phraseLength>=3 curatedDictionaryBonus
+    // to jump ahead of a higher-scoring 2-syllable native lexical leader
+    // ("前端" under "qian'duan") unless curated in user/extension layers (>= 1).
+    if (shuangpin == nullptr) {
+        std::optional<double> leaderDecoderScore;
+        std::size_t leaderSyllables = 0;
+        for (const auto &candidate : result.scored) {
+            if (candidate.source_index == 0 && candidate.phrase_length == 2 &&
+                candidate.is_lexical && candidate.dictionary_bonus <= 0.0 &&
+                candidate.decoder_score.has_value() &&
+                candidate.consumed_input_bytes == context.userInput().size() &&
+                core::PinyinMatchPolicy::exactInputMatch(context.userInput(),
+                                                         candidate.full_pinyin)) {
+                const auto sylls = static_cast<std::size_t>(
+                    std::count(candidate.full_pinyin.begin(),
+                               candidate.full_pinyin.end(), '\'')) + 1;
+                if (sylls == 2 &&
+                    (!leaderDecoderScore || *candidate.decoder_score > *leaderDecoderScore)) {
+                    leaderDecoderScore = *candidate.decoder_score;
+                    leaderSyllables = sylls;
+                }
+            }
+        }
+        if (leaderDecoderScore.has_value()) {
+            const auto hasCuratedMatch = [&dictionary](std::string_view fullPinyin,
+                                                       std::string_view phrase) {
+                try {
+                    const auto encoded = libime::PinyinEncoder::encodeFullPinyin(fullPinyin);
+                    std::string exactKey;
+                    exactKey.reserve(encoded.size() + 1 + phrase.size());
+                    exactKey.append(encoded.data(), encoded.size());
+                    exactKey.push_back('!');
+                    exactKey.append(phrase);
+                    const std::size_t layers = dictionary.dictSize();
+                    for (std::size_t idx = 1; idx < layers; ++idx) {
+                        const auto *trie = dictionary.trie(idx);
+                        if (trie == nullptr) continue;
+                        const float cost = trie->exactMatchSearch(exactKey);
+                        if (libime::DATrie<float>::isValid(cost) && cost >= 0.0F) {
+                            return true;
+                        }
+                    }
+                } catch (const std::exception &) {
+                }
+                return false;
+            };
+            for (auto &candidate : result.scored) {
+                if (candidate.source_index > 0 && candidate.phrase_length >= 3 &&
+                    candidate.dictionary_bonus > 0.0 &&
+                    candidate.decoder_score.has_value() &&
+                    *candidate.decoder_score < *leaderDecoderScore &&
+                    candidate.consumed_input_bytes == context.userInput().size() &&
+                    core::PinyinMatchPolicy::exactInputMatch(context.userInput(),
+                                                             candidate.full_pinyin)) {
+                    const auto sylls = static_cast<std::size_t>(
+                        std::count(candidate.full_pinyin.begin(),
+                                   candidate.full_pinyin.end(), '\'')) + 1;
+                    if (sylls > leaderSyllables &&
+                        !hasCuratedMatch(candidate.full_pinyin, candidate.text)) {
+                        candidate.dictionary_bonus = 0.0;
+                    }
+                }
+            }
+        }
+    }
     // A valid multi-syllable word competes with single characters for the same
     // complete keystrokes. Global character frequency is not word-frequency
     // evidence: center that prior on the most prominent matching character,

@@ -208,7 +208,9 @@ public:
         gtk_stack_set_visible_child_name(GTK_STACK(stack),
                                          std::string(definition.name).c_str());
         updateNavigation(visiblePage);
+        if (page == SettingsPageId::Dictionary) dictionaryPage->showEntries();
         if (page == SettingsPageId::Learning && !learningBehavior) dictionaryPage->showLearning();
+        if (page == SettingsPageId::Diagnostics) diagnosticsPage->showStatus();
         if (page == SettingsPageId::Updates) diagnosticsPage->showUpdates();
 
         switch (page) {
@@ -546,6 +548,8 @@ private:
             channelText = "APT 安装";
         } else if (channel == "dnf" || channel == "rpm") {
             channelText = "DNF 安装";
+        } else if (channel == "pacman") {
+            channelText = "Pacman 安装";
         } else if (channel == "script") {
             channelText = "脚本安装";
         }

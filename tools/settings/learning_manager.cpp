@@ -88,6 +88,11 @@ public:
         refreshButton = button(searchRow, "刷新", "learning-record-refresh", +[](GtkButton *, gpointer data) {
             static_cast<Impl *>(data)->refresh();
         });
+        pruneStaleButton = button(searchRow, "清理旧单次", "learning-prune-stale", +[](GtkButton *, gpointer data) {
+            static_cast<Impl *>(data)->confirmPruneStale();
+        });
+        gtk_widget_set_tooltip_text(pruneStaleButton,
+            "保留高频习惯词、7天内记录和已屏蔽词，清理长期未用或曾误触撤销的孤立单次记录");
         gtk_box_pack_start(GTK_BOX(root), searchRow, FALSE, FALSE, 4);
         suppressedOnly = gtk_check_button_new_with_label("仅显示屏蔽记录");
         target(suppressedOnly, "learning-record-suppressed-only");
@@ -201,7 +206,7 @@ public:
         g_signal_connect(root, "destroy", G_CALLBACK(+[](GtkWidget *, gpointer data) {
             static_cast<Impl *>(data)->deactivate();
         }), this);
-        setSettingsFocusChain(root, {search, refreshButton, suppressedOnly, retry, list,
+        setSettingsFocusChain(root, {search, refreshButton, pruneStaleButton, suppressedOnly, retry, list,
                                     forgetButton, unsuppress, pager});
         update();
         guard.release();
@@ -256,6 +261,7 @@ public:
         gtk_widget_set_sensitive(search, !mutating);
         gtk_widget_set_sensitive(suppressedOnly, !mutating);
         gtk_widget_set_sensitive(refreshButton, !mutating && !loading);
+        gtk_widget_set_sensitive(pruneStaleButton, ready() && total != 0);
         gtk_widget_set_sensitive(retry, !mutating && !loading);
         gtk_widget_set_sensitive(list, ready());
         gtk_widget_set_sensitive(previous, ready() && offset != 0);
@@ -364,9 +370,14 @@ public:
                     for (const auto &record : owner.records) {
                         GtkTreeIter iter;
                         gtk_list_store_append(owner.store, &iter);
+                        const std::string statusText = record.suppressed
+                            ? "已屏蔽"
+                            : (record.negativeFeedback > 0
+                                   ? ("已降权×" + std::to_string(record.negativeFeedback))
+                                   : "正常");
                         gtk_list_store_set(owner.store, &iter, Phrase, record.identity.phrase.c_str(),
                             Pinyin, record.identity.pinyin.c_str(), Frequency, static_cast<guint64>(record.frequency),
-                            Suppressed, record.suppressed ? "已屏蔽" : "正常", -1);
+                            Suppressed, statusText.c_str(), -1);
                         if (selectedIdentity && record.identity == *selectedIdentity)
                             gtk_tree_selection_select_iter(gtk_tree_view_get_selection(GTK_TREE_VIEW(owner.list)), &iter);
                     }
@@ -404,6 +415,72 @@ public:
         activeDialog = dialog;
         update();
         gtk_widget_show_all(dialog);
+    }
+
+    void confirmPruneStale() {
+        if (!ready() || total == 0) return;
+        auto *top = gtk_widget_get_toplevel(root);
+        auto *dialog = gtk_message_dialog_new(GTK_IS_WINDOW(top) ? GTK_WINDOW(top) : nullptr,
+            static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+            GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "清理陈旧的单次学习记录？");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+            "保留所有选用 ≥ 2 次的常用习惯词、7 天内最近选词以及已屏蔽词；\n仅清理 7 天以上未使用或曾误触撤销的单次孤立记录，不改动基础词库。");
+        gtk_dialog_add_buttons(GTK_DIALOG(dialog), "取消", GTK_RESPONSE_CANCEL, "清理", GTK_RESPONSE_ACCEPT, nullptr);
+        gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+        setDialogResponseAccessibility(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT, "清理旧单次", "批量清理陈旧孤立单次学习记录，保留常用习惯与基础词库");
+        gtk_style_context_add_class(gtk_widget_get_style_context(
+            gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT)), "destructive-action");
+        auto *life = new std::shared_ptr<Lifetime>(lifetime);
+        g_signal_connect_data(dialog, "response", G_CALLBACK(+[](GtkDialog *dialog, gint response, gpointer data) {
+            const auto lifeCopy = *static_cast<std::shared_ptr<Lifetime> *>(data);
+            lifeCopy->withOwner([&](Impl &owner) { owner.activeDialog = nullptr; });
+            gtk_widget_destroy(GTK_WIDGET(dialog));
+            lifeCopy->withOwner([&](Impl &owner) {
+                owner.update();
+                if (response == GTK_RESPONSE_ACCEPT) owner.pruneStale();
+            });
+        }), life, +[](gpointer data, GClosure *) { delete static_cast<std::shared_ptr<Lifetime> *>(data); }, GConnectFlags(0));
+        activeDialog = dialog;
+        update();
+        gtk_widget_show_all(dialog);
+    }
+
+    void pruneStale() {
+        if (!ready()) return;
+        if (debounce) { g_source_remove(debounce); debounce = 0; }
+        ++generation;
+        mutating = true;
+        g_object_set_data(G_OBJECT(root), "modernime-learning-mutation-busy", GINT_TO_POINTER(1));
+        gtk_label_set_text(GTK_LABEL(operationState), "正在清理陈旧单次记录…");
+        gtk_style_context_remove_class(gtk_widget_get_style_context(operationState), "modernime-status-error");
+        gtk_widget_show(operationState);
+        update();
+        backend.execute("learning.prune_stale", {"7"},
+            [life = lifetime](BackendReply reply) {
+                life->withOwner([&](Impl &owner) {
+                    owner.mutating = false;
+                    g_object_set_data(G_OBJECT(owner.root), "modernime-learning-mutation-busy", nullptr);
+                    std::string message;
+                    if (reply.ok) {
+                        const auto removed = reply.data.number("removed");
+                        const auto remaining = reply.data.number("remaining");
+                        message = removed == 0
+                            ? "暂无可清理的陈旧单次记录。"
+                            : ("已清理 " + std::to_string(removed) + " 条陈旧单次记录，当前剩余 " +
+                               std::to_string(remaining) + " 条。");
+                    } else if (reply.uncertain) {
+                        message = "清理结果未确认，请刷新列表核对后再操作。" +
+                            (reply.message.empty() ? std::string{} : "\n" + reply.message);
+                    } else {
+                        message = "清理失败：" + (reply.message.empty() ? std::string("请确认输入法版本已更新或稍后重试。") : reply.message);
+                    }
+                    gtk_label_set_text(GTK_LABEL(owner.operationState), message.c_str());
+                    if (!reply.ok) gtk_style_context_add_class(gtk_widget_get_style_context(owner.operationState), "modernime-status-error");
+                    owner.loaded = false;
+                    owner.request();
+                    if (owner.notify) owner.notify(message);
+                });
+            });
     }
 
     void mutate(const Identity &identity, bool forget) {
@@ -445,7 +522,7 @@ public:
             queryChanged(false);
             return focusWidgetOrFallback(search, root);
         }
-        for (auto *control : {search, list, forgetButton, unsuppress, refreshButton, suppressedOnly, retry, previous, next}) {
+        for (auto *control : {search, list, forgetButton, unsuppress, refreshButton, pruneStaleButton, suppressedOnly, retry, previous, next}) {
             const auto *name = static_cast<const char *>(g_object_get_data(G_OBJECT(control), "modernime-settings-target"));
             if (name && id == name) return focusWidgetOrFallback(control, root);
         }
@@ -456,6 +533,7 @@ public:
     GtkWidget *search = nullptr;
     GtkWidget *suppressedOnly = nullptr;
     GtkWidget *refreshButton = nullptr;
+    GtkWidget *pruneStaleButton = nullptr;
     GtkWidget *state = nullptr;
     GtkWidget *retry = nullptr;
     GtkWidget *list = nullptr;

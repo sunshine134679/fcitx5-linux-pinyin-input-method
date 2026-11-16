@@ -185,7 +185,8 @@ private:
             if (action == "capabilities") {
                 count(args, 0);
                 return "{\"ok\":true,\"version\":1,\"actions\":[\"learning.list\",\"learning.search\","
-                    "\"learning.forget\",\"learning.unsuppress\",\"pack.list\",\"pack.inspect\",\"pack.import\","
+                    "\"learning.forget\",\"learning.unsuppress\",\"learning.prune_stale\","
+                    "\"pack.list\",\"pack.inspect\",\"pack.import\","
                     "\"pack.update\",\"pack.enable\",\"pack.disable\",\"pack.remove\",\"bundle.export\","
                     "\"bundle.preview\",\"bundle.restore\",\"diagnostics\",\"applications\"],"
                     "\"selectionComponents\":[\"settings\",\"dictionary\",\"quick-phrases\",\"learning\","
@@ -213,8 +214,59 @@ private:
     }
     std::string learning(const std::string &action, const std::vector<std::string> &args) {
         if (action != "learning.list" && action != "learning.search" &&
-            action != "learning.forget" && action != "learning.unsuppress")
+            action != "learning.forget" && action != "learning.unsuppress" &&
+            action != "learning.prune_stale")
             return error("unknown_action", "未知学习管理操作");
+        if (action == "learning.prune_stale") {
+            if (args.size() > 1) invalid();
+            const std::size_t minAgeDays = args.empty() ? 7 : number(args[0], 3650);
+            auto activeWriter = writer();
+            if (!activeWriter) return error("learning_unavailable", "学习存储尚未就绪");
+            const auto state = activeWriter->exportConsistentState();
+            if (!state || !state->snapshot) return error("learning_unavailable", "学习存储尚未就绪");
+            const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            const auto cutoffMs = minAgeDays == 0 ? nowMs
+                : nowMs - static_cast<std::int64_t>(minAgeDays) * 24LL * 60LL * 60LL * 1000LL;
+            const auto &entries = state->snapshot->entries();
+            struct Aggregate final {
+                std::int64_t totalFrequency = 0;
+                bool suppressed = false;
+                bool negative = false;
+                std::int64_t latestMs = 0;
+            };
+            std::map<std::pair<std::string, std::string>, Aggregate> totals;
+            for (const auto &entry : entries) {
+                auto &agg = totals[{entry.phrase, core::normalizePinyin(entry.pinyin)}];
+                agg.totalFrequency += std::max<std::int64_t>(0, entry.frequency);
+                agg.suppressed = agg.suppressed || entry.suppressed;
+                agg.negative = agg.negative || entry.negativeFeedback > 0;
+                agg.latestMs = std::max(agg.latestMs, entry.lastSelectedMs);
+            }
+            std::vector<core::LearningEntry> kept;
+            kept.reserve(entries.size());
+            std::size_t removed = 0;
+            for (const auto &entry : entries) {
+                const auto it = totals.find({entry.phrase, core::normalizePinyin(entry.pinyin)});
+                const auto &agg = it->second;
+                const bool staleOrRejectedSingleton =
+                    !agg.suppressed && agg.totalFrequency <= 1 &&
+                    (agg.negative || (agg.latestMs > 0 && agg.latestMs <= cutoffMs));
+                if (staleOrRejectedSingleton) {
+                    ++removed;
+                    continue;
+                }
+                kept.push_back(entry);
+            }
+            if (removed == 0) {
+                return "{\"ok\":true,\"removed\":0,\"remaining\":" + std::to_string(kept.size()) + "}";
+            }
+            if (!activeWriter->restoreTrustedEntries(kept, *state)) {
+                return error("persistence_failed", "清理操作未能落盘，请刷新后重试");
+            }
+            return "{\"ok\":true,\"removed\":" + std::to_string(removed) +
+                   ",\"remaining\":" + std::to_string(kept.size()) + "}";
+        }
         if (action == "learning.forget" || action == "learning.unsuppress") {
             count(args, 2);
             if (args[0].empty() || args[0].size() > 512 || args[1].empty() || args[1].size() > 128) invalid();

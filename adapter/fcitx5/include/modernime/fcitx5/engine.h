@@ -288,6 +288,7 @@ private:
         // 提交后是否观测到过非空文档窗口。真实"删光"必然先经过非空阶段；
         // 首次观测即为空只可能是窗口跳转（如切到空输入框），不构成删光证据。
         bool sawDocumentText = false;
+        bool sawBackspace = false;
         std::vector<std::string> originalChars;
         std::vector<std::string> originalSyllables;
     };
@@ -328,6 +329,15 @@ private:
     // sensitive context prevents asynchronous UI updates.
     core::ClipboardAvailability clipboardPageAvailability_ = core::ClipboardAvailability::Ready;
     RecentCommit recentCommit_;
+    struct PendingNoContextDelete final {
+        std::string text;
+        std::string fullPinyin;
+        std::size_t charCount = 0;
+        std::size_t backspaces = 0;
+        std::chrono::steady_clock::time_point timestamp;
+        bool active = false;
+    };
+    PendingNoContextDelete pendingNoContextDelete_;
     struct AutoPair final {
         std::string opener, closer;
         TextEditContext expected;

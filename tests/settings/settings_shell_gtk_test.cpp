@@ -648,10 +648,18 @@ int main(int argc, char **argv) {
         auto *initialInput = findTarget(window, "input-enabled");
         assert(initialInput && gtk_widget_get_mapped(initialInput));
         auto *initialRuntime = findTarget(window, "diagnostics-refresh");
+        shell.show(modernime::settings::SettingsPageId::Updates);
+        drainEvents();
+        assert(gtk_widget_get_mapped(findTarget(window, "updates-check")));
         shell.show(modernime::settings::SettingsPageId::Diagnostics);
         drainEvents();
         assert(initialRuntime && gtk_widget_get_mapped(initialRuntime));
         assert(!gtk_widget_get_mapped(findTarget(window, "updates-check")));
+        shell.show(modernime::settings::SettingsPageId::Learning);
+        drainEvents();
+        shell.show(modernime::settings::SettingsPageId::Dictionary);
+        drainEvents();
+        assert(gtk_widget_get_mapped(findTarget(window, "dictionary-search")));
         shell.show(modernime::settings::SettingsPageId::Input,
                    "input-enabled");
         drainEvents();

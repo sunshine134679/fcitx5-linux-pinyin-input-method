@@ -341,4 +341,86 @@ TEST_F(PersonalizationControllerRegression, SensitiveCommitsNeverBecomeNormalFal
     }
 }
 
+TEST_F(PersonalizationControllerRegression, SingleAccidentalMultiCharPickDoesNotHijackAndSecondPickPromotes) {
+    for (const auto &[input, leader, secondary] : std::vector<std::tuple<std::string, std::string, std::string>>{
+             {"ceshi", "测试", "侧室"}, {"wenti", "问题", "文体"}}) {
+        SCOPED_TRACE(input);
+        controller->reset();
+        controller->setContext("", "");
+        type(input);
+        ASSERT_FALSE(controller->page().items.empty());
+        EXPECT_EQ(controller->page().items.front().text, leader);
+        controller->reset();
+        commit(input, secondary);
+        controller->setContext("", "");
+        type(input);
+        EXPECT_EQ(controller->page().items.front().text, leader) << "1 accidental pick must not hijack " << leader;
+        controller->reset();
+        commit(input, secondary);
+        controller->setContext("", "");
+        type(input);
+        EXPECT_EQ(controller->page().items.front().text, secondary) << "2 intentional picks promote " << secondary;
+    }
+}
+
+TEST_F(PersonalizationControllerRegression, QianduanPrefersFrontendOverSystemDictThreeSyllableSplit) {
+    controller->setContext("还有，一切设计", "", modernime::fcitx5::ContextAvailability::Valid);
+    type("qianduan");
+    ASSERT_FALSE(controller->page().items.empty());
+    EXPECT_EQ(controller->page().items.front().text, "前端");
+    EXPECT_EQ(controller->page().preedit, "qian'duan");
+}
+
+TEST_F(PersonalizationControllerRegression, UnavailableContextBackspaceDeletesTriggerNegativeFeedbackForChineseAndEnglish) {
+    using modernime::fcitx5::ContextAvailability;
+    controller->setContext("", "", ContextAvailability::Unavailable);
+    commit("ceshi", "侧室");
+    EXPECT_FALSE(controller->handle({KeyKind::Backspace, 0, 0}));
+    EXPECT_FALSE(controller->handle({KeyKind::Backspace, 0, 0}));
+    auto state = snapshot();
+    const auto *zh = state->entry("侧室", "ceshi", "", "");
+    ASSERT_NE(zh, nullptr);
+    EXPECT_EQ(zh->negativeFeedback, 1);
+
+    controller->reset();
+    controller->setContext("", "", ContextAvailability::Unavailable);
+    type("frontened");
+    ASSERT_TRUE(controller->handle({KeyKind::Enter, 0, 0}));
+    for (int i = 0; i < 9; ++i) {
+        EXPECT_FALSE(controller->handle({KeyKind::Backspace, 0, 0}));
+    }
+    state = snapshot();
+    const auto *en = state->entry("frontened", "frontened", "", "");
+    ASSERT_NE(en, nullptr);
+    EXPECT_EQ(en->negativeFeedback, 1);
+}
+
+TEST_F(PersonalizationControllerRegression, SingleCharFullBackspaceTriggersNegativeFeedback) {
+    controller->setContext("我要", "", modernime::fcitx5::ContextAvailability::Valid);
+    commit("gai", "该");
+    EXPECT_FALSE(controller->handle({KeyKind::Backspace, 0, 0}));
+    controller->setContext("我要", "", modernime::fcitx5::ContextAvailability::Valid);
+    const auto state = snapshot();
+    const auto *contextEntry = state->entry("该", "gai", "我要", "");
+    const auto *feedbackEntry = state->entry("该", "gai", "", "");
+    ASSERT_NE(contextEntry, nullptr);
+    ASSERT_NE(feedbackEntry, nullptr);
+    EXPECT_EQ(feedbackEntry->negativeFeedback, 1);
+    EXPECT_LT(state->boostAt("该", "gai", contextEntry->lastSelectedMs), 0.0);
+    EXPECT_EQ(state->contextBoost("该", "gai", "我要", "", contextEntry->lastSelectedMs), 0.0);
+}
+
+TEST_F(PersonalizationControllerRegression, TypoPinyinRawEnterNeverLearnsAsEnglishWord) {
+    controller->setContext("", "");
+    for (const auto &typo : {"snaqian", "zhogguo"}) {
+        controller->reset();
+        type(typo);
+        ASSERT_TRUE(controller->handle({KeyKind::Enter, 0, 0}));
+        EXPECT_EQ(host.committed, typo);
+    }
+    const auto state = snapshot();
+    EXPECT_EQ(state->entry("snaqian", "snaqian", "", ""), nullptr);
+    EXPECT_EQ(state->entry("zhogguo", "zhogguo", "", ""), nullptr);
+}
+
 } // namespace
