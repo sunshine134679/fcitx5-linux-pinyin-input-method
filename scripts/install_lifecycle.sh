@@ -52,7 +52,7 @@ modernime_is_safe_removal_target() {
     # 4. Canonical parent containment
     local parent_dir canon_parent
     parent_dir=$(dirname -- "$target")
-    canon_parent=$(readlink -f -- "$parent_dir" 2>/dev/null || true)
+    canon_parent=$(realpath -m -- "$parent_dir" 2>/dev/null || readlink -m -- "$parent_dir" 2>/dev/null || true)
     if [[ -z "$canon_parent" || ( "$canon_parent" != "$canon_prefix" && "$canon_parent" != "$canon_prefix/"* ) ]]; then
         return 1
     fi

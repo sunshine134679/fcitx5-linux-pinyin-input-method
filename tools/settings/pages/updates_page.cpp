@@ -1011,6 +1011,8 @@ private:
             channelText = "Debian / Ubuntu 软件包";
         } else if (channelText == "rpm") {
             channelText = "Fedora / openEuler 软件包";
+        } else if (channelText == "pacman") {
+            channelText = "Arch / Manjaro 软件包";
         } else if (channelText == "script") {
             channelText = "用户目录安装（脚本）";
         }

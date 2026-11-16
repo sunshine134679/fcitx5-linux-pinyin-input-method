@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ci_build_release_repos.sh — End-to-end builder for ModernIME APT & RPM/DNF static repositories
+# ci_build_release_repos.sh — End-to-end builder for ModernIME APT, RPM/DNF, and Arch/Pacman static repositories
 # Used by both .github/workflows/release.yml and tests/verify_package_repo_gate.sh to ensure
 # identical artifact filename resolution, multi-version retention, GPG signing, and Pages layout.
 set -euo pipefail
@@ -28,71 +28,22 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --assets-dir=*)
-            assets_dir="${1#*=}"
-            shift
-            ;;
-        --assets-dir)
-            assets_dir="$2"
-            shift 2
-            ;;
-        --pages-dir=*)
-            pages_dir="${1#*=}"
-            shift
-            ;;
-        --pages-dir)
-            pages_dir="$2"
-            shift 2
-            ;;
-        --previous-pages-dir=*)
-            previous_pages_dir="${1#*=}"
-            shift
-            ;;
-        --previous-pages-dir)
-            previous_pages_dir="$2"
-            shift 2
-            ;;
-        --require-persistent-gpg)
-            require_persistent_gpg=true
-            shift
-            ;;
-        --ephemeral-gpg)
-            ephemeral_gpg=true
-            shift
-            ;;
-        --gpg-private-key-file=*)
-            gpg_private_key_file="${1#*=}"
-            shift
-            ;;
-        --gpg-private-key-file)
-            gpg_private_key_file="$2"
-            shift 2
-            ;;
-        --gpg-passphrase=*)
-            gpg_passphrase="${1#*=}"
-            shift
-            ;;
-        --gpg-passphrase)
-            gpg_passphrase="$2"
-            shift 2
-            ;;
-        --repo-base-url=*)
-            repo_base_url="${1#*=}"
-            shift
-            ;;
-        --repo-base-url)
-            repo_base_url="$2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            printf 'Error: Unknown option: %s\n' "$1" >&2
-            usage >&2
-            exit 1
-            ;;
+        --assets-dir=*) assets_dir="${1#*=}"; shift ;;
+        --assets-dir) assets_dir="$2"; shift 2 ;;
+        --pages-dir=*) pages_dir="${1#*=}"; shift ;;
+        --pages-dir) pages_dir="$2"; shift 2 ;;
+        --previous-pages-dir=*) previous_pages_dir="${1#*=}"; shift ;;
+        --previous-pages-dir) previous_pages_dir="$2"; shift 2 ;;
+        --require-persistent-gpg) require_persistent_gpg=true; shift ;;
+        --ephemeral-gpg) ephemeral_gpg=true; shift ;;
+        --gpg-private-key-file=*) gpg_private_key_file="${1#*=}"; shift ;;
+        --gpg-private-key-file) gpg_private_key_file="$2"; shift 2 ;;
+        --gpg-passphrase=*) gpg_passphrase="${1#*=}"; shift ;;
+        --gpg-passphrase) gpg_passphrase="$2"; shift 2 ;;
+        --repo-base-url=*) repo_base_url="${1#*=}"; shift ;;
+        --repo-base-url) repo_base_url="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) printf 'Error: Unknown option: %s\n' "$1" >&2; usage >&2; exit 1 ;;
     esac
 done
 
@@ -109,7 +60,6 @@ if [[ "$require_persistent_gpg" == true ]]; then
     fi
 fi
 
-# Discover DEB artifacts (Ubuntu 24.04 / noble only; 22.04 support removed)
 find_first_match() {
     local dir=$1
     shift
@@ -124,71 +74,205 @@ find_first_match() {
     return 1
 }
 
-noble_deb=$(find_first_match "$assets_dir" "modernime_*_amd64_ubuntu24.04.deb" "*ubuntu24.04.deb" || true)
-
-if [[ -z "$noble_deb" ]]; then
+# --- 1. Discover DEB artifacts ---
+noble_amd64_deb=$(find_first_match "$assets_dir" "modernime_*_amd64_ubuntu24.04.deb" "*ubuntu24.04.deb" || true)
+if [[ -z "$noble_amd64_deb" ]]; then
     printf 'Error: Could not locate canonical *ubuntu24.04.deb package in %s\n' "$assets_dir" >&2
     exit 1
 fi
+cand_ver=$(dpkg-deb -f "$noble_amd64_deb" Version)
 
-rpm_pkg=$(find_first_match "$assets_dir" "modernime-*.oe24.x86_64.rpm" "*.rpm" || true)
-if [[ -z "$rpm_pkg" ]]; then
-    printf 'Error: Could not locate openEuler RPM package in %s\n' "$assets_dir" >&2
-    exit 1
-fi
+declare -A apt_suite_flags=(
+    [noble]="--noble-deb"
+    [bookworm]="--bookworm-deb"
+    [trixie]="--trixie-deb"
+)
+declare -A apt_distro_tags=(
+    [noble]="ubuntu24.04"
+    [bookworm]="debian12"
+    [trixie]="debian13"
+)
 
+declare -a apt_debs_args=()
+declare -a apt_arches=()
+declare -a built_apt_suites=()
+
+for suite in noble bookworm trixie; do
+    dtag="${apt_distro_tags[$suite]}"
+    flag="${apt_suite_flags[$suite]}"
+    suite_has_current=false
+    for arch in amd64 arm64; do
+        deb_match=""
+        if [[ "$suite" == "noble" && "$arch" == "amd64" ]]; then
+            deb_match="$noble_amd64_deb"
+        else
+            deb_match=$(find_first_match "$assets_dir" "modernime_*_${arch}_${dtag}.deb" || true)
+        fi
+        if [[ -n "$deb_match" ]]; then
+            apt_debs_args+=("$flag" "$deb_match")
+            suite_has_current=true
+            if [[ " ${apt_arches[*]-} " != *" $arch "* ]]; then
+                apt_arches+=("$arch")
+            fi
+        fi
+    done
+    if [[ "$suite_has_current" == true ]]; then
+        built_apt_suites+=("$suite")
+        if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
+            for old_deb in "$previous_pages_dir"/apt/pool/"$suite"/main/m/modernime/*.deb; do
+                [[ -f "$old_deb" ]] || continue
+                [[ "$(dpkg-deb -f "$old_deb" Version)" != "$cand_ver" ]] || continue
+                old_arch=$(dpkg-deb -f "$old_deb" Architecture)
+                if [[ " ${apt_arches[*]-} " == *" $old_arch "* ]]; then
+                    apt_debs_args+=("$flag" "$old_deb")
+                fi
+            done
+        fi
+    fi
+done
+
+apt_arches_csv=$(IFS=','; printf '%s' "${apt_arches[*]}")
 declare -a apt_args=(
     --output-dir "$pages_dir/apt"
     --repo-url "${repo_base_url%/}/apt"
-    --arch amd64
-)
-declare -a rpm_args=(
-    --output-dir "$pages_dir/rpm"
-    --repo-url "${repo_base_url%/}/rpm"
-    --distro oe2409
-    --arch x86_64
+    --arches "$apt_arches_csv"
+    "${apt_debs_args[@]}"
 )
 
-# A retry replaces the current version once, while preserving other released versions.
-cand_ver=$(dpkg-deb -f "$noble_deb" Version)
-if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
-    for old_deb in "$previous_pages_dir"/apt/pool/noble/main/m/modernime/*.deb; do
-        [[ -f "$old_deb" ]] || continue
-        [[ "$(dpkg-deb -f "$old_deb" Version)" != "$cand_ver" ]] || continue
-        apt_args+=("--noble-deb" "$old_deb")
-    done
-    for old_rpm in "$previous_pages_dir"/rpm/oe2409/x86_64/Packages/*.rpm; do
-        [[ -f "$old_rpm" ]] || continue
-        [[ "$(basename "$old_rpm")" != modernime-"${cand_ver}"-*.rpm ]] || continue
-        rpm_args+=(--rpm "$old_rpm")
-    done
+# --- 2. Discover RPM artifacts ---
+oe2409_x86_64_rpm=$(find_first_match "$assets_dir" "modernime-*.oe24.x86_64.rpm" "modernime-*.oe2409.x86_64.rpm" "*.rpm" || true)
+if [[ -z "$oe2409_x86_64_rpm" ]]; then
+    printf 'Error: Could not locate openEuler x86_64 RPM package in %s\n' "$assets_dir" >&2
+    exit 1
 fi
 
-apt_args+=(--noble-deb "$noble_deb")
-rpm_args+=(--rpm "$rpm_pkg")
+declare -a rpm_targets=()
+declare -A rpm_asset_map=()
 
+for distro in oe2409 fc41 fc42; do
+    for arch in x86_64 aarch64; do
+        rpm_match=""
+        if [[ "$distro" == "oe2409" && "$arch" == "x86_64" ]]; then
+            rpm_match="$oe2409_x86_64_rpm"
+        elif [[ "$distro" == "oe2409" ]]; then
+            rpm_match=$(find_first_match "$assets_dir" "modernime-*.oe24.${arch}.rpm" "modernime-*.oe2409.${arch}.rpm" || true)
+        else
+            rpm_match=$(find_first_match "$assets_dir" "modernime-*.${distro}.${arch}.rpm" || true)
+        fi
+        if [[ -n "$rpm_match" ]]; then
+            key="${distro}:${arch}"
+            rpm_targets+=("$key")
+            rpm_asset_map["$key"]="$rpm_match"
+        fi
+    done
+done
+
+# --- 3. Discover Arch Linux (.pkg.tar.zst) artifacts ---
+declare -a arch_targets=()
+declare -A arch_asset_map=()
+for arch in x86_64 aarch64; do
+    pkg_match=$(find_first_match "$assets_dir" "modernime-*-${arch}.pkg.tar.zst" || true)
+    if [[ -n "$pkg_match" ]]; then
+        arch_targets+=("$arch")
+        arch_asset_map["$arch"]="$pkg_match"
+    fi
+done
+
+ephemeral_gpg_home=""
+cleanup_ephemeral_gpg() {
+    if [[ -n "$ephemeral_gpg_home" && -d "$ephemeral_gpg_home" ]]; then
+        gpgconf --homedir "$ephemeral_gpg_home" --kill gpg-agent >/dev/null 2>&1 || true
+        rm -rf -- "$ephemeral_gpg_home"
+    fi
+}
+trap cleanup_ephemeral_gpg EXIT
+
+declare -a common_gpg_args=()
 if [[ -n "$gpg_private_key_file" ]]; then
-    apt_args+=(--gpg-private-key-file "$gpg_private_key_file")
-    rpm_args+=(--gpg-private-key-file "$gpg_private_key_file")
+    common_gpg_args+=(--gpg-private-key-file "$gpg_private_key_file")
 elif [[ "$ephemeral_gpg" == true ]]; then
-    apt_args+=(--ephemeral-gpg)
-    rpm_args+=(--ephemeral-gpg)
+    # Share one ephemeral GPG key across APT, all RPM distros/arches, and all Pacman arches
+    # so exported keyrings match every artifact produced in this run.
+    ephemeral_gpg_home=$(mktemp -d "${TMPDIR:-/tmp}/modernime-ci-ephemeral-gpg.XXXXXX")
+    chmod 700 "$ephemeral_gpg_home"
+    cat > "$ephemeral_gpg_home/gpg-batch.conf" <<'EOF'
+%echo Generating ModernIME ephemeral test GPG key
+Key-Type: RSA
+Key-Length: 3072
+Name-Real: ModernIME Ephemeral Test Signing
+Name-Email: ephemeral@modernime.invalid
+Expire-Date: 0
+%no-protection
+%commit
+EOF
+    gpg --homedir "$ephemeral_gpg_home" --batch --quiet --generate-key "$ephemeral_gpg_home/gpg-batch.conf"
+    ephemeral_key_id=$(gpg --homedir "$ephemeral_gpg_home" --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
+    common_gpg_args+=(--gpg-home "$ephemeral_gpg_home" --gpg-key-id "$ephemeral_key_id")
 fi
-
 if [[ -n "$gpg_passphrase" ]]; then
-    apt_args+=(--gpg-passphrase "$gpg_passphrase")
-    rpm_args+=(--gpg-passphrase "$gpg_passphrase")
+    common_gpg_args+=(--gpg-passphrase "$gpg_passphrase")
 fi
 
 rm -rf -- "$pages_dir"
 mkdir -p "$pages_dir"
 : > "$pages_dir/.nojekyll"
 
-"$project_root/scripts/build_apt_repo.sh" "${apt_args[@]}"
-"$project_root/scripts/build_rpm_repo.sh" "${rpm_args[@]}"
+# Build APT repository
+"$project_root/scripts/build_apt_repo.sh" "${apt_args[@]}" "${common_gpg_args[@]}"
+
+# Build RPM repositories across all discovered distro/arch pairs
+rm -rf -- "$pages_dir/rpm"
+for key in "${rpm_targets[@]}"; do
+    distro="${key%%:*}"
+    arch="${key##*:}"
+    rpm_pkg="${rpm_asset_map[$key]}"
+    declare -a rpm_args=(
+        --output-dir "$pages_dir/rpm"
+        --repo-url "${repo_base_url%/}/rpm"
+        --distro "$distro"
+        --arch "$arch"
+        --preserve-output
+    )
+    if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
+        for old_rpm in "$previous_pages_dir"/rpm/"$distro"/"$arch"/Packages/*.rpm; do
+            [[ -f "$old_rpm" ]] || continue
+            [[ "$(basename "$old_rpm")" != modernime-"${cand_ver}"-*.rpm ]] || continue
+            rpm_args+=(--rpm "$old_rpm")
+        done
+    fi
+    rpm_args+=(--rpm "$rpm_pkg" "${common_gpg_args[@]}")
+    "$project_root/scripts/build_rpm_repo.sh" "${rpm_args[@]}"
+done
+
+# Build Pacman repositories across all discovered Arch architectures
+if [[ ${#arch_targets[@]} -gt 0 ]]; then
+    rm -rf -- "$pages_dir/arch"
+    for arch in "${arch_targets[@]}"; do
+        arch_pkg="${arch_asset_map[$arch]}"
+        declare -a pac_args=(
+            --output-dir "$pages_dir/arch"
+            --repo-url "${repo_base_url%/}/arch"
+            --arch "$arch"
+            --preserve-output
+        )
+        if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
+            for old_pkg in "$previous_pages_dir"/arch/"$arch"/*.pkg.tar.zst; do
+                [[ -f "$old_pkg" ]] || continue
+                [[ "$(basename "$old_pkg")" != modernime-"${cand_ver}"-*.pkg.tar.zst ]] || continue
+                pac_args+=(--pkg "$old_pkg")
+            done
+        fi
+        pac_args+=(--pkg "$arch_pkg" "${common_gpg_args[@]}")
+        "$project_root/scripts/build_pacman_repo.sh" "${pac_args[@]}"
+    done
+fi
 
 if [[ "$require_persistent_gpg" == true ]]; then
-    for key_file in "$pages_dir/apt/modernime-archive-keyring.asc" "$pages_dir/rpm/RPM-GPG-KEY-modernime"; do
+    declare -a keys_to_check=("$pages_dir/apt/modernime-archive-keyring.asc" "$pages_dir/rpm/RPM-GPG-KEY-modernime")
+    if [[ -f "$pages_dir/arch/modernime-arch-keyring.asc" ]]; then
+        keys_to_check+=("$pages_dir/arch/modernime-arch-keyring.asc")
+    fi
+    for key_file in "${keys_to_check[@]}"; do
         key_meta=$(gpg --batch --with-colons --import-options show-only --import "$key_file" 2>/dev/null || true)
         if printf '%s\n' "$key_meta" | grep -Eiq 'modernime\.invalid|Ephemeral'; then
             printf 'Error: Ephemeral test GPG key detected in %s; refusing production release.\n' "$key_file" >&2
@@ -197,23 +281,26 @@ if [[ "$require_persistent_gpg" == true ]]; then
     done
 fi
 
-# Sync the signed current-version RPM from Pages repository back to assets_dir, preserving its canonical filename
-signed_pages_rpm=$(find_first_match "$pages_dir/rpm/oe2409/x86_64/Packages" "modernime-${cand_ver}-*.rpm" || true)
-if [[ -z "$signed_pages_rpm" || ! -f "$signed_pages_rpm" ]]; then
-    printf 'Error: Signed RPM for version %s not found in %s/rpm/oe2409/x86_64/Packages\n' "$cand_ver" "$pages_dir" >&2
-    exit 1
-fi
-cp -f "$signed_pages_rpm" "$rpm_pkg"
+# Sync each signed current-version RPM from Pages repository back to assets_dir,
+# preserving its canonical filename, and verify embedded OpenPGP signatures (tags 268 & 259).
+for key in "${rpm_targets[@]}"; do
+    distro="${key%%:*}"
+    arch="${key##*:}"
+    rpm_pkg="${rpm_asset_map[$key]}"
+    signed_pages_rpm=$(find_first_match "$pages_dir/rpm/${distro}/${arch}/Packages" "modernime-${cand_ver}-*.rpm" || true)
+    if [[ -z "$signed_pages_rpm" || ! -f "$signed_pages_rpm" ]]; then
+        printf 'Error: Signed RPM for version %s not found in %s/rpm/%s/%s/Packages\n' "$cand_ver" "$pages_dir" "$distro" "$arch" >&2
+        exit 1
+    fi
+    cp -f "$signed_pages_rpm" "$rpm_pkg"
 
-# Assert byte-for-byte identity between release-assets RPM and Pages repository RPM
-if ! cmp -s "$rpm_pkg" "$signed_pages_rpm"; then
-    printf 'Error: Release asset RPM %s is not byte-identical to Pages RPM %s\n' "$rpm_pkg" "$signed_pages_rpm" >&2
-    exit 1
-fi
+    if ! cmp -s "$rpm_pkg" "$signed_pages_rpm"; then
+        printf 'Error: Release asset RPM %s is not byte-identical to Pages RPM %s\n' "$rpm_pkg" "$signed_pages_rpm" >&2
+        exit 1
+    fi
 
-# Verify embedded OpenPGP signatures (tags 268 & 259) on the synced release-assets RPM
-if [[ -f "$pages_dir/rpm/RPM-GPG-KEY-modernime.gpg" ]]; then
-    python3 - "$rpm_pkg" "$pages_dir/rpm/RPM-GPG-KEY-modernime.gpg" "$pages_dir/rpm/KEY-FINGERPRINTS.txt" <<'PYEOF'
+    if [[ -f "$pages_dir/rpm/RPM-GPG-KEY-modernime.gpg" ]]; then
+        python3 - "$rpm_pkg" "$pages_dir/rpm/RPM-GPG-KEY-modernime.gpg" "$pages_dir/rpm/KEY-FINGERPRINTS.txt" <<'PYEOF'
 from pathlib import Path
 import re
 import struct
@@ -272,15 +359,26 @@ with tempfile.TemporaryDirectory() as td:
                 f"Error: Signature {sig_f} on {rpm_path} did not match any fingerprint in {allowed_fprs}"
             )
 PYEOF
-fi
+    fi
+done
 
 # Copy client configs and keyrings into assets_dir for Release attachment convenience
 cp -f "$pages_dir/apt/modernime-archive-keyring.gpg" "$assets_dir/"
 cp -f "$pages_dir/apt/modernime-archive-keyring.asc" "$assets_dir/"
 cp -f "$pages_dir/apt/KEY-FINGERPRINTS.txt" "$assets_dir/"
-cp -f "$pages_dir/apt/client/modernime-noble.sources" "$assets_dir/"
+for suite in "${built_apt_suites[@]}"; do
+    cp -f "$pages_dir/apt/client/modernime-${suite}.sources" "$assets_dir/"
+done
 cp -f "$pages_dir/apt/client/99-modernime.pref" "$assets_dir/"
 cp -f "$pages_dir/rpm/RPM-GPG-KEY-modernime" "$assets_dir/"
-cp -f "$pages_dir/rpm/client/modernime-openeuler-24.09.repo" "$assets_dir/"
+for repo_file in "$pages_dir/rpm/client"/*.repo; do
+    [[ -f "$repo_file" ]] || continue
+    cp -f "$repo_file" "$assets_dir/"
+done
+if [[ -d "$pages_dir/arch/client" ]]; then
+    cp -f "$pages_dir/arch/modernime-arch-keyring.asc" "$assets_dir/"
+    cp -f "$pages_dir/arch/modernime-arch-keyring.gpg" "$assets_dir/"
+    cp -f "$pages_dir/arch/client/modernime-pacman.conf" "$assets_dir/"
+fi
 
 printf 'Static Pages repository tree ready at: %s\n' "$pages_dir"

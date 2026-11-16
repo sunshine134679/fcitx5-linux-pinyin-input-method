@@ -291,6 +291,41 @@ DnfInfoResult parseDnfInfoOutput(std::string_view text, bool truncated) {
     return res;
 }
 
+PacmanSiResult parsePacmanSiOutput(std::string_view text, bool truncated) {
+    PacmanSiResult res;
+    if (truncated || text.empty()) {
+        return res;
+    }
+    std::istringstream iss{std::string(text)};
+    std::string line;
+    std::string repo;
+    std::string version;
+    std::string description;
+    while (std::getline(iss, line)) {
+        const auto colon = line.find(':');
+        if (colon == std::string::npos) {
+            continue;
+        }
+        const auto key = trim(std::string_view(line).substr(0, colon));
+        const auto val = trim(std::string_view(line).substr(colon + 1));
+        if (key == "Repository" || key == "软件库") {
+            repo = val;
+        } else if (key == "Version" || key == "版本") {
+            version = val;
+        } else if (key == "Description" || key == "描述") {
+            description = val;
+        }
+    }
+    if (!version.empty()) {
+        res.hasCandidate = true;
+        res.candidateVersion = version;
+        res.hasRemoteRepo = !repo.empty() && repo != "local";
+        res.packageSource = repo.empty() ? "Pacman 软件源" : ("Pacman 仓库 " + repo);
+        res.summary = description;
+    }
+    return res;
+}
+
 bool parseTrustedMetadata(std::string_view content, UpdateStatus &status) {
     if (content.empty()) {
         return false;
@@ -326,6 +361,8 @@ bool parseTrustedMetadata(std::string_view content, UpdateStatus &status) {
                 status.manager = PackageManagerKind::Dnf;
             } else if (val == "apt" || val == "deb") {
                 status.manager = PackageManagerKind::Apt;
+            } else if (val == "pacman") {
+                status.manager = PackageManagerKind::Pacman;
             }
         }
     }
@@ -351,6 +388,10 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
         status.refreshCacheCommand = "sudo dnf makecache --refresh";
         status.upgradeCommand = "sudo dnf makecache --refresh && sudo dnf upgrade modernime";
         status.privilegedCommand = "pkexec dnf upgrade --refresh -y modernime";
+    } else if (status.manager == PackageManagerKind::Pacman) {
+        status.refreshCacheCommand = "sudo pacman -Sy";
+        status.upgradeCommand = "sudo pacman -Syu modernime";
+        status.privilegedCommand = "pkexec pacman -Syu --noconfirm modernime";
     } else {
         if (status.manager == PackageManagerKind::Unknown) {
             status.manager = PackageManagerKind::Apt;
@@ -361,9 +402,13 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
     }
 
     if (status.installChannel == "script") {
-        const char *targetCh = (status.manager == PackageManagerKind::Dnf) ? "rpm" : "deb";
+        const char *targetCh = (status.manager == PackageManagerKind::Dnf) ? "rpm"
+                             : (status.manager == PackageManagerKind::Pacman) ? "pacman"
+                                                                              : "deb";
         const char *pkgCmd = (status.manager == PackageManagerKind::Dnf)
                                  ? "sudo dnf makecache --refresh && sudo dnf install -y modernime"
+                             : (status.manager == PackageManagerKind::Pacman)
+                                 ? "sudo pacman -Syu --noconfirm modernime"
                                  : "sudo apt update && sudo apt install -y modernime";
         status.upgradeCommand =
             std::string("modernime-migrate-channel --to-channel ") + targetCh +
@@ -416,7 +461,7 @@ void evaluateUpdateDecision(UpdateStatus &status, bool queryTruncated, bool quer
         status.statusMessage =
             "发现新版本 " + status.candidateVersion + "（当前版本 " +
             status.currentVersion +
-            "）。实际安装与升级必须通过系统包管理器（apt / dnf）执行。";
+            "）。实际安装与升级必须通过系统包管理器（apt / dnf / pacman）执行。";
     } else {
         status.updateAvailable = false;
         status.cacheMayBeStale = true;
@@ -442,6 +487,11 @@ std::string buildFallbackCommand(PackageManagerKind manager, PackageOperationKin
                    ? "sudo dnf makecache --refresh && sudo dnf upgrade modernime"
                    : "sudo dnf makecache --refresh";
     }
+    if (manager == PackageManagerKind::Pacman) {
+        return (opKind == PackageOperationKind::SystemUpgrade)
+                   ? "sudo pacman -Syu modernime"
+                   : "sudo pacman -Sy";
+    }
     return (opKind == PackageOperationKind::SystemUpgrade)
                ? "sudo apt update && sudo apt install --only-upgrade modernime"
                : "sudo apt update";
@@ -456,6 +506,9 @@ std::vector<std::string> buildRefreshCacheArgv(PackageManagerKind manager,
         return {pkexecPath, managerPath, "makecache", "--refresh",
                 "--setopt=*.skip_if_unavailable=False"};
     }
+    if (manager == PackageManagerKind::Pacman) {
+        return {pkexecPath, managerPath, "-Sy", "--noconfirm"};
+    }
     return {pkexecPath, managerPath, "update", "--error-on=any"};
 }
 
@@ -464,6 +517,9 @@ std::vector<std::string> buildUpgradeArgv(PackageManagerKind manager,
                                          const std::string &managerPath) {
     if (manager == PackageManagerKind::Dnf) {
         return {pkexecPath, managerPath, "upgrade", "--refresh", "-y", "modernime"};
+    }
+    if (manager == PackageManagerKind::Pacman) {
+        return {pkexecPath, managerPath, "-Syu", "--noconfirm", "modernime"};
     }
     return {pkexecPath, managerPath, "install", "--only-upgrade", "-y", "modernime"};
 }

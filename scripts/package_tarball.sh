@@ -3,10 +3,25 @@ set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 version=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' "${project_root}/CMakeLists.txt")
-build_dir="${project_root}/build/package-tarball"
+raw_arch="${MODERNIME_TARBALL_ARCH:-$(uname -m)}"
+case "${raw_arch}" in
+    x86_64|amd64)
+        target_arch="x86_64"
+        alt_arch="amd64"
+        ;;
+    aarch64|arm64)
+        target_arch="aarch64"
+        alt_arch="arm64"
+        ;;
+    *)
+        printf 'Error: Unsupported tarball architecture "%s" (expected x86_64 or aarch64)\n' "${raw_arch}" >&2
+        exit 1
+        ;;
+esac
+build_dir="${MODERNIME_TARBALL_BUILD_DIR:-${project_root}/build/package-tarball}"
 stage_dir="${build_dir}/stage"
-dist_dir="${project_root}/dist"
-tar_name="modernime-${version}-linux-x86_64"
+dist_dir="${MODERNIME_TARBALL_DIST_DIR:-${project_root}/dist}"
+tar_name="modernime-${version}-linux-${target_arch}"
 
 rm -rf "${stage_dir}"
 mkdir -p "${stage_dir}/${tar_name}" "${dist_dir}"
@@ -31,13 +46,13 @@ DESTDIR="${stage_dir}/${tar_name}" cmake --install "${build_dir}"
 cat << EOF > "${stage_dir}/${tar_name}/README.txt"
 ModernIME - Modern Fcitx5 Pinyin Input Method
 Version: ${version}
-Target Platform: Linux x86_64 (glibc >= 2.34, libstdc++ >= 3.4.30)
+Target Platform: Linux ${target_arch} (glibc >= 2.34, libstdc++ >= 3.4.30)
 Repository: https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method
 
 Requirements:
-  - Architecture: x86_64 / amd64
-    (For aarch64 / ARM64 or other architectures, build from source using ./install.sh)
-  - Linux distribution with glibc >= 2.34 (Ubuntu 24.04+, openEuler 24.03+, Fedora 38+)
+  - Architecture: ${target_arch} / ${alt_arch}
+    (For other architectures, build from source using ./install.sh)
+  - Linux distribution with glibc >= 2.34 (Ubuntu 22.04+/24.04+, Debian 12+/13+, openEuler 24.03+, Fedora 41+, Arch Linux)
   - Fcitx5 input method framework installed and configured
 
 Installation:

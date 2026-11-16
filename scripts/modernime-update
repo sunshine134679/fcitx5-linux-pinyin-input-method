@@ -120,30 +120,58 @@ def validate_installation(prefix, channel):
             raise UpdateError("系统安装包只支持原有 /usr 安装前缀。")
         if channel == "deb":
             owner = query(["dpkg-query", "-S", str(executable)])
-            if owner not in (f"modernime: {executable}", f"modernime:amd64: {executable}"):
+            if owner not in (f"modernime: {executable}", f"modernime:amd64: {executable}", f"modernime:arm64: {executable}"):
                 raise UpdateError("客户端不属于已安装的 ModernIME DEB 包。")
-        elif query(["rpm", "-qf", "--qf", "%{NAME}\n", str(executable)]) != "modernime":
-            raise UpdateError("客户端不属于已安装的 ModernIME RPM 包。")
+        elif channel == "rpm":
+            if query(["rpm", "-qf", "--qf", "%{NAME}\n", str(executable)]) != "modernime":
+                raise UpdateError("客户端不属于已安装的 ModernIME RPM 包。")
+        elif channel == "pacman":
+            if query(["pacman", "-Qoq", str(executable)]) != "modernime":
+                raise UpdateError("客户端不属于已安装的 ModernIME Pacman 包。")
+
+
+def resolved_arches():
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "x86_64", "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "aarch64", "arm64"
+    raise UpdateError("此架构没有匹配的官方预编译更新包；自动更新仅支持 Linux x86_64 与 aarch64/arm64。")
 
 
 def select_asset(version, channel):
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise UpdateError("更新版本号格式无效。")
-    if platform.system() != "Linux" or platform.machine().lower() not in ("x86_64", "amd64"):
-        raise UpdateError("此架构没有匹配的官方预编译更新包；自动更新仅支持 Linux x86_64。")
+    rpm_arch, deb_arch = resolved_arches()
+    if platform.system() != "Linux":
+        raise UpdateError("此系统没有匹配的官方预编译更新包；自动更新仅支持 Linux。")
     if channel == "script":
         libc, libc_version = platform.libc_ver()
         match = re.fullmatch(r"([0-9]+)\.([0-9]+)(?:\.[0-9]+)*", libc_version)
         if libc != "glibc" or not match or tuple(map(int, match.groups())) < (2, 34):
             raise UpdateError("此便携更新包要求 glibc 2.34 或更新版本，当前系统不满足要求。")
-        return f"modernime-{version}-linux-x86_64.tar.gz"
+        return f"modernime-{version}-linux-{rpm_arch}.tar.gz"
     release = platform.freedesktop_os_release()
-    distro, release_version = release.get("ID", "").lower(), release.get("VERSION_ID", "")
-    if channel == "deb" and distro == "ubuntu" and release_version == "24.04":
-        return f"modernime_{version}_amd64_ubuntu24.04.deb"
-    if channel == "rpm" and distro == "openeuler" and release_version in ("24.09", "24.03"):
-        return f"modernime-{version}-1.oe24.x86_64.rpm"
-    raise UpdateError(f"当前系统 {distro} {release_version} 没有匹配的 {channel} 发布包。")
+    distro = release.get("ID", "").lower()
+    id_like = {item.lower() for item in release.get("ID_LIKE", "").split()}
+    release_version = release.get("VERSION_ID", "")
+    codename = release.get("VERSION_CODENAME", "").lower()
+    if channel == "deb":
+        if distro == "ubuntu" and release_version == "24.04":
+            return f"modernime_{version}_{deb_arch}_ubuntu24.04.deb"
+        if distro == "debian" and (release_version == "12" or codename == "bookworm"):
+            return f"modernime_{version}_{deb_arch}_debian12.deb"
+        if distro == "debian" and (release_version == "13" or codename == "trixie"):
+            return f"modernime_{version}_{deb_arch}_debian13.deb"
+    elif channel == "rpm":
+        if distro == "openeuler" and release_version in ("24.09", "24.03"):
+            return f"modernime-{version}-1.oe24.{rpm_arch}.rpm"
+        if distro == "fedora" and release_version in ("41", "42"):
+            return f"modernime-{version}-1.fc{release_version}.{rpm_arch}.rpm"
+    elif channel == "pacman":
+        if distro in ("arch", "manjaro", "endeavouros", "cachyos", "garuda") or "arch" in id_like:
+            return f"modernime-{version}-1-{rpm_arch}.pkg.tar.zst"
+    raise UpdateError(f"当前系统 {distro} {release_version} ({rpm_arch}) 没有匹配的 {channel} 发布包。")
 
 
 class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -367,16 +395,32 @@ def install(args, prefix, directory):
             progress(directory, "install")
             result = subprocess.run(["bash", str(installer)], cwd=installer.parent, env=environment, check=False)
     else:
+        rpm_arch, deb_arch = resolved_arches()
         if args.channel == "deb":
             identity = query(["dpkg-deb", "--show", "--showformat=${Package}\n${Version}\n${Architecture}\n", str(package)])
-            architecture = "amd64"
+            if identity.splitlines() != ["modernime", prepared["version"], deb_arch]:
+                raise UpdateError("安装包内部的名称、版本或架构与发布资产不一致。")
             command = ["pkexec", "apt-get", "install", "--only-upgrade", "-y", str(package)]
-        else:
+        elif args.channel == "rpm":
             identity = query(["rpm", "-qp", "--qf", "%{NAME}\n%{VERSION}\n%{ARCH}\n", str(package)])
-            architecture = "x86_64"
+            if identity.splitlines() != ["modernime", prepared["version"], rpm_arch]:
+                raise UpdateError("安装包内部的名称、版本或架构与发布资产不一致。")
             command = ["pkexec", "dnf", "upgrade", "-y", "--setopt=localpkg_gpgcheck=1", str(package)]
-        if identity.splitlines() != ["modernime", prepared["version"], architecture]:
-            raise UpdateError("安装包内部的名称、版本或架构与发布资产不一致。")
+        elif args.channel == "pacman":
+            info_text = query(["pacman", "-Qpi", str(package)])
+            fields = {}
+            for line in info_text.splitlines():
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    fields[k.strip().lower()] = v.strip()
+            pkg_name = fields.get("name") or fields.get("名称")
+            pkg_ver = fields.get("version") or fields.get("版本", "")
+            pkg_arch = fields.get("architecture") or fields.get("架构")
+            if pkg_name != "modernime" or not pkg_ver.startswith(prepared["version"] + "-") or pkg_arch != rpm_arch:
+                raise UpdateError("安装包内部的名称、版本或架构与发布资产不一致。")
+            command = ["pkexec", "pacman", "-U", "--noconfirm", str(package)]
+        else:
+            raise UpdateError(f"不支持的安装渠道：{args.channel}")
         progress(directory, "install")
         result = subprocess.run(command, check=False)
     if result.returncode:
@@ -446,7 +490,7 @@ def main(argv=None):
             child.add_argument("--parent-start-time", required=True)
             child.add_argument("--directory")
         else:
-            child.add_argument("--channel", choices=("script", "deb", "rpm"), required=True)
+            child.add_argument("--channel", choices=("script", "deb", "rpm", "pacman"), required=True)
             child.add_argument("--directory", required=True)
             if command == "download":
                 child.add_argument("--version", required=True)

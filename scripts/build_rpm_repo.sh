@@ -18,13 +18,14 @@ gpg_passphrase="${MODERNIME_GPG_PASSPHRASE:-}"
 rotation_key_id="${MODERNIME_GPG_ROTATION_KEY_ID:-}"
 trusted_pubkeys_dir="${project_root}/packaging/keys/trusted-pubkeys.d"
 ephemeral_gpg=false
+preserve_output=false
 declare -a rpm_files=()
 
 usage() {
     cat <<'EOF'
 Usage:
   build_rpm_repo.sh --output-dir DIR --rpm FILE [--rpm FILE]...
-                    [--distro oe2409] [--arch x86_64]
+                    [--distro oe2409|fc41|fc42] [--arch x86_64|aarch64] [--preserve-output]
                     [--gpg-home DIR] [--gpg-key-id ID] [--gpg-private-key-file FILE]
                     [--rotation-key-id ID] [--trusted-pubkeys-dir DIR] [--ephemeral-gpg]
                     [--repo-url URL]
@@ -115,6 +116,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ephemeral-gpg)
             ephemeral_gpg=true
+            shift
+            ;;
+        --preserve-output)
+            preserve_output=true
             shift
             ;;
         --repo-url=*)
@@ -237,7 +242,11 @@ if [[ -n "$gpg_key_id" && -d "$trusted_pubkeys_dir" ]]; then
     done
 fi
 
-rm -rf -- "$output_dir"
+if [[ "$preserve_output" == true ]]; then
+    rm -rf -- "$output_dir/$distro_id/$target_arch"
+else
+    rm -rf -- "$output_dir"
+fi
 repo_subdir="$output_dir/$distro_id/$target_arch"
 mkdir -p "$repo_subdir/Packages" "$repo_subdir/repodata" "$output_dir/client"
 export MODERNIME_GPG_PASSPHRASE="$gpg_passphrase"
@@ -689,6 +698,11 @@ for rpm_in in rpm_inputs:
             f'Error: Distro mismatch: refusing Fedora package ({pre_meta["release"]}) in openEuler ({distro_id}) repository\n'
         )
         sys.exit(1)
+    if "oe" in pre_meta["release"] and distro_id.startswith("fc"):
+        sys.stderr.write(
+            f'Error: Distro mismatch: refusing openEuler package ({pre_meta["release"]}) in Fedora ({distro_id}) repository\n'
+        )
+        sys.exit(1)
     ver_key = f'{pre_meta["version"]}-{pre_meta["release"]}'
     if ver_key in seen_versions:
         sys.stderr.write(f'Error: Duplicate RPM version-release "{ver_key}"\n')
@@ -949,13 +963,22 @@ for rpm_file in sorted(pkgs_dir.glob("*.rpm")):
 PYVERIFY
 fi
 
-sed \
-    -e "s|@MODERNIME_RPM_REPO_URL@|$repo_url|g" \
-    "$project_root/packaging/rpm/modernime-openeuler.repo.in" > "$output_dir/client/modernime-openeuler-24.09.repo"
+if [[ "$distro_id" == "oe2409" ]]; then
+    sed \
+        -e "s|@MODERNIME_RPM_REPO_URL@|$repo_url|g" \
+        "$project_root/packaging/rpm/modernime-openeuler.repo.in" > "$output_dir/client/modernime-openeuler-24.09.repo"
+elif [[ "$distro_id" =~ ^fc([0-9]+)$ ]]; then
+    fedora_ver="${BASH_REMATCH[1]}"
+    sed \
+        -e "s|@MODERNIME_RPM_REPO_URL@|$repo_url|g" \
+        -e "s|@MODERNIME_FEDORA_VER@|$fedora_ver|g" \
+        "$project_root/packaging/rpm/modernime-fedora.repo.in" > "$output_dir/client/modernime-fedora-${fedora_ver}.repo"
+fi
 
 (
     cd "$output_dir"
-    find "$distro_id" client -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+    find . -mindepth 1 -maxdepth 1 -type d \( -name 'oe*' -o -name 'fc*' -o -name 'client' \) -printf '%P\0' | \
+        sort -z | xargs -0 -I{} find {} -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 )
 
 printf 'RPM repository generated at: %s\n' "$output_dir"

@@ -175,20 +175,44 @@ class NativeUpdateHelperTest(unittest.TestCase):
 
     def test_native_package_install_uses_original_manager_and_local_asset(self):
         cases = [
-            ("deb", {"ID": "ubuntu", "VERSION_ID": "24.04"},
+            ("deb", "x86_64", {"ID": "ubuntu", "VERSION_ID": "24.04"},
              "modernime_0.2.1_amd64_ubuntu24.04.deb", "amd64",
              ["pkexec", "apt-get", "install", "--only-upgrade", "-y"]),
-            ("rpm", {"ID": "openEuler", "VERSION_ID": "24.09"},
+            ("deb", "aarch64", {"ID": "ubuntu", "VERSION_ID": "24.04"},
+             "modernime_0.2.1_arm64_ubuntu24.04.deb", "arm64",
+             ["pkexec", "apt-get", "install", "--only-upgrade", "-y"]),
+            ("deb", "x86_64", {"ID": "debian", "VERSION_ID": "12", "VERSION_CODENAME": "bookworm"},
+             "modernime_0.2.1_amd64_debian12.deb", "amd64",
+             ["pkexec", "apt-get", "install", "--only-upgrade", "-y"]),
+            ("deb", "aarch64", {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"},
+             "modernime_0.2.1_arm64_debian13.deb", "arm64",
+             ["pkexec", "apt-get", "install", "--only-upgrade", "-y"]),
+            ("rpm", "x86_64", {"ID": "openEuler", "VERSION_ID": "24.09"},
              "modernime-0.2.1-1.oe24.x86_64.rpm", "x86_64",
              ["pkexec", "dnf", "upgrade", "-y", "--setopt=localpkg_gpgcheck=1"]),
+            ("rpm", "aarch64", {"ID": "fedora", "VERSION_ID": "42"},
+             "modernime-0.2.1-1.fc42.aarch64.rpm", "aarch64",
+             ["pkexec", "dnf", "upgrade", "-y", "--setopt=localpkg_gpgcheck=1"]),
+            ("rpm", "x86_64", {"ID": "fedora", "VERSION_ID": "41"},
+             "modernime-0.2.1-1.fc41.x86_64.rpm", "x86_64",
+             ["pkexec", "dnf", "upgrade", "-y", "--setopt=localpkg_gpgcheck=1"]),
+            ("pacman", "x86_64", {"ID": "arch"},
+             "modernime-0.2.1-1-x86_64.pkg.tar.zst", "x86_64",
+             ["pkexec", "pacman", "-U", "--noconfirm"]),
         ]
-        for channel, release, asset, architecture, expected in cases:
-            with self.subTest(channel=channel), \
+        for channel, machine, release, asset, architecture, expected in cases:
+            with self.subTest(channel=channel, asset=asset), \
                  mock.patch.object(self.helper, "validate_installation"), \
+                 mock.patch.object(self.helper.platform, "machine", return_value=machine), \
                  mock.patch.object(self.helper.platform, "freedesktop_os_release", return_value=release), \
                  mock.patch.object(self.helper.subprocess, "run") as run:
                 def run_package(argv, **kwargs):
-                    output = "ModernIME settings 0.2.1\n" if argv[0].endswith("/modernime-settings") else f"modernime\n0.2.1\n{architecture}\n"
+                    if argv[0].endswith("/modernime-settings"):
+                        output = "ModernIME settings 0.2.1\n"
+                    elif argv[0] == "pacman":
+                        output = f"Name : modernime\nVersion : 0.2.1-1\nArchitecture : {architecture}\n"
+                    else:
+                        output = f"modernime\n0.2.1\n{architecture}\n"
                     return subprocess.CompletedProcess(argv, 0, output, "")
                 run.side_effect = run_package
                 self.assertEqual(self.download(b"package bytes", channel=channel, asset=asset, prefix=Path("/usr")), 0)
@@ -198,9 +222,16 @@ class NativeUpdateHelperTest(unittest.TestCase):
                 self.assertEqual(installation[0].args[0], expected + [str(self.directory / asset)])
                 self.assertNotIn("timeout", installation[0].kwargs)
 
+    def test_script_tarball_selects_aarch64_asset(self):
+        with mock.patch.object(self.helper.platform, "machine", return_value="aarch64"):
+            self.assertEqual(
+                self.helper.select_asset("0.2.1", "script"),
+                "modernime-0.2.1-linux-aarch64.tar.gz",
+            )
+
     def test_unsupported_package_platform_has_no_fallback(self):
         with mock.patch.object(self.helper, "validate_installation"), \
-             mock.patch.object(self.helper.platform, "freedesktop_os_release", return_value={"ID": "debian", "VERSION_ID": "12"}):
+             mock.patch.object(self.helper.platform, "freedesktop_os_release", return_value={"ID": "ubuntu", "VERSION_ID": "20.04"}):
             self.assertNotEqual(self.download(b"unused", channel="deb", prefix=Path("/usr")), 0)
         self.assertFalse((self.directory / "prepared.json").exists())
 

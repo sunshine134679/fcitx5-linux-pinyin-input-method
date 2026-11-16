@@ -150,6 +150,7 @@ check_runtime_dependencies() {
             printf 'Please install Fcitx5 before installing ModernIME:\n' >&2
             printf '  Ubuntu / Debian: sudo apt install fcitx5 fcitx5-chinese-addons\n' >&2
             printf '  openEuler / Fedora: sudo dnf install fcitx5 fcitx5-chinese-addons\n' >&2
+            printf '  Arch / Manjaro: sudo pacman -S fcitx5 fcitx5-chinese-addons\n' >&2
             printf '\n' >&2
             printf 'To deploy files without runtime verification (e.g. into an offline root/chroot), run with:\n' >&2
             printf '  ./install.sh --allow-missing-deps\n' >&2

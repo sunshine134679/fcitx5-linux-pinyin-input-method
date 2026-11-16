@@ -430,3 +430,111 @@ jobs:
           rm -f /etc/yum.repos.d/local-modernime.repo
           rm -rf "$WORK_DIR"
 
+  test-debian:
+    name: Debian Build & DEB Packaging (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: trixie
+            image: debian:trixie
+          - distro: bookworm
+            image: debian:bookworm
+    steps:
+      - name: Install Debian dependencies
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y \
+            git build-essential cmake pkg-config python3 ca-certificates \
+            libsqlite3-dev liblmdb-dev libboost-dev \
+            libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
+            libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
+            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify DEB packaging
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+          ./scripts/package_deb.sh
+          dpkg-deb -I dist/modernime-*.deb
+          dpkg-deb -c dist/modernime-*.deb | grep -F "modernime_fcitx5.so" >/dev/null
+          dpkg-deb -c dist/modernime-*.deb | grep -F "modernime-settings" >/dev/null
+
+  test-fedora:
+    name: Fedora Build & RPM Packaging (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fc41
+            image: fedora:41
+            rpm_release: 1.fc41
+          - distro: fc42
+            image: fedora:42
+            rpm_release: 1.fc42
+    steps:
+      - name: Install Fedora dependencies
+        run: |
+          set -euo pipefail
+          dnf install -y \
+            git gcc gcc-c++ cmake make pkgconf-pkg-config \
+            sqlite sqlite-libs sqlite-devel lmdb-libs lmdb-devel boost-devel \
+            fcitx5 fcitx5-devel libime libime-devel \
+            gtk3 gtk3-devel pango pango-devel cairo cairo-devel libayatana-appindicator-gtk3-devel \
+            desktop-file-utils hicolor-icon-theme python3 ca-certificates cpio gzip tar \
+            rpm rpm-build rpm-sign dnf gnupg2
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build and verify Fedora RPM
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+          export MODERNIME_REQUIRE_NATIVE_RPM_TOOLS=1
+          export MODERNIME_RPM_RELEASE="${{ matrix.rpm_release }}"
+          ./scripts/package_rpm.sh
+          rpm -qpi dist/*.rpm
+          rpm_files=$(rpm -qpl dist/*.rpm)
+          echo "$rpm_files" | grep -Fx "/usr/bin/modernime-settings" >/dev/null
+          echo "$rpm_files" | grep -E "^/usr/lib(64)?/fcitx5/modernime_fcitx5\.so$" >/dev/null
+
+  test-arch:
+    name: Arch Linux Build & Pacman Packaging
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install Arch Linux dependencies
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            git base-devel cmake pkgconf boost \
+            fcitx5 libime gtk3 pango cairo sqlite lmdb \
+            libayatana-appindicator python ca-certificates \
+            desktop-file-utils hicolor-icon-theme zstd tar gnupg
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build and verify Arch Linux package
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+          ./scripts/package_arch.sh
+          pkg_files=$(pacman -Qpl dist/*.pkg.tar.zst)
+          echo "$pkg_files" | grep -Fx "modernime /usr/bin/modernime-settings" >/dev/null
+          echo "$pkg_files" | grep -Fx "modernime /usr/share/modernime/install-channel.txt" >/dev/null
+          echo "$pkg_files" | grep -Fx "modernime /usr/lib/fcitx5/modernime_fcitx5.so" >/dev/null
+

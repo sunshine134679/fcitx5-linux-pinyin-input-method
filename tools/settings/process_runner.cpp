@@ -1,6 +1,7 @@
 #include "modernime/settings/detail/process_runner.h"
 
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>

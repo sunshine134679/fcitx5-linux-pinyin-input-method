@@ -1,0 +1,65 @@
+# Maintainer: ModernIME Maintainers <sunshine134679@users.noreply.github.com>
+pkgname=modernime
+pkgver=0.2.14
+pkgrel=1
+pkgdesc="Modern Fcitx5 Pinyin Input Method for Linux Desktops"
+arch=('x86_64' 'aarch64')
+url="https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method"
+license=('LGPL-2.1-or-later' 'MIT' 'CC-BY-3.0')
+depends=(
+  'fcitx5>=5.0.14'
+  'libime>=1.0.11'
+  'gtk3>=3.24.0'
+  'pango>=1.44.0'
+  'cairo>=1.16.0'
+  'sqlite>=3.31.0'
+  'lmdb>=0.9.24'
+  'python>=3.10'
+  'coreutils'
+  'ca-certificates'
+  'hicolor-icon-theme'
+  'desktop-file-utils'
+)
+optdepends=(
+  'fcitx5-chinese-addons: extra Chinese punctuation and table addons'
+  'libayatana-appindicator: system tray indicator support'
+)
+makedepends=(
+  'cmake>=3.24'
+  'gcc'
+  'pkgconf'
+  'boost'
+  'fcitx5>=5.0.14'
+  'libime>=1.0.11'
+  'gtk3>=3.24.0'
+  'pango>=1.44.0'
+  'cairo>=1.16.0'
+  'sqlite>=3.31.0'
+  'lmdb>=0.9.24'
+  'libayatana-appindicator'
+  'python>=3.10'
+)
+install=modernime.install
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  local src_dir="${srcdir}/${pkgname}-${pkgver}"
+  if [ ! -d "${src_dir}" ] && [ -d "${srcdir}/fcitx5-linux-pinyin-input-method-${pkgver}" ]; then
+    src_dir="${srcdir}/fcitx5-linux-pinyin-input-method-${pkgver}"
+  fi
+  cmake -S "${src_dir}" -B "${srcdir}/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DMODERNIME_PACKAGE_CHANNEL=pacman \
+    -DMODERNIME_BUILD_FCITX5=ON \
+    -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
+    -DMODERNIME_BUILD_SETTINGS=ON \
+    -DMODERNIME_BUILD_TESTS=OFF
+  cmake --build "${srcdir}/build" --parallel "$(nproc 2>/dev/null || echo 2)"
+}
+
+package() {
+  DESTDIR="${pkgdir}" cmake --install "${srcdir}/build"
+}

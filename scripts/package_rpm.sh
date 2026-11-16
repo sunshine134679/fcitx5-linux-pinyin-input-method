@@ -20,6 +20,7 @@ cmake -S "${project_root}" -B "${build_dir}" \
     -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_INSTALL_SO_NO_EXE=0 \
     -DMODERNIME_PACKAGE_CHANNEL=rpm \
+    -DMODERNIME_RPM_RELEASE="${MODERNIME_RPM_RELEASE:-1.oe2409}" \
     -DMODERNIME_BUILD_FCITX5=ON \
     -DMODERNIME_BUILD_LIBIME_PINYIN=ON \
     -DMODERNIME_BUILD_SETTINGS=ON \
@@ -37,7 +38,7 @@ if [ "${MODERNIME_FORCE_FALLBACK_RPM:-0}" != "1" ] && command -v rpmbuild >/dev/
     )
     version=$(sed -n 's/^project(ModernIME VERSION \([0-9.][0-9.]*\) LANGUAGES CXX)$/\1/p' "${project_root}/CMakeLists.txt")
     release="${MODERNIME_RPM_RELEASE:-1.oe2409}"
-    arch="${MODERNIME_RPM_ARCH:-x86_64}"
+    arch="${MODERNIME_RPM_ARCH:-$(uname -m)}"
     cpack_rpm=$(ls -1 "${build_dir}"/*.rpm | head -n 1)
     cp -f "${cpack_rpm}" "${dist_dir}/modernime-${version}-${release}.${arch}.rpm"
 else
@@ -72,7 +73,8 @@ if not m:
     raise SystemExit("Unable to determine ModernIME version from CMakeLists.txt")
 version = m.group(1)
 release = os.environ.get("MODERNIME_RPM_RELEASE", "1.oe2409")
-arch = os.environ.get("MODERNIME_RPM_ARCH", "x86_64")
+arch = os.environ.get("MODERNIME_RPM_ARCH") or os.uname().machine
+rpm_arch_tag = "aarch-64" if arch == "aarch64" else "x86-64"
 pkg_name = "modernime"
 license_str = "LGPL-2.1-or-later AND MIT AND CC-BY-3.0"
 summary_str = "Modern Fcitx5 Pinyin Input Method for Linux Desktops"
@@ -272,7 +274,7 @@ hdr_entries = [
     (1039, 8, fileusernames),                              # RPMTAG_FILEUSERNAME
     (1040, 8, filegroupnames),                             # RPMTAG_FILEGROUPNAME
     (1044, 6, f"{pkg_name}-{version}-{release}.src.rpm"),  # RPMTAG_SOURCERPM
-    (1047, 8, [pkg_name, f"{pkg_name}(x86-64)"]),          # RPMTAG_PROVIDENAME
+    (1047, 8, [pkg_name, f"{pkg_name}({rpm_arch_tag})"]),  # RPMTAG_PROVIDENAME
     (1048, 4, [r[1] for r in req_list]),                   # RPMTAG_REQUIREFLAGS
     (1049, 8, [r[0] for r in req_list]),                   # RPMTAG_REQUIRENAME
     (1050, 8, [r[2] for r in req_list]),                   # RPMTAG_REQUIREVERSION

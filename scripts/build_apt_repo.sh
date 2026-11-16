@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# build_apt_repo.sh — Generates a signed multi-suite (jammy, noble, bookworm) APT repository for ModernIME
+# build_apt_repo.sh — Generates a signed multi-suite (jammy, noble, bookworm, trixie)
+# and multi-arch (amd64, arm64) APT repository for ModernIME.
 # Enforces architecture isolation, dpkg version monotonicity, SHA256 checksums,
 # InRelease + Release.gpg signing (supporting persistent keys and dual-key rotation),
 # and Deb822 .sources with isolated Signed-By keyring.
@@ -10,6 +11,8 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output_dir=""
 repo_url="https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt"
 target_arch="amd64"
+target_arches_explicit=false
+declare -a allowed_arches=()
 gpg_home="${GNUPGHOME:-}"
 gpg_key_id="${MODERNIME_GPG_KEY_ID:-}"
 gpg_private_key_file=""
@@ -22,13 +25,15 @@ prev_version=""
 declare -a jammy_debs=()
 declare -a noble_debs=()
 declare -a bookworm_debs=()
+declare -a trixie_debs=()
 declare -a common_debs=()
 
 usage() {
     cat <<'EOF'
 Usage:
-  build_apt_repo.sh --output-dir DIR [--deb FILE]... [--jammy-deb FILE]... [--noble-deb FILE]... [--bookworm-deb FILE]...
-                    [--arch amd64] [--prev-version VER]
+  build_apt_repo.sh --output-dir DIR [--deb FILE]... [--jammy-deb FILE]... [--noble-deb FILE]...
+                    [--bookworm-deb FILE]... [--trixie-deb FILE]...
+                    [--arch amd64|arm64] [--arches amd64,arm64] [--prev-version VER]
                     [--gpg-home DIR] [--gpg-key-id ID] [--gpg-private-key-file FILE]
                     [--rotation-key-id ID] [--trusted-pubkeys-dir DIR] [--ephemeral-gpg]
                     [--repo-url URL]
@@ -77,12 +82,36 @@ while [[ $# -gt 0 ]]; do
             bookworm_debs+=("$2")
             shift 2
             ;;
+        --trixie-deb=*)
+            trixie_debs+=("${1#*=}")
+            shift
+            ;;
+        --trixie-deb)
+            trixie_debs+=("$2")
+            shift 2
+            ;;
         --arch=*)
             target_arch="${1#*=}"
+            allowed_arches+=("${1#*=}")
+            target_arches_explicit=true
             shift
             ;;
         --arch)
             target_arch="$2"
+            allowed_arches+=("$2")
+            target_arches_explicit=true
+            shift 2
+            ;;
+        --arches=*)
+            IFS=',' read -r -a _split_arches <<< "${1#*=}"
+            allowed_arches+=("${_split_arches[@]}")
+            target_arches_explicit=true
+            shift
+            ;;
+        --arches)
+            IFS=',' read -r -a _split_arches <<< "$2"
+            allowed_arches+=("${_split_arches[@]}")
+            target_arches_explicit=true
             shift 2
             ;;
         --prev-version=*)
@@ -177,12 +206,16 @@ for cmd in dpkg-deb dpkg-scanpackages apt-ftparchive gpg gpgv sha256sum gzip; do
     fi
 done
 
+if [[ "$target_arches_explicit" != true ]]; then
+    allowed_arches=("amd64")
+fi
+
 if [[ ${#common_debs[@]} -gt 0 && ${#noble_debs[@]} -eq 0 ]]; then
     noble_debs+=("${common_debs[@]}")
 fi
 
-if [[ ${#noble_debs[@]} -eq 0 ]]; then
-    printf 'Error: At least one .deb file must be supplied via --noble-deb (Ubuntu 24.04)\n' >&2
+if [[ ${#noble_debs[@]} -eq 0 && ${#bookworm_debs[@]} -eq 0 && ${#trixie_debs[@]} -eq 0 && ${#jammy_debs[@]} -eq 0 ]]; then
+    printf 'Error: At least one .deb file must be supplied (e.g. --noble-deb, --bookworm-deb, or --trixie-deb)\n' >&2
     exit 1
 fi
 
@@ -289,17 +322,28 @@ validate_deb_for_suite() {
         printf 'Error: Invalid DEB control metadata in %s\n' "$deb_file" >&2
         return 1
     fi
-    if [[ "$pkg_arch" != "$target_arch" && "$pkg_arch" != "all" ]]; then
+    local arch_allowed=false
+    for a in "${allowed_arches[@]}"; do
+        if [[ "$pkg_arch" == "$a" || "$pkg_arch" == "all" ]]; then
+            arch_allowed=true
+            break
+        fi
+    done
+    if [[ "$arch_allowed" != true ]]; then
         printf 'Error: Architecture mismatch for %s: package is "%s", repository requires "%s"\n' \
-            "$deb_file" "$pkg_arch" "$target_arch" >&2
+            "$deb_file" "$pkg_arch" "${allowed_arches[*]}" >&2
         return 1
     fi
-    if [[ "$suite" == "jammy" && ( "$pkg_ver" == *"ubuntu24.04"* || "$pkg_ver" == *"ubuntu2404"* || "$pkg_ver" == *"~noble"* ) ]]; then
-        printf 'Error: Suite mismatch: refusing to place noble-specific package (%s) into jammy suite\n' "$pkg_ver" >&2
+    if [[ "$suite" == "jammy" && ( "$pkg_ver" == *"ubuntu24.04"* || "$pkg_ver" == *"ubuntu2404"* || "$pkg_ver" == *"~noble"* || "$pkg_ver" == *"debian13"* || "$pkg_ver" == *"~trixie"* ) ]]; then
+        printf 'Error: Suite mismatch: refusing to place newer-distro package (%s) into jammy suite\n' "$pkg_ver" >&2
         return 1
     fi
-    if [[ "$suite" == "noble" && ( "$pkg_ver" == *"ubuntu22.04"* || "$pkg_ver" == *"ubuntu2204"* || "$pkg_ver" == *"~jammy"* ) ]]; then
-        printf 'Error: Suite mismatch: refusing to place jammy-specific package (%s) into noble suite\n' "$pkg_ver" >&2
+    if [[ "$suite" == "bookworm" && ( "$pkg_ver" == *"ubuntu24.04"* || "$pkg_ver" == *"ubuntu2404"* || "$pkg_ver" == *"~noble"* || "$pkg_ver" == *"debian13"* || "$pkg_ver" == *"~trixie"* ) ]]; then
+        printf 'Error: Suite mismatch: refusing to place newer-distro package (%s) into bookworm suite\n' "$pkg_ver" >&2
+        return 1
+    fi
+    if [[ ( "$suite" == "noble" || "$suite" == "trixie" ) && ( "$pkg_ver" == *"ubuntu22.04"* || "$pkg_ver" == *"ubuntu2204"* || "$pkg_ver" == *"~jammy"* || "$pkg_ver" == *"debian12"* || "$pkg_ver" == *"~bookworm"* ) ]]; then
+        printf 'Error: Suite mismatch: refusing to place older-distro package (%s) into %s suite\n' "$pkg_ver" "$suite" >&2
         return 1
     fi
     if ! dpkg --compare-versions "$pkg_ver" gt "0.0.0"; then
@@ -330,40 +374,54 @@ build_suite() {
     fi
 
     local pool_dir="$output_dir/pool/$suite/main/m/modernime"
-    local bin_dir="$output_dir/dists/$suite/main/binary-$target_arch"
     local suite_dir="$output_dir/dists/$suite"
-    mkdir -p "$pool_dir" "$bin_dir"
+    mkdir -p "$pool_dir" "$suite_dir"
 
-    local prev_in_suite=""
+    local seen_ver_arch=""
+    local present_arches=()
     for deb in "${debs[@]}"; do
         validate_deb_for_suite "$deb" "$suite"
-        local ver
+        local ver pkg_arch
         ver=$(dpkg-deb -f "$deb" Version)
-        if [[ -n "$prev_in_suite" ]]; then
-            if [[ "$ver" == "$prev_in_suite" ]]; then
-                printf 'Error: Duplicate version "%s" in suite "%s"\n' "$ver" "$suite" >&2
-                exit 1
-            fi
+        pkg_arch=$(dpkg-deb -f "$deb" Architecture)
+        local key="${ver}:${pkg_arch}"
+        if [[ " $seen_ver_arch " == *" $key "* ]]; then
+            printf 'Error: Duplicate version/arch "%s" in suite "%s"\n' "$key" "$suite" >&2
+            exit 1
         fi
-        prev_in_suite="$ver"
-        local base_name="modernime_${ver}_${target_arch}.deb"
+        seen_ver_arch+=" $key"
+        local base_name="modernime_${ver}_${pkg_arch}.deb"
         cp -f -- "$deb" "$pool_dir/$base_name"
+
+        if [[ "$pkg_arch" == "all" ]]; then
+            for a in "${allowed_arches[@]}"; do
+                if [[ " ${present_arches[*]-} " != *" $a "* ]]; then
+                    present_arches+=("$a")
+                fi
+            done
+        elif [[ " ${present_arches[*]-} " != *" $pkg_arch "* ]]; then
+            present_arches+=("$pkg_arch")
+        fi
     done
 
-    (
-        cd "$output_dir"
-        dpkg-scanpackages --multiversion "pool/$suite/main" /dev/null > "dists/$suite/main/binary-$target_arch/Packages"
-        gzip -9cn "dists/$suite/main/binary-$target_arch/Packages" > "dists/$suite/main/binary-$target_arch/Packages.gz"
-    )
-
-    cat > "$suite_dir/main/binary-$target_arch/Release" <<EOF
+    local suite_arches_str="${present_arches[*]}"
+    for arch in "${present_arches[@]}"; do
+        local bin_dir="$suite_dir/main/binary-$arch"
+        mkdir -p "$bin_dir"
+        (
+            cd "$output_dir"
+            dpkg-scanpackages --multiversion -a "$arch" "pool/$suite/main" /dev/null > "dists/$suite/main/binary-$arch/Packages"
+            gzip -9cn "dists/$suite/main/binary-$arch/Packages" > "dists/$suite/main/binary-$arch/Packages.gz"
+        )
+        cat > "$bin_dir/Release" <<EOF
 Archive: $suite
 Version: $suite_ver
 Component: main
 Origin: ModernIME
 Label: ModernIME APT Repository
-Architecture: $target_arch
+Architecture: $arch
 EOF
+    done
 
     (
         cd "$suite_dir"
@@ -373,7 +431,7 @@ EOF
             -o "APT::FTPArchive::Release::Suite=$suite" \
             -o "APT::FTPArchive::Release::Version=$suite_ver" \
             -o "APT::FTPArchive::Release::Codename=$suite" \
-            -o "APT::FTPArchive::Release::Architectures=$target_arch" \
+            -o "APT::FTPArchive::Release::Architectures=$suite_arches_str" \
             -o "APT::FTPArchive::Release::Components=main" \
             -o "APT::FTPArchive::Release::Description=$suite_desc" \
             release . > Release
@@ -391,16 +449,21 @@ EOF
     sed \
         -e "s|@MODERNIME_APT_REPO_URL@|$repo_url|g" \
         -e "s|@MODERNIME_APT_SUITE@|$suite|g" \
+        -e "s|@MODERNIME_APT_ARCHES@|$suite_arches_str|g" \
         "$project_root/packaging/apt/modernime.sources.in" > "$output_dir/client/modernime-$suite.sources"
 }
 
-# 仅构建实际提供包的发行版套件；Ubuntu 22.04 / Debian 12 已停止支持。
 if [[ ${#jammy_debs[@]} -gt 0 ]]; then
     build_suite "jammy" "22.04" "ModernIME APT Repository for Ubuntu 22.04 LTS (Jammy Jellyfish)" "${jammy_debs[@]}"
 fi
-build_suite "noble" "24.04" "ModernIME APT Repository for Ubuntu 24.04 LTS (Noble Numbat)" "${noble_debs[@]}"
+if [[ ${#noble_debs[@]} -gt 0 ]]; then
+    build_suite "noble" "24.04" "ModernIME APT Repository for Ubuntu 24.04 LTS (Noble Numbat)" "${noble_debs[@]}"
+fi
 if [[ ${#bookworm_debs[@]} -gt 0 ]]; then
     build_suite "bookworm" "12" "ModernIME APT Repository for Debian 12 (Bookworm)" "${bookworm_debs[@]}"
+fi
+if [[ ${#trixie_debs[@]} -gt 0 ]]; then
+    build_suite "trixie" "13" "ModernIME APT Repository for Debian 13 (Trixie)" "${trixie_debs[@]}"
 fi
 
 cp -f -- "$project_root/packaging/apt/99-modernime.pref" "$output_dir/client/99-modernime.pref"
@@ -418,7 +481,7 @@ if [[ -n "$gpg_key_id" ]]; then
         printf 'Keyring-SHA256: %s\n' "$(sha256sum "$output_dir/modernime-archive-keyring.gpg" | awk '{print $1}')"
     } > "$output_dir/KEY-FINGERPRINTS.txt"
 
-    for suite in jammy noble bookworm; do
+    for suite in jammy noble bookworm trixie; do
         if [[ -f "$output_dir/dists/$suite/Release" ]]; then
             gpgv --keyring "$output_dir/modernime-archive-keyring.gpg" \
                 "$output_dir/dists/$suite/InRelease" >/dev/null 2>&1

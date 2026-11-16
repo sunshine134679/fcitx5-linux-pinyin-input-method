@@ -22,13 +22,13 @@ usage() {
     cat <<'EOF'
 Usage:
   modernime-migrate-channel --check [--from-prefix PREFIX] [--target-prefix /usr]
-  modernime-migrate-channel --to-channel <deb|rpm> [--from-prefix PREFIX] [--target-prefix /usr] [--package-cmd CMD] [--package-rollback-cmd CMD]
+  modernime-migrate-channel --to-channel <deb|rpm|pacman> [--from-prefix PREFIX] [--target-prefix /usr] [--package-cmd CMD] [--package-rollback-cmd CMD]
 
 Options:
   --check                      Inspect existing installation channel, manifest, ownership, and version
   --from-prefix PREFIX         Source script installation prefix (default: auto-detect ~/.local or /usr)
   --target-prefix PREFIX       Target native package prefix (default: /usr)
-  --to-channel CHANNEL         Target native package channel (deb or rpm)
+  --to-channel CHANNEL         Target native package channel (deb, rpm, or pacman)
   --package-cmd CMD            Command to install the native package (e.g. "sudo apt install -y modernime")
   --package-rollback-cmd CMD   Command to uninstall the native package on rollback
   --no-session-init            Skip re-initializing user desktop session after migration
@@ -150,6 +150,8 @@ detect_owner() {
         owner=$(dpkg -S "$f" 2>/dev/null || true)
     elif command -v rpm >/dev/null 2>&1; then
         owner=$(rpm -qf "$f" 2>/dev/null || true)
+    elif command -v pacman >/dev/null 2>&1; then
+        owner=$(pacman -Qo "$f" 2>/dev/null || true)
     fi
     printf '%s' "$owner"
 }
@@ -189,8 +191,10 @@ if [[ -z "$detected_channel" ]]; then
     if [[ -n "$pkg_owner" ]]; then
         if command -v dpkg >/dev/null 2>&1 && dpkg -S "$from_prefix/bin/modernime-settings" >/dev/null 2>&1; then
             detected_channel="deb"
-        else
+        elif command -v rpm >/dev/null 2>&1 && rpm -qf "$from_prefix/bin/modernime-settings" >/dev/null 2>&1; then
             detected_channel="rpm"
+        else
+            detected_channel="pacman"
         fi
     elif [[ -f "$manifest_file" ]]; then
         detected_channel="script"
@@ -222,6 +226,8 @@ if [[ "$mode" == "check" ]]; then
         printf '  modernime-migrate-channel --from-prefix "%s" --to-channel deb --package-cmd "sudo apt install -y modernime"\n' "$from_prefix"
         printf 'Recommended Migration Command (openEuler/Fedora DNF):\n'
         printf '  modernime-migrate-channel --from-prefix "%s" --to-channel rpm --package-cmd "sudo dnf install -y modernime"\n' "$from_prefix"
+        printf 'Recommended Migration Command (Arch/Manjaro Pacman):\n'
+        printf '  modernime-migrate-channel --from-prefix "%s" --to-channel pacman --package-cmd "sudo pacman -S --noconfirm modernime"\n' "$from_prefix"
     fi
     exit 0
 fi
@@ -231,14 +237,16 @@ if [[ -z "$to_channel" ]]; then
         to_channel="deb"
     elif command -v dnf >/dev/null 2>&1 || command -v rpm >/dev/null 2>&1; then
         to_channel="rpm"
+    elif command -v pacman >/dev/null 2>&1; then
+        to_channel="pacman"
     else
-        printf 'Error: Please specify --to-channel deb or --to-channel rpm.\n' >&2
+        printf 'Error: Please specify --to-channel deb, --to-channel rpm, or --to-channel pacman.\n' >&2
         exit 1
     fi
 fi
 
-if [[ "$to_channel" != "deb" && "$to_channel" != "rpm" ]]; then
-    printf 'Error: Unsupported target channel "%s" (expected deb or rpm).\n' "$to_channel" >&2
+if [[ "$to_channel" != "deb" && "$to_channel" != "rpm" && "$to_channel" != "pacman" ]]; then
+    printf 'Error: Unsupported target channel "%s" (expected deb, rpm, or pacman).\n' "$to_channel" >&2
     exit 1
 fi
 
@@ -692,6 +700,12 @@ restore_original_channel() {
                     dnf remove -y modernime >/dev/null 2>&1 || rpm -e modernime >/dev/null 2>&1 || true
                 elif command -v sudo >/dev/null 2>&1; then
                     sudo -n dnf remove -y modernime >/dev/null 2>&1 || sudo -n rpm -e modernime >/dev/null 2>&1 || true
+                fi
+            elif [[ "$to_channel" == "pacman" ]]; then
+                if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+                    pacman -R --noconfirm modernime >/dev/null 2>&1 || true
+                elif command -v sudo >/dev/null 2>&1; then
+                    sudo -n pacman -R --noconfirm modernime >/dev/null 2>&1 || true
                 fi
             fi
         fi

@@ -14,6 +14,7 @@ namespace modernime::settings {
 enum class PackageManagerKind {
     Apt,
     Dnf,
+    Pacman,
     Unknown,
 };
 

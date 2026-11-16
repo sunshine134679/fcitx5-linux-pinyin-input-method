@@ -26,12 +26,21 @@ struct DnfInfoResult {
     std::string summary;
 };
 
+struct PacmanSiResult {
+    bool hasCandidate = false;
+    std::string candidateVersion;
+    bool hasRemoteRepo = false;
+    std::string packageSource;
+    std::string summary;
+};
+
 int compareDebianSegment(std::string_view a, std::string_view b);
 int compareVersions(std::string_view lhs, std::string_view rhs);
 
 AptPolicyResult parseAptPolicyOutput(std::string_view text, bool truncated = false);
 std::string parseAptShowDescription(std::string_view text, bool truncated = false);
 DnfInfoResult parseDnfInfoOutput(std::string_view text, bool truncated = false);
+PacmanSiResult parsePacmanSiOutput(std::string_view text, bool truncated = false);
 
 bool parseTrustedMetadata(std::string_view content, UpdateStatus &status);
 std::string detectInstallChannelFromContent(std::string_view content);

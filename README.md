@@ -30,16 +30,23 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.14_amd64_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64` (`x86_64`) | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime-0.2.14-1.oe24.x86_64.rpm` | openEuler 24.09 (`oe2409` 官方验证目标)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.14-linux-x86_64.tar.gz` | Linux 便携免编译包 | `x86_64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
-| 源码构建 (`./install.sh`) | 任意 Linux (含 `aarch64` / ARM64, RISC-V) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
+| `modernime_0.2.14_{amd64,arm64}_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64`, `arm64` | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime_0.2.14_{amd64,arm64}_debian13.deb` | Debian 13 (`trixie`) | `amd64`, `arm64` | glibc ≥ 2.40, Fcitx5 ≥ 5.1.12, LibIME ≥ 1.1.10 |
+| `modernime_0.2.14_{amd64,arm64}_debian12.deb` | Debian 12 (`bookworm`) | `amd64`, `arm64` | glibc ≥ 2.36, Fcitx5 ≥ 5.0.21, LibIME ≥ 1.0.16 |
+| `modernime-0.2.14-1.fc42.{x86_64,aarch64}.rpm` | Fedora 42 (`fc42`) | `x86_64`, `aarch64` | glibc ≥ 2.41, Fcitx5 ≥ 5.1.12, LibIME ≥ 1.1.10 |
+| `modernime-0.2.14-1.fc41.{x86_64,aarch64}.rpm` | Fedora 41 (`fc41`) | `x86_64`, `aarch64` | glibc ≥ 2.40, Fcitx5 ≥ 5.1.x, LibIME ≥ 1.1.x |
+| `modernime-0.2.14-1.oe24.{x86_64,aarch64}.rpm` | openEuler 24.09 (`oe2409` 官方验证)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64`, `aarch64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.14-1-x86_64.pkg.tar.zst` | Arch Linux / Manjaro / EndeavourOS | `x86_64`（ARM64 附 `PKGBUILD`） | Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11, GTK3 ≥ 3.24 |
+| `modernime-0.2.14-linux-{x86_64,aarch64}.tar.gz` | Linux 便携免编译包 | `x86_64`, `aarch64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| 源码构建 (`./install.sh`) | 任意 Linux (含 RISC-V 等) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
+
+> 所有 GitHub Releases 二进制资产均附带同名 `.sig` 独立 GPG 签名与 `SHA256SUMS.txt` 校验清单。
 
 #### 1. Ubuntu / Debian 系统（APT 软件源升级与 `.deb` 包）
 
 **方式 A：配置签名 APT 仓库（推荐，支持 `apt upgrade` 持续升级与版本回退）**
 
-ModernIME 采用符合现代 Debian 安全规范的 **Deb822 `.sources` 格式**与独立 `Signed-By` 密钥环（不使用已废弃的 `apt-key` 或全局信任锚），当前仅提供 Ubuntu 24.04 LTS（`noble`）与 `amd64` 架构的预编译软件源；Ubuntu 22.04 / Debian 12 已停止支持，请升级系统或使用源码构建。仓库提供持久化签名密钥指纹核验与双密钥平滑轮换机制（详见 [`packaging/keys/README.md`](packaging/keys/README.md)）：
+ModernIME 采用符合现代 Debian 安全规范的 **Deb822 `.sources` 格式**与独立 `Signed-By` 密钥环（不使用已废弃的 `apt-key` 或全局信任锚），提供 **Ubuntu 24.04 (`noble`)**、**Debian 13 (`trixie`)**、**Debian 12 (`bookworm`)** 的 `amd64` 与 `arm64` 双架构预编译软件源；仓库提供持久化签名密钥指纹核验与双密钥平滑轮换机制（详见 [`packaging/keys/README.md`](packaging/keys/README.md)）：
 
 ```bash
 # 1. 下载并核验独立 GPG 签名密钥环（二进制 OpenPGP 格式，仅授权给 ModernIME 源）
@@ -52,18 +59,18 @@ sudo chmod 0644 /usr/share/keyrings/modernime-archive-keyring.gpg
 gpg --show-keys --with-fingerprint /usr/share/keyrings/modernime-archive-keyring.gpg
 curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt/KEY-FINGERPRINTS.txt
 
-# 2. 写入 Deb822 仓库配置（仅支持 Ubuntu 24.04 noble）
+# 2. 写入 Deb822 仓库配置（自动匹配 Ubuntu 24.04 noble / Debian 13 trixie / Debian 12 bookworm）
 SUITE="$(. /etc/os-release && echo "${VERSION_CODENAME:-noble}")"
 case "${SUITE}" in
-  noble) ;;
-  *) echo "当前发行版代号 (${SUITE}) 不在预编译 APT 仓库支持范围内（仅 Ubuntu 24.04 noble），请改用源码构建 ./install.sh" >&2 ;;
+  noble|trixie|bookworm) ;;
+  *) echo "当前发行版代号 (${SUITE}) 不在预编译 APT 仓库支持范围内，请改用便携包或源码构建 ./install.sh" >&2 ;;
 esac
 sudo tee /etc/apt/sources.list.d/modernime.sources >/dev/null <<EOF
 Types: deb
 URIs: https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/apt
 Suites: ${SUITE}
 Components: main
-Architectures: amd64
+Architectures: amd64 arm64
 Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg
 EOF
 
@@ -80,7 +87,7 @@ sudo apt install -y modernime
 # 终端中刷新软件源并仅升级 ModernIME（客户端检查官方版本无需管理员授权）：
 sudo apt update && sudo apt install --only-upgrade -y modernime
 
-# 5. 版本回退（在线源保留 0.1.9 及后续历史版本；仓库建立前的 0.1.8 需从 GitHub Releases 下载离线包）
+# 5. 版本回退（在线源保留历史版本，支持指定版本回退）
 apt-cache madison modernime
 sudo apt install -y --allow-downgrades modernime=0.1.9
 
@@ -97,21 +104,22 @@ sudo apt update
 
 **方式 B：离线安装单文件 `.deb` 包**
 ```bash
-# 仅提供 Ubuntu 24.04 预编译包（*_ubuntu24.04.deb）：
-sudo dpkg -i modernime_*_amd64_ubuntu24.04.deb
+# 选择与当前发行版和架构匹配的 .deb 包（如 *_amd64_ubuntu24.04.deb / *_arm64_debian13.deb）：
+sudo dpkg -i modernime_*_<arch>_<distro>.deb
 # 若系统提示缺失运行库依赖，一键自动修复补全：
 sudo apt-get install -f
 ```
 
-#### 2. openEuler 系统（DNF/RPM 仓库升级与 `.rpm` 包，当前支持 `x86_64`）
+#### 2. Fedora 与 openEuler 系统（DNF/RPM 仓库升级与 `.rpm` 包，支持 `x86_64` 与 `aarch64`）
 
 > [!NOTE]
-> **openEuler 版本兼容边界与 EPOL 源说明**：
-> - **openEuler 24.09 (`x86_64`)**：官方验证目标版本。系统自带 EPOL 扩展源原生提供 `fcitx5`（5.1.10+）与 `libime`（1.1.8+），直接启用 EPOL 源即可使用 DNF 仓库在线安装与升级：
+> **Fedora 与 openEuler 依赖说明**：
+> - **Fedora 41 / 42 (`x86_64` / `aarch64`)**：官方仓库原生包含 `fcitx5` 与 `libime`，直接添加仓库配置即可安装。
+> - **openEuler 24.09 (`x86_64` / `aarch64`)**：官方验证目标版本。系统自带 EPOL 扩展源原生提供 `fcitx5`（5.1.10+）与 `libime`（1.1.8+），直接启用 EPOL 源即可使用 DNF 仓库在线安装与升级：
 >   ```bash
 >   sudo dnf config-manager --set-enabled EPOL || true
 >   ```
-> - **openEuler 24.03 LTS-SP4 (`x86_64`)**：官方默认 OS/EPOL 仓库未内置 `fcitx5` 与 `libime`。若在 24.03 上安装，需额外引入 24.09 EPOL 扩展源并**使用 `includepkgs` 进行精确限定**（仅拉取输入法依赖组件，保留 GPG 校验）：
+> - **openEuler 24.03 LTS-SP4**：官方默认 OS/EPOL 仓库未内置 `fcitx5` 与 `libime`。若在 24.03 上安装，需额外引入 24.09 EPOL 扩展源并**使用 `includepkgs` 进行精确限定**（仅拉取输入法依赖组件，保留 GPG 校验）：
 >   ```bash
 >   sudo tee /etc/yum.repos.d/openEuler-24.09-epol.repo << 'EOF'
 >   [openEuler-24.09-epol]
@@ -125,11 +133,24 @@ sudo apt-get install -f
 >   EOF
 >   sudo dnf makecache --refresh
 >   ```
-> - **其他架构（如 `aarch64`）或 Fedora**：当前预编译 DNF 仓库仅发布 `oe2409/x86_64`；`aarch64` 或其他 RPM 发行版请使用 `./scripts/package_rpm.sh` 本地构建 RPM 或运行 `./install.sh` 从源码构建。
+> - 其他 RPM 发行版请使用 `./scripts/package_rpm.sh` 本地构建 RPM 或运行 `./install.sh` 从源码构建。
 
-**方式 A：配置 openEuler 24.09 `x86_64` DNF 签名仓库（推荐，支持 `dnf upgrade` 持续升级）**
+**方式 A：配置签名 DNF 仓库（推荐，支持 `dnf upgrade` 持续升级）**
 ```bash
-# 1. 写入开启 RPM 包体签名与 repomd.xml 仓库索引双签名校验 (gpgcheck=1, repo_gpgcheck=1) 的 .repo 配置
+# 1a. Fedora 41 / 42 写入双签名校验 .repo 配置：
+FEDORA_VER="$(. /etc/os-release && echo "${VERSION_ID}")"
+sudo tee "/etc/yum.repos.d/modernime-fedora-${FEDORA_VER}.repo" >/dev/null <<EOF
+[modernime-fedora-${FEDORA_VER}]
+name=ModernIME Repository for Fedora ${FEDORA_VER} (\$basearch)
+baseurl=https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/fc${FEDORA_VER}/\$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/RPM-GPG-KEY-modernime
+metadata_expire=6h
+EOF
+
+# 1b. 或 openEuler 24.09 写入 /etc/yum.repos.d/modernime-openeuler-24.09.repo：
 sudo tee /etc/yum.repos.d/modernime-openeuler-24.09.repo >/dev/null <<'EOF'
 [modernime-openeuler-24.09]
 name=ModernIME Repository for openEuler 24.09 ($basearch)
@@ -147,10 +168,9 @@ sudo dnf install -y modernime
 # 后续升级：
 sudo dnf upgrade --refresh -y modernime
 
-# 3. 版本回退与移除 DNF 仓库（在线源保留 0.1.9 及后续历史版本，支持 dnf downgrade）
+# 3. 版本回退与移除 DNF 仓库
 sudo dnf downgrade -y modernime
-# 移除仓库配置与已导入的 GPG 公钥：
-sudo rm -f /etc/yum.repos.d/modernime-openeuler-24.09.repo
+sudo rm -f /etc/yum.repos.d/modernime-openeuler-24.09.repo /etc/yum.repos.d/modernime-fedora-*.repo
 sudo dnf clean all
 ```
 
@@ -158,14 +178,39 @@ sudo dnf clean all
 ```bash
 # 导入签名公钥后通过 dnf 安装本地已签名 RPM（自动从已配置仓库解析并补齐依赖）：
 sudo rpm --import https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/rpm/RPM-GPG-KEY-modernime
-sudo dnf install -y ./modernime-*.x86_64.rpm
+sudo dnf install -y ./modernime-*.rpm
+```
+
+#### 3. Arch Linux / Manjaro 系统（Pacman 签名仓库与 `PKGBUILD`）
+
+```bash
+# 1. 导入并本地信任签名公钥（可在 KEY-FINGERPRINTS.txt 核对指纹）
+curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/arch/modernime-arch-keyring.asc \
+  | sudo pacman-key --add -
+sudo pacman-key --lsign-key "$(curl -fsSL https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/arch/KEY-FINGERPRINTS.txt | awk '/^Fingerprint:/{print $2; exit}')"
+
+# 2. 在 /etc/pacman.conf 末尾加入签名仓库（当前提供 x86_64 预编译包）
+sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
+
+[modernime]
+SigLevel = Required DatabaseRequired
+Server = https://sunshine134679.github.io/fcitx5-linux-pinyin-input-method/arch/$arch
+EOF
+
+# 3. 同步并安装 / 升级
+sudo pacman -Sy modernime
+# 或直接安装 GitHub Releases 下载的包：
+# sudo pacman -U ./modernime-*-x86_64.pkg.tar.zst
+
+# 4. Arch ARM (aarch64) 或本地打包可使用仓库内 packaging/arch/PKGBUILD：
+# ./scripts/package_arch.sh
 ```
 
 <a id="install-channel-migration"></a>
 
-#### 2.5 安装渠道隔离与可控迁移（`script` ↔ `deb`/`rpm`）
+#### 3.5 安装渠道隔离与可控迁移（`script` ↔ `deb`/`rpm`/`pacman`）
 
-ModernIME 严格区分脚本/源码安装（`channel=script`）与系统发行包安装（`channel=deb` / `channel=rpm`），默认禁止跨渠道直接覆盖，并提供 `modernime-migrate-channel` 与 `modernime-data-guard` 工具完成安全迁移：
+ModernIME 严格区分脚本/源码安装（`channel=script`）与系统发行包安装（`channel=deb` / `channel=rpm` / `channel=pacman`），默认禁止跨渠道直接覆盖，并提供 `modernime-migrate-channel` 与 `modernime-data-guard` 工具完成安全迁移：
 
 ```bash
 # 1. 检查当前安装来源、manifest、文件归属与版本
@@ -174,17 +219,20 @@ modernime-migrate-channel --check
 # 2. 从 ~/.local 脚本安装平滑迁移至 Ubuntu/Debian APT 系统包（自动备份并校验；失败时回退程序，保留迁移期间的用户数据）
 modernime-migrate-channel --from-prefix "$HOME/.local" --to-channel deb --package-cmd "sudo apt install -y modernime"
 
-# 3. 从脚本安装平滑迁移至 openEuler DNF 系统包
+# 3. 从脚本安装平滑迁移至 openEuler/Fedora DNF 系统包
 modernime-migrate-channel --from-prefix "$HOME/.local" --to-channel rpm --package-cmd "sudo dnf install -y modernime"
+
+# 4. 从脚本安装平滑迁移至 Arch/Manjaro Pacman 系统包
+modernime-migrate-channel --from-prefix "$HOME/.local" --to-channel pacman --package-cmd "sudo pacman -S --noconfirm modernime"
 ```
 
 迁移失败不会自动恢复旧学习、词典或设置。期间新建或修改的外部会话配置也会保留，并在回退日志中提示；备份仍可用于主动恢复。
 
-#### 3. Linux x86_64 便携归档（`.tar.gz` 免编译包，要求 glibc ≥ 2.34）
+#### 4. Linux 便携归档（`.tar.gz` 免编译包，`x86_64` 与 `aarch64`，要求 glibc ≥ 2.34）
 ```bash
-# 解压预编译便携包
-tar -zxvf modernime-*-linux-x86_64.tar.gz
-cd modernime-*-linux-x86_64
+# 解压预编译便携包（按需选择 linux-x86_64 或 linux-aarch64）
+tar -zxvf modernime-*-linux-*.tar.gz
+cd modernime-*-linux-*
 
 # 用户级一键安装至 ~/.local（推荐，无需 root 权限）
 ./install.sh
@@ -194,7 +242,7 @@ sudo ./install.sh /usr
 # 等价于：sudo MODERNIME_PREFIX=/usr ./install.sh
 ```
 
-归档包含 `install.sh` 和 `uninstall.sh`，与源码安装共享环境集成、安装清单及用户修改保护。安装无需 CMake 或编译器，默认离线；支持 `MODERNIME_PREFIX`、`MODERNIME_CONFIG_HOME`、`MODERNIME_DESKTOP_DIR` 和 `MODERNIME_SKIP_FCITX_RESTART`。卸载时使用安装所选的前缀，例如 `MODERNIME_PREFIX="$HOME/.local/modernime" ./uninstall.sh`。如果从 `/tmp` 或 `/var/tmp` 解压目录运行，必须显式指定 `MODERNIME_PREFIX`。三份内置词典会通过 `XDG_DATA_DIRS` 在安装前缀下定位。若宿主为 aarch64 / ARM64 或其他架构，请选用下述“方式二：从源码一键构建安装”。
+归档包含 `install.sh` 和 `uninstall.sh`，与源码安装共享环境集成、安装清单及用户修改保护。安装无需 CMake 或编译器，默认离线；支持 `MODERNIME_PREFIX`、`MODERNIME_CONFIG_HOME`、`MODERNIME_DESKTOP_DIR` 和 `MODERNIME_SKIP_FCITX_RESTART`。卸载时使用安装所选的前缀，例如 `MODERNIME_PREFIX="$HOME/.local/modernime" ./uninstall.sh`。如果从 `/tmp` 或 `/var/tmp` 解压目录运行，必须显式指定 `MODERNIME_PREFIX`。三份内置词典会通过 `XDG_DATA_DIRS` 在安装前缀下定位。
 
 ---
 
@@ -220,10 +268,10 @@ sudo apt install \
 
 #### openEuler / RHEL / Fedora 构建依赖准备
 ```bash
-# 1. 确保已启用 EPOL 扩展源（openEuler 24.03 SP4 用户请先配置上方包含 includepkgs 的 24.09 EPOL 隔离源）：
+# 1. openEuler 用户请确保已启用 EPOL 扩展源（openEuler 24.03 SP4 请先配置上方包含 includepkgs 的 24.09 EPOL 隔离源）：
 sudo dnf config-manager --set-enabled EPOL || true
 
-# 2. 安装构建依赖（必须包含 libappindicator-gtk3-devel 以启用状态栏托盘图标支持）：
+# 2. 安装构建依赖（openEuler 安装 libappindicator-gtk3-devel；Fedora 安装 libayatana-appindicator-gtk3-devel）：
 sudo dnf install -y \
     gcc gcc-c++ cmake make git pkgconf-pkg-config python3 coreutils util-linux ca-certificates /usr/bin/ldd \
     sqlite-devel lmdb-devel boost-devel \
@@ -231,6 +279,13 @@ sudo dnf install -y \
     fcitx5-devel libime libime-devel \
     gtk3-devel pango-devel cairo-devel rpm-build \
     libappindicator-gtk3-devel
+```
+
+#### Arch Linux / Manjaro 构建依赖准备
+```bash
+sudo pacman -S --needed \
+    base-devel cmake git pkgconf boost python ca-certificates \
+    fcitx5 libime gtk3 pango cairo sqlite lmdb libayatana-appindicator
 ```
 
 #### 执行一键安装
@@ -258,9 +313,10 @@ cd fcitx5-linux-pinyin-input-method
 
 - **打包 Debian/Ubuntu `.deb`**：运行 `./scripts/package_deb.sh`
 - **打包 openEuler/Fedora `.rpm`**：运行 `./scripts/package_rpm.sh`
+- **打包 Arch Linux `.pkg.tar.zst`**：运行 `./scripts/package_arch.sh`
 - **打包通用便携归档 `.tar.gz`**：运行 `./scripts/package_tarball.sh`
 
-同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.1.10`）或在 Actions 页面手动触发时，均会在 Ubuntu 虚拟机和官方 openEuler 真实容器中自动完成全平台编译、打包并发布至 GitHub Releases。
+同时项目配置了 GitHub Actions 自动化工作流（`.github/workflows/release.yml`），每次推送版本标签（如 `v0.2.14`）或在 Actions 页面手动触发时，均会在 Ubuntu（`amd64`/`arm64`）、Debian（12/13）、Fedora（41/42）、openEuler（24.09）和 Arch Linux 真实环境中自动完成全平台编译、打包、签名并发布至 GitHub Releases 与 GitHub Pages 软件源。
 
 
 `install.sh` 会自动完成配置、编译、测试和安装，并且会：
@@ -698,9 +754,9 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
 
 ### 1. Ubuntu / Debian (DEB 原生包)
 
-- **升级**：下载与当前操作系统版本严格匹配的 DEB 包（`ubuntu24.04`），使用 APT 执行事务升级以自动校验并补齐可能的新依赖：
+- **升级**：下载与当前操作系统版本及架构严格匹配的 DEB 包（`ubuntu24.04` / `debian13` / `debian12`），使用 APT 执行事务升级以自动校验并补齐可能的新依赖：
   ```bash
-  sudo apt-get install --reinstall ./modernime_<new_version>_amd64_<distro>.deb
+  sudo apt-get install --reinstall ./modernime_<new_version>_<arch>_<distro>.deb
   ```
   升级完成后，在当前用户桌面会话中执行 `modernime-session-init` 或重载输入法：
   ```bash
@@ -708,23 +764,30 @@ MODERNIME_BUILD_DIR="$HOME/.cache/modernime-build" \
   ```
 - **回退**：下载历史版本的 DEB 包，通过 `--allow-downgrades` 参数安全回退：
   ```bash
-  sudo apt-get install --allow-downgrades ./modernime_<old_version>_amd64_<distro>.deb
+  sudo apt-get install --allow-downgrades ./modernime_<old_version>_<arch>_<distro>.deb
   ```
 
-### 2. openEuler (RPM 原生包)
+### 2. Fedora / openEuler (RPM 原生包)
 
 - **升级**：使用 DNF 或 `rpm -Uvh` 执行同名包原子升级（**切勿使用 `rpm -ivh`**，避免同名多版本冲突）：
   ```bash
-  sudo dnf upgrade ./modernime-<new_version>-1.oe24.x86_64.rpm
+  sudo dnf upgrade ./modernime-<new_version>-1.<distro>.<arch>.rpm
   # 或使用 rpm:
-  # sudo rpm -Uvh ./modernime-<new_version>-1.oe24.x86_64.rpm
+  # sudo rpm -Uvh ./modernime-<new_version>-1.<distro>.<arch>.rpm
   ```
   安装后以普通桌面用户身份运行 `modernime-session-init` 刷新环境与会话。
 - **回退**：使用 DNF 或 `rpm --oldpackage` 回退到指定旧版本：
   ```bash
-  sudo dnf downgrade ./modernime-<old_version>-1.oe24.x86_64.rpm
+  sudo dnf downgrade ./modernime-<old_version>-1.<distro>.<arch>.rpm
   # 或使用 rpm:
-  # sudo rpm -Uvh --oldpackage ./modernime-<old_version>-1.oe24.x86_64.rpm
+  # sudo rpm -Uvh --oldpackage ./modernime-<old_version>-1.<distro>.<arch>.rpm
+  ```
+
+### 3. Arch Linux / Manjaro (Pacman 原生包)
+
+- **升级**：通过 `sudo pacman -Syu modernime` 或本地签名包升级：
+  ```bash
+  sudo pacman -U ./modernime-<new_version>-1-x86_64.pkg.tar.zst
   ```
 
 ### 3. 便携绿色包 (Portable Tarball) 与源码安装

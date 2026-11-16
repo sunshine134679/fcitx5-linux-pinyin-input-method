@@ -258,6 +258,48 @@ int main(int argc, char **argv) {
     assert(static_cast<bool>(std::getline(calls, call)));
     assert(call.find("--cacheonly") != std::string::npos);
     assert(call.find("info") != std::string::npos);
+
+    // 3b. Fake Pacman check with available update on Arch / Manjaro
+    const auto pacmanBinDir = tempRoot / "pacman-bin";
+    std::filesystem::create_directories(pacmanBinDir);
+    const auto pacmanChannelFile = tempRoot / "channel-pacman.txt";
+    writeTextFile(pacmanChannelFile, "channel=pacman\npackage_version=0.1.8\n");
+    writeExecutable(
+        pacmanBinDir / "pacman",
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"-Si\" ] && [ \"$2\" = \"modernime\" ]; then\n"
+        "  cat <<'EOF'\n"
+        "Repository      : modernime\n"
+        "Name            : modernime\n"
+        "Version         : 0.1.9-1\n"
+        "Description     : ModernIME Arch Linux signed Pacman upgrade\n"
+        "EOF\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n");
+    const Environment pacmanEnv{
+        {"PATH", pacmanBinDir.string()},
+        {"MODERNIME_CURRENT_VERSION", "0.1.8"},
+        {"MODERNIME_INSTALL_CHANNEL_FILE", pacmanChannelFile.string()},
+        {"MODERNIME_PACKAGE_MANAGER_LOCK_FILE", mockLockPath.string()},
+    };
+    const auto pacmanStatus = UpdateController::checkForUpdates(pacmanEnv);
+    assert(pacmanStatus.checked);
+    assert(!pacmanStatus.offlineOrUnreachable);
+    assert(pacmanStatus.updateAvailable);
+    assert(pacmanStatus.manager == PackageManagerKind::Pacman);
+    assert(pacmanStatus.candidateVersion == "0.1.9-1");
+    assert(pacmanStatus.packageSource.find("Pacman 仓库 modernime") != std::string::npos);
+    assert(pacmanStatus.packageSource.find("channel=pacman") != std::string::npos);
+    assert(pacmanStatus.refreshCacheCommand == "sudo pacman -Sy");
+    assert(pacmanStatus.upgradeCommand == "sudo pacman -Syu modernime");
+    assert(pacmanStatus.privilegedCommand == "pkexec pacman -Syu --noconfirm modernime");
+    assert((modernime::settings::detail::buildRefreshCacheArgv(
+        PackageManagerKind::Pacman, "pkexec", "pacman") ==
+        std::vector<std::string>{"pkexec", "pacman", "-Sy", "--noconfirm"}));
+    assert((modernime::settings::detail::buildUpgradeArgv(
+        PackageManagerKind::Pacman, "pkexec", "pacman") ==
+        std::vector<std::string>{"pkexec", "pacman", "-Syu", "--noconfirm", "modernime"}));
     assert(call.find("modernime") != std::string::npos);
     assert(call.find("--available") == std::string::npos);
     assert(!std::getline(calls, call));

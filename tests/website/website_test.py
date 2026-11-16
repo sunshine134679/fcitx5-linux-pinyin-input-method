@@ -184,7 +184,14 @@ class WebsiteTests(unittest.TestCase):
             source = Path(temp) / "source"
             destination = Path(temp) / "pages"
             make_website_fixture(source)
-            for file in ("apt/dists/noble/InRelease", "apt/pool/package.deb", "rpm/oe2409/x86_64/repodata/repomd.xml", "rpm/RPM-GPG-KEY-modernime"):
+            for file in (
+                "apt/dists/noble/InRelease",
+                "apt/pool/package.deb",
+                "rpm/oe2409/x86_64/repodata/repomd.xml",
+                "rpm/RPM-GPG-KEY-modernime",
+                "arch/x86_64/modernime.db",
+                "arch/modernime-arch-keyring.asc",
+            ):
                 path = destination / file
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"signed package repository fixture\x00")

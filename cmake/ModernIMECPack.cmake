@@ -42,19 +42,23 @@ endif()
 
 # RPM generator configuration (openEuler / Fedora / RHEL)
 # Code is LGPL-2.1-or-later; dictionary data is MIT and component data CC-BY-3.0.
+set(MODERNIME_RPM_RELEASE "1.oe2409" CACHE STRING "RPM package release tag (e.g. 1.oe2409, 1.fc41, 1.fc42)")
 set(CPACK_RPM_PACKAGE_NAME "modernime")
 set(CPACK_RPM_PACKAGE_LICENSE "LGPL-2.1-or-later AND MIT AND CC-BY-3.0")
-set(CPACK_RPM_PACKAGE_RELEASE "1.oe2409")
+set(CPACK_RPM_PACKAGE_RELEASE "${MODERNIME_RPM_RELEASE}")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
 set(CPACK_RPM_PACKAGE_URL "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV "yes")
 set(CPACK_RPM_COMPRESSION_TYPE "gzip")
 set(CPACK_RPM_SPEC_MORE_DEFINE "%define _build_id_links none")
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
+    "/usr/lib64"
     "/usr/lib64/fcitx5"
     "/usr/lib/fcitx5"
     "/usr/lib/x86_64-linux-gnu"
     "/usr/lib/x86_64-linux-gnu/fcitx5"
+    "/usr/lib/aarch64-linux-gnu"
+    "/usr/lib/aarch64-linux-gnu/fcitx5"
     "/usr/share/applications"
     "/usr/share/fcitx5"
     "/usr/share/fcitx5/addon"

@@ -12,7 +12,7 @@ FILES = PAGES + CACHE_ASSETS + ("sitemap.xml", "robots.txt")
 
 def repository_digest(root):
     result = {}
-    for name in ("apt", "rpm"):
+    for name in ("apt", "rpm", "arch"):
         folder = root / name
         if folder.is_symlink():
             raise ValueError(f"Refusing symlink repository directory: {folder}")

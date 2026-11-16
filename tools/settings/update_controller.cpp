@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <fcntl.h>
+#include <limits.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -435,6 +436,7 @@ bool UpdateController::isPackageManagerLocked(const Environment &environment) {
                      "archives-lock",
                      ".rpm.lock",
                      "metadata_lock.pid",
+                     "db.lck",
                  }) {
                 std::error_code subEc;
                 const auto p = std::filesystem::path(v) / subLock;
@@ -458,6 +460,7 @@ bool UpdateController::isPackageManagerLocked(const Environment &environment) {
              "/var/cache/apt/archives/lock",
              "/var/lib/rpm/.rpm.lock",
              "/var/cache/dnf/metadata_lock.pid",
+             "/var/lib/pacman/db.lck",
          }) {
         std::error_code ec;
         if (std::filesystem::exists(lockPath, ec) && isPathLocked(lockPath)) {
@@ -491,15 +494,18 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
         }
     }
 
-    // 2. Probe APT via apt-cache policy & apt-cache show
+    // 2. Probe APT via apt-cache policy & apt-cache show, DNF, or Pacman
     const auto aptCache = findExecutableInPath("apt-cache", environment);
     const auto dnfBin = findExecutableInPath("dnf", environment);
+    const auto pacmanBin = findExecutableInPath("pacman", environment);
     const bool rpmChannel = status.installChannel == "rpm";
     const bool debChannel = status.installChannel == "deb";
+    const bool pacmanChannel = status.installChannel == "pacman";
     if (rpmChannel) status.manager = PackageManagerKind::Dnf;
     if (debChannel) status.manager = PackageManagerKind::Apt;
+    if (pacmanChannel) status.manager = PackageManagerKind::Pacman;
 
-    if (!aptCache.empty() && !rpmChannel) {
+    if (!aptCache.empty() && !rpmChannel && !pacmanChannel) {
         status.manager = PackageManagerKind::Apt;
         detail::CommandSpec policySpec;
         policySpec.mode = detail::CommandMode::Query;
@@ -552,7 +558,7 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
     }
 
     // 3. Probe DNF on openEuler / Fedora / RHEL
-    if (!dnfBin.empty() && !debChannel) {
+    if (!dnfBin.empty() && !debChannel && !pacmanChannel) {
         status.manager = PackageManagerKind::Dnf;
         detail::CommandSpec infoSpec;
         infoSpec.mode = detail::CommandMode::Query;
@@ -589,6 +595,43 @@ UpdateStatus UpdateController::checkForUpdates(const Environment &environment) {
         }
 
         detail::evaluateUpdateDecision(status, false, queryFailed || !dnfRes.hasRemoteRepo);
+        return status;
+    }
+
+    // 4. Probe Pacman on Arch Linux / Manjaro
+    if (!pacmanBin.empty() && !debChannel && !rpmChannel) {
+        status.manager = PackageManagerKind::Pacman;
+        detail::CommandSpec infoSpec;
+        infoSpec.mode = detail::CommandMode::Query;
+        infoSpec.timeoutMs = kQueryTimeoutMs;
+        infoSpec.argv = {pacmanBin.string(), "-Si", "modernime"};
+        infoSpec.environment = environment;
+        infoSpec.limits.perStreamBufferBytes = 1048576;
+        infoSpec.limits.perStreamResultBytes = 1048576;
+        infoSpec.limits.perStreamFileBytes = 1048576;
+
+        const auto infoOut = detail::runCommand(infoSpec);
+        const bool queryTruncated = infoOut.stdoutTruncated || infoOut.stderrTruncated;
+        const bool queryFailed = (infoOut.state != detail::CommandState::Exited || infoOut.exitStatus != 0);
+
+        if (queryTruncated) {
+            detail::evaluateUpdateDecision(status, true, false);
+            return status;
+        }
+
+        const auto pacRes = detail::parsePacmanSiOutput(infoOut.stdoutText, queryTruncated);
+        if (pacRes.hasCandidate) {
+            status.candidateVersion = pacRes.candidateVersion;
+        }
+        if (pacRes.hasRemoteRepo) {
+            status.packageSource = pacRes.packageSource;
+            status.changelogSummary = pacRes.summary;
+            if (!status.installChannel.empty() && status.installChannel != "unknown") {
+                status.packageSource += " (channel=" + status.installChannel + ")";
+            }
+        }
+
+        detail::evaluateUpdateDecision(status, false, queryFailed || !pacRes.hasRemoteRepo);
         return status;
     }
 
@@ -747,6 +790,8 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
             manager = PackageManagerKind::Apt;
         } else if (!findExecutableInPath("dnf", environment).empty()) {
             manager = PackageManagerKind::Dnf;
+        } else if (!findExecutableInPath("pacman", environment).empty()) {
+            manager = PackageManagerKind::Pacman;
         }
     }
 
@@ -766,6 +811,13 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
         managerBin = findExecutableInPath("dnf", environment);
         if (managerBin.empty()) {
             RuntimeResult res{false, "未找到 dnf 包管理器，请手动执行：" + fallbackCmd};
+            finishPackageOperation(*opId, res, {}, {}, false);
+            return res;
+        }
+    } else if (manager == PackageManagerKind::Pacman) {
+        managerBin = findExecutableInPath("pacman", environment);
+        if (managerBin.empty()) {
+            RuntimeResult res{false, "未找到 pacman 包管理器，请手动执行：" + fallbackCmd};
             finishPackageOperation(*opId, res, {}, {}, false);
             return res;
         }
@@ -831,7 +883,8 @@ RuntimeResult UpdateController::refreshPackageCache(const UpdateStatus &status,
             return {false, "设置客户端正在退出，软件源刷新由系统包管理器继续处理。"};
         }
         const std::string procHint = (manager == PackageManagerKind::Dnf) ? "ps aux | grep -E 'dnf|rpm'"
-                                                                         : "ps aux | grep -E 'apt|dpkg'";
+                                       : (manager == PackageManagerKind::Pacman) ? "ps aux | grep pacman"
+                                                                                : "ps aux | grep -E 'apt|dpkg'";
         return {false,
                 "刷新软件源缓存等待超时（检测到包管理器子进程仍在运行或等待锁，为保护系统状态未强制终止进程；后台将继续读取输出并跟踪该进程直至结束，期间已锁定重复操作）。可在终端通过 " +
                     procHint + " 检查进程状态，或待其完成后执行：" + fallbackCmd};
@@ -902,6 +955,13 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
             finishPackageOperation(*opId, res, {}, {}, false);
             return res;
         }
+    } else if (status.manager == PackageManagerKind::Pacman) {
+        managerBin = findExecutableInPath("pacman", environment);
+        if (managerBin.empty()) {
+            RuntimeResult res{false, "未找到 pacman 包管理器，请手动执行：" + status.upgradeCommand};
+            finishPackageOperation(*opId, res, {}, {}, false);
+            return res;
+        }
     } else {
         managerBin = findExecutableInPath("apt-get", environment);
         if (managerBin.empty()) {
@@ -945,6 +1005,13 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
             finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
             return res;
         }
+        if (status.manager == PackageManagerKind::Pacman) {
+            RuntimeResult res{false,
+                    "系统包管理器升级操作超时（子进程已退出，未检测到后台仍在运行的 pacman 进程）。请在终端检查状态后手动执行：" +
+                        status.upgradeCommand};
+            finishPackageOperation(*opId, res, out.stdoutText, out.stderrText, false);
+            return res;
+        }
         RuntimeResult res{false,
                 "系统包管理器升级操作超时（子进程已退出，未检测到后台仍在运行的 apt/dpkg 进程）。若此前包状态未完成配置，请先执行 sudo dpkg --configure -a && sudo apt-get install -f 恢复，随后在终端运行：" +
                     status.upgradeCommand};
@@ -958,6 +1025,11 @@ RuntimeResult UpdateController::runSystemUpgrade(const UpdateStatus &status,
         if (status.manager == PackageManagerKind::Dnf) {
             return {false,
                     "系统包管理器升级等待超时（检测到 dnf/rpm 子进程仍在运行或等待锁，为避免中断升级事务未强制终止进程；后台将继续读取输出并跟踪该进程直至结束，期间已锁定重复升级触发）。请在终端通过 ps aux | grep -E 'dnf|rpm' 检查进度；待后台事务完成后再重新检查，或手动执行：" +
+                        status.upgradeCommand};
+        }
+        if (status.manager == PackageManagerKind::Pacman) {
+            return {false,
+                    "系统包管理器升级等待超时（检测到 pacman 子进程仍在运行或等待锁，为避免中断升级事务未强制终止进程；后台将继续读取输出并跟踪该进程直至结束，期间已锁定重复升级触发）。请在终端通过 ps aux | grep pacman 检查进度；待后台事务完成后再重新检查，或手动执行：" +
                         status.upgradeCommand};
         }
         return {false,

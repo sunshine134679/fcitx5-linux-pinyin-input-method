@@ -134,6 +134,7 @@ check_native_package_collision() {
         local collision_files=()
         for check_file in "$prefix/bin/modernime-settings" \
                           "$prefix/lib/x86_64-linux-gnu/fcitx5/modernime_fcitx5.so" \
+                          "$prefix/lib/aarch64-linux-gnu/fcitx5/modernime_fcitx5.so" \
                           "$prefix/lib64/fcitx5/modernime_fcitx5.so" \
                           "$prefix/lib/fcitx5/modernime_fcitx5.so"; do
             if [[ -f "$check_file" || -L "$check_file" ]]; then
@@ -200,6 +201,34 @@ payload_root="$project_root/usr"
 if [[ ! -d "$payload_root" ]]; then
     printf 'Error: Binary package payload missing: %s\n' "$payload_root" >&2
     exit 1
+fi
+
+if [[ -f "$payload_root/bin/modernime-settings" ]]; then
+    host_arch=$(uname -m)
+    case "$host_arch" in
+        x86_64|amd64) expected_elf_machine="x86_64" ;;
+        aarch64|arm64) expected_elf_machine="aarch64" ;;
+        *)
+            printf 'Error: Unsupported host architecture for binary tarball: %s\n' "$host_arch" >&2
+            exit 1
+            ;;
+    esac
+    payload_elf_machine=$(python3 - "$payload_root/bin/modernime-settings" <<'PYEOF'
+import struct, sys
+with open(sys.argv[1], "rb") as f:
+    hdr = f.read(20)
+if len(hdr) >= 20 and hdr[:4] == b"\x7fELF":
+    endian = "<" if hdr[5] == 1 else ">"
+    machine = struct.unpack(endian + "H", hdr[18:20])[0]
+    print({0x3E: "x86_64", 0xB7: "aarch64"}.get(machine, f"unknown({machine})"))
+else:
+    print("script-fixture")
+PYEOF
+    )
+    if [[ "$payload_elf_machine" != "script-fixture" && "$payload_elf_machine" != "$expected_elf_machine" ]]; then
+        printf 'Error: ModernIME binary package is built for %s, but host architecture is %s.\n' "$payload_elf_machine" "$host_arch" >&2
+        exit 1
+    fi
 fi
 
 if ! modernime_acquire_prefix_lock "$prefix"; then

@@ -96,6 +96,9 @@ grep -F '%{_bindir}/modernime-session-init' "$project_root/packaging/rpm/moderni
 for helper_script in "$project_root/scripts/modernime-migrate-channel" \
                      "$project_root/scripts/build_apt_repo.sh" \
                      "$project_root/scripts/build_rpm_repo.sh" \
+                     "$project_root/scripts/build_pacman_repo.sh" \
+                     "$project_root/scripts/package_arch.sh" \
+                     "$project_root/scripts/ci_build_release_repos.sh" \
                      "$project_root/scripts/resolve_release_target.sh"; do
     test -f "$helper_script" && test -x "$helper_script"
     bash -n "$helper_script"
@@ -107,8 +110,8 @@ test -f "$release_wf"
 grep -F 'required: true' "$release_wf" >/dev/null
 grep -F 'scripts/resolve_release_target.sh' "$release_wf" >/dev/null
 grep -F 'scripts/modernime-data-guard" --init-lmdb' "$release_wf" >/dev/null
-test "$(grep -Fc 'ref: ${{ needs.resolve-target.outputs.source_sha }}' "$release_wf")" -eq 4
-test "$(grep -Fc 'Product Source Commit SHA:' "$release_wf")" -eq 4
+test "$(grep -Fc 'ref: ${{ needs.resolve-target.outputs.source_sha }}' "$release_wf")" -eq 7
+test "$(grep -Fc 'Product Source Commit SHA:' "$release_wf")" -eq 7
 grep -F 'tag_name: ${{ needs.resolve-target.outputs.tag }}' "$release_wf" >/dev/null
 if grep -F 'target_commitish' "$release_wf" >/dev/null; then
     echo "release.yml must not pass redundant target_commitish when publishing an existing tag" >&2
@@ -136,6 +139,13 @@ test -f "$project_root/packaging/apt/99-modernime.pref"
 test -f "$project_root/packaging/rpm/modernime-openeuler.repo.in"
 grep -F 'gpgcheck=1' "$project_root/packaging/rpm/modernime-openeuler.repo.in" >/dev/null
 grep -F 'repo_gpgcheck=1' "$project_root/packaging/rpm/modernime-openeuler.repo.in" >/dev/null
+test -f "$project_root/packaging/rpm/modernime-fedora.repo.in"
+grep -F 'gpgcheck=1' "$project_root/packaging/rpm/modernime-fedora.repo.in" >/dev/null
+grep -F 'repo_gpgcheck=1' "$project_root/packaging/rpm/modernime-fedora.repo.in" >/dev/null
+test -f "$project_root/packaging/arch/PKGBUILD"
+bash -n "$project_root/packaging/arch/PKGBUILD"
+test -f "$project_root/packaging/arch/modernime.install"
+bash -n "$project_root/packaging/arch/modernime.install"
 
 grep -F '/etc/apt/sources.list.d/modernime.sources' "$readme" >/dev/null
 grep -F '/usr/share/keyrings/modernime-archive-keyring.gpg' "$readme" >/dev/null

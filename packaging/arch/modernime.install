@@ -1,0 +1,50 @@
+_check_script_collision() {
+  for prefix_dir in /usr /usr/local; do
+    if [ -f "${prefix_dir}/share/modernime/install-channel.txt" ]; then
+      existing_channel=$(grep -E '^channel=' "${prefix_dir}/share/modernime/install-channel.txt" 2>/dev/null | head -n 1 | cut -d= -f2 || true)
+      if [ "${existing_channel}" = "script" ] && [ "${MODERNIME_MIGRATE_FROM_SCRIPT:-0}" != "1" ]; then
+        echo "Error: Detected an existing script-based ModernIME installation in ${prefix_dir} (channel=script)." >&2
+        echo "Please run 'sudo modernime-migrate-channel --to-channel pacman --package-cmd \"sudo pacman -U ...\"' or uninstall the script installation first." >&2
+        return 1
+      fi
+    elif [ -f "${prefix_dir}/share/modernime/install-manifest.txt" ] && [ "${MODERNIME_MIGRATE_FROM_SCRIPT:-0}" != "1" ]; then
+      echo "Error: Detected an existing script-managed install-manifest.txt in ${prefix_dir}." >&2
+      return 1
+    fi
+  done
+}
+
+pre_install() {
+  _check_script_collision
+}
+
+pre_upgrade() {
+  _check_script_collision
+  if [ -x /usr/bin/modernime-data-guard ]; then
+    /usr/bin/modernime-data-guard --pre-upgrade
+  fi
+}
+
+_refresh_desktop() {
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+  fi
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+  fi
+  if command -v fcitx5-remote >/dev/null 2>&1; then
+    fcitx5-remote -r >/dev/null 2>&1 || true
+  fi
+}
+
+post_install() {
+  _refresh_desktop
+}
+
+post_upgrade() {
+  _refresh_desktop
+}
+
+post_remove() {
+  _refresh_desktop
+}
