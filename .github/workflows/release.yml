@@ -73,7 +73,7 @@ jobs:
             libsqlite3-dev liblmdb-dev libboost-dev libgtest-dev libbenchmark-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
             libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
-            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev
+            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev apt-utils file
 
       - name: Checkout bound product source SHA
         uses: actions/checkout@v4
@@ -183,7 +183,7 @@ jobs:
             libsqlite3-dev liblmdb-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
             libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \
-            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev
+            libgtk-3-dev libpango1.0-dev libayatana-appindicator3-dev dpkg-dev apt-utils file
 
       - name: Checkout bound product source SHA
         uses: actions/checkout@v4
@@ -737,12 +737,13 @@ jobs:
           sudo apt-get install -y \
             liblmdb0 \
             dpkg-dev \
+            apt-utils \
             gnupg \
             python3 \
             tar \
             zstd \
             coreutils
-          for req_tool in python3 dpkg-deb dpkg-scanpackages gpg gpgv tar zstd sha256sum cmp; do
+          for req_tool in python3 dpkg-deb dpkg-scanpackages apt-ftparchive gpg gpgv tar zstd sha256sum cmp; do
             if ! command -v "$req_tool" >/dev/null 2>&1; then
               echo "FATAL: Required release gate tool missing: $req_tool" >&2
               exit 1
