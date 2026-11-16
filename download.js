@@ -13,14 +13,15 @@
 
 const installOptions = {
   ubuntu: {
-    heading: '通过 APT 软件源安装', support: '适用于 Ubuntu 24.04（noble）amd64。', badge: '签名软件源',
+    heading: '通过 APT 软件源安装', support: '适用于 Ubuntu 24.04（noble）amd64 / arm64。', badge: '签名软件源',
     prerequisite: '首次安装需配置独立签名密钥与软件源。复制命令后，在终端执行。',
     documentation: repository + '#快速安装与发行包下载', linkLabel: '完整安装说明与密钥核验',
     command: `(
 set -eu
 . /etc/os-release
-if [ "$ID" != ubuntu ] || [ "$VERSION_ID" != 24.04 ] || [ "$(dpkg --print-architecture)" != amd64 ]; then
-  echo '此软件源仅适用于 Ubuntu 24.04 amd64，请参阅源码构建说明。' >&2
+ARCH=$(dpkg --print-architecture)
+if [ "$ID" != ubuntu ] || [ "$VERSION_ID" != 24.04 ] || { [ "$ARCH" != amd64 ] && [ "$ARCH" != arm64 ]; }; then
+  echo '此软件源仅适用于 Ubuntu 24.04 (amd64 / arm64)，请参阅源码构建说明。' >&2
   exit 1
 fi
 sudo install -d -m 0755 /usr/share/keyrings
@@ -33,22 +34,79 @@ Types: deb
 URIs: ${packageRoot}/apt
 Suites: noble
 Components: main
-Architectures: amd64
+Architectures: amd64 arm64
 Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg
 REPO
 sudo apt update
 sudo apt install modernime
 )`
   },
+  debian: {
+    heading: '通过 APT 软件源安装', support: '适用于 Debian 12（bookworm）与 Debian 13（trixie）amd64 / arm64。', badge: '签名软件源',
+    prerequisite: '命令自动识别 Debian 代号并写入独立签名源。首次安装按复制命令执行即可。',
+    documentation: repository + '#快速安装与发行包下载', linkLabel: '完整安装说明与密钥核验',
+    command: `(
+set -eu
+. /etc/os-release
+ARCH=$(dpkg --print-architecture)
+SUITE="\${VERSION_CODENAME:-}"
+if [ "$ID" != debian ] || { [ "$SUITE" != bookworm ] && [ "$SUITE" != trixie ]; } || { [ "$ARCH" != amd64 ] && [ "$ARCH" != arm64 ]; }; then
+  echo '此软件源仅适用于 Debian 12 (bookworm) / 13 (trixie) (amd64 / arm64)，请参阅源码构建说明。' >&2
+  exit 1
+fi
+sudo install -d -m 0755 /usr/share/keyrings
+key_file=$(mktemp)
+trap 'rm -f "$key_file"' EXIT
+curl -fsSL ${packageRoot}/apt/modernime-archive-keyring.gpg -o "$key_file"
+sudo install -m 0644 "$key_file" /usr/share/keyrings/modernime-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/modernime.sources >/dev/null <<REPO
+Types: deb
+URIs: ${packageRoot}/apt
+Suites: \${SUITE}
+Components: main
+Architectures: amd64 arm64
+Signed-By: /usr/share/keyrings/modernime-archive-keyring.gpg
+REPO
+sudo apt update
+sudo apt install modernime
+)`
+  },
+  fedora: {
+    heading: '通过 DNF 软件源安装', support: '适用于 Fedora 41 / 42 x86_64 与 aarch64。', badge: '签名软件源',
+    prerequisite: '自动匹配 Fedora 41 / 42 与当前架构（$basearch），首次安装按提示确认导入 GPG 公钥。',
+    documentation: repository + '#快速安装与发行包下载', linkLabel: '完整安装说明与密钥核验',
+    command: `(
+set -eu
+. /etc/os-release
+ARCH=$(uname -m)
+if [ "$ID" != fedora ] || { [ "$VERSION_ID" != 41 ] && [ "$VERSION_ID" != 42 ]; } || { [ "$ARCH" != x86_64 ] && [ "$ARCH" != aarch64 ]; }; then
+  echo '此软件源仅适用于 Fedora 41 / 42 (x86_64 / aarch64)，请参阅源码构建说明。' >&2
+  exit 1
+fi
+sudo tee "/etc/yum.repos.d/modernime-fedora-\${VERSION_ID}.repo" >/dev/null <<REPO
+[modernime-fedora-\${VERSION_ID}]
+name=ModernIME Repository for Fedora \${VERSION_ID} (\$basearch)
+baseurl=${packageRoot}/rpm/fc\${VERSION_ID}/\$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=${packageRoot}/rpm/RPM-GPG-KEY-modernime
+metadata_expire=6h
+REPO
+sudo dnf makecache --refresh
+sudo dnf install modernime
+)`
+  },
   openeuler: {
-    heading: '通过 DNF 软件源安装', support: '适用于 openEuler 24.09 x86_64。', badge: '签名软件源',
+    heading: '通过 DNF 软件源安装', support: '适用于 openEuler 24.09 x86_64 与 aarch64。', badge: '签名软件源',
     prerequisite: '请先确保系统已配置 24.09 EPOL 依赖源。首次安装按提示核验并导入签名公钥。',
     documentation: repository + '#快速安装与发行包下载', linkLabel: '完整安装说明与 EPOL 配置',
     command: `(
 set -eu
 . /etc/os-release
-if [ "$ID" != openEuler ] || [ "$VERSION_ID" != 24.09 ] || [ "$(uname -m)" != x86_64 ]; then
-  echo '此命令仅适用于 openEuler 24.09 x86_64，请参阅完整安装说明。' >&2
+ARCH=$(uname -m)
+if [ "$ID" != openEuler ] || [ "$VERSION_ID" != 24.09 ] || { [ "$ARCH" != x86_64 ] && [ "$ARCH" != aarch64 ]; }; then
+  echo '此命令仅适用于 openEuler 24.09 (x86_64 / aarch64)，请参阅完整安装说明。' >&2
   exit 1
 fi
 sudo tee /etc/yum.repos.d/modernime-openeuler-24.09.repo >/dev/null <<'REPO'
@@ -65,9 +123,36 @@ sudo dnf makecache --refresh
 sudo dnf install modernime
 )`
   },
+  arch: {
+    heading: '通过 Pacman 软件源安装', support: '适用于 Arch Linux / Manjaro x86_64（ARM64 请用 PKGBUILD 构建）。', badge: '签名软件源',
+    prerequisite: '先导入并本地信任 ModernIME 签名公钥，再配置 Pacman 仓库并安装。',
+    documentation: repository + '#快速安装与发行包下载', linkLabel: '完整安装说明与 PKGBUILD',
+    command: `(
+set -eu
+if [ "$(uname -m)" != x86_64 ]; then
+  echo '预编译 Pacman 仓库仅提供 x86_64；aarch64 请使用仓库内 packaging/arch/PKGBUILD 构建。' >&2
+  exit 1
+fi
+key_file=$(mktemp)
+trap 'rm -f "$key_file"' EXIT
+curl -fsSL ${packageRoot}/arch/modernime-arch-keyring.asc -o "$key_file"
+fpr=$(gpg --show-keys --with-colons "$key_file" 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
+sudo pacman-key --add "$key_file"
+sudo pacman-key --lsign-key "$fpr"
+if ! grep -q '^\\[modernime\\]' /etc/pacman.conf; then
+  sudo tee -a /etc/pacman.conf >/dev/null <<'REPO'
+
+[modernime]
+SigLevel = Required DatabaseRequired
+Server = ${packageRoot}/arch/$arch
+REPO
+fi
+sudo pacman -Sy modernime
+)`
+  },
   source: {
-    heading: '从源码构建安装', support: '其他发行版或架构，请先按文档准备依赖。', badge: '开放源代码',
-    prerequisite: '需要 C++20 编译器、CMake ≥ 3.24、Fcitx5、LibIME、GTK 3.24 等依赖。构建安装过程默认离线。',
+    heading: '便携归档或源码构建安装', support: '其他发行版、自定义前缀或全架构源码编译。', badge: '通用包与源码',
+    prerequisite: '便携归档支持 x86_64 与 aarch64（glibc ≥ 2.34）；源码构建需 C++20、CMake ≥ 3.24 与 Fcitx5/LibIME 开发库。',
     documentation: repository + '#方式二从源码一键构建安装', linkLabel: '查看完整构建依赖',
     command: `git clone https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method.git ModernIME
 cd ModernIME
@@ -82,14 +167,29 @@ MODERNIME_PREFIX="$HOME/.local" ./install.sh`
       prerequisite: '以下命令仅适用于已通过 APT 安装并配置好 ModernIME 软件源的用户。源码或便携安装请先查看渠道迁移说明。',
       command: 'sudo apt update\nsudo apt install --only-upgrade modernime'
     },
+    debian: {
+      heading: '更新已安装的 APT 版本',
+      prerequisite: '以下命令仅适用于已通过 Debian APT 软件源安装的用户，也可在客户端「维护 → 检查更新」一键升级。',
+      command: 'sudo apt update\nsudo apt install --only-upgrade modernime'
+    },
+    fedora: {
+      heading: '更新已安装的 DNF 版本',
+      prerequisite: '以下命令仅适用于已通过 Fedora DNF 软件源安装的用户，更新前会刷新软件源元数据。',
+      command: 'sudo dnf makecache --refresh\nsudo dnf upgrade modernime'
+    },
     openeuler: {
       heading: '更新已安装的 DNF 版本',
       prerequisite: '以下命令仅适用于已通过 DNF 安装并配置好 ModernIME 软件源的用户。更新会刷新软件源信息。',
       command: 'sudo dnf makecache --refresh\nsudo dnf upgrade modernime'
     },
+    arch: {
+      heading: '更新已安装的 Pacman 版本',
+      prerequisite: '适用于已通过 Pacman 仓库或本地 .pkg.tar.zst 安装的用户。',
+      command: 'sudo pacman -Syu modernime'
+    },
     source: {
-      heading: '更新原有源码安装',
-      prerequisite: '在原源码目录执行，并沿用原安装前缀。便携包用户请从发行页获取新版，使用其中的安装脚本更新。',
+      heading: '更新原有源码或便携安装',
+      prerequisite: '在原源码目录执行，并沿用原安装前缀。便携包用户可在客户端直接检查更新，或下载新版归档覆盖安装。',
       command: 'git pull --ff-only && ./install.sh'
     }
   };
@@ -159,6 +259,7 @@ MODERNIME_PREFIX="$HOME/.local" ./install.sh`
       item.tabIndex = item === tab ? 0 : -1;
     });
     if (panel) panel.setAttribute('aria-labelledby', tab.id);
+    tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     positionPlatformIndicator();
     render(Math.sign(tabs.indexOf(tab) - previousIndex));
     if (focus) tab.focus();

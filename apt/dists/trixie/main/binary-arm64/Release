@@ -1,0 +1,6 @@
+Archive: trixie
+Version: 13
+Component: main
+Origin: ModernIME
+Label: ModernIME APT Repository
+Architecture: arm64
