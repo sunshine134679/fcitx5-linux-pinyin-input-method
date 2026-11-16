@@ -757,6 +757,19 @@ jobs:
       - name: Verify Release Assets & Upgrade Lifecycle Gate
         run: |
           set -euo pipefail
+          gate_log="$(mktemp)"
+          report_gate_failure() {
+            local rc=$?
+            local line_no=${1:-0}
+            sleep 0.3
+            local tail_txt
+            tail_txt=$(tail -n 25 "$gate_log" 2>/dev/null | tr '\n' '|' | sed 's/|/ ; /g' | cut -c1-1800)
+            echo "::error title=Verify Release Assets Failed (line ${line_no}, rc=${rc})::${tail_txt}" >&2
+            rm -f -- "$gate_log"
+            exit "$rc"
+          }
+          trap 'report_gate_failure $LINENO' ERR
+          exec > >(tee -a "$gate_log") 2>&1
           repo_root="$(pwd)"
           cd release-assets
           echo "=== 1. 检查发布产物完整性与命名规范 ==="

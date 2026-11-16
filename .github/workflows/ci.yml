@@ -43,11 +43,38 @@ jobs:
         run: |
           unset DISPLAY WAYLAND_DISPLAY GDK_BACKEND BROADWAY_DISPLAY
           mkdir -p "$PWD/build/ci/gtest_output"
+          set +e
           GTEST_OUTPUT="xml:$PWD/build/ci/gtest_output/personal_engine.xml" \
           ctest --test-dir build/ci --output-on-failure \
             -E '^(modernime_personal_engine_benchmark|modernime_input_experience_replay)$' \
             --output-junit "$PWD/build/ci/debug-junit.xml" \
-            --parallel $(nproc)
+            --parallel 2
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            python3 - "$PWD/build/ci/debug-junit.xml" "$PWD/build/ci/Testing/Temporary/LastTestsFailed.log" <<'PYEOF'
+          import pathlib, sys, xml.etree.ElementTree as ET
+          junit = pathlib.Path(sys.argv[1])
+          failed_log = pathlib.Path(sys.argv[2])
+          names = []
+          if junit.is_file():
+              try:
+                  root = ET.parse(junit).getroot()
+                  for tc in root.iter("testcase"):
+                      for tag in ("failure", "error"):
+                          node = tc.find(tag)
+                          if node is not None:
+                              msg = (node.attrib.get("message") or node.text or "").strip().splitlines()[:5]
+                              names.append(f"{tc.attrib.get('name', '?')}: {' | '.join(msg)}")
+              except Exception as exc:
+                  names.append(f"junit-parse-error: {exc}")
+          if not names and failed_log.is_file():
+              names = [line.strip() for line in failed_log.read_text(errors="replace").splitlines() if line.strip()]
+          summary = "; ".join(names) if names else "no failed testcase parsed"
+          print(f"::error title=Headless CTest Failed::{summary[:1800]}")
+          PYEOF
+            exit "$rc"
+          fi
 
       # Latency budgets describe shipped optimized code. Keep Debug correctness
       # coverage above. Run the unchanged full replay and benchmark in Release;
