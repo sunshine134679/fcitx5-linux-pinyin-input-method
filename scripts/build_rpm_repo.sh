@@ -264,6 +264,7 @@ import gzip
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -555,29 +556,62 @@ def sign_rpm_file(rpm_path: Path, key_id: str) -> None:
                 f"--batch --no-tty --yes --homedir {gpg_path} "
                 f"--pinentry-mode loopback --passphrase-file {pass_file}"
             )
-            gpg_sign_cmd = (
-                f"{gpg_bin} gpg --batch --no-tty --yes --no-verbose --no-armor "
-                f"--homedir {gpg_path} --pinentry-mode loopback --passphrase-file {pass_file} "
-                f'--no-secmem-warning -u "%{{_gpg_name}}" '
-                f"-sbo %{{__signature_filename}} --digest-algo sha256 %{{__plaintext_filename}}"
-            )
+            rpm_major = 4
+            if not os.environ.get("MODERNIME_RPMSIGN_BIN"):
+                rpm_bin = str(Path(rpmsign_bin).with_name("rpm"))
+                if not Path(rpm_bin).is_file():
+                    rpm_bin = shutil.which("rpm") or ""
+                if rpm_bin:
+                    ver_rc, ver_out, _ = _run_bounded_process([rpm_bin, "--version"], env, 5.0)
+                    if ver_rc == 0:
+                        ver_match = re.search(r"(\d+)\.", ver_out.decode("utf-8", errors="replace"))
+                        if ver_match:
+                            rpm_major = int(ver_match.group(1))
+            if rpm_major >= 6:
+                rpmsign_cmd = [
+                    rpmsign_bin,
+                    "--define",
+                    "_openpgp_sign gpg",
+                    "--define",
+                    f"_openpgp_sign_id {key_id}",
+                    "--define",
+                    f"_gpg_name {key_id}",
+                    "--define",
+                    f"_gpg_path {gpg_path}",
+                    "--define",
+                    f"__gpg {gpg_bin}",
+                    "--define",
+                    "_gpg_digest_algo sha256",
+                    "--define",
+                    f"_gpg_sign_cmd_extra_args {extra_args}",
+                    "--addsign",
+                    str(rpm_path),
+                ]
+            else:
+                gpg_sign_cmd = (
+                    f"{gpg_bin} gpg --batch --no-tty --yes --no-verbose --no-armor "
+                    f"--homedir {gpg_path} --pinentry-mode loopback --passphrase-file {pass_file} "
+                    f'--no-secmem-warning -u "%{{_gpg_name}}" '
+                    f"-sbo %{{__signature_filename}} --digest-algo sha256 %{{__plaintext_filename}}"
+                )
+                rpmsign_cmd = [
+                    rpmsign_bin,
+                    "--define",
+                    f"_gpg_name {key_id}",
+                    "--define",
+                    f"_gpg_path {gpg_path}",
+                    "--define",
+                    f"__gpg {gpg_bin}",
+                    "--define",
+                    f"_gpg_sign_cmd_extra_args {extra_args}",
+                    "--define",
+                    f"__gpg_sign_cmd {gpg_sign_cmd}",
+                    "--addsign",
+                    str(rpm_path),
+                ]
             try:
                 rc, out, err = _run_bounded_process(
-                    [
-                        rpmsign_bin,
-                        "--define",
-                        f"_gpg_name {key_id}",
-                        "--define",
-                        f"_gpg_path {gpg_path}",
-                        "--define",
-                        f"__gpg {gpg_bin}",
-                        "--define",
-                        f"_gpg_sign_cmd_extra_args {extra_args}",
-                        "--define",
-                        f"__gpg_sign_cmd {gpg_sign_cmd}",
-                        "--addsign",
-                        str(rpm_path),
-                    ],
+                    rpmsign_cmd,
                     env,
                     sign_timeout,
                 )

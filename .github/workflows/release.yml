@@ -695,7 +695,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release & Signed Package Repositories
     needs: [resolve-target, build-ubuntu, build-debian, build-rpm, build-arch, build-tarball-x86_64, build-tarball-aarch64]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: modernime-pages-sync
       cancel-in-progress: false
