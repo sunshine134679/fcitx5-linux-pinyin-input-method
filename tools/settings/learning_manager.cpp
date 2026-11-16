@@ -8,10 +8,12 @@
 #include <gtk/gtk.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -109,6 +111,35 @@ public:
         });
         gtk_widget_set_no_show_all(retry, TRUE);
         gtk_box_pack_start(GTK_BOX(root), stateRow, FALSE, FALSE, 4);
+
+        auto *hintStrip = gtk_flow_box_new();
+        gtk_style_context_add_class(gtk_widget_get_style_context(hintStrip), "modernime-keycap-strip");
+        target(hintStrip, "learning-correction-hints");
+        gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(hintStrip), GTK_SELECTION_NONE);
+        gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(hintStrip), FALSE);
+        gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(hintStrip), 1);
+        gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(hintStrip), 3);
+        gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(hintStrip), 14);
+        gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(hintStrip), 6);
+        gtk_widget_set_can_focus(hintStrip, FALSE);
+        for (const auto &[keyText, actionText, tipText] : std::array<std::tuple<const char *, const char *, const char *>, 3>{{
+                 {"BackSpace", "误选后删掉自动降权", "选错字词后直接退格删掉，系统会自动降低该词权重，不再霸占首位"},
+                 {"Ctrl+Shift+BackSpace", "15 秒内撤回重选", "撤回刚上屏的候选并恢复原拼音，同时对误选词记录一次降权"},
+                 {"Ctrl+Delete", "候选框内屏蔽词条", "高亮不想再见到的候选时按下，立即从后续候选中屏蔽"}}}) {
+            auto *pair = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+            auto *cap = gtk_label_new(keyText);
+            gtk_style_context_add_class(gtk_widget_get_style_context(cap), "modernime-keycap");
+            auto *action = gtk_label_new(actionText);
+            gtk_style_context_add_class(gtk_widget_get_style_context(action), "modernime-keycap-action");
+            gtk_box_pack_start(GTK_BOX(pair), cap, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(pair), action, FALSE, FALSE, 0);
+            gtk_widget_set_tooltip_text(pair, tipText);
+            auto *child = gtk_flow_box_child_new();
+            gtk_widget_set_can_focus(child, FALSE);
+            gtk_container_add(GTK_CONTAINER(child), pair);
+            gtk_container_add(GTK_CONTAINER(hintStrip), child);
+        }
+        gtk_box_pack_start(GTK_BOX(root), hintStrip, FALSE, FALSE, 0);
 
         auto storeOwner = detail::GObjectHandle<GtkListStore>::adopt(
             gtk_list_store_new(ColumnCount, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT64, G_TYPE_STRING));

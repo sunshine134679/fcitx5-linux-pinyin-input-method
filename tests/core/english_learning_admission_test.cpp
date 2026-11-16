@@ -465,4 +465,21 @@ TEST_F(EnglishLearningAdmissionPersistence, FullRawCommitsAccumulateBeforePrefix
         }
     }
 }
+
+TEST(EnglishLearningAdmission, AgedOrPenalizedSingleBuiltinObservationStopsRecalling) {
+    for (const auto &[word, prefix] :
+         std::vector<std::pair<std::string, std::string>>{{"suds", "sud"}, {"gnupg", "gnu"}}) {
+        SCOPED_TRACE(word);
+        ASSERT_TRUE(core::EnglishDictionary::containsWord(word));
+        core::LearningSnapshot snapshot;
+        snapshot.recordSelection(word, word, {}, {}, kNow);
+        EXPECT_TRUE(contains(snapshot.recallEnglishWords(prefix, 3, kNow), word));
+        EXPECT_TRUE(snapshot.recallEnglishWords(prefix, 3, kNow + kYear).empty());
+
+        core::LearningSnapshot penalized;
+        penalized.recordSelection(word, word, {}, {}, kNow);
+        penalized.recordNegativeFeedback(word, word);
+        EXPECT_TRUE(penalized.recallEnglishWords(prefix, 3, kNow).empty());
+    }
+}
 } // namespace

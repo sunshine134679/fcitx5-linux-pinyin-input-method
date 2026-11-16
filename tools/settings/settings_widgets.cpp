@@ -1166,6 +1166,27 @@ std::string_view settingsStyles() {
         .modernime-learning-storage-state .modernime-data-summary {
             font-size: 13px; font-weight: 400;
         }
+        .modernime-keycap-strip {
+            background-color: @modernime_inset_color;
+            border: 1px solid @borders;
+            border-radius: 6px;
+            padding: 6px 10px;
+        }
+        .modernime-keycap {
+            background-color: @modernime_control_surface;
+            border: 1px solid @modernime_control_border;
+            border-bottom-width: 2px;
+            border-radius: 4px;
+            padding: 1px 6px;
+            color: @theme_fg_color;
+            font-family: monospace;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .modernime-keycap-action {
+            color: @insensitive_fg_color;
+            font-size: 12px;
+        }
         .modernime-content-list.view { border: none; }
         .modernime-content-list.view header button {
             background-color: @modernime_inset_color; border: none; border-bottom: 1px solid @borders;

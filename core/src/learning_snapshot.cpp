@@ -5,6 +5,7 @@
 #include "english_recall_index.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <limits>
@@ -1426,40 +1427,58 @@ std::vector<RecalledEnglishWord> LearningSnapshot::recallEnglishWords(std::strin
     if (prefix.size() < 2 || limit == 0) return {};
     const auto lower = toLowerAscii(prefix);
     EnglishRecallQuery query(lower, limit, now);
-    struct ShardView {
-        const EnglishRecallIndex *index;
+    static const std::unordered_set<std::string> kEmptyExcluded;
+    std::array<const EnglishRecallIndex *, kShardCount> shardIndices{};
+    struct DeltaEntry {
+        std::size_t shardIndex;
         std::unordered_set<std::string> changed;
         std::vector<EnglishRecallEvidence> replacements;
     };
-    std::vector<ShardView> views;
-    views.reserve(kShardCount);
-    for (const auto &shard : shards_) if (shard) {
-        ShardView view{&shard->ensureRecallIndex().englishIndex, {}, {}};
+    std::vector<DeltaEntry> deltas;
+    for (std::size_t i = 0; i < shards_.size(); ++i) {
+        const auto &shard = shards_[i];
+        if (!shard) continue;
+        shardIndices[i] = &shard->ensureRecallIndex().englishIndex;
+        if (shard->delta_.empty()) continue;
+        DeltaEntry delta{i, {}, {}};
         // Only the bounded delta is aggregated on a key. Exclude every changed
         // spelling, including newly suppressed observations, from stale base
         // evidence. The old immutable shard/index remains untouched.
         for (const auto &[key, item] : shard->delta_) {
             if (isRecallableEnglishWord(item.phrase) &&
                 toLowerAscii(item.phrase).starts_with(lower))
-                view.changed.insert(item.phrase);
+                delta.changed.insert(item.phrase);
         }
-        for (const auto &phrase : view.changed) {
+        if (delta.changed.empty()) continue;
+        for (const auto &phrase : delta.changed) {
             const auto evidence = aggregateLearningEvidence(
                 shard->collectVariants(phrase, normalizePinyin(phrase)));
             if (admittedEnglishEvidence(evidence, phrase))
-                view.replacements.push_back({toLowerAscii(phrase), phrase, evidence});
+                delta.replacements.push_back({toLowerAscii(phrase), phrase, evidence});
         }
-        views.push_back(std::move(view));
+        deltas.push_back(std::move(delta));
+    }
+    std::array<const DeltaEntry *, kShardCount> shardDeltas{};
+    for (const auto &delta : deltas) {
+        shardDeltas[delta.shardIndex] = &delta;
     }
     // Fix the common recency reference before applying a global Top K. A local
     // truncation cannot predict which old complete spelling will win globally.
-    for (const auto &view : views) {
-        view.index->observeLatest(query, view.changed);
-        for (const auto &word : view.replacements) query.observeLatest(word);
+    for (std::size_t i = 0; i < shardIndices.size(); ++i) {
+        if (!shardIndices[i]) continue;
+        const auto *delta = shardDeltas[i];
+        shardIndices[i]->observeLatest(query, delta ? delta->changed : kEmptyExcluded);
+        if (delta) {
+            for (const auto &word : delta->replacements) query.observeLatest(word);
+        }
     }
-    for (const auto &view : views) {
-        view.index->collect(query, view.changed);
-        for (const auto &word : view.replacements) query.consider(word);
+    for (std::size_t i = 0; i < shardIndices.size(); ++i) {
+        if (!shardIndices[i]) continue;
+        const auto *delta = shardDeltas[i];
+        shardIndices[i]->collect(query, delta ? delta->changed : kEmptyExcluded);
+        if (delta) {
+            for (const auto &word : delta->replacements) query.consider(word);
+        }
     }
     return query.results();
 }

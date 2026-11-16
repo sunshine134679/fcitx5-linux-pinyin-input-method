@@ -42,6 +42,12 @@ bool EnglishRecallQuery::better(const RankedWord &a, const RankedWord &b) {
 void EnglishRecallQuery::consider(const EnglishRecallEvidence &word) {
     if (limit_ == 0) return;
     const double boost = learningBoostAt(word.learning, now_);
+    // A single-use English entry that has decayed or been penalized out of relevance
+    // must stop auto-recalling so accidental picks of obscure built-in words fade away.
+    if (word.learning.frequency == 1 && boost <= 0.01 &&
+        word.learning.lastSelectedMs > 0 && now_ > 0) {
+        return;
+    }
     RankedWord item{&word, score(boost, word.learning.lastSelectedMs, word.lower.size(), word.lower == prefix_), boost};
     const auto at = std::lower_bound(best_.begin(), best_.end(), item, better);
     if (best_.size() == limit_ && at == best_.end()) return;
