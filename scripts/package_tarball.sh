@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LANG="C.UTF-8"
+export LC_ALL="C.UTF-8"
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 version=$(grep -oP 'project\(ModernIME VERSION \K[0-9.]+' "${project_root}/CMakeLists.txt")

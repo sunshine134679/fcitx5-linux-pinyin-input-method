@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test-ubuntu:
     name: Ubuntu Test & Build
@@ -447,9 +451,10 @@ jobs:
       - name: Install Debian dependencies
         run: |
           set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y \
-            git build-essential cmake pkg-config python3 ca-certificates \
+            git build-essential cmake pkg-config python3 ca-certificates file \
             libsqlite3-dev liblmdb-dev libboost-dev \
             libfcitx5core-dev libfcitx5utils-dev fcitx5-modules-dev fcitx5 \
             libimecore-dev libimepinyin-dev libime-bin libime-data libime-data-language-model fcitx5-chinese-addons \

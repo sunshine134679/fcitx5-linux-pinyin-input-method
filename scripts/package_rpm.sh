@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LANG="C.UTF-8"
+export LC_ALL="C.UTF-8"
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir="${MODERNIME_RPM_BUILD_DIR:-${project_root}/build/package-rpm}"

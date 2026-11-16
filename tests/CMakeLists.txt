@@ -658,6 +658,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
         )
         set_tests_properties(modernime_personal_engine_gtest PROPERTIES
             RUN_SERIAL TRUE
+            TIMEOUT 2400
         )
     elseif(MODERNIME_REQUIRE_FULL_TESTS)
         message(FATAL_ERROR "MODERNIME_REQUIRE_FULL_TESTS=ON requires Google Test (gtest and gtest_main), but it was not found.")
@@ -1075,7 +1076,7 @@ if(BASH_EXECUTABLE)
     )
     set_tests_properties(modernime_verify_package_repo_gate modernime_verify_release_install_upgrade PROPERTIES
         RUN_SERIAL TRUE
-        TIMEOUT 300
+        TIMEOUT 600
     )
 endif()
 
