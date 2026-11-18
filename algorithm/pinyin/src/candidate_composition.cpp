@@ -272,6 +272,18 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
 
     // Stage 4: English & Raw & Command Placement
     const auto rawInput = input.rawInput;
+    const bool hasUppercase = std::any_of(rawInput.begin(), rawInput.end(),
+        [](unsigned char ch) { return ch >= 'A' && ch <= 'Z'; });
+    const auto equalsIgnoreCaseAscii = [](std::string_view a, std::string_view b) {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(a[i])) !=
+                std::tolower(static_cast<unsigned char>(b[i]))) {
+                return false;
+            }
+        }
+        return true;
+    };
     const bool isInitialConsonant = isInitialConsonantInput(rawInput);
     const bool isChineseAbbreviation = isConsonantAbbreviationInput(rawInput, mixed) ||
         isLexicalAbbreviationInput(rawInput, mixed, input.isLexicalWord);
@@ -286,7 +298,14 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         input.isSuppressed ? input.isSuppressed(rawInput, rawInput) : false;
 
     bool preferEnglishOverChinese = false;
-    if (mixed.empty()) {
+    const bool matureLearnedTop =
+        !mixed.empty() &&
+        mixed.front().consumedInputBytes == rawInput.size() &&
+        mixed.front().source == core::CandidateSource::Learned &&
+        mixed.front().learningBoost >= 1.5;
+    if (hasUppercase && !matureLearnedTop) {
+        preferEnglishOverChinese = true;
+    } else if (mixed.empty()) {
         preferEnglishOverChinese = true;
     } else if (hasHighConfidenceChinese) {
         preferEnglishOverChinese = false;
@@ -392,8 +411,13 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         preedit = std::string(rawInput);
     } else if (preferEnglishOverChinese) {
         std::vector<std::string> preds;
-        for (const auto &p : input.englishPredictions) {
-            if (preds.size() < 3 && std::find(preds.begin(), preds.end(), p) == preds.end()) {
+        std::size_t learnedPredCount = 0;
+        for (std::size_t idx = 0; idx < input.englishPredictions.size() && preds.size() < 3; ++idx) {
+            const auto &p = input.englishPredictions[idx];
+            if (std::find(preds.begin(), preds.end(), p) == preds.end()) {
+                if (idx < input.learnedEnglishCount) {
+                    ++learnedPredCount;
+                }
                 preds.push_back(p);
             }
         }
@@ -414,7 +438,91 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
 
         const bool hasLearnedEnglish = input.learnedEnglishCount > 0 && !preds.empty();
 
-        if (hasLearnedEnglish) {
+        if (hasUppercase) {
+            std::vector<core::CandidateItem> englishItems;
+            std::vector<std::string> exactCasePreds;
+            std::vector<std::string> otherCasePreds;
+            bool hasLearnedExactCase = false;
+            for (std::size_t idx = 0; idx < preds.size(); ++idx) {
+                const auto &p = preds[idx];
+                if (p == rawInput) continue;
+                if (p.starts_with(rawInput)) {
+                    if (idx < learnedPredCount) {
+                        hasLearnedExactCase = true;
+                    }
+                    exactCasePreds.push_back(p);
+                } else {
+                    otherCasePreds.push_back(p);
+                }
+            }
+            const bool promoteExactLearned =
+                hasLearnedExactCase && !exactCasePreds.empty() && rawInput.size() >= 2;
+            const auto pushEnglishItem = [&](const std::string &word) {
+                core::CandidateItem pItem;
+                pItem.text = word;
+                pItem.fullPinyin = word;
+                pItem.source = core::CandidateSource::Raw;
+                pItem.commitRole = equalsIgnoreCaseAscii(word, rawInput)
+                                       ? core::CommitCandidateRole::Raw
+                                       : core::CommitCandidateRole::English;
+                pItem.origins = {pItem.source};
+                pItem.consumedInputBytes = rawInput.size();
+                englishItems.push_back(std::move(pItem));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           englishItems.size() - 1, MoveReason::EnglishPreferOverChinese);
+            };
+            if (promoteExactLearned) {
+                std::size_t promotedIdx = 0;
+                for (std::size_t idx = 0; idx < preds.size(); ++idx) {
+                    if (idx < learnedPredCount && preds[idx] != rawInput &&
+                        preds[idx].starts_with(rawInput)) {
+                        promotedIdx = static_cast<std::size_t>(
+                            std::find(exactCasePreds.begin(), exactCasePreds.end(), preds[idx]) -
+                            exactCasePreds.begin());
+                        break;
+                    }
+                }
+                pushEnglishItem(exactCasePreds[promotedIdx]);
+                englishItems.push_back(std::move(rawCandidate));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           englishItems.size() - 1, MoveReason::EnglishPreferOverChinese);
+                for (std::size_t i = 0; i < exactCasePreds.size(); ++i) {
+                    if (i != promotedIdx) {
+                        pushEnglishItem(exactCasePreds[i]);
+                    }
+                }
+            } else {
+                englishItems.push_back(std::move(rawCandidate));
+                recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                           0, MoveReason::EnglishPreferOverChinese);
+                if (rawInput.size() == 1 && rawInput[0] >= 'A' && rawInput[0] <= 'Z') {
+                    core::CandidateItem lowerSingle;
+                    lowerSingle.text = std::string(1, static_cast<char>(rawInput[0] + ('a' - 'A')));
+                    lowerSingle.fullPinyin = lowerSingle.text;
+                    lowerSingle.source = core::CandidateSource::Raw;
+                    lowerSingle.commitRole = core::CommitCandidateRole::Raw;
+                    lowerSingle.origins = {lowerSingle.source};
+                    lowerSingle.consumedInputBytes = rawInput.size();
+                    englishItems.push_back(std::move(lowerSingle));
+                    recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,
+                               englishItems.size() - 1, MoveReason::EnglishPreferOverChinese);
+                }
+                for (const auto &p : exactCasePreds) {
+                    pushEnglishItem(p);
+                }
+            }
+            for (const auto &p : otherCasePreds) {
+                pushEnglishItem(p);
+            }
+            for (auto &m : macros) {
+                englishItems.push_back(std::move(m));
+                recordMove(core::CandidateSource::Engine, CompositionStage::MacroInsert,
+                           englishItems.size() - 1, MoveReason::MacroInsertPos);
+            }
+            mixed.insert(mixed.begin(),
+                         std::make_move_iterator(englishItems.begin()),
+                         std::make_move_iterator(englishItems.end()));
+        } else if (hasLearnedEnglish) {
             std::vector<core::CandidateItem> englishItems;
             core::CandidateItem topPred;
             topPred.text = preds[0];
@@ -548,8 +656,13 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         preedit = std::string(rawInput);
     } else {
         std::vector<std::string> preds;
-        for (const auto &p : input.englishPredictions) {
-            if (preds.size() < 3 && std::find(preds.begin(), preds.end(), p) == preds.end()) {
+        std::size_t learnedPredCount = 0;
+        for (std::size_t idx = 0; idx < input.englishPredictions.size() && preds.size() < 3; ++idx) {
+            const auto &p = input.englishPredictions[idx];
+            if (std::find(preds.begin(), preds.end(), p) == preds.end()) {
+                if (idx < input.learnedEnglishCount) {
+                    ++learnedPredCount;
+                }
                 preds.push_back(p);
             }
         }

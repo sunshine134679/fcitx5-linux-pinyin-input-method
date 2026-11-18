@@ -2876,3 +2876,104 @@ TEST_F(CandidateRankingRegression, EnglishCompletionNeedsConfirmationAndSurvives
         }
     }
 }
+
+TEST_F(CandidateRankingRegression, ShiftUppercaseEntersCompositionAndPreservesCaseInLearning) {
+    for (const bool lmdb : {false, true}) {
+        SCOPED_TRACE(lmdb ? "LMDB" : "SQLite");
+        auto isolated = paths;
+        isolated.learningStore = (root / (lmdb ? "upper.lmdb" : "upper.sqlite3")).string();
+        {
+            pinyin::PinyinCandidateProvider provider(isolated);
+            Host host;
+            fcitx5::ModernIMEController controller(host, &provider);
+            // Seed lowercase "linux" repeatedly first to reproduce user's DB state.
+            for (int i = 0; i < 3; ++i) {
+                type(controller, "linux");
+                auto lowerIdx = rank(controller.page(), "linux");
+                ASSERT_LT(lowerIdx, controller.page().items.size());
+                ASSERT_TRUE(controller.select(lowerIdx));
+            }
+            type(controller, "L");
+            ASSERT_FALSE(controller.page().items.empty());
+            EXPECT_EQ(controller.page().preedit, "L");
+            EXPECT_EQ(controller.page().items.front().text, "L");
+            EXPECT_GE(controller.page().items.size(), 2u);
+            EXPECT_EQ(controller.page().items[1].text, "l");
+            for (const char c : std::string_view("inux")) {
+                ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Character, c}));
+            }
+            EXPECT_EQ(controller.page().preedit, "Linux");
+            EXPECT_EQ(controller.page().items.front().text, "Linux");
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Space}));
+            EXPECT_EQ(host.committed, "Linux");
+            ASSERT_TRUE(provider.flush());
+        }
+        {
+            pinyin::PinyinCandidateProvider reopened(isolated);
+            Host host;
+            fcitx5::ModernIMEController controller(host, &reopened);
+            type(controller, "Li");
+            ASSERT_FALSE(controller.page().items.empty());
+            EXPECT_EQ(controller.page().items.front().text, "Linux");
+            controller.handle({fcitx5::KeyKind::Escape});
+            type(controller, "Linux");
+            ASSERT_FALSE(controller.page().items.empty());
+            EXPECT_EQ(controller.page().items.front().text, "Linux");
+        }
+    }
+}
+
+TEST_F(CandidateRankingRegression, HealedNegativeFeedbackAndNoContextPartialDeletePromoteSingleChar) {
+    for (const bool lmdb : {false, true}) {
+        SCOPED_TRACE(lmdb ? "LMDB" : "SQLite");
+        auto isolated = paths;
+        isolated.learningStore = (root / (lmdb ? "zhi-heal.lmdb" : "zhi-heal.sqlite3")).string();
+        pinyin::PinyinCandidateProvider provider(isolated);
+        // Seed exact user-reported DB condition: "只" selected 6 times and penalized 7 times.
+        {
+            core::CommitEvent ev;
+            ev.text = "只";
+            ev.fullPinyin = "zhi";
+            ev.rawKeystrokes = "zhi";
+            ev.role = core::CommitCandidateRole::Chinese;
+            ev.consumedInputBytes = 3;
+            ev.timestampMs = 1000000;
+            for (int i = 0; i < 6; ++i) provider.onCommitEvent(ev);
+            for (int i = 0; i < 7; ++i) provider.onNegativeFeedback("只", "zhi");
+            ASSERT_TRUE(provider.flush());
+        }
+        Host host;
+        fcitx5::ModernIMEController controller(host, &provider);
+        controller.setContext("", "", fcitx5::ContextAvailability::Unavailable);
+        // Simulate typing "zhishi" in !SurroundingText app -> select "只是" -> BackSpace ("是" deleted) -> next char 'z'.
+        feedKeys(controller, "zhishi");
+        const auto idx = rank(controller.page(), "只是");
+        ASSERT_LT(idx, controller.page().items.size());
+        ASSERT_TRUE(controller.select(idx));
+        EXPECT_FALSE(controller.handle({fcitx5::KeyKind::Backspace}));
+        EXPECT_TRUE(controller.handle({fcitx5::KeyKind::Character, 'z', 0}));
+        for (const char c : std::string_view("hi")) {
+            ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Character, c, 0}));
+        }
+        ASSERT_FALSE(controller.page().items.empty());
+        EXPECT_EQ(controller.page().items.front().text, "只")
+            << "Partial deletion in !SurroundingText mode must heal negative_feedback and promote '只' to rank 0";
+    }
+}
+
+TEST_F(CandidateRankingRegression, LongSentencesAndRealUserCollocationsRankFirst) {
+    pinyin::PinyinCandidateProvider provider(paths);
+    Host host;
+    fcitx5::ModernIMEController controller(host, &provider);
+    for (const auto &[input, expected] : {
+             std::pair{"paidehenhoumian", "排得很后面"},
+             std::pair{"qiyouxianji", "其优先级"},
+             std::pair{"xianshishimeiyou", "现实是没有"},
+             std::pair{"zheduanzi", "这段字"},
+         }) {
+        controller.handle({fcitx5::KeyKind::Escape});
+        type(controller, input);
+        ASSERT_FALSE(controller.page().items.empty()) << input;
+        EXPECT_EQ(controller.page().items.front().text, expected) << input;
+    }
+}

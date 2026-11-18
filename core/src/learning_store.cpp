@@ -302,7 +302,11 @@ bool LearningStore::applySelection(
     // Exact prefix keys use the existing (pinyin, phrase) index. No full-table
     // scan, migration, or frequency increment is needed to clear old aliases.
     std::string clearSuppressionSql =
-        "UPDATE learning_entries SET suppressed = 0 WHERE phrase = ? AND pinyin IN (";
+        "UPDATE learning_entries SET suppressed = 0, "
+        "negative_feedback = CASE WHEN negative_feedback > 0 AND "
+        "negative_feedback < 9223372036854775807 THEN negative_feedback / 2 "
+        "ELSE negative_feedback END "
+        "WHERE phrase = ? AND pinyin IN (";
     for (size_t i = 0; i < clearKeys.size(); ++i) {
         clearSuppressionSql += i == 0 ? "?" : ",?";
     }

@@ -39,6 +39,13 @@ CommitLearningDecision decideCommitLearning(const CommitEvent &event,
     }
 
     if (event.role == CommitCandidateRole::Raw) {
+        bool hasUppercase = false;
+        for (const unsigned char ch : event.text) {
+            if (ch >= 'A' && ch <= 'Z') {
+                hasUppercase = true;
+                break;
+            }
+        }
         const bool isTypoCorrectedPinyin = [&] {
             if (event.text.size() < 4 || EnglishDictionary::isEnglishWord(event.text)) {
                 return false;
@@ -47,7 +54,7 @@ CommitLearningDecision decideCommitLearning(const CommitEvent &event,
             return !normalized.empty() && normalized != event.text &&
                    PinyinMatchPolicy::isValidPinyinSequence(normalized);
         }();
-        if (!EnglishDictionary::isEnglishWord(event.text) &&
+        if (!hasUppercase && !EnglishDictionary::isEnglishWord(event.text) &&
             (PinyinMatchPolicy::isValidPinyinSequence(event.text) || isTypoCorrectedPinyin)) {
             return CommitLearningDecision::IgnoreRawPinyin;
         }

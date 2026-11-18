@@ -87,8 +87,14 @@ bool PersonalEngineState::recordUsage(std::string_view pinyin_key,
     rebuildCompactIndex(norm_key);
 
     for (auto &v : variants) {
-        if (v.text == text && v.meta.suppressed != 0) {
-            v.meta.suppressed = 0;
+        if (v.text == text) {
+            if (v.meta.suppressed != 0) {
+                v.meta.suppressed = 0;
+            }
+            if (v.meta.negative_feedback > 0 &&
+                v.meta.negative_feedback < std::numeric_limits<uint32_t>::max()) {
+                v.meta.negative_feedback /= 2;
+            }
         }
     }
 

@@ -343,7 +343,8 @@ bool validInputComposition(std::string_view input) {
 std::size_t pinyinLetterCount(std::string_view input) {
     std::size_t count = 0;
     for (const char character : input) {
-        if (character >= 'a' && character <= 'z') {
+        if ((character >= 'a' && character <= 'z') ||
+            (character >= 'A' && character <= 'Z')) {
             ++count;
         }
     }
@@ -1582,9 +1583,12 @@ private:
         }
         const auto requestNowMs = nowMilliseconds();
         std::optional<ContextDecoder> contextual;
-        if (learning)
-            contextual.emplace(*context, contextLearningEnabled_ ? contextBefore_ : std::string_view{},
-                               learning.get(), requestNowMs, shared_->contextLanguageModel);
+        if (learning || (shared_ && shared_->contextLanguageModel))
+            contextual.emplace(
+                *context,
+                (learning && contextLearningEnabled_) ? contextBefore_
+                                                      : std::string_view{},
+                learning.get(), requestNowMs, shared_->contextLanguageModel);
         const auto result = buildCandidatePipeline(
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
@@ -1759,12 +1763,15 @@ private:
             }
         };
 
+        const bool hasUppercase = std::any_of(rawInput.begin(), rawInput.end(), [](unsigned char ch) {
+            return ch >= 'A' && ch <= 'Z';
+        });
         const bool isInitialConsonant = isInitialConsonantInput(rawInput);
         const bool isChineseAbbreviation =
             isConsonantAbbreviationInput(rawInput, fullItems) ||
             isLexicalAbbreviationInput(rawInput, fullItems, lexicalWordCheck);
         const bool isEnglish =
-            !(useShuangpin && !fullItems.empty()) && !isInitialConsonant && !isChineseAbbreviation &&
+            !(useShuangpin && !hasUppercase && !fullItems.empty()) && !isInitialConsonant && !isChineseAbbreviation &&
             core::EnglishDictionary::isEnglishWord(rawInput);
 
         const bool hasExactFullPinyin =
@@ -1783,17 +1790,18 @@ private:
         // 不注入静态英文补全：单音节前排必须保持全部地道中文（既有单音节
         // 英文沉底契约）。已学英文召回与纯声母缩写（pyt→python）不受此限制。
         const bool singleSyllableChineseProtected =
+            !hasUppercase &&
             rawInput.find('\'') == std::string::npos &&
             core::PinyinMatchPolicy::isStandardSyllable(rawInput) &&
             hasExactFullPinyin && topChineseLexical;
 
         const bool shouldPredictEnglish =
-            !(useShuangpin && !fullItems.empty()) &&
+            !(useShuangpin && !hasUppercase && !fullItems.empty()) &&
             (rawInput.empty() || rawInput.front() != 'v') &&
             !hasTrustedShortAbbr &&
             rawInput.size() >= 3 &&
             !singleSyllableChineseProtected &&
-            (isEnglish ||
+            (isEnglish || hasUppercase ||
              (isChineseAbbreviation && rawInput.size() <= 3) ||
              (!highConfidenceChinese && !hasExactFullPinyin &&
               (!hasPinyinCoverage || hasInvalidInternalPinyinSegment(segmentedInput))));
@@ -1801,7 +1809,7 @@ private:
         std::vector<std::string> predictedWords;
         std::size_t learnedEnglishCount = 0;
         const bool canPredictEnglish =
-            !(useShuangpin && !fullItems.empty()) &&
+            !(useShuangpin && !hasUppercase && !fullItems.empty()) &&
             (rawInput.empty() || rawInput.front() != 'v') &&
             !hasTrustedShortAbbr &&
             rawInput.size() >= 2;

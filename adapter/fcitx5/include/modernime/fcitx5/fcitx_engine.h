@@ -357,6 +357,8 @@ public:
     bool insertPair(std::string_view opener, std::string_view closer) override;
     bool replaceSurrounding(std::string_view before, std::string_view after,
                             std::string_view replacement) override;
+    bool stepOverFallback(std::string_view closer) override;
+    bool eraseEmptyPairFallback() override;
 
 private:
     fcitx::InputContext *inputContext_;

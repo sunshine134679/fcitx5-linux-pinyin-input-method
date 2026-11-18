@@ -396,7 +396,8 @@ bool PinyinMatchPolicy::validComposition(std::string_view userInput) {
     bool hasLetter = false;
     bool separator = false;
     for (const char character : userInput) {
-        if (character >= 'a' && character <= 'z') {
+        if ((character >= 'a' && character <= 'z') ||
+            (character >= 'A' && character <= 'Z')) {
             hasLetter = true;
             separator = false;
             continue;

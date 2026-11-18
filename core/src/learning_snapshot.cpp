@@ -205,6 +205,13 @@ bool isRecallableEnglishWord(std::string_view text) {
     if (!isAsciiWord(text)) {
         return false;
     }
+    if (text.size() >= 2) {
+        for (const unsigned char ch : text) {
+            if (ch >= 'A' && ch <= 'Z') {
+                return true;
+            }
+        }
+    }
     if (EnglishDictionary::isEnglishWord(text)) {
         return true;
     }
@@ -696,15 +703,24 @@ void LearningSnapshotShard::recordSelection(
     const auto normalized = normalizePinyin(pinyin);
     const auto cKey = candidateKey(phrase, normalized);
 
-    // 1. Unsuppress any suppressed variants of (phrase, normalized)
+    // 1. Unsuppress and heal negative feedback on other variants of (phrase, normalized)
+    constexpr auto kMaxFeedback = std::numeric_limits<std::int64_t>::max();
+    const auto healFeedback = [](std::int64_t &feedback) {
+        if (feedback > 0 && feedback < kMaxFeedback) {
+            feedback /= 2;
+        }
+    };
+    const auto targetVKey = variantKey(phrase, normalized, contextBefore, contextAfter);
     const auto variants = collectVariants(phrase, normalized);
     for (const auto *item : variants) {
-        if (item->suppressed) {
-            const auto vKey = variantKey(item->phrase, item->pinyin,
-                                         item->contextBefore, item->contextAfter);
+        const auto vKey = variantKey(item->phrase, item->pinyin,
+                                     item->contextBefore, item->contextAfter);
+        if (vKey != targetVKey &&
+            (item->suppressed || (item->negativeFeedback > 0 && item->negativeFeedback < kMaxFeedback))) {
             auto &d = delta_[vKey];
             d = *item;
             d.suppressed = false;
+            healFeedback(d.negativeFeedback);
             auto &dList = deltaIndex_[cKey];
             if (std::find(dList.begin(), dList.end(), vKey) == dList.end()) {
                 dList.push_back(vKey);
@@ -713,11 +729,11 @@ void LearningSnapshotShard::recordSelection(
     }
 
     // 2. Insert or update targeted variant
-    const auto targetVKey = variantKey(phrase, normalized, contextBefore, contextAfter);
     auto it = delta_.find(targetVKey);
     bool isNewEntry = false;
     if (it != delta_.end()) {
         it->second.suppressed = false;
+        healFeedback(it->second.negativeFeedback);
         it->second.frequency = saturatingIncrement(it->second.frequency);
         it->second.lastSelectedMs = nowMs;
     } else {
@@ -746,6 +762,7 @@ void LearningSnapshotShard::recordSelection(
             ++deltaNewCount_;
         }
         newEntry.suppressed = false;
+        healFeedback(newEntry.negativeFeedback);
         newEntry.frequency = saturatingIncrement(newEntry.frequency);
         newEntry.lastSelectedMs = nowMs;
         delta_[targetVKey] = std::move(newEntry);

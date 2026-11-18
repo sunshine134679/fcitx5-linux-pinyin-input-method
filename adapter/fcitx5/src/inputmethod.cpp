@@ -448,14 +448,54 @@ std::optional<TextEditContext> FcitxEngineHost::textEditContext() const {
 }
 
 bool FcitxEngineHost::insertPair(std::string_view opener, std::string_view closer) {
-    if (!textEditContext() || inputContext_->capabilityFlags().test(
-            fcitx::CapabilityFlag::Terminal)) return false;
+    const auto flags = inputContext_->capabilityFlags();
+    if (!inputContext_->hasFocus() ||
+        flags.testAny(fcitx::CapabilityFlag::PasswordOrSensitive) ||
+        flags.test(fcitx::CapabilityFlag::Terminal)) {
+        return false;
+    }
+    const auto &surrounding = inputContext_->surroundingText();
+    if (flags.test(fcitx::CapabilityFlag::SurroundingText) && surrounding.isValid()) {
+        if (surrounding.cursor() != surrounding.anchor() ||
+            extractSurroundingContextState(surrounding, 256).availability !=
+                ContextAvailability::Valid) {
+            return false;
+        }
+    }
     if (contextCache_) contextCache_->invalidate();
     const auto pair = std::string(opener) + std::string(closer);
     if (commitWithCursor(inputContext_, pair, fcitx::utf8::length(opener))) return true;
     inputContext_->commitString(pair);
     inputContext_->forwardKey(fcitx::Key(FcitxKey_Left));
     inputContext_->forwardKey(fcitx::Key(FcitxKey_Left), true);
+    return true;
+}
+
+bool FcitxEngineHost::stepOverFallback(std::string_view) {
+    const auto flags = inputContext_->capabilityFlags();
+    if (!inputContext_->hasFocus() ||
+        flags.testAny(fcitx::CapabilityFlag::PasswordOrSensitive) ||
+        flags.test(fcitx::CapabilityFlag::Terminal)) {
+        return false;
+    }
+    if (contextCache_) contextCache_->invalidate();
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_Right));
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_Right), true);
+    return true;
+}
+
+bool FcitxEngineHost::eraseEmptyPairFallback() {
+    const auto flags = inputContext_->capabilityFlags();
+    if (!inputContext_->hasFocus() ||
+        flags.testAny(fcitx::CapabilityFlag::PasswordOrSensitive) ||
+        flags.test(fcitx::CapabilityFlag::Terminal)) {
+        return false;
+    }
+    if (contextCache_) contextCache_->invalidate();
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_Delete));
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_Delete), true);
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_BackSpace));
+    inputContext_->forwardKey(fcitx::Key(FcitxKey_BackSpace), true);
     return true;
 }
 
@@ -872,12 +912,22 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         event.kind = KeyKind::NextPage;
         return event;
     }
-    if (bindings.arrowNavigation && key.check(FcitxKey_Left)) {
+    if (bindings.arrowNavigation &&
+        key.check(FcitxKey_Left, fcitx::KeyStates(fcitx::KeyState::Ctrl))) {
         event.kind = KeyKind::MoveCompositionLeft;
         return event;
     }
-    if (bindings.arrowNavigation && key.check(FcitxKey_Right)) {
+    if (bindings.arrowNavigation &&
+        key.check(FcitxKey_Right, fcitx::KeyStates(fcitx::KeyState::Ctrl))) {
         event.kind = KeyKind::MoveCompositionRight;
+        return event;
+    }
+    if (bindings.arrowNavigation && key.check(FcitxKey_Left)) {
+        event.kind = KeyKind::PreviousCandidate;
+        return event;
+    }
+    if (bindings.arrowNavigation && key.check(FcitxKey_Right)) {
+        event.kind = KeyKind::NextCandidate;
         return event;
     }
     if (bindings.arrowNavigation &&
@@ -921,10 +971,8 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
     }
     if (!hasNonShiftModifier(key)) {
         const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
-        if (unicode >= 'A' && unicode <= 'Z') {
-            return std::nullopt;
-        }
-        if (unicode >= 'a' && unicode <= 'z') {
+        if ((unicode >= 'a' && unicode <= 'z') ||
+            (unicode >= 'A' && unicode <= 'Z')) {
             event.kind = KeyKind::Character;
             event.character = static_cast<char>(unicode);
             return event;
@@ -955,8 +1003,7 @@ bool shouldCommitCompositionBeforePassThrough(std::string_view preedit,
         }
     }
     const auto unicode = fcitx::Key::keySymToUnicode(key.sym());
-    return (unicode >= 'A' && unicode <= 'Z') ||
-           (unicode >= '0' && unicode <= '9');
+    return (unicode >= '0' && unicode <= '9');
 }
 
 void ModernIMEInputMethod::pollClipboard() {
@@ -1315,7 +1362,8 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             // key. Keep undo/pair ownership until the actual command arrives.
             if (hasNonShiftModifier(event.key()) && !event.key().isModifier())
                 contextState->controller().invalidateTextActions();
-            if (contextState->controller().page().preedit.empty() &&
+            if (!event.key().isModifier() &&
+                contextState->controller().page().preedit.empty() &&
                 !event.inputContext()->surroundingText().isValid()) {
                 contextState->controller().setContext(
                     "", "", ContextAvailability::Invalidated);
@@ -1331,6 +1379,8 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             contextState->controller().invalidateUndo();
         } else if (modernEvent->kind == KeyKind::MoveCompositionLeft ||
                    modernEvent->kind == KeyKind::MoveCompositionRight ||
+                   modernEvent->kind == KeyKind::PreviousCandidate ||
+                   modernEvent->kind == KeyKind::NextCandidate ||
                    modernEvent->kind == KeyKind::PreviousClipboardItem || modernEvent->kind == KeyKind::NextClipboardItem ||
                    modernEvent->kind == KeyKind::PreviousPage || modernEvent->kind == KeyKind::NextPage) {
             contextState->controller().invalidateTextActions();

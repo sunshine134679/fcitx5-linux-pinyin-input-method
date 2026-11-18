@@ -43,10 +43,12 @@ struct LearnedSentenceWord {
     std::string text;
     std::string encodedPinyin;
     double boost;
+    double dictBoost = 0.0;
 };
 
 struct LearnedSentenceEvidence {
     double total = 0.0;
+    double dictTotal = 0.0;
     bool rareCovered = false;
 };
 
@@ -65,13 +67,17 @@ LearnedSentenceEvidence sentenceLearningEvidence(
     // Evidence belongs to aligned text/readings, not a decoder's tokenization.
     // Choose disjoint learned spans so overlapping words never count twice.
     std::vector<double> best(syllables + 1);
+    std::vector<double> bestDict(syllables + 1);
     // Keep coverage reachability separately: a stronger overlapping common-word
     // span must not discard an otherwise valid rare-character covering path.
     std::vector<double> covered(syllables + 1, -std::numeric_limits<double>::infinity());
     covered.front() = 0.0;
     for (std::size_t begin = 0; begin < syllables; ++begin) {
         const auto character = text.substr(ends[begin], ends[begin + 1] - ends[begin]);
-        best[begin + 1] = std::max(best[begin + 1], best[begin]);
+        if (best[begin] > best[begin + 1]) {
+            best[begin + 1] = best[begin];
+            bestDict[begin + 1] = bestDict[begin];
+        }
         if (!core::CommonCharacters::containsRare(character))
             covered[begin + 1] = std::max(covered[begin + 1], covered[begin]);
         for (const auto &word : words) {
@@ -81,11 +87,14 @@ LearnedSentenceEvidence sentenceLearningEvidence(
                 encodedPinyin.substr(begin * 2, length * 2) != word.encodedPinyin)
                 continue;
             const auto evidence = word.boost * static_cast<double>(length);
-            best[begin + length] = std::max(best[begin + length], best[begin] + evidence);
+            if (best[begin] + evidence > best[begin + length]) {
+                best[begin + length] = best[begin] + evidence;
+                bestDict[begin + length] = bestDict[begin] + word.dictBoost;
+            }
             covered[begin + length] = std::max(covered[begin + length], covered[begin] + evidence);
         }
     }
-    return {best.back(), std::isfinite(covered.back())};
+    return {best.back(), bestDict.back(), std::isfinite(covered.back())};
 }
 
 // Keep up to four plausible tokenizations at each character boundary. The
@@ -214,7 +223,18 @@ double ContextDecoder::gain(const libime::SentenceResult &sentence) const {
     double contextual = -std::numeric_limits<double>::infinity();
     for (const auto &state : evidenceStates_) contextual = std::max(contextual, score(state));
     const auto difference = contextual - score(evidenceModel_.nullState());
-    return std::isfinite(difference) ? std::clamp<double>(difference, -2.0, 2.0) : 0.0;
+    if (!std::isfinite(difference)) return 0.0;
+    // Suppress weak PMI fluctuations / KenLM backoff noise (e.g. "就是"+"卧室"
+    // yielding +0.45 while "我是" gets -0.16 backoff) so only genuine context
+    // transitions (>= 0.75) or strong mismatches (<= -0.75) affect ranking.
+    const bool singleCharSplit =
+        fcitx::utf8::length(sentence.toString()) >= 3 &&
+        fcitx::utf8::length(firstWord) == 1;
+    if (difference > -0.75 && difference < (singleCharSplit ? 1.2 : 0.75)) {
+        return 0.0;
+    }
+    const double limit = singleCharSplit ? 0.5 : 2.0;
+    return std::clamp<double>(difference, -limit, limit);
 }
 
 std::vector<core::CandidateScore> ContextDecoder::candidates() const {
@@ -246,13 +266,16 @@ std::vector<core::CandidateScore> ContextDecoder::candidates() const {
             }
             return true;
         });
-        // Mature preferences also apply inside unseen sentences for known words.
-        // Preserve their dictionary cost; add only the bounded, decayed evidence
-        // in this request-local dictionary, without changing shared dictionaries.
-        dictionary.addWord(1, word.pinyin, word.phrase,
-                           lexicalCost + static_cast<float>(2.0 * std::clamp(word.learningBoost, 0.0, 3.0)));
+        // Known words already exist in shared dictionaries with calibrated cost;
+        // add only a mild preference nudge so common learned words like "显示"
+        // cannot drag single-character homophone gibberish over fluent sentences.
+        const float boostMargin = known
+            ? static_cast<float>(0.4 * std::clamp(word.learningBoost, 0.0, 2.0))
+            : static_cast<float>(2.0 * std::clamp(word.learningBoost, 0.0, 3.0));
+        dictionary.addWord(1, word.pinyin, word.phrase, lexicalCost + boostMargin);
         learnedWords.push_back({word.phrase, std::string(encoded.begin(), encoded.end()),
-                                std::min(word.learningBoost, 3.0)});
+                                std::min(word.learningBoost, 3.0),
+                                static_cast<double>(boostMargin)});
     }
     if (!active_ && learnedWords.empty()) return result;
     auto graph = context_.useShuangpin()
@@ -279,7 +302,9 @@ std::vector<core::CandidateScore> ContextDecoder::candidates() const {
         const auto component = sentenceLearningEvidence(candidate.text, encoded, learnedWords);
         if (evidence < 1.0 && component.total == 0.0) continue;
         if (component.total > 0.0) {
-            candidate.decoder_score = sentence.score();
+            // Strip injected SentenceDictionary boost so decoder_score keeps
+            // true linguistic fluency when competing against clean native paths.
+            candidate.decoder_score = static_cast<float>(sentence.score() - component.dictTotal);
             candidate.learned_word_bonus = component.total / static_cast<double>(encoded.size() / 2);
             candidate.learned_rare_coverage = component.rareCovered;
         }

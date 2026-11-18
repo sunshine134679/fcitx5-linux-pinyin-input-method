@@ -419,10 +419,16 @@ bool PersonalEngine::RecordUsage(std::string_view pinyin_key,
     auto &variants = db_[norm_key];
     RebuildCompactIndex(norm_key);
 
-    // 取消同一 (norm_key, text) 下所有变体的 suppressed 状态
+    // 取消同一 (norm_key, text) 下所有变体的 suppressed 状态，并对负反馈减半恢复
     for (auto &v : variants) {
-        if (v.text == text && v.meta.suppressed != 0) {
-            v.meta.suppressed = 0;
+        if (v.text == text) {
+            if (v.meta.suppressed != 0) {
+                v.meta.suppressed = 0;
+            }
+            if (v.meta.negative_feedback > 0 &&
+                v.meta.negative_feedback < std::numeric_limits<uint32_t>::max()) {
+                v.meta.negative_feedback /= 2;
+            }
         }
     }
 

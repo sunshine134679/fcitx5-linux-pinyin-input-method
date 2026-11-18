@@ -184,11 +184,23 @@ int main() {
     assertKind(FcitxKey_Delete, modernime::fcitx5::KeyKind::DeleteForward,
                "plain delete maps to forward composition deletion");
     assertKind(FcitxKey_Left,
-               modernime::fcitx5::KeyKind::MoveCompositionLeft,
-               "left maps to composition cursor movement");
+               modernime::fcitx5::KeyKind::PreviousCandidate,
+               "left maps to previous candidate selection");
     assertKind(FcitxKey_Right,
-               modernime::fcitx5::KeyKind::MoveCompositionRight,
-               "right maps to composition cursor movement");
+               modernime::fcitx5::KeyKind::NextCandidate,
+               "right maps to next candidate selection");
+    const auto ctrlLeft = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_Left, ctrl));
+    assertTrue(ctrlLeft.has_value() &&
+                   ctrlLeft->kind ==
+                       modernime::fcitx5::KeyKind::MoveCompositionLeft,
+               "ctrl left maps to composition cursor movement");
+    const auto ctrlRight = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_Right, ctrl));
+    assertTrue(ctrlRight.has_value() &&
+                   ctrlRight->kind ==
+                       modernime::fcitx5::KeyKind::MoveCompositionRight,
+               "ctrl right maps to composition cursor movement");
     assertKind(FcitxKey_Return, modernime::fcitx5::KeyKind::Enter,
                "main enter maps to candidate submission");
     assertKind(FcitxKey_KP_Enter, modernime::fcitx5::KeyKind::Enter,
@@ -251,14 +263,18 @@ int main() {
                    bracketRightDisabled->character == ']',
                "disabled extraction translates bracket right to punctuation");
     const fcitx::Key uppercaseN(FcitxKey_N, shift);
-    assertTrue(!modernime::fcitx5::translateKey(uppercaseN).has_value(),
-               "uppercase letters pass through instead of entering pinyin");
-    assertTrue(modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
+    const auto translatedUpper = modernime::fcitx5::translateKey(uppercaseN);
+    assertTrue(translatedUpper.has_value() &&
+                   translatedUpper->kind ==
+                       modernime::fcitx5::KeyKind::Character &&
+                   translatedUpper->character == 'N',
+               "uppercase letters enter composition with case preserved");
+    assertTrue(!modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
                    "ni", uppercaseN),
-               "uppercase input commits an existing composition first");
+               "uppercase input continues inside composition instead of bypassing");
     assertTrue(!modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
                    "", uppercaseN),
-               "uppercase input at idle passes through directly");
+               "uppercase input at idle does not trigger passthrough commit");
     assertTrue(modernime::fcitx5::shouldCommitCompositionBeforePassThrough(
                    "ni", fcitx::Key(FcitxKey_0)),
                "a literal digit commits an existing composition first");

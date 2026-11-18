@@ -42,7 +42,11 @@ public:
     const char *frontend() const override { return "typing-test"; }
     std::string text;
     std::size_t cursor = 0;
-    void sync() { surroundingText().setText(text, static_cast<unsigned>(cursor), static_cast<unsigned>(cursor)); }
+    void sync() {
+        if (capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText)) {
+            surroundingText().setText(text, static_cast<unsigned>(cursor), static_cast<unsigned>(cursor));
+        }
+    }
 protected:
     void commitStringImpl(const std::string &s) override {
         text.insert(byteAt(text, cursor), s); cursor += fcitx::utf8::length(s); sync();
@@ -58,7 +62,19 @@ protected:
         cursor = start; sync();
     }
     void forwardKeyImpl(const fcitx::ForwardKeyEvent &event) override {
-        if (!event.isRelease() && event.key().sym() == FcitxKey_Left && cursor) --cursor;
+        if (!event.isRelease()) {
+            const auto total = fcitx::utf8::length(text);
+            if (event.key().sym() == FcitxKey_Left && cursor) {
+                --cursor;
+            } else if (event.key().sym() == FcitxKey_Right && cursor < total) {
+                ++cursor;
+            } else if (event.key().sym() == FcitxKey_Delete && cursor < total) {
+                text.erase(byteAt(text, cursor), byteAt(text, cursor + 1) - byteAt(text, cursor));
+            } else if (event.key().sym() == FcitxKey_BackSpace && cursor) {
+                text.erase(byteAt(text, cursor - 1), byteAt(text, cursor) - byteAt(text, cursor - 1));
+                --cursor;
+            }
+        }
         sync();
     }
     void updatePreeditImpl() override {}
@@ -536,6 +552,72 @@ void testComponentLookup(fcitx::Instance &instance) {
     controller.reset();
 }
 
+void testShiftUppercaseLeftRightAndFallbackPairs(fcitx::Instance &instance) {
+    fcitx5::ModernIMEInputMethod engine(&instance.addonManager());
+    const auto entries = engine.listInputMethods();
+    const auto &entry = entries.front();
+    Document doc(instance.inputContextManager(), "electron-like");
+    doc.setCapabilityFlags(fcitx::CapabilityFlags{}); // No SurroundingText / No CommitWithCursor
+    fcitx::InputContextEvent in(&doc, fcitx::EventType::InputContextFocusIn);
+    engine.activate(entry, in);
+    auto send = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key);
+        engine.keyEvent(entry, event);
+        return event.accepted();
+    };
+    auto release = [&](fcitx::Key key) {
+        fcitx::KeyEvent event(&doc, key, true);
+        engine.keyEvent(entry, event);
+        return event.accepted();
+    };
+    // 1. Shift + L enters composition cleanly and Shift release does not toggle to EN.
+    check(!send(fcitx::Key(FcitxKey_Shift_L)), "modifier press passes through");
+    check(send(fcitx::Key(FcitxKey_L, fcitx::KeyState::Shift)), "Shift+L enters composition");
+    check(!release(fcitx::Key(FcitxKey_Shift_L)), "Shift release passes through");
+    auto &controller = engine.state(&doc)->controller();
+    check(controller.active(), "Shift+L keeps Chinese mode active");
+    check(controller.page().preedit == "L" && !controller.page().items.empty() &&
+              controller.page().items.front().text == "L",
+          "Shift+L sets preedit L and candidate 1=L");
+    for (const char c : std::string("inux")) {
+        check(send(fcitx::Key(std::string(1, c))), "continue typing Linux");
+    }
+    check(controller.page().preedit == "Linux" &&
+              controller.page().items.front().text == "Linux",
+          "Shift+L+inux preserves Linux inside preedit");
+    check(send(fcitx::Key(FcitxKey_space)) && doc.text == "Linux",
+          "space commits Linux inside composition");
+
+    // 2. Fallback auto-pair without SurroundingText (survives Shift modifier!).
+    doc.text.clear();
+    doc.cursor = 0;
+    check(!send(fcitx::Key(FcitxKey_Shift_L)), "Shift press before quote preserves fallback context");
+    check(send(fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Shift)),
+          "Shift+quote inserts Chinese quote pair in !SurroundingText app");
+    check(doc.text == "“”" && doc.cursor == 1, "quote pair commits opener+closer with cursor inside");
+    check(!send(fcitx::Key(FcitxKey_Shift_L)), "Shift press before closing quote keeps auto-pair");
+    check(send(fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Shift)),
+          "closing quote steps over closer instead of inserting duplicate");
+    check(doc.text == "“”" && doc.cursor == 2, "cursor stepped past closer");
+    check(send(fcitx::Key(FcitxKey_parenleft, fcitx::KeyState::Shift)), "open paren pair in !SurroundingText");
+    check(doc.text == "“”（" "）" && doc.cursor == 3, "paren pair inserted");
+    check(send(fcitx::Key(FcitxKey_BackSpace)) && doc.text == "“”" && doc.cursor == 2,
+          "immediate backspace deletes empty fallback pair");
+
+    // 3. Left/Right candidate cursor movement in composition.
+    for (const char c : std::string("nihao")) {
+        check(send(fcitx::Key(std::string(1, c))), "type nihao");
+    }
+    check(controller.page().cursor == 0 && controller.page().items.size() > 1,
+          "initial candidate cursor at 0");
+    check(send(fcitx::Key(FcitxKey_Right)) && controller.page().cursor == 1,
+          "Right moves candidate highlight to index 1");
+    check(send(fcitx::Key(FcitxKey_Left)) && controller.page().cursor == 0,
+          "Left moves candidate highlight back to index 0");
+    send(fcitx::Key(FcitxKey_Escape));
+    engine.deactivate(entry, in);
+}
+
 }
 
 int main() {
@@ -555,6 +637,7 @@ int main() {
         testApplicationModes(instance);
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
         testUndo(instance);
+        testShiftUppercaseLeftRightAndFallbackPairs(instance);
 #endif
         testTemporaryEnglish(instance);
         testTemporaryEnglishApplicationShortcuts(instance);

@@ -130,6 +130,8 @@ public:
     virtual bool insertPair(std::string_view, std::string_view) { return false; }
     virtual bool replaceSurrounding(std::string_view, std::string_view,
                                     std::string_view) { return false; }
+    virtual bool stepOverFallback(std::string_view) { return false; }
+    virtual bool eraseEmptyPairFallback() { return false; }
 };
 
 class ModernIMEController final {
@@ -332,17 +334,31 @@ private:
     struct PendingNoContextDelete final {
         std::string text;
         std::string fullPinyin;
+        std::string basePrefix;
+        std::string contextAfter;
         std::size_t charCount = 0;
         std::size_t backspaces = 0;
+        std::vector<std::string> chars;
+        std::vector<std::string> syllables;
         std::chrono::steady_clock::time_point timestamp;
         bool active = false;
     };
+    void initNoContextDelete(const core::CandidateItem &candidate,
+                             std::string basePrefix,
+                             std::string contextAfter);
+    void finalizeNoContextDelete();
     PendingNoContextDelete pendingNoContextDelete_;
     struct AutoPair final {
         std::string opener, closer;
-        TextEditContext expected;
+        std::optional<TextEditContext> expected;
+        bool fallbackEmpty = false;
     };
     std::vector<AutoPair> autoPairs_;
+    void markAutoPairsNonEmpty() {
+        for (auto &pair : autoPairs_) {
+            pair.fallbackEmpty = false;
+        }
+    }
     struct UndoCommit final {
         TextEditContext expected;
         core::CandidateIdentity candidate;

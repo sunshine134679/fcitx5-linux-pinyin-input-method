@@ -544,7 +544,7 @@ private:
         arrowNavigation = gtk_switch_new();
         pageNavigation = gtk_switch_new();
         setTarget(arrowNavigation, "arrow-navigation");
-        gtk_widget_set_tooltip_text(arrowNavigation, "左右移动拼音光标，上下切换候选");
+        gtk_widget_set_tooltip_text(arrowNavigation, "左右键选择候选，上下键翻页（Ctrl+左右移动拼音光标）");
         gtk_widget_set_tooltip_text(pageNavigation, "使用 PageUp / PageDown 和 + / = 翻页");
         setTarget(pageNavigation, "page-navigation");
         arrowNavigationFallback = createSettingRow(
