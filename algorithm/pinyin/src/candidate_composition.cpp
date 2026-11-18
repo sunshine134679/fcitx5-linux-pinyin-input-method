@@ -274,6 +274,15 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     const auto rawInput = input.rawInput;
     const bool hasUppercase = std::any_of(rawInput.begin(), rawInput.end(),
         [](unsigned char ch) { return ch >= 'A' && ch <= 'Z'; });
+    const auto containsAsciiAlpha = [](std::string_view text) {
+        return std::any_of(text.begin(), text.end(), [](unsigned char ch) {
+            return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+        });
+    };
+    const auto containsNonAscii = [](std::string_view text) {
+        return std::any_of(text.begin(), text.end(),
+                           [](unsigned char ch) { return ch >= 0x80; });
+    };
     const auto equalsIgnoreCaseAscii = [](std::string_view a, std::string_view b) {
         if (a.size() != b.size()) return false;
         for (std::size_t i = 0; i < a.size(); ++i) {
@@ -300,6 +309,8 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
     bool preferEnglishOverChinese = false;
     const bool matureLearnedTop =
         !mixed.empty() &&
+        containsAsciiAlpha(mixed.front().text) &&
+        mixed.front().isLexical &&
         mixed.front().consumedInputBytes == rawInput.size() &&
         mixed.front().source == core::CandidateSource::Learned &&
         mixed.front().learningBoost >= 1.5;
@@ -519,6 +530,27 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
                 recordMove(core::CandidateSource::Engine, CompositionStage::MacroInsert,
                            englishItems.size() - 1, MoveReason::MacroInsertPos);
             }
+            // Intentional Shift+letter input targets English/mixed terms, so strip
+            // pure-Chinese noise (e.g. "了/你/来" under single "L"), partial-CJK+ASCII
+            // fallback glue (e.g. "给itHub" under "GitHub"), and duplicate entries
+            // already covered by englishItems, while preserving genuine lexical
+            // mixed words (e.g. "Docker容器" under "DockerRongQi").
+            mixed.erase(
+                std::remove_if(mixed.begin(), mixed.end(),
+                               [&](const auto &item) {
+                                   if (item.source == core::CandidateSource::Command) return false;
+                                   if (containsNonAscii(item.text)) {
+                                       const bool genuineMixed =
+                                           item.isLexical &&
+                                           containsAsciiAlpha(item.text) &&
+                                           item.consumedInputBytes == rawInput.size();
+                                       if (!genuineMixed) return true;
+                                   }
+                                   return std::any_of(
+                                       englishItems.begin(), englishItems.end(),
+                                       [&](const auto &eng) { return eng.text == item.text; });
+                               }),
+                mixed.end());
             mixed.insert(mixed.begin(),
                          std::make_move_iterator(englishItems.begin()),
                          std::make_move_iterator(englishItems.end()));

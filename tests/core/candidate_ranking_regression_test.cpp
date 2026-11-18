@@ -2886,7 +2886,17 @@ TEST_F(CandidateRankingRegression, ShiftUppercaseEntersCompositionAndPreservesCa
             pinyin::PinyinCandidateProvider provider(isolated);
             Host host;
             fcitx5::ModernIMEController controller(host, &provider);
-            // Seed lowercase "linux" repeatedly first to reproduce user's DB state.
+            // Seed both mature Chinese ("了") and lowercase "linux" first.
+            {
+                core::CommitEvent le;
+                le.text = "了";
+                le.fullPinyin = "le";
+                le.rawKeystrokes = "l";
+                le.role = core::CommitCandidateRole::Chinese;
+                le.consumedInputBytes = 1;
+                le.timestampMs = nowMs();
+                for (int i = 0; i < 10; ++i) provider.onCommitEvent(le);
+            }
             for (int i = 0; i < 3; ++i) {
                 type(controller, "linux");
                 auto lowerIdx = rank(controller.page(), "linux");
@@ -2896,8 +2906,8 @@ TEST_F(CandidateRankingRegression, ShiftUppercaseEntersCompositionAndPreservesCa
             type(controller, "L");
             ASSERT_FALSE(controller.page().items.empty());
             EXPECT_EQ(controller.page().preedit, "L");
-            EXPECT_EQ(controller.page().items.front().text, "L");
-            EXPECT_GE(controller.page().items.size(), 2u);
+            ASSERT_EQ(controller.page().items.size(), 2u);
+            EXPECT_EQ(controller.page().items[0].text, "L");
             EXPECT_EQ(controller.page().items[1].text, "l");
             for (const char c : std::string_view("inux")) {
                 ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Character, c}));
@@ -2906,6 +2916,18 @@ TEST_F(CandidateRankingRegression, ShiftUppercaseEntersCompositionAndPreservesCa
             EXPECT_EQ(controller.page().items.front().text, "Linux");
             ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Space}));
             EXPECT_EQ(host.committed, "Linux");
+            for (const std::string_view mixedCaseWord : {"GitHub", "CMake"}) {
+                type(controller, mixedCaseWord);
+                ASSERT_FALSE(controller.page().items.empty());
+                EXPECT_EQ(controller.page().items.front().text, mixedCaseWord);
+                for (const auto &item : controller.page().items) {
+                    const bool hasNonAscii = std::any_of(
+                        item.text.begin(), item.text.end(),
+                        [](unsigned char ch) { return ch >= 0x80; });
+                    EXPECT_FALSE(hasNonAscii) << "Unexpected CJK/mixed leak: " << item.text;
+                }
+                ASSERT_TRUE(controller.handle({fcitx5::KeyKind::Space}));
+            }
             ASSERT_TRUE(provider.flush());
         }
         {
