@@ -692,7 +692,7 @@ GNOME 扩展仅在当前 GNOME 图形与 DBus 会话中自动部署。ModernIME 
 
 ### 5. 质量与性能说明
 
-此前的商业输入法评分表缺少可复核的同条件测量，已撤下；目前不宣称固定的对标达成率、超越商业输入法或零延迟。已实施能力、直接测量条件和剩余边界见[升级路线图](docs/全面升级审计与路线图-2026-11-08.md)。版本化质量语料及跨应用桌面综合验收仍在推进，局部构建和检查通过不代表整体产品验收完成。
+此前的商业输入法评分表缺少可复核的同条件测量，已撤下；目前不宣称固定的对标达成率、超越商业输入法或零延迟。已实施能力、直接测量条件和剩余边界见[升级路线图](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/535fbb3df9f78de553584e6d00d2bdc29ba7dacc/docs/%E5%85%A8%E9%9D%A2%E5%8D%87%E7%BA%A7%E5%AE%A1%E8%AE%A1%E4%B8%8E%E8%B7%AF%E7%BA%BF%E5%9B%BE-2026-11-08.md)。版本化质量语料及跨应用桌面综合验收仍在推进，局部构建和检查通过不代表整体产品验收完成。
 
 ### 拼音内部音节歧义
 
@@ -721,7 +721,7 @@ python3 tools/replay_pinyin_quality.py --binary build/dev/tools/modernime_pinyin
 
 X11 会话使用 ModernIME 自绘候选栏，锚定到光标下方，靠近屏幕底部时翻到上方。Wayland 会话使用应用提供的候选面板或由 Fcitx5 选择可用的桌面面板；GNOME Shell 面板需启用随项目提供的输入法面板扩展（Kimpanel）。安装、自启与设置中的重启均保留自动 UI 选择。请勿在 Wayland 下强制 `-u modernime-ui`：GTK 自绘弹窗无法跨应用定位。“系统与诊断”会区分GNOME面板未安装、等待重新登录、未启用、运行中和旧面板运行中；已发现但未启用的项目面板可直接启用，无需重启Fcitx5。概览会提示面板未就绪，并提供诊断入口。GNOME 面板的字体、配色、轮廓和间距通过“候选与外观 → 打开 GNOME 面板设置”调整，默认跟随桌面；设置客户端的自绘预览不代表该面板；扩展不可用时请在“系统与诊断”检查会话与扩展状态。
 
-Ubuntu 24.04 / GNOME 46 的隔离桌面已验证原生 GTK、Qt 5.15 Wayland、Chrome 157 原生 Wayland 和系统概览搜索通过实际按键上屏中文；概览搜索支持在表情后插入中文而不破坏已有字符。Chrome 使用 `--ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3`，Fcitx 的 IBus 前端需启用。随项目提供的扩展现会在 GNOME 46 新输入连接建立后恢复已有输入焦点及输入框类型；已验证先打开浏览器、再启动输入法时无需重新聚焦即可输入中文，密码框仍保持原始输入。该恢复适配仅针对 GNOME 46；扩展更新仍需重新登录加载。跨应用验证与限制记录在[升级路线图](docs/全面升级审计与路线图-2026-11-08.md)，不代表所有应用版本和显示配置均已验证。
+Ubuntu 24.04 / GNOME 46 的隔离桌面已验证原生 GTK、Qt 5.15 Wayland、Chrome 157 原生 Wayland 和系统概览搜索通过实际按键上屏中文；概览搜索支持在表情后插入中文而不破坏已有字符。Chrome 使用 `--ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3`，Fcitx 的 IBus 前端需启用。随项目提供的扩展现会在 GNOME 46 新输入连接建立后恢复已有输入焦点及输入框类型；已验证先打开浏览器、再启动输入法时无需重新聚焦即可输入中文，密码框仍保持原始输入。该恢复适配仅针对 GNOME 46；扩展更新仍需重新登录加载。跨应用验证与限制记录在[升级路线图](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/535fbb3df9f78de553584e6d00d2bdc29ba7dacc/docs/%E5%85%A8%E9%9D%A2%E5%8D%87%E7%BA%A7%E5%AE%A1%E8%AE%A1%E4%B8%8E%E8%B7%AF%E7%BA%BF%E5%9B%BE-2026-11-08.md)，不代表所有应用版本和显示配置均已验证。
 
 概览搜索现在共用 GNOME 原生异步输入链路，扩展只负责候选面板和菜单，不再同步拦截搜索框按键或自行插入提交文本。概览搜索与上述 Wayland 浏览器均需要 Fcitx 的 IBus 前端；若曾手动禁用，请在 Fcitx 附加组件中重新启用。GNOME 46 已验证空格及实际鼠标选词、表情后的中文插入和退出概览后的面板隐藏。
 
@@ -987,7 +987,7 @@ modernime-session-init --remove-gnome-extension
 
 - **Ubuntu 22.04 LTS (Jammy) 测试断言解耦与透明度强化**：将 `pinyin_quality_test` 与 `pinyin_daily_simulation_test` 中技术词条「调优」在 Jammy 低版本 LibIME 语言模型下的严格等号断言解耦为上限区间断言（`<= 15`），并在断言失败时精确输出实际排位数值，彻底杜绝跨平台因 LibIME 底层次选细微顺位差异导致的假阳性构建阻断；完整保留 10 次选词提升至首位（Rank 0）与不可变快照持久化契约。
 - **全平台构建与签名包**：Ubuntu 24.04 DEB、Ubuntu 22.04 DEB、openEuler 24.09 RPM 及 Linux 便携归档全线通过自动化门禁与签名发布。
-- 完整发布说明见 [v0.1.17](docs/releases/v0.1.17.md)，架构验收详情见 [架构整改最终验收报告](docs/架构整改最终验收报告.md)。
+- 完整发布说明见 [v0.1.17](docs/releases/v0.1.17.md)，架构验收详情见 [架构整改最终验收报告](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/535fbb3df9f78de553584e6d00d2bdc29ba7dacc/docs/%E6%9E%B6%E6%9E%84%E6%95%B4%E6%94%B9%E6%9C%80%E7%BB%88%E9%AA%8C%E6%94%B6%E6%8A%A5%E5%91%8A.md)。
 
 ### v0.1.16 (2026-10-19，线上门禁未通过)
 
@@ -1005,7 +1005,7 @@ modernime-session-init --remove-gnome-extension
 - **安装生命周期与事务回滚**：统一安装生命周期状态机，完善多进程安全写入、原子替换与损坏自动回滚，确保升级与卸载的完全对称与幂等。
 - **中文命名与双向规范**：全面落实中文文档命名与 Git 提交规范，保持 27 项双向兼容软链接与文档映射，保留历史追溯性。
 - **自动化全量验收与真实桌面点验**：通过 G0~G5 及 G7 强契约检查器自动化全量门禁；在真实 GNOME 桌面环境下完成打字选词、翻页、热重载与会话加载验证，用户体验确认正常。
-- 完整发布说明见 [v0.1.16](docs/releases/v0.1.16.md)，架构验收详情见 [架构整改最终验收报告](docs/架构整改最终验收报告.md)。
+- 完整发布说明见 [v0.1.16](docs/releases/v0.1.16.md)，架构验收详情见 [架构整改最终验收报告](https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method/blob/535fbb3df9f78de553584e6d00d2bdc29ba7dacc/docs/%E6%9E%B6%E6%9E%84%E6%95%B4%E6%94%B9%E6%9C%80%E7%BB%88%E9%AA%8C%E6%94%B6%E6%8A%A5%E5%91%8A.md)。
 
 ### v0.1.13 (2026-10-15)
 

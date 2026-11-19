@@ -33,11 +33,6 @@
       "旧路径": "docs/RELEASE_MAINTENANCE.md",
       "中文路径": "docs/发布维护指南.md",
       "主检出已迁移": true
-    },
-    {
-      "旧路径": "docs/ARCHITECTURE_REMEDIATION_ACCEPTANCE.md",
-      "中文路径": "docs/架构整改最终验收报告.md",
-      "主检出已迁移": false
     }
   ],
   "历史资料索引": "docs/历史资料索引.md"
