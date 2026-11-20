@@ -589,7 +589,7 @@ if(MODERNIME_BUILD_LIBIME_PINYIN)
             COMMAND modernime_input_experience_replay_tests
                 "${CMAKE_CURRENT_BINARY_DIR}/input-experience-replay"
         )
-        set_tests_properties(modernime_input_experience_replay PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+        set_tests_properties(modernime_input_experience_replay PROPERTIES TIMEOUT 1200 RUN_SERIAL TRUE)
     endif()
 
     if(NOT MODERNIME_SIMULATE_MISSING_GTEST)

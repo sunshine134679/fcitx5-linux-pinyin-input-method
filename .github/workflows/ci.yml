@@ -89,9 +89,36 @@ jobs:
             -DMODERNIME_BUILD_UI_LAYOUT_TESTS=ON \
             -DMODERNIME_BUILD_TESTS=ON
           cmake --build build/ci-performance --target modernime_personal_engine_benchmark modernime_input_experience_replay_tests --parallel 2
+          set +e
           ctest --test-dir build/ci-performance --output-on-failure \
             -R '^(modernime_personal_engine_benchmark|modernime_input_experience_replay)$' \
             --output-junit "$PWD/build/ci-performance/release-junit.xml"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            python3 - "$PWD/build/ci-performance/release-junit.xml" "$PWD/build/ci-performance/Testing/Temporary/LastTestsFailed.log" <<'PYEOF'
+          import pathlib, sys, xml.etree.ElementTree as ET
+          junit = pathlib.Path(sys.argv[1])
+          failed_log = pathlib.Path(sys.argv[2])
+          names = []
+          if junit.is_file():
+              try:
+                  root = ET.parse(junit).getroot()
+                  for tc in root.iter("testcase"):
+                      for tag in ("failure", "error"):
+                          node = tc.find(tag)
+                          if node is not None:
+                              msg = (node.attrib.get("message") or node.text or "").strip().splitlines()[:5]
+                              names.append(f"{tc.attrib.get('name', '?')}: {' | '.join(msg)}")
+              except Exception as exc:
+                  names.append(f"junit-parse-error: {exc}")
+          if not names and failed_log.is_file():
+              names = [line.strip() for line in failed_log.read_text(errors="replace").splitlines() if line.strip()]
+          summary = "; ".join(names) if names else "no failed testcase parsed"
+          print(f"::error title=Performance Gate CTest Failed::{summary[:1800]}")
+          PYEOF
+            exit "$rc"
+          fi
 
       - name: Verify required tests contracts
         run: |
