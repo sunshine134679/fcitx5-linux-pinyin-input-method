@@ -257,7 +257,8 @@ pinyin::PinyinProviderOptions pinyinOptions(
     return {settings.learningEnabled, settings.contextLearningEnabled,
             settings.englishDefinitionEnabled,
             settings.clipboardEnabled, settings.clipboardTrigger, settings.fuzzyPinyin,
-            settings.pinyinScheme, settings.candidatePins, settings.calculatorEnabled, settings.symbolSearchEnabled};
+            settings.pinyinScheme, settings.candidatePins, settings.calculatorEnabled, settings.symbolSearchEnabled,
+            settings.typoCorrectionEnabled, settings.dynamicPreeditSeparator};
 }
 #endif
 

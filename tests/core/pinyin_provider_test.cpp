@@ -396,6 +396,204 @@ void testFullPinyinInputIsAutomaticallySegmentedInPreedit() {
     std::filesystem::remove(learningPath.string() + "-shm", error);
 }
 
+void testTypoLatticeAndDynamicPreedit() {
+    const auto learningPath = testPath("typo-lattice-preedit-learning.sqlite3");
+    modernime::pinyin::PinyinDataPaths paths;
+    paths.hotwordDictionary = MODERNIME_PINYIN_HOTWORDS_BUILD_BINARY;
+    paths.learningStore = learningPath.string();
+    modernime::pinyin::PinyinProviderOptions options;
+    options.learningEnabled = false;
+    options.contextLearningEnabled = false;
+    modernime::pinyin::PinyinCandidateProvider provider(paths, options);
+
+    // 1. xan -> xanch -> xancheng -> backspace back to xan:
+    //    Exact split x'an ("西安") leads on xan; typing ch/cheng promotes
+    //    omission-corrected "线程" to Top-1 and dynamically merges preedit '\''
+    //    while preserving original user keystrokes.
+    assertTrue(provider.append("xan"), "xan accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "西安",
+               "xan exact split 西安 ranks ahead of typo 先");
+    assertTrue(indexOf(provider.page(), "先") > 0 &&
+                   indexOf(provider.page(), "先") < 12,
+               "xan still includes typo candidate 先 behind 西安");
+    assertTrue(provider.page().preedit == "x'an",
+               "xan preedit aligns to Top-1 西安 as x'an");
+
+    assertTrue(provider.append("ch"), "append ch to xan -> xanch");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "线程",
+               "xanch omission correction ranks 线程 at Top-1");
+    assertTrue(hasText(provider.page(), "现成") &&
+                   hasText(provider.page(), "县城"),
+               "xanch subsequent candidates include 现成 and 县城");
+    assertTrue(provider.page().preedit == "xan'ch",
+               "xanch dynamically merges x'an into xan'ch while retaining raw letters");
+
+    assertTrue(provider.append("eng"), "append eng to xanch -> xancheng");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "线程",
+               "xancheng omission correction ranks 线程 at Top-1");
+    assertTrue(indexOf(provider.page(), "县城") < 5 &&
+                   indexOf(provider.page(), "现成") < 5,
+               "xancheng subsequent candidates include 县城 and 现成");
+    assertTrue(provider.page().preedit == "xan'cheng",
+               "xancheng preedit retains raw letters as xan'cheng");
+
+    // Backspace consistency: xancheng -> xanch -> xan
+    assertTrue(provider.eraseLast() && provider.eraseLast() && provider.eraseLast(),
+               "backspace eng from xancheng -> xanch");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "线程" &&
+                   provider.page().preedit == "xan'ch",
+               "backspacing to xanch keeps 线程 at Top-1 and preedit xan'ch");
+    assertTrue(provider.eraseLast() && provider.eraseLast(),
+               "backspace ch from xanch -> xan");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "西安" &&
+                   provider.page().preedit == "x'an",
+               "backspacing back to xan restores Top-1 西安 and preedit x'an");
+
+    // Selection of typo candidate consumes full rawInput cleanly
+    assertTrue(provider.append("ch"), "re-append ch -> xanch");
+    assertTrue(provider.page().items.front().consumedInputBytes == 5,
+               "xanch Top-1 线程 consumes all 5 raw bytes");
+    assertTrue(provider.select(0) && provider.page().items.empty(),
+               "selecting 线程 from xanch commits and clears composition");
+
+    // 2. jn -> jnch -> jncheng -> backspace:
+    //    2-letter abbreviation jn stays intact; jnch promotes "进程" to Top-1
+    //    with preedit "jn'ch" while coexisting with normal j'n'ch abbreviations.
+    provider.reset();
+    assertTrue(provider.append("jn"), "jn accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "今年",
+               "jn keeps normal 2-letter abbreviation 今年 at Top-1");
+
+    assertTrue(provider.append("ch"), "append ch to jn -> jnch");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "进程",
+               "jnch omission correction ranks 进程 at Top-1");
+    assertTrue(indexOf(provider.page(), "进城") < 6,
+               "jnch includes 进城 in top candidates");
+    assertTrue(hasText(provider.page(), "剑南春") &&
+                   hasText(provider.page(), "纪念钞"),
+               "jnch coexists with normal j'n'ch abbreviations 剑南春 and 纪念钞");
+    assertTrue(provider.page().preedit == "jn'ch",
+               "jnch dynamically formats preedit as jn'ch rather than j'n'ch");
+
+    assertTrue(provider.append("eng"), "append eng to jnch -> jncheng");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "进程",
+               "jncheng omission correction ranks 进程 at Top-1");
+    assertTrue(indexOf(provider.page(), "进城") < 4,
+               "jncheng includes 进城 right behind 进程");
+    assertTrue(provider.page().preedit == "jn'cheng",
+               "jncheng retains raw letters as jn'cheng");
+
+    // Backspace back to jn restores normal abbreviation
+    assertTrue(provider.eraseLast() && provider.eraseLast() &&
+                   provider.eraseLast() && provider.eraseLast() &&
+                   provider.eraseLast(),
+               "backspace cheng from jncheng -> jn");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "今年",
+               "backspacing from jncheng to jn restores 今年");
+
+    // 3. Respect manual separator '\'': never merge across explicit user '\''
+    for (const auto &[input, forbiddenTop] : {
+             std::pair<std::string_view, std::string_view>{"x'anch", "线程"},
+             std::pair<std::string_view, std::string_view>{"x'ancheng", "线程"},
+             std::pair<std::string_view, std::string_view>{"j'nch", "进程"},
+             std::pair<std::string_view, std::string_view>{"j'ncheng", "进程"}}) {
+        provider.reset();
+        assertTrue(provider.append(input), "manual separator input accepted");
+        assertTrue(provider.page().preedit == input,
+                   "manual separator preedit is preserved verbatim");
+        assertTrue(!provider.page().items.empty() &&
+                       provider.page().items.front().text != forbiddenTop &&
+                       !hasText(provider.page(), forbiddenTop),
+                   "typo correction never merges across manual separator '\''");
+    }
+
+    // 4. Transposition (xina->xian, nihoa->nihao) and adjacent key (jun->jin)
+    provider.reset();
+    assertTrue(provider.append("xina"), "xina accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "吸纳" &&
+                   provider.page().preedit == "xi'na",
+               "xina keeps exact split 吸纳 at Top-1 with preedit xi'na");
+    assertTrue(hasText(provider.page(), "先"),
+               "xina includes transposed candidate 先");
+
+    assertTrue(provider.append("cheng"), "append cheng to xina -> xinacheng");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "线程" &&
+                   provider.page().preedit == "xina'cheng",
+               "xinacheng promotes 线程 to Top-1 with raw preedit xina'cheng");
+
+    provider.reset();
+    assertTrue(provider.append("nihoa"), "nihoa accepted");
+    assertTrue(indexOf(provider.page(), "你好") < 3,
+               "general transposition nihoa recalls 你好 in top 3");
+
+    provider.reset();
+    assertTrue(provider.append("jun"), "jun accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "均",
+               "single valid syllable jun keeps 均 at Top-1");
+
+    provider.reset();
+    assertTrue(provider.append("junshi"), "junshi accepted");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "军事",
+               "valid word junshi keeps 军事 at Top-1");
+
+    provider.reset();
+    assertTrue(provider.append("juncheng"), "juncheng accepted");
+    assertTrue(indexOf(provider.page(), "进程") < 6 &&
+                   provider.page().preedit == "jun'cheng",
+               "adjacent-key juncheng exposes 进程 while keeping raw preedit jun'cheng");
+
+    // 5. Option switches: typoCorrectionEnabled & dynamicPreeditSeparator
+    provider.reset();
+    provider.setDynamicPreeditSeparator(false);
+    assertTrue(provider.append("xan"), "xan accepted with dynamic separator off");
+    assertTrue(provider.page().preedit == "xan" &&
+                   !provider.page().items.empty() &&
+                   provider.page().items.front().text == "西安",
+               "disabling dynamicPreeditSeparator keeps raw preedit xan without altering Top-1");
+    assertTrue(provider.append("ch"), "xanch accepted with dynamic separator off");
+    assertTrue(provider.page().preedit == "xanch" &&
+                   !provider.page().items.empty() &&
+                   provider.page().items.front().text == "线程",
+               "disabling dynamicPreeditSeparator keeps raw preedit xanch while typo correction stays active");
+    provider.setDynamicPreeditSeparator(true);
+    assertTrue(provider.page().preedit == "xan'ch",
+               "re-enabling dynamicPreeditSeparator immediately updates preedit to xan'ch");
+
+    provider.setTypoCorrectionEnabled(false);
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text != "线程" &&
+                   !hasText(provider.page(), "线程") &&
+                   provider.page().preedit == "x'an'ch",
+               "disabling typoCorrectionEnabled disables omission correction on xanch");
+    provider.reset();
+    assertTrue(provider.append("jnch"), "jnch accepted with typo correction off");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text != "进程" &&
+                   !hasText(provider.page(), "进程"),
+               "disabling typoCorrectionEnabled disables omission correction on jnch");
+    auto reenabled = options;
+    reenabled.typoCorrectionEnabled = true;
+    reenabled.dynamicPreeditSeparator = true;
+    provider.applyOptions(reenabled);
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "进程" &&
+                   provider.page().preedit == "jn'ch",
+               "applyOptions re-enabling typoCorrectionEnabled restores 进程 and jn'ch");
+}
+
 void testTypoCorrectionTransposition() {
     const auto learningPath = testPath("typo-transposition-learning.sqlite3");
     modernime::pinyin::PinyinDataPaths paths;
@@ -1929,6 +2127,7 @@ int main(int argc, char **argv) {
     testExtensionDictionaryIsLoadedAsOfflineKnowledge();
     testRepeatedSelectionAcrossContextsStillPromotes();
     testTypoCorrectionTransposition();
+    testTypoLatticeAndDynamicPreedit();
     testPunctuationAndSymbolMacroCandidates();
     testNumeralMacrosAtZeroGroupBoundaries();
     testVCommandMenuAndDeduplication();

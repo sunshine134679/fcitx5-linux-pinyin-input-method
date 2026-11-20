@@ -29,6 +29,8 @@ std::vector<SettingsChange> SettingsWindowModel::changes() const {
     add(&S::defaultMode, "输入习惯", "默认输入状态");
     add(&S::toggleKey, "输入习惯", "中英文切换键");
     add(&S::pinyinScheme, "输入习惯", "拼音方案");
+    add(&S::typoCorrectionEnabled, "输入习惯", "拼音智能纠错");
+    add(&S::dynamicPreeditSeparator, "输入习惯", "预编辑自动分词");
     for (const auto &option : core::kFuzzyPinyinOptions) {
         if (edited_.fuzzyPinyin.*option.member != loaded_.fuzzyPinyin.*option.member)
             result.push_back({"输入习惯 · 模糊音", option.label});

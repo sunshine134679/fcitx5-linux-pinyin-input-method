@@ -45,6 +45,8 @@ struct PinyinProviderOptions final {
     std::vector<core::CandidatePin> candidatePins;
     bool calculatorEnabled = true;
     bool symbolSearchEnabled = true;
+    bool typoCorrectionEnabled = true;
+    bool dynamicPreeditSeparator = true;
 };
 
 struct ResourceChange final {
@@ -132,6 +134,8 @@ public:
     void setEnglishDefinitionEnabled(bool enabled);
     void setClipboardEnabled(bool enabled);
     void setClipboardTrigger(std::string trigger);
+    void setTypoCorrectionEnabled(bool enabled);
+    void setDynamicPreeditSeparator(bool enabled);
 
     std::shared_ptr<SharedResources> sharedResources() const;
     void setOnReadyCallback(std::function<void()> callback);

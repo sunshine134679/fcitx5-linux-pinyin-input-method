@@ -75,6 +75,8 @@ struct ModernIMESettings final {
     std::string clientTheme = "blue";
     FuzzyPinyinOptions fuzzyPinyin;
     PinyinScheme pinyinScheme = PinyinScheme::Full;
+    bool typoCorrectionEnabled = true;
+    bool dynamicPreeditSeparator = true;
     bool autoPairPunctuation = true;
     bool smartPunctuation = true;
     UnderscoreStyle underscoreStyle = UnderscoreStyle::Smart;

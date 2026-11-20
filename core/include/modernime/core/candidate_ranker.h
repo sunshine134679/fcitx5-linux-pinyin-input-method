@@ -84,12 +84,17 @@ struct CandidateScore final {
     // Native code-based parsers supply match evidence in their own alphabet.
     // Full-pinyin callers continue to derive priority from userInput.
     std::optional<int> decoded_match_priority = std::nullopt;
+    // Lattice typo-correction penalty (>= 0). Zero for exact/native candidates.
+    double typo_penalty = 0.0;
+    // Preedit segmented along this candidate's exact raw-input spans (preserving
+    // original keystrokes while dynamically repositioning '\'' boundaries).
+    std::string raw_preedit = {};
 
 
     double base_prior() const {
         const double sourceStep = (phrase_length == 1 && unigram_prominence > 0.0) ? DenseNativeRankStep : 1.0;
         double score = native_rank_scale * sourceStep * static_cast<double>(source_index) +
-               unigram_comparison_offset -
+               unigram_comparison_offset + typo_penalty -
                DictionaryPriorWeight * dictionary_bonus -
                ContextPriorWeight * context_bonus -
                LanguageContextPriorWeight * language_context_bonus -
@@ -100,7 +105,7 @@ struct CandidateScore final {
         }
         if (is_lexical) {
             score -= 3.0;
-            if (source_index == 0) {
+            if (source_index == 0 && typo_penalty <= 0.0) {
                 score -= 2.0;
             }
         } else if (phrase_length >= 2 && context_bonus <= 0.0 && recent_choice_bonus <= 0.0) {

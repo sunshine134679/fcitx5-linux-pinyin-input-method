@@ -59,6 +59,9 @@ void testDefaultsAndRoundTrip() {
                "missing file uses clipboard enabled default");
     assertTrue(missing.settings.clipboardTrigger == defaults.clipboardTrigger,
                "missing file uses clipboard trigger default");
+    assertTrue(missing.settings.typoCorrectionEnabled &&
+                   missing.settings.dynamicPreeditSeparator,
+               "missing file enables typo correction and dynamic preedit separator by default");
 
     auto expected = defaults;
     expected.inputEnabled = false;
@@ -77,6 +80,8 @@ void testDefaultsAndRoundTrip() {
     expected.clipboardEnabled = false;
     expected.clipboardTrigger = "B+7";
     expected.characterExtractionEnabled = false;
+    expected.typoCorrectionEnabled = false;
+    expected.dynamicPreeditSeparator = false;
     std::string error;
     assertTrue(modernime::core::SettingsStore::save(path, expected, &error),
                "settings save succeeds: " + error);
@@ -111,6 +116,11 @@ void testDefaultsAndRoundTrip() {
     assertTrue(loaded.settings.characterExtractionEnabled ==
                    expected.characterExtractionEnabled,
                "character extraction round-trips");
+    assertTrue(loaded.settings.typoCorrectionEnabled ==
+                       expected.typoCorrectionEnabled &&
+                   loaded.settings.dynamicPreeditSeparator ==
+                       expected.dynamicPreeditSeparator,
+               "typo correction and dynamic preedit separator round-trip");
 }
 
 void testClientThemeRoundTrip() {

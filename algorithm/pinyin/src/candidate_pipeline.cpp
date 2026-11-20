@@ -8,6 +8,7 @@
 #include "modernime/core/common_characters.h"
 #include "modernime/core/pinyin_match.h"
 
+#include <unordered_map>
 #include <unordered_set>
 
 #include <libime/pinyin/pinyincontext.h>
@@ -80,7 +81,9 @@ CandidatePipelineResult buildCandidatePipeline(
     const std::vector<std::string> &previousOrder,
     const libime::PinyinContext *typoContext, const RecentChoices *recentChoices,
     const libime::PinyinContext *variantContext, const ShuangpinInput *shuangpin,
-    std::size_t nativeOffset, const ContextDecoder *contextDecoder, const MixedWordIndex *mixedWords) {
+    std::size_t nativeOffset, const ContextDecoder *contextDecoder,
+    const MixedWordIndex *mixedWords,
+    const std::vector<TypoDecodedPath> *typoPaths) {
     CandidatePipelineResult result;
     const auto &nativeCandidates = context.candidates();
     // libime 保留 N-best 整句在前，后续候选按解码分数降序排列；高分更优。
@@ -240,6 +243,192 @@ CandidatePipelineResult buildCandidatePipeline(
             // 分数越高越优，容错补充扣除 0.8，避免把纠错惩罚变成奖励。
             candidate.decoder_score = adjustedScore;
             if (contextDecoder) candidate.language_context_bonus = contextDecoder->gain(typoCandidates[index]);
+            result.scored.push_back(std::move(candidate));
+        }
+    }
+
+    if (nativeOffset == 0 && typoPaths != nullptr && !typoPaths->empty() &&
+        shuangpin == nullptr) {
+        const auto &rawInput = context.userInput();
+        const bool hasManualSep = rawInput.find('\'') != std::string::npos;
+        const bool rawIsValidFull = core::PinyinMatchPolicy::isValidPinyinSequence(
+            core::PinyinMatchPolicy::canonical(rawInput));
+        const bool hasNativePrio2 = rawIsValidFull && std::any_of(
+            nativeEntries.begin(), nativeEntries.end(),
+            [&rawInput](const NativeCandidateEntry &entry) {
+                return entry.match_priority == 2 &&
+                       entry.consumed == rawInput.size();
+            });
+        struct LatticeTypoCandidate {
+            std::string text;
+            std::string full_pinyin;
+            std::string raw_preedit;
+            std::size_t consumed = 0;
+            float raw_decoder_score = 0.0F;
+            float adjusted_decoder_score = 0.0F;
+            double language_context_bonus = 0.0;
+            double typo_penalty = 0.0;
+            int match_priority = 1;
+            double rank_key = 0.0;
+        };
+        std::vector<LatticeTypoCandidate> latticeCandidates;
+        std::unordered_map<std::string, std::size_t> latticeIndex;
+
+        for (const auto &decodedPath : *typoPaths) {
+            if (!decodedPath.context) {
+                continue;
+            }
+            const auto &path = decodedPath.path;
+            const auto &segments = path.segments;
+            if (segments.empty()) {
+                continue;
+            }
+            std::vector<std::size_t> segDecEnds;
+            segDecEnds.reserve(segments.size());
+            std::size_t decCursor = 0;
+            for (std::size_t i = 0; i < segments.size(); ++i) {
+                if (i > 0) {
+                    ++decCursor; // '\'' separator in decodedInput
+                }
+                decCursor += segments[i].syllable.size();
+                segDecEnds.push_back(decCursor);
+            }
+
+            const auto &pathCandidates = decodedPath.context->candidates();
+            const std::size_t pathLimit =
+                std::min<std::size_t>(pathCandidates.size(), 16);
+            for (std::size_t idx = 0; idx < pathLimit; ++idx) {
+                const auto &sentence = pathCandidates[idx].sentence();
+                if (sentence.empty() || sentence.back() == nullptr ||
+                    sentence.back()->to() == nullptr) {
+                    continue;
+                }
+                std::size_t decEnd = sentence.back()->to()->index();
+                while (decEnd > 0 && decEnd <= path.decodedInput.size() &&
+                       path.decodedInput[decEnd - 1] == '\'') {
+                    --decEnd;
+                }
+                std::optional<std::size_t> matchedSeg;
+                for (std::size_t s = 0; s < segDecEnds.size(); ++s) {
+                    if (segDecEnds[s] == decEnd) {
+                        matchedSeg = s;
+                        break;
+                    }
+                }
+                if (!matchedSeg) {
+                    continue;
+                }
+                const auto text = pathCandidates[idx].toString();
+                std::string fullPinyin;
+                try {
+                    fullPinyin = decodedPath.context->candidateFullPinyin(idx);
+                } catch (const std::exception &) {
+                    fullPinyin.clear();
+                }
+                if (text.empty() || fullPinyin.empty()) {
+                    continue;
+                }
+                const auto decodedPrefix =
+                    std::string_view(path.decodedInput).substr(0, segDecEnds[*matchedSeg]);
+                const int pathPriority =
+                    core::PinyinMatchPolicy::priority(decodedPrefix, fullPinyin);
+                // Prevent double-drift (typo + unrelated fuzzy mismatch).
+                if (pathPriority < 1) {
+                    continue;
+                }
+                std::size_t consumed = segments[*matchedSeg].rawEnd;
+                while (consumed < rawInput.size() &&
+                       (rawInput[consumed] == '\'' || rawInput[consumed] == ',')) {
+                    ++consumed;
+                }
+                const bool isFullSpan =
+                    (*matchedSeg + 1 == segments.size()) &&
+                    consumed == rawInput.size();
+                const int assignedPriority =
+                    !isFullSpan
+                        ? -1
+                        : (hasNativePrio2 && path.allSyllablesComplete &&
+                                   pathPriority == 2
+                               ? 2
+                               : 1);
+                const float rawScore = pathCandidates[idx].score();
+                const float adjustedScore =
+                    rawScore - static_cast<float>(path.totalPenalty * 0.25);
+                const double rankKey =
+                    static_cast<double>(rawScore) - 0.5 * path.totalPenalty;
+                const auto key = spanKey(text, fullPinyin, consumed);
+                if (seenKeys.contains(key)) {
+                    continue;
+                }
+                if (const auto it = latticeIndex.find(key);
+                    it != latticeIndex.end()) {
+                    auto &existing = latticeCandidates[it->second];
+                    if (rankKey > existing.rank_key) {
+                        existing.raw_decoder_score = rawScore;
+                        existing.adjusted_decoder_score = adjustedScore;
+                        existing.typo_penalty = path.totalPenalty;
+                        existing.match_priority = assignedPriority;
+                        existing.rank_key = rankKey;
+                        if (isFullSpan && !hasManualSep) {
+                            existing.raw_preedit = path.rawPreedit;
+                        }
+                    }
+                    continue;
+                }
+                LatticeTypoCandidate item;
+                item.text = text;
+                item.full_pinyin = fullPinyin;
+                if (isFullSpan && !hasManualSep) {
+                    item.raw_preedit = path.rawPreedit;
+                }
+                item.consumed = consumed;
+                item.raw_decoder_score = rawScore;
+                item.adjusted_decoder_score = adjustedScore;
+                if (contextDecoder) {
+                    item.language_context_bonus =
+                        contextDecoder->gain(pathCandidates[idx]);
+                }
+                item.typo_penalty = path.totalPenalty;
+                item.match_priority = assignedPriority;
+                item.rank_key = rankKey;
+                latticeIndex.emplace(key, latticeCandidates.size());
+                latticeCandidates.push_back(std::move(item));
+            }
+        }
+
+        std::stable_sort(
+            latticeCandidates.begin(), latticeCandidates.end(),
+            [](const LatticeTypoCandidate &a, const LatticeTypoCandidate &b) {
+                if (a.rank_key != b.rank_key) {
+                    return a.rank_key > b.rank_key;
+                }
+                return a.text < b.text;
+            });
+
+        constexpr std::size_t kMaxMergedLatticeCandidates = 24;
+        std::size_t fullRank = 0;
+        std::size_t partialRank = 0;
+        const std::size_t emitCount =
+            std::min(latticeCandidates.size(), kMaxMergedLatticeCandidates);
+        for (std::size_t i = 0; i < emitCount; ++i) {
+            auto &entry = latticeCandidates[i];
+            const auto key = spanKey(entry.text, entry.full_pinyin, entry.consumed);
+            if (!seenKeys.insert(key).second) {
+                continue;
+            }
+            core::CandidateScore candidate;
+            candidate.source_index =
+                entry.match_priority >= 0 ? fullRank++ : partialRank++;
+            candidate.text = std::move(entry.text);
+            candidate.full_pinyin = std::move(entry.full_pinyin);
+            candidate.consumed_input_bytes = entry.consumed;
+            candidate.decoder_score = entry.adjusted_decoder_score;
+            candidate.language_context_bonus = entry.language_context_bonus;
+            candidate.typo_penalty = entry.typo_penalty;
+            candidate.decoded_match_priority = entry.match_priority;
+            candidate.raw_preedit = std::move(entry.raw_preedit);
+            seenWords.insert(
+                core::candidateOrderKey(candidate.text, candidate.full_pinyin));
             result.scored.push_back(std::move(candidate));
         }
     }

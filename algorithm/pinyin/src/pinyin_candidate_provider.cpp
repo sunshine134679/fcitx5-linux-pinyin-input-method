@@ -507,7 +507,8 @@ bool isBetterPreeditAlignment(const PreeditAlignment &candidate,
 }
 
 std::optional<PreeditAlignment> alignPreeditToCandidate(
-    std::string_view rawInput, std::string_view fullPinyin) {
+    std::string_view rawInput, std::string_view fullPinyin,
+    bool typoCorrectionEnabled = true) {
     if (rawInput.empty() || fullPinyin.empty() ||
         rawInput.find('\'') != std::string_view::npos) {
         return std::nullopt;
@@ -592,7 +593,9 @@ std::optional<PreeditAlignment> alignPreeditToCandidate(
             consider(syllable.size(), true, false);
         }
 
-        const auto typoLen = matchTypoSyllable(remaining, syllable);
+        const auto typoLen = typoCorrectionEnabled
+            ? core::PinyinMatchPolicy::matchTypoLatticeSyllable(remaining, syllable)
+            : std::size_t{0};
         if (typoLen > 0) {
             consider(typoLen, true, false);
         }
@@ -617,7 +620,7 @@ std::optional<PreeditAlignment> alignPreeditToCandidate(
             }
         }
 
-        if (isTypoPrefix(remaining, syllable) &&
+        if (typoCorrectionEnabled && isTypoPrefix(remaining, syllable) &&
             remaining.size() == rawInput.size() - inputOffset) {
             PreeditAlignment alignment;
             alignment.text = std::string(remaining);
@@ -647,29 +650,44 @@ std::optional<PreeditAlignment> alignPreeditToCandidate(
 }
 
 std::string automaticallySegmentedPreedit(
-    std::string_view rawInput, const CandidatePipelineResult &result) {
+    std::string_view rawInput, const CandidatePipelineResult &result,
+    const std::function<bool(std::string_view, std::string_view)> &isSuppressed = {},
+    bool typoCorrectionEnabled = true) {
     // An explicit separator is the user's segmentation choice.
     if (rawInput.find('\'') != std::string_view::npos) {
         return std::string(rawInput);
     }
 
-    // Try candidates in their actual ranked order so the displayed boundary
-    // follows the same phrase that the user sees first in the candidate list.
-    for (const auto sourceIndex : result.order) {
-        if (sourceIndex >= result.scored.size()) {
-            continue;
-        }
-        const auto &candidate = result.scored[sourceIndex];
-        // A leading single character can coexist with an inner-syllable word.
-        // Do not display the lower candidate's split above that single character.
-        if (candidate.full_pinyin.find('\'') == std::string::npos &&
-            core::PinyinMatchPolicy::exactInputMatch(rawInput, candidate.full_pinyin)) {
-            return std::string(rawInput);
-        }
-        const auto alignment =
-            alignPreeditToCandidate(rawInput, candidate.full_pinyin);
-        if (alignment.has_value()) {
-            return alignment->text;
+    // Try visible full-consumption candidates first in their actual ranked
+    // order so the displayed boundary always follows the Top-1 candidate.
+    for (const bool requireFull : {true, false}) {
+        for (const auto sourceIndex : result.order) {
+            if (sourceIndex >= result.scored.size()) {
+                continue;
+            }
+            const auto &candidate = result.scored[sourceIndex];
+            if (isSuppressed && isSuppressed(candidate.text, candidate.full_pinyin)) {
+                continue;
+            }
+            if (requireFull && candidate.consumed_input_bytes.has_value() &&
+                *candidate.consumed_input_bytes < rawInput.size()) {
+                continue;
+            }
+            if (!candidate.raw_preedit.empty()) {
+                return candidate.raw_preedit;
+            }
+            // A leading single character can coexist with an inner-syllable word.
+            // Do not display the lower candidate's split above that single character.
+            if (candidate.full_pinyin.find('\'') == std::string::npos &&
+                core::PinyinMatchPolicy::exactInputMatch(rawInput, candidate.full_pinyin)) {
+                return std::string(rawInput);
+            }
+            const auto alignment =
+                alignPreeditToCandidate(rawInput, candidate.full_pinyin,
+                                        typoCorrectionEnabled);
+            if (alignment.has_value()) {
+                return alignment->text;
+            }
         }
     }
     return std::string(rawInput);
@@ -739,6 +757,8 @@ public:
           clipboardTrigger_(options.clipboardTrigger),
           calculatorEnabled_(options.calculatorEnabled),
           symbolSearchEnabled_(options.symbolSearchEnabled),
+          typoCorrectionEnabled_(options.typoCorrectionEnabled),
+          dynamicPreeditSeparator_(options.dynamicPreeditSeparator),
           candidatePins_(options.candidatePins),
           observedDictionaryGeneration_(shared_ ? shared_->dictionaryGeneration() : 0),
           observedLearningRevision_(shared_ ? shared_->learningRevision() : 0),
@@ -1385,6 +1405,20 @@ public:
         }
     }
 
+    void setTypoCorrectionEnabled(bool enabled) {
+        if (typoCorrectionEnabled_ != enabled) {
+            typoCorrectionEnabled_ = enabled;
+            refresh();
+        }
+    }
+
+    void setDynamicPreeditSeparator(bool enabled) {
+        if (dynamicPreeditSeparator_ != enabled) {
+            dynamicPreeditSeparator_ = enabled;
+            refresh();
+        }
+    }
+
     void applyOptions(const PinyinProviderOptions &opts) {
         const bool fuzzyChanged = shared_->setFuzzyOptions(opts.fuzzyPinyin);
         const bool schemeChanged = shared_->setPinyinScheme(opts.pinyinScheme);
@@ -1413,6 +1447,14 @@ public:
         }
         if (symbolSearchEnabled_ != opts.symbolSearchEnabled) {
             symbolSearchEnabled_ = opts.symbolSearchEnabled; needRefresh = true;
+        }
+        if (typoCorrectionEnabled_ != opts.typoCorrectionEnabled) {
+            typoCorrectionEnabled_ = opts.typoCorrectionEnabled;
+            needRefresh = true;
+        }
+        if (dynamicPreeditSeparator_ != opts.dynamicPreeditSeparator) {
+            dynamicPreeditSeparator_ = opts.dynamicPreeditSeparator;
+            needRefresh = true;
         }
         setLearningEnabled(opts.learningEnabled);
         setContextLearningEnabled(opts.contextLearningEnabled);
@@ -1552,14 +1594,41 @@ private:
         const bool useShuangpin = context->useShuangpin();
         std::optional<ShuangpinInput> shuangpin;
         if (useShuangpin) shuangpin.emplace(rawInput, *ime().shuangpinProfile(), ime().fuzzyFlags());
-        const auto correctedInput = correctTypoInput(rawInput);
-        if (!extend && !useShuangpin && correctedInput != rawInput) {
+        const auto correctedInput = typoCorrectionEnabled_
+            ? correctTypoInput(rawInput)
+            : std::string(rawInput);
+        if (!extend && !useShuangpin && typoCorrectionEnabled_ &&
+            correctedInput != rawInput) {
             try {
                 typoContext =
                     std::make_unique<libime::PinyinContext>(shared_->ime.get());
                 typoContext->type(correctedInput);
             } catch (const std::exception &) {
                 typoContext.reset();
+            }
+        }
+        std::vector<TypoDecodedPath> typoDecodedPaths;
+        if (!extend && !useShuangpin && typoCorrectionEnabled_ &&
+            typoContext == nullptr) {
+            const auto rawCanonical = core::PinyinMatchPolicy::canonical(rawInput);
+            auto paths = core::PinyinMatchPolicy::generateTypoPaths(rawInput, 3);
+            typoDecodedPaths.reserve(paths.size());
+            for (auto &path : paths) {
+                const auto pathCanonical =
+                    core::PinyinMatchPolicy::canonical(path.decodedInput);
+                if (pathCanonical == rawCanonical) {
+                    continue;
+                }
+                try {
+                    auto ctx = std::make_unique<libime::PinyinContext>(
+                        shared_->ime.get());
+                    ctx->type(path.decodedInput);
+                    if (!ctx->candidates().empty()) {
+                        typoDecodedPaths.push_back(
+                            TypoDecodedPath{std::move(path), std::move(ctx)});
+                    }
+                } catch (const std::exception &) {
+                }
             }
         }
         // 容错变体上下文（2026-10-24 容错专项 F3/F4/F6/F8）：对有效拼音串
@@ -1593,14 +1662,19 @@ private:
             *context, *ime().dict(), learning.get(), requestNowMs,
             contextBefore_, contextAfter_, previousOrder, typoContext.get(), &recentChoices_,
             variantContext.get(), shuangpin ? &*shuangpin : nullptr, nativeOffset,
-            contextual ? &*contextual : nullptr, &shared_->mixedWords);
+            contextual ? &*contextual : nullptr, &shared_->mixedWords,
+            typoDecodedPaths.empty() ? nullptr : &typoDecodedPaths);
         nextNativeCandidate_ = result.nextNativeCandidate;
         page_.hasMoreCandidates = result.hasMoreCandidates;
         const auto segmentedInput =
-            shuangpin ? shuangpin->preedit() : automaticallySegmentedPreedit(rawInput, result);
+            shuangpin ? shuangpin->preedit()
+                      : automaticallySegmentedPreedit(rawInput, result, isSuppressed,
+                                                      typoCorrectionEnabled_);
+        const auto displayedSegmentedInput =
+            (!useShuangpin && !dynamicPreeditSeparator_) ? rawInput : segmentedInput;
         if (diagnostics_) {
             diagnostics_->timestampMs = requestNowMs;
-            diagnostics_->segmentedInput = segmentedInput;
+            diagnostics_->segmentedInput = displayedSegmentedInput;
             diagnostics_->scored = result.scored;
             diagnostics_->order = result.order;
         }
@@ -1874,7 +1948,7 @@ private:
         }
         compInput.shuangpin = useShuangpin;
         compInput.rawInput = rawInput;
-        compInput.segmentedInput = segmentedInput;
+        compInput.segmentedInput = displayedSegmentedInput;
         compInput.fullCandidates = std::move(fullItems);
         compInput.partialCandidates = std::move(partialPool);
         compInput.prefixEnds = prefixEnds;
@@ -2034,6 +2108,8 @@ private:
     std::string clipboardTrigger_ = "V+2";
     bool calculatorEnabled_ = true;
     bool symbolSearchEnabled_ = true;
+    bool typoCorrectionEnabled_ = true;
+    bool dynamicPreeditSeparator_ = true;
     std::vector<core::CandidatePin> candidatePins_;
     std::function<bool(const core::CandidateItem &)> candidateFilter_;
     core::CandidatePage page_;
@@ -2156,6 +2232,14 @@ void PinyinCandidateProvider::setClipboardEnabled(bool enabled) {
 
 void PinyinCandidateProvider::setClipboardTrigger(std::string trigger) {
     impl_->setClipboardTrigger(std::move(trigger));
+}
+
+void PinyinCandidateProvider::setTypoCorrectionEnabled(bool enabled) {
+    impl_->setTypoCorrectionEnabled(enabled);
+}
+
+void PinyinCandidateProvider::setDynamicPreeditSeparator(bool enabled) {
+    impl_->setDynamicPreeditSeparator(enabled);
 }
 
 std::shared_ptr<PinyinCandidateProvider::SharedResources>

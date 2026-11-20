@@ -271,5 +271,26 @@ int main() {
     assertTrue(extModel.reloadFromDisk(), "reloadFromDisk succeeds");
     assertTrue(!extModel.hasExternalModification(), "after reloadFromDisk, conflict is cleared");
 
+    // Verify typoCorrectionEnabled and dynamicPreeditSeparator change tracking & save
+    auto typoDraft = extModel.settings();
+    typoDraft.typoCorrectionEnabled = false;
+    typoDraft.dynamicPreeditSeparator = false;
+    extModel.setSettings(typoDraft);
+    assertTrue(extModel.dirty(), "toggling pinyin typo and preedit separator marks model dirty");
+    const auto typoChanges = extModel.changes();
+    bool hasTypoChange = false;
+    bool hasPreeditSepChange = false;
+    for (const auto &change : typoChanges) {
+        if (change.title == "拼音智能纠错") hasTypoChange = true;
+        if (change.title == "预编辑自动分词") hasPreeditSepChange = true;
+    }
+    assertTrue(hasTypoChange && hasPreeditSepChange,
+               "changes() reports both pinyin typo correction and dynamic preedit separator");
+    std::string typoErr;
+    assertTrue(extModel.save(&typoErr), "saving pinyin typo and preedit separator succeeds: " + typoErr);
+    assertTrue(!extModel.dirty() && !extModel.settings().typoCorrectionEnabled &&
+                   !extModel.settings().dynamicPreeditSeparator,
+               "saved typoCorrectionEnabled and dynamicPreeditSeparator persist cleanly");
+
     return EXIT_SUCCESS;
 }

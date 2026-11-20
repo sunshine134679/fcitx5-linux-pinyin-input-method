@@ -323,6 +323,8 @@ std::string computeSettingsHash(const ModernIMESettings &settings) {
     for (const auto &option : kPinyinSchemes) {
         if (option.scheme == settings.pinyinScheme) output << "pinyin.scheme=" << option.key << '\n';
     }
+    output << "pinyin.typo_correction=" << (settings.typoCorrectionEnabled ? "true" : "false") << '\n'
+           << "pinyin.dynamic_preedit_separator=" << (settings.dynamicPreeditSeparator ? "true" : "false") << '\n';
     return fnv1a64Hex(output.str());
 }
 
@@ -470,6 +472,10 @@ SettingsLoadResult SettingsStore::load(const std::filesystem::path &path) {
                 }
             } else if (fuzzy != kFuzzyPinyinOptions.end()) {
                 parsed = parseBoolean(value, result.settings.fuzzyPinyin.*fuzzy->member);
+            } else if (key == "pinyin.typo_correction") {
+                parsed = parseBoolean(value, result.settings.typoCorrectionEnabled);
+            } else if (key == "pinyin.dynamic_preedit_separator") {
+                parsed = parseBoolean(value, result.settings.dynamicPreeditSeparator);
             } else if (key == "appearance.client_theme") {
                 if (std::any_of(kClientThemes.begin(), kClientThemes.end(), [&](const auto &option) { return option.key == value; })) {
                     result.settings.clientTheme = value;
@@ -715,6 +721,8 @@ SettingsSaveResult SettingsStore::saveWithResult(
     for (const auto &option : kFuzzyPinyinOptions) {
         knownSettings[option.key] = settings.fuzzyPinyin.*option.member ? "true" : "false";
     }
+    knownSettings["pinyin.typo_correction"] = settings.typoCorrectionEnabled ? "true" : "false";
+    knownSettings["pinyin.dynamic_preedit_separator"] = settings.dynamicPreeditSeparator ? "true" : "false";
     knownSettings["input.enabled"] = settings.inputEnabled ? "true" : "false";
     knownSettings["input.default_mode"] =
         settings.defaultMode == InputMode::Chinese ? "chinese" : "english";
@@ -830,6 +838,7 @@ SettingsSaveResult SettingsStore::saveWithResult(
         "pinyin.scheme",
         "pinyin.fuzzy_z_zh", "pinyin.fuzzy_c_ch", "pinyin.fuzzy_s_sh",
         "pinyin.fuzzy_l_n", "pinyin.fuzzy_en_eng", "pinyin.fuzzy_in_ing",
+        "pinyin.typo_correction", "pinyin.dynamic_preedit_separator",
         "appearance.client_theme", "candidate.page_size", "candidate.font_size",
         "candidate.font_family", "candidate.theme", "candidate.shape", "candidate.style", "candidate.spacing",
         "candidate.number_selection", "candidate.arrow_navigation",

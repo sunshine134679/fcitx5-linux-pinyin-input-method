@@ -208,7 +208,8 @@ public:
         gtk_box_pack_start(GTK_BOX(page), categories, TRUE, TRUE, 0);
         gtk_widget_show_all(categories);
         gtk_stack_set_visible_child_name(GTK_STACK(categories), "pinyin");
-        setSettingsFocusChain(page, {switcher, inputEnabled, defaultMode, rememberPerApp, appRules, pinyinScheme, fuzzyExpander,
+        setSettingsFocusChain(page, {switcher, inputEnabled, defaultMode, rememberPerApp, appRules, pinyinScheme,
+            typoCorrection, dynamicPreeditSeparator, fuzzyExpander,
             fuzzyControls[0], fuzzyControls[1], fuzzyControls[2],
             fuzzyControls[3], fuzzyControls[4], fuzzyControls[5],
             toggleKey, characterExtraction, undoCommit, script->widget(), assist->widget(), punctuation, autoPair, smartPunctuation,
@@ -299,6 +300,23 @@ public:
         gtk_box_pack_start(GTK_BOX(schemeSection), createSettingRow(
             "输入方案", "全拼兼容简拼；双拼支持小鹤、自然码。个人词典与学习记录共用。", pinyinScheme), FALSE, FALSE, 0);
         g_signal_connect(pinyinScheme, "changed", G_CALLBACK(onChanged), this);
+
+        typoCorrection = gtk_switch_new();
+        addEditingRow(schemeSection, "拼音智能纠错",
+            "自动纠正全拼漏键、换位及邻键误触，例如 xanch 选“线程”、jnch 选“进程”。",
+            typoCorrection, "pinyin.typo_correction");
+        gtk_widget_set_tooltip_text(typoCorrection,
+            "自动纠正全拼漏键、换位及邻键误触，例如 xanch 选“线程”、jnch 选“进程”。仅限全拼/简拼方案生效。");
+        g_signal_connect(typoCorrection, "notify::active", G_CALLBACK(onSwitchChanged), this);
+
+        dynamicPreeditSeparator = gtk_switch_new();
+        addEditingRow(schemeSection, "预编辑自动分词",
+            "跟随首选词动态插入并合并 '，例如 x'an 变为 xan'ch；保留原始输入字母与手动 '。",
+            dynamicPreeditSeparator, "pinyin.dynamic_preedit_separator");
+        gtk_widget_set_tooltip_text(dynamicPreeditSeparator,
+            "跟随首选词动态插入并合并 '，例如 x'an 变为 xan'ch；保留原始输入字母与手动 '。仅限全拼/简拼方案生效。");
+        g_signal_connect(dynamicPreeditSeparator, "notify::active", G_CALLBACK(onSwitchChanged), this);
+
         fuzzyExpander = gtk_expander_new("模糊音");
         addStyleClass(fuzzyExpander, "modernime-fuzzy-expander");
         setAccessibleWidgetText(fuzzyExpander, "模糊音设置",
@@ -542,6 +560,8 @@ public:
         settings.smartPunctuation = gtk_switch_get_active(GTK_SWITCH(impl->smartPunctuation));
         settings.rememberModePerApp = gtk_switch_get_active(GTK_SWITCH(impl->rememberPerApp));
         settings.undoCommitEnabled = gtk_switch_get_active(GTK_SWITCH(impl->undoCommit));
+        settings.typoCorrectionEnabled = gtk_switch_get_active(GTK_SWITCH(impl->typoCorrection));
+        settings.dynamicPreeditSeparator = gtk_switch_get_active(GTK_SWITCH(impl->dynamicPreeditSeparator));
         const std::array underscoreStyles{core::UnderscoreStyle::Smart, core::UnderscoreStyle::Ascii, core::UnderscoreStyle::Chinese};
         const auto underscoreIndex = settingsChoiceActive(impl->underscore);
         if (underscoreIndex >= 0 && underscoreIndex < static_cast<int>(underscoreStyles.size()))
@@ -582,6 +602,8 @@ public:
         gtk_switch_set_active(GTK_SWITCH(smartPunctuation), settings.smartPunctuation);
         gtk_switch_set_active(GTK_SWITCH(rememberPerApp), settings.rememberModePerApp);
         gtk_switch_set_active(GTK_SWITCH(undoCommit), settings.undoCommitEnabled);
+        gtk_switch_set_active(GTK_SWITCH(typoCorrection), settings.typoCorrectionEnabled);
+        gtk_switch_set_active(GTK_SWITCH(dynamicPreeditSeparator), settings.dynamicPreeditSeparator);
         setSettingsChoiceActive(underscore, settings.underscoreStyle == core::UnderscoreStyle::Ascii ? 1
             : settings.underscoreStyle == core::UnderscoreStyle::Chinese ? 2 : 0);
         for (std::size_t i = 0; i < core::kPinyinSchemes.size(); ++i) {
@@ -605,7 +627,7 @@ public:
         for (auto *control : {defaultMode, pinyinScheme, toggleKey, characterExtraction, punctuation}) {
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         }
-        for (auto *control : {rememberPerApp, appRules, undoCommit})
+        for (auto *control : {rememberPerApp, appRules, undoCommit, typoCorrection, dynamicPreeditSeparator})
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive);
         for (auto *control : {autoPair, smartPunctuation, underscore, punctuationRules})
             gtk_widget_set_sensitive(control, state.dependentControlsSensitive && model.settings().punctuationEnabled);
@@ -710,6 +732,8 @@ public:
     GtkWidget *inputEnabled = nullptr;
     GtkWidget *defaultMode = nullptr;
     GtkWidget *pinyinScheme = nullptr;
+    GtkWidget *typoCorrection = nullptr;
+    GtkWidget *dynamicPreeditSeparator = nullptr;
     GtkWidget *fuzzyExpander = nullptr;
     GtkWidget *defaultModeFallback = nullptr;
     std::array<GtkWidget *, core::kFuzzyPinyinOptions.size()> fuzzyControls{};

@@ -5,8 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <vector>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace modernime::core {
 namespace {
@@ -1602,6 +1603,487 @@ int PinyinMatchPolicy::priority(std::string_view userInput,
         return -1;
     }
     return 0;
+}
+
+namespace {
+
+bool isPinyinVowel(char ch) noexcept {
+    return ch == 'a' || ch == 'e' || ch == 'i' || ch == 'o' || ch == 'u' || ch == 'v';
+}
+
+bool isValidPinyinInitialChar(char ch) noexcept {
+    return ch >= 'a' && ch <= 'z' && ch != 'i' && ch != 'u' && ch != 'v';
+}
+
+std::string_view qwertyHorizontalNeighbors(char ch) noexcept {
+    switch (ch) {
+    case 'q': return "w";
+    case 'w': return "qe";
+    case 'e': return "wr";
+    case 'r': return "et";
+    case 't': return "ry";
+    case 'y': return "tu";
+    case 'u': return "yi";
+    case 'i': return "uo";
+    case 'o': return "ip";
+    case 'p': return "o";
+    case 'a': return "s";
+    case 's': return "ad";
+    case 'd': return "sf";
+    case 'f': return "dg";
+    case 'g': return "fh";
+    case 'h': return "gj";
+    case 'j': return "hk";
+    case 'k': return "jl";
+    case 'l': return "k";
+    case 'z': return "x";
+    case 'x': return "zc";
+    case 'c': return "xv";
+    case 'v': return "cb";
+    case 'b': return "vn";
+    case 'n': return "bm";
+    case 'm': return "n";
+    default: return {};
+    }
+}
+
+struct TypoEditTarget final {
+    std::string syllable;
+    TypoEditKind kind = TypoEditKind::None;
+    bool originalValid = false;
+    double penalty = 0.0;
+};
+
+struct TypoEditTables final {
+    std::unordered_map<std::string, std::vector<TypoEditTarget>> omission;
+    std::unordered_map<std::string, std::vector<TypoEditTarget>> transposition;
+    std::unordered_map<std::string, std::vector<TypoEditTarget>> adjacentSub;
+    std::unordered_set<std::string> validPrefixes;
+
+    static void addTarget(
+        std::unordered_map<std::string, std::vector<TypoEditTarget>> &table,
+        const std::string &key, std::string_view syllable, TypoEditKind kind,
+        bool originalValid, double penalty) {
+        auto &vec = table[key];
+        for (auto &existing : vec) {
+            if (existing.syllable == syllable) {
+                if (penalty < existing.penalty) {
+                    existing.penalty = penalty;
+                    existing.kind = kind;
+                }
+                return;
+            }
+        }
+        vec.push_back(TypoEditTarget{
+            std::string(syllable), kind, originalValid, penalty});
+    }
+
+    TypoEditTables() {
+        for (const auto syllable : kValidPinyinSyllables) {
+            for (std::size_t len = 2; len < syllable.size(); ++len) {
+                validPrefixes.emplace(syllable.substr(0, len));
+            }
+            if (syllable.size() < 3) {
+                continue;
+            }
+            // 1. Strictly interior single-character omission (1 <= k < size - 1).
+            //    Never deletes initial (k=0) or coda (k=size-1), preventing false
+            //    matches on incomplete prefixes (e.g., "gara", "who", "windo").
+            for (std::size_t k = 1; k + 1 < syllable.size(); ++k) {
+                std::string key;
+                key.reserve(syllable.size() - 1);
+                key.append(syllable.substr(0, k));
+                key.append(syllable.substr(k + 1));
+                if (isValidMandarinSyllable(key)) {
+                    continue;
+                }
+                const char omitted = syllable[k];
+                const bool keyHasVowel = std::any_of(
+                    key.begin(), key.end(), isPinyinVowel);
+                if (key.size() == 2 && !keyHasVowel &&
+                    omitted != 'i' && omitted != 'u' && omitted != 'e') {
+                    continue;
+                }
+                const double penalty = (omitted == 'i') ? 3.5 : 4.3;
+                addTarget(omission, key, syllable, TypoEditKind::Omission,
+                          false, penalty);
+            }
+            // 2. Interior adjacent-character transposition (1 <= k < size - 1).
+            for (std::size_t k = 1; k + 1 < syllable.size(); ++k) {
+                if (syllable[k] == syllable[k + 1]) {
+                    continue;
+                }
+                std::string key(syllable);
+                std::swap(key[k], key[k + 1]);
+                if (isValidMandarinSyllable(key)) {
+                    continue;
+                }
+                addTarget(transposition, key, syllable,
+                          TypoEditKind::Transposition, false, 3.5);
+            }
+            // 3. QWERTY horizontal adjacent-key substitution (k >= 1).
+            for (std::size_t k = 1; k < syllable.size(); ++k) {
+                const char orig = syllable[k];
+                for (const char nb : qwertyHorizontalNeighbors(orig)) {
+                    std::string key(syllable);
+                    key[k] = nb;
+                    if (!isValidMandarinSyllable(key)) {
+                        addTarget(adjacentSub, key, syllable,
+                                  TypoEditKind::AdjacentKey, false, 4.2);
+                    } else if (syllable.size() == 3 && syllable.back() == 'n' &&
+                               ((orig == 'i' && nb == 'u') ||
+                                (orig == 'u' && nb == 'i'))) {
+                        // Valid-syllable confusion restricted to 3-letter C+{i,u}+n
+                        // top-row neighbors (jun<->jin, xun<->xin, qun<->qin, lun<->lin).
+                        addTarget(adjacentSub, key, syllable,
+                                  TypoEditKind::AdjacentKey, true, 5.8);
+                    }
+                }
+            }
+        }
+        auto sortTargets = [](auto &table) {
+            for (auto &[key, vec] : table) {
+                std::sort(vec.begin(), vec.end(),
+                          [](const TypoEditTarget &a, const TypoEditTarget &b) {
+                              if (a.penalty != b.penalty) {
+                                  return a.penalty < b.penalty;
+                              }
+                              return a.syllable < b.syllable;
+                          });
+            }
+        };
+        sortTargets(omission);
+        sortTargets(transposition);
+        sortTargets(adjacentSub);
+    }
+};
+
+const TypoEditTables &typoEditTables() {
+    static const TypoEditTables tables;
+    return tables;
+}
+
+bool allChunksValidPinyin(std::string_view rawInput) {
+    std::size_t start = 0;
+    bool hasChunk = false;
+    while (start < rawInput.size()) {
+        const auto sep = rawInput.find('\'', start);
+        const auto end = sep == std::string_view::npos ? rawInput.size() : sep;
+        if (end > start) {
+            hasChunk = true;
+            if (!PinyinMatchPolicy::isValidPinyinSequence(
+                    rawInput.substr(start, end - start))) {
+                return false;
+            }
+        }
+        if (sep == std::string_view::npos) {
+            break;
+        }
+        start = sep + 1;
+    }
+    return hasChunk;
+}
+
+} // namespace
+
+std::size_t PinyinMatchPolicy::matchTypoLatticeSyllable(
+    std::string_view input, std::string_view syllable) {
+    if (input.empty() || syllable.empty()) {
+        return 0;
+    }
+    if (const auto len = matchTypoSyllable(input, syllable); len > 0) {
+        return len;
+    }
+    const auto &tables = typoEditTables();
+    const std::size_t maxLen = std::min<std::size_t>(6, input.size());
+    for (std::size_t len = maxLen; len >= 2; --len) {
+        const std::string key(input.substr(0, len));
+        for (const auto *table : {&tables.omission, &tables.transposition,
+                                  &tables.adjacentSub}) {
+            const auto it = table->find(key);
+            if (it == table->end()) {
+                continue;
+            }
+            for (const auto &target : it->second) {
+                if (target.syllable == syllable) {
+                    return len;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
+    std::string_view rawInput, std::size_t maxPaths) {
+    if (maxPaths == 0 || rawInput.size() < 2 || rawInput.size() > 32 ||
+        rawInput.front() == 'v' || !validComposition(rawInput) ||
+        rawInput.back() == '\'') {
+        return {};
+    }
+    for (const char ch : rawInput) {
+        if (ch != '\'' && !(ch >= 'a' && ch <= 'z')) {
+            return {};
+        }
+    }
+    const auto plainInput = canonical(rawInput);
+    if (plainInput.size() < 2 || EnglishDictionary::isCommonWord(plainInput)) {
+        return {};
+    }
+    if (plainInput.size() >= 4) {
+        if (EnglishDictionary::isEnglishWord(plainInput)) {
+            return {};
+        }
+        const auto preds = EnglishDictionary::predictWords(plainInput, 1);
+        if (!preds.empty()) {
+            return {};
+        }
+    }
+
+    const auto &tables = typoEditTables();
+    const bool rawIsValidFull = allChunksValidPinyin(rawInput);
+    const std::size_t n = rawInput.size();
+
+    struct LatticeState {
+        std::vector<TypoSegment> segments;
+        double dpCost = 0.0;
+        double typoPenalty = 0.0;
+        TypoEditKind primaryEdit = TypoEditKind::None;
+    };
+
+    constexpr std::size_t kBeamWidth = 6;
+    std::vector<std::array<std::vector<LatticeState>, 2>> beam(n + 1);
+    beam[0][0].push_back(LatticeState{});
+
+    const auto pushState = [&](std::size_t nextPos, int nextEdits,
+                               LatticeState state) {
+        auto &slot = beam[nextPos][static_cast<std::size_t>(nextEdits)];
+        slot.push_back(std::move(state));
+        std::stable_sort(
+            slot.begin(), slot.end(),
+            [](const LatticeState &a, const LatticeState &b) {
+                if (a.dpCost != b.dpCost) {
+                    return a.dpCost < b.dpCost;
+                }
+                if (a.segments.size() != b.segments.size()) {
+                    return a.segments.size() < b.segments.size();
+                }
+                return a.typoPenalty < b.typoPenalty;
+            });
+        if (slot.size() > kBeamWidth) {
+            slot.resize(kBeamWidth);
+        }
+    };
+
+    for (std::size_t pos = 0; pos < n; ++pos) {
+        if (rawInput[pos] == '\'') {
+            // Explicit user separator: never allow any segment to cross '\''.
+            for (int edits = 0; edits <= 1; ++edits) {
+                for (const auto &state : beam[pos][static_cast<std::size_t>(edits)]) {
+                    pushState(pos + 1, edits, state);
+                }
+            }
+            continue;
+        }
+        const auto sepPos = rawInput.find('\'', pos);
+        const std::size_t chunkEnd =
+            sepPos == std::string_view::npos ? n : sepPos;
+        const std::size_t maxLen = std::min<std::size_t>(6, chunkEnd - pos);
+
+        for (int edits = 0; edits <= 1; ++edits) {
+            const auto &states = beam[pos][static_cast<std::size_t>(edits)];
+            if (states.empty()) {
+                continue;
+            }
+
+            // A. Exact / normal syllable and initial edges (deltaEdits = 0).
+            for (std::size_t len = maxLen; len >= 1; --len) {
+                const auto sv = rawInput.substr(pos, len);
+                if (!isValidMandarinSyllable(sv)) {
+                    continue;
+                }
+                for (const auto &base : states) {
+                    LatticeState next = base;
+                    next.segments.push_back(TypoSegment{
+                        pos, pos + len, std::string(sv), TypoEditKind::None,
+                        true, 0.0});
+                    next.dpCost += 0.15;
+                    pushState(pos + len, edits, std::move(next));
+                }
+            }
+            if (chunkEnd - pos >= 2) {
+                const auto sv = rawInput.substr(pos, 2);
+                if (sv == "zh" || sv == "ch" || sv == "sh") {
+                    for (const auto &base : states) {
+                        LatticeState next = base;
+                        next.segments.push_back(TypoSegment{
+                            pos, pos + 2, std::string(sv), TypoEditKind::None,
+                            false, 0.0});
+                        next.dpCost += 0.55;
+                        pushState(pos + 2, edits, std::move(next));
+                    }
+                }
+            }
+            const bool isDigraphStart =
+                chunkEnd - pos >= 2 && rawInput[pos + 1] == 'h' &&
+                (rawInput[pos] == 'z' || rawInput[pos] == 'c' ||
+                 rawInput[pos] == 's');
+            if (isValidPinyinInitialChar(rawInput[pos]) && !isDigraphStart) {
+                const auto sv = rawInput.substr(pos, 1);
+                if (!isValidMandarinSyllable(sv)) {
+                    for (const auto &base : states) {
+                        LatticeState next = base;
+                        next.segments.push_back(TypoSegment{
+                            pos, pos + 1, std::string(sv), TypoEditKind::None,
+                            false, 0.0});
+                        next.dpCost += 0.95;
+                        pushState(pos + 1, edits, std::move(next));
+                    }
+                }
+            }
+            if (chunkEnd == n && chunkEnd - pos >= 2 && chunkEnd - pos <= 5) {
+                const auto sv = rawInput.substr(pos, n - pos);
+                if (!isValidMandarinSyllable(sv) &&
+                    sv != "zh" && sv != "ch" && sv != "sh" &&
+                    tables.validPrefixes.contains(std::string(sv))) {
+                    for (const auto &base : states) {
+                        LatticeState next = base;
+                        next.segments.push_back(TypoSegment{
+                            pos, n, std::string(sv), TypoEditKind::None,
+                            false, 0.0});
+                        next.dpCost += 0.40;
+                        pushState(n, edits, std::move(next));
+                    }
+                }
+            }
+
+            // B. Bounded 1-edit typo edges (deltaEdits = 1, only when edits == 0).
+            if (edits > 0) {
+                continue;
+            }
+            for (std::size_t len = 2; len <= maxLen; ++len) {
+                const std::string key(rawInput.substr(pos, len));
+                const bool keyHasVowel = std::any_of(
+                    key.begin(), key.end(), isPinyinVowel);
+
+                // 1. Omission recovery (only when raw input is not already a
+                //    clean full-pinyin sequence).
+                if (!rawIsValidFull) {
+                    if (const auto it = tables.omission.find(key);
+                        it != tables.omission.end()) {
+                        const bool allowedShortConsonant =
+                            !(len == 2 && !keyHasVowel) ||
+                            plainInput.size() >= 4;
+                        if (allowedShortConsonant) {
+                            for (const auto &target : it->second) {
+                                for (const auto &base : states) {
+                                    LatticeState next = base;
+                                    next.segments.push_back(TypoSegment{
+                                        pos, pos + len, target.syllable,
+                                        TypoEditKind::Omission, true,
+                                        target.penalty});
+                                    next.dpCost += target.penalty + 0.15;
+                                    next.typoPenalty += target.penalty;
+                                    next.primaryEdit = TypoEditKind::Omission;
+                                    pushState(pos + len, 1, std::move(next));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Adjacent transposition recovery.
+                if (const auto it = tables.transposition.find(key);
+                    it != tables.transposition.end()) {
+                    for (const auto &target : it->second) {
+                        for (const auto &base : states) {
+                            LatticeState next = base;
+                            next.segments.push_back(TypoSegment{
+                                pos, pos + len, target.syllable,
+                                TypoEditKind::Transposition, true,
+                                target.penalty});
+                            next.dpCost += target.penalty + 0.15;
+                            next.typoPenalty += target.penalty;
+                            next.primaryEdit = TypoEditKind::Transposition;
+                            pushState(pos + len, 1, std::move(next));
+                        }
+                    }
+                }
+
+                // 3. QWERTY adjacent-key substitution recovery.
+                if (const auto it = tables.adjacentSub.find(key);
+                    it != tables.adjacentSub.end()) {
+                    const bool multiSyllableSpan =
+                        plainInput.size() >= 4 && (pos > 0 || pos + len < n);
+                    for (const auto &target : it->second) {
+                        if (target.originalValid) {
+                            if (!multiSyllableSpan ||
+                                (rawIsValidFull && plainInput.size() > 10)) {
+                                continue;
+                            }
+                        } else if (rawIsValidFull) {
+                            continue;
+                        }
+                        for (const auto &base : states) {
+                            LatticeState next = base;
+                            next.segments.push_back(TypoSegment{
+                                pos, pos + len, target.syllable,
+                                TypoEditKind::AdjacentKey, true,
+                                target.penalty});
+                            next.dpCost += target.penalty + 0.15;
+                            next.typoPenalty += target.penalty;
+                            next.primaryEdit = TypoEditKind::AdjacentKey;
+                            pushState(pos + len, 1, std::move(next));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::vector<TypoPath> results;
+    std::unordered_set<std::string> seenCanonical;
+    const double bestDpCost =
+        beam[n][1].empty() ? 0.0 : beam[n][1].front().dpCost;
+    for (const auto &state : beam[n][1]) {
+        if (state.segments.empty()) {
+            continue;
+        }
+        if (state.dpCost > bestDpCost + 1.2) {
+            break;
+        }
+        TypoPath path;
+        path.segments = state.segments;
+        path.totalPenalty = state.typoPenalty;
+        path.editCount = 1;
+        path.primaryEdit = state.primaryEdit;
+        path.allSyllablesComplete = true;
+        for (std::size_t i = 0; i < state.segments.size(); ++i) {
+            const auto &seg = state.segments[i];
+            if (!seg.isFullSyllable) {
+                path.allSyllablesComplete = false;
+            }
+            if (i > 0) {
+                path.decodedInput.push_back('\'');
+                path.rawPreedit.push_back('\'');
+            }
+            path.decodedInput.append(seg.syllable);
+            path.rawPreedit.append(
+                rawInput.substr(seg.rawStart, seg.rawEnd - seg.rawStart));
+        }
+        if (path.decodedInput == rawInput) {
+            continue;
+        }
+        const auto canon = canonical(path.decodedInput);
+        if (canon == plainInput || !seenCanonical.insert(canon).second) {
+            continue;
+        }
+        results.push_back(std::move(path));
+        if (results.size() >= maxPaths) {
+            break;
+        }
+    }
+    return results;
 }
 
 } // namespace modernime::core

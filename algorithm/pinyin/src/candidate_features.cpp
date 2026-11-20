@@ -122,8 +122,9 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
         candidate.last_selected_ms = request.learning->lastSelectedMs(
             candidate.text, candidate.full_pinyin);
     }
-    if (count == 1 && (candidate.full_pinyin == request.input ||
-                      candidate.decoded_match_priority == 2)) {
+    if (count == 1 && candidate.typo_penalty <= 0.0 &&
+        (candidate.full_pinyin == request.input ||
+         candidate.decoded_match_priority == 2)) {
         candidate.unigram_prominence = core::CommonCharacters::unigramProminence(
             core::CommonCharacters::firstCodepoint(candidate.text));
     } else {

@@ -302,5 +302,93 @@ int main() {
     assertTrue(PinyinMatchPolicy::initialsMatch("wsl", "wangshaolong"),
                "wsl matches initials of unseparated wangshaolong");
 
+    // Typo lattice DAG: omission, transposition, adjacent key, raw spans, manual '\'' protection
+    {
+        const auto hasPath = [](const std::vector<modernime::core::TypoPath> &paths,
+                                std::string_view decoded,
+                                std::string_view rawPreedit) {
+            for (const auto &p : paths) {
+                if (p.decodedInput == decoded && p.rawPreedit == rawPreedit &&
+                    p.editCount == 1) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        const auto xanPaths = PinyinMatchPolicy::generateTypoPaths("xan");
+        assertTrue(hasPath(xanPaths, "xian", "xan"),
+                   "xan lattice generates xian with raw preedit xan");
+
+        const auto xanchPaths = PinyinMatchPolicy::generateTypoPaths("xanch");
+        assertTrue(hasPath(xanchPaths, "xian'ch", "xan'ch"),
+                   "xanch lattice generates xian'ch with raw preedit xan'ch");
+        assertTrue(xanchPaths.front().segments.size() == 2 &&
+                       xanchPaths.front().segments[0].rawStart == 0 &&
+                       xanchPaths.front().segments[0].rawEnd == 3 &&
+                       xanchPaths.front().segments[1].rawStart == 3 &&
+                       xanchPaths.front().segments[1].rawEnd == 5,
+                   "xanch lattice preserves exact raw spans [0,3) and [3,5)");
+
+        const auto xanchengPaths = PinyinMatchPolicy::generateTypoPaths("xancheng");
+        assertTrue(hasPath(xanchengPaths, "xian'cheng", "xan'cheng"),
+                   "xancheng lattice generates xian'cheng with raw preedit xan'cheng");
+
+        const auto jnchPaths = PinyinMatchPolicy::generateTypoPaths("jnch");
+        assertTrue(hasPath(jnchPaths, "jin'ch", "jn'ch"),
+                   "jnch lattice generates jin'ch with raw preedit jn'ch");
+        assertTrue(jnchPaths.front().segments.size() == 2 &&
+                       jnchPaths.front().segments[0].rawStart == 0 &&
+                       jnchPaths.front().segments[0].rawEnd == 2 &&
+                       jnchPaths.front().segments[1].rawStart == 2 &&
+                       jnchPaths.front().segments[1].rawEnd == 4,
+                   "jnch lattice preserves exact raw spans [0,2) and [2,4)");
+
+        const auto jnchengPaths = PinyinMatchPolicy::generateTypoPaths("jncheng");
+        assertTrue(hasPath(jnchengPaths, "jin'cheng", "jn'cheng"),
+                   "jncheng lattice generates jin'cheng with raw preedit jn'cheng");
+
+        // Transposition and QWERTY adjacent-key paths
+        const auto nihoaPaths = PinyinMatchPolicy::generateTypoPaths("nihoa");
+        assertTrue(hasPath(nihoaPaths, "ni'hao", "ni'hoa"),
+                   "nihoa lattice generates transposition ni'hao with raw preedit ni'hoa");
+        const auto junchengPaths = PinyinMatchPolicy::generateTypoPaths("juncheng");
+        assertTrue(hasPath(junchengPaths, "jin'cheng", "jun'cheng"),
+                   "juncheng lattice generates adjacent-key jin'cheng with raw preedit jun'cheng");
+
+        // Manual '\'' protection: typo edges must never merge across explicit separators
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("x'anch").empty(),
+                   "manual separator x'anch blocks cross-boundary omission merge");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("x'ancheng").empty(),
+                   "manual separator x'ancheng blocks cross-boundary omission merge");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("j'nch").empty(),
+                   "manual separator j'nch blocks cross-boundary omission merge");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("j'ncheng").empty(),
+                   "manual separator j'ncheng blocks cross-boundary omission merge");
+
+        // Normal pinyin, short abbreviations, and English inputs produce zero overhead
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("nihao").empty(),
+                   "normal full pinyin nihao produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("beijing").empty(),
+                   "normal full pinyin beijing produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("zhege").empty(),
+                   "normal full pinyin zhege produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("wsm").empty(),
+                   "normal abbreviation wsm produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("jn").empty(),
+                   "2-letter abbreviation jn produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("jun").empty(),
+                   "single valid syllable jun produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("gara").empty(),
+                   "English prefix gara produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths("good").empty(),
+                   "English word good produces no typo paths");
+        assertTrue(PinyinMatchPolicy::generateTypoPaths(std::string(40, 'a')).empty(),
+                   "overlong input is bounded and skipped");
+        assertTrue(PinyinMatchPolicy::matchTypoLatticeSyllable("xanch", "xian") == 3,
+                   "lattice matcher aligns xan to xian");
+        assertTrue(PinyinMatchPolicy::matchTypoLatticeSyllable("jnch", "jin") == 2,
+                   "lattice matcher aligns jn to jin");
+    }
+
     return EXIT_SUCCESS;
 }

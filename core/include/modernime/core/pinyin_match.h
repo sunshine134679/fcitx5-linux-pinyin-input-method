@@ -7,6 +7,32 @@
 
 namespace modernime::core {
 
+enum class TypoEditKind {
+    None = 0,
+    Omission,
+    Transposition,
+    AdjacentKey,
+};
+
+struct TypoSegment final {
+    std::size_t rawStart = 0;
+    std::size_t rawEnd = 0;
+    std::string syllable;
+    TypoEditKind editKind = TypoEditKind::None;
+    bool isFullSyllable = false;
+    double penalty = 0.0;
+};
+
+struct TypoPath final {
+    std::vector<TypoSegment> segments;
+    std::string decodedInput;
+    std::string rawPreedit;
+    double totalPenalty = 0.0;
+    int editCount = 0;
+    bool allSyllablesComplete = false;
+    TypoEditKind primaryEdit = TypoEditKind::None;
+};
+
 class PinyinMatchPolicy final {
 public:
     static std::string canonical(std::string_view fullPinyin);
@@ -31,6 +57,10 @@ public:
     static std::string normalizeTypoInput(std::string_view input);
     static std::size_t matchTypoSyllable(std::string_view input,
                                          std::string_view syllable);
+    static std::size_t matchTypoLatticeSyllable(std::string_view input,
+                                                std::string_view syllable);
+    static std::vector<TypoPath> generateTypoPaths(std::string_view rawInput,
+                                                   std::size_t maxPaths = 4);
     static bool isTypoPrefix(std::string_view input,
                              std::string_view syllable);
     static bool isFullTypoMatch(std::string_view userInput,

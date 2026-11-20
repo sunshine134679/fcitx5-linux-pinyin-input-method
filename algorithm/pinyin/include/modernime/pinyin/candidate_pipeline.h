@@ -2,9 +2,11 @@
 
 #include "modernime/core/candidate_ranker.h"
 #include "modernime/core/learning_snapshot.h"
+#include "modernime/core/pinyin_match.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -18,6 +20,11 @@ class RecentChoices;
 class ShuangpinInput;
 class ContextDecoder;
 class MixedWordIndex;
+
+struct TypoDecodedPath final {
+    core::TypoPath path;
+    std::unique_ptr<libime::PinyinContext> context;
+};
 
 struct CandidatePipelineResult final {
     std::vector<core::CandidateScore> scored;
@@ -43,6 +50,7 @@ CandidatePipelineResult buildCandidatePipeline(
     const ShuangpinInput *shuangpin = nullptr,
     std::size_t nativeOffset = 0,
     const ContextDecoder *contextDecoder = nullptr,
-    const MixedWordIndex *mixedWords = nullptr);
+    const MixedWordIndex *mixedWords = nullptr,
+    const std::vector<TypoDecodedPath> *typoPaths = nullptr);
 
 } // namespace modernime::pinyin

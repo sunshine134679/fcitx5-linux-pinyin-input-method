@@ -105,7 +105,8 @@ int main(int argc, char **argv) {
     gtk_widget_show_all(window);
     gtk_window_present(GTK_WINDOW(window));
     drain();
-    for (const auto *name : {"punctuation.auto_pair", "punctuation.smart", "input.undo_commit"}) {
+    for (const auto *name : {"punctuation.auto_pair", "punctuation.smart", "input.undo_commit",
+                             "pinyin.typo_correction", "pinyin.dynamic_preedit_separator"}) {
         auto *control = find(page.widget(), name);
         assert(control && gtk_switch_get_active(GTK_SWITCH(control)));
         gtk_switch_set_active(GTK_SWITCH(control), false);
@@ -114,10 +115,13 @@ int main(int argc, char **argv) {
     setSettingsChoiceActive(find(page.widget(), "punctuation.underscore"), 1);
     assert(!model.settings().autoPairPunctuation && !model.settings().smartPunctuation);
     assert(model.settings().rememberModePerApp && !model.settings().undoCommitEnabled);
+    assert(!model.settings().typoCorrectionEnabled && !model.settings().dynamicPreeditSeparator);
     assert(model.settings().underscoreStyle == modernime::core::UnderscoreStyle::Ascii);
     assert(changes > 0 && model.dirty());
     model.resetEdits(); page.refresh();
     assert(gtk_switch_get_active(GTK_SWITCH(find(page.widget(), "punctuation.auto_pair"))));
+    assert(gtk_switch_get_active(GTK_SWITCH(find(page.widget(), "pinyin.typo_correction"))));
+    assert(gtk_switch_get_active(GTK_SWITCH(find(page.widget(), "pinyin.dynamic_preedit_separator"))));
     assert(!gtk_switch_get_active(GTK_SWITCH(find(page.widget(), "input.remember_per_app"))));
 
     click(page.widget(), "input.app");
@@ -157,7 +161,8 @@ int main(int argc, char **argv) {
     assert(!model.settings().punctuationOverrides.contains('/'));
     assert(model.settings().punctuationOverrides.at('_') == "_");
     assert(modernime::core::SettingsStore::load(file).settings == initial);
-    for (const auto *name : {"punctuation.auto_pair", "punctuation.smart", "input.undo_commit"})
+    for (const auto *name : {"punctuation.auto_pair", "punctuation.smart", "input.undo_commit",
+                             "pinyin.typo_correction", "pinyin.dynamic_preedit_separator"})
         gtk_switch_set_active(GTK_SWITCH(find(page.widget(), name)), false);
     gtk_switch_set_active(GTK_SWITCH(find(page.widget(), "input.remember_per_app")), true);
     setSettingsChoiceActive(find(page.widget(), "punctuation.underscore"), 2);
@@ -166,6 +171,7 @@ int main(int argc, char **argv) {
     assert(saved.settings == model.settings());
     assert(!saved.settings.punctuationOverrides.contains('/'));
     assert(!saved.settings.autoPairPunctuation && !saved.settings.smartPunctuation && !saved.settings.undoCommitEnabled);
+    assert(!saved.settings.typoCorrectionEnabled && !saved.settings.dynamicPreeditSeparator);
     assert(saved.settings.rememberModePerApp && saved.settings.underscoreStyle == modernime::core::UnderscoreStyle::Chinese);
 
     gtk_switch_set_active(GTK_SWITCH(find(page.widget(), "punctuation")), false);
@@ -175,12 +181,20 @@ int main(int argc, char **argv) {
     model.resetEdits(); page.refresh();
     gtk_window_present(GTK_WINDOW(window));
     wait([&] { return gtk_window_is_active(GTK_WINDOW(window)); });
-    for (const auto *name : {"punctuation.auto_pair", "punctuation.smart", "punctuation.underscore", "punctuation.map", "input.app", "input.remember_per_app", "input.undo_commit"}) {
+    for (const auto *name : {"punctuation.auto_pair", "punctuation.smart", "punctuation.underscore", "punctuation.map", "input.app", "input.remember_per_app", "input.undo_commit", "pinyin.typo_correction", "pinyin.dynamic_preedit_separator"}) {
         bool found = false;
         for (const auto &entry : settingsSearchEntries()) if (entry.target == name) found = true;
         assert(found);
         assert(page.focusTarget(name));
     }
+    gtk_switch_set_active(GTK_SWITCH(find(page.widget(), "input-enabled")), false);
+    assert(!gtk_widget_is_sensitive(find(page.widget(), "pinyin.typo_correction")));
+    assert(!gtk_widget_is_sensitive(find(page.widget(), "pinyin.dynamic_preedit_separator")));
+    assert(page.focusTarget("pinyin.typo_correction"));
+    assert(page.focusTarget("pinyin.dynamic_preedit_separator"));
+    model.resetEdits(); page.refresh();
+    assert(!searchSettings("纠错").empty() && searchSettings("纠错").front().target == "pinyin.typo_correction");
+    assert(!searchSettings("分词").empty() && searchSettings("分词").front().target == "pinyin.dynamic_preedit_separator");
     assert(settingsFocusRouteForIssue("input.app.code")->target == "input.app");
     assert(settingsFocusRouteForIssue("punctuation.map.95")->target == "punctuation.map");
     if (const auto *captures = std::getenv("MODERNIME_INPUT_SCREENSHOT_DIR")) {
