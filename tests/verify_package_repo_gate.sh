@@ -608,6 +608,49 @@ if cmp -s "${ci_assets_dir}/modernime-${expected_version}-1.oe24.x86_64.rpm" \
 fi
 printf '==> [Gate 3b] Subsequent release multi-version retention & production RPM sync (--previous-pages-dir): VERIFIED\n'
 
+# 3c. Verify --retain-versions 1 and --max-repo-mib budget cleanly prune older packages while keeping current release
+pruned_pages_dir="${work_dir}/pages-pruned"
+MODERNIME_GPG_KEY_ID="${primary_fpr}" \
+MODERNIME_GPG_PASSPHRASE="${passphrase}" \
+MODERNIME_GPG_ROTATION_PRIVATE_KEY="${rotation_sec_value}" \
+MODERNIME_GPG_ROTATION_KEY_ID="${rotation_fpr}" \
+"${repo_root}/scripts/ci_build_release_repos.sh" \
+    --assets-dir "${ci_assets_dir}" \
+    --pages-dir "${pruned_pages_dir}" \
+    --previous-pages-dir "${prev_pages_dir}" \
+    --retain-versions 1 \
+    --gpg-private-key-file "${primary_sec_file}" \
+    --require-persistent-gpg \
+    --repo-base-url "file://${pruned_pages_dir}"
+grep -Fxq "Version: ${expected_version}" "${pruned_pages_dir}/apt/dists/noble/main/binary-amd64/Packages" ||
+    fail "Pruned APT repository missing current Version: ${expected_version}"
+if grep -Fxq "Version: 0.1.8" "${pruned_pages_dir}/apt/dists/noble/main/binary-amd64/Packages"; then
+    fail "--retain-versions 1 did not prune Version: 0.1.8 from APT metadata"
+fi
+if [ -e "${pruned_pages_dir}/rpm/oe2409/x86_64/Packages/modernime-0.1.8-1.oe2409.x86_64.rpm" ]; then
+    fail "--retain-versions 1 did not prune modernime-0.1.8-1.oe2409.x86_64.rpm from RPM repo"
+fi
+pruned_budget_dir="${work_dir}/pages-pruned-budget"
+MODERNIME_GPG_KEY_ID="${primary_fpr}" \
+MODERNIME_GPG_PASSPHRASE="${passphrase}" \
+MODERNIME_GPG_ROTATION_PRIVATE_KEY="${rotation_sec_value}" \
+MODERNIME_GPG_ROTATION_KEY_ID="${rotation_fpr}" \
+"${repo_root}/scripts/ci_build_release_repos.sh" \
+    --assets-dir "${ci_assets_dir}" \
+    --pages-dir "${pruned_budget_dir}" \
+    --previous-pages-dir "${prev_pages_dir}" \
+    --retain-versions 3 \
+    --max-repo-mib 100 \
+    --gpg-private-key-file "${primary_sec_file}" \
+    --require-persistent-gpg \
+    --repo-base-url "file://${pruned_budget_dir}"
+if grep -Fxq "Version: 0.1.8" "${pruned_budget_dir}/apt/dists/noble/main/binary-amd64/Packages"; then
+    fail "--max-repo-mib 100 did not prune older Version: 0.1.8 when exceeding MiB budget"
+fi
+[ -f "${pruned_budget_dir}/rpm/oe2409/x86_64/Packages/modernime-${expected_version}-1.oe2409.x86_64.rpm" ] ||
+    fail "--max-repo-mib 100 dropped current release RPM"
+printf '==> [Gate 3c] Repository retention cap (--retain-versions) & MiB budget (--max-repo-mib) pruning: VERIFIED\n'
+
 [ -f "${pages_site_dir}/.nojekyll" ] || fail "pages-site/.nojekyll missing"
 [ -f "${pages_site_dir}/apt/KEY-FINGERPRINTS.txt" ] || fail "apt/KEY-FINGERPRINTS.txt missing"
 [ -f "${pages_site_dir}/rpm/KEY-FINGERPRINTS.txt" ] || fail "rpm/KEY-FINGERPRINTS.txt missing"

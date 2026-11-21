@@ -961,7 +961,7 @@ jobs:
           prev_pages=""
           git ls-remote --heads origin refs/heads/gh-pages > previous-pages-ref.txt
           if [[ -s previous-pages-ref.txt ]]; then
-            git fetch origin refs/heads/gh-pages:refs/remotes/origin/gh-pages
+            git fetch --depth 1 origin refs/heads/gh-pages:refs/remotes/origin/gh-pages
           fi
           if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
             git worktree add prev-pages origin/gh-pages
@@ -971,6 +971,8 @@ jobs:
             --assets-dir release-assets \
             --pages-dir pages-site \
             ${prev_pages:+--previous-pages-dir "$prev_pages"} \
+            --retain-versions 3 \
+            --max-repo-mib 900 \
             --require-persistent-gpg
           if [ -n "$prev_pages" ]; then
             git worktree remove --force "$prev_pages" || true
@@ -1142,6 +1144,7 @@ jobs:
             cd -
           fi
 
+          find "$work_pages" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf -- {} +
           cp -a pages-site/. "$work_pages/"
           cd "$work_pages"
           git add -A

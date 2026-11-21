@@ -9,6 +9,8 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 assets_dir=""
 pages_dir=""
 previous_pages_dir=""
+retain_versions="${MODERNIME_RETAIN_VERSIONS:-3}"
+max_repo_mib="${MODERNIME_MAX_REPO_MIB:-900}"
 require_persistent_gpg=false
 ephemeral_gpg=false
 gpg_private_key_file=""
@@ -20,6 +22,8 @@ usage() {
 Usage:
   ci_build_release_repos.sh --assets-dir DIR --pages-dir DIR
                             [--previous-pages-dir DIR]
+                            [--retain-versions N]
+                            [--max-repo-mib N]
                             [--require-persistent-gpg | --ephemeral-gpg]
                             [--gpg-private-key-file FILE]
                             [--repo-base-url URL]
@@ -34,6 +38,10 @@ while [[ $# -gt 0 ]]; do
         --pages-dir) pages_dir="$2"; shift 2 ;;
         --previous-pages-dir=*) previous_pages_dir="${1#*=}"; shift ;;
         --previous-pages-dir) previous_pages_dir="$2"; shift 2 ;;
+        --retain-versions=*) retain_versions="${1#*=}"; shift ;;
+        --retain-versions) retain_versions="$2"; shift 2 ;;
+        --max-repo-mib=*) max_repo_mib="${1#*=}"; shift ;;
+        --max-repo-mib) max_repo_mib="$2"; shift 2 ;;
         --require-persistent-gpg) require_persistent_gpg=true; shift ;;
         --ephemeral-gpg) ephemeral_gpg=true; shift ;;
         --gpg-private-key-file=*) gpg_private_key_file="${1#*=}"; shift ;;
@@ -49,6 +57,11 @@ done
 
 if [[ -z "$assets_dir" || -z "$pages_dir" ]]; then
     printf 'Error: --assets-dir and --pages-dir are required\n' >&2
+    exit 1
+fi
+
+if ! [[ "$retain_versions" =~ ^[0-9]+$ ]] || ! [[ "$max_repo_mib" =~ ^[0-9]+$ ]]; then
+    printf 'Error: --retain-versions and --max-repo-mib must be non-negative integers\n' >&2
     exit 1
 fi
 
@@ -118,26 +131,8 @@ for suite in noble bookworm trixie; do
     done
     if [[ "$suite_has_current" == true ]]; then
         built_apt_suites+=("$suite")
-        if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
-            for old_deb in "$previous_pages_dir"/apt/pool/"$suite"/main/m/modernime/*.deb; do
-                [[ -f "$old_deb" ]] || continue
-                [[ "$(dpkg-deb -f "$old_deb" Version)" != "$cand_ver" ]] || continue
-                old_arch=$(dpkg-deb -f "$old_deb" Architecture)
-                if [[ " ${apt_arches[*]-} " == *" $old_arch "* ]]; then
-                    apt_debs_args+=("$flag" "$old_deb")
-                fi
-            done
-        fi
     fi
 done
-
-apt_arches_csv=$(IFS=','; printf '%s' "${apt_arches[*]}")
-declare -a apt_args=(
-    --output-dir "$pages_dir/apt"
-    --repo-url "${repo_base_url%/}/apt"
-    --arches "$apt_arches_csv"
-    "${apt_debs_args[@]}"
-)
 
 # --- 2. Discover RPM artifacts ---
 oe2409_x86_64_rpm=$(find_first_match "$assets_dir" "modernime-*.oe24.x86_64.rpm" "modernime-*.oe2409.x86_64.rpm" "*.rpm" || true)
@@ -177,6 +172,160 @@ for arch in x86_64 aarch64; do
         arch_asset_map["$arch"]="$pkg_match"
     fi
 done
+
+# --- 4. Select retained historical versions within count and MiB limits ---
+declare -A retained_rpm_files=()
+declare -A retained_arch_files=()
+
+if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
+    cur_pkg_files=()
+    for ((i = 1; i < ${#apt_debs_args[@]}; i += 2)); do
+        cur_pkg_files+=("${apt_debs_args[$i]}")
+    done
+    for key in "${rpm_targets[@]}"; do
+        cur_pkg_files+=("${rpm_asset_map[$key]}")
+    done
+    if [[ ${#arch_targets[@]} -gt 0 ]]; then
+        for arch in "${arch_targets[@]}"; do
+            cur_pkg_files+=("${arch_asset_map[$arch]}")
+        done
+    fi
+
+    retention_manifest=$(
+        python3 - "$cand_ver" "$retain_versions" "$max_repo_mib" "$previous_pages_dir" \
+            "${built_apt_suites[*]-}" "${apt_arches[*]-}" "${rpm_targets[*]-}" "${arch_targets[*]-}" \
+            "${cur_pkg_files[@]}" <<'PYEOF'
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+cand_ver = sys.argv[1]
+retain_versions = int(sys.argv[2])
+max_repo_mib = int(sys.argv[3])
+prev_dir = Path(sys.argv[4])
+apt_suites = [s for s in sys.argv[5].split() if s]
+apt_arches = set(s for s in sys.argv[6].split() if s)
+rpm_targets = [s for s in sys.argv[7].split() if s]
+arch_targets = [s for s in sys.argv[8].split() if s]
+cur_files = [Path(p) for p in sys.argv[9:] if p]
+
+current_bytes = sum(p.stat().st_size for p in cur_files if p.is_file())
+max_repo_bytes = max_repo_mib * 1024 * 1024
+
+def ver_key(ver: str):
+    parts = [int(x) for x in re.findall(r"\d+", ver)]
+    return (parts, ver)
+
+prev_entries = []  # (kind, key_or_suite, ver, path, size)
+
+for suite in apt_suites:
+    pool_dir = prev_dir / "apt" / "pool" / suite / "main" / "m" / "modernime"
+    if not pool_dir.is_dir():
+        continue
+    for deb in sorted(pool_dir.glob("*.deb")):
+        meta = subprocess.check_output(
+            ["dpkg-deb", "--show", "--showformat=${Version}\t${Architecture}", str(deb)],
+            text=True,
+        ).strip().split("\t")
+        if len(meta) != 2:
+            continue
+        ver, arch = meta
+        if ver == cand_ver or arch not in apt_arches:
+            continue
+        prev_entries.append(("DEB", suite, ver, deb, deb.stat().st_size))
+
+for target in rpm_targets:
+    distro, arch = target.split(":", 1)
+    pkg_dir = prev_dir / "rpm" / distro / arch / "Packages"
+    if not pkg_dir.is_dir():
+        continue
+    for rpm in sorted(pkg_dir.glob("*.rpm")):
+        m = re.match(r"^modernime-(.+)-[^-]+\.[^.]+\.[^.]+\.rpm$", rpm.name)
+        if not m:
+            continue
+        ver = m.group(1)
+        if ver == cand_ver:
+            continue
+        prev_entries.append(("RPM", target, ver, rpm, rpm.stat().st_size))
+
+for arch in arch_targets:
+    arch_dir = prev_dir / "arch" / arch
+    if not arch_dir.is_dir():
+        continue
+    for pkg in sorted(arch_dir.glob("*.pkg.tar.zst")):
+        m = re.match(r"^modernime-(.+)-[^-]+-(?:x86_64|aarch64|any)\.pkg\.tar\.zst$", pkg.name)
+        if not m:
+            continue
+        ver = m.group(1)
+        if ver == cand_ver:
+            continue
+        prev_entries.append(("PAC", arch, ver, pkg, pkg.stat().st_size))
+
+ver_bytes = {}
+for _, _, ver, _, sz in prev_entries:
+    ver_bytes[ver] = ver_bytes.get(ver, 0) + sz
+
+sorted_prev = sorted(ver_bytes.keys(), key=ver_key, reverse=True)
+kept = []
+pruned = []
+running_bytes = current_bytes
+
+for idx, ver in enumerate(sorted_prev):
+    if retain_versions > 0 and (len(kept) + 1) >= retain_versions:
+        pruned.extend(sorted_prev[idx:])
+        break
+    if max_repo_bytes > 0 and (running_bytes + ver_bytes[ver]) > max_repo_bytes:
+        pruned.extend(sorted_prev[idx:])
+        break
+    kept.append(ver)
+    running_bytes += ver_bytes[ver]
+
+kept_set = set(kept)
+sys.stderr.write(
+    f"Repository retention (retain_versions={retain_versions}, max_repo_mib={max_repo_mib}): "
+    f"current={cand_ver} ({current_bytes / (1024 * 1024):.1f} MiB), "
+    f"retained_previous={kept}, pruned_previous={pruned}, "
+    f"projected_repo_packages={running_bytes / (1024 * 1024):.1f} MiB\n"
+)
+
+for kind, target, ver, path, _ in prev_entries:
+    if ver in kept_set:
+        print(f"{kind}\t{target}\t{path}")
+PYEOF
+    )
+
+    while IFS=$'\t' read -r kind target pkg_path; do
+        [[ -n "$kind" ]] || continue
+        case "$kind" in
+            DEB)
+                apt_debs_args+=("${apt_suite_flags[$target]}" "$pkg_path")
+                ;;
+            RPM)
+                if [[ -n "${retained_rpm_files[$target]-}" ]]; then
+                    retained_rpm_files["$target"]+=$'\n'"$pkg_path"
+                else
+                    retained_rpm_files["$target"]="$pkg_path"
+                fi
+                ;;
+            PAC)
+                if [[ -n "${retained_arch_files[$target]-}" ]]; then
+                    retained_arch_files["$target"]+=$'\n'"$pkg_path"
+                else
+                    retained_arch_files["$target"]="$pkg_path"
+                fi
+                ;;
+        esac
+    done <<< "$retention_manifest"
+fi
+
+apt_arches_csv=$(IFS=','; printf '%s' "${apt_arches[*]}")
+declare -a apt_args=(
+    --output-dir "$pages_dir/apt"
+    --repo-url "${repo_base_url%/}/apt"
+    --arches "$apt_arches_csv"
+    "${apt_debs_args[@]}"
+)
 
 ephemeral_gpg_home=""
 cleanup_ephemeral_gpg() {
@@ -233,12 +382,11 @@ for key in "${rpm_targets[@]}"; do
         --arch "$arch"
         --preserve-output
     )
-    if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
-        for old_rpm in "$previous_pages_dir"/rpm/"$distro"/"$arch"/Packages/*.rpm; do
+    if [[ -n "${retained_rpm_files[$key]-}" ]]; then
+        while IFS= read -r old_rpm; do
             [[ -f "$old_rpm" ]] || continue
-            [[ "$(basename "$old_rpm")" != modernime-"${cand_ver}"-*.rpm ]] || continue
             rpm_args+=(--rpm "$old_rpm")
-        done
+        done <<< "${retained_rpm_files[$key]}"
     fi
     rpm_args+=(--rpm "$rpm_pkg" "${common_gpg_args[@]}")
     "$project_root/scripts/build_rpm_repo.sh" "${rpm_args[@]}"
@@ -255,12 +403,11 @@ if [[ ${#arch_targets[@]} -gt 0 ]]; then
             --arch "$arch"
             --preserve-output
         )
-        if [[ -n "$previous_pages_dir" && -d "$previous_pages_dir" ]]; then
-            for old_pkg in "$previous_pages_dir"/arch/"$arch"/*.pkg.tar.zst; do
+        if [[ -n "${retained_arch_files[$arch]-}" ]]; then
+            while IFS= read -r old_pkg; do
                 [[ -f "$old_pkg" ]] || continue
-                [[ "$(basename "$old_pkg")" != modernime-"${cand_ver}"-*.pkg.tar.zst ]] || continue
                 pac_args+=(--pkg "$old_pkg")
-            done
+            done <<< "${retained_arch_files[$arch]}"
         fi
         pac_args+=(--pkg "$arch_pkg" "${common_gpg_args[@]}")
         "$project_root/scripts/build_pacman_repo.sh" "${pac_args[@]}"
