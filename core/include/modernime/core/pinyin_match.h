@@ -30,6 +30,7 @@ struct TypoPath final {
     double totalPenalty = 0.0;
     int editCount = 0;
     bool allSyllablesComplete = false;
+    bool usesValidSyllableOmission = false;
     TypoEditKind primaryEdit = TypoEditKind::None;
 };
 

@@ -18,4 +18,7 @@ struct CandidateFeatureContext final {
 void populateCandidateFeatures(core::CandidateScore &candidate,
                                const libime::PinyinDictionary &dictionary,
                                const CandidateFeatureContext &request);
+bool isDictionaryLexicalPhrase(const libime::PinyinDictionary &dictionary,
+                               std::string_view fullPinyin,
+                               std::string_view phrase);
 } // namespace modernime::pinyin

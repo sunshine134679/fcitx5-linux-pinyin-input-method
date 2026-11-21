@@ -388,6 +388,35 @@ int main() {
                    "lattice matcher aligns xan to xian");
         assertTrue(PinyinMatchPolicy::matchTypoLatticeSyllable("jnch", "jin") == 2,
                    "lattice matcher aligns jn to jin");
+
+        // Separated full-typo matching (omission + nasal/retroflex fuzzy)
+        assertTrue(PinyinMatchPolicy::isFullTypoMatch("luo'ye'gui'geng", "luo'ye'gui'gen"),
+                   "isFullTypoMatch skips syllable-boundary '\'' for fuzzy tail matching");
+        assertTrue(!PinyinMatchPolicy::isFullTypoMatch("ni'h'ao", "ni'hao"),
+                   "isFullTypoMatch never crosses intra-syllable '\''");
+        assertTrue(!PinyinMatchPolicy::isFullTypoMatch("luo'ye'gui'gen'", "luo'ye'gui'gen"),
+                   "isFullTypoMatch rejects trailing '\''");
+
+        // Bounded valid-syllable glide omissions (gui->gu, huan->hun)
+        const auto luoyePaths = PinyinMatchPolicy::generateTypoPaths("luoyegugen");
+        assertTrue(hasPath(luoyePaths, "luo'ye'gui'gen", "luo'ye'gu'gen") &&
+                       luoyePaths.front().usesValidSyllableOmission,
+                   "luoyegugen generates valid-syllable glide omission luo'ye'gui'gen");
+        const auto luoyeSepPaths = PinyinMatchPolicy::generateTypoPaths("luo'ye'gu'gen");
+        assertTrue(hasPath(luoyeSepPaths, "luo'ye'gui'gen", "luo'ye'gu'gen"),
+                   "luo'ye'gu'gen preserves manual separators while recovering gui->gu");
+        const auto luoyeFuzzyPaths = PinyinMatchPolicy::generateTypoPaths("luoyegugeng");
+        assertTrue(hasPath(luoyeFuzzyPaths, "luo'ye'gui'geng", "luo'ye'gu'geng"),
+                   "luoyegugeng generates luo'ye'gui'geng for typo+fuzzy recovery");
+        const auto xihunPaths = PinyinMatchPolicy::generateTypoPaths("xihun");
+        assertTrue(hasPath(xihunPaths, "xi'huan", "xi'hun"),
+                   "xihun generates valid-syllable glide omission xi'huan");
+        const auto dannaoPaths = PinyinMatchPolicy::generateTypoPaths("dannao", 4);
+        assertTrue(hasPath(dannaoPaths, "dian'nao", "dan'nao"),
+                   "dannao retains dian'nao alongside lower-cost invalid split");
+        const auto dngxiPaths = PinyinMatchPolicy::generateTypoPaths("dngxi", 4);
+        assertTrue(hasPath(dngxiPaths, "dong'xi", "dng'xi"),
+                   "dngxi includes dong'xi within 4-path budget");
     }
 
     return EXIT_SUCCESS;

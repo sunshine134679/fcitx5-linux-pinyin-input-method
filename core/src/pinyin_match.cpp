@@ -1531,11 +1531,19 @@ bool PinyinMatchPolicy::isFullTypoMatch(std::string_view userInput,
 
     std::size_t offset = 0;
     bool hadTypo = false;
-    for (const auto syl : syllables) {
+    for (std::size_t idx = 0; idx < syllables.size(); ++idx) {
+        const auto syl = syllables[idx];
+        if (idx > 0 && offset < userInput.size() && userInput[offset] == '\'') {
+            ++offset;
+        }
         if (offset >= userInput.size()) {
             return false;
         }
-        const auto rem = userInput.substr(offset);
+        const auto sep = userInput.find('\'', offset);
+        const auto rem = userInput.substr(
+            offset,
+            sep == std::string_view::npos ? std::string_view::npos
+                                          : sep - offset);
         const auto typoLen = matchTypoSyllable(rem, syl);
         if (typoLen > 0) {
             offset += typoLen;
@@ -1708,6 +1716,37 @@ struct TypoEditTables final {
                 addTarget(omission, key, syllable, TypoEditKind::Omission,
                           false, penalty);
             }
+            // 1b. Bounded valid-syllable glide/medial omissions where dropping one
+            //     vowel accidentally yields another valid syllable (e.g. gui->gu,
+            //     huan->hun, yuan->yun, dian->dan, hao->ha). Gated by high penalty
+            //     and lexical/multi-syllable guards so valid words keep priority.
+            if (syllable.ends_with("ui")) {
+                const std::string key(syllable.substr(0, syllable.size() - 1));
+                if (isValidMandarinSyllable(key)) {
+                    addTarget(omission, key, syllable, TypoEditKind::Omission,
+                              true, 5.5);
+                }
+            } else if (syllable.size() >= 4 && syllable.ends_with("uan")) {
+                std::string key(syllable.substr(0, syllable.size() - 2));
+                key.push_back('n');
+                if (isValidMandarinSyllable(key)) {
+                    addTarget(omission, key, syllable, TypoEditKind::Omission,
+                              true, 5.5);
+                }
+            } else if (syllable.size() >= 4 && syllable.ends_with("ian")) {
+                std::string key(syllable.substr(0, syllable.size() - 3));
+                key.append("an");
+                if (isValidMandarinSyllable(key)) {
+                    addTarget(omission, key, syllable, TypoEditKind::Omission,
+                              true, 5.5);
+                }
+            } else if (syllable.ends_with("ao")) {
+                const std::string key(syllable.substr(0, syllable.size() - 1));
+                if (isValidMandarinSyllable(key)) {
+                    addTarget(omission, key, syllable, TypoEditKind::Omission,
+                              true, 5.8);
+                }
+            }
             // 2. Interior adjacent-character transposition (1 <= k < size - 1).
             for (std::size_t k = 1; k + 1 < syllable.size(); ++k) {
                 if (syllable[k] == syllable[k + 1]) {
@@ -1848,6 +1887,7 @@ std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
         std::vector<TypoSegment> segments;
         double dpCost = 0.0;
         double typoPenalty = 0.0;
+        bool usesValidSyllableOmission = false;
         TypoEditKind primaryEdit = TypoEditKind::None;
     };
 
@@ -1966,27 +2006,44 @@ std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
                 const bool keyHasVowel = std::any_of(
                     key.begin(), key.end(), isPinyinVowel);
 
-                // 1. Omission recovery (only when raw input is not already a
-                //    clean full-pinyin sequence).
-                if (!rawIsValidFull) {
-                    if (const auto it = tables.omission.find(key);
-                        it != tables.omission.end()) {
-                        const bool allowedShortConsonant =
-                            !(len == 2 && !keyHasVowel) ||
-                            plainInput.size() >= 4;
-                        if (allowedShortConsonant) {
-                            for (const auto &target : it->second) {
-                                for (const auto &base : states) {
-                                    LatticeState next = base;
-                                    next.segments.push_back(TypoSegment{
-                                        pos, pos + len, target.syllable,
-                                        TypoEditKind::Omission, true,
-                                        target.penalty});
-                                    next.dpCost += target.penalty + 0.15;
-                                    next.typoPenalty += target.penalty;
-                                    next.primaryEdit = TypoEditKind::Omission;
-                                    pushState(pos + len, 1, std::move(next));
+                // 1. Omission recovery. Invalid-syllable omissions require
+                //    !rawIsValidFull; bounded valid-syllable glide omissions
+                //    require multi-syllable length >= 5 and cannot span all input.
+                if (const auto it = tables.omission.find(key);
+                    it != tables.omission.end()) {
+                    const bool allowedShortConsonant =
+                        !(len == 2 && !keyHasVowel) || plainInput.size() >= 4;
+                    const bool multiSyllableSpan =
+                        plainInput.size() >= 5 && (pos > 0 || pos + len < n);
+                    if (allowedShortConsonant) {
+                        for (const auto &target : it->second) {
+                            if (target.originalValid) {
+                                if (!multiSyllableSpan ||
+                                    (rawIsValidFull && plainInput.size() > 14)) {
+                                    continue;
                                 }
+                                if (target.syllable.ends_with("ao") &&
+                                    (plainInput.size() < 6 ||
+                                     (pos + len < n &&
+                                      rawInput[pos + len] == 'o'))) {
+                                    continue;
+                                }
+                            } else if (rawIsValidFull) {
+                                continue;
+                            }
+                            for (const auto &base : states) {
+                                LatticeState next = base;
+                                next.segments.push_back(TypoSegment{
+                                    pos, pos + len, target.syllable,
+                                    TypoEditKind::Omission, true,
+                                    target.penalty});
+                                next.dpCost += target.penalty + 0.15;
+                                next.typoPenalty += target.penalty;
+                                next.primaryEdit = TypoEditKind::Omission;
+                                if (target.originalValid) {
+                                    next.usesValidSyllableOmission = true;
+                                }
+                                pushState(pos + len, 1, std::move(next));
                             }
                         }
                     }
@@ -2049,7 +2106,7 @@ std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
         if (state.segments.empty()) {
             continue;
         }
-        if (state.dpCost > bestDpCost + 1.2) {
+        if (state.dpCost > bestDpCost + 2.4) {
             break;
         }
         TypoPath path;
@@ -2057,6 +2114,7 @@ std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
         path.totalPenalty = state.typoPenalty;
         path.editCount = 1;
         path.primaryEdit = state.primaryEdit;
+        path.usesValidSyllableOmission = state.usesValidSyllableOmission;
         path.allSyllablesComplete = true;
         for (std::size_t i = 0; i < state.segments.size(); ++i) {
             const auto &seg = state.segments[i];

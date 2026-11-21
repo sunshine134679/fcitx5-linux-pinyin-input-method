@@ -332,8 +332,16 @@ CandidatePipelineResult buildCandidatePipeline(
                     std::string_view(path.decodedInput).substr(0, segDecEnds[*matchedSeg]);
                 const int pathPriority =
                     core::PinyinMatchPolicy::priority(decodedPrefix, fullPinyin);
-                // Prevent double-drift (typo + unrelated fuzzy mismatch).
-                if (pathPriority < 1) {
+                bool phoneticFuzzyMatch = false;
+                if (pathPriority == 0) {
+                    const auto decFuzzy =
+                        core::PinyinMatchPolicy::phoneticFuzzyKey(decodedPrefix);
+                    const auto candFuzzy =
+                        core::PinyinMatchPolicy::phoneticFuzzyKey(fullPinyin);
+                    phoneticFuzzyMatch = !decFuzzy.empty() && decFuzzy == candFuzzy;
+                }
+                // Prevent double-drift (typo + unrelated mismatch).
+                if (pathPriority < 1 && !phoneticFuzzyMatch) {
                     continue;
                 }
                 std::size_t consumed = segments[*matchedSeg].rawEnd;
@@ -344,18 +352,24 @@ CandidatePipelineResult buildCandidatePipeline(
                 const bool isFullSpan =
                     (*matchedSeg + 1 == segments.size()) &&
                     consumed == rawInput.size();
+                const bool hasSecondaryFuzzy =
+                    path.allSyllablesComplete &&
+                    core::PinyinMatchPolicy::canonical(decodedPrefix) !=
+                        core::PinyinMatchPolicy::canonical(fullPinyin);
+                const double effectivePenalty =
+                    path.totalPenalty + (hasSecondaryFuzzy ? 1.5 : 0.0);
                 const int assignedPriority =
                     !isFullSpan
                         ? -1
                         : (hasNativePrio2 && path.allSyllablesComplete &&
-                                   pathPriority == 2
+                                   (pathPriority == 2 || phoneticFuzzyMatch)
                                ? 2
                                : 1);
                 const float rawScore = pathCandidates[idx].score();
                 const float adjustedScore =
-                    rawScore - static_cast<float>(path.totalPenalty * 0.25);
+                    rawScore - static_cast<float>(effectivePenalty * 0.25);
                 const double rankKey =
-                    static_cast<double>(rawScore) - 0.5 * path.totalPenalty;
+                    static_cast<double>(rawScore) - 0.5 * effectivePenalty;
                 const auto key = spanKey(text, fullPinyin, consumed);
                 if (seenKeys.contains(key)) {
                     continue;
@@ -366,7 +380,7 @@ CandidatePipelineResult buildCandidatePipeline(
                     if (rankKey > existing.rank_key) {
                         existing.raw_decoder_score = rawScore;
                         existing.adjusted_decoder_score = adjustedScore;
-                        existing.typo_penalty = path.totalPenalty;
+                        existing.typo_penalty = effectivePenalty;
                         existing.match_priority = assignedPriority;
                         existing.rank_key = rankKey;
                         if (isFullSpan && !hasManualSep) {
@@ -388,7 +402,7 @@ CandidatePipelineResult buildCandidatePipeline(
                     item.language_context_bonus =
                         contextDecoder->gain(pathCandidates[idx]);
                 }
-                item.typo_penalty = path.totalPenalty;
+                item.typo_penalty = effectivePenalty;
                 item.match_priority = assignedPriority;
                 item.rank_key = rankKey;
                 latticeIndex.emplace(key, latticeCandidates.size());

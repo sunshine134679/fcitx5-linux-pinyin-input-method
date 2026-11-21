@@ -145,4 +145,10 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
             request.input, candidate.text, candidate.full_pinyin, partial);
     }
 }
+
+bool isDictionaryLexicalPhrase(const libime::PinyinDictionary &dictionary,
+                               std::string_view fullPinyin,
+                               std::string_view phrase) {
+    return dictionaryBonus(dictionary, fullPinyin, phrase).is_lexical;
+}
 } // namespace modernime::pinyin

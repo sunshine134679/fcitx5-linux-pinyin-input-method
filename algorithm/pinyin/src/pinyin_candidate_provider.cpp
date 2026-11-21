@@ -5,6 +5,7 @@
 #include "modernime/pinyin/pinyin_shared_resources.h"
 
 #include "modernime/pinyin/candidate_composition.h"
+#include "modernime/pinyin/candidate_features.h"
 #include "modernime/pinyin/candidate_mixer.h"
 #include "modernime/pinyin/candidate_pipeline.h"
 #include "modernime/pinyin/context_decoder.h"
@@ -1611,9 +1612,36 @@ private:
         if (!extend && !useShuangpin && typoCorrectionEnabled_ &&
             typoContext == nullptr) {
             const auto rawCanonical = core::PinyinMatchPolicy::canonical(rawInput);
-            auto paths = core::PinyinMatchPolicy::generateTypoPaths(rawInput, 3);
+            auto paths = core::PinyinMatchPolicy::generateTypoPaths(rawInput, 4);
+            bool nativeTopIsFullLexical = false;
+            const auto &nativeCandidates = context->candidates();
+            if (!nativeCandidates.empty()) {
+                const auto &topSentence = nativeCandidates.front().sentence();
+                std::size_t topConsumed =
+                    (!topSentence.empty() && topSentence.back() != nullptr &&
+                     topSentence.back()->to() != nullptr)
+                        ? topSentence.back()->to()->index()
+                        : 0;
+                while (topConsumed < rawInput.size() &&
+                       (rawInput[topConsumed] == '\'' ||
+                        rawInput[topConsumed] == ',')) {
+                    ++topConsumed;
+                }
+                if (topConsumed == rawInput.size() && ime().dict() != nullptr) {
+                    try {
+                        nativeTopIsFullLexical = isDictionaryLexicalPhrase(
+                            *ime().dict(),
+                            context->candidateFullPinyin(0),
+                            nativeCandidates.front().toString());
+                    } catch (const std::exception &) {
+                    }
+                }
+            }
             typoDecodedPaths.reserve(paths.size());
             for (auto &path : paths) {
+                if (path.usesValidSyllableOmission && nativeTopIsFullLexical) {
+                    continue;
+                }
                 const auto pathCanonical =
                     core::PinyinMatchPolicy::canonical(path.decodedInput);
                 if (pathCanonical == rawCanonical) {

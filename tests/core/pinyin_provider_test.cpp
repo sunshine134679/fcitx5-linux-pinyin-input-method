@@ -592,6 +592,77 @@ void testTypoLatticeAndDynamicPreedit() {
                    provider.page().items.front().text == "进程" &&
                    provider.page().preedit == "jn'ch",
                "applyOptions re-enabling typoCorrectionEnabled restores 进程 and jn'ch");
+
+    // 6. Valid-syllable glide omission + combined nasal fuzzy + lexical guardrails
+    for (const auto &[input, expectedPreedit] :
+         std::vector<std::pair<std::string_view, std::string_view>>{
+             {"luoyegugen", "luo'ye'gu'gen"},
+             {"luo'ye'gu'gen", "luo'ye'gu'gen"},
+             {"luoyegugeng", "luo'ye'gu'geng"},
+             {"luo'ye'gu'geng", "luo'ye'gu'geng"},
+             {"luoyegigen", "luo'ye'gi'gen"},
+             {"luo'ye'gi'gen", "luo'ye'gi'gen"},
+         }) {
+        provider.reset();
+        assertTrue(provider.append(input), "luoye typo input accepted");
+        assertTrue(!provider.page().items.empty() &&
+                       provider.page().items.front().text == "落叶归根" &&
+                       provider.page().preedit == expectedPreedit,
+                   "luoye valid/invalid omission & fuzzy promotes 落叶归根 to Top-1 with raw preedit");
+    }
+
+    for (const auto &[input, expectedTop, expectedPreedit] :
+         std::vector<std::tuple<std::string_view, std::string_view, std::string_view>>{
+             {"xihun", "喜欢", "xi'hun"},
+             {"jisunji", "计算机", "ji'sun'ji"},
+             {"chengxuyun", "程序员", "cheng'xu'yun"},
+             {"danshiju", "电视剧", "dan'shi'ju"},
+             {"buhayisi", "不好意思", "bu'ha'yi'si"},
+             {"dannao", "电脑", "dan'nao"},
+             {"dngxi", "东西", "dng'xi"},
+             {"gunyuwom", "关于我们", "gun'yu'wo'm"},
+         }) {
+        provider.reset();
+        assertTrue(provider.append(input), "glide omission input accepted");
+        assertTrue(!provider.page().items.empty() &&
+                       provider.page().items.front().text == expectedTop &&
+                       provider.page().preedit == expectedPreedit,
+                   "valid-syllable glide omission recovers intended lexical phrase at Top-1");
+    }
+
+    for (const auto &[input, nativeTop] :
+         std::vector<std::pair<std::string_view, std::string_view>>{
+             {"dubuqi", "读不起"},
+             {"gushi", "故事"},
+             {"hujia", "护甲"},
+             {"wode", "我的"},
+             {"womendajia", "我们大家"},
+             {"zhegegushi", "这个故事"},
+             {"woqugugong", "我去故宫"},
+             {"tadanxin", "他担心"},
+         }) {
+        provider.reset();
+        assertTrue(provider.append(input), "lexical control input accepted");
+        assertTrue(!provider.page().items.empty() &&
+                       provider.page().items.front().text == nativeTop,
+                   "valid lexical and multi-syllable normal native Top-1 is never overridden");
+    }
+
+    // Selecting a corrected candidate never pollutes clean split learning
+    for (int i = 0; i < 3; ++i) {
+        provider.reset();
+        assertTrue(provider.append("xancheng"), "xancheng accepted");
+        if (!provider.page().items.empty() &&
+            provider.page().items.front().text == "线程") {
+            assertTrue(provider.select(0), "select 线程 succeeds");
+        }
+    }
+    provider.reset();
+    assertTrue(provider.append("xan"), "xan accepted after typo learning");
+    assertTrue(!provider.page().items.empty() &&
+                   provider.page().items.front().text == "西安" &&
+                   provider.page().preedit == "x'an",
+               "learning corrected candidate does not pollute clean split xan");
 }
 
 void testTypoCorrectionTransposition() {
