@@ -1,6 +1,6 @@
 # Maintainer: ModernIME Maintainers <sunshine134679@users.noreply.github.com>
 pkgname=modernime
-pkgver=0.2.16
+pkgver=0.2.17
 pkgrel=1
 pkgdesc="Modern Fcitx5 Pinyin Input Method for Linux Desktops"
 arch=('x86_64' 'aarch64')
