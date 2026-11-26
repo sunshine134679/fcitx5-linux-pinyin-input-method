@@ -112,10 +112,7 @@ struct AppIndicatorAPI {
     }
 
     ~AppIndicatorAPI() {
-        if (handle != nullptr) {
-            dlclose(handle);
-            handle = nullptr;
-        }
+        handle = nullptr;
     }
 };
 
@@ -192,6 +189,7 @@ struct ModernIMEUserInterface::Impl final {
     std::shared_ptr<const CandidateFrame> paintedFrame;
     std::shared_ptr<const CandidateFrame> drawnFrame;
     guint frameReadySource = 0;
+    guint scaleRefreshIdleId = 0;
     std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>>
         contextWatchers;
 
@@ -403,6 +401,12 @@ struct ModernIMEUserInterface::Impl final {
         auto *monitor = gdk_display_get_monitor_at_point(
             display, cursor.x, cursorAnchorBottom(cursor.y, cursor.height));
         if (!monitor) {
+            monitor = gdk_display_get_primary_monitor(display);
+        }
+        if (!monitor) {
+            monitor = gdk_display_get_monitor(display, 0);
+        }
+        if (!monitor) {
             return std::nullopt;
         }
         GdkRectangle workarea{};
@@ -433,6 +437,9 @@ struct ModernIMEUserInterface::Impl final {
     // Wayland 会话由 Fcitx5 的原生桌面面板负责，本窗口仅用于 X11。
     void positionWindow(fcitx::InputContext *inputContext) {
         if (inputContext == nullptr || !pendingFrame) {
+            return;
+        }
+        if (inputContext->cursorRect().isEmpty() && windowAnchor.valid) {
             return;
         }
         const auto cursor = logicalCursor(inputContext);
@@ -754,15 +761,59 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
     }
     impl_->drawingArea = gtk_drawing_area_new();
     gtk_widget_add_events(impl_->drawingArea,
-                          GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
+                          GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+                              GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
     gtk_widget_add_events(impl_->window,
                           GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
     gtk_container_add(GTK_CONTAINER(impl_->window), impl_->drawingArea);
     g_signal_connect(impl_->drawingArea, "draw", G_CALLBACK(drawCallback), this);
     g_signal_connect(impl_->drawingArea, "button-press-event",
                      G_CALLBACK(buttonPressCallback), this);
-    g_signal_connect(impl_->window, "button-press-event",
-                     G_CALLBACK(buttonPressCallback), this);
+    g_signal_connect(
+        impl_->drawingArea, "scroll-event",
+        G_CALLBACK(+[](GtkWidget *, GdkEventScroll *event, gpointer data) -> gboolean {
+            auto *impl = static_cast<Impl *>(data);
+            if (impl == nullptr || impl->suspended || event == nullptr) {
+                return FALSE;
+            }
+            const auto frame = impl->paintedFrame;
+            const auto list = frame ? frame->currentList() : nullptr;
+            auto *pageable = list ? list->toPageable() : nullptr;
+            if (!pageable) {
+                return FALSE;
+            }
+            bool prev = false;
+            bool next = false;
+            if (event->direction == GDK_SCROLL_UP) {
+                prev = true;
+            } else if (event->direction == GDK_SCROLL_DOWN) {
+                next = true;
+            } else if (event->direction == GDK_SCROLL_SMOOTH) {
+                if (event->delta_y < -0.1) {
+                    prev = true;
+                } else if (event->delta_y > 0.1) {
+                    next = true;
+                }
+            }
+            if (prev) {
+                if (!pageable->hasPrev()) {
+                    return FALSE;
+                }
+                pageable->prev();
+            } else if (next) {
+                if (!pageable->hasNext()) {
+                    return FALSE;
+                }
+                pageable->next();
+            } else {
+                return FALSE;
+            }
+            if (auto *ic = frame->context.get(); ic && ic->hasFocus()) {
+                ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel, true);
+            }
+            return TRUE;
+        }),
+        impl_.get());
     gtk_widget_set_size_request(impl_->drawingArea, 1, 1);
     gtk_widget_realize(impl_->window);
     g_signal_connect(impl_->window, "notify::scale-factor",
@@ -821,6 +872,14 @@ ModernIMEUserInterface::ModernIMEUserInterface(fcitx::Instance *instance)
 }
 
 ModernIMEUserInterface::~ModernIMEUserInterface() {
+    if (impl_->scaleRefreshIdleId != 0) {
+        g_source_remove(impl_->scaleRefreshIdleId);
+        impl_->scaleRefreshIdleId = 0;
+    }
+    if (impl_->drawingArea) {
+        g_signal_handlers_disconnect_by_data(impl_->drawingArea, this);
+        g_signal_handlers_disconnect_by_data(impl_->drawingArea, impl_.get());
+    }
     if (impl_->window) {
         g_signal_handlers_disconnect_by_data(impl_->window, this);
     }
@@ -852,7 +911,16 @@ ModernIMEUserInterface::~ModernIMEUserInterface() {
 void ModernIMEUserInterface::draw(cairo_t *context) {
     const auto frame = impl_->pendingFrame;
     if (frame && frame->scale != gtk_widget_get_scale_factor(impl_->window)) {
-        refreshDisplayScale();
+        if (impl_->scaleRefreshIdleId == 0) {
+            impl_->scaleRefreshIdleId = g_idle_add(
+                +[](gpointer data) -> gboolean {
+                    auto *self = static_cast<ModernIMEUserInterface *>(data);
+                    self->impl_->scaleRefreshIdleId = 0;
+                    self->refreshDisplayScale();
+                    return G_SOURCE_REMOVE;
+                },
+                this);
+        }
         return;
     }
     if (impl_->suspended || !frame || !frame->currentList()) {

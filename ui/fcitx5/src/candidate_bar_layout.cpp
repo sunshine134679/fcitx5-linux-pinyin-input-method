@@ -143,7 +143,8 @@ CandidateBarLayout measureClipboard(
             rowHeight};
         const auto rightReserved = selected
                                        ? metrics.clipboardSubmitIconWidth +
-                                             metrics.clipboardSubmitIconGap
+                                             metrics.clipboardSubmitIconGap +
+                                             metrics.clipboardTextPadding
                                        : metrics.clipboardTextPadding;
         const auto maxTextWidth = row.width - metrics.clipboardTextPadding -
                                   rightReserved;
@@ -449,8 +450,16 @@ int hitTestCandidate(const CandidateBarLayout &layout,
     // Horizontal pinyin mode
     for (std::size_t i = 0; i < layout.candidates.size(); ++i) {
         const auto &bounds = layout.candidates[i].bounds;
-        if (x >= bounds.x && x <= bounds.x + bounds.width &&
-            y >= bounds.y && y <= bounds.y + bounds.height) {
+        const bool inBounds = x >= bounds.x && x <= bounds.x + bounds.width &&
+                              y >= bounds.y && y <= bounds.y + bounds.height;
+        const bool inSelectedPill =
+            layout.candidates[i].selected &&
+            layout.selectedPill.width > 0.0 && layout.selectedPill.height > 0.0 &&
+            x >= layout.selectedPill.x &&
+            x <= layout.selectedPill.x + layout.selectedPill.width &&
+            y >= layout.selectedPill.y &&
+            y <= layout.selectedPill.y + layout.selectedPill.height;
+        if (inBounds || inSelectedPill) {
             return static_cast<int>(i);
         }
     }

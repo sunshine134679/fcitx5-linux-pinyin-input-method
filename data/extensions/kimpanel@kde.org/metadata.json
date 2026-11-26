@@ -5,8 +5,11 @@
   "name": "ModernIME Input Panel",
   "settings-schema": "org.gnome.shell.extensions.kimpanel",
   "shell-version": [
+    "45",
     "46",
-    "47"
+    "47",
+    "48",
+    "49"
   ],
   "url": "https://github.com/sunshine134679/fcitx5-linux-pinyin-input-method",
   "uuid": "modernime-panel@sunshine134679.github.io",

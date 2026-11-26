@@ -722,8 +722,8 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
          input.starts_with("zhaung") || input.starts_with("shaung") ||
          input.starts_with("chaung"));
     if (!isPotentialTypo && input.size() >= 5) {
-        const auto englishPredictions = EnglishDictionary::predictWords(input, 1);
-        if (!englishPredictions.empty() && englishPredictions.front() != input) {
+        if (EnglishDictionary::hasWordWithPrefix(input) &&
+            !EnglishDictionary::isEnglishWord(input)) {
             return std::string(input);
         }
     }
@@ -742,14 +742,22 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
 
     // 1. 抗抖去重：消除单音节内的非法连续双元音 (oo->o, ee->e, aa->a, ii->i, uu->u)
     // 约束：仅折叠单次重复弹跳字符，避免跨分隔符和无界折叠
+    // 合法跨音节 'a' + (an/ang/ai/ao) 组合（如 da'an 答案、fa'an 法案、da'ai 大爱）保留双 a。
     if (!isProtectedEnglish) {
         std::string debounced;
         debounced.reserve(s.size());
         bool lastSkipped = false;
         for (std::size_t i = 0; i < s.size(); ++i) {
             if (i > 0 && isVowel(s[i]) && s[i] == s[i - 1] && !lastSkipped) {
-                lastSkipped = true;
-                continue;
+                const bool validCrossSyllableAA =
+                    s[i] == 'a' && i + 1 < s.size() &&
+                    (s[i + 1] == 'n' || s[i + 1] == 'i' || s[i + 1] == 'o') &&
+                    isValidPinyinSequence(canonical(s.substr(0, i))) &&
+                    isValidPinyinSequence(canonical(s));
+                if (!validCrossSyllableAA) {
+                    lastSkipped = true;
+                    continue;
+                }
             }
             if (i > 0 && isConsonant(s[i]) && s[i] == s[i - 1] && (i == 1 || s[i - 2] == '\'') && !lastSkipped) {
                 lastSkipped = true;
@@ -1000,9 +1008,11 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
     }
 
     // 3.4 ina -> ian (e.g. tina -> tian, xina -> xian)
+    // 避开 *inan (hunan/jinan/xinan/zhinan -> ji'nan/xi'nan 等合法跨音节词，pinyin 无双 nn 韵尾)
     pos = 0;
     while ((pos = s.find("ina", pos)) != std::string::npos) {
-        if (pos > 0 && isConsonant(s[pos - 1])) {
+        const bool followedByN = (pos + 3 < s.size() && s[pos + 3] == 'n');
+        if (pos > 0 && isConsonant(s[pos - 1]) && !followedByN) {
             s.replace(pos, 3, "ian");
             pos += 3;
         } else {
@@ -1013,7 +1023,8 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
     // 3.5 una -> uan (e.g. guna -> guan, kuna -> kuan, tuna -> tuan)
     pos = 0;
     while ((pos = s.find("una", pos)) != std::string::npos) {
-        if (pos > 0 && isConsonant(s[pos - 1])) {
+        const bool followedByN = (pos + 3 < s.size() && s[pos + 3] == 'n');
+        if (pos > 0 && isConsonant(s[pos - 1]) && !followedByN) {
             s.replace(pos, 3, "uan");
             pos += 3;
         } else {
@@ -1057,24 +1068,32 @@ std::string PinyinMatchPolicy::normalizeTypoInput(std::string_view input) {
 
     // 4. 残缺韵尾漏字母补全 (Omission Recovery)
     // 4.1 漏打后鼻音 n: *og -> *ong, *eg -> *eng, *ig -> *ing, *ag -> *ang
-    std::string omissionRes;
-    omissionRes.reserve(s.size() + 4);
-    for (std::size_t i = 0; i < s.size(); ++i) {
-        omissionRes.push_back(s[i]);
-        if (s[i] == 'g') {
-            if (i >= 1 && isVowel(s[i - 1]) && (i < 2 || s[i - 2] != 'n')) {
-                const bool atEnd = (i + 1 == s.size());
-                const bool nextIsConsonant = (i + 1 < s.size() && isConsonant(s[i + 1]));
-                const bool nextIsSep = (i + 1 < s.size() && s[i + 1] == '\'');
-                if (atEnd || nextIsConsonant || nextIsSep) {
-                    omissionRes.pop_back();
-                    omissionRes.push_back('n');
-                    omissionRes.push_back('g');
+    // 保护常见 3~4 字母混拼简拼（如 zheg/yig/tig/xig/qig/jig/fag/dag/deg），不误判为 *ng
+    const bool skipShortMixedPrefixG =
+        s.size() <= 4 && s.back() == 'g' &&
+        isValidMandarinSyllable(std::string_view(s).substr(0, s.size() - 1)) &&
+        !std::string_view(s).ends_with("uag") &&
+        !std::string_view(s).ends_with("iag");
+    if (!skipShortMixedPrefixG) {
+        std::string omissionRes;
+        omissionRes.reserve(s.size() + 4);
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            omissionRes.push_back(s[i]);
+            if (s[i] == 'g') {
+                if (i >= 1 && isVowel(s[i - 1]) && (i < 2 || s[i - 2] != 'n')) {
+                    const bool atEnd = (i + 1 == s.size());
+                    const bool nextIsConsonant = (i + 1 < s.size() && isConsonant(s[i + 1]));
+                    const bool nextIsSep = (i + 1 < s.size() && s[i + 1] == '\'');
+                    if (atEnd || nextIsConsonant || nextIsSep) {
+                        omissionRes.pop_back();
+                        omissionRes.push_back('n');
+                        omissionRes.push_back('g');
+                    }
                 }
             }
         }
+        s = std::move(omissionRes);
     }
-    s = std::move(omissionRes);
 
     // 4.2 漏打三元音 u: *yo -> *you (例如 pengyo -> pengyou)
     pos = 0;
@@ -1099,8 +1118,12 @@ std::size_t PinyinMatchPolicy::matchTypoSyllable(std::string_view input,
     }
 
     // 0. 单字符弹跳容错（受限单次重复字母）：dee -> de, nii -> ni, shii -> shi, dde -> de
+    const auto isMatchVowel = [](char c) {
+        return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' || c == 'v';
+    };
     // 0.1 尾部元音单次重复: e.g. input "dee" vs syllable "de" (consumes 3 bytes)
-    if (syllable.size() >= 2 && input.size() >= syllable.size() + 1 &&
+    if (syllable.size() >= 2 && isMatchVowel(syllable.back()) &&
+        input.size() >= syllable.size() + 1 &&
         input.substr(0, syllable.size()) == syllable &&
         input[syllable.size()] == syllable.back()) {
         if (input.size() == syllable.size() + 1 || input[syllable.size() + 1] != syllable.back()) {
@@ -1108,10 +1131,11 @@ std::size_t PinyinMatchPolicy::matchTypoSyllable(std::string_view input,
         }
     }
     // 0.2 首部声母单次重复: e.g. input "dde" vs syllable "de" (consumes 3 bytes)
-    if (syllable.size() >= 2 && input.size() >= syllable.size() + 1 &&
+    if (syllable.size() >= 2 && !isMatchVowel(syllable.front()) &&
+        input.size() >= syllable.size() + 1 &&
         input.front() == syllable.front() &&
         input.substr(1, syllable.size()) == syllable) {
-        if (input.size() == syllable.size() + 1 || input[1] != syllable.front()) {
+        if (input.size() == syllable.size() + 1 || input[2] != syllable.front()) {
             return syllable.size() + 1;
         }
     }
@@ -1507,8 +1531,8 @@ bool PinyinMatchPolicy::isFullTypoMatch(std::string_view userInput,
          userInput.starts_with("lain") || userInput.starts_with("gaun") ||
          userInput.starts_with("kaun") || userInput.starts_with("haun"));
     if (!isPotentialTypo && userInput.size() >= 5) {
-        const auto preds = EnglishDictionary::predictWords(userInput, 1);
-        if (!preds.empty() && preds.front() != userInput &&
+        if (EnglishDictionary::hasWordWithPrefix(userInput) &&
+            !EnglishDictionary::isEnglishWord(userInput) &&
             !exactInputMatch(userInput, fullPinyin)) {
             return false;
         }
@@ -1593,6 +1617,57 @@ int PinyinMatchPolicy::priority(std::string_view userInput,
         return 2;
     }
     if (isFullTypoMatch(userInput, fullPinyin)) {
+        // Pure nasal fuzzy differences (en<->eng, in<->ing, an<->ang) belong in the
+        // fuzzy group (priority 0) so F1 promotion and exact-over-fuzzy ordering work.
+        auto isPureNasalFuzzyDiff = [](std::string_view raw, std::string_view full) {
+            std::vector<std::string_view> syllables;
+            for (std::size_t s = 0; s < full.size();) {
+                const auto sep = full.find('\'', s);
+                const auto end = sep == std::string_view::npos ? full.size() : sep;
+                if (end > s) syllables.push_back(full.substr(s, end - s));
+                if (sep == std::string_view::npos) break;
+                s = sep + 1;
+            }
+            if (syllables.empty() || syllables.size() > 16) return false;
+            auto swapNasal = [](std::string_view syl) -> std::string {
+                for (const auto &[f, b] : {
+                         std::pair<std::string_view, std::string_view>{"en", "eng"},
+                         std::pair<std::string_view, std::string_view>{"in", "ing"},
+                         std::pair<std::string_view, std::string_view>{"an", "ang"}}) {
+                    if (syl.ends_with(b)) {
+                        std::string out(syl.substr(0, syl.size() - 1));
+                        if (isValidMandarinSyllable(out)) return out;
+                    } else if (syl.ends_with(f)) {
+                        std::string out(syl);
+                        out.push_back('g');
+                        if (isValidMandarinSyllable(out)) return out;
+                    }
+                }
+                return {};
+            };
+            auto align = [&](auto &self, std::size_t idx, std::size_t off, bool hadNasal) -> bool {
+                if (idx == syllables.size()) return off == raw.size() && hadNasal;
+                if (off < raw.size() && raw[off] == '\'') {
+                    if (idx == 0) return false;
+                    ++off;
+                }
+                if (off >= raw.size()) return false;
+                const auto sep = raw.find('\'', off);
+                const auto rem = raw.substr(off, sep == std::string_view::npos ? std::string_view::npos : sep - off);
+                const auto syl = syllables[idx];
+                if (rem.starts_with(syl) && self(self, idx + 1, off + syl.size(), hadNasal)) return true;
+                const auto swapped = swapNasal(syl);
+                if (!swapped.empty() && rem.starts_with(swapped) &&
+                    self(self, idx + 1, off + swapped.size(), true)) {
+                    return true;
+                }
+                return false;
+            };
+            return align(align, 0, 0, false);
+        };
+        if (isPureNasalFuzzyDiff(userInput, fullPinyin)) {
+            return 0;
+        }
         return 2;
     }
     // isAbbreviationInput 只依赖 userInput，对所有候选结果相同，
@@ -1873,14 +1948,40 @@ std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
         if (EnglishDictionary::isEnglishWord(plainInput)) {
             return {};
         }
-        const auto preds = EnglishDictionary::predictWords(plainInput, 1);
-        if (!preds.empty()) {
+        if (EnglishDictionary::hasWordWithPrefix(plainInput)) {
             return {};
         }
     }
 
     const auto &tables = typoEditTables();
     const bool rawIsValidFull = allChunksValidPinyin(rawInput);
+    const bool inputHasVowel = std::any_of(plainInput.begin(), plainInput.end(), isPinyinVowel);
+    // Detect inputs that only parse as valid pinyin via an unseparated zero-initial
+    // trailing vowel syllable (e.g. dianjua -> dian+ju+a, zhongfuo -> zhong+fu+o,
+    // xuao -> xu+ao, shiang -> shi+ang) so adjacent-key recovery can still fire.
+    const bool usesUnseparatedZeroInitial = [&]() {
+        if (!rawIsValidFull || rawInput.find('\'') != std::string_view::npos ||
+            isValidMandarinSyllable(plainInput)) {
+            return false;
+        }
+        const std::size_t m = plainInput.size();
+        std::vector<unsigned char> dpNoZero(m + 1, 0);
+        dpNoZero[0] = 1;
+        for (std::size_t end = 1; end <= m; ++end) {
+            const auto maxL = std::min<std::size_t>(6, end);
+            for (std::size_t len = 1; len <= maxL; ++len) {
+                const auto sv = std::string_view(plainInput).substr(end - len, len);
+                if (end - len > 0 && !isValidPinyinInitialChar(sv.front())) {
+                    continue;
+                }
+                if (dpNoZero[end - len] && isValidMandarinSyllable(sv)) {
+                    dpNoZero[end] = 1;
+                    break;
+                }
+            }
+        }
+        return dpNoZero.back() == 0;
+    }();
     const std::size_t n = rawInput.size();
 
     struct LatticeState {
@@ -2078,7 +2179,7 @@ std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
                                 (rawIsValidFull && plainInput.size() > 10)) {
                                 continue;
                             }
-                        } else if (rawIsValidFull) {
+                        } else if (rawIsValidFull && !usesUnseparatedZeroInitial) {
                             continue;
                         }
                         for (const auto &base : states) {
@@ -2104,6 +2205,11 @@ std::vector<TypoPath> PinyinMatchPolicy::generateTypoPaths(
         beam[n][1].empty() ? 0.0 : beam[n][1].front().dpCost;
     for (const auto &state : beam[n][1]) {
         if (state.segments.empty()) {
+            continue;
+        }
+        // Protect pure 4+ letter consonant initialisms (e.g. hngx/xngn/hnjd) from being
+        // hijacked into 3-word omissions while preserving 2-segment jn'ch (jnch).
+        if (!inputHasVowel && state.segments.size() >= 3) {
             continue;
         }
         if (state.dpCost > bestDpCost + 2.4) {

@@ -21,6 +21,7 @@
 #include <fcitx/surroundingtext.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -408,6 +409,7 @@ struct ReadyNotificationEndpoint : public std::enable_shared_from_this<ReadyNoti
     std::condition_variable inFlightCv;
     bool active = true;
     int inFlightSchedules = 0;
+    int inFlightDispatches = 0;
     fcitx::EventDispatcher *dispatcher = nullptr;
     ModernIMEInputMethod *owner = nullptr;
     fcitx::Instance *instance = nullptr;
@@ -443,14 +445,31 @@ struct ReadyNotificationEndpoint : public std::enable_shared_from_this<ReadyNoti
                     if (self->onBeforeDispatchForTest) {
                         self->onBeforeDispatchForTest();
                     }
-                    std::lock_guard dispatchLock(self->mutex);
-                    if (!self->active) {
-                        return;
+                    std::function<void()> dispatchFn;
+                    std::function<void()> refreshFn;
+                    {
+                        std::lock_guard dispatchLock(self->mutex);
+                        if (!self->active || currentGeneration != self->notificationGeneration) {
+                            return;
+                        }
+                        ++self->inFlightDispatches;
+                        dispatchFn = self->onDispatch;
+                        refreshFn = self->onRefreshCallbackForTest;
                     }
-                    if (currentGeneration != self->notificationGeneration) {
-                        return;
+                    struct DispatchGuard final {
+                        ReadyNotificationEndpoint &endpoint;
+                        ~DispatchGuard() {
+                            std::lock_guard unlockGuard(endpoint.mutex);
+                            --endpoint.inFlightDispatches;
+                            endpoint.inFlightCv.notify_all();
+                        }
+                    } guard{*self};
+                    if (dispatchFn) {
+                        dispatchFn();
                     }
-                    self->dispatchLocked();
+                    if (refreshFn) {
+                        refreshFn();
+                    }
                 });
             }
             --inFlightSchedules;
@@ -461,7 +480,9 @@ struct ReadyNotificationEndpoint : public std::enable_shared_from_this<ReadyNoti
     inline void deactivateAndDrain() {
         std::unique_lock lock(mutex);
         active = false;
-        inFlightCv.wait(lock, [this] { return inFlightSchedules == 0; });
+        inFlightCv.wait(lock, [this] {
+            return inFlightSchedules == 0 && inFlightDispatches == 0;
+        });
         dispatcher = nullptr;
         owner = nullptr;
         instance = nullptr;
@@ -507,6 +528,7 @@ private:
     void observeCompatibility(fcitx::InputContext *context);
     void rememberAppMode(fcitx::InputContext *context);
     bool appStartsInChinese(fcitx::InputContext *context) const;
+    void ensureAuxResources();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // 阻塞等待后台词典预热完成并落地 resources_.pinyin；fcitx5 事件循环
     // 串行调用本引擎，主线程内无需加锁。加载失败仅记录日志，保持空资源，
@@ -535,6 +557,8 @@ private:
     int settingsRetryCount_ = 0;
     bool shiftPressed_ = false;
     bool otherKeyPressedWhileShift_ = false;
+    std::chrono::steady_clock::time_point shiftPressTime_{};
+    int shiftPressKey_ = 0;
     std::uint64_t settingsGeneration_ = 0;
     core::ModernIMESettings settings_;
     std::map<std::string, core::InputMode> rememberedAppModes_;
@@ -543,6 +567,9 @@ private:
     std::shared_ptr<ReadyNotificationEndpoint> readyEndpoint_;
     std::shared_ptr<ReadyNotificationEndpoint> clipboardEndpoint_;
     FcitxEngineResources resources_;
+    std::future<std::shared_ptr<const core::ComponentLookup>> componentLookupFuture_;
+    std::future<std::shared_ptr<const core::CandidateFilterIndex>> candidateFilterFuture_;
+    bool auxResourcesResolved_ = false;
     std::shared_ptr<core::InputCompatibilityTracker> compatibility_ = std::make_shared<core::InputCompatibilityTracker>();
     bool maintenanceActive_ = false;
 #ifdef MODERNIME_HAS_LIBIME_PINYIN

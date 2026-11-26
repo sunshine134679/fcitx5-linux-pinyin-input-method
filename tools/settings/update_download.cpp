@@ -98,7 +98,7 @@ DownloadedUpdate UpdateController::downloadUpdate(const UpdateStatus &previous,
         return download;
     }
     const auto channel = detectInstallChannel(environment);
-    if (channel != "script" && channel != "deb" && channel != "rpm") {
+    if (channel != "script" && channel != "deb" && channel != "rpm" && channel != "pacman") {
         download.result.message = "未找到当前客户端的安装记录，请修复安装后再试。";
         return download;
     }
@@ -117,6 +117,24 @@ DownloadedUpdate UpdateController::downloadUpdate(const UpdateStatus &previous,
     if (cache.empty()) cache = g_get_user_cache_dir();
     const auto cacheRoot = std::filesystem::path(cache) / "modernime";
     std::filesystem::create_directories(cacheRoot, error);
+    if (!error) {
+        const auto now = std::filesystem::file_time_type::clock::now();
+        std::error_code iterEc;
+        for (const auto &entry : std::filesystem::directory_iterator(cacheRoot, iterEc)) {
+            if (!entry.is_directory(iterEc)) {
+                continue;
+            }
+            const auto name = entry.path().filename().string();
+            if (!name.starts_with("update-")) {
+                continue;
+            }
+            const auto mtime = entry.last_write_time(iterEc);
+            if (!iterEc && now - mtime > std::chrono::hours(24 * 7)) {
+                std::error_code rmEc;
+                std::filesystem::remove_all(entry.path(), rmEc);
+            }
+        }
+    }
     auto pattern = (cacheRoot / "update-XXXXXX").string();
     if (error || !g_mkdtemp_full(pattern.data(), 0700)) {
         download.result.message = "无法创建更新下载目录，请检查磁盘空间和目录权限。";

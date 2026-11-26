@@ -103,7 +103,7 @@ using Object=std::unique_ptr<GDBusConnection,decltype(&g_object_unref)>;
 constexpr auto destination="org.modernime.Backend1";
 constexpr auto objectPath="/org/modernime/Backend1";
 bool mutating(std::string_view action) {
-    return action=="learning.forget" || action=="learning.unsuppress" || action=="bundle.restore" || action=="bundle.export" ||
+    return action=="learning.forget" || action=="learning.unsuppress" || action=="learning.prune_stale" || action=="bundle.restore" || action=="bundle.export" ||
         (action.starts_with("pack.") && action!="pack.list" && action!="pack.inspect");
 }
 BackendReply invoke(GDBusConnection *bus,const char *owner,const std::string &action,const std::vector<std::string> &args,GCancellable *cancel) {

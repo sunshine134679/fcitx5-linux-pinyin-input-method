@@ -1455,12 +1455,22 @@ int runCommandCaptureChild(int argc, char **argv) {
     const int diagErrFd = ::open((opDir + "/stderr.diag").c_str(),
                                  O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 
-    int outPipe[2];
-    int errPipe[2];
-    if (::pipe2(outPipe, O_CLOEXEC | O_NONBLOCK) != 0 || ::pipe2(errPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
+    int outPipe[2]{-1, -1};
+    int errPipe[2]{-1, -1};
+    if (::pipe2(outPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
         const char errByte = 'N';
         (void)::write(handshakeFd, &errByte, 1);
         ::close(handshakeFd);
+        if (diagOutFd >= 0) ::close(diagOutFd);
+        if (diagErrFd >= 0) ::close(diagErrFd);
+        return 1;
+    }
+    if (::pipe2(errPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
+        const char errByte = 'N';
+        (void)::write(handshakeFd, &errByte, 1);
+        ::close(handshakeFd);
+        ::close(outPipe[0]);
+        ::close(outPipe[1]);
         if (diagOutFd >= 0) ::close(diagOutFd);
         if (diagErrFd >= 0) ::close(diagErrFd);
         return 1;
@@ -1491,12 +1501,19 @@ int runCommandCaptureChild(int argc, char **argv) {
     }
 
     if (childPid == 0) {
+        if (errPipe[1] == STDOUT_FILENO) {
+            const int dupErr = ::dup(errPipe[1]);
+            if (dupErr >= 0) {
+                errPipe[1] = dupErr;
+            }
+        }
         ::dup2(outPipe[1], STDOUT_FILENO);
         ::dup2(errPipe[1], STDERR_FILENO);
-        ::close(outPipe[0]);
-        ::close(outPipe[1]);
-        ::close(errPipe[0]);
-        ::close(errPipe[1]);
+        for (int fd : {outPipe[0], outPipe[1], errPipe[0], errPipe[1]}) {
+            if (fd >= 0 && fd != STDOUT_FILENO && fd != STDERR_FILENO) {
+                ::close(fd);
+            }
+        }
         const int fOut = ::fcntl(STDOUT_FILENO, F_GETFL);
         if (fOut >= 0) ::fcntl(STDOUT_FILENO, F_SETFL, fOut & ~O_NONBLOCK);
         const int fErr = ::fcntl(STDERR_FILENO, F_GETFL);
@@ -1659,8 +1676,13 @@ int runCommandCaptureChild(int argc, char **argv) {
     if (diagOutFd >= 0) ::close(diagOutFd);
     if (diagErrFd >= 0) ::close(diagErrFd);
 
-    if (!childFinished) {
-        ::waitpid(childPid, &childStatus, 0);
+    while (!childFinished) {
+        const pid_t w = ::waitpid(childPid, &childStatus, 0);
+        if (w == childPid) {
+            childFinished = true;
+        } else if (w < 0 && errno != EINTR) {
+            break;
+        }
     }
 
     const bool ifExited = WIFEXITED(childStatus);

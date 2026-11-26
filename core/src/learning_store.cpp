@@ -100,12 +100,19 @@ bool LearningStore::open() {
         close();
         return false;
     }
+    readOnly_ = false;
     // The settings client reads the same database while the input method
     // writes it; wait briefly for the other writer instead of failing with
     // SQLITE_BUSY.
     sqlite3_busy_timeout(db_, 1000);
-    if (!execute("PRAGMA journal_mode=WAL;") || !execute(schema) ||
+    if (!execute("PRAGMA journal_mode=WAL;") ||
+        !execute("PRAGMA journal_size_limit=4194304;") ||
+        !execute("PRAGMA synchronous=NORMAL;") ||
+        !execute(schema) ||
         !ensureSuppressionColumn() ||
+        !execute("CREATE INDEX IF NOT EXISTS idx_learning_context ON "
+                 "learning_entries(pinyin, phrase) "
+                 "WHERE context_before <> '' OR context_after <> '';") ||
         !execute("CREATE TABLE IF NOT EXISTS learning_state ("
                  "id INTEGER PRIMARY KEY CHECK (id = 1), "
                  "reset_revision INTEGER NOT NULL DEFAULT 0);"
@@ -152,7 +159,8 @@ bool LearningStore::openReadOnly() {
         close();
         return false;
     }
-    sqlite3_busy_timeout(db_, 0);
+    readOnly_ = true;
+    sqlite3_busy_timeout(db_, 100);
     lastDataVersion_ = dataVersion();
     return true;
 }
@@ -205,6 +213,7 @@ void LearningStore::close() {
         sqlite3_close(db_);
         db_ = nullptr;
     }
+    readOnly_ = false;
 }
 
 bool LearningStore::execute(const char *sql) const {
@@ -548,6 +557,9 @@ bool LearningStore::pruneContextVariants(bool *pruned) const {
 bool LearningStore::pruneTotalEntries(bool *pruned) const {
     if (db_ == nullptr) {
         return false;
+    }
+    if (const auto count = entryCount(); count && *count <= totalEntryLimit_) {
+        return true;
     }
     constexpr const char *sql =
         "DELETE FROM learning_entries WHERE rowid IN ("

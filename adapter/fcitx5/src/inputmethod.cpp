@@ -198,7 +198,8 @@ ControllerOptions controllerOptions(const core::ModernIMESettings &settings) {
             settings.autoPairPunctuation, settings.smartPunctuation,
             settings.underscoreStyle, settings.punctuationOverrides, settings.undoCommitEnabled,
             settings.temporaryEnglishEnabled, settings.componentLookupEnabled, settings.calculatorEnabled, settings.symbolSearchEnabled,
-            std::vector<std::string>(settings.symbolFavorites.begin(), settings.symbolFavorites.end())};
+            std::vector<std::string>(settings.symbolFavorites.begin(), settings.symbolFavorites.end()),
+            settings.pinyinScheme != core::PinyinScheme::Full};
 }
 
 KeyBindings keyBindings(const core::ModernIMESettings &settings) {
@@ -264,7 +265,8 @@ pinyin::PinyinProviderOptions pinyinOptions(
 
 static SurroundingContext
 extractSurroundingContextState(const fcitx::SurroundingText &text,
-                          std::size_t maxChars) {
+                          std::size_t maxChars,
+                          bool allowLineBoundaryEmpty = false) {
     if (!text.isValid() || maxChars == 0) {
         return {"", "", ContextAvailability::Invalidated};
     }
@@ -335,7 +337,7 @@ extractSurroundingContextState(const fcitx::SurroundingText &text,
     // A line boundary yielding an empty local window is not evidence that
     // the previous committed word was deleted. Drop its pending feedback.
     const auto availability =
-        lastNl != std::string::npos && before.empty() && after.empty()
+        !allowLineBoundaryEmpty && lastNl != std::string::npos && before.empty() && after.empty()
             ? ContextAvailability::Invalidated
             : ContextAvailability::Valid;
     return {std::move(before), std::move(after), availability};
@@ -443,7 +445,7 @@ std::optional<TextEditContext> FcitxEngineHost::textEditContext() const {
         flags.testAny(fcitx::CapabilityFlag::PasswordOrSensitive) ||
         !flags.test(fcitx::CapabilityFlag::SurroundingText) || !text.isValid() ||
         text.cursor() != text.anchor()) return std::nullopt;
-    auto window = extractSurroundingContextState(text, 256);
+    auto window = extractSurroundingContextState(text, 256, true);
     if (window.availability != ContextAvailability::Valid) return std::nullopt;
     return TextEditContext{std::move(window.first), std::move(window.second), text.cursor()};
 }
@@ -458,7 +460,7 @@ bool FcitxEngineHost::insertPair(std::string_view opener, std::string_view close
     const auto &surrounding = inputContext_->surroundingText();
     if (flags.test(fcitx::CapabilityFlag::SurroundingText) && surrounding.isValid()) {
         if (surrounding.cursor() != surrounding.anchor() ||
-            extractSurroundingContextState(surrounding, 256).availability !=
+            extractSurroundingContextState(surrounding, 256, true).availability !=
                 ContextAvailability::Valid) {
             return false;
         }
@@ -600,13 +602,36 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
           // 保证首键路径不再承担全量词典加载。
           ensurePinyinResources();
 #endif
+          ensureAuxResources();
           return new FcitxInputContextState(inputContext, settings_,
                                             resources_, settingsGeneration_);
       }) {
     // Load the optional converter on activation. Starting another addon here
     // re-enters AddonManager's loader and prevents engine startup.
-    resources_.componentLookup = std::make_shared<const core::ComponentLookup>();
-    resources_.candidateFilter = std::make_shared<const core::CandidateFilterIndex>();
+    {
+        auto compPromise =
+            std::make_shared<std::promise<std::shared_ptr<const core::ComponentLookup>>>();
+        componentLookupFuture_ = compPromise->get_future();
+        std::thread([compPromise]() {
+            try {
+                compPromise->set_value(std::make_shared<const core::ComponentLookup>());
+            } catch (...) {
+                compPromise->set_exception(std::current_exception());
+            }
+        }).detach();
+
+        auto filterPromise =
+            std::make_shared<std::promise<std::shared_ptr<const core::CandidateFilterIndex>>>();
+        candidateFilterFuture_ = filterPromise->get_future();
+        std::thread([filterPromise]() {
+            try {
+                filterPromise->set_value(
+                    std::make_shared<const core::CandidateFilterIndex>());
+            } catch (...) {
+                filterPromise->set_exception(std::current_exception());
+            }
+        }).detach();
+    }
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // One dictionary/language-model/learning-writer set for the whole engine;
     // every input context only adds its own composition state. The load
@@ -783,6 +808,10 @@ ModernIMEInputMethod::ModernIMEInputMethod(fcitx::AddonManager *manager,
 }
 
 ModernIMEInputMethod::~ModernIMEInputMethod() {
+    surroundingWatcher_.reset();
+    clipboardCapabilityWatcher_.reset();
+    clipboardTimer_.reset();
+    fileTimer_.reset();
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     backendService_.reset();
     if (resources_.pinyin) {
@@ -802,6 +831,12 @@ ModernIMEInputMethod::~ModernIMEInputMethod() {
         }
     }
     dispatcher_.detach();
+    if (componentLookupFuture_.valid()) {
+        componentLookupFuture_.wait();
+    }
+    if (candidateFilterFuture_.valid()) {
+        candidateFilterFuture_.wait();
+    }
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
     // 后台线程只持有 promise/paths/options 的值拷贝，不引用 this；
     // 这里等待加载结果落地，避免析构先于 set_value 完成。
@@ -957,14 +992,24 @@ std::optional<KeyEvent> translateKey(const fcitx::Key &key,
         return event;
     }
     if (bindings.characterExtractionEnabled) {
-        if (key.check(FcitxKey_bracketleft, fcitx::KeyStates(fcitx::KeyState::Ctrl)) ||
-            (!hasNonShiftModifier(key) && key.check(FcitxKey_bracketleft))) {
+        if (key.check(FcitxKey_bracketleft, fcitx::KeyStates(fcitx::KeyState::Ctrl))) {
+            event.kind = KeyKind::CommitFirstCharacter;
+            event.character = '[';
+            event.allowPunctuationFallback = false;
+            return event;
+        }
+        if (!hasNonShiftModifier(key) && key.check(FcitxKey_bracketleft)) {
             event.kind = KeyKind::CommitFirstCharacter;
             event.character = '[';
             return event;
         }
-        if (key.check(FcitxKey_bracketright, fcitx::KeyStates(fcitx::KeyState::Ctrl)) ||
-            (!hasNonShiftModifier(key) && key.check(FcitxKey_bracketright))) {
+        if (key.check(FcitxKey_bracketright, fcitx::KeyStates(fcitx::KeyState::Ctrl))) {
+            event.kind = KeyKind::CommitLastCharacter;
+            event.character = ']';
+            event.allowPunctuationFallback = false;
+            return event;
+        }
+        if (!hasNonShiftModifier(key) && key.check(FcitxKey_bracketright)) {
             event.kind = KeyKind::CommitLastCharacter;
             event.character = ']';
             return event;
@@ -1031,6 +1076,21 @@ void ModernIMEInputMethod::pollClipboard() {
     if (!clipboardAddonLookupAttempted_) {
         clipboardAddon_ = manager_->addon("clipboard", true);
         clipboardAddonLookupAttempted_ = true;
+    }
+    if (inputContext != nullptr) {
+        std::string program = inputContext->program();
+        for (char &ch : program) {
+            if (ch >= 'A' && ch <= 'Z') {
+                ch = static_cast<char>(ch - 'A' + 'a');
+            }
+        }
+        for (const char *secretApp :
+             {"keepass", "bitwarden", "1password", "enpass", "passbolt", "seahorse", "kwallet"}) {
+            if (program.find(secretApp) != std::string::npos) {
+                clipboardNeedsBaseline_ = true;
+                return;
+            }
+        }
     }
     if (clipboardAddon_ == nullptr) {
         return;
@@ -1104,6 +1164,11 @@ void ModernIMEInputMethod::pollFileChanges() {
                                 if (contextState->settingsGeneration() != settingsGeneration_) {
                                     contextState->applySettings(settings_, settingsGeneration_);
                                 }
+                                const bool active = contextState->controller().active();
+                                subModeAction_.setShortText(active ? "中" : "英");
+                                subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
+                                subModeAction_.update(ic);
+                                ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
                             }
                         }
                     }
@@ -1121,9 +1186,33 @@ void ModernIMEInputMethod::pollFileChanges() {
                 settingsRetryCount_ = 0;
             }
         } else {
+            const bool hadSettings =
+                settingsStamp_.exists || !appliedVersion_.contentHash.empty();
             settingsStamp_ = currentStamp;
             settingsLoadFailed_ = false;
             settingsRetryCount_ = 0;
+            if (hadSettings) {
+                rememberedAppModes_.clear();
+                settings_ = core::defaultSettings();
+                keyBindings_ = keyBindings(settings_);
+                clipboardNeedsBaseline_ = true;
+                ++settingsGeneration_;
+                appliedVersion_ = {"", settingsGeneration_};
+                writeRuntimeState(settingsPaths().runtimeState, "",
+                                  settingsGeneration_);
+                if (instance_ != nullptr) {
+                    if (auto *ic = instance_->inputContextManager().mostRecentInputContext()) {
+                        if (auto *contextState = state(ic)) {
+                            contextState->applySettings(settings_, settingsGeneration_);
+                            const bool active = contextState->controller().active();
+                            subModeAction_.setShortText(active ? "中" : "英");
+                            subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
+                            subModeAction_.update(ic);
+                            ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+                        }
+                    }
+                }
+            }
         }
     }
     const auto dictionaryFile = settingsPaths().userDictionary;
@@ -1154,6 +1243,33 @@ void ModernIMEInputMethod::pollFileChanges() {
 #else
     userDictionaryStamp_ = dictStamp;
 #endif
+}
+
+void ModernIMEInputMethod::ensureAuxResources() {
+    if (auxResourcesResolved_) {
+        return;
+    }
+    auxResourcesResolved_ = true;
+    try {
+        if (componentLookupFuture_.valid()) {
+            resources_.componentLookup = componentLookupFuture_.get();
+        }
+    } catch (const std::exception &error) {
+        FCITX_ERROR() << "ModernIME component lookup load failed: " << error.what();
+    }
+    try {
+        if (candidateFilterFuture_.valid()) {
+            resources_.candidateFilter = candidateFilterFuture_.get();
+        }
+    } catch (const std::exception &error) {
+        FCITX_ERROR() << "ModernIME candidate filter load failed: " << error.what();
+    }
+    if (!resources_.componentLookup) {
+        resources_.componentLookup = std::make_shared<const core::ComponentLookup>();
+    }
+    if (!resources_.candidateFilter) {
+        resources_.candidateFilter = std::make_shared<const core::CandidateFilterIndex>();
+    }
 }
 
 #ifdef MODERNIME_HAS_LIBIME_PINYIN
@@ -1232,41 +1348,58 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
     InputDispatchTimer timing{*compatibility_, event};
     consumeClipboardSnapshot();
     if (event.isRelease()) {
-        if (event.key().check(FcitxKey_Shift_L) ||
-            event.key().check(FcitxKey_Shift_R)) {
-            if (shiftPressed_ && !otherKeyPressedWhileShift_) {
+        const bool isLeftShift = event.key().check(FcitxKey_Shift_L);
+        const bool isRightShift = event.key().check(FcitxKey_Shift_R);
+        if (isLeftShift || isRightShift) {
+            const int releasedShift = isLeftShift ? 1 : 2;
+            const auto elapsed = std::chrono::steady_clock::now() - shiftPressTime_;
+            const bool bindingAllowsShift =
+                (keyBindings_.toggleKey != "Shift_L" || (releasedShift == 1 && shiftPressKey_ == 1)) &&
+                (keyBindings_.toggleKey != "Shift_R" || (releasedShift == 2 && shiftPressKey_ == 2));
+            if (shiftPressed_ && !otherKeyPressedWhileShift_ &&
+                bindingAllowsShift &&
+                elapsed <= std::chrono::milliseconds(400)) {
                 shiftPressed_ = false;
+                shiftPressKey_ = 0;
                 auto *contextState = state(event.inputContext());
                 if (contextState != nullptr) {
                     if (contextState->settingsGeneration() != settingsGeneration_) {
                         contextState->applySettings(settings_, settingsGeneration_);
                     }
-                    if (!contextState->controller().page().preedit.empty()) {
-                        contextState->controller().handle({KeyKind::Enter, 0, 0});
+                    auto &ctrl = contextState->controller();
+                    if (ctrl.auxiliaryInputActive() || ctrl.clipboardMode() || ctrl.candidateFiltering()) {
+                        ctrl.handle({KeyKind::Escape, 0, 0});
+                    } else if (!ctrl.page().preedit.empty()) {
+                        ctrl.handle({KeyKind::Enter, 0, 0});
                     }
-                    if (contextState->controller().handle({KeyKind::Toggle, 0, 0})) {
+                    if (ctrl.handle({KeyKind::Toggle, 0, 0})) {
                         rememberAppMode(event.inputContext());
-                        const bool active = contextState->controller().active();
+                        const bool active = ctrl.active();
                         subModeAction_.setShortText(active ? "中" : "英");
                         subModeAction_.setLongText(active ? "中文输入法" : "英文键盘");
                         if (auto *ic = event.inputContext()) {
                             subModeAction_.update(ic);
                             ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
                         }
-                        event.filterAndAccept();
                         return;
                     }
                 }
             }
             shiftPressed_ = false;
+            shiftPressKey_ = 0;
         }
         return;
     }
 
     if (event.key().check(FcitxKey_Shift_L) ||
         event.key().check(FcitxKey_Shift_R)) {
+        if (event.rawKey().states().test(fcitx::KeyState::Repeat) && shiftPressed_) {
+            return;
+        }
         shiftPressed_ = true;
         otherKeyPressedWhileShift_ = false;
+        shiftPressTime_ = std::chrono::steady_clock::now();
+        shiftPressKey_ = event.key().check(FcitxKey_Shift_L) ? 1 : 2;
     } else {
         otherKeyPressedWhileShift_ = true;
     }
@@ -1280,6 +1413,19 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         }
         contextState->syncSurroundingContext();
         auto modernEvent = translateKey(event.key(), keyBindings_);
+        if (!modernEvent.has_value() &&
+            (!contextState->controller().page().preedit.empty() ||
+             contextState->controller().auxiliaryInputActive()) &&
+            event.key().states() == fcitx::KeyStates(fcitx::KeyState::Shift)) {
+            if (event.key().sym() == FcitxKey_space) {
+                modernEvent = KeyEvent{KeyKind::Space};
+            } else if (event.key().sym() == FcitxKey_Return ||
+                       event.key().sym() == FcitxKey_KP_Enter) {
+                modernEvent = KeyEvent{KeyKind::Enter};
+            }
+        }
+        const bool fullPinyinScheme =
+            settings_.pinyinScheme == core::PinyinScheme::Full;
         if (!hasNonShiftModifier(event.key()) && event.key().check(FcitxKey_grave) &&
             !contextState->controller().auxiliaryInputActive() &&
             !contextState->controller().page().rawInput.empty()) {
@@ -1292,19 +1438,23 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
             modernEvent = KeyEvent{KeyKind::StartClipboardSearch};
         } else if (contextState->controller().clipboardMode() && (event.key().check(FcitxKey_d, fcitx::KeyState::Ctrl) || event.key().check(FcitxKey_D, fcitx::KeyState::Ctrl))) {
             modernEvent = KeyEvent{KeyKind::ToggleClipboardFavorite};
-        } else if (keyBindings_.componentLookupEnabled && !hasNonShiftModifier(event.key()) &&
+        } else if (fullPinyinScheme && keyBindings_.componentLookupEnabled && !hasNonShiftModifier(event.key()) &&
                    !contextState->controller().auxiliaryInputActive() &&
                    contextState->controller().page().rawInput == "u" && event.key().check(FcitxKey_plus)) {
             modernEvent = KeyEvent{KeyKind::OpenComponentLookup};
-        } else if (keyBindings_.calculatorEnabled && !hasNonShiftModifier(event.key()) &&
+        } else if (fullPinyinScheme && keyBindings_.calculatorEnabled && !hasNonShiftModifier(event.key()) &&
                    !contextState->controller().auxiliaryInputActive() &&
                    contextState->controller().page().rawInput == "v" && event.key().check(FcitxKey_equal)) {
             modernEvent = KeyEvent{KeyKind::OpenCalculator};
-        } else if (keyBindings_.symbolSearchEnabled && !hasNonShiftModifier(event.key()) &&
+        } else if (fullPinyinScheme && keyBindings_.symbolSearchEnabled && !hasNonShiftModifier(event.key()) &&
                    !contextState->controller().auxiliaryInputActive() && contextState->controller().page().rawInput == "v" &&
                    event.key().check(FcitxKey_semicolon)) {
             modernEvent = KeyEvent{KeyKind::OpenSymbols};
-        } else if ((contextState->controller().auxiliaryInputActive() || contextState->controller().clipboardSearching()) && !hasNonShiftModifier(event.key())) {
+        } else if ((contextState->controller().auxiliaryInputActive() || contextState->controller().clipboardSearching()) &&
+                   !hasNonShiftModifier(event.key()) &&
+                   (!modernEvent ||
+                    (modernEvent->kind != KeyKind::PreviousPage && modernEvent->kind != KeyKind::NextPage) ||
+                    contextState->controller().auxiliaryInputMode() == AuxiliaryInputMode::Calculator)) {
             const auto c = fcitx::Key::keySymToUnicode(event.key().sym());
             if (c > 0x20 && c <= 0x7e) modernEvent = KeyEvent{KeyKind::Character, static_cast<char>(c)};
         }
@@ -1331,7 +1481,7 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         // 两段式剪贴板触发：拼音组合恰好是触发字母（默认 v）时，下一键为
         // 触发数字（默认 2）则丢弃组合并打开剪贴板。触发字母本身始终按
         // 正常输入处理，不会被消费或改写；数字选择关闭时同样生效。
-        if (clipboardActive &&
+        if (fullPinyinScheme && clipboardActive &&
             clipboardTriggerFire(contextState->controller().page().preedit,
                                  event.key(), keyBindings_.clipboardTrigger)) {
             if (contextState->controller().handle(
@@ -1361,7 +1511,16 @@ void ModernIMEInputMethod::keyEvent(const fcitx::InputMethodEntry &,
         if (!modernEvent.has_value()) {
             // Physical shortcuts arrive as modifier presses before the final
             // key. Keep undo/pair ownership until the actual command arrives.
-            if (hasNonShiftModifier(event.key()) && !event.key().isModifier())
+            const auto sym = event.key().sym();
+            const bool isCursorJumpKey = !event.key().isModifier() &&
+                contextState->controller().page().preedit.empty() &&
+                (sym == FcitxKey_Home || sym == FcitxKey_End ||
+                 sym == FcitxKey_KP_Home || sym == FcitxKey_KP_End ||
+                 sym == FcitxKey_Left || sym == FcitxKey_Right ||
+                 sym == FcitxKey_Up || sym == FcitxKey_Down ||
+                 sym == FcitxKey_Page_Up || sym == FcitxKey_Page_Down);
+            if ((hasNonShiftModifier(event.key()) && !event.key().isModifier()) ||
+                isCursorJumpKey)
                 contextState->controller().invalidateTextActions();
             if (!event.key().isModifier() &&
                 contextState->controller().page().preedit.empty() &&

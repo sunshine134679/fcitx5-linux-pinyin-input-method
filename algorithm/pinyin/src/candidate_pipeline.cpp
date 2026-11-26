@@ -43,7 +43,18 @@ std::optional<std::size_t> inputBoundary(
     if (split == from.size()) {
         letterEnd = to.size();
     } else {
-        if (to.starts_with(prefix)) letterEnd = split;
+        if (to.starts_with(prefix)) {
+            std::size_t pos = split;
+            // Absorb a single debounced repeated vowel at the syllable boundary
+            // (e.g. niihaoo -> nii + haoo instead of leaving orphan 'i').
+            if (pos > 0 && pos < to.size() && to[pos] == to[pos - 1] &&
+                (to[pos] == 'a' || to[pos] == 'e' || to[pos] == 'i' ||
+                 to[pos] == 'o' || to[pos] == 'u') &&
+                (pos >= from.size() || from[pos] != to[pos])) {
+                ++pos;
+            }
+            letterEnd = pos;
+        }
         const auto suffix = std::string_view(from).substr(split);
         if (to.ends_with(suffix)) {
             const auto suffixEnd = to.size() - suffix.size();
@@ -658,7 +669,10 @@ CandidatePipelineResult buildCandidatePipeline(
     }
     result.order = core::CandidateRanker::rank(
         shuangpin != nullptr && !recallInputs.empty() ? recallInputs.front() : context.userInput(),
-        result.scored, previousOrder);
+        result.scored, previousOrder,
+        shuangpin != nullptr && !recallInputs.empty()
+            ? std::optional<std::size_t>(context.userInput().size())
+            : std::nullopt);
     return result;
 }
 

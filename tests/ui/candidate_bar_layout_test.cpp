@@ -265,6 +265,10 @@ int main() {
     const auto &hc2 = hitTestHLayout.candidates[2].bounds;
     assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc0.x + hc0.width / 2.0, hc0.y + hc0.height / 2.0) == 0,
                "center of candidate 0 hits candidate 0");
+    assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics,
+                                               hitTestHLayout.selectedPill.x + 1.0,
+                                               hitTestHLayout.selectedPill.y + 1.0) == 0,
+               "selected pill padding hits selected candidate");
     assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc1.x + hc1.width / 2.0, hc1.y + hc1.height / 2.0) == 1,
                "center of candidate 1 hits candidate 1");
     assertTrue(modernime::ui::hitTestCandidate(hitTestHLayout, metrics, hc2.x + hc2.width / 2.0, hc2.y + hc2.height / 2.0) == 2,
@@ -290,6 +294,26 @@ int main() {
     modernime::ui::CandidateBarLayout emptyLayout;
     assertTrue(modernime::ui::hitTestCandidate(emptyLayout, metrics, 50.0, 50.0) == -1,
                "empty layout returns -1");
+
+    // Selected clipboard row reserves full submit-icon + padding clearance
+    modernime::core::CandidatePage clipReservePage;
+    clipReservePage.mode = modernime::core::CandidatePageMode::Clipboard;
+    clipReservePage.items = {{"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", {}, 0}};
+    clipReservePage.cursor = 0;
+    auto clipMetrics = metrics;
+    clipMetrics.panelWidth = 220.0;
+    const auto clipReserveLayout = modernime::ui::CandidateBarLayout::measure(
+        clipReservePage, clipMetrics,
+        [](std::string_view value) {
+            return static_cast<double>(value.size() * 10);
+        });
+    assertTrue(clipReserveLayout.candidates.size() == 1 &&
+                   clipReserveLayout.candidates[0].displayText.size() * 10.0 <=
+                       clipReserveLayout.submitIcon.x -
+                           (clipReserveLayout.candidates[0].bounds.x +
+                            clipMetrics.clipboardTextPadding) -
+                           clipMetrics.clipboardSubmitIconGap + 1e-6,
+               "selected clipboard preview leaves submit icon gap clear");
 
     modernime::core::CandidatePage annotationPage;
     annotationPage.items.push_back({"dee", "dee", 0, modernime::core::CandidateSource::Raw, 3, "马具；电极"});

@@ -454,9 +454,19 @@ def restart(args, prefix):
         raise UpdateError("找不到更新后的可执行客户端。")
     activated = False
     try:
-        subprocess.Popen(["fcitx5", "-d", "-r"], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True, close_fds=True)
+        runner = prefix / "bin/modernime-session-runner"
+        if runner.is_file() and os.access(runner, os.X_OK):
+            subprocess.run(["fcitx5-remote", "-e"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=2, check=False)
+            time.sleep(0.3)
+            subprocess.Popen([str(runner)], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True, close_fds=True)
+        else:
+            subprocess.Popen(["fcitx5", "-d", "-r"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True, close_fds=True)
         deadline = time.monotonic() + 15
         time.sleep(0.5)
         while time.monotonic() < deadline:

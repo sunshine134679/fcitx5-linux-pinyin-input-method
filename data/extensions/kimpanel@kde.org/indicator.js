@@ -107,19 +107,26 @@ export class KimIndicator extends PanelMenu.Button {
             }
             return;
         } else {
-            for (let p in this._propertySwitch) {
-                if (properties[p] == undefined) {
-                    this._propertySwitch[p].destroy();
-                    delete this._propertySwitch[p];
-                }
-            }
-
             let count = 0;
-            for (let p in properties) {
+            const parsedProperties = [];
+            const activeKeys = new Set();
+            for (let p = 0; p < properties.length; p++) {
                 let property = Lib.parseProperty(properties[p]);
                 if (property == null) {
                     continue;
                 }
+                parsedProperties.push(property);
+                activeKeys.add(property.key);
+            }
+
+            for (let key in this._propertySwitch) {
+                if (!activeKeys.has(key)) {
+                    this._propertySwitch[key].destroy();
+                    delete this._propertySwitch[key];
+                }
+            }
+
+            for (const property of parsedProperties) {
                 count++;
                 let key = property.key;
                 this._properties[key] = property;

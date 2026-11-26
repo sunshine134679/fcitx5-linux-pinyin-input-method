@@ -196,7 +196,6 @@ public:
                     owner.notifyMessage("学习记录统计已刷新");
                 }
             });
-            delete taskData;
         }
     }
 
@@ -213,7 +212,7 @@ public:
         ++refreshGeneration_;
         auto *taskData = new RefreshTaskData{lifetime, path, refreshGeneration_, shouldNotify, 0, {}, {}};
         auto *task = g_task_new(nullptr, nullptr, onRefreshFinished, nullptr);
-        g_task_set_task_data(task, taskData, nullptr);
+        g_task_set_task_data(task, taskData, +[](gpointer p) { delete static_cast<RefreshTaskData *>(p); });
         g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer data, GCancellable *) {
             auto *td = static_cast<RefreshTaskData *>(data);
             td->count = DataController::learningEntryCount(td->path, &td->error);
@@ -336,7 +335,6 @@ private:
                 gtk_widget_show(owner.operationResult);
                 owner.refresh(false);
             });
-            delete taskData;
         }
     }
 
@@ -402,7 +400,7 @@ private:
         const auto backup = learningBackupPath(impl->path);
         auto *taskData = new ClearTaskData{impl->lifetime, impl->path, backup, false, {}};
         auto *task = g_task_new(nullptr, nullptr, onClearFinished, nullptr);
-        g_task_set_task_data(task, taskData, nullptr);
+        g_task_set_task_data(task, taskData, +[](gpointer p) { delete static_cast<ClearTaskData *>(p); });
         g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
             auto *td = static_cast<ClearTaskData *>(task_data);
             td->success = DataController::backupAndClearLearning(td->path, td->backup, &td->error);

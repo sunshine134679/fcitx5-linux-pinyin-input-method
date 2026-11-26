@@ -274,6 +274,7 @@ void CandidateBarRenderer::render(RenderSurface &surface,
                         : (lead & 0xF8) == 0xF0 ? 4 : 1;
             ++chars;
         }
+        hintBytes = std::min(hintBytes, valueText.size());
         const auto valuePrefix =
             candidate.hint.empty() ? valueText : valueText.substr(0, hintBytes);
         const auto valueSuffix =

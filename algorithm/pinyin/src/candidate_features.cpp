@@ -115,10 +115,20 @@ void populateCandidateFeatures(core::CandidateScore &candidate,
     if (request.learning != nullptr) {
         // The snapshot owns signed evidence. Zero means no history, not a
         // lower bound: max(default_zero, boost) would erase negative feedback.
-        candidate.learning_boost = request.learning->boostAt(
-            candidate.text, candidate.full_pinyin, request.nowMs);
-        candidate.context_bonus = request.learning->contextBoost(
-            candidate.text, candidate.full_pinyin, request.before, request.after, request.nowMs);
+        // High-penalty (>= 5.0) valid-syllable substitutions/omissions on an already
+        // valid pinyin input (e.g. learned xin'xi under xunxi) must not hijack exact words.
+        const bool suppressForeignLearning =
+            candidate.typo_penalty >= 5.0 &&
+            core::PinyinMatchPolicy::isValidPinyinSequence(
+                core::PinyinMatchPolicy::canonical(request.input));
+        candidate.learning_boost = suppressForeignLearning
+            ? 0.0
+            : request.learning->boostAt(
+                  candidate.text, candidate.full_pinyin, request.nowMs);
+        candidate.context_bonus = suppressForeignLearning
+            ? 0.0
+            : request.learning->contextBoost(
+                  candidate.text, candidate.full_pinyin, request.before, request.after, request.nowMs);
         candidate.last_selected_ms = request.learning->lastSelectedMs(
             candidate.text, candidate.full_pinyin);
     }

@@ -42,6 +42,26 @@ std::string keyFor(std::string_view pinyin, std::string_view phrase) {
     return key;
 }
 
+std::string preserveSeparatorPinyin(std::string_view pinyin) {
+    std::string out;
+    out.reserve(pinyin.size());
+    bool pendingSep = false;
+    for (const unsigned char ch : pinyin) {
+        if (ch == '\'' || ch == ',') {
+            if (!out.empty()) pendingSep = true;
+            continue;
+        }
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+            if (pendingSep) {
+                out.push_back('\'');
+                pendingSep = false;
+            }
+            out.push_back(static_cast<char>(std::tolower(ch)));
+        }
+    }
+    return out;
+}
+
 bool validUserPinyin(std::string_view pinyin) {
     if (pinyin.empty()) {
         return false;
@@ -262,7 +282,12 @@ UserDictionarySnapshot UserDictionary::loadSnapshot(
                 snapshot.diagnostics.push_back({lineNumber, line, "拼音规范化失败"});
                 continue;
             }
-            UserDictionaryEntry entry{normalized, std::move(phrase), weight};
+            const auto preserved = preserveSeparatorPinyin(pinyin);
+            std::string rawPinyin =
+                (preserved.find('\'') != std::string::npos && preserved != normalized)
+                    ? preserved
+                    : std::string{};
+            UserDictionaryEntry entry{normalized, std::move(phrase), weight, std::move(rawPinyin)};
             const auto key = keyFor(entry.pinyin, entry.phrase);
             const auto [position, inserted] = positions.emplace(
                 key, snapshot.entries.size());
@@ -310,13 +335,19 @@ bool UserDictionary::upsert(std::string_view pinyin, std::string_view phrase,
     if (normalized.empty()) {
         return false;
     }
+    const auto preserved = preserveSeparatorPinyin(pinyin);
+    std::string rawPinyin =
+        (preserved.find('\'') != std::string::npos && preserved != normalized)
+            ? preserved
+            : std::string{};
     const auto key = keyFor(normalized, phrase);
     const auto iterator = entryIndex_.find(key);
     if (iterator == entryIndex_.end()) {
         entryIndex_.emplace(key, entries_.size());
-        entries_.push_back({normalized, std::string(phrase), weight});
+        entries_.push_back({normalized, std::string(phrase), weight, std::move(rawPinyin)});
     } else {
         entries_[iterator->second].weight = weight;
+        entries_[iterator->second].rawPinyin = std::move(rawPinyin);
     }
     return true;
 }
@@ -401,8 +432,8 @@ bool UserDictionary::saveTextImpl(const std::filesystem::path &path,
     }
     output << std::setprecision(9);
     for (const auto &entry : entries_) {
-        output << entry.pinyin << '\t' << entry.phrase << '\t' << entry.weight
-               << '\n';
+        output << (entry.rawPinyin.empty() ? entry.pinyin : entry.rawPinyin)
+               << '\t' << entry.phrase << '\t' << entry.weight << '\n';
     }
     output.close();
     if (!output) {
@@ -421,7 +452,8 @@ bool UserDictionary::saveTextImpl(const std::filesystem::path &path,
 void UserDictionary::addTo(libime::PinyinDictionary &dictionary,
                            std::size_t index, std::optional<float> costOverride) const {
     for (const auto &entry : entries_) {
-        const auto segmented = segmentedPinyin(entry.pinyin);
+        const auto segmented = segmentedPinyin(
+            entry.rawPinyin.empty() ? entry.pinyin : entry.rawPinyin);
         if (!segmented.empty()) {
             try {
                 dictionary.addWord(index, segmented, entry.phrase, costOverride.value_or(entry.weight));

@@ -70,6 +70,7 @@ struct KeyEvent final {
     KeyKind kind = KeyKind::Character;
     char character = 0;
     char digit = 0;
+    bool allowPunctuationFallback = true;
 };
 
 struct ControllerOptions final {
@@ -94,6 +95,7 @@ struct ControllerOptions final {
     bool calculatorEnabled = true;
     bool symbolSearchEnabled = true;
     std::vector<std::string> symbolFavorites;
+    bool shuangpinMode = false;
 };
 
 struct KeyBindings final {

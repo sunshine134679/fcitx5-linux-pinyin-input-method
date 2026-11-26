@@ -226,17 +226,23 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
 
     // Stage 2.5: Variant Recall Placement（2026-10-24 容错专项）
     // 近音变体候选（kazhu 输入下经 ka'zhe 解码召回的 卡着）默认沉在
-    // prio=0 组尾部不可见；组合器将其置入第 2 位可见席位，保留既有
-    // 首选与语义顺序。后续 Deduplication 阶段按身份合并重复项。
+    // prio=0 组尾部不可见；组合器将其放在精确词典同音词之后的可见席位，
+    // 不抢占精确同音词的第 2 位。后续 Deduplication 阶段按身份合并重复项。
     if (input.variantTopCandidate.has_value() &&
         !input.variantTopCandidate->text.empty()) {
         core::CandidateItem variantItem = *input.variantTopCandidate;
-        const auto insertPos = mixed.empty() ? mixed.begin()
-                                             : std::next(mixed.begin());
-        const auto index = static_cast<std::size_t>(std::distance(mixed.begin(), insertPos));
+        std::size_t insertIndex = mixed.empty() ? 0 : 1;
+        const std::size_t maxSlot = std::min<std::size_t>(mixed.size(), 5);
+        while (insertIndex < maxSlot &&
+               mixed[insertIndex].consumedInputBytes == input.rawInput.size() &&
+               mixed[insertIndex].isLexical &&
+               core::PinyinMatchPolicy::priority(input.rawInput, mixed[insertIndex].fullPinyin) == 2) {
+            ++insertIndex;
+        }
+        const auto insertPos = mixed.begin() + static_cast<std::ptrdiff_t>(insertIndex);
         mixed.insert(insertPos, std::move(variantItem));
         recordMove(input.variantTopCandidate->source,
-                   CompositionStage::VariantRecallPlacement, index,
+                   CompositionStage::VariantRecallPlacement, insertIndex,
                    MoveReason::VariantRecallVisible);
     }
 
@@ -312,7 +318,8 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
         containsAsciiAlpha(mixed.front().text) &&
         mixed.front().isLexical &&
         mixed.front().consumedInputBytes == rawInput.size() &&
-        mixed.front().source == core::CandidateSource::Learned &&
+        (mixed.front().source == core::CandidateSource::Learned ||
+         mixed.front().source == core::CandidateSource::UserDictionary) &&
         mixed.front().learningBoost >= 1.5;
     if (hasUppercase && !matureLearnedTop) {
         preferEnglishOverChinese = true;
@@ -699,8 +706,15 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
             }
         }
         if (!preds.empty()) {
+            const bool protectSingleSyllableHomophones =
+                !hasUppercase &&
+                rawInput.find('\'') == std::string::npos &&
+                rawInput.size() <= 3 &&
+                core::PinyinMatchPolicy::isStandardSyllable(rawInput) &&
+                hasExactFullPinyinMatch && isTopChineseLexical;
             auto insertPos = mixed.empty() ? mixed.begin() : std::next(mixed.begin());
-            for (const auto &p : preds) {
+            for (std::size_t pIdx = 0; pIdx < preds.size(); ++pIdx) {
+                const auto &p = preds[pIdx];
                 core::CandidateItem predictedCandidate;
                 predictedCandidate.text = p;
                 predictedCandidate.fullPinyin = p;
@@ -709,6 +723,10 @@ CandidateCompositionResult composeCandidates(const CandidateCompositionInput &in
                 predictedCandidate.origins = {predictedCandidate.source};
                 predictedCandidate.consumedInputBytes = rawInput.size();
 
+                if (protectSingleSyllableHomophones && pIdx >= 1) {
+                    const auto tailIndex = std::min<std::size_t>(mixed.size(), 5);
+                    insertPos = mixed.begin() + static_cast<std::ptrdiff_t>(tailIndex);
+                }
                 const auto idx = static_cast<std::size_t>(std::distance(mixed.begin(), insertPos));
                 insertPos = std::next(mixed.insert(insertPos, std::move(predictedCandidate)));
                 recordMove(core::CandidateSource::Raw, CompositionStage::EnglishAndRawPlacement,

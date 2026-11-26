@@ -417,6 +417,24 @@ int main() {
         const auto dngxiPaths = PinyinMatchPolicy::generateTypoPaths("dngxi", 4);
         assertTrue(hasPath(dngxiPaths, "dong'xi", "dng'xi"),
                    "dngxi includes dong'xi within 4-path budget");
+
+        // Regression guards for valid-syllable preservation & typo/fuzzy prioritization
+        assertTrue(PinyinMatchPolicy::normalizeTypoInput("daan") == "daan",
+                   "daan preserves double-a boundary instead of collapsing");
+        assertTrue(PinyinMatchPolicy::normalizeTypoInput("dee") == "de",
+                   "dee debounces repeated e");
+        assertTrue(PinyinMatchPolicy::normalizeTypoInput("hunan") == "hunan" &&
+                       PinyinMatchPolicy::normalizeTypoInput("jinan") == "jinan",
+                   "hunan and jinan avoid spurious -nan vowel swap");
+        assertTrue(PinyinMatchPolicy::normalizeTypoInput("tina") == "tian",
+                   "tina retains valid -ina -> -ian transposition");
+        assertTrue(PinyinMatchPolicy::normalizeTypoInput("zheg") == "zheg" &&
+                       PinyinMatchPolicy::normalizeTypoInput("yig") == "yig",
+                   "short zheg and yig avoid blind -g -> -ng expansion");
+        assertTrue(PinyinMatchPolicy::normalizeTypoInput("guag") == "guang",
+                   "guag retains -uag -> -uang expansion");
+        assertTrue(PinyinMatchPolicy::priority("jingying", "jin'ying") == 0,
+                   "pure nasal fuzzy mismatch preserves priority 0");
     }
 
     return EXIT_SUCCESS;

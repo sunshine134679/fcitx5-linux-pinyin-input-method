@@ -59,9 +59,9 @@ export function getTextStyle(settings) {
     let font_string = settings.get_string('font') || "Sans 11";
     let desc = Pango.FontDescription.from_string(font_string);
 
-    let font_family = desc.get_family();
-    let font_size = (desc.get_size() / Pango.SCALE) + "pt";
-    let font_style;
+    let font_family = desc.get_family() || 'Sans';
+    let font_size = ((desc.get_size() || 11 * Pango.SCALE) / Pango.SCALE) + "pt";
+    let font_style = 'normal';
     for (let i in Pango.Style)
         if (Pango.Style[i] == desc.get_style())
             font_style = i.toLowerCase();

@@ -14,6 +14,7 @@ public:
     static bool isCommonWord(std::string_view word) noexcept;
     static std::vector<std::string_view> predictWords(std::string_view prefix,
                                                       std::size_t maxCount = 3) noexcept;
+    static bool hasWordWithPrefix(std::string_view prefix) noexcept;
     static double wordPopularityWeight(std::string_view word) noexcept;
     static bool isModernTechWord(std::string_view word) noexcept;
 };

@@ -377,7 +377,7 @@ public:
         data->generation = ++reloadGeneration;
         data->shouldNotify = shouldNotify;
         auto *task = g_task_new(nullptr, nullptr, onReloadFinished, nullptr);
-        g_task_set_task_data(task, data, nullptr);
+        g_task_set_task_data(task, data, +[](gpointer p) { delete static_cast<ReloadTaskData *>(p); });
         g_task_run_in_thread(task, onReloadWorker);
         g_object_unref(task);
     }
@@ -420,7 +420,6 @@ public:
             owner.hasLoaded = true;
             owner.requestSearch(false, td->shouldNotify);
         });
-        delete td;
     }
 
     static void onSearchChanged(GtkWidget *, gpointer data) {
@@ -471,7 +470,7 @@ public:
         data->favoritesOnly = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(favoritesToggle));
         data->shouldNotify = shouldNotify;
         auto *task = g_task_new(nullptr, nullptr, onSearchFinished, nullptr);
-        g_task_set_task_data(task, data, nullptr);
+        g_task_set_task_data(task, data, +[](gpointer p) { delete static_cast<SearchTaskData *>(p); });
         g_task_run_in_thread(task, onSearchWorker);
         g_object_unref(task);
     }
@@ -504,7 +503,6 @@ public:
             owner.displayItems = std::move(td->items);
             owner.startBatchRender(td->generation, td->shouldNotify);
         });
-        delete td;
     }
 
     void startBatchRender(uint64_t gen, bool shouldNotify) {
@@ -751,7 +749,7 @@ private:
         td->historyIndex = index;
         td->expectedText = std::move(expected);
         auto *task = g_task_new(nullptr, nullptr, onOperationFinished, nullptr);
-        g_task_set_task_data(task, td, nullptr);
+        g_task_set_task_data(task, td, +[](gpointer p) { delete static_cast<OperationTaskData *>(p); });
         g_task_run_in_thread(task, onOperationWorker);
         g_object_unref(task);
     }
@@ -803,7 +801,6 @@ private:
                 owner.requestSearch(false, false);
             }
         });
-        delete td;
     }
 
     static void onRowSelected(GtkListBox *, GtkListBoxRow *, gpointer data) {

@@ -25,7 +25,27 @@ struct ApplicationState final {
     modernime::core::SettingsPaths settingsPaths;
     std::unique_ptr<modernime::settings::SettingsWindow> window;
     uint64_t sequenceNumber = 0;
+    bool shortcutEnsured = false;
 };
+
+void ensureDesktopShortcutOnce(ApplicationState *state) {
+    if (state->shortcutEnsured) {
+        return;
+    }
+    state->shortcutEnsured = true;
+    const auto *explicitDesktop = std::getenv("MODERNIME_DESKTOP_DIR");
+    const auto *xdgDesktop = std::getenv("XDG_DESKTOP_DIR");
+    if ((explicitDesktop != nullptr && *explicitDesktop != '\0') ||
+        (xdgDesktop != nullptr && *xdgDesktop != '\0')) {
+        modernime::settings::UpdateController::ensureDesktopShortcut();
+        return;
+    }
+    auto *task = g_task_new(nullptr, nullptr, nullptr, nullptr);
+    g_task_run_in_thread(task, [](GTask *, gpointer, gpointer, GCancellable *) {
+        modernime::settings::UpdateController::ensureDesktopShortcut();
+    });
+    g_object_unref(task);
+}
 
 struct NavigationRequest final {
     std::string pageName;
@@ -188,8 +208,8 @@ void dumpSettingsStateIfConfigured(ApplicationState *state) {
 }
 
 void activate(GtkApplication *application, gpointer data) {
-    modernime::settings::UpdateController::ensureDesktopShortcut();
     auto *state = static_cast<ApplicationState *>(data);
+    ensureDesktopShortcutOnce(state);
     if (state->window == nullptr) {
         state->window = std::make_unique<modernime::settings::SettingsWindow>(
             application, state->settingsPaths);
@@ -214,7 +234,7 @@ int commandLine(GApplication *application,
         return EXIT_SUCCESS;
     }
 
-    modernime::settings::UpdateController::ensureDesktopShortcut();
+    ensureDesktopShortcutOnce(state);
 
     std::optional<modernime::settings::SettingsPageId> parsedPage;
     if (!req.pageName.empty()) {

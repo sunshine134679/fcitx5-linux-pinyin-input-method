@@ -214,6 +214,17 @@ public:
         detail::GtkWidgetGuard pageGuard(createPageShell(
             "我的词语", ""));
         page = pageGuard.get();
+        using SharedLifetime = std::shared_ptr<detail::DiagnosticsLifetime<Impl>>;
+        g_signal_connect_data(
+            page, "destroy",
+            G_CALLBACK(+[](GtkWidget *, gpointer data) {
+                (*static_cast<SharedLifetime *>(data))->deactivate();
+            }),
+            new SharedLifetime(lifetime),
+            +[](gpointer data, GClosure *) {
+                delete static_cast<SharedLifetime *>(data);
+            },
+            static_cast<GConnectFlags>(0));
         buildPage();
         refresh();
         pageGuard.release();
@@ -269,14 +280,23 @@ public:
         dictionaryPacks = std::make_unique<DictionaryPackManager>(notify);
         gtk_stack_add_titled(GTK_STACK(views), scrollableView(dictionaryPacks->widget()), "dictionary-packs", "词库包");
         gtk_box_pack_start(GTK_BOX(page), views, TRUE, TRUE, 0);
-        g_signal_connect(views, "notify::visible-child-name", G_CALLBACK(+[](GObject *, GParamSpec *, gpointer p) {
-            auto &owner = *static_cast<Impl *>(p);
-            if (owner.visibleView("quick-phrases")) owner.quickPhrases->refresh();
-            if (owner.visibleView("dictionary-packs")) owner.dictionaryPacks->refresh();
-            if (owner.learningPage && gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.learningPage && owner.refreshLearning) owner.refreshLearning();
-            if (owner.dictionaryToolbar) gtk_widget_set_visible(owner.dictionaryToolbar,
-                g_strcmp0(gtk_stack_get_visible_child_name(GTK_STACK(owner.views)), "dictionary") == 0);
-        }), this);
+        using SharedLifetime = std::shared_ptr<detail::DiagnosticsLifetime<Impl>>;
+        g_signal_connect_data(
+            views, "notify::visible-child-name",
+            G_CALLBACK(+[](GObject *, GParamSpec *, gpointer p) {
+                (*static_cast<SharedLifetime *>(p))->withOwner([](Impl &owner) {
+                    if (owner.visibleView("quick-phrases")) owner.quickPhrases->refresh();
+                    if (owner.visibleView("dictionary-packs")) owner.dictionaryPacks->refresh();
+                    if (owner.learningPage && gtk_stack_get_visible_child(GTK_STACK(owner.views)) == owner.learningPage && owner.refreshLearning) owner.refreshLearning();
+                    if (owner.dictionaryToolbar) gtk_widget_set_visible(owner.dictionaryToolbar,
+                        g_strcmp0(gtk_stack_get_visible_child_name(GTK_STACK(owner.views)), "dictionary") == 0);
+                });
+            }),
+            new SharedLifetime(lifetime),
+            +[](gpointer p, GClosure *) {
+                delete static_cast<SharedLifetime *>(p);
+            },
+            static_cast<GConnectFlags>(0));
         auto *section = createSectionCard("", "");
         gtk_box_pack_start(GTK_BOX(dictionaryContent), section, TRUE, TRUE, 0);
 
@@ -857,7 +877,6 @@ private:
                 }
                 owner.showImportOptionsDialog(std::move(taskData->preview));
             });
-            delete taskData;
         }
     }
 
@@ -903,7 +922,6 @@ private:
                     owner.updateActionState();
                 }
             });
-            delete taskData;
         }
     }
 
@@ -1020,7 +1038,7 @@ private:
         };
 
         auto *saveTask = g_task_new(nullptr, nullptr, onImportSaveFinished, nullptr);
-        g_task_set_task_data(saveTask, saveTaskData, nullptr);
+        g_task_set_task_data(saveTask, saveTaskData, +[](gpointer p) { delete static_cast<ImportSaveTaskData *>(p); });
         g_task_run_in_thread(saveTask, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
             auto *td = static_cast<ImportSaveTaskData *>(task_data);
             if (td->isReplace) {
@@ -1093,7 +1111,7 @@ private:
         g_free(filename);
 
         auto *task = g_task_new(nullptr, nullptr, onImportPreviewFinished, nullptr);
-        g_task_set_task_data(task, previewTaskData, nullptr);
+        g_task_set_task_data(task, previewTaskData, +[](gpointer p) { delete static_cast<ImportPreviewTaskData *>(p); });
         g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
             auto *td = static_cast<ImportPreviewTaskData *>(task_data);
             td->preview = DataController::previewDictionaryImport(td->filename, td->currentEntries);
@@ -1131,7 +1149,6 @@ private:
                     owner.notifyMessage(taskData->error.empty() ? "导出用户词典失败" : taskData->error);
                 }
             });
-            delete taskData;
         }
     }
 
@@ -1169,7 +1186,7 @@ private:
         g_free(filename);
 
         auto *task = g_task_new(nullptr, nullptr, onExportFinished, nullptr);
-        g_task_set_task_data(task, taskData, nullptr);
+        g_task_set_task_data(task, taskData, +[](gpointer p) { delete static_cast<ExportTaskData *>(p); });
         g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
             auto *td = static_cast<ExportTaskData *>(task_data);
             td->success = DataController::saveDictionary(td->filename, td->entries, &td->error);
@@ -1310,7 +1327,6 @@ private:
                 }
                 owner.emitStateChanged();
             });
-            delete taskData;
         }
     }
 
@@ -1333,7 +1349,7 @@ private:
             std::move(successMessage), DictionarySaveResult::Invalid, {}, std::move(draft)
         };
         auto *task = g_task_new(nullptr, nullptr, onSaveFinished, nullptr);
-        g_task_set_task_data(task, taskData, nullptr);
+        g_task_set_task_data(task, taskData, +[](gpointer p) { delete static_cast<SaveTaskData *>(p); });
         g_task_run_in_thread(task, [](GTask *t, gpointer, gpointer task_data, GCancellable *) {
             auto *td = static_cast<SaveTaskData *>(task_data);
             td->result = DataController::saveDictionaryIfUnchanged(

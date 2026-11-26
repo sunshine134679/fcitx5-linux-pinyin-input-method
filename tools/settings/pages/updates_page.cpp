@@ -70,6 +70,7 @@ void modernime_release_notes_scroll_init(ModernimeReleaseNotesScroll *) {}
 std::string_view upgradeCommand(const UpdateStatus &status) {
     if (!status.checked || (status.installChannel != "deb" &&
                             status.installChannel != "rpm" &&
+                            status.installChannel != "pacman" &&
                             status.installChannel != "script")) {
         return {};
     }

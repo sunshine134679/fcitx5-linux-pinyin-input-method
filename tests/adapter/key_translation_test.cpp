@@ -227,9 +227,13 @@ int main() {
                    apostrophe->kind == modernime::fcitx5::KeyKind::Character &&
                    apostrophe->character == '\'',
                "apostrophe maps to a character event");
-    assertKind(FcitxKey_bracketleft,
-               modernime::fcitx5::KeyKind::CommitFirstCharacter,
-               "bracket left maps to commit first character");
+    const auto bracketLeft = modernime::fcitx5::translateKey(
+        fcitx::Key(FcitxKey_bracketleft));
+    assertTrue(bracketLeft.has_value() &&
+                   bracketLeft->kind ==
+                       modernime::fcitx5::KeyKind::CommitFirstCharacter &&
+                   bracketLeft->allowPunctuationFallback,
+               "unmodified bracket left allows punctuation fallback");
     assertKind(FcitxKey_bracketright,
                modernime::fcitx5::KeyKind::CommitLastCharacter,
                "bracket right maps to commit last character");
@@ -237,14 +241,16 @@ int main() {
         fcitx::Key(FcitxKey_bracketleft, ctrl));
     assertTrue(ctrlBracketLeft.has_value() &&
                    ctrlBracketLeft->kind ==
-                       modernime::fcitx5::KeyKind::CommitFirstCharacter,
-               "ctrl bracket left maps to commit first character");
+                       modernime::fcitx5::KeyKind::CommitFirstCharacter &&
+                   !ctrlBracketLeft->allowPunctuationFallback,
+               "ctrl bracket left maps to commit first character without punctuation fallback");
     const auto ctrlBracketRight = modernime::fcitx5::translateKey(
         fcitx::Key(FcitxKey_bracketright, ctrl));
     assertTrue(ctrlBracketRight.has_value() &&
                    ctrlBracketRight->kind ==
-                       modernime::fcitx5::KeyKind::CommitLastCharacter,
-               "ctrl bracket right maps to commit last character");
+                       modernime::fcitx5::KeyKind::CommitLastCharacter &&
+                   !ctrlBracketRight->allowPunctuationFallback,
+               "ctrl bracket right maps to commit last character without punctuation fallback");
 
     auto extractionDisabled = defaultBindings;
     extractionDisabled.characterExtractionEnabled = false;

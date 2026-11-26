@@ -609,6 +609,7 @@ ResourceChange PinyinSharedResources::consumeDictionaryPackRefresh() {
         pendingPackRefresh_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
         return {dictionaryGeneration(), learningRevision(), false};
     auto prepared = pendingPackRefresh_.get();
+    std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
     if (!prepared.resources) return {dictionaryGeneration(), learningRevision(), false};
     if (prepared.baselineGeneration != dictionaryGeneration()) {
         retiredPackResources_.push_back(std::move(prepared.resources));
@@ -654,7 +655,7 @@ ResourceChange PinyinSharedResources::reloadDictionaryPacks() {
     UserDictionary native;
     for (const auto &pack : active) for (const auto &entry : pack.entries) {
         if (MixedWordIndex::isMixedWord(entry.phrase)) mixed.add(entry);
-        else native.upsert(entry.pinyin, entry.phrase, 0.0F);
+        else native.upsert(entry.rawPinyin.empty() ? entry.pinyin : entry.rawPinyin, entry.phrase, 0.0F);
     }
     if (ime && ime->dict()) {
         auto &dictionary = *ime->dict();
@@ -666,6 +667,10 @@ ResourceChange PinyinSharedResources::reloadDictionaryPacks() {
     }
     mixedWords = std::move(mixed);
     activeDictionaryPacks_ = std::move(active);
+    try {
+        dictionaryPackStamp_ = packDirectoryStamp(dictionaryPacksPath_, bundledDictionaryPacksPath_);
+    } catch (const std::exception &) {
+    }
     ++dictionaryGeneration_;
     return {dictionaryGeneration(), learningRevision(), true};
 }
@@ -805,7 +810,9 @@ void PinyinSharedResources::setOnReadyCallback(std::function<void()> callback) {
 
 core::EnglishDefinitionDictionary *PinyinSharedResources::ensureEnglishDefinitionDictionary() {
     std::lock_guard<std::recursive_mutex> lock(resourceMutex_);
-    if (!englishDefinitionDict.isLoaded() && !englishDefinitionDictPath.empty()) {
+    if (!englishDefinitionDict.isLoaded() && !englishDefinitionLoadAttempted_ &&
+        !englishDefinitionDictPath.empty()) {
+        englishDefinitionLoadAttempted_ = true;
         englishDefinitionDict.load(englishDefinitionDictPath);
     }
     return englishDefinitionDict.isLoaded() ? &englishDefinitionDict : nullptr;

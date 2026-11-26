@@ -74284,6 +74284,36 @@ std::vector<std::string_view> EnglishDictionary::predictWords(std::string_view p
     return matches;
 }
 
+bool EnglishDictionary::hasWordWithPrefix(std::string_view prefix) noexcept {
+    if (prefix.size() < 2 || prefix.size() > 20) {
+        return false;
+    }
+    char buffer[24];
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        char c = prefix[i];
+        if (c >= 65 && c <= 90) {
+            c = static_cast<char>(c + 32);
+        } else if (c < 97 || c > 122) {
+            return false;
+        }
+        buffer[i] = c;
+    }
+    std::string_view lowerPrefix(buffer, prefix.size());
+    if (!hasEnglishVowel(lowerPrefix)) {
+        return false;
+    }
+
+    auto it = std::lower_bound(std::begin(kEnglishWords), std::end(kEnglishWords), lowerPrefix);
+    while (it != std::end(kEnglishWords) && it->starts_with(lowerPrefix)) {
+        if (it->size() >= 4 && hasEnglishVowel(*it) &&
+            (it->size() >= 5 || isAllowedShortEnglishWord(*it))) {
+            return true;
+        }
+        ++it;
+    }
+    return false;
+}
+
 double EnglishDictionary::wordPopularityWeight(std::string_view word) noexcept {
     return englishWordPopularityWeight(word);
 }

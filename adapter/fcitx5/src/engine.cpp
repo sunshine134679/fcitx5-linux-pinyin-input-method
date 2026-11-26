@@ -627,8 +627,6 @@ void ModernIMEController::setContext(std::string before, std::string after,
     } guard{inSetContext_};
 
     if (sensitive_) { availability = ContextAvailability::Invalidated; }
-    if (undoCommit_ && (availability != ContextAvailability::Valid ||
-                       host_.textEditContext() != undoCommit_->expected)) undoCommit_.reset();
 
     const bool availabilityChanged = (availability != contextAvailability_);
     const bool contentChanged = (availability == ContextAvailability::Valid)
@@ -637,6 +635,9 @@ void ModernIMEController::setContext(std::string before, std::string after,
     if (!availabilityChanged && !contentChanged) {
         return;
     }
+
+    if (undoCommit_ && (availability != ContextAvailability::Valid ||
+                       host_.textEditContext() != undoCommit_->expected)) undoCommit_.reset();
 
     if (availability == ContextAvailability::Valid) {
         pendingNoContextDelete_.active = false;
@@ -785,7 +786,11 @@ bool ModernIMEController::handle(const KeyEvent &event) {
 
     switch (event.kind) {
     case KeyKind::Character: {
-        const bool isVMode = !compositionInput_.empty() && compositionInput_.front() == 'v';
+        if (clipboardMode_) {
+            return true;
+        }
+        const bool isVMode = !options_.shuangpinMode &&
+                             !compositionInput_.empty() && compositionInput_.front() == 'v';
         const bool isLegalChar = (event.character >= 'a' && event.character <= 'z') ||
                                  (event.character >= 'A' && event.character <= 'Z') ||
                                  event.character == '\'';
@@ -922,12 +927,19 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             return page_.items.empty() ? false : commitCurrent();
         }
         if (page_.preedit.empty()) {
+            markAutoPairsNonEmpty();
             return false;
         }
         return commitRawPreedit();
     case KeyKind::Space:
+        if (!clipboardMode_ && page_.preedit.empty()) {
+            markAutoPairsNonEmpty();
+        }
         return page_.items.empty() ? commitRawPreedit(" ") : commitCurrent();
     case KeyKind::Punctuation: {
+        if (clipboardMode_) {
+            return true;
+        }
         if (event.character == '_' && !compositionInput_.empty() && !clipboardMode_) {
             const auto mapping = options_.punctuationOverrides.find('_');
             const bool literal = !options_.punctuationEnabled ||
@@ -988,7 +1000,7 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             triggerChar = static_cast<char>(std::tolower(static_cast<unsigned char>(options_.clipboardTrigger[0])));
             triggerDigit = options_.clipboardTrigger[2];
         }
-        if (options_.clipboardEnabled &&
+        if (!options_.shuangpinMode && options_.clipboardEnabled &&
             compositionInput_.size() == 1 &&
             std::tolower(static_cast<unsigned char>(compositionInput_.front())) == triggerChar &&
             event.digit == triggerDigit) {
@@ -1015,6 +1027,12 @@ bool ModernIMEController::handle(const KeyEvent &event) {
             }
         }
         if (!options_.numberSelection || event.digit < '1' || event.digit > '9') {
+            if (clipboardMode_) {
+                return true;
+            }
+            if (page_.preedit.empty()) {
+                markAutoPairsNonEmpty();
+            }
             commitRawPreedit();
             return false;
         }
@@ -1023,6 +1041,8 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         if (page_.items.empty()) {
             if (!page_.preedit.empty()) {
                 commitRawPreedit();
+            } else if (!clipboardMode_) {
+                markAutoPairsNonEmpty();
             }
             return false;
         }
@@ -1094,25 +1114,53 @@ bool ModernIMEController::handle(const KeyEvent &event) {
         }
         return openClipboard();
     case KeyKind::CommitFirstCharacter:
+        if (clipboardMode_) {
+            return true;
+        }
         if (options_.characterExtractionEnabled && extractCharacter(true)) {
             return true;
         }
-        if (page_.preedit.empty()) {
-            if (options_.punctuationEnabled && commitPunctuation('[')) {
+        if (!event.allowPunctuationFallback) {
+            return true;
+        }
+        if (options_.punctuationEnabled && commitPunctuation('[')) {
+            return true;
+        }
+        if (!page_.preedit.empty()) {
+            const bool hasNoneCandidate = !page_.items.empty() &&
+                page_.items[0].source == core::CandidateSource::None;
+            if (hasNoneCandidate) {
+                return false;
+            }
+            if (!page_.items.empty() ? commitCurrent() : commitRawPreedit()) {
+                host_.commit("[");
                 return true;
             }
-            return false;
         }
         return false;
     case KeyKind::CommitLastCharacter:
+        if (clipboardMode_) {
+            return true;
+        }
         if (options_.characterExtractionEnabled && extractCharacter(false)) {
             return true;
         }
-        if (page_.preedit.empty()) {
-            if (options_.punctuationEnabled && commitPunctuation(']')) {
+        if (!event.allowPunctuationFallback) {
+            return true;
+        }
+        if (options_.punctuationEnabled && commitPunctuation(']')) {
+            return true;
+        }
+        if (!page_.preedit.empty()) {
+            const bool hasNoneCandidate = !page_.items.empty() &&
+                page_.items[0].source == core::CandidateSource::None;
+            if (hasNoneCandidate) {
+                return false;
+            }
+            if (!page_.items.empty() ? commitCurrent() : commitRawPreedit()) {
+                host_.commit("]");
                 return true;
             }
-            return false;
         }
         return false;
     case KeyKind::Toggle:
@@ -1287,9 +1335,21 @@ bool ModernIMEController::extractCharacter(bool firstChar) {
     if (!provider_->extractCharacter(candidateIndex, firstChar, &committedText)) {
         return false;
     }
+    markAutoPairsNonEmpty();
     host_.commit(committedText);
     appendFallbackContext(committedText);
-    clearComposition();
+    if (!provider_->page().rawInput.empty()) {
+        compositionInput_ = provider_->page().rawInput;
+        compositionCursor_ = compositionInput_.size();
+        if (candidateFiltering_) {
+            candidateFiltering_ = false;
+            candidateFilterQuery_.clear();
+            provider_->clearCandidateFilter();
+        }
+        publishProviderPage(true);
+    } else {
+        clearComposition();
+    }
     return true;
 }
 
@@ -1326,7 +1386,7 @@ bool ModernIMEController::commitPunctuation(char ascii) {
             const auto index = std::min(page_.cursor, page_.items.size() - 1);
             pending = page_.items[index].text;
         }
-        afterAscii = afterAscii || isAsciiText(pending);
+        afterAscii = isAsciiText(pending);
     }
     std::optional<std::string> converted;
     if (override != options_.punctuationOverrides.end()) {
@@ -1437,8 +1497,21 @@ bool ModernIMEController::editPairedPunctuation(char ascii) {
     default: return false;
     }
     if (context && context->after.starts_with(closer)) return false;
-    if (!page_.preedit.empty() && !commitCurrent()) return false;
-    const auto insertion = host_.textEditContext();
+    const auto preCommitContext = context;
+    std::string committedPendingText;
+    if (!page_.preedit.empty()) {
+        if (!page_.items.empty() && page_.cursor < page_.items.size()) {
+            committedPendingText = page_.items[page_.cursor].text;
+        } else {
+            committedPendingText = compositionInput_.empty() ? page_.preedit : compositionInput_;
+        }
+        if (!commitCurrent()) return false;
+    }
+    auto insertion = host_.textEditContext();
+    if (!committedPendingText.empty() && preCommitContext &&
+        (!insertion || *insertion == *preCommitContext)) {
+        insertion = afterInsertion(*preCommitContext, committedPendingText);
+    }
     if (!host_.insertPair(opener, closer)) return false;
     if (autoPairs_.size() == 32) autoPairs_.erase(autoPairs_.begin());
     std::optional<TextEditContext> expected = std::nullopt;
@@ -1510,8 +1583,11 @@ bool ModernIMEController::undoLastCommit() {
         refreshPage();
         return false;
     }
-    if (const auto context = host_.textEditContext())
-        setContext(context->before, context->after, ContextAvailability::Valid);
+    std::string restoredBefore = undo.expected.before;
+    if (restoredBefore.ends_with(undo.candidate.text)) {
+        restoredBefore.resize(restoredBefore.size() - undo.candidate.text.size());
+    }
+    setContext(std::move(restoredBefore), undo.expected.after, ContextAvailability::Valid);
     if (provider_ && options_.learningEnabled &&
         (undo.candidate.role == core::CommitCandidateRole::Chinese ||
          undo.candidate.role == core::CommitCandidateRole::UserDictionary ||
@@ -2084,9 +2160,13 @@ bool ModernIMEController::handleAuxiliaryInput(const KeyEvent &event) {
         }
         // Up/Down carry the existing clipboard navigation kinds; auxiliary
         // queries use them for items while ordinary pinyin keeps page movement.
-        if (event.kind == KeyKind::PreviousCandidate || event.kind == KeyKind::PreviousClipboardItem)
+        if ((auxiliaryMode_ != AuxiliaryInputMode::Calculator &&
+             event.kind == KeyKind::PreviousCandidate) ||
+            event.kind == KeyKind::PreviousClipboardItem)
             return moveCursor(-1);
-        if (event.kind == KeyKind::NextCandidate || event.kind == KeyKind::NextClipboardItem)
+        if ((auxiliaryMode_ != AuxiliaryInputMode::Calculator &&
+             event.kind == KeyKind::NextCandidate) ||
+            event.kind == KeyKind::NextClipboardItem)
             return moveCursor(1);
         if (event.kind == KeyKind::PreviousPage) return movePage(-1);
         if (event.kind == KeyKind::NextPage) return movePage(1);

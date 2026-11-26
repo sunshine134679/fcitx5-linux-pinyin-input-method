@@ -153,12 +153,14 @@ class Kimpanel extends GObject.Object {
             break;
         case 'UpdateSpotLocation':
             if (this.x != value[0] || this.y != value[1] || this.w != 0 ||
-                this.h != 0)
+                this.h != 0 || this.relative || this.scale != 1)
                 changed = true;
             this.x = value[0];
             this.y = value[1];
             this.w = 0;
             this.h = 0;
+            this.relative = false;
+            this.scale = 1;
             break;
         case 'UpdatePreeditText':
             if (this.preedit != value[0])
@@ -346,8 +348,8 @@ class Kimpanel extends GObject.Object {
         this.table = texts;
         this.cursor = cursor;
         this.layoutHint = layout;
-        this.updateInputPanel();
         this.inputpanel.setVertical(this.isLookupTableVertical());
+        this.updateInputPanel();
     }
     LockXkbGroup(idx) { Meta.get_backend().lock_layout_group(idx); }
 }

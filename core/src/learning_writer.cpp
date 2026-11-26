@@ -78,6 +78,9 @@ LearningWriter::~LearningWriter() {
     if (worker_.joinable()) {
         worker_.join();
     }
+    if (observerStore_) {
+        observerStore_->close();
+    }
     store_->close();
 }
 
@@ -96,6 +99,7 @@ bool LearningWriter::enqueueSelectionLocked(
     std::int64_t nowMs) {
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSelection(phrase, pinyin, contextBefore, contextAfter, nowMs);
+    retiredSnapshots_.push_back(std::move(snapshot_));
     snapshot_ = std::move(next);
     ++snapshotVersion_;
     Event event;
@@ -154,6 +158,7 @@ bool LearningWriter::enqueueNegativeFeedback(std::string_view phrase,
     std::lock_guard lock(mutex_);
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordNegativeFeedback(phrase, pinyin);
+    retiredSnapshots_.push_back(std::move(snapshot_));
     snapshot_ = std::move(next);
     ++snapshotVersion_;
     Event event;
@@ -169,6 +174,7 @@ bool LearningWriter::enqueueSuppression(std::string_view phrase,
     std::lock_guard lock(mutex_);
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     next->recordSuppression(phrase, pinyin);
+    retiredSnapshots_.push_back(std::move(snapshot_));
     snapshot_ = std::move(next);
     ++snapshotVersion_;
     Event event;
@@ -196,6 +202,7 @@ bool LearningWriter::enqueueManagement(std::string_view phrase, std::string_view
     auto next = std::make_shared<LearningSnapshot>(*snapshot_);
     if (forget) next->recordForget(phrase, pinyin);
     else next->recordUnsuppression(phrase, pinyin);
+    retiredSnapshots_.push_back(std::move(snapshot_));
     snapshot_ = std::move(next);
     ++snapshotVersion_;
     if (forget) {
@@ -309,8 +316,11 @@ bool LearningWriter::enqueueForPersistence(Event event) {
         trimQueuedEvents();
     }
     if (!durablyAvailable && retryExhausted_ && !processing_) {
-        retryExhausted_ = false;
-        automaticRetryCyclesRemaining_ = 1;
+        const auto now = std::chrono::steady_clock::now();
+        if (viewState_ != EpochViewState::Reloading || now >= nextReloadRetryAt_) {
+            retryExhausted_ = false;
+            automaticRetryCyclesRemaining_ = 1;
+        }
     }
     wakeup_.notify_one();
     return durablyAvailable;
@@ -328,14 +338,16 @@ void LearningWriter::trimQueuedEvents() {
 
 bool LearningWriter::flush() {
     std::unique_lock lock(mutex_);
-    if ((!events_.empty() || viewState_ == EpochViewState::Reloading) &&
+    if ((!events_.empty() || viewState_ == EpochViewState::Reloading || pendingRebaseReload_) &&
         retryExhausted_ && !processing_) {
+        nextReloadRetryAt_ = {};
         retryExhausted_ = false;
         automaticRetryCyclesRemaining_ = 1;
         wakeup_.notify_one();
     }
     drained_.wait(lock, [this] {
-        return !restoring_ && !processing_ && (events_.empty() || retryExhausted_) &&
+        return !restoring_ && !processing_ && !pendingRebaseReload_ &&
+               (events_.empty() || retryExhausted_) &&
                (viewState_ == EpochViewState::Ready || retryExhausted_);
     });
     return storageAvailable_ && events_.empty() && viewState_ == EpochViewState::Ready;
@@ -645,13 +657,14 @@ void LearningWriter::run() {
             }
             wakeup_.wait(lock, [this] {
                 return stopping_ || (!restoring_ && ((!events_.empty() && !retryExhausted_) ||
-                       (viewState_ == EpochViewState::Reloading && !retryExhausted_)));
+                       ((viewState_ == EpochViewState::Reloading || pendingRebaseReload_) && !retryExhausted_)));
             });
             if (stopping_ && (events_.empty() || retryExhausted_)) {
                 return;
             }
+            const bool rebaseOnly = pendingRebaseReload_ && viewState_ == EpochViewState::Ready;
             reloading = (viewState_ == EpochViewState::Reloading);
-            if (!reloading) {
+            if (!reloading && !rebaseOnly) {
                 events.reserve(events_.size());
                 while (!events_.empty()) {
                     events.push_back(std::move(events_.front()));
@@ -660,6 +673,62 @@ void LearningWriter::run() {
                 processing_ = true;
                 processingEvents_ = events;
             }
+            if (rebaseOnly) {
+                pendingRebaseReload_ = false;
+                processing_ = true;
+            }
+        }
+
+        if (!reloading && events.empty()) {
+            std::optional<LearningStoreState> freshState;
+            {
+                std::lock_guard storeLock(storeMutex_);
+                if (store_->open()) {
+                    freshState = store_->readState();
+                }
+            }
+            std::shared_ptr<LearningSnapshot> prepared;
+            std::uint64_t capturedVersion = 0;
+            if (freshState && freshState->snapshot) {
+                std::vector<Event> pending;
+                {
+                    std::lock_guard lock(mutex_);
+                    capturedVersion = snapshotVersion_;
+                    pending.assign(events_.begin(), events_.end());
+                }
+                prepared = std::make_shared<LearningSnapshot>(*freshState->snapshot);
+                for (const auto &event : pending) {
+                    if (event.resetRevision == freshState->resetRevision) {
+                        applyEvent(*prepared, event);
+                    }
+                }
+            }
+            std::shared_ptr<const LearningSnapshot> retiredSnapshot;
+            {
+                std::lock_guard lock(mutex_);
+                if (freshState && freshState->resetRevision > resetRevision_) {
+                    std::erase_if(events_, [rev = freshState->resetRevision](const Event &event) {
+                        return event.resetRevision < rev;
+                    });
+                    retiredSnapshot = std::move(snapshot_);
+                    snapshot_ = freshState->snapshot;
+                    resetRevision_ = freshState->resetRevision;
+                    ++snapshotVersion_;
+                } else if (freshState && prepared &&
+                           viewState_ == EpochViewState::Ready &&
+                           freshState->resetRevision == resetRevision_) {
+                    if (capturedVersion == snapshotVersion_) {
+                        retiredSnapshot = std::move(snapshot_);
+                        snapshot_ = std::move(prepared);
+                        ++snapshotVersion_;
+                    } else {
+                        pendingRebaseReload_ = true;
+                    }
+                }
+                processing_ = false;
+                drained_.notify_all();
+            }
+            continue;
         }
 
         if (reloading) {
@@ -720,6 +789,7 @@ void LearningWriter::run() {
                     !currentDiskRevision.has_value()) {
                     storageAvailable_ = false;
                     retryExhausted_ = true;
+                    nextReloadRetryAt_ = std::chrono::steady_clock::now() + std::chrono::seconds(5);
                 } else if (freshState->resetRevision < resetRevision_ ||
                            (currentDiskRevision.has_value() && *currentDiskRevision > freshState->resetRevision)) {
                     if (currentDiskRevision.has_value() && *currentDiskRevision > resetRevision_) {
@@ -830,9 +900,11 @@ void LearningWriter::run() {
                 trimQueuedEvents();
                 storageAvailable_ = false;
                 retryExhausted_ = true;
+                nextReloadRetryAt_ = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             } else {
                 storageAvailable_ = true;
                 retryExhausted_ = false;
+                nextReloadRetryAt_ = {};
                 automaticRetryCyclesRemaining_ = 1;
                 if (freshState && freshState->resetRevision > resetRevision_) {
                     // A previously unseen clear takes precedence even when
@@ -847,11 +919,14 @@ void LearningWriter::run() {
                     ++snapshotVersion_;
                 } else if (freshState && prepared &&
                            viewState_ == EpochViewState::Ready &&
-                           freshState->resetRevision == resetRevision_ &&
-                           capturedVersion == snapshotVersion_) {
-                    retiredSnapshot = std::move(snapshot_);
-                    snapshot_ = std::move(prepared);
-                    ++snapshotVersion_;
+                           freshState->resetRevision == resetRevision_) {
+                    if (capturedVersion == snapshotVersion_) {
+                        retiredSnapshot = std::move(snapshot_);
+                        snapshot_ = std::move(prepared);
+                        ++snapshotVersion_;
+                    } else if (pruned || externalChanged) {
+                        pendingRebaseReload_ = true;
+                    }
                 }
             }
             processingEvents_.clear();

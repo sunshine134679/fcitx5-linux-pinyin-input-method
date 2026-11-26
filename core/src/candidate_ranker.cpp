@@ -13,7 +13,9 @@ namespace modernime::core {
 std::vector<std::size_t>
 CandidateRanker::rank(std::string_view userInput,
                      std::vector<CandidateScore> &candidates,
-                     const std::vector<std::string> &previousOrder) {
+                     const std::vector<std::string> &previousOrder,
+                     std::optional<std::size_t> expectedConsumedBytes) {
+    const std::size_t fullConsumedBytes = expectedConsumedBytes.value_or(userInput.size());
     std::vector<std::size_t> order(candidates.size());
     std::iota(order.begin(), order.end(), 0);
     for (auto &candidate : candidates) {
@@ -157,7 +159,7 @@ CandidateRanker::rank(std::string_view userInput,
         if (candidate.match_priority == 2 && candidate.phrase_length >= 2 &&
             candidate.is_lexical && candidate.source_index == 0 &&
             candidate.learning_boost >= 0.0 &&
-            candidate.consumed_input_bytes.value_or(userInput.size()) == userInput.size()) {
+            candidate.consumed_input_bytes.value_or(fullConsumedBytes) == fullConsumedBytes) {
             unconfirmedPhraseFloor =
                 std::min(unconfirmedPhraseFloor, candidate.final_score());
         }
@@ -184,7 +186,7 @@ CandidateRanker::rank(std::string_view userInput,
                    candidate.learning_boost > 0.0 && candidate.learning_boost < 1.15 &&
                    candidate.recent_choice_bonus <= 0.0 && candidate.context_bonus <= 0.0 &&
                    candidate.language_context_bonus < 1.0 &&
-                   candidate.consumed_input_bytes.value_or(userInput.size()) == userInput.size()) {
+                   candidate.consumed_input_bytes.value_or(fullConsumedBytes) == fullConsumedBytes) {
             cost = std::max(cost, unconfirmedPhraseFloor + 1e-6);
         }
         preferenceCosts.push_back(cost);
@@ -235,7 +237,7 @@ CandidateRanker::rank(std::string_view userInput,
                 std::count(candidate.full_pinyin.begin(), candidate.full_pinyin.end(), '\'')) + 1;
             if (candidate.match_priority == 2 && !candidate.is_rare &&
                 syllables == inputSyllables &&
-                candidate.consumed_input_bytes.value_or(userInput.size()) == userInput.size() &&
+                candidate.consumed_input_bytes.value_or(fullConsumedBytes) == fullConsumedBytes &&
                 std::isfinite(candidate.language_context_bonus))
                 strongestExactContext = std::max(strongestExactContext, candidate.language_context_bonus);
         }

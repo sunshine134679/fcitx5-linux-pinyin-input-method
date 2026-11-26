@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
@@ -269,6 +270,41 @@ ClipboardHistory::LoadResult ClipboardHistory::readFile(
 
 bool ClipboardHistory::load(const std::filesystem::path &path,
                             std::string *error, bool recoverCorrupt) {
+    if (!path.empty()) {
+        std::error_code cleanupEc;
+        const auto parent = path.parent_path().empty()
+            ? std::filesystem::current_path(cleanupEc)
+            : path.parent_path();
+        const auto tmpPrefix = "." + path.filename().string() + ".tmp.";
+        const auto corruptPrefix = path.filename().string() + ".corrupt-";
+        std::vector<std::filesystem::path> corruptFiles;
+        for (const auto &entry : std::filesystem::directory_iterator(parent, cleanupEc)) {
+            const auto name = entry.path().filename().string();
+            if (name.starts_with(tmpPrefix)) {
+                const auto pidPart = name.substr(tmpPrefix.size());
+                const auto dot = pidPart.find('.');
+                if (dot != std::string::npos && dot > 0) {
+                    try {
+                        const auto pid = static_cast<pid_t>(std::stol(pidPart.substr(0, dot)));
+                        if (pid > 0 && ::kill(pid, 0) == -1 && errno == ESRCH) {
+                            std::error_code rmEc;
+                            std::filesystem::remove(entry.path(), rmEc);
+                        }
+                    } catch (...) {
+                    }
+                }
+            } else if (recoverCorrupt && name.starts_with(corruptPrefix)) {
+                corruptFiles.push_back(entry.path());
+            }
+        }
+        if (corruptFiles.size() > 3) {
+            std::sort(corruptFiles.begin(), corruptFiles.end());
+            for (std::size_t i = 0; i + 3 < corruptFiles.size(); ++i) {
+                std::error_code rmEc;
+                std::filesystem::remove(corruptFiles[i], rmEc);
+            }
+        }
+    }
     const auto result = readFile(path, error);
     if (result == LoadResult::Ready) return true;
     if (result != LoadResult::Corrupt || !recoverCorrupt) return false;
@@ -391,6 +427,11 @@ bool ClipboardHistory::save(const std::filesystem::path &path,
         return false;
     }
     success = true;
+    const int dirFd = ::open(parentDir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd >= 0) {
+        (void)::fsync(dirFd);
+        ::close(dirFd);
+    }
 
     std::filesystem::permissions(
         path, std::filesystem::perms::owner_read |
@@ -415,7 +456,7 @@ bool ClipboardHistory::updateFile(
         // 3. Inside the lock: read latest state, apply mutation, and write back
         ClipboardHistory current;
         std::string loadError;
-        if (!current.load(path, &loadError)) {
+        if (!current.load(path, &loadError, /*recoverCorrupt=*/true)) {
             setError(error, "unable to load latest clipboard history: " + loadError);
             return false;
         }

@@ -253,5 +253,17 @@ int main() {
                    indicatorSurface.textBaseline == plainSurface.textBaseline,
                "page metadata draws no extra text and preserves candidate positions");
 
+    modernime::core::CandidatePage malformedHintPage;
+    modernime::core::CandidateItem malformedItem;
+    malformedItem.text = "\xE5\x8D\xA1\xE5";
+    malformedItem.readingHint = "qia";
+    malformedItem.readingHintAfterCharIndex = 2;
+    malformedHintPage.items = {malformedItem};
+    malformedHintPage.cursor = 0;
+    const auto malformedLayout = modernime::ui::CandidateBarLayout::measure(
+        malformedHintPage, modernime::ui::CandidateBarMetrics::reference());
+    RecordingSurface malformedSurface;
+    modernime::ui::CandidateBarRenderer::render(malformedSurface, malformedLayout, style);
+
     return EXIT_SUCCESS;
 }

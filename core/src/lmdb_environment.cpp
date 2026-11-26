@@ -172,6 +172,8 @@ bool LmdbEnvironment::initializeLocked(size_t initial_map_size) {
         mdb_env_close(new_env);
         return false;
     }
+    int deadReaders = 0;
+    mdb_reader_check(new_env, &deadReaders);
 
     MDB_txn *txn = nullptr;
     if (mdb_txn_begin(new_env, nullptr, read_only ? MDB_RDONLY : 0, &txn) != MDB_SUCCESS) {
@@ -239,8 +241,12 @@ bool LmdbEnvironment::upgradeToWritableLocked(size_t initial_map_size) {
         if (upgraded_env != nullptr) {
             mdb_env_close(upgraded_env);
         }
+        read_only = true;
+        initializeLocked(initial_map_size);
         return false;
     }
+    int deadReaders = 0;
+    mdb_reader_check(upgraded_env, &deadReaders);
 
     MDB_txn *txn = nullptr;
     if (mdb_txn_begin(upgraded_env, nullptr, 0, &txn) != MDB_SUCCESS ||
@@ -251,6 +257,8 @@ bool LmdbEnvironment::upgradeToWritableLocked(size_t initial_map_size) {
             mdb_txn_abort(txn);
         }
         mdb_env_close(upgraded_env);
+        read_only = true;
+        initializeLocked(initial_map_size);
         return false;
     }
 
@@ -296,29 +304,55 @@ bool LmdbEnvironment::ensureMapCapacity(size_t required_extra_bytes) {
 }
 
 std::optional<int64_t> LmdbEnvironment::readResetRevision() const {
-    std::shared_lock lock(lifecycle_gate);
-    if (env == nullptr || meta_dbi == 0) {
-        return std::nullopt;
-    }
-    std::lock_guard rev_lock(revision_mutex_);
-    if (env == nullptr || meta_dbi == 0) {
-        return std::nullopt;
-    }
-    if (cached_revision_txn_ == nullptr) {
-        if (mdb_txn_begin(env, nullptr, MDB_RDONLY, &cached_revision_txn_) == MDB_SUCCESS) {
-            mdb_txn_reset(cached_revision_txn_);
-        }
-    }
-    if (cached_revision_txn_ != nullptr) {
-        if (mdb_txn_renew(cached_revision_txn_) == MDB_SUCCESS) {
-            const auto rev = getMetaInt64(cached_revision_txn_, meta_dbi, "reset_revision");
-            mdb_txn_reset(cached_revision_txn_);
-            if (rev.has_value()) {
-                return rev;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        bool needMapResize = false;
+        {
+            std::shared_lock lock(lifecycle_gate);
+            if (env == nullptr || meta_dbi == 0) {
+                return std::nullopt;
             }
-        } else {
-            mdb_txn_abort(cached_revision_txn_);
-            cached_revision_txn_ = nullptr;
+            std::lock_guard rev_lock(revision_mutex_);
+            if (env == nullptr || meta_dbi == 0) {
+                return std::nullopt;
+            }
+            if (cached_revision_txn_ == nullptr) {
+                const int beginRc = mdb_txn_begin(env, nullptr, MDB_RDONLY, &cached_revision_txn_);
+                if (beginRc == MDB_MAP_RESIZED) {
+                    needMapResize = true;
+                } else if (beginRc == MDB_SUCCESS) {
+                    mdb_txn_reset(cached_revision_txn_);
+                }
+            }
+            if (cached_revision_txn_ != nullptr) {
+                const int renewRc = mdb_txn_renew(cached_revision_txn_);
+                if (renewRc == MDB_SUCCESS) {
+                    const auto rev = getMetaInt64(cached_revision_txn_, meta_dbi, "reset_revision");
+                    mdb_txn_reset(cached_revision_txn_);
+                    if (rev.has_value()) {
+                        return rev;
+                    }
+                } else {
+                    mdb_txn_abort(cached_revision_txn_);
+                    cached_revision_txn_ = nullptr;
+                    if (renewRc == MDB_MAP_RESIZED) {
+                        needMapResize = true;
+                    }
+                }
+            }
+        }
+        if (!needMapResize) {
+            break;
+        }
+        std::unique_lock ulock(lifecycle_gate);
+        {
+            std::lock_guard rev_lock(revision_mutex_);
+            if (cached_revision_txn_ != nullptr) {
+                mdb_txn_abort(cached_revision_txn_);
+                cached_revision_txn_ = nullptr;
+            }
+        }
+        if (env == nullptr || mdb_env_set_mapsize(env, 0) != MDB_SUCCESS) {
+            break;
         }
     }
     return std::nullopt;

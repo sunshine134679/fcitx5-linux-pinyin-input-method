@@ -66,18 +66,24 @@ std::vector<std::string> ShuangpinInput::recallInputs() const {
     std::vector<std::string> inputs{std::string{}};
     for (const auto &segment : segments_) {
         std::vector<std::string> next;
-        for (const auto &[initial, finals] : segment.exact) {
-            if (initial == libime::PinyinInitial::Invalid) continue;
-            for (const auto &[final, fuzzy] : finals) {
-                if (fuzzy) continue;
-                const auto syllable = libime::PinyinSyllable(initial, final).toString();
-                if (syllable.empty()) continue;
-                for (const auto &prefix : inputs) {
-                    const auto value = prefix.empty() ? syllable : prefix + "'" + syllable;
-                    if (next.size() < 16 && std::find(next.begin(), next.end(), value) == next.end())
-                        next.push_back(value);
+        const auto collectFrom = [&](const auto &map, bool allowFuzzy) {
+            for (const auto &[initial, finals] : map) {
+                if (initial == libime::PinyinInitial::Invalid) continue;
+                for (const auto &[final, fuzzy] : finals) {
+                    if (fuzzy && !allowFuzzy) continue;
+                    const auto syllable = libime::PinyinSyllable(initial, final).toString();
+                    if (syllable.empty()) continue;
+                    for (const auto &prefix : inputs) {
+                        const auto value = prefix.empty() ? syllable : prefix + "'" + syllable;
+                        if (next.size() < 16 && std::find(next.begin(), next.end(), value) == next.end())
+                            next.push_back(value);
+                    }
                 }
             }
+        };
+        collectFrom(segment.exact, false);
+        if (next.empty()) {
+            collectFrom(segment.fuzzy, true);
         }
         inputs = std::move(next);
         if (inputs.empty()) break;

@@ -96,9 +96,13 @@ export class KimMenu extends PopupMenu.PopupMenu {
         // menu is higher then the screen; it's useful if part of the menu is
         // scrollable so the minimum height is smaller than the natural height
         let monitor = Main.layoutManager.primaryMonitor;
+        if (!monitor)
+            return;
+        const panelActor = Main.panel.actor ?? Main.panel;
+        const panelHeight = panelActor ? panelActor.height : 0;
         this.actor.style =
             ('max-height: ' +
-             Math.round(monitor.height - Main.panel.actor.height) + 'px;');
+             Math.round(monitor.height - panelHeight) + 'px;');
     }
 
     _onHoverCapture() {

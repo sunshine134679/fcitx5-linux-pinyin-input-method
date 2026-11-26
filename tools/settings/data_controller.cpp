@@ -418,7 +418,8 @@ DictionarySaveResult DataController::saveDictionaryIfUnchanged(
 
     pinyin::UserDictionary dictionary;
     for (const auto &entry : entries) {
-        if (!dictionary.upsert(entry.pinyin, entry.phrase, entry.weight)) {
+        if (!dictionary.upsert(entry.rawPinyin.empty() ? entry.pinyin : entry.rawPinyin,
+                               entry.phrase, entry.weight)) {
             setErr("用户词典包含无效词条");
             return DictionarySaveResult::Invalid;
         }

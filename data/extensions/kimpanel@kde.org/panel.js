@@ -75,6 +75,10 @@ export class InputPanel extends GObject.Object {
         this.lookupTableLayout = null;
         this.auxText = null;
         this.preeditText = null;
+        if (this._cursor) {
+            this._cursor.destroy();
+            this._cursor = null;
+        }
         this.panel.destroy();
         this.panel = null;
         this._cursor.destroy();
@@ -170,7 +174,15 @@ export class InputPanel extends GObject.Object {
                     .remove_style_pseudo_class('active');
         }
     }
-    setVertical(vertical) { this.lookupTableLayout.set_vertical(vertical); }
+    setVertical(vertical) {
+        if (typeof this.lookupTableLayout.set_vertical === 'function') {
+            this.lookupTableLayout.set_vertical(vertical);
+        } else {
+            this.lookupTableLayout.orientation =
+                vertical ? Clutter.Orientation.VERTICAL
+                         : Clutter.Orientation.HORIZONTAL;
+        }
+    }
     updateAppearance() {
         const themes = ['system', 'light', 'dark', 'classic', 'jade', 'amber', 'rose', 'lavender', 'midnight', 'contrast'];
         for (const theme of themes.slice(1))
@@ -228,7 +240,11 @@ export class InputPanel extends GObject.Object {
         let rect = new Mtk.Rectangle({x : x, y : y, width : w, height : h});
         let monitor =
             Main.layoutManager
-                .monitors[global.display.get_monitor_index_for_rect(rect)];
+                .monitors[global.display.get_monitor_index_for_rect(rect)] ??
+            Main.layoutManager.primaryMonitor;
+        if (!monitor) {
+            return;
+        }
         let panel_height = this.panel.get_height();
 
         if (h == 0) {

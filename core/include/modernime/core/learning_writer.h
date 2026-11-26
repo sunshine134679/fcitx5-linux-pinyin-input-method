@@ -167,6 +167,8 @@ private:
     // of either dropping the batch or waiting forever.
     bool retryExhausted_ = false;
     int automaticRetryCyclesRemaining_ = 1;
+    bool pendingRebaseReload_ = false;
+    std::chrono::steady_clock::time_point nextReloadRetryAt_{};
     // Persistence availability is independent of the visible epoch's state.
     bool storageAvailable_ = false;
     std::thread worker_;

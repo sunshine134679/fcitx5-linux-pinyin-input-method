@@ -242,7 +242,8 @@ std::string toChineseStandardNumber(std::string_view numStr) {
 }
 
 std::vector<std::string> generateMacroCandidates(std::string_view rawInput,
-                                                 std::string_view canonicalInput = {}) {
+                                                 std::string_view canonicalInput = {},
+                                                 bool shuangpin = false) {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
 #if defined(_WIN32)
@@ -272,6 +273,10 @@ std::vector<std::string> generateMacroCandidates(std::string_view rawInput,
             results.emplace_back(numPart);
             return results;
         }
+    }
+
+    if (shuangpin) {
+        return results;
     }
 
     std::string_view lookupKey = canonicalInput.empty() ? rawInput : canonicalInput;
@@ -1207,10 +1212,15 @@ public:
         }
 
         const auto rawInput = context->userInput();
+        const auto consumedBytes =
+            (candidate.consumedInputBytes > 0 && candidate.consumedInputBytes <= rawInput.size())
+                ? candidate.consumedInputBytes
+                : rawInput.size();
+        const bool partialSelection = consumedBytes < rawInput.size();
         auto event = makeCommitEvent(
             chosenChar, chosenSyllable, chosenSyllable,
-            core::CommitCandidateRole::Chinese, rawInput.size(),
-            false, true, 0, 0, contextBefore_, contextAfter_);
+            core::CommitCandidateRole::Chinese, consumedBytes,
+            partialSelection, true, 0, 0, contextBefore_, contextAfter_);
 
         phraseTracker_.cancelComposition();
         core::CommitEvent genericEvent = event;
@@ -1224,7 +1234,18 @@ public:
         }
         appendFallbackContext(chosenChar);
 
-        context->clear();
+        if (partialSelection) {
+            auto remainder = rawInput.substr(consumedBytes);
+            while (!remainder.empty() && remainder.front() == '\'') {
+                remainder.erase(remainder.begin());
+            }
+            context->clear();
+            if (!remainder.empty()) {
+                context->type(remainder);
+            }
+        } else {
+            context->clear();
+        }
         refresh();
         return true;
     }
@@ -1607,6 +1628,24 @@ private:
             } catch (const std::exception &) {
                 typoContext.reset();
             }
+        } else if (!extend && !useShuangpin && !typoCorrectionEnabled_) {
+            // Preserve standard lue/nue -> lve/nve input even when typo correction is off.
+            std::string ueNormalized(rawInput);
+            std::size_t uePos = 0;
+            while ((uePos = ueNormalized.find("ue", uePos)) != std::string::npos) {
+                if (uePos > 0 && (ueNormalized[uePos - 1] == 'l' || ueNormalized[uePos - 1] == 'n')) {
+                    ueNormalized[uePos] = 'v';
+                }
+                uePos += 2;
+            }
+            if (ueNormalized != rawInput) {
+                try {
+                    typoContext = std::make_unique<libime::PinyinContext>(shared_->ime.get());
+                    typoContext->type(ueNormalized);
+                } catch (const std::exception &) {
+                    typoContext.reset();
+                }
+            }
         }
         std::vector<TypoDecodedPath> typoDecodedPaths;
         if (!extend && !useShuangpin && typoCorrectionEnabled_ &&
@@ -1664,7 +1703,8 @@ private:
         // （de/qu/zhang 等单音节不做变体，避免高频输入的噪声与额外解码）。
         std::unique_ptr<libime::PinyinContext> variantContext;
         std::string variantInput;
-        if (!extend && !useShuangpin && rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
+        if (!extend && !useShuangpin && typoCorrectionEnabled_ &&
+            rawInput.size() >= 3 && rawInput.find('\'') == std::string::npos &&
             !core::PinyinMatchPolicy::isStandardSyllable(rawInput)) {
             variantInput = core::PinyinMatchPolicy::rhymeVariantInput(rawInput);
             if (variantInput != rawInput) {
@@ -1816,9 +1856,13 @@ private:
                     candidateSyllables.size() <= inputSegments.size()) {
                     std::size_t matched = 0;
                     for (; matched < candidateSyllables.size(); ++matched) {
-                        if (matched >= inputSegments.size() ||
-                            !candidateSyllables[matched].starts_with(
-                                inputSegments[matched])) {
+                        if (matched >= inputSegments.size()) {
+                            break;
+                        }
+                        const auto &seg = inputSegments[matched];
+                        const auto &candSyl = candidateSyllables[matched];
+                        const bool isInitial = seg.size() == 1 || seg == "zh" || seg == "ch" || seg == "sh";
+                        if (candSyl != seg && !(isInitial && candSyl.starts_with(seg))) {
                             break;
                         }
                     }
@@ -1982,7 +2026,8 @@ private:
         compInput.prefixEnds = prefixEnds;
         compInput.prefixEvidence = std::move(prefixEvidence);
         compInput.variantTopCandidate = std::move(compInputVariantTop);
-        compInput.macroCandidates = generateMacroCandidates(rawInput, canonicalInput);
+        compInput.macroCandidates =
+            generateMacroCandidates(rawInput, canonicalInput, useShuangpin);
         compInput.englishPredictions = std::move(predictedWords);
         compInput.learnedEnglishCount = learnedEnglishCount;
         compInput.isEnglishWord = isEnglish;

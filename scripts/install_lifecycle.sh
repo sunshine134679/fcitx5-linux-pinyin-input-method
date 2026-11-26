@@ -115,6 +115,11 @@ modernime_is_safe_removal_target() {
             if [[ -z "$owner" && -n "$canonical_target" && "$canonical_target" != "$target" ]]; then
                 owner=$(rpm -qf "$canonical_target" 2>/dev/null || true)
             fi
+        elif command -v pacman >/dev/null 2>&1; then
+            owner=$(pacman -Qo "$target" 2>/dev/null || true)
+            if [[ -z "$owner" && -n "$canonical_target" && "$canonical_target" != "$target" ]]; then
+                owner=$(pacman -Qo "$canonical_target" 2>/dev/null || true)
+            fi
         fi
         if [[ -n "$owner" ]]; then
             return 1
@@ -528,9 +533,11 @@ modernime_integrate() {
     esac
 
     local desktop_tmp
+    local new_manifest_tmp=""
+    local sorted_manifest_tmp=""
     desktop_tmp=$(mktemp "${TMPDIR:-/tmp}/modernime-integ.XXXXXX")
     cleanup_desktop_tmp() {
-        rm -f -- "${desktop_tmp:-}"
+        rm -f -- "${desktop_tmp:-}" "${new_manifest_tmp:-}" "${sorted_manifest_tmp:-}"
     }
     trap cleanup_desktop_tmp RETURN
 
@@ -683,7 +690,6 @@ EOF
 
     # 8. Write install manifest from staging payload
     local prefix_clean="${prefix%/}"
-    local new_manifest_tmp
     new_manifest_tmp=$(mktemp "${TMPDIR:-/tmp}/modernime-manifest.XXXXXX") || return 1
 
     # Collect payload items
@@ -749,10 +755,10 @@ EOF
     fi
 
     # Deduplicate and sort new manifest
-    local sorted_manifest_tmp
     sorted_manifest_tmp=$(mktemp "${TMPDIR:-/tmp}/modernime-sorted-manifest.XXXXXX") || return 1
     sort -u "$new_manifest_tmp" > "$sorted_manifest_tmp" || return 1
     rm -f -- "$new_manifest_tmp"
+    new_manifest_tmp=""
 
     # Prune obsolete files from existing install manifest that are no longer part of new payload
     if [[ -f "$manifest_file" ]]; then

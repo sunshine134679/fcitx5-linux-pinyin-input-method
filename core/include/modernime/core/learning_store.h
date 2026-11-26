@@ -103,6 +103,7 @@ private:
 
     std::filesystem::path path_;
     sqlite3 *db_ = nullptr;
+    bool readOnly_ = false;
     std::unique_ptr<PersonalEngine> lmdbEngine_;
     bool useLmdb_ = false;
     std::size_t totalEntryLimit_ = kMaxLearningEntries;

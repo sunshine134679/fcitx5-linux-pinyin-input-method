@@ -43,7 +43,8 @@ int main() {
     expectResult("-0", "0");
 
     for (const auto expression : {"", ".", "1+", "1/0", "1%(2-2)",
-                                  "(1+2", "2(3)", "1 2", "1+2oops"}) {
+                                  "(1+2", "2(3)", "1 2", "1+2oops",
+                                  "1e500", "1e-500"}) {
         expectInvalid(expression);
     }
     expectInvalid(std::string(513, '1'));

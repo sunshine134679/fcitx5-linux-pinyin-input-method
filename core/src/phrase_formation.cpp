@@ -168,9 +168,19 @@ std::optional<FormedPhrase> PhraseFormationTracker::recordFinalSelection(
     FormedPhrase fp;
     fp.text = phraseText;
     fp.fullPinyin = phrasePinyin;
-    fp.rawKeystrokes = initialCompositionRawInput_.empty()
-                           ? joinKeystrokes(segs)
-                           : initialCompositionRawInput_;
+    const auto joinedKeys = joinKeystrokes(segs);
+    auto stripSep = [](std::string_view sv) {
+        std::string out;
+        out.reserve(sv.size());
+        for (const char ch : sv) {
+            if (ch != '\'') out.push_back(ch);
+        }
+        return out;
+    };
+    fp.rawKeystrokes = (!initialCompositionRawInput_.empty() &&
+                        stripSep(initialCompositionRawInput_) == stripSep(joinedKeys))
+                           ? initialCompositionRawInput_
+                           : joinedKeys;
     fp.repetitionCount = 1;
     fp.isInitialFormation = true;
     initialCompositionRawInput_.clear();

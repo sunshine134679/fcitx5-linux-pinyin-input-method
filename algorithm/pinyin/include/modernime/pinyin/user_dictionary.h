@@ -18,6 +18,7 @@ struct UserDictionaryEntry final {
     std::string pinyin;
     std::string phrase;
     float weight = 0.0F;
+    std::string rawPinyin = {};
 };
 
 struct DictionaryParseDiagnostic final {

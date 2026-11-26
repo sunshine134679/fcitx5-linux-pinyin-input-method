@@ -37,6 +37,9 @@ std::string formatResult(long double value) {
     }
 
     const int exponent = std::stoi(text.substr(exponentAt + 1));
+    if (exponent > 24 || exponent < -16) {
+        return text;
+    }
     const bool negative = text.front() == '-';
     auto digits = text.substr(negative ? 1 : 0,
                               exponentAt - (negative ? 1 : 0));

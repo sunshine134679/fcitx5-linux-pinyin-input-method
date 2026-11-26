@@ -10,15 +10,104 @@ Any backup, integrity check, or schema migration failure exits non-zero to abort
 import argparse
 import ctypes
 import datetime
+import errno
 import hashlib
 import json
 import os
 import pwd
+import re
 import shutil
 import sqlite3
 import struct
 import sys
 from pathlib import Path
+
+
+def _target_uid_gid(*candidates: Path) -> tuple[int, int] | None:
+    if os.geteuid() != 0:
+        return None
+    for cand in candidates:
+        cur = cand
+        while True:
+            if cur.exists():
+                st = cur.stat()
+                if st.st_uid != 0:
+                    return (st.st_uid, st.st_gid)
+                break
+            parent = cur.parent
+            if parent == cur:
+                break
+            cur = parent
+    return None
+
+
+def _chown_tree(path: Path, uid: int, gid: int) -> None:
+    if uid <= 0 or not path.exists():
+        return
+    try:
+        os.chown(path, uid, gid)
+    except OSError:
+        return
+    if path.is_dir():
+        for root, dirs, files in os.walk(path):
+            root_p = Path(root)
+            for name in dirs + files:
+                try:
+                    os.chown(root_p / name, uid, gid)
+                except OSError:
+                    pass
+
+
+def _prune_auto_backups(data_dir: Path, keep: int = 5) -> None:
+    backups_dir = data_dir / "backups"
+    latest_target = None
+    latest_file = backups_dir / "latest"
+    if latest_file.is_file():
+        try:
+            latest_target = Path(latest_file.read_text(encoding="utf-8").strip()).resolve()
+        except OSError:
+            latest_target = None
+
+    if backups_dir.is_dir():
+        stamped_dirs = sorted(
+            [p for p in backups_dir.iterdir() if p.is_dir() and re.fullmatch(r"\d{14}", p.name)],
+            key=lambda p: p.name,
+            reverse=True,
+        )
+        for stale in stamped_dirs[keep:]:
+            if latest_target is not None:
+                try:
+                    if stale.resolve() == latest_target:
+                        continue
+                except OSError:
+                    pass
+            shutil.rmtree(stale, ignore_errors=True)
+
+    sqlite_siblings = sorted(
+        [p for p in data_dir.iterdir() if re.fullmatch(r"learning\.sqlite3\.backup-\d{14}", p.name)],
+        key=lambda p: p.name.rsplit("-", 1)[-1],
+        reverse=True,
+    )
+    for stale in sqlite_siblings[keep:]:
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    lmdb_siblings = sorted(
+        [p for p in data_dir.iterdir() if re.fullmatch(r"learning\.lmdb\.backup-\d{14}", p.name)],
+        key=lambda p: p.name.rsplit("-", 1)[-1],
+        reverse=True,
+    )
+    for stale in lmdb_siblings[keep:]:
+        try:
+            if stale.is_dir():
+                shutil.rmtree(stale, ignore_errors=True)
+            else:
+                stale.unlink(missing_ok=True)
+            Path(f"{stale}-lock").unlink(missing_ok=True)
+        except OSError:
+            pass
 
 # LMDB constants from <lmdb.h>
 MDB_FIXEDMAP = 0x01
@@ -193,6 +282,14 @@ def verify_lmdb(lmdb_path: Path) -> dict:
             flags |= MDB_NOSUBDIR
         # If the lockfile cannot be created on a read-only directory, fall back to MDB_NOLOCK only after trying normal lock
         rc = lib.mdb_env_open(env, str(lmdb_path).encode("utf-8"), flags, 0o644)
+        if rc in (errno.EACCES, errno.EROFS, errno.EPERM):
+            lib.mdb_env_close(env)
+            env = ctypes.c_void_p()
+            rc_new = lib.mdb_env_create(ctypes.byref(env))
+            if rc_new != MDB_SUCCESS:
+                raise RuntimeError(f"mdb_env_create failed: {_mdb_err(lib, rc_new)}")
+            lib.mdb_env_set_maxdbs(env, 8)
+            rc = lib.mdb_env_open(env, str(lmdb_path).encode("utf-8"), flags | MDB_NOLOCK, 0o644)
         if rc != MDB_SUCCESS:
             raise RuntimeError(f"mdb_env_open({lmdb_path}) failed: {_mdb_err(lib, rc)}")
 
@@ -353,7 +450,15 @@ def verify_sqlite(sqlite_path: Path) -> dict:
         if hdr != b"SQLite format 3\x00":
             raise RuntimeError(f"Invalid SQLite header magic in {sqlite_path}")
 
-    conn = sqlite3.connect(str(sqlite_path), timeout=5.0)
+    has_wal_or_shm = (
+        Path(f"{sqlite_path}-wal").exists() or Path(f"{sqlite_path}-shm").exists()
+    )
+    uri = sqlite_path.resolve().as_uri()
+    conn = sqlite3.connect(
+        f"{uri}?mode=ro" if has_wal_or_shm else f"{uri}?mode=ro&immutable=1",
+        uri=True,
+        timeout=5.0,
+    )
     try:
         row = conn.execute("PRAGMA integrity_check;").fetchone()
         if not row or row[0] != "ok":
@@ -420,11 +525,12 @@ def backup_sqlite(src_path: Path, dst_path: Path) -> dict:
         if stale.exists():
             stale.unlink()
 
-    src_conn = sqlite3.connect(str(src_path), timeout=5.0)
+    src_conn = sqlite3.connect(f"{src_path.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
     dst_conn = sqlite3.connect(str(dst_path), timeout=5.0)
     try:
         with dst_conn:
             src_conn.backup(dst_conn)
+        dst_conn.execute("PRAGMA journal_mode=DELETE;")
     except Exception as exc:
         dst_conn.close()
         src_conn.close()
@@ -637,10 +743,21 @@ def init_test_lmdb(lmdb_path: Path, sample_key: str = "!u!ce,shi", sample_phrase
             )
 
         phrase_bytes = sample_phrase.encode("utf-8")
-        # WordMeta struct (24 bytes): double dynamic_weight (8), int64 last_active_ts (8),
-        # uint16 text_bytes_len (2), uint16 context_before_len (2), uint16 context_after_len (2),
-        # uint8 negative_count (1), uint8 flags (1)
-        word_header = struct.pack("<dqHHHBB", 5.0, 1700000000000, len(phrase_bytes), 0, 0, 0, 0)
+        # WordMeta struct (31 bytes, packed): uint32 first_seen_sec, uint32 hit_count,
+        # float dynamic_weight, uint16 text_bytes_len, uint16 context_before_len,
+        # uint16 context_after_len, uint8 negative_count, uint8 flags, int64 last_active_ts
+        word_header = struct.pack(
+            "<IIfHHHIBq",
+            1700000000,
+            1,
+            5.0,
+            len(phrase_bytes),
+            0,
+            0,
+            0,
+            0,
+            1700000000000,
+        )
         word_payload = word_header + phrase_bytes
         kb = sample_key.encode("utf-8")
         k_buf = ctypes.create_string_buffer(kb, len(kb))
@@ -670,7 +787,7 @@ def perform_backup_for_dirs(
         "custom_words.txt",
         "user.dict",
         "pinned_candidates.txt",
-        "clipboard-history.bin",
+        "clipboard-favorites.bin",
         "clipboard_history.json",
     ]
     config_files = []
@@ -774,6 +891,18 @@ def perform_backup_for_dirs(
     if latest_link.exists() or latest_link.is_symlink():
         latest_link.unlink()
     latest_link.write_text(str(target_root) + "\n", encoding="utf-8")
+    owner_ids = _target_uid_gid(data_dir, config_dir)
+    if owner_ids is not None:
+        uid, gid = owner_ids
+        _chown_tree(target_root, uid, gid)
+        _chown_tree(data_dir / "backups", uid, gid)
+        if manifest.get("sqlite"):
+            _chown_tree(Path(manifest["sqlite"]["legacy_backup_file"]), uid, gid)
+        if manifest.get("lmdb"):
+            legacy_lmdb = Path(manifest["lmdb"]["legacy_backup_file"])
+            _chown_tree(legacy_lmdb, uid, gid)
+            _chown_tree(Path(f"{legacy_lmdb}-lock"), uid, gid)
+    _prune_auto_backups(data_dir)
     return target_root
 
 
@@ -860,6 +989,12 @@ def perform_restore_for_dirs(
         tmp_f = dst_f.parent / f".{dst_f.name}.restore-tmp"
         shutil.copy2(bak_f, tmp_f)
         os.replace(tmp_f, dst_f)
+
+    owner_ids = _target_uid_gid(data_dir, config_dir, backup_dir)
+    if owner_ids is not None:
+        uid, gid = owner_ids
+        _chown_tree(data_dir, uid, gid)
+        _chown_tree(config_dir, uid, gid)
 
 
 def main() -> int:

@@ -97,6 +97,7 @@ def main():
     checked_remote = supports_checked_remote()
     last_mode = None
     restore_mode = None
+    poll_tick = 0
     try:
         while not stopping and session_alive():
             if same_session_fcitx(address):
@@ -122,9 +123,11 @@ def main():
                         if remote('-s', method) is not None and remote('-o' if active == '2' else '-c') is not None:
                             restore_mode = None
                     else:
-                        method = remote('-n')
-                        if method:
-                            last_mode = (state, method)
+                        if last_mode is None or last_mode[0] != state or poll_tick % 4 == 0:
+                            method = remote('-n')
+                            if method:
+                                last_mode = (state, method)
+                        poll_tick += 1
             child = None
             if stopping or result in (0, -signal.SIGTERM, -signal.SIGINT, -signal.SIGHUP) or not session_alive():
                 return 0

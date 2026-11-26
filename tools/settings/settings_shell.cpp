@@ -185,6 +185,10 @@ public:
     }
 
     ~Impl() {
+        if (savedStatusRetrySourceId != 0) {
+            g_source_remove(savedStatusRetrySourceId);
+            savedStatusRetrySourceId = 0;
+        }
         motion.reset();
     }
 
@@ -630,6 +634,11 @@ private:
                 updateActionState();
                 if (revision != model.savedRevision()) {
                     savedStatusHash = model.savedContentHash();
+                    savedStatusRetryCount = 0;
+                    if (savedStatusRetrySourceId != 0) {
+                        g_source_remove(savedStatusRetrySourceId);
+                        savedStatusRetrySourceId = 0;
+                    }
                     presentError("已保存，应用状态待确认");
                     requestOverviewRefresh();
                 }
@@ -1000,6 +1009,11 @@ private:
 
         updateActionState();
         savedStatusHash = model.savedContentHash();
+        savedStatusRetryCount = 0;
+        if (savedStatusRetrySourceId != 0) {
+            g_source_remove(savedStatusRetrySourceId);
+            savedStatusRetrySourceId = 0;
+        }
         presentError("已保存，应用状态待确认");
         requestOverviewRefresh();
         if (closeAfterSave) {
@@ -1162,7 +1176,29 @@ private:
             if (!savedHash.empty() && savedHash == savedStatusHash &&
                 savedHash == model.savedContentHash()) {
                 presentError(result->applicationMessage);
-                savedStatusHash.clear();
+                if (result->applicationMessage.find("等待输入法读取") != std::string::npos &&
+                    savedStatusRetryCount < 3) {
+                    if (savedStatusRetrySourceId == 0) {
+                        ++savedStatusRetryCount;
+                        auto *retryState = new SharedLifetime(lifetimeGuard.state());
+                        savedStatusRetrySourceId = g_timeout_add_full(
+                            G_PRIORITY_DEFAULT, 1200,
+                            +[](gpointer data) -> gboolean {
+                                (*static_cast<SharedLifetime *>(data))->withOwner([](Impl &owner) {
+                                    owner.savedStatusRetrySourceId = 0;
+                                    owner.requestOverviewRefresh();
+                                });
+                                return G_SOURCE_REMOVE;
+                            },
+                            retryState,
+                            +[](gpointer data) {
+                                delete static_cast<SharedLifetime *>(data);
+                            });
+                    }
+                } else {
+                    savedStatusHash.clear();
+                    savedStatusRetryCount = 0;
+                }
             }
         } else if (current) {
             presentError(error == nullptr || error->message == nullptr
@@ -1210,6 +1246,8 @@ private:
     std::string appliedTheme;
     std::string editStatusText;
     std::string savedStatusHash;
+    unsigned savedStatusRetryCount = 0;
+    guint savedStatusRetrySourceId = 0;
 
     GtkWidget *stack = nullptr;
     GtkWidget *navigationBox = nullptr;

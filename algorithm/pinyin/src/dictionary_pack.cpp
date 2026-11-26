@@ -100,7 +100,8 @@ std::optional<DictionaryPack> DictionaryPackStore::validate(
         if (!MixedWordIndex::isMixedWord(entry.phrase)) {
             try {
                 libime::PinyinEncoder::encodeFullPinyin(
-                    core::PinyinMatchPolicy::segmentPinyin(entry.pinyin));
+                    core::PinyinMatchPolicy::segmentPinyin(
+                        entry.rawPinyin.empty() ? entry.pinyin : entry.rawPinyin));
             } catch (const std::exception &) {
                 fail(error, "非混合词条包含无效的完整拼音");
                 return {};

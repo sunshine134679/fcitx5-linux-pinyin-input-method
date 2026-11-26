@@ -101,6 +101,7 @@ public:
     std::filesystem::path learningStorePath;
     core::EnglishDefinitionDictionary englishDefinitionDict;
     std::filesystem::path englishDefinitionDictPath;
+    bool englishDefinitionLoadAttempted_ = false;
     std::shared_ptr<core::PhraseFormationStats> phraseStats =
         std::make_shared<core::PhraseFormationStats>();
 

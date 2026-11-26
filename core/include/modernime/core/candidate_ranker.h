@@ -134,7 +134,8 @@ class CandidateRanker final {
 public:
     static std::vector<std::size_t>
     rank(std::string_view userInput, std::vector<CandidateScore> &candidates,
-         const std::vector<std::string> &previousOrder = {});
+         const std::vector<std::string> &previousOrder = {},
+         std::optional<std::size_t> expectedConsumedBytes = std::nullopt);
 };
 
 } // namespace modernime::core
