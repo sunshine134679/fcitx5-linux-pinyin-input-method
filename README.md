@@ -30,14 +30,14 @@ ModernIME 推荐在下列已支持的系统使用 **签名 APT / DNF 软件源**
 
 | 资产文件名 / 仓库渠道 | 适配发行版与代号 | 架构 | 最低系统要求与支持边界 |
 |---|---|---|---|
-| `modernime_0.2.17_{amd64,arm64}_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64`, `arm64` | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
-| `modernime_0.2.17_{amd64,arm64}_debian13.deb` | Debian 13 (`trixie`) | `amd64`, `arm64` | glibc ≥ 2.40, Fcitx5 ≥ 5.1.12, LibIME ≥ 1.1.10 |
-| `modernime_0.2.17_{amd64,arm64}_debian12.deb` | Debian 12 (`bookworm`) | `amd64`, `arm64` | glibc ≥ 2.36, Fcitx5 ≥ 5.0.21, LibIME ≥ 1.0.16 |
-| `modernime-0.2.17-1.fc42.{x86_64,aarch64}.rpm` | Fedora 42 (`fc42`) | `x86_64`, `aarch64` | glibc ≥ 2.41, Fcitx5 ≥ 5.1.12, LibIME ≥ 1.1.10 |
-| `modernime-0.2.17-1.fc41.{x86_64,aarch64}.rpm` | Fedora 41 (`fc41`) | `x86_64`, `aarch64` | glibc ≥ 2.40, Fcitx5 ≥ 5.1.x, LibIME ≥ 1.1.x |
-| `modernime-0.2.17-1.oe24.{x86_64,aarch64}.rpm` | openEuler 24.09 (`oe2409` 官方验证)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64`, `aarch64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
-| `modernime-0.2.17-1-x86_64.pkg.tar.zst` | Arch Linux / Manjaro / EndeavourOS | `x86_64`（ARM64 附 `PKGBUILD`） | Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11, GTK3 ≥ 3.24 |
-| `modernime-0.2.17-linux-{x86_64,aarch64}.tar.gz` | Linux 便携免编译包 | `x86_64`, `aarch64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
+| `modernime_0.2.18_{amd64,arm64}_ubuntu24.04.deb` | Ubuntu 24.04 LTS (`noble`) | `amd64`, `arm64` | glibc ≥ 2.39, Fcitx5 ≥ 5.1.7, LibIME ≥ 1.1.5 |
+| `modernime_0.2.18_{amd64,arm64}_debian13.deb` | Debian 13 (`trixie`) | `amd64`, `arm64` | glibc ≥ 2.40, Fcitx5 ≥ 5.1.12, LibIME ≥ 1.1.10 |
+| `modernime_0.2.18_{amd64,arm64}_debian12.deb` | Debian 12 (`bookworm`) | `amd64`, `arm64` | glibc ≥ 2.36, Fcitx5 ≥ 5.0.21, LibIME ≥ 1.0.16 |
+| `modernime-0.2.18-1.fc42.{x86_64,aarch64}.rpm` | Fedora 42 (`fc42`) | `x86_64`, `aarch64` | glibc ≥ 2.41, Fcitx5 ≥ 5.1.12, LibIME ≥ 1.1.10 |
+| `modernime-0.2.18-1.fc41.{x86_64,aarch64}.rpm` | Fedora 41 (`fc41`) | `x86_64`, `aarch64` | glibc ≥ 2.40, Fcitx5 ≥ 5.1.x, LibIME ≥ 1.1.x |
+| `modernime-0.2.18-1.oe24.{x86_64,aarch64}.rpm` | openEuler 24.09 (`oe2409` 官方验证)<br>openEuler 24.03 SP4（需配置 24.09 EPOL 扩展源） | `x86_64`, `aarch64` | glibc ≥ 2.38, Fcitx5 ≥ 5.0.14 (EPOL), LibIME ≥ 1.0.11 |
+| `modernime-0.2.18-1-x86_64.pkg.tar.zst` | Arch Linux / Manjaro / EndeavourOS | `x86_64`（ARM64 附 `PKGBUILD`） | Fcitx5 ≥ 5.0.14, LibIME ≥ 1.0.11, GTK3 ≥ 3.24 |
+| `modernime-0.2.18-linux-{x86_64,aarch64}.tar.gz` | Linux 便携免编译包 | `x86_64`, `aarch64` | glibc ≥ 2.34, libstdc++ ≥ 3.4.30, Fcitx5 |
 | 源码构建 (`./install.sh`) | 任意 Linux (含 RISC-V 等) | 全架构 | C++20, CMake ≥ 3.24, GCC ≥ 10, Fcitx5-devel |
 
 > 所有 GitHub Releases 二进制资产均附带同名 `.sig` 独立 GPG 签名与 `SHA256SUMS.txt` 校验清单。
@@ -821,6 +821,12 @@ modernime-session-init --remove-gnome-extension
 已完成任务的过程报告与旧计划通过[历史资料索引](docs/历史资料索引.md)追溯；现行规范、接口和版本说明继续保留在 `docs/`。
 
 ## 版本更新记录
+
+### v0.2.18（2026-11-27）
+
+- 完成全链路深度修复：精准保护 `daan`/`hunan`/`jinan` 等合法拼音切分、修正中英混输后标点与 `Ctrl+[`/`Ctrl+]` 不漏发、完善双拼边界及 Shift 短按与连发防误触。
+- 新增候选栏滚轮翻页与选中胶囊边缘命中、修复零宽/零高光标跟随并扩展 Kimpanel 至 GNOME 45–49；强化密码管理器剪贴板避让、WAL/LMDB/备份稳健性及设置客户端异步生命周期。
+- 详见 [v0.2.18 发布说明](docs/releases/v0.2.18-发布说明.md)。
 
 ### v0.2.17（2026-11-21）
 
