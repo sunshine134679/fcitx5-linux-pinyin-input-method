@@ -439,7 +439,10 @@ struct ModernIMEUserInterface::Impl final {
         if (inputContext == nullptr || !pendingFrame) {
             return;
         }
-        if (inputContext->cursorRect().isEmpty() && windowAnchor.valid) {
+        const auto &rawCursor = inputContext->cursorRect();
+        if (rawCursor.left() == 0 && rawCursor.top() == 0 &&
+            rawCursor.width() <= 0 && rawCursor.height() <= 0 &&
+            windowAnchor.valid) {
             return;
         }
         const auto cursor = logicalCursor(inputContext);
